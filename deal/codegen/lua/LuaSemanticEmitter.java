@@ -8058,9 +8058,18 @@ end
 -- language null (the chunk's raw nil or its __NULL sentinel) is the
 -- language-null carrier, so its actual projects table like the oracle's
 -- NullValue and the JVM's present null — never the absent marker's nil.
+-- The absent marker (the chunk's own or the deployed runtime's) is not a
+-- language null: it takes the named missing-to-null mapping at a
+-- nullable position and the closed parameter cell at every other
+-- declared position.
 local function __hostFnParam(desc, inner, index, v, origin)
   local function kindReason()
     return __renderTemplate("TYPED_BOUNDARY_KIND", {kind = "function"})
+  end
+  if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then
+    if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
+    return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = kindReason()},
+      origin, desc, __typedBoundaryKind("missing", v)), 0)
   end
   if v == nil or v == __NULL then
     if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
@@ -8083,36 +8092,50 @@ local function __hostFnParam(desc, inner, index, v, origin)
   end
   return v
 end
--- The language-null admission of one declared host position: the chunk's
--- language-null representation — the raw nil the null literal emits and
--- the chunk's own __NULL sentinel — crosses as the deployed runtime's
--- explicit null sentinel only when the declared position admits null
--- (the null descriptor itself and every nullable position). A
--- non-nullable position renders the same closed HOST_PARAMETER_CELL
--- failure its loaded matcher cell renders — the declared kind's reason,
--- the declared descriptor as expected, and the language-null carrier's
--- table kind as actual — never a plain nil the deployed table/array
--- matcher rows would wrongly admit. The __MISSING absence marker is not
--- a language null and is left to the loaded matcher. The helper is
--- chunk-global (like the async-start normalization below) rather than a
--- chunk-level local: LuaJIT bounds one function at 200 locals and the
--- emitted main body carries the program's own, so a fixed host prelude
--- must not spend a main-chunk local here.
-__hostNullParam = function(desc, index, v, origin)
+-- The closed kind text of one declared host descriptor (the {kind}
+-- parameter of the typed-boundary kind arm and the inner reason of the
+-- host parameter cell): the declared class/array/function descriptors
+-- project their own kind words, every other descriptor its own text.
+__hostDeclKind = function(desc)
+  if string.sub(desc, 1, 1) == "@" then return "class instance" end
+  if string.sub(desc, 1, 1) == "[" then return "array" end
+  if string.sub(desc, 1, 1) == "(" or string.sub(desc, 1, 9) == "async(" then
+    return "function"
+  end
+  return desc
+end
+-- The admission of one declared host position before the loaded matcher:
+-- the chunk's language-null representation — the raw nil the null literal
+-- emits and the chunk's own __NULL sentinel — crosses as the deployed
+-- runtime's explicit null sentinel only when the declared position admits
+-- null (the null descriptor itself and every nullable position). The
+-- absent marker (the chunk's __MISSING and the deployed runtime's own
+-- __rt.__MISSING) is not a language null: at a nullable position it takes
+-- the named missing-to-null mapping, and at every other declared position
+-- it renders the closed HOST_PARAMETER_CELL failure — the declared kind's
+-- reason, the declared descriptor as expected, and the absent marker's
+-- nil kind as actual — never the table the representation-only matcher
+-- rows would wrongly admit (the deployed table row accepts every Lua
+-- table and the array row every element-less one, so the absent marker
+-- must be distinguished here, before the matcher runs). A language null
+-- at a non-nullable position likewise renders the closed failure with the
+-- language-null carrier's table kind as actual. The helper is chunk-global
+-- (like the async-start normalization below) rather than a chunk-level
+-- local: LuaJIT bounds one function at 200 locals and the emitted main
+-- body carries the program's own, so a fixed host prelude must not spend a
+-- main-chunk local here.
+__hostParamAdmit = function(desc, index, v, origin)
+  if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then
+    if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
+    local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
+      {kind = __hostDeclKind(desc)})
+    return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
+      origin, desc, __typedBoundaryKind("missing", v)), 0)
+  end
   if v ~= nil and v ~= __NULL then return v end
   if desc == "null" or string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
-  local kind
-  if string.sub(desc, 1, 1) == "@" then
-    kind = "class instance"
-  elseif string.sub(desc, 1, 1) == "[" then
-    kind = "array"
-  elseif string.sub(desc, 1, 1) == "("
-      or string.sub(desc, 1, 9) == "async(" then
-    kind = "function"
-  else
-    kind = desc
-  end
-  local inner = __renderTemplate("TYPED_BOUNDARY_KIND", {kind = kind})
+  local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
+    {kind = __hostDeclKind(desc)})
   return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
     origin, desc, __carrierKind(__rt.__NULL)), 0)
 end
@@ -8124,10 +8147,13 @@ end
 -- the two sentinels are distinct values) and renders the closed
 -- parameter cell's own failure at an incompatible descriptor before the
 -- loaded matcher can project its carrier. A genuine absence (the
--- __MISSING marker) is never a language null: it stays the absent value
--- the loaded matcher classifies.
+-- __MISSING marker, the chunk's own or the deployed runtime's) is never
+-- a language null: it takes the named missing-to-null mapping at a
+-- nullable position and the closed parameter cell at every other
+-- declared position, before the representation-only matcher can admit
+-- the marker's table shape.
 local function __hostParamCell(desc, index, v, origin)
-  v = __hostNullParam(desc, index, v, origin)
+  v = __hostParamAdmit(desc, index, v, origin)
   if string.sub(desc, 1, 1) == "@" then
     return __hostClassCell(desc, index, v, origin, false)
   end
@@ -8273,10 +8299,12 @@ end
 -- null sentinel, so the loaded matcher admits it and the raw host
 -- observes the sentinel, never a plain nil) and renders the closed
 -- parameter cell's own failure at an incompatible descriptor; the
--- __MISSING absence marker is not a language null and is left to the
--- loaded matcher.
+-- __MISSING absence marker is not a language null: it takes the named
+-- missing-to-null mapping at a nullable position and the closed
+-- parameter cell at every other declared position, never the marker's
+-- table shape.
 local function __hostProjectArg(desc, inner, index, v, origin)
-  v = __hostNullParam(desc, index, v, origin)
+  v = __hostParamAdmit(desc, index, v, origin)
   if v == __rt.__NULL then return v end
   if inner ~= nil and (string.sub(inner, 1, 1) == "("
       or string.sub(inner, 1, 9) == "async(") then

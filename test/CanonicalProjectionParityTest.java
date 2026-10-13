@@ -2830,6 +2830,62 @@ public class CanonicalProjectionParityTest {
           return null
         }
 
+        export function test_reject_table_missing_field(): null {
+          host.takeTable(bagWithNull().missing)
+          return null
+        }
+
+        export function test_reject_array_missing_field(): null {
+          host.takeArray(bagWithNull().missing)
+          return null
+        }
+
+        export async function test_async_reject_table_missing_field(): null {
+          await host.asyncTakeTable(bagWithNull().missing)
+          return null
+        }
+
+        export async function test_async_reject_array_missing_field(): null {
+          await host.asyncTakeArray(bagWithNull().missing)
+          return null
+        }
+
+        function applyTableMissing(f: (value: table) => string, bag: table): string {
+          return f(bag.missing)
+        }
+
+        function applyArrayMissing(f: (value: int[]) => string, bag: table): string {
+          return f(bag.missing)
+        }
+
+        export function test_dynamic_reject_table_missing_field(): null {
+          applyTableMissing(host.takeTable, bagWithNull())
+          return null
+        }
+
+        export function test_dynamic_reject_array_missing_field(): null {
+          applyArrayMissing(host.takeArray, bagWithNull())
+          return null
+        }
+
+        async function applyAsyncTableMissing(f: async (value: table) => string, bag: table): string {
+          return await f(bag.missing)
+        }
+
+        async function applyAsyncArrayMissing(f: async (value: int[]) => string, bag: table): string {
+          return await f(bag.missing)
+        }
+
+        export async function test_dynamic_async_reject_table_missing_field(): null {
+          await applyAsyncTableMissing(host.asyncTakeTable, bagWithNull())
+          return null
+        }
+
+        export async function test_dynamic_async_reject_array_missing_field(): null {
+          await applyAsyncArrayMissing(host.asyncTakeArray, bagWithNull())
+          return null
+        }
+
         export function main(): null {
           return null
         }
@@ -3249,29 +3305,34 @@ public class CanonicalProjectionParityTest {
 
     /**
      * The crossing's rejection controls: a language null supplied
-     * dynamically (a {@code table} read) to a non-nullable {@code table}
+     * dynamically (a {@code table} read) and a genuine missing field —
+     * never a language null — supplied to a non-nullable {@code table}
      * and a non-nullable {@code int[]} host position must be rejected on
      * all three consumers with the identical closed tuple and origin. The
      * declaring call shape and the declaring async host start run the
      * recorded {@code HOST_PARAMETER} cell, so their tuple is the closed
      * {@code HOST_PARAMETER_CELL} composite — the declared kind's reason,
-     * the declared descriptor as expected, and the language-null
-     * carrier's {@code table} kind as actual — while the function-valued
-     * (indirect) call shape and its async start run the recorded general
+     * the declared descriptor as expected, and the failing carrier's
+     * {@code table} kind (the language null) or {@code nil} kind (the
+     * absent marker) as actual — while the function-valued (indirect)
+     * call shape and its async start run the recorded general
      * function-parameter cell, whose closed typed-boundary kind tuple
      * names the declared kind. The loaded matcher's own table and array
-     * rows admit the null sentinel, so a projection that only normalizes
-     * the null without distinguishing the declared position would
-     * complete on Lua while the other two consumers reject.
+     * rows admit both the null sentinel and the element-less absent
+     * marker, so a projection that only normalizes the null without
+     * distinguishing the declared position, or that leaves the marker to
+     * the representation-only matcher, would complete on Lua while the
+     * other two consumers reject.
      */
     private static void driveNullCrossingRejections(Compiled compiled)
             throws Exception {
         Tuple tableCell = hostParameterCellTuple("table", 1,
-            FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE), 153, 3);
+            FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE), "table",
+            153, 3);
         Tuple arrayCell = hostParameterCellTuple("[int]", 1,
             FailureProjections.kindReason(
                 new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
-            158, 3);
+            "table", 158, 3);
         assertNullCrossingRejection(compiled, "test_reject_table_dynamic_null",
             tableCell, "the dynamically supplied null at the non-nullable "
                 + "table parameter");
@@ -3280,19 +3341,19 @@ public class CanonicalProjectionParityTest {
                 + "array parameter");
         assertNullCrossingRejection(compiled,
             "test_dynamic_reject_table_dynamic_null",
-            typedBoundaryKindTuple("table", 163, 12),
+            typedBoundaryKindTuple("table", "null", 163, 12),
             "the function-valued call's dynamically supplied null at the "
                 + "non-nullable table parameter");
         assertNullCrossingRejection(compiled,
             "test_dynamic_reject_array_dynamic_null",
-            typedBoundaryKindTuple("array", 167, 10),
+            typedBoundaryKindTuple("array", "null", 167, 10),
             "the function-valued call's dynamically supplied null at the "
                 + "non-nullable array parameter");
         assertAsyncNullCrossingRejection(compiled,
             "test_async_reject_table_dynamic_null",
             hostParameterCellTuple("table", 1,
                 FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
-                181, 9),
+                "table", 181, 9),
             "the async start's dynamically supplied null at the non-nullable "
                 + "table parameter");
         assertAsyncNullCrossingRejection(compiled,
@@ -3300,25 +3361,80 @@ public class CanonicalProjectionParityTest {
             hostParameterCellTuple("[int]", 1,
                 FailureProjections.kindReason(
                     new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
-                186, 9),
+                "table", 186, 9),
             "the async start's dynamically supplied null at the non-nullable "
                 + "array parameter");
         assertAsyncNullCrossingRejection(compiled,
             "test_dynamic_async_reject_table_dynamic_null",
-            typedBoundaryKindTuple("table", 191, 18),
+            typedBoundaryKindTuple("table", "null", 191, 18),
             "the function-valued async start's dynamically supplied null at "
                 + "the non-nullable table parameter");
         assertAsyncNullCrossingRejection(compiled,
             "test_dynamic_async_reject_array_dynamic_null",
-            typedBoundaryKindTuple("array", 195, 16),
+            typedBoundaryKindTuple("array", "null", 195, 16),
             "the function-valued async start's dynamically supplied null at "
                 + "the non-nullable array parameter");
+        // The absent-marker controls: a missing field (never a language
+        // null) supplied to the same non-nullable positions must be
+        // rejected by the same cells. The deployed matcher's table row
+        // admits every Lua table and its array row every element-less one,
+        // so the absent marker's chunk-side marker table would cross a
+        // non-nullable table/array host parameter exactly like a real
+        // table unless the emitted parameter admission distinguishes it
+        // first.
+        assertNullCrossingRejection(compiled, "test_reject_table_missing_field",
+            hostParameterCellTuple("table", 1,
+                FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
+                "nil", 209, 3),
+            "the missing field at the non-nullable table parameter");
+        assertNullCrossingRejection(compiled, "test_reject_array_missing_field",
+            hostParameterCellTuple("[int]", 1,
+                FailureProjections.kindReason(
+                    new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
+                "nil", 214, 3),
+            "the missing field at the non-nullable array parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_async_reject_table_missing_field",
+            hostParameterCellTuple("table", 1,
+                FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
+                "nil", 219, 9),
+            "the async start's missing field at the non-nullable table "
+                + "parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_async_reject_array_missing_field",
+            hostParameterCellTuple("[int]", 1,
+                FailureProjections.kindReason(
+                    new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
+                "nil", 224, 9),
+            "the async start's missing field at the non-nullable array "
+                + "parameter");
+        assertNullCrossingRejection(compiled,
+            "test_dynamic_reject_table_missing_field",
+            typedBoundaryKindTuple("table", "nil", 229, 12),
+            "the function-valued call's missing field at the non-nullable "
+                + "table parameter");
+        assertNullCrossingRejection(compiled,
+            "test_dynamic_reject_array_missing_field",
+            typedBoundaryKindTuple("array", "nil", 233, 10),
+            "the function-valued call's missing field at the non-nullable "
+                + "array parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_dynamic_async_reject_table_missing_field",
+            typedBoundaryKindTuple("table", "nil", 247, 18),
+            "the function-valued async start's missing field at the "
+                + "non-nullable table parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_dynamic_async_reject_array_missing_field",
+            typedBoundaryKindTuple("array", "nil", 251, 16),
+            "the function-valued async start's missing field at the "
+                + "non-nullable array parameter");
     }
 
     /** The closed {@code TYPE_DESCRIPTOR} kind tuple at one probe origin. */
-    private static Tuple typedBoundaryKindTuple(String kind, int line, int column) {
+    private static Tuple typedBoundaryKindTuple(String kind, String actual, int line,
+            int column) {
         BoundaryFailure arm = FailureContractRegistry.render(
-            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", kind), kind, "null",
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", kind), kind, actual,
             null);
         return new Tuple(arm.code().name(), arm.message(), "app.deal", line, column,
             arm.expected(), arm.actual());
@@ -3326,11 +3442,11 @@ public class CanonicalProjectionParityTest {
 
     /** The closed {@code HOST_PARAMETER_CELL} tuple at one probe origin. */
     private static Tuple hostParameterCellTuple(String descriptor, int index,
-            String inner, int line, int column) {
+            String inner, String actual, int line, int column) {
         BoundaryFailure arm = FailureContractRegistry.render(
             FailureArmId.HOST_PARAMETER_CELL,
             Map.of("index", Integer.toString(index), "inner", inner), descriptor,
-            "table", null);
+            actual, null);
         return new Tuple(arm.code().name(), arm.message(), "app.deal", line, column,
             arm.expected(), arm.actual());
     }
