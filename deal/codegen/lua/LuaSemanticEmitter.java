@@ -2202,10 +2202,18 @@ public final class LuaSemanticEmitter {
                 // The builtin Error field write commits into the carrier's
                 // own field (K13 item 6): the field boundary already ran the
                 // declared string descriptor, so the committed value is the
-                // written string.
+                // written string. A committed message write invalidates the
+                // carrier's generated-message provenance (LL4): the carrier
+                // may still spell generated descriptor fields, but the text
+                // the program wrote is authored and the lane frames it
+                // verbatim — writing through an alias edits the same table,
+                // so the invalidation covers every alias too.
                 out.append("__instT.")
                     .append(errorCarrierField(op, payload.field()))
                     .append(" = __chkB\n");
+                if ("message".equals(payload.field())) {
+                    out.append("__instT.gm = nil\n");
+                }
             } else if (isHostClass(payload.classId())) {
 
                 out.append("__instT[").append(luaString(payload.field()))
@@ -5197,7 +5205,14 @@ public final class LuaSemanticEmitter {
             // only this handler's caught one) keeps its own identity and
             // gains no cause; a new failure raised in the catch block is
             // the replacement failure and links the caught failure as its
-            // cause (frames/code/message/origin unchanged).
+            // cause (frames/code/message/origin unchanged). The wrapper
+            // keeps the escaping failure's own carrier provenance: a
+            // generated failure arm raised inside the catch body still
+            // carries its compiler-generated descriptor content (its
+            // message and expected/actual fields are copied here), so the
+            // wrapper passes the carrier mark through instead of claiming
+            // generated content of its own; an authored raise (a host
+            // long-form error, a user-thrown value) stays authored.
             out.append("      if type(__terrT) == \"table\" and __terrT.__re"
                 + " then\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -5206,7 +5221,8 @@ public final class LuaSemanticEmitter {
             out.append("      else\n");
             out.append("        __wrappedT = {__d = true, code = __terrT.code, "
                 + "m = __terrT.m, o = __terrT.o, e = __terrT.e, a = __terrT.a, "
-                + "f = __terrT.f, cause = " + caughtIdentity + "}\n");
+                + "f = __terrT.f, g = __terrT.g, gm = __terrT.gm, cause = "
+                + caughtIdentity + "}\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
                 "__errtext(__wrappedT)");
             out.append("        error(__wrappedT, 0)\n");
@@ -8129,7 +8145,7 @@ local function __hostDealProject(desc, v, origin)
     -- identity arm's own template (no composed spelling).
     return error(__failExpr("E8010",
       __renderTemplate("CLASS_IDENTITY", {expected = desc,
-        actual = tostring(v.__classname)}), origin, desc, v.__classname), 0)
+        actual = tostring(v.__classname)}), origin, desc, v.__classname, true), 0)
   end
   local out = {__c = true, __id = desc, __f = {}, __p = {}}
   for k, val in pairs(v) do
@@ -9099,10 +9115,21 @@ local function __rawAtom(kind, v)
   if type(v) == "function" then return "ref:"..__allocId(v) end
   return __atom(kind, v)
 end
-local function __failExpr(code, msg, o, e, a)
-  return {__d = true, code = code, m = msg, o = o, e = e, a = a, f = __framesText(),
-          cause = nil}
+local function __failExpr(code, msg, o, e, a, g)
+  return {__d = true, code = code, m = msg, o = o, e = e, a = a, g = g,
+          gm = g, f = __framesText(), cause = nil}
 end
+-- The carrier provenance marks of one failure table (the lane's honest
+-- field projection): `g = true` states that the expected/actual fields
+-- are compiler-generated descriptor content — the closed arm renderer's
+-- declared parameters — and `gm = true` states that the message is still
+-- that renderer's template output, so a consumer may rewrite generated
+-- module descriptors to the corpus vocabulary. Every other carrier (a
+-- converted runtime/host raise, a user-thrown error value) omits the
+-- marks, and its authored text is projected verbatim. A committed write
+-- to the builtin Error's message field clears `gm` alone: the carrier's
+-- generated descriptor fields stay generated, while the text the program
+-- wrote is authored and never rewritten.
 -- The closed failure-arm table (canonical failure-projection authority P1):
 -- the registry's arms serialized verbatim. Every failure site renders
 -- through the one arm renderer below; a failure site composes no text of
@@ -9768,7 +9795,8 @@ local function __arm(id, values, origin, expected, actual)
   __checkExpectedField(id, arm, values, expected)
   __checkActualField(id, arm, actual)
   __checkFieldBinding(id, arm, values, expected, actual)
-  return __failExpr(arm.c, __renderTemplate(id, values), origin, expected, actual)
+  return __failExpr(arm.c, __renderTemplate(id, values), origin, expected, actual,
+    true)
 end
 -- An inner-only arm's message text (the host arms' inner reasons).
 local function __innerArm(id, values)
