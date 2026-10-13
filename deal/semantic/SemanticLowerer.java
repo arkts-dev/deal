@@ -3921,9 +3921,8 @@ public final class SemanticLowerer {
                             + " symbols for every @jsonable class — a fact defect)",
                                 classDeclaration.span());
                     }
-                    RuntimeDescriptor.Func signature = (RuntimeDescriptor.Func)
-                        ContainerPayloadDescriptors.resultDescriptorOf(
-                            functionSymbol.funcType());
+                    RuntimeDescriptor.Func signature =
+                        jsonHelperSignatureOf(functionSymbol, classDeclaration);
                     BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
                     BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
                         INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
@@ -4268,10 +4267,10 @@ public final class SemanticLowerer {
                     + "function symbols (the checker defines the synthetic symbols for "
                     + "every @jsonable class — a fact defect)", declaration.span());
             }
-            RuntimeDescriptor.Func fromSignature = (RuntimeDescriptor.Func)
-                ContainerPayloadDescriptors.resultDescriptorOf(fromFunction.funcType());
-            RuntimeDescriptor.Func toSignature = (RuntimeDescriptor.Func)
-                ContainerPayloadDescriptors.resultDescriptorOf(toFunction.funcType());
+            RuntimeDescriptor.Func fromSignature =
+                jsonHelperSignatureOf(fromFunction, declaration);
+            RuntimeDescriptor.Func toSignature =
+                jsonHelperSignatureOf(toFunction, declaration);
             RuntimeDescriptor fromResult = fromSignature.returnType();
             RuntimeDescriptor toResult = toSignature.returnType();
             RuntimeDescriptor fromParameter = fromSignature.paramTypes().get(0);
@@ -4287,6 +4286,27 @@ public final class SemanticLowerer {
             // C$toJson(v: C): string.
             lowerJsonFunction(declaration, layout, toSignature, toParameter, toResult,
                 FailurePolicyId.JSON_TO_ERROR, false);
+        }
+
+        /**
+         * The checked signature of one generated {@code @jsonable} helper
+         * ({@code C$fromJson}/{@code C$toJson}): the single
+         * {@link ContainerPayloadDescriptors} bridge over the checker's
+         * synthetic function symbol. The generated declaration's site is
+         * the owning class declaration (D2), so a corrupted checked
+         * signature fails closed at that declaration's own range — never
+         * the canonical empty-file anchor — while an already attached
+         * (inner) range always wins.
+         */
+        private RuntimeDescriptor.Func jsonHelperSignatureOf(
+                Symbol.FunctionSymbol functionSymbol, ClassDeclaration declaration) {
+            try {
+                return (RuntimeDescriptor.Func)
+                    ContainerPayloadDescriptors.resultDescriptorOf(
+                        functionSymbol.funcType());
+            } catch (ContainerPayloadDescriptors.Defect defect) {
+                throw defect.withRange(declaration.span().range());
+            }
         }
 
         /**

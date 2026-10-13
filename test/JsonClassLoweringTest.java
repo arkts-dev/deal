@@ -3,6 +3,7 @@ package deal.test;
 import deal.ast.ClassDeclaration;
 import deal.ast.ExportDeclaration;
 import deal.ast.ProgramNode;
+import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.checker.CheckResult;
 import deal.checker.ModuleResolver;
@@ -11,6 +12,8 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.Lexer;
 import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
@@ -19,6 +22,7 @@ import deal.semantic.CheckedModuleKind;
 import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ContainerPayloadDescriptors;
 import deal.semantic.JsonClassAlgorithmAdapter;
 import deal.semantic.LoweringSupport;
 import deal.semantic.ModuleFact;
@@ -729,6 +733,163 @@ public class JsonClassLoweringTest {
     }
 
     // =========================================================================
+    // (b2) the @jsonable helper descriptor origins (ISSUE-0750)
+    // =========================================================================
+
+    /**
+     * ISSUE-0750: the generated @jsonable helper signatures are
+     * declaration-owned at the class-core boundary — a corrupted checked
+     * {@code C$fromJson}/{@code C$toJson} signature (the closed fact no
+     * checker-valid program produces) fails closed at the owning class
+     * declaration's own range, the same span the helper's
+     * declared-parameter origin records. A known-file offsetless
+     * declaration span keeps its file and stays SYNTHETIC at the
+     * canonical anchor, never borrowing the empty-file anchor.
+     */
+    private static void testGeneratedHelperDescriptorOrigins() {
+        System.out.println("-- the generated @jsonable helper descriptor failures keep "
+            + "the class declaration's own range --");
+
+        String source = """
+            // @jsonable
+            export class Widget { n: int = 1; }
+            """;
+
+        // (a) both generated signatures (fromJson, toJson), known offsets:
+        // exactly the class declaration's own converted SOURCE range.
+        for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
+            CheckedSlice slice = checkSlice(source, MODULE, null);
+            if (slice == null) {
+                continue;
+            }
+            PipelineSlice pipeline = pipeline(slice);
+            if (pipeline == null) {
+                continue;
+            }
+            ClassDeclaration declaration = jsonableClassOf(slice);
+            check(declaration != null,
+                "the slice carries the @jsonable class declaration");
+            if (declaration == null) {
+                continue;
+            }
+            CompilerDiagnostic diagnostic = lowerCorruptedHelper(slice, pipeline,
+                slice.program(), helper);
+            if (diagnostic == null) {
+                continue;
+            }
+            assertDescriptorFailure(diagnostic, helper);
+            DiagnosticRange range = diagnostic.range();
+            check(range.origin() == RangeOrigin.SOURCE
+                    && "main.deal".equals(range.file())
+                    && range.startLine() == 2 && range.startColumn() == 8
+                    && range.endLine() == 2 && range.endColumn() == 36
+                    && range.startScalarOffset() == 20
+                    && range.endScalarOffset() == 48
+                    && range.scalarLength() == 28,
+                "the corrupted " + helper + " failure carries the class declaration's "
+                    + "own exact SOURCE range main.deal 2:8-2:36 [20,48) length 28; got "
+                    + range);
+            check(range.equals(declaration.span().range()),
+                "the " + helper + " range is exactly the class declaration's own span "
+                    + "conversion; got " + range);
+        }
+
+        // (b) known-file offsetless control: the same class-walk derivation
+        // with an offsetless declaration span keeps its file and stays
+        // SYNTHETIC at the canonical anchor.
+        for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
+            CheckedSlice slice = checkSlice(source, MODULE, null);
+            if (slice == null) {
+                continue;
+            }
+            PipelineSlice pipeline = pipeline(slice);
+            if (pipeline == null) {
+                continue;
+            }
+            ClassDeclaration parsed = jsonableClassOf(slice);
+            if (parsed == null) {
+                continue;
+            }
+            ClassDeclaration declaration = new ClassDeclaration(
+                new Span("writer.deal", 2, 8, 2, 35), parsed.name(), parsed.fields(),
+                parsed.directives());
+            ProgramNode program = new ProgramNode(
+                new Span("writer.deal", 1, 1, 2, 35), List.of(declaration));
+            CompilerDiagnostic diagnostic = lowerCorruptedHelper(slice, pipeline,
+                program, helper);
+            if (diagnostic == null) {
+                continue;
+            }
+            assertDescriptorFailure(diagnostic, helper);
+            DiagnosticRange range = diagnostic.range();
+            check(range.origin() == RangeOrigin.SYNTHETIC
+                    && "writer.deal".equals(range.file())
+                    && range.startLine() == 1 && range.startColumn() == 1
+                    && range.endLine() == 1 && range.endColumn() == 1
+                    && range.startScalarOffset() == 0
+                    && range.endScalarOffset() == 0
+                    && range.scalarLength() == 0,
+                "the offsetless " + helper + " class declaration keeps its known file "
+                    + "and stays SYNTHETIC at the canonical anchor: " + range);
+        }
+    }
+
+    /** The single exported @jsonable class declaration of the slice. */
+    private static ClassDeclaration jsonableClassOf(CheckedSlice slice) {
+        for (StatementNode statement : slice.program().statements()) {
+            StatementNode declaration = statement instanceof ExportDeclaration export
+                ? export.declaration() : statement;
+            if (declaration instanceof ClassDeclaration classDeclaration
+                    && classDeclaration.isJsonable()) {
+                return classDeclaration;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * One class-core drive of one corrupted generated-helper signature:
+     * the named synthetic symbol of the slice's root table is replaced
+     * with a {@code Type.Error} return type, and the supplied program is
+     * lowered through {@code lowerModuleClassCore}. Returns the first
+     * diagnostic of the failed lowering, or null when the lowering did
+     * not fail.
+     */
+    private static CompilerDiagnostic lowerCorruptedHelper(CheckedSlice slice,
+            PipelineSlice pipeline, ProgramNode program, String helper) {
+        slice.checks().symbolTable().remove(helper);
+        slice.checks().symbolTable().define(helper,
+            new Symbol.FunctionSymbol(helper,
+                new Type.Func(List.of(Type.String.INSTANCE), Type.Error.INSTANCE, false)));
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            SemanticLowerer.lowerModuleClassCore(
+                new CheckedModuleInput(MODULE, "writer.deal", Path.of("writer.deal"),
+                    program, slice.checks(), List.of(), List.of(),
+                    CheckedModuleKind.IMPLEMENTATION),
+                SemanticProfile.DEAL_V1_2_INT32, pipeline.coverage(),
+                pipeline.interfaceHash(), REGISTRY_HASH, pipeline.ownInterface(),
+                SemanticIdAllocator.over(List.of(MODULE)));
+        check(result != null && result.lowering().hasErrors()
+                && result.lowering().unit() == null,
+            "the corrupted " + helper + " signature fails the class-core lowering hard "
+                + "with no unit");
+        if (result == null || !result.lowering().hasErrors()) {
+            return null;
+        }
+        return result.lowering().diagnostics().get(0);
+    }
+
+    /** The unchanged E6005 DESCRIPTOR_UNREPRESENTABLE conversion of one helper failure. */
+    private static void assertDescriptorFailure(CompilerDiagnostic diagnostic,
+            String helper) {
+        check("E6005".equals(diagnostic.code())
+                && diagnostic.message().contains(
+                    ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+            "the corrupted " + helper + " signature converts to the unchanged E6005 "
+                + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
+    }
+
+    // =========================================================================
     // (c) the combined T1..T5 scenario: the end-to-end two-module drive
     // =========================================================================
 
@@ -1318,6 +1479,7 @@ public class JsonClassLoweringTest {
         System.out.println("=== Json Class Lowering Tests (ISSUE-0515 K-D8/K-D10) ===\n");
 
         testNonJsonableNegative();
+        testGeneratedHelperDescriptorOrigins();
         testDeterminism();
 
         System.out.println("\nJsonClassLoweringTest: " + passed + " passed, "

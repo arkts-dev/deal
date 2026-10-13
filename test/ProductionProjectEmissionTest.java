@@ -1,5 +1,7 @@
 package deal.test;
 
+import deal.ast.ClassDeclaration;
+import deal.ast.ExportDeclaration;
 import deal.ast.FunctionDeclaration;
 import deal.ast.StatementNode;
 import deal.checker.BuiltinErrorDeclaration;
@@ -176,6 +178,18 @@ public class ProductionProjectEmissionTest {
         function f(): int {
           return 41;
         }
+        """;
+
+    /**
+     * The generated-helper-origin fixture: one {@code @jsonable} class
+     * whose synthetic {@code Widget$fromJson}/{@code Widget$toJson}
+     * checked signatures the declaration-origin probe corrupts, plus the
+     * production entry.
+     */
+    private static final String GENERATED_HELPER_APP_SOURCE = """
+        // @jsonable
+        export class Widget { n: int = 1; }
+        export function main(): null { return null; }
         """;
 
     /**
@@ -1860,6 +1874,80 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
+     * ISSUE-0750: the generated @jsonable helper signatures are
+     * declaration-owned through the real {@code lowerProject} entry too:
+     * a corrupted checked {@code Widget$fromJson}/{@code Widget$toJson}
+     * signature fails the project lowering closed with no project, and
+     * the shared E6005 carries the owning class declaration's own exact
+     * range for both generated signatures.
+     */
+    private static void testGeneratedHelperDescriptorOrigins() throws Exception {
+        System.out.println("-- the corrupted generated @jsonable helper signatures keep "
+            + "the class declaration's own range through lowerProject --");
+
+        for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
+            Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
+                "src/app.deal", GENERATED_HELPER_APP_SOURCE)), Map.of());
+            try {
+                ClassDeclaration target = null;
+                SymbolTable table = null;
+                for (CheckedModuleInput module : fixture.checkedProject().modules()) {
+                    for (StatementNode statement : module.ast().statements()) {
+                        StatementNode declaration =
+                            statement instanceof ExportDeclaration export
+                                ? export.declaration() : statement;
+                        if (declaration instanceof ClassDeclaration classDeclaration
+                                && classDeclaration.isJsonable()) {
+                            target = classDeclaration;
+                            table = module.checks().symbolTable();
+                        }
+                    }
+                }
+                check(target != null && table != null,
+                    "the fixture carries the checked @jsonable class Widget");
+                if (target == null || table == null) {
+                    continue;
+                }
+                table.remove(helper);
+                table.define(helper, new Symbol.FunctionSymbol(helper,
+                    new Type.Func(List.of(Type.String.INSTANCE), Type.Error.INSTANCE,
+                        false)));
+
+                SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+                check(result.project() == null && !result.diagnostics().isEmpty()
+                        && result.tables().isEmpty() && result.registries().isEmpty(),
+                    "the corrupted " + helper + " signature fails the project lowering "
+                        + "closed with no project, tables, or registries");
+                if (result.diagnostics().isEmpty()) {
+                    continue;
+                }
+                CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.message().contains(
+                            ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                    "the corrupted " + helper + " signature converts to the unchanged "
+                        + "E6005 DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
+                DiagnosticRange range = diagnostic.range();
+                check(range.origin() == RangeOrigin.SOURCE
+                        && range.file().endsWith("src/app.deal")
+                        && range.startLine() == 2 && range.startColumn() == 8
+                        && range.endLine() == 2 && range.endColumn() == 36
+                        && range.startScalarOffset() == 20
+                        && range.endScalarOffset() == 48
+                        && range.scalarLength() == 28,
+                    "the corrupted " + helper + " failure carries the class "
+                        + "declaration's own exact SOURCE range 2:8-2:36 [20,48) "
+                        + "length 28; got " + range);
+                check(range.equals(target.span().range()),
+                    "the " + helper + " range is exactly the class declaration's own "
+                        + "converted range; got " + range);
+            } finally {
+                deleteRecursively(fixture.root());
+            }
+        }
+    }
+
+    /**
      * The production arm's own projection of one known-file offsetless
      * rejection: the synthetic shape keeps the supplied file and never
      * borrows the canonical empty one.
@@ -2649,6 +2737,7 @@ public class ProductionProjectEmissionTest {
             testAbsentDeclarationSurfaceEntries();
             testStdlibCatalogMissOrigin();
             testDeclarationSignatureOrigin();
+            testGeneratedHelperDescriptorOrigins();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
