@@ -3553,7 +3553,9 @@ public final class LuaSemanticEmitter {
                     + ", __chkB)");
                 out.append("__hbT[").append(index).append("] = __hostProjectArg(")
                     .append(luaString(desc)).append(", ")
-                    .append(sourceTextOf(boundaryPayload.descriptor())).append(", __chkB)\n");
+                    .append(sourceTextOf(boundaryPayload.descriptor())).append(", ")
+                    .append(index).append(", __chkB, ").append(origin)
+                    .append(")\n");
                 index++;
             }
             return index - 1;
@@ -4024,7 +4026,9 @@ public final class LuaSemanticEmitter {
                     .append(luaString(boundaryPayload.descriptor().canonicalSpecText()))
                     .append(", ")
                     .append(sourceTextOf(boundaryPayload.descriptor())).append(", ")
-                    .append(slot(boundaryPayload.input())).append(")\n");
+                    .append(index).append(", ")
+                    .append(slot(boundaryPayload.input())).append(", ")
+                    .append(luaString(originOf(op))).append(")\n");
                 index++;
             }
             emitHostInvocationTail(op, "__dynC", index - 1, returnBoundary);
@@ -5839,28 +5843,70 @@ public final class LuaSemanticEmitter {
             // reliable length.
             if (payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
                 out.append("S.__sa").append(op.opId().id()).append(" = {}\n");
+                boolean hostRuntime = bindsHostRuntime();
                 int position = 0;
                 for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                     position++;
                     SemanticOp boundary = opsById.get(boundaryId);
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) boundary.payload();
-                    emitBoundaryStart(boundary, slot(boundaryPayload.input()),
+                    // A recorded HOST_PARAMETER cell of the host prelude
+                    // runs the same declared parameter cell its sync
+                    // sibling runs — the loaded wrapper's own matcher
+                    // through the pinned E8010 template, including the
+                    // language-null admission at a declared null/nullable
+                    // position and the closed rejection at an incompatible
+                    // descriptor — so the oracle's host parameter arm and
+                    // this artifact agree byte-exact. Every other boundary
+                    // (and a session without the host prelude) keeps the
+                    // general typed-boundary check.
+                    boolean hostCell = hostRuntime
+                        && boundary.failurePolicy()
+                            == FailurePolicyId.HOST_PARAMETER;
+                    String input = slot(boundaryPayload.input());
+                    String desc = boundaryPayload.descriptor().canonicalSpecText();
+                    String origin = luaString(originOf(boundary));
+                    emitBoundaryStart(boundary, input,
                         boundaryPayload.descriptor());
-                    out.append("__okB, __chkB = pcall(__bcheck, ")
-                        .append(bcheckArgs(boundaryPayload.descriptor(),
-                            slot(boundaryPayload.input())))
-                        .append(")\n");
+                    if (hostCell
+                            && isFunctionPosition(boundaryPayload.descriptor())) {
+                        out.append("__okB, __chkB = pcall(__hostFnParam, ")
+                            .append(luaString(desc)).append(", ")
+                            .append(luaString(innerFunctionText(
+                                boundaryPayload.descriptor())))
+                            .append(", ").append(position).append(", ")
+                            .append(input).append(", ").append(origin)
+                            .append(")\n");
+                    } else if (hostCell) {
+                        out.append("__okB, __chkB = pcall(__hostParamCell, ")
+                            .append(luaString(desc)).append(", ").append(position)
+                            .append(", ").append(input).append(", ").append(origin)
+                            .append(")\n");
+                    } else {
+                        out.append("__okB, __chkB = pcall(__bcheck, ")
+                            .append(bcheckArgs(boundaryPayload.descriptor(), input))
+                            .append(")\n");
+                    }
                     out.append("if not __okB then\n");
-                    out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
-                        .append("\n");
+                    out.append("  __chkB.o = ").append(origin).append("\n");
                     emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
                         "__errtext(__chkB)");
                     emitFailureEvent(op.opId(), op.kind().name(), op,
                         "__errtext(__chkB)");
                     out.append("  error(__chkB, 0)\n");
                     out.append("end\n");
-                    emitBoundarySuccess(boundary, "__chkB", boundaryPayload.descriptor());
+                    if (hostCell) {
+                        // The declared-kind atom of a host parameter cell:
+                        // both language-null sentinels atomize as "null",
+                        // exactly like the oracle's host parameter
+                        // boundary SUCCESS.
+                        emitBoundarySuccessAtom(boundary, "__hostCellAtom("
+                            + luaString(staticKind(boundaryPayload.descriptor()))
+                            + ", __chkB)");
+                    } else {
+                        emitBoundarySuccess(boundary, "__chkB",
+                            boundaryPayload.descriptor());
+                    }
                     out.append("S.__sa").append(op.opId().id())
                         .append("[").append(position).append("] = __chkB\n");
                 }
@@ -8008,7 +8054,10 @@ end
 -- The declared parameter cell of a function-typed host position: the
 -- loaded matcher's own rule over the DEAL function carrier (byte-exact
 -- carried canonical descriptor) or a host-facing wrapper; the pinned
--- E8010 text is the loaded wrapper's own parameter projection.
+-- E8010 text is the loaded wrapper's own parameter projection. A
+-- language null (the chunk's raw nil or its __NULL sentinel) is the
+-- language-null carrier, so its actual projects table like the oracle's
+-- NullValue and the JVM's present null — never the absent marker's nil.
 local function __hostFnParam(desc, inner, index, v, origin)
   local function kindReason()
     return __renderTemplate("TYPED_BOUNDARY_KIND", {kind = "function"})
@@ -8016,7 +8065,7 @@ local function __hostFnParam(desc, inner, index, v, origin)
   if v == nil or v == __NULL then
     if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
     return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = kindReason()},
-      origin, desc, __carrierKind(v)), 0)
+      origin, desc, __carrierKind(__rt.__NULL)), 0)
   end
   local carried = nil
   if type(v) == "table" then
@@ -8034,16 +8083,51 @@ local function __hostFnParam(desc, inner, index, v, origin)
   end
   return v
 end
+-- The language-null admission of one declared host position: the chunk's
+-- language-null representation — the raw nil the null literal emits and
+-- the chunk's own __NULL sentinel — crosses as the deployed runtime's
+-- explicit null sentinel only when the declared position admits null
+-- (the null descriptor itself and every nullable position). A
+-- non-nullable position renders the same closed HOST_PARAMETER_CELL
+-- failure its loaded matcher cell renders — the declared kind's reason,
+-- the declared descriptor as expected, and the language-null carrier's
+-- table kind as actual — never a plain nil the deployed table/array
+-- matcher rows would wrongly admit. The __MISSING absence marker is not
+-- a language null and is left to the loaded matcher. The helper is
+-- chunk-global (like the async-start normalization below) rather than a
+-- chunk-level local: LuaJIT bounds one function at 200 locals and the
+-- emitted main body carries the program's own, so a fixed host prelude
+-- must not spend a main-chunk local here.
+__hostNullParam = function(desc, index, v, origin)
+  if v ~= nil and v ~= __NULL then return v end
+  if desc == "null" or string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
+  local kind
+  if string.sub(desc, 1, 1) == "@" then
+    kind = "class instance"
+  elseif string.sub(desc, 1, 1) == "[" then
+    kind = "array"
+  elseif string.sub(desc, 1, 1) == "("
+      or string.sub(desc, 1, 9) == "async(" then
+    kind = "function"
+  else
+    kind = desc
+  end
+  local inner = __renderTemplate("TYPED_BOUNDARY_KIND", {kind = kind})
+  return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
+    origin, desc, __carrierKind(__rt.__NULL)), 0)
+end
 -- The declared parameter cell of one host call: the loaded runtime's own
 -- matcher (the wrapper's cell), projected through the pinned E8010
--- parameter template at the call origin. The crossing normalizes the
--- chunk's language-null representation — the raw nil the null literal
--- emits and the chunk's own __NULL sentinel — to the deployed runtime's
--- explicit null sentinel (the two sentinels are distinct values) and back
--- on the return path. A genuine absence (the __MISSING marker) is never a
--- language null: it stays the absent value the loaded matcher classifies.
+-- parameter template at the call origin. The crossing admits a
+-- language-null representation only at a declared null or nullable
+-- position (normalized to the deployed runtime's explicit null sentinel;
+-- the two sentinels are distinct values) and renders the closed
+-- parameter cell's own failure at an incompatible descriptor before the
+-- loaded matcher can project its carrier. A genuine absence (the
+-- __MISSING marker) is never a language null: it stays the absent value
+-- the loaded matcher classifies.
 local function __hostParamCell(desc, index, v, origin)
-  if v == nil or v == __NULL then v = __rt.__NULL end
+  v = __hostNullParam(desc, index, v, origin)
   if string.sub(desc, 1, 1) == "@" then
     return __hostClassCell(desc, index, v, origin, false)
   end
@@ -8184,14 +8268,15 @@ end
 -- The declared host-facing projection of one checked parameter: a
 -- declared function position is bridged, every other position's carrier
 -- is the Lua value itself (the shared Lua table in both directions). The
--- crossing normalizes the chunk's language-null representation — the
--- raw nil the null literal emits and the chunk's own __NULL sentinel —
--- to the deployed runtime's explicit null sentinel, so the loaded matcher
--- admits a declared null/nullable position and the raw host observes the
--- sentinel, never a plain nil; the __MISSING absence marker is not a
--- language null and is left to the loaded matcher.
-local function __hostProjectArg(desc, inner, v)
-  if v == nil or v == __NULL then return __rt.__NULL end
+-- crossing admits a language-null representation only at a declared null
+-- or nullable position (normalized to the deployed runtime's explicit
+-- null sentinel, so the loaded matcher admits it and the raw host
+-- observes the sentinel, never a plain nil) and renders the closed
+-- parameter cell's own failure at an incompatible descriptor; the
+-- __MISSING absence marker is not a language null and is left to the
+-- loaded matcher.
+local function __hostProjectArg(desc, inner, index, v, origin)
+  v = __hostNullParam(desc, index, v, origin)
   if v == __rt.__NULL then return v end
   if inner ~= nil and (string.sub(inner, 1, 1) == "("
       or string.sub(inner, 1, 9) == "async(") then

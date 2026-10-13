@@ -6425,10 +6425,21 @@ public final class JvmSemanticEmitter {
             // values (RUN) or the raw operand slots (ELIDED_BY_ADAPTER).
             List<String> args = new ArrayList<>();
             if (payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
+                int position = 0;
                 for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                    position++;
                     SemanticOp boundary = opsById.get(boundaryId);
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) boundary.payload();
+                    // A recorded HOST_PARAMETER cell of the production host
+                    // surface runs the emitted host parameter cell — the
+                    // pinned E8010 tuple and projections at the boundary
+                    // origin, exactly the oracle's host parameter arm and
+                    // the Lua artifact's cell — while every other boundary
+                    // (and the scenario host seam without a declared
+                    // surface) keeps the general typed-boundary check.
+                    boolean hostCell = hostAbi != null
+                        && boundary.failurePolicy() == FailurePolicyId.HOST_PARAMETER;
                     emitBoundaryStart(boundary, slot(boundaryPayload.input()),
                         boundaryPayload.descriptor(), indent);
                     // The declared parameter cell's own failure: the
@@ -6440,9 +6451,18 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent)).append("Object ").append(checked)
                         .append(";\n");
                     out.append(indent(indent)).append("try {\n");
-                    out.append(indent(indent + 1)).append(checked).append(" = ")
-                        .append(bcheckArgs(boundaryPayload.descriptor(),
-                            slot(boundaryPayload.input()))).append(";\n");
+                    out.append(indent(indent + 1)).append(checked).append(" = ");
+                    if (hostCell) {
+                        out.append("__hostParamCheck(").append(position).append(", ")
+                            .append(javaString(boundaryPayload.descriptor()
+                                .canonicalSpecText()))
+                            .append(", ").append(slot(boundaryPayload.input()))
+                            .append(", ").append(originArgs(boundary)).append(")");
+                    } else {
+                        out.append(bcheckArgs(boundaryPayload.descriptor(),
+                            slot(boundaryPayload.input())));
+                    }
+                    out.append(";\n");
                     out.append(indent(indent))
                         .append("} catch (JvmRuntime.DealError __be) {\n");
                     out.append(indent(indent + 1))

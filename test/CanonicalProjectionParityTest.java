@@ -2602,12 +2602,16 @@ public class CanonicalProjectionParityTest {
         export function takeNull(value: null): string;
         export function takeNullableInt(value: int | null): string;
         export function takeNullBadReturn(value: null): string;
+        export function takeTable(value: table): string;
+        export function takeArray(value: int[]): string;
         export function returnNull(): null;
         export function returnNullableInt(): int | null;
         export async function asyncTakeNull(value: null): string;
         export async function asyncTakeNullableInt(value: int | null): string;
         export async function asyncTakeNullThenInt(value: null, count: int): string;
         export async function asyncTakePair(value: int | null, count: int | null): string;
+        export async function asyncTakeTable(value: table): string;
+        export async function asyncTakeArray(value: int[]): string;
         """;
 
     /**
@@ -2764,6 +2768,68 @@ public class CanonicalProjectionParityTest {
           return null
         }
 
+        function bagWithNull(): table {
+          let bag: table = {};
+          bag.value = null
+          return bag
+        }
+
+        export function test_reject_table_dynamic_null(): null {
+          host.takeTable(bagWithNull().value)
+          return null
+        }
+
+        export function test_reject_array_dynamic_null(): null {
+          host.takeArray(bagWithNull().value)
+          return null
+        }
+
+        function applyTable(f: (value: table) => string, bag: table): string {
+          return f(bag.value)
+        }
+
+        function applyArray(f: (value: int[]) => string, bag: table): string {
+          return f(bag.value)
+        }
+
+        export function test_dynamic_reject_table_dynamic_null(): null {
+          applyTable(host.takeTable, bagWithNull())
+          return null
+        }
+
+        export function test_dynamic_reject_array_dynamic_null(): null {
+          applyArray(host.takeArray, bagWithNull())
+          return null
+        }
+
+        export async function test_async_reject_table_dynamic_null(): null {
+          await host.asyncTakeTable(bagWithNull().value)
+          return null
+        }
+
+        export async function test_async_reject_array_dynamic_null(): null {
+          await host.asyncTakeArray(bagWithNull().value)
+          return null
+        }
+
+        async function applyAsyncTable(f: async (value: table) => string, bag: table): string {
+          return await f(bag.value)
+        }
+
+        async function applyAsyncArray(f: async (value: int[]) => string, bag: table): string {
+          return await f(bag.value)
+        }
+
+        export async function test_dynamic_async_reject_table_dynamic_null(): null {
+          await applyAsyncTable(host.asyncTakeTable, bagWithNull())
+          return null
+        }
+
+        export async function test_dynamic_async_reject_array_dynamic_null(): null {
+          await applyAsyncArray(host.asyncTakeArray, bagWithNull())
+          return null
+        }
+
         export function main(): null {
           return null
         }
@@ -2799,6 +2865,12 @@ public class CanonicalProjectionParityTest {
                 if value == nil then return "plain-nil" end
                 return "other"
               end,
+              takeTable = function(value)
+                return "unexpected-table-admission"
+              end,
+              takeArray = function(value)
+                return "unexpected-array-admission"
+              end,
               takeNullBadReturn = function(value)
                 return 7
               end,
@@ -2832,6 +2904,16 @@ public class CanonicalProjectionParityTest {
                 end
                 return rt.async_start(function() return report(value, count) end)
               end,
+              asyncTakeTable = function(value)
+                return rt.async_start(function()
+                  return "unexpected-table-admission"
+                end)
+              end,
+              asyncTakeArray = function(value)
+                return rt.async_start(function()
+                  return "unexpected-array-admission"
+                end)
+              end,
               returnNull = function()
                 return rt.__NULL
               end,
@@ -2857,6 +2939,12 @@ public class CanonicalProjectionParityTest {
               public static Object takeNullableInt(Integer value) {
                 return value == null ? "sentinel" : "other";
               }
+              public static Object takeTable(Object value) {
+                return "unexpected-table-admission";
+              }
+              public static Object takeArray($DealRt.__IntArray value) {
+                return "unexpected-array-admission";
+              }
               public static Object takeNullBadReturn(Object value) {
                 return java.lang.Integer.valueOf(7);
               }
@@ -2876,6 +2964,14 @@ public class CanonicalProjectionParityTest {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     value == null && count != null && count == 7
                         ? "sentinel+7" : "other");
+              }
+              public static Object asyncTakeTable(Object value) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    "unexpected-table-admission");
+              }
+              public static Object asyncTakeArray($DealRt.__IntArray value) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    "unexpected-array-admission");
               }
               public static Object returnNull() {
                 return null;
@@ -2924,6 +3020,13 @@ public class CanonicalProjectionParityTest {
                     asyncSeen.put(operationLabel,
                         args.get(0) instanceof SemanticOracle.Value.NullValue
                             ? "sentinel" : "other");
+                } else if ("asyncTakeTable".equals(export)
+                        || "asyncTakeArray".equals(export)) {
+                    // The non-nullable rejections never reach the host: the
+                    // recorded parameter cell rejects the language null
+                    // before the start. A reached start is a wrong
+                    // admission and the probe must fail on the marker.
+                    asyncSeen.put(operationLabel, "unexpected-admission");
                 } else if ("asyncTakeNullThenInt".equals(export)
                         || "asyncTakePair".equals(export)) {
                     // The null-before-non-null crossings: the oracle's own
@@ -2962,6 +3065,8 @@ public class CanonicalProjectionParityTest {
                                 ? "sentinel" : "other"));
                     case "takeNullBadReturn" -> new SyncOutcome.Returned(
                         new SemanticOracle.Value.IntValue(7L));
+                    case "takeTable", "takeArray" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.StrValue("unexpected-admission"));
                     case "returnNull", "returnNullableInt" -> new SyncOutcome.Returned(
                         SemanticOracle.Value.NullValue.INSTANCE);
                     default -> throw new IllegalStateException(
@@ -3004,6 +3109,8 @@ public class CanonicalProjectionParityTest {
         try {
             safely("the null crossing admissions",
                 () -> driveNullCrossingAdmissions(compiled));
+            safely("the null crossing's incompatible-position rejections",
+                () -> driveNullCrossingRejections(compiled));
             safely("the null crossing's subsequent failure projection",
                 () -> driveNullCrossingBadReturn(compiled));
         } finally {
@@ -3137,6 +3244,163 @@ public class CanonicalProjectionParityTest {
             checkEq(null, firstDifferingField(oracle, jvm),
                 "the null crossing's subsequent failure: the oracle and the "
                     + "JVM artifact render the identical tuple");
+        }
+    }
+
+    /**
+     * The crossing's rejection controls: a language null supplied
+     * dynamically (a {@code table} read) to a non-nullable {@code table}
+     * and a non-nullable {@code int[]} host position must be rejected on
+     * all three consumers with the identical closed tuple and origin. The
+     * declaring call shape and the declaring async host start run the
+     * recorded {@code HOST_PARAMETER} cell, so their tuple is the closed
+     * {@code HOST_PARAMETER_CELL} composite — the declared kind's reason,
+     * the declared descriptor as expected, and the language-null
+     * carrier's {@code table} kind as actual — while the function-valued
+     * (indirect) call shape and its async start run the recorded general
+     * function-parameter cell, whose closed typed-boundary kind tuple
+     * names the declared kind. The loaded matcher's own table and array
+     * rows admit the null sentinel, so a projection that only normalizes
+     * the null without distinguishing the declared position would
+     * complete on Lua while the other two consumers reject.
+     */
+    private static void driveNullCrossingRejections(Compiled compiled)
+            throws Exception {
+        Tuple tableCell = hostParameterCellTuple("table", 1,
+            FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE), 153, 3);
+        Tuple arrayCell = hostParameterCellTuple("[int]", 1,
+            FailureProjections.kindReason(
+                new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
+            158, 3);
+        assertNullCrossingRejection(compiled, "test_reject_table_dynamic_null",
+            tableCell, "the dynamically supplied null at the non-nullable "
+                + "table parameter");
+        assertNullCrossingRejection(compiled, "test_reject_array_dynamic_null",
+            arrayCell, "the dynamically supplied null at the non-nullable "
+                + "array parameter");
+        assertNullCrossingRejection(compiled,
+            "test_dynamic_reject_table_dynamic_null",
+            typedBoundaryKindTuple("table", 163, 12),
+            "the function-valued call's dynamically supplied null at the "
+                + "non-nullable table parameter");
+        assertNullCrossingRejection(compiled,
+            "test_dynamic_reject_array_dynamic_null",
+            typedBoundaryKindTuple("array", 167, 10),
+            "the function-valued call's dynamically supplied null at the "
+                + "non-nullable array parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_async_reject_table_dynamic_null",
+            hostParameterCellTuple("table", 1,
+                FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
+                181, 9),
+            "the async start's dynamically supplied null at the non-nullable "
+                + "table parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_async_reject_array_dynamic_null",
+            hostParameterCellTuple("[int]", 1,
+                FailureProjections.kindReason(
+                    new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
+                186, 9),
+            "the async start's dynamically supplied null at the non-nullable "
+                + "array parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_dynamic_async_reject_table_dynamic_null",
+            typedBoundaryKindTuple("table", 191, 18),
+            "the function-valued async start's dynamically supplied null at "
+                + "the non-nullable table parameter");
+        assertAsyncNullCrossingRejection(compiled,
+            "test_dynamic_async_reject_array_dynamic_null",
+            typedBoundaryKindTuple("array", 195, 16),
+            "the function-valued async start's dynamically supplied null at "
+                + "the non-nullable array parameter");
+    }
+
+    /** The closed {@code TYPE_DESCRIPTOR} kind tuple at one probe origin. */
+    private static Tuple typedBoundaryKindTuple(String kind, int line, int column) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", kind), kind, "null",
+            null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line, column,
+            arm.expected(), arm.actual());
+    }
+
+    /** The closed {@code HOST_PARAMETER_CELL} tuple at one probe origin. */
+    private static Tuple hostParameterCellTuple(String descriptor, int index,
+            String inner, int line, int column) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", Integer.toString(index), "inner", inner), descriptor,
+            "table", null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line, column,
+            arm.expected(), arm.actual());
+    }
+
+    /**
+     * One rejected sync crossing: the three consumers render the declared
+     * parameter cell's closed tuple at the recorded call origin; the raw
+     * host is never invoked (its own report would complete the probe).
+     */
+    private static void assertNullCrossingRejection(Compiled compiled, String export,
+            Tuple expected, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+            compiled.project(), compiled.tables(), compiled.registries(),
+            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
+            List.of());
+        Tuple oracle = failureTuple(compiled, run);
+        checkEq(expected, oracle, what + " (oracle): the incompatible null is "
+            + "rejected by the declared parameter cell's own tuple");
+        String luaOutput = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        Tuple lua = parseLuaProbe(luaOutput, compiled);
+        checkEq(expected, lua, what + " (luajit): the incompatible null is "
+            + "rejected by the declared parameter cell's own tuple: " + luaOutput);
+        String jvmOutput = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+            Map.of("null_crossing", jvmNullCrossingHost()));
+        Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
+        checkEq(expected, jvm, what + " (jvm): the incompatible null is rejected "
+            + "by the declared parameter cell's own tuple: " + jvmOutput);
+        if (oracle != null && lua != null) {
+            checkEq(null, firstDifferingField(oracle, lua), what + ": the oracle "
+                + "and the LuaJIT artifact render the identical tuple");
+        }
+        if (oracle != null && jvm != null) {
+            checkEq(null, firstDifferingField(oracle, jvm), what + ": the oracle "
+                + "and the JVM artifact render the identical tuple");
+        }
+    }
+
+    /**
+     * One rejected async crossing: the same closed parameter-cell tuple at
+     * the recorded start origin on the three consumers, the raw host's
+     * async start never reached.
+     */
+    private static void assertAsyncNullCrossingRejection(Compiled compiled,
+            String export, Tuple expected, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+            compiled.project(), compiled.tables(), nullCrossingResponder(),
+            compiled.checkedProject().entryModule(), export, List.of());
+        Tuple oracle = failureTuple(compiled, run);
+        checkEq(expected, oracle, what + " (oracle): the incompatible null is "
+            + "rejected by the declared parameter cell's own tuple");
+        String luaOutput = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        Tuple lua = parseLuaProbe(luaOutput, compiled);
+        checkEq(expected, lua, what + " (luajit): the incompatible null is "
+            + "rejected by the declared parameter cell's own tuple: " + luaOutput);
+        String jvmOutput = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+            Map.of("null_crossing", jvmNullCrossingHost()));
+        Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
+        checkEq(expected, jvm, what + " (jvm): the incompatible null is rejected "
+            + "by the declared parameter cell's own tuple: " + jvmOutput);
+        if (oracle != null && lua != null) {
+            checkEq(null, firstDifferingField(oracle, lua), what + ": the oracle "
+                + "and the LuaJIT artifact render the identical tuple");
+        }
+        if (oracle != null && jvm != null) {
+            checkEq(null, firstDifferingField(oracle, jvm), what + ": the oracle "
+                + "and the JVM artifact render the identical tuple");
         }
     }
 
