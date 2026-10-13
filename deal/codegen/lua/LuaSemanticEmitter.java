@@ -94,7 +94,7 @@ public final class LuaSemanticEmitter {
      * resolves the field at call time — never a nil global — and each
      * body captures the one table instead of one upvalue per factory.
      * The host prelude's chunk-bound host-crossing helpers
-     * ({@code __factories.__hostDeclKind/__hostParamAdmit/__hostNullArg})
+     * ({@code __factories.__hostDeclKind/__hostParamAdmit/__hostAsyncArg})
      * are fields of the same store: a helper assigned to a global name is
      * clobbered when a second chunk of the same process loads, while a
      * field of the owning chunk's store keeps a retained export on its own
@@ -4245,7 +4245,7 @@ public final class LuaSemanticEmitter {
             }
             out.append("  __okH, __resH = pcall(__dynC.f");
             for (int i = 1; i <= recordedArgCount(payload, op); i++) {
-                out.append(", __factories.__hostNullArg(").append(carrierArgs)
+                out.append(", __factories.__hostAsyncArg(").append(carrierArgs)
                     .append("[").append(i).append("])");
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
@@ -6178,14 +6178,16 @@ public final class LuaSemanticEmitter {
             // sync arm: the trailing literal span triplet is how the
             // loaded wrapper's declared-async shape check reports the DEAL
             // call site byte-exact (the pinned E8010 at the call origin),
-            // and every recorded argument normalizes the chunk's
-            // language-null representation (the raw nil the null literal
-            // emits and the chunk's own __NULL sentinel) to the deployed
-            // runtime's explicit null sentinel, exactly like the sync
-            // crossing's declared parameter cell.
+            // and every recorded argument crosses through the host-facing
+            // projection — the chunk's language-null representation (the
+            // raw nil the null literal emits and the chunk's own __NULL
+            // sentinel) normalizes to the deployed runtime's explicit null
+            // sentinel and the value model's numeric variant carrier
+            // projects to its number, exactly like the sync crossing's
+            // declared parameter cell.
             out.append("__okT, __resT = pcall((").append(target).append(").f");
             for (String arg : args) {
-                out.append(", __factories.__hostNullArg(").append(arg)
+                out.append(", __factories.__hostAsyncArg(").append(arg)
                     .append(")");
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
@@ -8389,19 +8391,29 @@ local function __dealFnValue(w, ...)
   if w.__mode ~= nil then return __adaptInvoke(w, "-", ...) end
   return w.__fn(...)
 end
--- The language-null normalization of one recorded DEAL-to-host argument
--- at the async-start crossing: the chunk's language-null representation —
--- the raw nil the null literal emits and the chunk's own __NULL sentinel —
--- becomes the deployed runtime's explicit null sentinel, so the loaded
--- wrapper admits a declared null/nullable position and the raw host
--- observes the sentinel, never a plain nil. The __MISSING absence marker
--- is not a language null and stays the absent value the loaded matcher
--- classifies. The helper rides the chunk's one factory store like the
--- other host-crossing helpers, so a retained export keeps its own chunk's
--- normalization (a global assignment would be clobbered by the next
--- chunk) without spending a main-chunk local.
-__factories.__hostNullArg = function(v)
+-- The host-facing projection of one recorded DEAL-to-host argument at the
+-- async-start crossing — the async twin of the sync crossing's declared
+-- parameter cell (__hostParamAdmit): the chunk's language-null
+-- representation — the raw nil the null literal emits and the chunk's own
+-- __NULL sentinel — becomes the deployed runtime's explicit null sentinel,
+-- so the loaded wrapper admits a declared null/nullable position and the
+-- raw host observes the sentinel, never a plain nil; and the value
+-- model's numeric variant carrier (the read-side carrier and the host
+-- completion crossing's carrier) projects to the number it stands for, so
+-- a completed host future — or any numeric carrier value — forwarded as a
+-- recorded argument reaches the loaded wrapper's own matcher as its
+-- host-facing numeric value and the raw host observes the number its
+-- declared carrier names, never the carrier table's Lua shape (exactly
+-- like the sync crossing's declared parameter cell and the shared JVM
+-- runtime's declared boxed carrier). The __MISSING absence marker is not a
+-- language null and stays the absent value the loaded matcher classifies;
+-- every other value crosses unchanged. The helper rides the chunk's one
+-- factory store like the other host-crossing helpers, so a retained export
+-- keeps its own chunk's projection (a global assignment would be clobbered
+-- by the next chunk) without spending a main-chunk local.
+__factories.__hostAsyncArg = function(v)
   if v == nil or v == __NULL then return __rt.__NULL end
+  if type(v) == "table" and v.__jn then return v.d end
   return v
 end
 -- The host-facing projection of one declared function position (H7): the
