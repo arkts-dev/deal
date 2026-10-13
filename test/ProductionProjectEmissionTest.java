@@ -38,6 +38,7 @@ import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.SemanticOp;
@@ -137,6 +138,21 @@ public class ProductionProjectEmissionTest {
 
         export function label(): string {
           return "app";
+        }
+        """;
+
+    /**
+     * The two STDLIB imports of the catalog-miss probe: their distinct
+     * spans prove the guard carries the span of the import that recorded
+     * the failing catalog entry, never another matching import's.
+     */
+    private static final String TWO_STDLIB_APP_SOURCE = """
+        import * as console from "std/console"
+        import * as str from "std/string"
+
+        export function main(): null {
+          console.log("PROBE|STDLIB-IMPORT");
+          return null;
         }
         """;
 
@@ -1485,7 +1501,7 @@ public class ProductionProjectEmissionTest {
                                 result.tables(), result.registries(), "FixtureProbe",
                                 empty));
                     if (luaRejection != null) {
-                        assertProjectedAbsentEntry("the absent declaration-surface "
+                        assertProjectedEmitterOrigin("the absent declaration-surface "
                             + "entry", expected, expectedMessage, result,
                             luaRejection);
                     }
@@ -1537,7 +1553,7 @@ public class ProductionProjectEmissionTest {
                                 externC.surface(), new FfiEmissionInput(Map.of(),
                                     "manifests")));
                     if (rejection != null) {
-                        assertProjectedAbsentEntry("the absent FFI generated-module "
+                        assertProjectedEmitterOrigin("the absent FFI generated-module "
                             + "entry", expected, expectedMessage, result, rejection);
                     }
                 }
@@ -1579,13 +1595,13 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The production arm's own projection of one absent-entry rejection (the
-     * real private {@code sharedEmitterCoverage} step of
+     * The production arm's own projection of one source-bearing emitter
+     * rejection (the real private {@code sharedEmitterCoverage} step of
      * {@link ProductionProjectEmission#run}, invoked so the regression
      * exercises the production projection instead of re-implementing it),
      * plus the genuinely originless control.
      */
-    private static void assertProjectedAbsentEntry(String what,
+    private static void assertProjectedEmitterOrigin(String what,
             DiagnosticRange expected, String expectedMessage,
             SemanticLowerer.ProjectLoweringResult lowering,
             SharedEmissionFailure rejection) throws Exception {
@@ -1627,6 +1643,184 @@ public class ProductionProjectEmissionTest {
         projection.setAccessible(true);
         return (CompilerDiagnostic) projection.invoke(null, entryModulePath,
             rejection, productionInvocation());
+    }
+
+    /**
+     * The empty-catalog STDLIB import (ISSUE-0750 D4): the recorded
+     * import entry keeps the identifying {@code MODULE_IMPORT} operation,
+     * so the fail-closed catalog miss at both emitter boundaries throws
+     * the source-bearing shared signal carrying that import's own exact
+     * range — and the production arm's own projection merges it into the
+     * unchanged {@code SHARED_EMITTER_COVERAGE} E6005 — instead of the
+     * canonical empty-file synthetic anchor. The carried range is the
+     * span of the import that recorded the failing catalog entry (never
+     * another matching import's); a known-file offsetless import keeps
+     * its supplied file, and a genuinely originless emitter refusal keeps
+     * the canonical synthetic projection.
+     */
+    private static void testStdlibCatalogMissOrigin() throws Exception {
+        System.out.println("-- the empty-catalog STDLIB import guard carries the "
+            + "recorded MODULE_IMPORT's own exact range on both targets --");
+
+        Fixture fixture = twoModuleFixture(TWO_STDLIB_APP_SOURCE);
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            check(!result.hasErrors(),
+                "the two-stdlib fixture lowers: " + result.diagnostics());
+            if (result.hasErrors()) {
+                return;
+            }
+            LoweredModuleUnit entry = result.project()
+                .modules().get(result.project().entryModule());
+            SemanticOp consoleImport = null;
+            SemanticOp stringImport = null;
+            for (SemanticOp op : entry.ops()) {
+                if (op.kind() != SemanticOpKind.MODULE_IMPORT
+                        || !(op.payload()
+                            instanceof KindPayload.ModuleImportPayload payload)
+                        || payload.kind() != ModuleImportKind.STDLIB) {
+                    continue;
+                }
+                if (payload.resolvedModule().path().equals("std.console")) {
+                    consoleImport = op;
+                } else if (payload.resolvedModule().path().equals("std.string")) {
+                    stringImport = op;
+                }
+            }
+            check(consoleImport != null && stringImport != null,
+                "the fixture lowers both STDLIB MODULE_IMPORTs");
+            if (consoleImport == null || stringImport == null) {
+                return;
+            }
+            KindPayload.ModuleImportPayload payload =
+                (KindPayload.ModuleImportPayload) stringImport.payload();
+            ModuleId missing = new ModuleId("std/missing");
+            KindPayload.ModuleImportPayload doctoredPayload =
+                new KindPayload.ModuleImportPayload(payload.rawSpecifier(),
+                    missing, payload.kind(), payload.aliasCells());
+            ExecutableLoweredProject doctored = replaceUnitOp(result.project(),
+                entry, stringImport, doctoredPayload);
+            DiagnosticRange expected = stringImport.origin().span().range();
+            DiagnosticRange first = consoleImport.origin().span().range();
+            check(expected.origin() == RangeOrigin.SOURCE
+                    && expected.scalarLength() > 0,
+                "the doctored STDLIB MODULE_IMPORT carries a real SOURCE span: "
+                    + expected);
+            check(!expected.equals(first),
+                "the two STDLIB imports carry distinct spans: " + expected
+                    + " vs " + first);
+
+            String expectedMessage = "the STDLIB import of module '"
+                + missing.path() + "' resolves no closed catalog row (the catalog"
+                + " is the resolution authority — a producer defect)";
+            SharedEmissionFailure luaRejection =
+                assertStdlibCatalogMissRejection("LuaJIT", expected,
+                    expectedMessage, () ->
+                        LuaSemanticEmitter.emitProductionProject(doctored,
+                            result.tables(), result.registries(),
+                            fixture.surface(), null));
+            SharedEmissionFailure jvmRejection =
+                assertStdlibCatalogMissRejection("JVM", expected, expectedMessage,
+                    () -> JvmSemanticEmitter.emitProductionProject(doctored,
+                        result.tables(), result.registries(), "FixtureProbe",
+                        fixture.surface()));
+            if (luaRejection != null) {
+                assertProjectedEmitterOrigin("the empty-catalog STDLIB import",
+                    expected, expectedMessage, result, luaRejection);
+            }
+            if (jvmRejection != null) {
+                assertProjectedEmitterOrigin("the empty-catalog STDLIB import",
+                    expected, expectedMessage, result, jvmRejection);
+            }
+
+            // The known-file offsetless import: the synthetic conversion
+            // keeps the supplied file and the production projection does
+            // too — never the canonical empty-file anchor.
+            SourceOrigin offsetlessOrigin = new SourceOrigin("offsetless.deal",
+                new SourceSpan("offsetless.deal", 3, 4, 3, 9),
+                SourceOriginKind.USER, new AnchorId(4242), null);
+            ExecutableLoweredProject offsetless = replaceUnitOp(result.project(),
+                entry, stringImport, doctoredPayload, offsetlessOrigin);
+            DiagnosticRange offsetlessExpected = offsetlessOrigin.span().range();
+            check(offsetlessExpected.origin() == RangeOrigin.SYNTHETIC
+                    && offsetlessExpected.file().equals("offsetless.deal")
+                    && offsetlessExpected.scalarLength() == 0,
+                "the offsetless import keeps its known file under the synthetic"
+                    + " conversion: " + offsetlessExpected);
+            SharedEmissionFailure offsetlessLua =
+                assertStdlibCatalogMissRejection("LuaJIT", offsetlessExpected,
+                    expectedMessage, () ->
+                        LuaSemanticEmitter.emitProductionProject(offsetless,
+                            result.tables(), result.registries(),
+                            fixture.surface(), null));
+            SharedEmissionFailure offsetlessJvm =
+                assertStdlibCatalogMissRejection("JVM", offsetlessExpected,
+                    expectedMessage, () ->
+                        JvmSemanticEmitter.emitProductionProject(offsetless,
+                            result.tables(), result.registries(), "FixtureProbe",
+                            fixture.surface()));
+            if (offsetlessLua != null) {
+                assertProjectedOffsetlessImport(offsetlessExpected, result,
+                    offsetlessLua);
+            }
+            if (offsetlessJvm != null) {
+                assertProjectedOffsetlessImport(offsetlessExpected, result,
+                    offsetlessJvm);
+            }
+        } finally {
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /**
+     * The production arm's own projection of one known-file offsetless
+     * rejection: the synthetic shape keeps the supplied file and never
+     * borrows the canonical empty one.
+     */
+    private static void assertProjectedOffsetlessImport(DiagnosticRange expected,
+            SemanticLowerer.ProjectLoweringResult lowering,
+            SharedEmissionFailure rejection) throws Exception {
+        CompilerDiagnostic projected = projectEmitterRejection(
+            lowering.project().entryModule().path(), rejection);
+        checkEq("E6005", projected.code(),
+            "the offsetless import projection is E6005");
+        checkEq(expected, projected.range(),
+            "the offsetless import projection keeps the known file's synthetic"
+                + " range");
+        checkEq(expected.file(), projected.range().file(),
+            "the offsetless import projection never borrows the empty file");
+        check(projected.range().origin() == RangeOrigin.SYNTHETIC,
+            "the offsetless import projection stays SYNTHETIC, got "
+                + projected.range().origin());
+    }
+
+    /**
+     * One emitter drive of the empty-catalog STDLIB import: the rejection
+     * must be the source-bearing shared signal with the unchanged complete
+     * message and the identifying {@code MODULE_IMPORT}'s own exact
+     * range.
+     */
+    private static SharedEmissionFailure assertStdlibCatalogMissRejection(
+            String target, DiagnosticRange expected, String expectedMessage,
+            EmitterDrive drive) throws Exception {
+        try {
+            drive.emit();
+            fail("the empty-catalog STDLIB import [" + target
+                + "]: the emitter rejects");
+            return null;
+        } catch (SharedEmissionFailure rejection) {
+            checkEq(expectedMessage, rejection.getMessage(),
+                "the empty-catalog STDLIB import [" + target + "]: the rejection"
+                    + " message is the unchanged complete text");
+            checkEq(expected, rejection.diagnosticRange(),
+                "the empty-catalog STDLIB import [" + target + "]: the rejection"
+                    + " carries the recorded MODULE_IMPORT's own exact range");
+            return rejection;
+        } catch (IllegalStateException other) {
+            fail("the empty-catalog STDLIB import [" + target + "]: the rejection"
+                + " is the source-bearing shared signal: " + other);
+            return null;
+        }
     }
 
     /**
@@ -1704,6 +1898,17 @@ public class ProductionProjectEmissionTest {
     private static ExecutableLoweredProject replaceUnitOp(
             ExecutableLoweredProject project, LoweredModuleUnit unit,
             SemanticOp op, KindPayload replacedPayload) {
+        return replaceUnitOp(project, unit, op, replacedPayload, op.origin());
+    }
+
+    /**
+     * The project with one unit op rebuilt on a replaced payload and a
+     * replaced origin (the origin-transport control drives).
+     */
+    private static ExecutableLoweredProject replaceUnitOp(
+            ExecutableLoweredProject project, LoweredModuleUnit unit,
+            SemanticOp op, KindPayload replacedPayload,
+            SourceOrigin replacedOrigin) {
         deal.semantic.ir.OperationContractSnapshot old = op.contract();
         deal.semantic.ir.OperationContractSnapshot rewired =
             new deal.semantic.ir.OperationContractSnapshot(old.version(),
@@ -1714,7 +1919,7 @@ public class ProductionProjectEmissionTest {
         for (SemanticOp candidate : unit.ops()) {
             if (candidate.opId().equals(op.opId())) {
                 ops.add(new SemanticOp(candidate.opId(), candidate.kind(),
-                    candidate.origin(), candidate.result(), candidate.resultType(),
+                    replacedOrigin, candidate.result(), candidate.resultType(),
                     candidate.operands(), candidate.operandTypes(), replacedPayload,
                     candidate.failurePolicy(), rewired));
             } else {
@@ -2355,6 +2560,7 @@ public class ProductionProjectEmissionTest {
             testRejectedOpEmissionOrigins();
             testIdentifiedSharedGuardOrigins();
             testAbsentDeclarationSurfaceEntries();
+            testStdlibCatalogMissOrigin();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);

@@ -165,6 +165,14 @@ public abstract class EmitterSessionBase {
      */
     protected final Map<ModuleId, ModuleImportKind> importKinds = new LinkedHashMap<>();
     /**
+     * The {@code MODULE_IMPORT} operation that recorded each entry of
+     * {@link #importKinds} (the same first-import-wins registration), so
+     * a rejection of the recorded import entry carries the identifying
+     * import's own copied origin instead of the canonical synthetic
+     * anchor. Never a second, arbitrary matching import.
+     */
+    protected final Map<ModuleId, SemanticOp> importOps = new LinkedHashMap<>();
+    /**
      * The published export names of every closure module: the names the
      * module's own {@code EXPORT_PUBLISH} ops write into its export
      * surface during its module-init walk. A compiled export read whose
@@ -354,6 +362,7 @@ public abstract class EmitterSessionBase {
                 KindPayload.ModuleImportPayload payload =
                     (KindPayload.ModuleImportPayload) op.payload();
                 importKinds.putIfAbsent(payload.resolvedModule(), payload.kind());
+                importOps.putIfAbsent(payload.resolvedModule(), op);
             }
             if (op.kind() == SemanticOpKind.EXPORT_PUBLISH) {
                 KindPayload.ExportPublishPayload payload =

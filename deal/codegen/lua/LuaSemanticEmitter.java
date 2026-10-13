@@ -1182,9 +1182,13 @@ public final class LuaSemanticEmitter {
                 String modulePath = imported.getKey().path();
                 List<StdlibFunctionCatalog.Entry> rows = stdlibRowsOf(modulePath);
                 if (rows.isEmpty()) {
-                    throw new IllegalStateException("the STDLIB import of module '"
+                    String message = "the STDLIB import of module '"
                         + modulePath + "' resolves no closed catalog row (the catalog"
-                        + " is the resolution authority — a producer defect)");
+                        + " is the resolution authority — a producer defect)";
+                    SemanticOp importOp = importOps.get(imported.getKey());
+                    throw importOp == null
+                        ? new IllegalStateException(message)
+                        : rejectedOp(importOp, message);
                 }
                 String key = luaString(modulePath);
                 out.append("__exportSurfaces[").append(key).append("] = ")
