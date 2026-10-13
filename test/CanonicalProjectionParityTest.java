@@ -2410,6 +2410,504 @@ public class CanonicalProjectionParityTest {
             """.formatted(carrier, carrier, carrier);
     }
 
+    // =========================================================================
+    // The array host async completions (ISSUE-0793 remediation)
+    // =========================================================================
+
+    /**
+     * The caller-owned array-completion declaration of the array drives
+     * (no corpus or host-fixture membership change): a mandatory int
+     * array, a nullable int array, an int-or-null element array, a nested
+     * int array, a nested string array, and a string array.
+     */
+    private static final String ARRAY_COMPLETION_DECLARATION = """
+        export async function fetchInts(): int[];
+        export async function fetchNullableInts(): int[] | null;
+        export async function fetchNullableElements(): (int | null)[];
+        export async function fetchNestedInts(): int[][];
+        export async function fetchNestedStrings(): string[][];
+        export async function fetchStrings(): string[];
+        """;
+
+    /**
+     * The admitted int-array probe: the settled element is consumed by a
+     * real int comparison and addition, so a boxed carrier that did not
+     * settle onto the production int carrier (or a wrong element value)
+     * cannot reach the probe's success.
+     */
+    private static final String ARRAY_COMPLETION_INT_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_use_int_array(): int {
+          let xs: int[] = await host.fetchInts()
+          let v: int = xs[0]
+          if (v !== 7) {
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" }
+          }
+          return v + 1
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The admitted nullable-int-array probe (and its language-null control). */
+    private static final String ARRAY_COMPLETION_NULLABLE_INT_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_use_nullable_int_array(): int {
+          let xs: int[] | null = await host.fetchNullableInts()
+          if (xs !== null) {
+            let v: int = xs[0]
+            if (v !== 7) {
+              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable boxed int element did not land 7" }
+            }
+            return v + 1
+          }
+          return 0
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The admitted int-or-null element array probe: the boxed int element
+     * settles and is consumed, and the language-null element stays null.
+     */
+    private static final String ARRAY_COMPLETION_NULLABLE_ELEMENT_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_use_nullable_elements(): int {
+          let xs: (int | null)[] = await host.fetchNullableElements()
+          let v: int | null = xs[0]
+          let w: int | null = xs[1]
+          if (w !== null) {
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the null element did not stay null" }
+          }
+          if (v !== null) {
+            if (v !== 7) {
+              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable-element boxed int did not land 7" }
+            }
+            let total: int = v + 1
+            return total
+          }
+          return 0
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The admitted nested-int-array probe. */
+    private static final String ARRAY_COMPLETION_NESTED_INT_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_use_nested_int_array(): int {
+          let xs: int[][] = await host.fetchNestedInts()
+          let v: int = xs[0][0]
+          if (v !== 7) {
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the nested boxed int element did not land 7" }
+          }
+          return v + 1
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The wrong-kind string-array probe: only the crossing's own check rejects it. */
+    private static final String ARRAY_COMPLETION_STRING_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_drop_string_array(): null {
+          let xs: string[] = await host.fetchStrings()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The wrong-kind nested string-array probe. */
+    private static final String ARRAY_COMPLETION_NESTED_STRING_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_drop_nested_string_array(): null {
+          let xs: string[][] = await host.fetchNestedStrings()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The array host async completions (ISSUE-0793 remediation): a host
+     * operation's completed future carries an array whose elements are the
+     * raw closed host numeric carriers, and the value crosses the single
+     * {@code ASYNC_COMPLETION} boundary at the await site. The boxed int at
+     * any element position — the nested arrays' and the nullable positions
+     * included — settles onto the production int carrier exactly like the
+     * top-level crossing, so the oracle, the LuaJIT artifact, and the JVM
+     * artifact admit the same element; a boxed int at a wrong-kind element
+     * position renders the canonical element arm with the element's own
+     * kind, never the declared element's. The drives' declarations and host
+     * implementations are caller-owned.
+     */
+    private static void testHostArrayCompletions() throws Exception {
+        System.out.println("-- the array host async completions: the boxed int at "
+            + "array element positions settles onto the production carrier and a "
+            + "wrong-kind boxed int projects its own kind on all three consumers --");
+        JvmRuntime.Array boxed = new JvmRuntime.Array(1);
+        boxed.elements.add(Integer.valueOf(7));
+        Object settled = JvmRuntime.hostCompletion("array(int)", "array", boxed);
+        check(settled instanceof JvmRuntime.Array settledArray
+                && settledArray.elements.size() == 1
+                && Long.valueOf(7L).equals(settledArray.elements.get(0)),
+            "the host completion seam settles a boxed int array element onto the "
+                + "production int carrier");
+        check(boxed.elements.get(0) instanceof Integer,
+            "the host completion seam leaves the host's own array carrier "
+                + "untouched");
+        JvmRuntime.Array inner = new JvmRuntime.Array(1);
+        inner.elements.add(Integer.valueOf(7));
+        JvmRuntime.Array nested = new JvmRuntime.Array(2);
+        nested.elements.add(inner);
+        nested.elements.add(inner);
+        Object settledNested = JvmRuntime.hostCompletion("array(array(int))",
+            "array", nested);
+        check(settledNested instanceof JvmRuntime.Array settledOuter
+                && settledOuter.elements.get(0) == settledOuter.elements.get(1),
+            "the host completion seam keeps one repeated inner carrier one settled "
+                + "array (the reference-identity contract)");
+        try {
+            JvmRuntime.hostCompletion("array(string)", "array", boxed);
+            check(false, "the host completion seam rejects the boxed int at a "
+                + "string element position");
+        } catch (JvmRuntime.DealError element) {
+            check("E8003".equals(element.code)
+                    && "array element 1 type mismatch".equals(element.msg)
+                    && "string".equals(element.expected)
+                    && "int".equals(element.actual),
+                "the host completion seam renders the canonical element arm with "
+                    + "the boxed int's own kind: " + element.code + " "
+                    + element.msg + " expected " + element.expected + " actual "
+                    + element.actual);
+        }
+        JvmRuntime.Array cyclic = new JvmRuntime.Array(1);
+        cyclic.elements.add(cyclic);
+        try {
+            JvmRuntime.hostCompletion("array(int)", "array", cyclic);
+            check(false, "the host completion seam's cyclic carrier walk "
+                + "terminates through the element arm");
+        } catch (JvmRuntime.DealError cyclicFailure) {
+            check("E8003".equals(cyclicFailure.code),
+                "the host completion seam terminates a reference-cyclic host "
+                    + "carrier through the element arm: " + cyclicFailure.code
+                    + " " + cyclicFailure.msg);
+        } catch (StackOverflowError overflow) {
+            check(false, "the host completion seam's cyclic carrier walk must "
+                + "terminate through the identity memo, never overflow");
+        }
+        safely("the int[] host completion",
+            CanonicalProjectionParityTest::driveHostIntArrayCompletion);
+        safely("the nullable int[] host completion",
+            CanonicalProjectionParityTest::driveHostNullableIntArrayCompletion);
+        safely("the int-or-null element array host completion",
+            CanonicalProjectionParityTest::driveHostNullableElementArrayCompletion);
+        safely("the nested int[][] host completion",
+            CanonicalProjectionParityTest::driveHostNestedIntArrayCompletion);
+        safely("the wrong-kind string[] host completion",
+            CanonicalProjectionParityTest::driveHostStringArrayCompletion);
+        safely("the wrong-kind nested string[][] host completion",
+            CanonicalProjectionParityTest::driveHostNestedStringArrayCompletion);
+    }
+
+    /** The array-completion case anchor of one probe export. */
+    private static Case arrayCompletionCase(String probe) {
+        return new Case("host-abi/host-async-shape-bad", probe, Entry.ASYNC,
+            List.of(), "async_arrays", null);
+    }
+
+    /** One array-completion probe compiled with the caller-owned declaration. */
+    private static Compiled compileArrayCompletion(String probe, String driver)
+            throws Exception {
+        return compile(arrayCompletionCase(probe), driver,
+            Map.of("async_arrays", ARRAY_COMPLETION_DECLARATION));
+    }
+
+    /**
+     * One admitted array host completion on all three consumers: the
+     * oracle's async entry completes successfully with the probe's pinned
+     * result atom (the consumed element's own arithmetic), and both
+     * production artifacts complete without a failure event — their probes'
+     * in-language guard raises the probe error if the settled element did
+     * not land 7.
+     */
+    private static void assertAsyncArrayCompletionSuccess(Compiled compiled,
+            String export, String resultAtom, SemanticOracle.HostResponder responder,
+            String luaHost, String jvmHost, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+            compiled.project(), compiled.tables(), responder,
+            compiled.checkedProject().entryModule(), export, List.of());
+        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
+                && resultAtom.equals(success.resultAtom()),
+            what + " (oracle): the settled element is admitted and consumed with "
+                + "the pinned result " + resultAtom + ": " + run.terminal());
+        String lua = luaArtifactOutput(compiled, Map.of("async_arrays", luaHost));
+        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): the "
+            + "production artifact completes without a failure event: " + lua);
+        String jvm = jvmArtifactOutput(compiled, jvmProbe(
+            JvmBackend.classNameFor(compiled.checkedProject().entryModule().path()),
+            compiled.checkedProject().entryModule().path(), ""),
+            Map.of("async_arrays", jvmHost));
+        check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
+            + " (jvm): the production artifact completes without a failure event: "
+            + jvm);
+    }
+
+    /** The array-completion responder: every declared operation completes with the value. */
+    private static SemanticOracle.HostResponder arrayCompletionResponder(
+            SemanticOracle.Value value) {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                return new AsyncStartOutcome.Operation(operationLabel);
+            }
+
+            @Override
+            public SyncOutcome completeAsync(String operationLabel) {
+                return new SyncOutcome.Returned(value);
+            }
+        };
+    }
+
+    /** The oracle's one-element int array completion value (the boxed element). */
+    private static SemanticOracle.Value oracleIntArrayElement(long value) {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
+            RuntimeDescriptor.Int.INSTANCE, false);
+    }
+
+    /** The oracle's one-element nested int array completion value. */
+    private static SemanticOracle.Value oracleNestedIntArrayElement(long value) {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(oracleIntArrayElement(value))),
+            RuntimeDescriptor.parseCanonicalText("[int]"), false);
+    }
+
+    /** The oracle's int-or-null element array completion value. */
+    private static SemanticOracle.Value oracleNullableElementArray() {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(7L),
+                SemanticOracle.Value.NullValue.INSTANCE)),
+            RuntimeDescriptor.parseCanonicalText("?int"), false);
+    }
+
+    /** The oracle's string array completion value carrying one element. */
+    private static SemanticOracle.Value oracleStringArrayElement(
+            SemanticOracle.Value element) {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(element)), RuntimeDescriptor.String.INSTANCE,
+            false);
+    }
+
+    /** The LuaJIT array-completion host: one carrier expression for every export. */
+    private static String luaAsyncArrayHost(String carrier) {
+        return """
+            local rt = require("deal.runtime")
+
+            return {
+              fetchInts = function()
+                return rt.async_start(function() return %s end)
+              end,
+              fetchNullableInts = function()
+                return rt.async_start(function() return %s end)
+              end,
+              fetchNullableElements = function()
+                return rt.async_start(function() return %s end)
+              end,
+              fetchNestedInts = function()
+                return rt.async_start(function() return %s end)
+              end,
+              fetchNestedStrings = function()
+                return rt.async_start(function() return %s end)
+              end,
+              fetchStrings = function()
+                return rt.async_start(function() return %s end)
+              end,
+            }
+            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier);
+    }
+
+    /** The JVM array-completion host: one completed-future carrier per export. */
+    private static String jvmAsyncArrayHost(String carrier) {
+        return """
+            import java.util.concurrent.CompletableFuture;
+
+            final class HostAsync_arrays {
+              private static deal.codegen.jvm.JvmRuntime.Array array(
+                  java.lang.Object... elements) {
+                deal.codegen.jvm.JvmRuntime.Array array =
+                    new deal.codegen.jvm.JvmRuntime.Array(elements.length);
+                for (java.lang.Object element : elements) {
+                  array.elements.add(element);
+                }
+                return array;
+              }
+
+              public static Object fetchInts() {
+                return CompletableFuture.completedFuture(%s);
+              }
+              public static Object fetchNullableInts() {
+                return CompletableFuture.completedFuture(%s);
+              }
+              public static Object fetchNullableElements() {
+                return CompletableFuture.completedFuture(%s);
+              }
+              public static Object fetchNestedInts() {
+                return CompletableFuture.completedFuture(%s);
+              }
+              public static Object fetchNestedStrings() {
+                return CompletableFuture.completedFuture(%s);
+              }
+              public static Object fetchStrings() {
+                return CompletableFuture.completedFuture(%s);
+              }
+            }
+            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier);
+    }
+
+    /** The admitted int[] completion: the boxed element settles and is consumed. */
+    private static void driveHostIntArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_use_int_array",
+            ARRAY_COMPLETION_INT_DRIVER);
+        try {
+            assertAsyncArrayCompletionSuccess(compiled, "test_use_int_array", "int:8",
+                arrayCompletionResponder(oracleIntArrayElement(7L)),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                "the boxed int int[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The nullable int[] completion: the boxed element settles and is
+     * consumed, and the language-null control stays the language null.
+     */
+    private static void driveHostNullableIntArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_use_nullable_int_array",
+            ARRAY_COMPLETION_NULLABLE_INT_DRIVER);
+        try {
+            assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
+                "int:8", arrayCompletionResponder(oracleIntArrayElement(7L)),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                "the boxed int nullable int[] completion");
+            assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
+                "int:0", arrayCompletionResponder(
+                    SemanticOracle.Value.NullValue.INSTANCE),
+                luaAsyncArrayHost("rt.__NULL"), jvmAsyncArrayHost("null"),
+                "the language-null nullable int[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The int-or-null element array completion: the boxed element and the null element. */
+    private static void driveHostNullableElementArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_use_nullable_elements",
+            ARRAY_COMPLETION_NULLABLE_ELEMENT_DRIVER);
+        try {
+            assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_elements",
+                "int:8", arrayCompletionResponder(oracleNullableElementArray()),
+                luaAsyncArrayHost("{__a = true, __n = 2, [1] = 7}"),
+                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), null)"),
+                "the boxed int and null (int | null)[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The admitted nested int[][] completion: the nested boxed element settles. */
+    private static void driveHostNestedIntArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_use_nested_int_array",
+            ARRAY_COMPLETION_NESTED_INT_DRIVER);
+        try {
+            assertAsyncArrayCompletionSuccess(compiled, "test_use_nested_int_array",
+                "int:8", arrayCompletionResponder(oracleNestedIntArrayElement(7L)),
+                luaAsyncArrayHost(
+                    "{__a = true, __n = 1, [1] = {__a = true, __n = 1, [1] = 7}}"),
+                jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
+                "the nested boxed int int[][] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The wrong-kind string[] completion: the canonical element arm projects int. */
+    private static void driveHostStringArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_string_array",
+            ARRAY_COMPLETION_STRING_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(oracleStringArrayElement(
+                    new SemanticOracle.Value.IntValue(7L))),
+                "test_drop_string_array",
+                asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
+                    "int"),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                "the boxed int string[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The wrong-kind nested string[][] completion: the outermost element arm. */
+    private static void driveHostNestedStringArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_nested_string_array",
+            ARRAY_COMPLETION_NESTED_STRING_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(new SemanticOracle.Value.ArrayValue(
+                    new ArrayList<>(List.of(oracleStringArrayElement(
+                        new SemanticOracle.Value.IntValue(7L)))),
+                    RuntimeDescriptor.parseCanonicalText("[string]"), false)),
+                "test_drop_nested_string_array",
+                asyncElementTuple(ARRAY_COMPLETION_NESTED_STRING_DRIVER, 4, 1,
+                    "[string]", "array"),
+                luaAsyncArrayHost(
+                    "{__a = true, __n = 1, [1] = {__a = true, __n = 1, [1] = 7}}"),
+                jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
+                "the nested boxed int string[][] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The element arm's own tuple (E8003) at one await origin. */
+    private static Tuple asyncElementTuple(String driver, int line,
+            int oneBasedIndex, String expected, String actual) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.ARRAY_ELEMENT_KIND,
+            Map.of("oneBasedIndex", Integer.toString(oneBasedIndex)), expected,
+            actual, null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line,
+            awaitColumn(driver, line), arm.expected(), arm.actual());
+    }
+
     /**
      * One admitted numeric host completion on all three consumers: the
      * oracle's async entry completes successfully (the body's own in-language
@@ -7731,6 +8229,7 @@ public class CanonicalProjectionParityTest {
         testHostSyncReturnPresence();
         testHostNumericReturnCarriers();
         testHostNumericCompletions();
+        testHostArrayCompletions();
         testHostNullParameterCrossing();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();

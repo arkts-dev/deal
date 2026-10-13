@@ -274,14 +274,52 @@ public final class BoundaryExecutor {
             completionActual(core(descriptor, view), view));
     }
 
-    /** The completion cell's numeric actual token ({@link #checkAsyncCompletion}). */
+    /**
+     * The completion cell's numeric actual token ({@link #checkAsyncCompletion}):
+     * the cell's pinned projection has one numeric kind, so a numeric carrier
+     * of the checked value projects {@code number} — the value itself and the
+     * numeric carrier at an array-element leaf behind the shared {@code E8003}
+     * arm's cause chain (every {@code ELEMENT} wrapper keeps the element's own
+     * reference token, the outer arm's declared actual field). A boxed-int
+     * element at a wrong-kind position therefore renders the element's own
+     * {@code int} token in the enclosing element arm and the cell's completion
+     * variant {@code number} in the nested leaf cause, exactly like the JVM
+     * runtime's {@code completionActualOf} and the emitted Lua prelude's
+     * {@code __completionBoundaryKind}; the leaf cause's projection stays the
+     * executing cell's own row (the pinned leaf-cause rule).
+     */
     private static CoreResult completionActual(CoreResult result, BoundaryValueView view) {
         if (result instanceof CoreFail fail
                 && fail.caseKind() == FailureCase.KIND_MISMATCH
                 && view.kind() == ActualKind.INT) {
             return new CoreFail(fail.caseKind(), fail.descriptor(), "number", 0, null);
         }
-        return result;
+        return completionElementLeaf(result);
+    }
+
+    /**
+     * The element-leaf projection of the completion cell ({@link
+     * #completionActual}): every {@code ELEMENT} wrapper keeps its own element
+     * reference token and one-based index, and the innermost kind leaf's
+     * numeric carrier follows the cell's single completion variant.
+     */
+    private static CoreResult completionElementLeaf(CoreResult result) {
+        if (!(result instanceof CoreFail fail)) {
+            return result;
+        }
+        if (fail.caseKind() == FailureCase.ELEMENT && fail.cause() != null) {
+            CoreResult cause = completionElementLeaf(fail.cause());
+            if (cause == fail.cause()) {
+                return fail;
+            }
+            return new CoreFail(fail.caseKind(), fail.descriptor(), fail.actualToken(),
+                fail.elementIndex(), (CoreFail) cause);
+        }
+        if (fail.caseKind() == FailureCase.KIND_MISMATCH
+                && "int".equals(fail.actualToken())) {
+            return new CoreFail(fail.caseKind(), fail.descriptor(), "number", 0, null);
+        }
+        return fail;
     }
 
     /** ARRAY_ELEMENT_DESCRIPTOR: element check; E8003 with the leaf cause. */

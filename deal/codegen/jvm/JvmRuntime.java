@@ -1100,7 +1100,7 @@ public final class JvmRuntime {
         if (v instanceof Boolean) {
             return "boolean";
         }
-        if (v instanceof Long) {
+        if (v instanceof Integer || v instanceof Long) {
             return "int";
         }
         if (v instanceof Double) {
@@ -1245,6 +1245,21 @@ public final class JvmRuntime {
      * Lua completion check select. The emitted site re-originates every
      * failure at the await boundary, so this seam renders the absence
      * origin.</p>
+     *
+     * <p>The completed array carrier's element positions follow the same
+     * settling rule recursively (the value tree is walked before the
+     * completion cell's own check): a boxed Integer element — including a
+     * nested array's element — becomes the production int carrier, a Long
+     * and an admitted Double keep their own variants, and every other
+     * element (the language null included) crosses unchanged. A wrong-kind
+     * element therefore projects its own kind through the canonical
+     * element failure arm, and an int element is admitted exactly like the
+     * oracle's IntValue and the emitted Lua completion cell's integral
+     * number. The walk carries one identity-keyed memo per crossing, so a
+     * repeated inner carrier settles to one array (the reference-identity
+     * contract) and a reference-cyclic host carrier terminates; the
+     * settled tree is a copy, so a rejected completion leaves the host's
+     * own carrier untouched.</p>
      */
     public static Object hostCompletion(String desc, String staticKind, Object v) {
         return hostCompletion(desc, staticKind, v, null);
@@ -1306,7 +1321,45 @@ public final class JvmRuntime {
                 return v;
             }
         }
-        return bcheck(desc, staticKind, v, true, canon);
+        return bcheck(desc, staticKind, settleCompletionElements(v), true, canon);
+    }
+
+    /**
+     * The recursive element settling of one host-completed value: the boxed
+     * Integer at any array element position — nested arrays included —
+     * settles onto the production int carrier (Long), exactly like the
+     * crossing's top-level numeric rule ({@link #hostCompletion}), while
+     * every other carrier keeps its own variant. The walk's identity memo
+     * keeps one raw array one settled array across repeated positions and
+     * terminates a reference-cyclic host carrier; the raw host tree is
+     * never mutated.
+     */
+    private static Object settleCompletionElements(Object v) {
+        if (v instanceof Array array) {
+            return settleCompletionElements(array, new IdentityHashMap<>());
+        }
+        return v;
+    }
+
+    private static Object settleCompletionElements(Object v,
+            IdentityHashMap<Array, Array> settled) {
+        if (v instanceof Integer intValue) {
+            return Long.valueOf(intValue.longValue());
+        }
+        if (!(v instanceof Array array)) {
+            return v;
+        }
+        Array copy = settled.get(array);
+        if (copy != null) {
+            return copy;
+        }
+        copy = new Array(array.length);
+        copy.decodedArray = array.decodedArray;
+        settled.put(array, copy);
+        for (Object element : array.elements) {
+            copy.elements.add(settleCompletionElements(element, settled));
+        }
+        return copy;
     }
 
     /** The signed32-range non-admission of the host completion crossing. */

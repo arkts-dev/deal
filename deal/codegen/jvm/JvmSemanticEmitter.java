@@ -481,8 +481,9 @@ public final class JvmSemanticEmitter {
          * with crosses through {@link JvmRuntime#hostCompletion} — the
          * closed host numeric carriers are validated in the pinned int
          * order and every admitted carrier keeps its own variant (only the
-         * boxed Integer settles onto the production int carrier), and then
-         * through the completion cell's own check, so the failing arm
+         * boxed Integer settles onto the production int carrier), at the
+         * completed array's element positions recursively included, and
+         * then through the completion cell's own check, so the failing arm
          * and its tuple are the completion cell's. Every non-host
          * completion (a DEAL body's value, the external-entry activation's
          * value) takes the plain {@link #bcheckCompletionArgs} route.
@@ -6870,7 +6871,8 @@ public final class JvmSemanticEmitter {
             // host-completion seam (the closed host numeric carriers are
             // validated in the pinned int order and every admitted carrier
             // keeps its own variant — only the boxed Integer settles onto
-            // the production int carrier — exactly like the oracle's
+            // the production int carrier, at the completed array's element
+            // positions recursively included — exactly like the oracle's
             // completion cell); a DEAL body
             // value atomizes by the declared descriptor and takes the plain
             // completion check. The static token owner alone cannot select
