@@ -2886,6 +2886,28 @@ public class CanonicalProjectionParityTest {
           return null
         }
 
+        async function applyAsyncNullValue(f: async (value: null) => string, value: null): string {
+          return await f(value)
+        }
+
+        export async function test_async_take_null_from_host(): null {
+          let value: null = host.returnNull()
+          let seen: string = await host.asyncTakeNull(value)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the admitted host null crossed the async null host start as a non-sentinel" }
+          }
+          return null
+        }
+
+        export async function test_dynamic_async_take_null_from_host(): null {
+          let value: null = host.returnNull()
+          let seen: string = await applyAsyncNullValue(host.asyncTakeNull, value)
+          if (seen !== "sentinel") {
+            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async admission delivered a non-sentinel for the admitted host null" }
+          }
+          return null
+        }
+
         export function main(): null {
           return null
         }
@@ -3145,16 +3167,16 @@ public class CanonicalProjectionParityTest {
      * The null-crossing drive: the admitted crossings — the null literal
      * and the admitted host null against the null and the nullable primitive
      * parameter through the declaring call shape, the same values through
-     * the dynamic function-valued call shape, and the null literal through
-     * the declaring and dynamic async host starts, including a null in
-     * front of a non-null argument (both declared parameters nullable, and
-     * a declared {@code null} before a declared {@code int}) so a
-     * nil-dropped or position-shifted argument cannot pass — complete
-     * without a failure event on the oracle, the LuaJIT artifact, and the
-     * JVM artifact (each raw host reporting that it observed the explicit
-     * null sentinel at the recorded position), and the wrong-kind return
-     * after the same crossing renders the closed return cell's tuple
-     * byte-exact and identical on the three consumers.
+     * the dynamic function-valued call shape, the null literal and the
+     * admitted host null through the declaring and dynamic async host
+     * starts, including a null in front of a non-null argument (both
+     * declared parameters nullable, and a declared {@code null} before a
+     * declared {@code int}) so a nil-dropped or position-shifted argument
+     * cannot pass — complete without a failure event on the oracle, the
+     * LuaJIT artifact, and the JVM artifact (each raw host reporting that it
+     * observed the explicit null sentinel at the recorded position), and the
+     * wrong-kind return after the same crossing renders the closed return
+     * cell's tuple byte-exact and identical on the three consumers.
      */
     private static void testHostNullParameterCrossing() throws Exception {
         System.out.println("-- the DEAL-to-host null crossing: the language "
@@ -3169,6 +3191,8 @@ public class CanonicalProjectionParityTest {
                 () -> driveNullCrossingRejections(compiled));
             safely("the null crossing's subsequent failure projection",
                 () -> driveNullCrossingBadReturn(compiled));
+            safely("the null crossing's two-load retained exports",
+                () -> driveNullCrossingTwoLoadRetention(compiled));
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -3197,6 +3221,11 @@ public class CanonicalProjectionParityTest {
             "the dynamic async null literal at the null parameter");
         assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_nullable_int",
             "the dynamic async null literal at the nullable primitive parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_async_take_null_from_host",
+            "the admitted host null at the async null host start");
+        assertAsyncNullCrossingAdmission(compiled,
+            "test_dynamic_async_take_null_from_host",
+            "the admitted host null at the dynamic async null host start");
         assertAsyncNullCrossingAdmission(compiled, "test_async_take_null_then_int",
             "the async null literal before a non-null int parameter");
         assertAsyncNullCrossingAdmission(compiled, "test_async_take_pair",
@@ -3301,6 +3330,112 @@ public class CanonicalProjectionParityTest {
                 "the null crossing's subsequent failure: the oracle and the "
                     + "JVM artifact render the identical tuple");
         }
+    }
+
+    /**
+     * The crossing's cross-chunk state isolation (LuaJIT regression): a
+     * second load of the same production chunk must not rewrite a retained
+     * export's crossing behavior. The probe loads the real artifact, runs
+     * its module init, retains the first chunk's exported closures, loads
+     * and initializes the same artifact again, and then drives the retained
+     * closures: every admitted crossing — the null literal and the admitted
+     * host null at the declared {@code null} and the declared nullable
+     * primitive parameter through the declaring and the dynamic call shape,
+     * including both async host starts over the chunk's own null
+     * normalization — must still deliver the deployed runtime's explicit
+     * null sentinel to the raw host, and the retained non-nullable
+     * rejection must still render the declared parameter cell's canonical
+     * tuple at its recorded origin. A crossing helper (or the async-entry
+     * dispatch field) assigned to a global name is clobbered by the second
+     * chunk, so before the fix the retained export rejects its own chunk's
+     * null sentinel with a foreign tuple, admits the retained absence
+     * marker, or reaches the second chunk's uninitialized activation state.
+     */
+    private static void driveNullCrossingTwoLoadRetention(Compiled compiled)
+            throws Exception {
+        String successes = "{"
+            + "\"test_take_null_literal\", "
+            + "\"test_take_nullable_int_literal\", "
+            + "\"test_take_null_from_host\", "
+            + "\"test_take_nullable_int_from_host\", "
+            + "\"test_dynamic_take_null\", "
+            + "\"test_dynamic_take_nullable_int\", "
+            + "\"test_async_take_null\", "
+            + "\"test_async_take_nullable_int\", "
+            + "\"test_async_take_null_from_host\", "
+            + "\"test_dynamic_async_take_null\", "
+            + "\"test_dynamic_async_take_null_from_host\"}";
+        String probe = """
+            local function fail(m) print("PROBE-FAIL: " .. tostring(m)) os.exit(1) end
+            local function emit(e)
+              if type(e) == "table" and e.__d then
+                local file, line, column = nil, nil, nil
+                if e.o ~= nil then
+                  file, line, column = tostring(e.o):match("^(.*):(%d+):(%d+)$")
+                end
+                print("ERR|" .. tostring(e.code) .. "|" .. tostring(e.m) .. "|"
+                  .. tostring(file) .. "|" .. tostring(line) .. "|"
+                  .. tostring(column) .. "|" .. (e.e == nil and "" or tostring(e.e))
+                  .. "|" .. (e.a == nil and "" or tostring(e.a)))
+                return
+              end
+              print("RAW|" .. tostring(e))
+            end
+            dofile(__ARTIFACT__)
+            local ok, err = __dealMain()
+            if not ok then fail("the first init failed") end
+            local retained = {}
+            for _, name in ipairs(__SUCCESS__) do
+              local entry = __exportSurfaces[__MODULE__][name]
+              if entry == nil then fail("no retained entry " .. name) end
+              retained[name] = entry.f
+            end
+            local reject = __exportSurfaces[__MODULE__]["test_reject_table_missing_field"]
+            if reject == nil then fail("no retained rejection entry") end
+            local retainedReject = reject.f
+            dofile(__ARTIFACT__)
+            ok, err = __dealMain()
+            if not ok then fail("the second init failed") end
+            for _, name in ipairs(__SUCCESS__) do
+              local ok2, err2 = pcall(retained[name])
+              if not ok2 then
+                fail("the retained export " .. name .. " failed: "
+                  .. tostring(type(err2) == "table"
+                      and (tostring(err2.code) .. "|" .. tostring(err2.m)
+                        .. "|" .. tostring(err2.o)) or err2))
+              end
+              print("RETAINED|" .. name)
+            end
+            local ok3, err3 = pcall(retainedReject)
+            if ok3 then fail("the retained rejection completed") end
+            emit(err3)
+            print("TWO-LOAD-OK")
+            """;
+        String probeSource = probe
+            .replace("__ARTIFACT__", luaString(artifactPath(compiled)))
+            .replace("__MODULE__",
+                luaString(compiled.checkedProject().entryModule().path()))
+            .replace("__SUCCESS__", successes);
+        String output = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()), probeSource);
+        check(!output.contains("PROBE-FAIL") && output.contains("TWO-LOAD-OK"),
+            "the null crossing's two-load retained exports complete: " + output);
+        for (String name : List.of("test_take_null_literal",
+                "test_take_nullable_int_literal", "test_take_null_from_host",
+                "test_take_nullable_int_from_host", "test_dynamic_take_null",
+                "test_dynamic_take_nullable_int", "test_async_take_null",
+                "test_async_take_nullable_int", "test_async_take_null_from_host",
+                "test_dynamic_async_take_null",
+                "test_dynamic_async_take_null_from_host")) {
+            check(output.contains("RETAINED|" + name), name + ": the retained "
+                + "export completes after a second load of the same chunk: " + output);
+        }
+        Tuple rejectTuple = parseLuaProbe(output, compiled);
+        checkEq(hostParameterCellTuple("table", 1,
+                FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
+                "nil", 209, 3),
+            rejectTuple, "the null crossing's two-load retained rejection renders "
+                + "the declared parameter cell's canonical tuple: " + output);
     }
 
     /**

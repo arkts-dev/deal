@@ -92,6 +92,12 @@ public final class LuaSemanticEmitter {
      * reference, so a body emitted before a factory's assignment still
      * resolves the field at call time — never a nil global — and each
      * body captures the one table instead of one upvalue per factory.
+     * The host prelude's chunk-bound host-crossing helpers
+     * ({@code __factories.__hostDeclKind/__hostParamAdmit/__hostNullArg})
+     * are fields of the same store: a helper assigned to a global name is
+     * clobbered when a second chunk of the same process loads, while a
+     * field of the owning chunk's store keeps a retained export on its own
+     * chunk's helpers and sentinels without spending a main-chunk local.
      */
     private static final String FACTORY_TABLE = "__factories";
 
@@ -643,6 +649,27 @@ public final class LuaSemanticEmitter {
             // carriers).
             out.append("__intrinsicCarriers = __intrinsicCarriers or {}\n");
 
+            // The one factory store (LuaJIT bounds one function at 200
+            // locals): the function factories, the detached class-default
+            // functions, and the adapter thunk re-executors are fields of
+            // this single local table, never one pre-declared chunk local
+            // per factory. A body emitted before a later factory's
+            // assignment still references the field, which resolves at
+            // call time from the one table (a per-factory pre-declaration
+            // was only needed to keep such a reference off the globals);
+            // the same table keeps every body's capture set at one
+            // upvalue instead of one per referenced factory. It is
+            // declared before the host prelude because that prelude's
+            // chunk-bound host-crossing helpers ride it as fields: a
+            // helper assigned to a global name is clobbered when a second
+            // chunk of the same process loads (the emitted artifacts
+            // support several chunks in one process), while a field of
+            // this chunk's own store keeps a retained export on its own
+            // chunk's helpers and sentinels — and the store is already a
+            // chunk-level local, so the helpers spend no main-chunk local
+            // (the LuaJIT 200-local bound).
+            out.append("local ").append(FACTORY_TABLE).append(" = {}\n");
+
             if (bindsHostRuntime()) {
                 out.append("local __rt = require(\"deal.runtime\")\n");
                 out.append("__rtNull = __rt.__NULL\n");
@@ -798,18 +825,6 @@ public final class LuaSemanticEmitter {
             // body never captures 30+ chunk temps as upvalues (LuaJIT's
             // 60-upvalue limit binds a large body otherwise).
             out.append("local ").append(HOISTED_TEMPS).append("\n");
-
-            // The one factory store (LuaJIT bounds one function at 200
-            // locals): the function factories, the detached class-default
-            // functions, and the adapter thunk re-executors are fields of
-            // this single local table, never one pre-declared chunk local
-            // per factory. A body emitted before a later factory's
-            // assignment still references the field, which resolves at
-            // call time from the one table (a per-factory pre-declaration
-            // was only needed to keep such a reference off the globals);
-            // the same table keeps every body's capture set at one
-            // upvalue instead of one per referenced factory.
-            out.append("local ").append(FACTORY_TABLE).append(" = {}\n");
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (LoweredFunction function : moduleUnit.functions().values()) {
                     emitFunctionFactory(function);
@@ -4202,7 +4217,7 @@ public final class LuaSemanticEmitter {
             }
             out.append("  __okH, __resH = pcall(__dynC.f");
             for (int i = 1; i <= recordedArgCount(payload, op); i++) {
-                out.append(", __hostNullArg(").append(carrierArgs)
+                out.append(", __factories.__hostNullArg(").append(carrierArgs)
                     .append("[").append(i).append("])");
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
@@ -5451,17 +5466,26 @@ public final class LuaSemanticEmitter {
          */
         private String exportCallable(SemanticOp op,
                 KindPayload.ExportPublishPayload payload) {
+            SemanticOp entry = asyncExportEntry(payload.module(), payload.name());
             if (!(payload.descriptor() instanceof RuntimeDescriptor.Func func)
                     || !func.isAsync()
-                    || asyncExportEntry(payload.module(), payload.name()) == null) {
+                    || entry == null) {
                 return "__unfn(" + slot(payload.value()) + ")";
             }
+            // The wrapper drives the declaration's activation through the
+            // owning chunk's own dispatch field (the one factory store),
+            // never through the process-wide __asyncEntries name: a
+            // retained export must keep its own chunk's entry when a
+            // second chunk of the same process loads, and the chunk's own
+            // field is the identical function the chunk also publishes
+            // under the shared key for the cross-module link and the
+            // scenario drivers.
             return "function(...) local __rtAsync = require(\"deal.runtime\");"
                 + " local __en = select(\"#\", ...); local __ea = {...};"
                 + " return __rtAsync.async_start(function() return"
-                + " __asyncExportCompletion(__rtAsync, __asyncEntries["
-                + luaString(payload.module().path() + "#" + payload.name())
-                + "](nil, true, unpack(__ea, 1, __en)), "
+                + " __asyncExportCompletion(__rtAsync, "
+                + FACTORY_TABLE + ".E" + entry.opId().id()
+                + "(nil, true, unpack(__ea, 1, __en)), "
                 + (numberScalarReturn(func.returnType()) ? "true" : "false")
                 + ") end) end";
         }
@@ -6135,7 +6159,8 @@ public final class LuaSemanticEmitter {
             // crossing's declared parameter cell.
             out.append("__okT, __resT = pcall((").append(target).append(").f");
             for (String arg : args) {
-                out.append(", __hostNullArg(").append(arg).append(")");
+                out.append(", __factories.__hostNullArg(").append(arg)
+                    .append(")");
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
             out.append("if not __okT then\n");
@@ -6337,8 +6362,16 @@ public final class LuaSemanticEmitter {
                 caps.append(captureArg(capture));
             }
             String ownerPath = owner.moduleId().path();
-            out.append("__asyncEntries[")
-                .append(luaString(ownerPath + "#" + payload.exportName()))
+            // The entry is published under the shared __asyncEntries key
+            // (the source-mapped definition the cross-module link and the
+            // scenario drivers resolve) and aliased into the chunk's one
+            // factory store as E<id>: a retained export's published wrapper
+            // drives the chunk-local alias, so a second chunk of the same
+            // process cannot redirect it. The alias is assigned at chunk
+            // load, before every reference at call time.
+            String entryKey = luaString(ownerPath + "#" + payload.exportName());
+            String entryField = FACTORY_TABLE + ".E" + op.opId().id();
+            out.append("__asyncEntries[").append(entryKey)
                 .append("] = function(__parentKey, __drive, ...)\n");
 
             emitModulePush();
@@ -6396,6 +6429,8 @@ public final class LuaSemanticEmitter {
             // The link caller receives this activation's own task instance.
             out.append("  return __tk\n");
             out.append("end\n");
+            out.append(entryField).append(" = __asyncEntries[")
+                .append(entryKey).append("]\n");
         }
 
         /**
@@ -8096,7 +8131,14 @@ end
 -- parameter of the typed-boundary kind arm and the inner reason of the
 -- host parameter cell): the declared class/array/function descriptors
 -- project their own kind words, every other descriptor its own text.
-__hostDeclKind = function(desc)
+-- The host-crossing helpers ride the chunk's one factory store rather
+-- than global names: a global assignment is clobbered when a second
+-- chunk of the same process loads (the emitted artifacts support several
+-- chunks in one process), while a field of this chunk's own store keeps a
+-- retained export on its own chunk's helpers and sentinels — and the
+-- store is already a chunk-level local, so the helper set spends no
+-- main-chunk local (the LuaJIT 200-local bound).
+__factories.__hostDeclKind = function(desc)
   if string.sub(desc, 1, 1) == "@" then return "class instance" end
   if string.sub(desc, 1, 1) == "[" then return "array" end
   if string.sub(desc, 1, 1) == "(" or string.sub(desc, 1, 9) == "async(" then
@@ -8119,23 +8161,23 @@ end
 -- table and the array row every element-less one, so the absent marker
 -- must be distinguished here, before the matcher runs). A language null
 -- at a non-nullable position likewise renders the closed failure with the
--- language-null carrier's table kind as actual. The helper is chunk-global
--- (like the async-start normalization below) rather than a chunk-level
--- local: LuaJIT bounds one function at 200 locals and the emitted main
--- body carries the program's own, so a fixed host prelude must not spend a
--- main-chunk local here.
-__hostParamAdmit = function(desc, index, v, origin)
+-- language-null carrier's table kind as actual. The helper rides the
+-- chunk's one factory store like the other host-crossing helpers, so a
+-- retained export keeps its own chunk's admission (a global assignment
+-- would be clobbered by the next chunk) without spending a main-chunk
+-- local.
+__factories.__hostParamAdmit = function(desc, index, v, origin)
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then
     if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
     local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
-      {kind = __hostDeclKind(desc)})
+      {kind = __factories.__hostDeclKind(desc)})
     return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
       origin, desc, __typedBoundaryKind("missing", v)), 0)
   end
   if v ~= nil and v ~= __NULL then return v end
   if desc == "null" or string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
   local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
-    {kind = __hostDeclKind(desc)})
+    {kind = __factories.__hostDeclKind(desc)})
   return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
     origin, desc, __carrierKind(__rt.__NULL)), 0)
 end
@@ -8153,7 +8195,7 @@ end
 -- declared position, before the representation-only matcher can admit
 -- the marker's table shape.
 local function __hostParamCell(desc, index, v, origin)
-  v = __hostParamAdmit(desc, index, v, origin)
+  v = __factories.__hostParamAdmit(desc, index, v, origin)
   if string.sub(desc, 1, 1) == "@" then
     return __hostClassCell(desc, index, v, origin, false)
   end
@@ -8271,11 +8313,11 @@ end
 -- wrapper admits a declared null/nullable position and the raw host
 -- observes the sentinel, never a plain nil. The __MISSING absence marker
 -- is not a language null and stays the absent value the loaded matcher
--- classifies. The helper is chunk-global (like the async-entry linkage's
--- own helpers) rather than a chunk-level local: LuaJIT bounds one
--- function at 200 locals and the emitted main body carries the program's
--- own, so the fixed host prelude must not spend a main-chunk local here.
-__hostNullArg = function(v)
+-- classifies. The helper rides the chunk's one factory store like the
+-- other host-crossing helpers, so a retained export keeps its own chunk's
+-- normalization (a global assignment would be clobbered by the next
+-- chunk) without spending a main-chunk local.
+__factories.__hostNullArg = function(v)
   if v == nil or v == __NULL then return __rt.__NULL end
   return v
 end
@@ -8304,7 +8346,7 @@ end
 -- parameter cell at every other declared position, never the marker's
 -- table shape.
 local function __hostProjectArg(desc, inner, index, v, origin)
-  v = __hostParamAdmit(desc, index, v, origin)
+  v = __factories.__hostParamAdmit(desc, index, v, origin)
   if v == __rt.__NULL then return v end
   if inner ~= nil and (string.sub(inner, 1, 1) == "("
       or string.sub(inner, 1, 9) == "async(") then
