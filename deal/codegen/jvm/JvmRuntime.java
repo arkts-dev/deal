@@ -1212,6 +1212,82 @@ public final class JvmRuntime {
     }
 
     /**
+     * The host asynchronous completion crossing (the {@code AWAIT} site's
+     * host-operation arm): the raw value a host operation completed its
+     * future with is validated and settled onto the declared production
+     * carrier before it enters the DEAL value model, exactly like the
+     * synchronous host return cell's declared-carrier normalization. The
+     * closed host numeric carriers — the boxed {@code int} (Integer), the
+     * signed32 {@code long}, and the {@code double} — are admitted in the
+     * pinned int order (NaN, infinity, non-fractional, then the signed32
+     * range) at a declared {@code int} and settled: an Integer or an
+     * admitted integral Double becomes the production int carrier (Long);
+     * every admitted numeric carrier of a declared {@code number} becomes
+     * the production number carrier (Double). A nullable cell keeps its
+     * language null.
+     *
+     * <p>Every non-numeric value and every other descriptor crosses to the
+     * completion cell's own check ({@link #bcheckCompletion}) unchanged, so
+     * the failing arm's tuple is the same one the check renders; the
+     * numeric non-admissions render the completion row's refinement arm
+     * (NaN, infinity, non-fractional) and the shared signed32-range arm
+     * (E8004), the same arms the oracle's completion cell and the emitted
+     * Lua completion check select. The emitted site re-originates every
+     * failure at the await boundary, so this seam renders the absence
+     * origin.</p>
+     */
+    public static Object hostCompletion(String desc, String staticKind, Object v) {
+        return hostCompletion(desc, staticKind, v, null);
+    }
+
+    /**
+     * The host asynchronous completion crossing of a descriptor carrying a
+     * function position (the canonical trailer's same projection).
+     */
+    public static Object hostCompletion(String desc, String staticKind, Object v,
+                                        String canon) {
+        String inner = desc.startsWith("nullable(")
+            ? desc.substring(9, desc.length() - 1) : desc;
+        if (v instanceof Integer || v instanceof Long || v instanceof Double) {
+            if ("int".equals(inner)) {
+                if (v instanceof Integer intValue) {
+                    return Long.valueOf(intValue.longValue());
+                }
+                if (v instanceof Long longValue) {
+                    if (longValue < -2147483648L || longValue > 2147483647L) {
+                        throw hostCompletionRangeFailure();
+                    }
+                    return v;
+                }
+                double value = ((Double) v).doubleValue();
+                if (Double.isNaN(value)) {
+                    throw refinementFailure("NaN", true);
+                }
+                if (Double.isInfinite(value)) {
+                    throw refinementFailure("infinity", true);
+                }
+                if (value != Math.rint(value)) {
+                    throw refinementFailure("number", true);
+                }
+                if (value < -2147483648d || value > 2147483647d) {
+                    throw hostCompletionRangeFailure();
+                }
+                return Long.valueOf((long) value);
+            }
+            if ("number".equals(inner)) {
+                return Double.valueOf(((Number) v).doubleValue());
+            }
+        }
+        return bcheck(desc, staticKind, v, true, canon);
+    }
+
+    /** The signed32-range non-admission of the host completion crossing. */
+    private static DealError hostCompletionRangeFailure() {
+        return arm(deal.semantic.ir.FailureArmId.INT32_RANGE, java.util.Map.of(), "-",
+            null, null);
+    }
+
+    /**
      * The class arms: a carried atom projects the identity arm, every other
      * value the closed kind arm.
      */

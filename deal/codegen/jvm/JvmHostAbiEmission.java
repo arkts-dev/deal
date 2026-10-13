@@ -873,11 +873,12 @@ final class JvmHostAbiEmission {
         // HOST_SYNC_RETURN_NOTHING before any descriptor checking — every
         // declared sync return descriptor (null, nullable, and mandatory
         // alike) rejects it, so a void host method never succeeds at a
-        // nullable or null position. A present Java null keeps its carrier:
-        // the language-null admission of the null/nullable cells, and the
-        // mandatory cell's zero-result rule (the corpus pins
-        // HOST_SYNC_RETURN_NOTHING for a null return of a mandatory
-        // position).
+        // nullable or null position. A present Java null is a value like
+        // every other present carrier: the null/nullable cells admit it as
+        // the language null, and the mandatory cell rejects it through the
+        // shared HOST_SYNC_RETURN_CELL composite (the same tuple the
+        // oracle's NullValue and the LuaJIT artifact's null sentinel
+        // render); only the absent marker selects the no-value arm.
         out.append("    if (__r == JvmRuntime.MISSING) {\n");
         emitNothingArm(out, desc);
         out.append("    }\n");
@@ -886,13 +887,6 @@ final class JvmHostAbiEmission {
                 + " oCol);\n");
             out.append("    return;\n");
             return;
-        }
-        if (!nullable) {
-            // The mandatory cell's zero-result rule (the host surface's
-            // Java-null form): the emitted wrapper holds no failure text.
-            out.append("    if (__r == null) {\n");
-            emitNothingArm(out, desc);
-            out.append("    }\n");
         }
         String checked = "__hostCheck(" + javaString(desc)
             + ", __r, false, oFile, oLine, oCol)";

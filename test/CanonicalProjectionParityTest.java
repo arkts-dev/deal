@@ -3,6 +3,7 @@ package deal.test;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmRuntime;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
@@ -2026,11 +2027,11 @@ public class CanonicalProjectionParityTest {
      * present Java null (JVM), and the oracle's {@code NullValue} are
      * admitted by a declared {@code null} or {@code string | null} return
      * — the consuming probe observes the language null — and are never
-     * collapsed into absence. At the mandatory {@code int} return the
-     * oracle and the LuaJIT artifact render the closed
-     * {@code HOST_SYNC_RETURN_CELL} composite (a present wrong kind), while
-     * the JVM host surface's Java null is its mandated zero-result form at a
-     * mandatory position (the corpus pin {@code host-abi/host-empty-return-bad}).
+     * collapsed into absence. At the mandatory {@code int} return a present
+     * Java null is a value like every other present carrier: all three
+     * consumers render the identical closed {@code HOST_SYNC_RETURN_CELL}
+     * composite (a present wrong kind), while only a true no-result host
+     * invocation selects the no-value arm.
      */
     private static void driveHostPresentNullSyncReturns() throws Exception {
         Compiled compiled = compileSyncPresence();
@@ -2046,7 +2047,7 @@ public class CanonicalProjectionParityTest {
                 hostReturnCellTuple("int", FailureProjections.kindReason(
                     RuntimeDescriptor.Int.INSTANCE), "table", 32, 3),
                 luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
-                "the present null int return", hostNothingTuple("int", 32, 3));
+                "the present null int return");
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -2093,6 +2094,414 @@ public class CanonicalProjectionParityTest {
             + "emitted wrappers --");
         safely("the numeric host return carriers",
             CanonicalProjectionParityTest::driveHostNumericReturnCarriers);
+    }
+
+    // =========================================================================
+    // The numeric host async completions (ISSUE-0696 remediation)
+    // =========================================================================
+
+    /**
+     * The caller-owned numeric-completion declaration of the async drives
+     * (no corpus or host-fixture membership change): a mandatory int, a
+     * nullable int, and a number completion, each carrying the closed host
+     * numeric carriers.
+     */
+    private static final String NUMERIC_COMPLETION_DECLARATION = """
+        export async function fetchInt(): int;
+        export async function fetchNullableInt(): int | null;
+        export async function fetchNumber(): number;
+        """;
+
+    /**
+     * The int-completion probe: the admitted completion is consumed by a
+     * real int addition, so an unnormalized carrier (a Double kept as the
+     * production int) cannot reach the probe's success.
+     */
+    private static final String NUMERIC_COMPLETION_INT_DRIVER = """
+        import * as host from "host/async_numeric"
+
+        export async function test_use_int(): int {
+          let v: int = await host.fetchInt()
+          let w: int = v + 1
+          return w
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The nullable-int-completion probe: the settled completion is consumed. */
+    private static final String NUMERIC_COMPLETION_NULLABLE_INT_DRIVER = """
+        import * as host from "host/async_numeric"
+
+        export async function test_use_nullable_int(): int {
+          let v: int | null = await host.fetchNullableInt()
+          if (v !== null) {
+            let w: int = v + 1
+            return w
+          }
+          return 0
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The number-completion probe: the settled completion is consumed. */
+    private static final String NUMERIC_COMPLETION_NUMBER_DRIVER = """
+        import * as host from "host/async_numeric"
+
+        export async function test_use_number(): number {
+          let v: number = await host.fetchNumber()
+          let w: number = v + 0.5
+          return w
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** One numeric-completion carrier triple: the oracle value and both host carriers. */
+    private record NumericCompletion(SemanticOracle.Value oracle, String lua,
+                                     String jvm) {
+    }
+
+    /**
+     * The numeric host async completions (ISSUE-0696 remediation; the raw
+     * future path): a production host operation's completed future carries
+     * the closed host numeric carriers — the boxed int (Integer), the
+     * signed32 long, and the double — and crosses the single
+     * {@code ASYNC_COMPLETION} boundary at the await site. The crossing
+     * validates the carriers in the pinned int order and settles them onto
+     * the declared production carrier (an Integer or an admitted integral
+     * Double becomes the production int carrier before any in-language int
+     * use), exactly like the synchronous host return cell's
+     * declared-carrier normalization, so the oracle, the LuaJIT artifact,
+     * and the JVM artifact render the identical complete tuple for the same
+     * carrier and an out-of-range or non-integral carrier fails at the
+     * await expression, never at a later consuming op. The drive's
+     * declaration and every host implementation are caller-owned.
+     */
+    private static void testHostNumericCompletions() throws Exception {
+        System.out.println("-- the numeric host async completions: the closed "
+            + "host numeric carriers are validated and settled onto the declared "
+            + "production carrier at the await crossing --");
+        check(JvmRuntime.hostCompletion("int", "int", Integer.valueOf(7))
+            instanceof Long, "the host completion seam settles the boxed int onto "
+                + "the production int carrier");
+        check(JvmRuntime.hostCompletion("int", "int", Double.valueOf(7))
+            instanceof Long, "the host completion seam settles the admitted "
+                + "integral double onto the production int carrier");
+        check(JvmRuntime.hostCompletion("number", "number", Long.valueOf(7))
+            instanceof Double, "the host completion seam settles the signed32 "
+                + "carrier onto the production number carrier");
+        check(JvmRuntime.hostCompletion("nullable(int)", "nullable:int",
+            Integer.valueOf(7)) instanceof Long, "the host completion seam "
+                + "settles a nullable int completion's carrier");
+        try {
+            JvmRuntime.hostCompletion("int", "int", "x");
+            check(false, "the host completion seam rejects a non-numeric carrier "
+                + "through the completion cell's own check");
+        } catch (JvmRuntime.DealError kind) {
+            check("E8001".equals(kind.code) && "expected int".equals(kind.msg),
+                "the host completion seam rejects a non-numeric carrier through "
+                    + "the completion cell's own check: " + kind.code + " "
+                    + kind.msg);
+        }
+        safely("the int host completions",
+            CanonicalProjectionParityTest::driveHostIntCompletions);
+        safely("the nullable-int host completions",
+            CanonicalProjectionParityTest::driveHostNullableIntCompletions);
+        safely("the number host completions",
+            CanonicalProjectionParityTest::driveHostNumberCompletions);
+    }
+
+    /** The int completion drive: admitted carriers and the rejected ones. */
+    private static void driveHostIntCompletions() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad", "test_use_int",
+            Entry.ASYNC, List.of(), "async_numeric", null);
+        Compiled compiled = compile(spec, NUMERIC_COMPLETION_INT_DRIVER,
+            Map.of("async_numeric", NUMERIC_COMPLETION_DECLARATION));
+        try {
+            for (NumericCompletion carrier : List.of(
+                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                        "7", "java.lang.Integer.valueOf(7)"),
+                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                        "7", "java.lang.Long.valueOf(7)"),
+                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                        "7", "java.lang.Double.valueOf(7)"))) {
+                assertAsyncCompletionSuccess(compiled, "async_numeric",
+                    numericCompletionResponder(carrier.oracle()), "test_use_int",
+                    luaAsyncNumericHost(carrier.lua()),
+                    jvmAsyncNumericHost(carrier.jvm()),
+                    "the int completion " + carrier.jvm());
+            }
+            Tuple range = asyncRangeTuple(NUMERIC_COMPLETION_INT_DRIVER, 4);
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.NumValue(2147483648.0)),
+                "test_use_int", range, luaAsyncNumericHost("2147483648"),
+                jvmAsyncNumericHost("java.lang.Long.valueOf(2147483648L)"),
+                "the out-of-range Long int completion");
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.NumValue(2147483648.0)),
+                "test_use_int", range, luaAsyncNumericHost("2147483648"),
+                jvmAsyncNumericHost("java.lang.Double.valueOf(2147483648.0)"),
+                "the out-of-range Double int completion");
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.NumValue(Double.NaN)),
+                "test_use_int", asyncRefinementTuple(
+                    NUMERIC_COMPLETION_INT_DRIVER, 4, "NaN"),
+                luaAsyncNumericHost("0/0"),
+                jvmAsyncNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
+                "the NaN Double int completion");
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.NumValue(Double.POSITIVE_INFINITY)),
+                "test_use_int", asyncRefinementTuple(
+                    NUMERIC_COMPLETION_INT_DRIVER, 4, "infinity"),
+                luaAsyncNumericHost("math.huge"),
+                jvmAsyncNumericHost(
+                    "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)"),
+                "the infinite Double int completion");
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.NumValue(1.5)),
+                "test_use_int", asyncRefinementTuple(
+                    NUMERIC_COMPLETION_INT_DRIVER, 4, "number"),
+                luaAsyncNumericHost("1.5"),
+                jvmAsyncNumericHost("java.lang.Double.valueOf(1.5)"),
+                "the fractional Double int completion");
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.StrValue("x")),
+                "test_use_int", asyncKindTuple(NUMERIC_COMPLETION_INT_DRIVER, 4,
+                    "int", "string"),
+                luaAsyncNumericHost("\"x\""),
+                jvmAsyncNumericHost("\"x\""),
+                "the string int completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The nullable-int completion drive: admitted carriers, null, and the range arm. */
+    private static void driveHostNullableIntCompletions() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad",
+            "test_use_nullable_int", Entry.ASYNC, List.of(), "async_numeric",
+            null);
+        Compiled compiled = compile(spec, NUMERIC_COMPLETION_NULLABLE_INT_DRIVER,
+            Map.of("async_numeric", NUMERIC_COMPLETION_DECLARATION));
+        try {
+            for (NumericCompletion carrier : List.of(
+                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                        "7", "java.lang.Integer.valueOf(7)"),
+                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                        "7", "java.lang.Long.valueOf(7)"),
+                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                        "7", "java.lang.Double.valueOf(7)"),
+                    new NumericCompletion(SemanticOracle.Value.NullValue.INSTANCE,
+                        "rt.__NULL", "null"))) {
+                assertAsyncCompletionSuccess(compiled, "async_numeric",
+                    numericCompletionResponder(carrier.oracle()),
+                    "test_use_nullable_int",
+                    luaAsyncNumericHost(carrier.lua()),
+                    jvmAsyncNumericHost(carrier.jvm()),
+                    "the nullable-int completion " + carrier.jvm());
+            }
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.NumValue(2147483648.0)),
+                "test_use_nullable_int",
+                asyncRangeTuple(NUMERIC_COMPLETION_NULLABLE_INT_DRIVER, 4),
+                luaAsyncNumericHost("2147483648"),
+                jvmAsyncNumericHost("java.lang.Long.valueOf(2147483648L)"),
+                "the out-of-range Long nullable-int completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The number completion drive: every numeric carrier and the kind control. */
+    private static void driveHostNumberCompletions() throws Exception {
+        Case spec = new Case("host-abi/host-async-shape-bad", "test_use_number",
+            Entry.ASYNC, List.of(), "async_numeric", null);
+        Compiled compiled = compile(spec, NUMERIC_COMPLETION_NUMBER_DRIVER,
+            Map.of("async_numeric", NUMERIC_COMPLETION_DECLARATION));
+        try {
+            for (NumericCompletion carrier : List.of(
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7.0),
+                        "7", "java.lang.Integer.valueOf(7)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7.0),
+                        "7", "java.lang.Long.valueOf(7)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7.5),
+                        "7.5", "java.lang.Double.valueOf(7.5)"))) {
+                assertAsyncCompletionSuccess(compiled, "async_numeric",
+                    numericCompletionResponder(carrier.oracle()),
+                    "test_use_number", luaAsyncNumericHost(carrier.lua()),
+                    jvmAsyncNumericHost(carrier.jvm()),
+                    "the number completion " + carrier.jvm());
+            }
+            assertAsyncCompletionFailure(compiled, "async_numeric",
+                numericCompletionResponder(
+                    new SemanticOracle.Value.StrValue("x")),
+                "test_use_number", asyncKindTuple(NUMERIC_COMPLETION_NUMBER_DRIVER,
+                    4, "number", "string"),
+                luaAsyncNumericHost("\"x\""),
+                jvmAsyncNumericHost("\"x\""),
+                "the string number completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /** The async-completion responder: every declared operation completes with the value. */
+    private static SemanticOracle.HostResponder numericCompletionResponder(
+            SemanticOracle.Value value) {
+        return new SemanticOracle.HostResponder() {
+            @Override
+            public AsyncStartOutcome startAsync(ModuleId module, String export,
+                    RuntimeDescriptor.Func descriptor,
+                    List<SemanticOracle.Value> args, String operationLabel) {
+                return new AsyncStartOutcome.Operation(operationLabel);
+            }
+
+            @Override
+            public SyncOutcome completeAsync(String operationLabel) {
+                return new SyncOutcome.Returned(value);
+            }
+        };
+    }
+
+    /** The LuaJIT numeric-completion host: one plain carrier for every export. */
+    private static String luaAsyncNumericHost(String value) {
+        return """
+            local rt = require("deal.runtime")
+
+            return {
+              fetchInt = function()
+                return rt.async_start(function() return %s end)
+              end,
+              fetchNullableInt = function()
+                return rt.async_start(function() return %s end)
+              end,
+              fetchNumber = function()
+                return rt.async_start(function() return %s end)
+              end,
+            }
+            """.formatted(value, value, value);
+    }
+
+    /** The JVM numeric-completion host: one boxed carrier expression for every export. */
+    private static String jvmAsyncNumericHost(String carrier) {
+        return """
+            import java.util.concurrent.CompletableFuture;
+
+            final class HostAsync_numeric {
+              public static Object fetchInt() {
+                return CompletableFuture.completedFuture(%s);
+              }
+              public static Object fetchNullableInt() {
+                return CompletableFuture.completedFuture(%s);
+              }
+              public static Object fetchNumber() {
+                return CompletableFuture.completedFuture(%s);
+              }
+            }
+            """.formatted(carrier, carrier, carrier);
+    }
+
+    /**
+     * One admitted numeric host completion on all three consumers: the
+     * oracle's async entry completes successfully (the body's own in-language
+     * use consumed the settled value), and both production artifacts complete
+     * without a failure event.
+     */
+    private static void assertAsyncCompletionSuccess(Compiled compiled, String stem,
+            SemanticOracle.HostResponder responder, String export, String luaHost,
+            String jvmHost, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+            compiled.project(), compiled.tables(), responder,
+            compiled.checkedProject().entryModule(), export, List.of());
+        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            what + " (oracle): the settled completion is admitted and consumed: "
+                + run.terminal());
+        String lua = luaArtifactOutput(compiled, Map.of(stem, luaHost));
+        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): the "
+            + "production artifact completes without a failure event: " + lua);
+        String jvm = jvmArtifactOutput(compiled, jvmProbe(
+            JvmBackend.classNameFor(compiled.checkedProject().entryModule().path()),
+            compiled.checkedProject().entryModule().path(), ""),
+            Map.of(stem, jvmHost));
+        check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
+            + " (jvm): the production artifact completes without a failure event: "
+            + jvm);
+    }
+
+    /**
+     * One rejected numeric host completion on all three consumers: the
+     * complete tuple is the completion row's own arm at the await expression,
+     * byte-exact and identical on the oracle, the LuaJIT artifact, and the JVM
+     * artifact.
+     */
+    private static void assertAsyncCompletionFailure(Compiled compiled, String stem,
+            SemanticOracle.HostResponder responder, String export, Tuple expected,
+            String luaHost, String jvmHost, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+            compiled.project(), compiled.tables(), responder,
+            compiled.checkedProject().entryModule(), export, List.of());
+        Tuple oracle = failureTuple(compiled, run);
+        checkEq(expected, oracle, what + " (oracle): the complete tuple");
+        Tuple lua = luaArtifactWithHost(compiled, stem, luaHost);
+        checkEq(expected, lua, what + " (luajit): the complete tuple");
+        Tuple jvm = jvmArtifactWithHost(compiled, stem, jvmHost);
+        checkEq(expected, jvm, what + " (jvm): the complete tuple");
+        if (oracle != null && lua != null) {
+            checkEq(null, firstDifferingField(oracle, lua), what
+                + ": the oracle and the LuaJIT artifact render the identical tuple");
+        }
+        if (oracle != null && jvm != null) {
+            checkEq(null, firstDifferingField(oracle, jvm), what
+                + ": the oracle and the JVM artifact render the identical tuple");
+        }
+    }
+
+    /** The completion row's signed32-range tuple (E8004) at one await origin. */
+    private static Tuple asyncRangeTuple(String driver, int line) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.INT32_RANGE, Map.of(), null, null, null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line,
+            awaitColumn(driver, line), arm.expected(), arm.actual());
+    }
+
+    /** The completion row's refinement tuple (E8001) at one await origin. */
+    private static Tuple asyncRefinementTuple(String driver, int line, String token) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.ASYNC_COMPLETION_REFINEMENT,
+            Map.of("expected", "int", "actual", token), "int", token, null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line,
+            awaitColumn(driver, line), arm.expected(), arm.actual());
+    }
+
+    /** The completion cell's kind tuple (E8001) at one await origin. */
+    private static Tuple asyncKindTuple(String driver, int line, String expected,
+            String actual) {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.ASYNC_COMPLETION_KIND, Map.of("expected", expected),
+            expected, actual, null);
+        return new Tuple(arm.code().name(), arm.message(), "app.deal", line,
+            awaitColumn(driver, line), arm.expected(), arm.actual());
+    }
+
+    /** The one-based column of the {@code await} expression in one driver line. */
+    private static int awaitColumn(String driver, int line) {
+        String text = driver.lines().toList().get(line - 1);
+        return text.indexOf("await") + 1;
     }
 
     /** The caller-owned numeric-return project (one declaration and driver). */
@@ -2170,34 +2579,34 @@ public class CanonicalProjectionParityTest {
                 new SemanticOracle.Value.NumValue(2147483648.0)), "test_drop_int",
                 rangeInt, luaNumericHost("2147483648"),
                 jvmNumericHost("java.lang.Long.valueOf(2147483648L)"),
-                "the out-of-range Long int return", rangeInt);
+                "the out-of-range Long int return");
             assertHostFailure(compiled, stem, numericReturnResponder(
                 new SemanticOracle.Value.NumValue(2147483648.0)), "test_drop_int",
                 rangeInt, luaNumericHost("2147483648"),
                 jvmNumericHost("java.lang.Double.valueOf(2147483648.0)"),
-                "the out-of-range Double int return", rangeInt);
+                "the out-of-range Double int return");
             assertHostFailure(compiled, stem, numericReturnResponder(
                 new SemanticOracle.Value.NumValue(1.5)), "test_drop_int",
                 fractionInt, luaNumericHost("1.5"),
                 jvmNumericHost("java.lang.Double.valueOf(1.5)"),
-                "the fractional Double int return", fractionInt);
+                "the fractional Double int return");
             assertHostFailure(compiled, stem, numericReturnResponder(
                 new SemanticOracle.Value.NumValue(Double.NaN)), "test_drop_int",
                 nanInt, luaNumericHost("0/0"),
                 jvmNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
-                "the NaN Double int return", nanInt);
+                "the NaN Double int return");
             assertHostFailure(compiled, stem, numericReturnResponder(
                 new SemanticOracle.Value.NumValue(Double.POSITIVE_INFINITY)),
                 "test_drop_int", infinityInt, luaNumericHost("math.huge"),
                 jvmNumericHost(
                     "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)"),
-                "the infinite Double int return", infinityInt);
+                "the infinite Double int return");
             assertHostFailure(compiled, stem, numericReturnResponder(
                 new SemanticOracle.Value.NumValue(2147483648.0)),
                 "test_drop_nullable_int", rangeNullableInt,
                 luaNumericHost("2147483648"),
                 jvmNumericHost("java.lang.Long.valueOf(2147483648L)"),
-                "the out-of-range Long nullable-int return", rangeNullableInt);
+                "the out-of-range Long nullable-int return");
             assertHostFailure(compiled, stem, numericReturnResponder(
                 new SemanticOracle.Value.NumValue(Double.NaN)),
                 "test_drop_nullable_int", hostReturnCellTuple("?int",
@@ -2205,9 +2614,7 @@ public class CanonicalProjectionParityTest {
                         FailureArmId.INT_CONVERSION_NAN).template(), "number",
                     44, 3), luaNumericHost("0/0"),
                 jvmNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
-                "the NaN Double nullable-int return",
-                hostReturnCellTuple("?int", FailureContractRegistry.arm(
-                    FailureArmId.INT_CONVERSION_NAN).template(), "number", 44, 3));
+                "the NaN Double nullable-int return");
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -2259,43 +2666,35 @@ public class CanonicalProjectionParityTest {
     private static void assertSyncPresenceFailure(Compiled compiled,
             SemanticOracle.HostResponder responder, String export, Tuple expected,
             String luaHost, String jvmHost, String what) throws Exception {
-        assertSyncPresenceFailure(compiled, responder, export, expected, luaHost,
-            jvmHost, what, expected);
-    }
-
-    private static void assertSyncPresenceFailure(Compiled compiled,
-            SemanticOracle.HostResponder responder, String export, Tuple oracleExpected,
-            String luaHost, String jvmHost, String what, Tuple jvmExpected)
-            throws Exception {
-        assertHostFailure(compiled, "sync_presence", responder, export,
-            oracleExpected, luaHost, jvmHost, what, jvmExpected);
+        assertHostFailure(compiled, "sync_presence", responder, export, expected,
+            luaHost, jvmHost, what);
     }
 
     /**
      * Drives one probe export through the oracle (under the supplied
      * responder), the LuaJIT artifact, and the JVM artifact under the named
-     * host stem, asserting each captures the expected tuple and that the
-     * consumers agree.
+     * host stem, asserting that every consumer captures the expected tuple
+     * and that the three tuples are identical: the present-null cell is the
+     * same failure on all three, never an exempted divergence.
      */
     private static void assertHostFailure(Compiled compiled, String stem,
-            SemanticOracle.HostResponder responder, String export, Tuple oracleExpected,
-            String luaHost, String jvmHost, String what, Tuple jvmExpected)
+            SemanticOracle.HostResponder responder, String export, Tuple expected,
+            String luaHost, String jvmHost, String what)
             throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
             compiled.project(), compiled.tables(), compiled.registries(), responder,
             compiled.checkedProject().entryModule(), export, List.of());
         Tuple oracle = failureTuple(compiled, run);
-        checkEq(oracleExpected, oracle, what + " (oracle): the complete tuple");
+        checkEq(expected, oracle, what + " (oracle): the complete tuple");
         Tuple lua = luaHostFailure(compiled, stem, luaHost, export);
-        checkEq(oracleExpected, lua, what + " (luajit): the complete tuple");
+        checkEq(expected, lua, what + " (luajit): the complete tuple");
         Tuple jvm = jvmHostFailure(compiled, stem, jvmHost, export);
-        checkEq(jvmExpected, jvm, what + " (jvm): the complete tuple");
+        checkEq(expected, jvm, what + " (jvm): the complete tuple");
         if (oracle != null && lua != null) {
             checkEq(null, firstDifferingField(oracle, lua), what
                 + ": the oracle and the LuaJIT artifact render the identical tuple");
         }
-        if (oracle != null && jvm != null
-                && Objects.equals(jvmExpected, oracleExpected)) {
+        if (oracle != null && jvm != null) {
             checkEq(null, firstDifferingField(oracle, jvm), what
                 + ": the oracle and the JVM artifact render the identical tuple");
         }
@@ -7337,6 +7736,7 @@ public class CanonicalProjectionParityTest {
         testHostNullCompletions();
         testHostSyncReturnPresence();
         testHostNumericReturnCarriers();
+        testHostNumericCompletions();
         testHostNullParameterCrossing();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();

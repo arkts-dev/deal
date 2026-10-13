@@ -478,6 +478,21 @@ public final class JvmSemanticEmitter {
             return bcheckArgs("JvmRuntime.bcheckCompletion", descriptor, value);
         }
 
+        /**
+         * The host-operation completion crossing of the {@code AWAIT}
+         * boundary: the raw value a host operation completed its future
+         * with crosses through {@link JvmRuntime#hostCompletion} — the
+         * closed host numeric carriers are validated and settled onto the
+         * declared production carrier — and then through the completion
+         * cell's own check, so the failing arm and its tuple are the
+         * completion cell's. Every non-host completion (a DEAL body's value,
+         * the external-entry activation's value) takes the plain
+         * {@link #bcheckCompletionArgs} route.
+         */
+        static String hostCompletionArgs(RuntimeDescriptor descriptor, String value) {
+            return bcheckArgs("JvmRuntime.hostCompletion", descriptor, value);
+        }
+
         private static String bcheckArgs(String method, RuntimeDescriptor descriptor,
                                          String value) {
             String args = javaString(descriptorText(descriptor)) + ", "
@@ -6851,9 +6866,15 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 1)).append("throw __e;\n");
             out.append(indent(indent)).append("}\n");
             // The single ASYNC_COMPLETION boundary at the await site: a
-            // host completion atomizes by its runtime carrier; a DEAL
-            // body value atomizes by the declared descriptor.
-            if (canonicalOwnerOf(payload.token()) == AsyncTokenOwner.HOST_OPERATION) {
+            // host completion atomizes by its runtime carrier and crosses
+            // through the host-completion seam (the closed host numeric
+            // carriers are validated and settled onto the declared
+            // production carrier, exactly like the synchronous host return
+            // cell); a DEAL body value atomizes by the declared descriptor
+            // and takes the plain completion check.
+            boolean hostCompletion =
+                canonicalOwnerOf(payload.token()) == AsyncTokenOwner.HOST_OPERATION;
+            if (hostCompletion) {
                 emitBoundaryStartAtom(boundary, "JvmRuntime.hostAtom(" + awaited + ")",
                     indent);
             } else {
@@ -6864,7 +6885,9 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("Object ").append(checked).append(";\n");
             out.append(indent(indent)).append("try {\n");
             out.append(indent(indent + 1)).append(checked).append(" = ")
-                .append(bcheckCompletionArgs(boundaryPayload.descriptor(), awaited))
+                .append(hostCompletion
+                    ? hostCompletionArgs(boundaryPayload.descriptor(), awaited)
+                    : bcheckCompletionArgs(boundaryPayload.descriptor(), awaited))
                 .append(";\n");
             out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
             out.append(indent(indent + 1)).append("JvmRuntime.DealError __bre = new "
