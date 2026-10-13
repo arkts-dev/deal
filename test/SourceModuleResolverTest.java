@@ -289,12 +289,12 @@ public final class SourceModuleResolverTest {
             dir.resolve("deal.json").normalize().toString(),
             dir.normalize().toString(),
             dir.normalize().toString(),
-            "1.2",
+            "1.3",
             roots,
             output,
             "luajit",
             externals,
-            "1.2",
+            "1.3",
             stdlibSurface,
             stdlibDeclarationFiles,
             deployment);
@@ -326,7 +326,7 @@ public final class SourceModuleResolverTest {
         Path dir = fixture("matrix");
         deleteTree(dir);
         writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\"src\", \"lib\", \"lib/utils\", \"decl\"],\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\"declaration\": \"decl/host.d.deal\"}\n"
@@ -361,7 +361,7 @@ public final class SourceModuleResolverTest {
             "export function customFn(): null\n");
         // Nested project: its own deal.json must be ignored (rule 5).
         writeText(dir.resolve("nestedproj/deal.json"),
-            "{\"languageVersion\": \"1.2\"}\n");
+            "{\"languageVersion\": \"1.3\"}\n");
         writeText(dir.resolve("nestedproj/mod.deal"),
             "export function nestedMod(): null {}\n");
         // Out-of-manifest sources (outside all roots and the manifest dir).
@@ -611,7 +611,7 @@ public final class SourceModuleResolverTest {
         // std/ falls back to <processCWD>/std (the repository's std/).
         Path dir = fixture("dist-surface");
         writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\"src\"]\n}\n");
         writeText(dir.resolve("src/main.deal"), "// importer\n");
         ProjectContext dist = locateOrFail(dir, "entry.deal");
@@ -651,7 +651,7 @@ public final class SourceModuleResolverTest {
         System.out.println("-- Stdlib surface: the single pinned .d.deal candidate only");
         Path dir = fixture("single-pinned");
         writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\"src\"]\n}\n");
         writeText(dir.resolve("src/main.deal"), "// importer\n");
         // Non-spec candidate shapes under the surface must never satisfy
@@ -736,7 +736,7 @@ public final class SourceModuleResolverTest {
         System.out.println("-- File-keyed externals classification via bare root search");
         Path dir = fixture("rootlanding");
         writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\".\"],\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\"declaration\": \"decl/host.d.deal\"}\n"
@@ -987,7 +987,7 @@ public final class SourceModuleResolverTest {
         System.out.println("-- Symlinked pinned stdlib file (file-keyed BuiltinModule)");
         Path dir = fixture("symlinked-stdlib");
         writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\"src\"]\n}\n");
         writeText(dir.resolve("entry.deal"), "export function main(): null {}\n");
         writeText(dir.resolve("src/main.deal"), "// importer\n");
@@ -1358,12 +1358,12 @@ public final class SourceModuleResolverTest {
                 dummyRange()));
         ProjectContext tieContext = new ProjectContext(
             dir.resolve("deal.json").normalize().toString(),
-            dir.normalize().toString(), dir.normalize().toString(), "1.2",
+            dir.normalize().toString(), dir.normalize().toString(), "1.3",
             tieRoots,
             new OutputConfigResolver.OutputRef(OutputConfigResolver.Source.MANIFEST,
                 OutputConfigResolver.Kind.MANIFEST_RELATIVE_PATH, "build/lua",
                 dir.resolve("build/lua").normalize().toString(), null),
-            "luajit", Map.of(), "1.2", null, List.of(),
+            "luajit", Map.of(), "1.3", null, List.of(),
             new ProjectDeploymentIdentity(
                 dir.resolve("deal.json").normalize().toUri().toString(),
                 "0".repeat(64)));

@@ -1012,7 +1012,7 @@ public class JsConformanceTest {
             Path entryFile = projectRoot.resolve(entryRel);
             Path outputRoot = projectRoot.resolve("out");
 
-            // 2. The production manifest: languageVersion "1.2" plus the
+            // 2. The production manifest: languageVersion "1.3" plus the
             // externals entries wiring every bare host/ import to its
             // host-fixtures declaration (the JvmConformanceTest
             // externals-wiring pattern).
@@ -1257,7 +1257,7 @@ public class JsConformanceTest {
 
     /**
      * Writes the production project manifest ({@code deal.json}) into
-     * the temp project: {@code languageVersion "1.2"} always, plus the
+     * the temp project: {@code languageVersion "1.3"} always, plus the
      * externals map wiring every bare {@code host/<name>} import to the
      * copied {@code bindings/<name>.d.deal} declaration. A missing host
      * declaration or a manifest the harness generated that does not
@@ -1268,7 +1268,7 @@ public class JsConformanceTest {
             Path projectRoot, Set<String> hostNames, Set<String> ffiImports)
             throws IOException {
         StringBuilder dealJson = new StringBuilder();
-        dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
+        dealJson.append("{\n  \"languageVersion\": \"1.3\",\n");
         dealJson.append("  \"moduleRoots\": [\".\"],\n");
         dealJson.append("  \"output\": \"out\",\n");
         dealJson.append("  \"backend\": \"js\"");

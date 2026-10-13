@@ -1475,7 +1475,7 @@ public class LexerTest {
     }
 
     // =========================================================================
-    // @deal-version directive event tests (DEAL v1.2 file directives)
+    // @deal-version directive event tests (DEAL v1.3 file directives)
     // =========================================================================
 
     static void testDealVersionDirectives() {
@@ -1483,7 +1483,7 @@ public class LexerTest {
 
         // --- @deal-version before the first non-comment token: unanchored
         // event (a file directive clears the declaration run, D3) ---
-        LexResult r = tokenize("// @deal-version 1.2\nexport class C {}");
+        LexResult r = tokenize("// @deal-version 1.3\nexport class C {}");
         assertNoDiagnostics(r.diagnostics(),
             "@deal-version before first token: no lexer diagnostics");
         List<Token> tokens = r.tokens();
@@ -1496,10 +1496,10 @@ public class LexerTest {
             CompilerDirective e = r.directiveEvents().get(0);
             check(e.name() == DirectiveName.DEAL_VERSION,
                 "name DEAL_VERSION, got " + e.name());
-            check(e.rawArgument().equals(" 1.2"),
-                "raw argument ' 1.2', got '" + e.rawArgument() + "'");
-            check(e.trimmedArgument().equals("1.2"),
-                "trimmed argument '1.2', got '" + e.trimmedArgument() + "'");
+            check(e.rawArgument().equals(" 1.3"),
+                "raw argument ' 1.3', got '" + e.rawArgument() + "'");
+            check(e.trimmedArgument().equals("1.3"),
+                "trimmed argument '1.3', got '" + e.trimmedArgument() + "'");
             check(e.precedingNonCommentTokenCount() == 0,
                 "preceding count 0");
             check(e.declarationAnchorTokenIndex() == null,
@@ -1519,7 +1519,7 @@ public class LexerTest {
         }
 
         // --- @deal-version at end of file: EOF retention, unanchored ---
-        r = tokenize("// @deal-version 1.2");
+        r = tokenize("// @deal-version 1.3");
         assertNoDiagnostics(r.diagnostics(), "@deal-version alone at EOF");
         tokens = r.tokens();
         check(tokens.size() == 1,
@@ -1535,7 +1535,7 @@ public class LexerTest {
 
         // --- @deal-version after a non-comment token: no lexer diagnostic;
         // the parser's placement check owns E1046 (D4) ---
-        r = tokenize("class A { x: int = 0; }\n// @deal-version 1.2");
+        r = tokenize("class A { x: int = 0; }\n// @deal-version 1.3");
         assertNoDiagnostics(r.diagnostics(),
             "@deal-version after a declaration: lexer emits no placement error");
         check(r.directiveEvents().size() == 1,
@@ -1549,19 +1549,19 @@ public class LexerTest {
                 "file directive stays unanchored");
         }
 
-        // --- Delimiter-free @deal-version1.2 (D2): fixed-name first match ---
-        r = tokenize("// @deal-version1.2\nexport class C {}");
-        assertNoDiagnostics(r.diagnostics(), "delimiter-free @deal-version1.2");
+        // --- Delimiter-free @deal-version1.3 (D2): fixed-name first match ---
+        r = tokenize("// @deal-version1.3\nexport class C {}");
+        assertNoDiagnostics(r.diagnostics(), "delimiter-free @deal-version1.3");
         check(r.directiveEvents().size() == 1,
             "one event, got " + r.directiveEvents().size());
         if (!r.directiveEvents().isEmpty()) {
             CompilerDirective e = r.directiveEvents().get(0);
             check(e.name() == DirectiveName.DEAL_VERSION,
                 "name DEAL_VERSION (recognized prefix never reclassified)");
-            check(e.rawArgument().equals("1.2"),
-                "raw argument '1.2', got '" + e.rawArgument() + "'");
-            check(e.trimmedArgument().equals("1.2"),
-                "trimmed argument '1.2', got '" + e.trimmedArgument() + "'");
+            check(e.rawArgument().equals("1.3"),
+                "raw argument '1.3', got '" + e.rawArgument() + "'");
+            check(e.trimmedArgument().equals("1.3"),
+                "trimmed argument '1.3', got '" + e.trimmedArgument() + "'");
         }
 
         // --- @jsonablex / @jsonable:foo / @jsonable-foo / @jsonable foo ---

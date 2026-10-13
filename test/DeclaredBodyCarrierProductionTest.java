@@ -194,7 +194,7 @@ public class DeclaredBodyCarrierProductionTest {
     }
 
     private static final String DEAL_JSON =
-        "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
+        "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n";
 
     /** The release-owned production invocation of the compile path. */

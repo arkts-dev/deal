@@ -1,7 +1,7 @@
 # Documentation
 
-Agents: read-only. Do not modify, create, or delete files here.
+Agents: the frozen specification texts are read-only. Do not modify, create, or delete
+`docs/spec-v1.2.md` or `docs/spec-v1.3.md`.
 
-Two coexisting specs, each authoritative for its own version:
-- `docs/spec-v1.2.md` — v1.2, frozen.
-- `docs/spec-v1.3.md` — v1.3, frozen.
+`docs/spec-v1.3.md` is the sole active product specification. `docs/spec-v1.2.md` is frozen
+historical text and defines no active language version, grammar, or route.

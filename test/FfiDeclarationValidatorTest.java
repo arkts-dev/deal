@@ -67,14 +67,14 @@ public class FfiDeclarationValidatorTest {
 
     private static ProjectContext contextOf(String backend) {
         return new ProjectContext(
-            "/test/deal.json", "/test", "/test", "1.2",
+            "/test/deal.json", "/test", "/test", "1.3",
             List.of(),
             new OutputConfigResolver.OutputRef(
                 OutputConfigResolver.Source.MANIFEST,
                 OutputConfigResolver.Kind.ABSOLUTE_PATH,
                 "/test/build", "/test/build", null),
             backend,
-            Map.of(), "1.2", null, List.of(), DEPLOYMENT);
+            Map.of(), "1.3", null, List.of(), DEPLOYMENT);
     }
 
     private static final class ValidatorHarness {
@@ -987,7 +987,7 @@ public class FfiDeclarationValidatorTest {
         Path proj = Files.createTempDirectory("ffi-jvm-proj");
         try {
             writeFileIn(proj, "deal.json",
-                "{\"languageVersion\": \"1.2\", \"backend\": \"jvm\","
+                "{\"languageVersion\": \"1.3\", \"backend\": \"jvm\","
                     + " \"moduleRoots\": [\"src\"]}");
             writeFileIn(proj, "src/math.d.deal", """
                 // @extern-c
@@ -1049,7 +1049,7 @@ public class FfiDeclarationValidatorTest {
         Path proj = Files.createTempDirectory("ffi-lua-proj");
         try {
             writeFileIn(proj, "deal.json",
-                "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\","
+                "{\"languageVersion\": \"1.3\", \"backend\": \"luajit\","
                     + " \"moduleRoots\": [\"src\"]}");
             writeFileIn(proj, "src/math.d.deal", """
                 // @extern-c
@@ -1119,7 +1119,7 @@ public class FfiDeclarationValidatorTest {
         Path proj = Files.createTempDirectory("ffi-bad-proj");
         try {
             writeFileIn(proj, "deal.json",
-                "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\","
+                "{\"languageVersion\": \"1.3\", \"backend\": \"luajit\","
                     + " \"moduleRoots\": [\"src\"]}");
             writeFileIn(proj, "src/math.d.deal", """
                 // @extern-c
@@ -1159,7 +1159,7 @@ public class FfiDeclarationValidatorTest {
         Path proj = Files.createTempDirectory("ffi-structfail-proj");
         try {
             writeFileIn(proj, "deal.json",
-                "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\","
+                "{\"languageVersion\": \"1.3\", \"backend\": \"luajit\","
                     + " \"moduleRoots\": [\"src\"]}");
             writeFileIn(proj, "src/math.d.deal", """
                 // @extern-c
@@ -1216,7 +1216,7 @@ public class FfiDeclarationValidatorTest {
         Path proj = Files.createTempDirectory("ffi-order-proj");
         try {
             writeFileIn(proj, "deal.json",
-                "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\","
+                "{\"languageVersion\": \"1.3\", \"backend\": \"luajit\","
                     + " \"moduleRoots\": [\"src\"]}");
             // The extern-C module imports late first, but late imports
             // early: the dependency (check) order is early(0), late(1),

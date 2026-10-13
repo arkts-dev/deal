@@ -23,10 +23,10 @@ public record FileDirectives(
     }
 
     /**
-     * The empty default: effective {@code (1,2)}, declared absent,
+     * The empty default: effective {@code (1,3)}, declared absent,
      * no extern-C flag, no ranges.
      */
     public static FileDirectives empty() {
-        return new FileDirectives(DealVersion.V1_2, null, false, null, null);
+        return new FileDirectives(DealVersion.V1_3, null, false, null, null);
     }
 }

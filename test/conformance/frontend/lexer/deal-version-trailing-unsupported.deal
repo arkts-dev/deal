@@ -1,6 +1,6 @@
-// @spec: Lexical elements — v1.2 @deal-version file directive
+// @spec: Lexical elements — v1.3 @deal-version file directive
 // @description: A trailing @deal-version with no following declaration still validates its version value; an unsupported version is rejected even though no non-comment token follows
 // @expected: compile-error E1046
-// @features: lexer, directives, deal-version, v1.2, empty-module
+// @features: lexer, directives, deal-version, v1.3, empty-module
 
-// @deal-version 1.1
+// @deal-version 1.2

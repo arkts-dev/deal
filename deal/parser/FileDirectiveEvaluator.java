@@ -31,7 +31,7 @@ final class FileDirectiveEvaluator {
 
     private boolean seenDealVersion = false;
     private DealVersion declaredDealVersion = null;
-    private final DealVersion effectiveDealVersion = new DealVersion(1, 2);
+    private final DealVersion effectiveDealVersion = new DealVersion(1, 3);
     private DiagnosticRange dealVersionRange = null;
 
     private boolean seenExternC = false;
@@ -90,7 +90,7 @@ final class FileDirectiveEvaluator {
     /**
      * One {@code @deal-version} event (D4/D7): placement before the
      * first non-comment token, at most once, exactly one non-empty
-     * version value, and numeric {@code (1,2)} compatibility. No
+     * version value, and numeric {@code (1,3)} compatibility. No
      * migration registry exists or is consulted.
      */
     private void checkDealVersion(CompilerDirective e) {
@@ -131,12 +131,12 @@ final class FileDirectiveEvaluator {
                 e.sourceRange());
             return;
         }
-        if (!parsed.equals(DealVersion.V1_2)) {
+        if (!parsed.equals(DealVersion.V1_3)) {
             error(DiagnosticCode.E1046,
                 "Unsupported DEAL version '" + arg
-                    + "': DEAL v1.2 is not source-compatible with earlier"
+                    + "': DEAL v1.3 is not source-compatible with earlier"
                     + " language versions and this compiler supports"
-                    + " only '1.2'",
+                    + " only '1.3'",
                 e.sourceRange());
             return;
         }

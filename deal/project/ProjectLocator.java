@@ -34,7 +34,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * The exact-v1.2 project locator (design source
+ * The exact-v1.3 project locator (design source
  * {@code strict-project-context-resolution-identity} D1,
  * {@code deal-v1.2-directives-and-c-ffi-declarations} D5/D10/D11,
  * {@code deal-v1.2-int32-and-bytes-architecture} D5):
@@ -52,7 +52,7 @@ import java.util.Set;
  *   <li><b>Ancestor discovery</b> — walk the symlink-resolved parent
  *       chain of the validated entry up to and including the filesystem
  *       root and collect every regular {@code deal.json} (regular after
- *       resolution). Zero → one E2010 with a v1.2-manifest note; two or
+ *       resolution). Zero → one E2010 with a v1.3-manifest note; two or
  *       more → one E2010 with candidate-path notes. The walk continues to
  *       the root even after a hit, so the multiple case reports every
  *       candidate; the compiler never guesses. Discovery E2010s use the
@@ -103,7 +103,7 @@ import java.util.Set;
  *       event (the production Lexer's structured events — never a
  *       textual scan) and whose {@code nativeLibrary} member is absent
  *       is E2010 at the entry object's value range (the extern-C
- *       nativeLibrary policy, spec {@code docs/spec-v1.2.md:1891}; a
+ *       nativeLibrary policy, spec {@code docs/spec-v1.3.md:1830}; a
  *       present-but-invalid nativeLibrary is already the
  *       {@link StrictManifestParser}/{@link ProjectConfigValidator}
  *       E2010, and a present nativeLibrary never fires the check — the
@@ -178,8 +178,8 @@ public final class ProjectLocator {
     private ProjectLocator() {
     }
 
-    /** The exact v1.2 language version every published context carries. */
-    public static final String LANGUAGE_VERSION = "1.2";
+    /** The exact v1.3 language version every published context carries. */
+    public static final String LANGUAGE_VERSION = "1.3";
 
     /** The six spec-listed stdlib modules, in pinned order. */
     public static final List<String> SPEC_STDLIB_MODULES = List.of(
@@ -397,7 +397,7 @@ public final class ProjectLocator {
                     List.of(new DiagnosticNote("stdlib module '" + overlapped
                         + "' is resolved as part of the language distribution rather"
                         + " than as a project external host module"
-                        + " (docs/spec-v1.2.md:1890)", null)));
+                        + " (docs/spec-v1.3.md:1830)", null)));
             }
             if (spec.nativeLibrary() == null
                     && declaresExternC(declarationPathText)) {
@@ -405,7 +405,7 @@ public final class ProjectLocator {
                         + "': declaration '" + declarationText
                         + "' is an extern-C declaration without a nativeLibrary:"
                         + " a C FFI entry must include nativeLibrary"
-                        + " (docs/spec-v1.2.md:1891)",
+                        + " (docs/spec-v1.3.md:1830)",
                     sourceRange(manifestPathText, spec.sourceRange()), null);
             }
             completedExternals.add(new ExternalEntry(spec.rawImportSpecifier(),
@@ -505,7 +505,7 @@ public final class ProjectLocator {
 
     /**
      * The pinned discovery E2010: the canonical synthetic range anchored
-     * at the entry-file value plus the v1.2-manifest note (zero
+     * at the entry-file value plus the v1.3-manifest note (zero
      * candidates) or one candidate-path note per discovered manifest
      * (multiple candidates), nearest ancestor first.
      */
@@ -517,8 +517,8 @@ public final class ProjectLocator {
         if (candidates.isEmpty()) {
             message = "deal: no deal.json project manifest found among the ancestor"
                 + " directories of entry file '" + describe(entryFile) + "'";
-            notes.add(new DiagnosticNote("a v1.2 project requires exactly one ancestor"
-                + " deal.json with languageVersion \"1.2\"", null));
+            notes.add(new DiagnosticNote("a v1.3 project requires exactly one ancestor"
+                + " deal.json with languageVersion \"1.3\"", null));
         } else {
             message = "deal: multiple deal.json project manifests found among the"
                 + " ancestor directories of entry file '" + describe(entryFile)

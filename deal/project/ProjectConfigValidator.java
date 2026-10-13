@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The post-walk field-schema validation of the strict v1.2 manifest
+ * The post-walk field-schema validation of the strict v1.3 manifest
  * (design source {@code strict-project-context-resolution-identity} D2,
  * {@code deal-v1.2-directives-and-c-ffi-declarations} D5).
  *
@@ -19,7 +19,7 @@ import java.util.Map;
  *
  * <ol>
  *   <li>{@code languageVersion} — required, exactly the JSON string
- *       {@code "1.2"}; missing → failure at the enclosing root-object
+ *       {@code "1.3"}; missing → failure at the enclosing root-object
  *       range; empty input → the pinned document-start zero-length SOURCE
  *       range {@code (1,1,1,1,0,0)}; wrong value/type → the member value
  *       range;</li>
@@ -35,8 +35,8 @@ import java.util.Map;
  *   <li>{@code output} — a non-empty, scalar-valid, NUL-free string
  *       (value-level only; classification and conversion are the output
  *       resolver's duty);</li>
- *   <li>{@code stdlib} — when present exactly {@code "1.2"}, otherwise
- *       defaults to {@code "1.2"};</li>
+ *   <li>{@code stdlib} — when present exactly {@code "1.3"}, otherwise
+ *       defaults to {@code "1.3"};</li>
  *   <li>{@code dependencies} — when present must be a JSON object;
  *       contents are preserved opaquely (structural strictness was
  *       already enforced by the walk);</li>
@@ -88,7 +88,7 @@ public final class ProjectConfigValidator {
      *
      */
     public static Outcome validate(StrictJsonDocument document) {
-        // 1. languageVersion — required, exactly the JSON string "1.2".
+        // 1. languageVersion — required, exactly the JSON string "1.3".
         if (document.root() == null) {
             return failure("deal.json: missing required member 'languageVersion'",
                 DOCUMENT_START);
@@ -104,11 +104,11 @@ public final class ProjectConfigValidator {
                 rangeOf(document, rootObj));
         }
         if (!(languageVersionValue instanceof StrictJsonValue.StringVal languageVersion)) {
-            return failure("deal.json: 'languageVersion' must be the JSON string \"1.2\"",
+            return failure("deal.json: 'languageVersion' must be the JSON string \"1.3\"",
                 rangeOf(document, languageVersionValue));
         }
-        if (!"1.2".equals(languageVersion.value())) {
-            return failure("deal.json: 'languageVersion' must be exactly \"1.2\", got: '"
+        if (!"1.3".equals(languageVersion.value())) {
+            return failure("deal.json: 'languageVersion' must be exactly \"1.3\", got: '"
                     + languageVersion.value() + "'",
                 rangeOf(document, languageVersionValue));
         }
@@ -178,16 +178,16 @@ public final class ProjectConfigValidator {
             output = new ManifestString(outputString.value(), rangeOf(document, outputValue));
         }
 
-        // 5. stdlib — exactly "1.2"; absence defaults to "1.2".
-        String stdlib = "1.2";
+        // 5. stdlib — exactly "1.3"; absence defaults to "1.3".
+        String stdlib = "1.3";
         StrictJsonValue stdlibValue = rootMembers.get("stdlib");
         if (stdlibValue != null) {
             if (!(stdlibValue instanceof StrictJsonValue.StringVal stdlibString)) {
                 return failure("deal.json: 'stdlib' must be a string",
                     rangeOf(document, stdlibValue));
             }
-            if (!"1.2".equals(stdlibString.value())) {
-                return failure("deal.json: 'stdlib' must be exactly \"1.2\", got: '"
+            if (!"1.3".equals(stdlibString.value())) {
+                return failure("deal.json: 'stdlib' must be exactly \"1.3\", got: '"
                         + stdlibString.value() + "'",
                     rangeOf(document, stdlibValue));
             }

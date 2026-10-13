@@ -2,7 +2,7 @@
   "version": 1,
   "feature": "directives",
   "spec": "Declaration metadata versioning — older versions are E1046",
-  "description": "@deal-version 9.9 is rejected as E1046 (exact (1,2) contract)",
+  "description": "@deal-version 9.9 is rejected as E1046 (exact (1,3) contract)",
   "expected": { "compile-error": "E1046" },
   "backends": ["luajit", "jvm"],
   "invocation": "compile-only",

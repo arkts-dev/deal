@@ -25,7 +25,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * The strict, total, duplicate-safe, closed v1.2 manifest parser (design
+ * The strict, total, duplicate-safe, closed v1.3 manifest parser (design
  * source {@code strict-project-context-resolution-identity} D2).
  *
  * <p>Input contract: the parser receives <b>strictly UTF-8-decoded text

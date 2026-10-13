@@ -581,7 +581,7 @@ public class FailClosedGuardRetargetingTest {
 
     private static final String MANIFEST = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"

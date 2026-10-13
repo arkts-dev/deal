@@ -789,7 +789,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String EXTERNALS_HEADER = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s",
@@ -801,7 +801,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String PLAIN_MANIFEST = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s"

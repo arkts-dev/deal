@@ -247,7 +247,7 @@ public class DefaultSemanticSerializerTest {
 
     private static final String MANIFEST = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "backend": "luajit",
           "output": "build"
@@ -1932,7 +1932,7 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", """
                 {
-                  "languageVersion": "1.2",
+                  "languageVersion": "1.3",
                   "moduleRoots": ["src"],
                   "backend": "luajit",
                   "output": "build",
@@ -2157,7 +2157,7 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", """
                 {
-                  "languageVersion": "1.2",
+                  "languageVersion": "1.3",
                   "moduleRoots": ["src"],
                   "backend": "luajit",
                   "output": "build",

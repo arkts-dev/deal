@@ -337,7 +337,7 @@ public class JsonableHelperProductionDriveTest {
                 materialized);
         }
         String entryStem = moduleNameOf(entryCorpus.getFileName().toString());
-        String dealJson = "{\n  \"languageVersion\": \"1.2\",\n"
+        String dealJson = "{\n  \"languageVersion\": \"1.3\",\n"
             + "  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n"
             + "  \"backend\": \"" + (target == Target.JVM ? "jvm" : "luajit")
@@ -1793,7 +1793,7 @@ public class JsonableHelperProductionDriveTest {
                 + "export function main(): null {\n  return null;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(root.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
+                "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n",
                 StandardCharsets.UTF_8);
             Project project = new Project(root, src, src.resolve("plain.deal"), "plain",
@@ -1830,7 +1830,7 @@ public class JsonableHelperProductionDriveTest {
                     + "export function main(): null {\n  return null;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(missing.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
+                "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n",
                 StandardCharsets.UTF_8);
             Project project = new Project(missing, src, src.resolve("app.deal"), "app",
@@ -2110,7 +2110,7 @@ public class JsonableHelperProductionDriveTest {
                             + "export function main(): null {\n  return null;\n}\n",
                         StandardCharsets.UTF_8);
                     Files.writeString(entryRoot.resolve("deal.json"),
-                        "{\n  \"languageVersion\": \"1.2\",\n"
+                        "{\n  \"languageVersion\": \"1.3\",\n"
                             + "  \"moduleRoots\": [\"src\"],\n"
                             + "  \"output\": \"out\",\n"
                             + "  \"backend\": \""
@@ -2211,7 +2211,7 @@ public class JsonableHelperProductionDriveTest {
         Path entryFile = srcRoot.resolve(moduleName + ".deal");
         Files.writeString(entryFile, source, StandardCharsets.UTF_8);
         Files.writeString(root.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n  \"output\": \"out\",\n"
                 + "  \"backend\": \"" + (target == Target.JVM ? "jvm" : "luajit")
                 + "\"\n}\n", StandardCharsets.UTF_8);

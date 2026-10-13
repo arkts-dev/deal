@@ -8,14 +8,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The strictly parsed exact-v1.2 project manifest (design source
+ * The strictly parsed exact-v1.3 project manifest (design source
  * {@code strict-project-context-resolution-identity} D2,
  * {@code deal-v1.2-directives-and-c-ffi-declarations} D5).
  *
  * <p>Published by {@link StrictManifestParser} after the strict walk and
  * {@link ProjectConfigValidator}'s post-walk validations. Absent fields
  * carry their pinned parser-level defaults after validation:
- * {@code backend} is {@code "luajit"}, {@code stdlib} is {@code "1.2"},
+ * {@code backend} is {@code "luajit"}, {@code stdlib} is {@code "1.3"},
  * {@code moduleRoots} is the empty list (no implicit root), and
  * {@code externals} is the empty map. {@code output} and
  * {@code dependencies} remain absent (null) — the effective output path

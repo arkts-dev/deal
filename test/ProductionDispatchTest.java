@@ -87,7 +87,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"
@@ -96,7 +96,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JVM = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "jvm"
@@ -543,7 +543,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JS = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "js"
@@ -552,7 +552,7 @@ public class ProductionDispatchTest {
 
     private static final String HOST_DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit",
@@ -682,7 +682,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_NEWLINE_ROOT = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src\\nline"],
           "output": "out",
           "backend": "luajit"
@@ -696,7 +696,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_UNICODE_ROOT = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src\\\\u000aline"],
           "output": "out",
           "backend": "luajit"
@@ -711,7 +711,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_CONTROL_ROOT = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src\\u0007\\u000b\\u000c\\u001fline"],
           "output": "out",
           "backend": "luajit"
@@ -1385,8 +1385,8 @@ public class ProductionDispatchTest {
                 try {
                     write(project, "deal.json", """
                         {
-                          "languageVersion": "1.2",
-                          "stdlib": "1.2",
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
                           "moduleRoots": ["src"],
                           "dependencies": {},
                           "externals": {},
@@ -1507,8 +1507,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -1611,8 +1611,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -1798,8 +1798,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -1926,8 +1926,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -2002,8 +2002,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -2136,8 +2136,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -2250,8 +2250,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -2399,8 +2399,8 @@ public class ProductionDispatchTest {
         try {
             write(root, "deal.json", """
                 {
-                  "languageVersion": "1.2",
-                  "stdlib": "1.2",
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -2937,7 +2937,7 @@ public class ProductionDispatchTest {
         try {
             write(externC, "deal.json", """
                 {
-                  "languageVersion": "1.2",
+                  "languageVersion": "1.3",
                   "moduleRoots": ["src"],
                   "output": "out",
                   "backend": "luajit",
@@ -5830,7 +5830,7 @@ public class ProductionDispatchTest {
         try {
             write(js, "deal.json", """
                 {
-                  "languageVersion": "1.2",
+                  "languageVersion": "1.3",
                   "moduleRoots": ["src"],
                   "output": "out",
                   "backend": "js"

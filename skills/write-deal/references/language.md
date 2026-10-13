@@ -1,7 +1,7 @@
 # DEAL language guide
 
 Practical guide, not a specification. Authoritative source:
-[DEAL v1.2](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.2.md).
+[DEAL v1.3](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.3.md).
 
 ## Syntax
 

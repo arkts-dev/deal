@@ -2390,7 +2390,7 @@ public class CheckerTest {
                 Path probeSrc = root.resolve("probe_" + names[p] + "/src");
                 Files.createDirectories(probeSrc);
                 Files.writeString(root.resolve("probe_" + names[p] + "/deal.json"),
-                    "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                    "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                         + "\"moduleRoots\":[\"src\"]}\n");
                 Path probeEntry = probeSrc.resolve("main.deal");
                 Files.writeString(probeEntry,
@@ -2433,7 +2433,7 @@ public class CheckerTest {
             Path controlSrc = root.resolve("control/src");
             Files.createDirectories(controlSrc);
             Files.writeString(root.resolve("control/deal.json"),
-                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Path controlEntry = controlSrc.resolve("main.deal");
             Files.writeString(controlEntry,
@@ -2576,7 +2576,7 @@ public class CheckerTest {
                 Files.createDirectories(srcDir);
                 Files.writeString(root.resolve("probe_" + names[p]
                     + "/deal.json"),
-                    "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                    "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                         + "\"moduleRoots\":[\"src\"]}\n");
                 Path entry = srcDir.resolve("main.deal");
                 Files.writeString(entry, probes[p]);
@@ -2638,7 +2638,7 @@ public class CheckerTest {
             Path controlSrc = root.resolve("control/src");
             Files.createDirectories(controlSrc);
             Files.writeString(root.resolve("control/deal.json"),
-                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Path controlEntry = controlSrc.resolve("main.deal");
             Files.writeString(controlEntry,
@@ -2724,7 +2724,7 @@ public class CheckerTest {
             Path probeSrc = root.resolve("probe/src");
             Files.createDirectories(probeSrc);
             Files.writeString(root.resolve("probe/deal.json"),
-                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Path probeEntry = probeSrc.resolve("main.deal");
             Files.writeString(probeEntry,
@@ -2767,7 +2767,7 @@ public class CheckerTest {
             Path controlSrc = root.resolve("control/src");
             Files.createDirectories(controlSrc);
             Files.writeString(root.resolve("control/deal.json"),
-                "{\"languageVersion\":\"1.2\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Path controlEntry = controlSrc.resolve("main.deal");
             Files.writeString(controlEntry,
@@ -4578,7 +4578,7 @@ public class CheckerTest {
         }
         try {
             Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\":\"1.2\",\"backend\":\"luajit\","
+                "{\"languageVersion\":\"1.3\",\"backend\":\"luajit\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.createDirectories(root.resolve("src"));
             // z is a's import dependency: buildCheckOrder is

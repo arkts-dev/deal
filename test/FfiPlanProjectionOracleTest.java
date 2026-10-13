@@ -552,7 +552,7 @@ public class FfiPlanProjectionOracleTest {
 
     private static final String COUNTING_MANIFEST = """
         {
-          "languageVersion": "1.2",
+          "languageVersion": "1.3",
           "moduleRoots": ["src"],
           "output": "build/lua",
           "backend": "luajit",

@@ -539,7 +539,7 @@ public final class CorpusFfi {
             config.toString(),
             ffiDirText,
             ffiDirText,
-            "1.2",
+            "1.3",
             List.of(new ConfiguredModuleRoot("ffi", ffiDirText, null)),
             new OutputConfigResolver.OutputRef(
                 OutputConfigResolver.Source.MANIFEST,
@@ -547,7 +547,7 @@ public final class CorpusFfi {
                 ffiDirText, ffiDirText, null),
             "luajit",
             Map.of(wiring.rawImportSpecifier(), external),
-            "1.2",
+            "1.3",
             null,
             List.of(),
             deployment);

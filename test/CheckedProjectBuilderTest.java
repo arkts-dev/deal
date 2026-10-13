@@ -793,7 +793,7 @@ public class CheckedProjectBuilderTest {
                     + "export class D { w: boolean = false; }\n"
                     + "export function main(): null { return null; }\n");
             Files.writeString(tmp.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.2\",\n"
+                "{\n  \"languageVersion\": \"1.3\",\n"
                     + "  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"build\",\n"
                     + "  \"backend\": \"luajit\",\n"
@@ -906,7 +906,7 @@ public class CheckedProjectBuilderTest {
                 + "import * as time from \"std/time\";\n"
                 + "export function main(): null { return null; }\n");
         Files.writeString(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n"
                 + "  \"output\": \"build\",\n"
                 + "  \"backend\": \"luajit\",\n"
@@ -1064,7 +1064,7 @@ public class CheckedProjectBuilderTest {
                 + "export class C { v: int = 0; }\n"
                 + "export function main(): null { return null; }\n");
         Files.writeString(tmp.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n"
+            "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"moduleRoots\": [\"src2\"],\n"
                 + "  \"output\": \"build2\",\n"
                 + "  \"backend\": \"luajit\",\n"

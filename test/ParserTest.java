@@ -226,7 +226,7 @@ public class ParserTest {
         testExportAsyncFunction();
         testAsyncExprStatement();
 
-        // @deal-version file directive value validation (DEAL v1.2)
+        // @deal-version file directive value validation (DEAL v1.3)
         testDealVersionDirectives();
 
         testExternCWrongFileKind();
@@ -247,22 +247,22 @@ public class ParserTest {
     }
 
     // =========================================================================
-    // @deal-version file directive value validation (DEAL v1.2)
+    // @deal-version file directive value validation (DEAL v1.3)
     // =========================================================================
 
     static void testDealVersionDirectives() {
         System.out.println("-- @deal-version Directive Value Tests --");
 
-        // A valid 1.2 file directive compiles without diagnostics.
-        ParseResult r = parse("// @deal-version 1.2\nexport function probe(): null { return null; }");
-        assertNoParseErrors(r, "@deal-version 1.2 accepted");
+        // A valid 1.3 file directive compiles without diagnostics.
+        ParseResult r = parse("// @deal-version 1.3\nexport function probe(): null { return null; }");
+        assertNoParseErrors(r, "@deal-version 1.3 accepted");
         check(r.program().fileDirectives().declaredDealVersion() != null
                 && r.program().fileDirectives().declaredDealVersion()
-                    .equals(new DealVersion(1, 2)),
-            "declared version (1,2) recorded");
+                    .equals(new DealVersion(1, 3)),
+            "declared version (1,3) recorded");
         check(r.program().fileDirectives().effectiveDealVersion()
-                .equals(new DealVersion(1, 2)),
-            "effective version (1,2)");
+                .equals(new DealVersion(1, 3)),
+            "effective version (1,3)");
         check(r.program().fileDirectives().dealVersionRange() != null
                 && r.program().fileDirectives().dealVersionRange()
                     .startScalarOffset() == 0
@@ -270,28 +270,28 @@ public class ParserTest {
                     .endScalarOffset() == 20,
             "dealVersionRange = the first event's complete comment range (0,20)");
 
-        // Omission: declared absent, effective (1,2).
+        // Omission: declared absent, effective (1,3).
         r = parse("export function probe(): null { return null; }");
         assertNoParseErrors(r, "omission accepted");
         check(r.program().fileDirectives().declaredDealVersion() == null,
             "declared version absent on omission");
         check(r.program().fileDirectives().effectiveDealVersion()
-                .equals(new DealVersion(1, 2)),
-            "effective version defaults to (1,2)");
+                .equals(new DealVersion(1, 3)),
+            "effective version defaults to (1,3)");
 
-        // Numeric equivalence: 01.02 and 1.02 succeed (D7).
-        r = parse("// @deal-version 01.02\nclass A { x: int = 0; }");
-        assertNoParseErrors(r, "@deal-version 01.02 accepted");
+        // Numeric equivalence: 01.03 and 1.03 succeed (D7).
+        r = parse("// @deal-version 01.03\nclass A { x: int = 0; }");
+        assertNoParseErrors(r, "@deal-version 01.03 accepted");
         check(r.program().fileDirectives().declaredDealVersion() != null
                 && r.program().fileDirectives().declaredDealVersion()
-                    .equals(new DealVersion(1, 2)),
-            "01.02 parses to (1,2)");
-        r = parse("// @deal-version 1.02\nclass A { x: int = 0; }");
-        assertNoParseErrors(r, "@deal-version 1.02 accepted");
+                    .equals(new DealVersion(1, 3)),
+            "01.03 parses to (1,3)");
+        r = parse("// @deal-version 1.03\nclass A { x: int = 0; }");
+        assertNoParseErrors(r, "@deal-version 1.03 accepted");
 
-        // Delimiter-free @deal-version1.2 (D2/D7).
-        r = parse("// @deal-version1.2\nclass A { x: int = 0; }");
-        assertNoParseErrors(r, "delimiter-free @deal-version1.2 accepted");
+        // Delimiter-free @deal-version1.3 (D2/D7).
+        r = parse("// @deal-version1.3\nclass A { x: int = 0; }");
+        assertNoParseErrors(r, "delimiter-free @deal-version1.3 accepted");
 
         // Empty argument is E1045 at the complete comment range.
         r = parse("// @deal-version\nclass A { x: int = 0; }");
@@ -308,19 +308,19 @@ public class ParserTest {
         }
 
         // Multi-value argument is E1045.
-        r = parse("// @deal-version 1.2 1.3\nclass A { x: int = 0; }");
+        r = parse("// @deal-version 1.3 1.4\nclass A { x: int = 0; }");
         assertParseError(r, "E1045", "@deal-version multi-value rejected");
 
-        // Older language versions are rejected: DEAL v1.2 is not
+        // Older language versions are rejected: DEAL v1.3 is not
         // source-compatible with earlier versions (E1046).
-        r = parse("// @deal-version 1.1\nclass A { x: int = 0; }");
-        assertParseError(r, "E1046", "@deal-version 1.1 rejected");
+        r = parse("// @deal-version 1.2\nclass A { x: int = 0; }");
+        assertParseError(r, "E1046", "@deal-version 1.2 rejected");
 
         // E1046 anchors at the complete directive comment range: line 1,
         // column 1, offsets (0,20) — the comment line
-        // "// @deal-version 1.1" is 20 scalars.
+        // "// @deal-version 1.2" is 20 scalars.
         CompilerDiagnostic e1046 = diagOf(r, "E1046");
-        check(e1046 != null, "E1046 diagnostic present for 1.1");
+        check(e1046 != null, "E1046 diagnostic present for 1.2");
         if (e1046 != null) {
             check(e1046.range().origin() == RangeOrigin.SOURCE,
                 "E1046 range must be SOURCE, got " + e1046.range().origin());
@@ -349,8 +349,8 @@ public class ParserTest {
 
         // A trailing directive with no following declaration still
         // validates its value (E1046 at the complete comment range).
-        r = parse("// @deal-version 1.1");
-        assertParseError(r, "E1046", "trailing @deal-version 1.1 rejected");
+        r = parse("// @deal-version 1.2");
+        assertParseError(r, "E1046", "trailing @deal-version 1.2 rejected");
         CompilerDiagnostic trailing = diagOf(r, "E1046");
         if (trailing != null) {
             check(trailing.range().origin() == RangeOrigin.SOURCE
@@ -362,15 +362,15 @@ public class ParserTest {
         }
 
         // A trailing valid directive produces no diagnostics.
-        r = parse("// @deal-version 1.2");
-        assertNoParseErrors(r, "trailing @deal-version 1.2 accepted");
+        r = parse("// @deal-version 1.3");
+        assertNoParseErrors(r, "trailing @deal-version 1.3 accepted");
 
         // Placement after the first non-comment token is E1046.
-        r = parse("class A { x: int = 0; }\n// @deal-version 1.2");
+        r = parse("class A { x: int = 0; }\n// @deal-version 1.3");
         assertParseError(r, "E1046", "post-token @deal-version rejected");
 
         // Duplicate is E1046 at the duplicate's complete comment range.
-        r = parse("// @deal-version 1.2\n// @deal-version 1.2");
+        r = parse("// @deal-version 1.3\n// @deal-version 1.3");
         assertParseError(r, "E1046", "duplicate @deal-version rejected");
         CompilerDiagnostic dup = r.diagnostics().stream()
                 .filter(d -> d.code().equals("E1046")
@@ -2826,9 +2826,9 @@ public class ParserTest {
                     + e1044.notes());
         }
 
-        // // @deal-version 1.2 inside an interpolation: E1046 (placement —
+        // // @deal-version 1.3 inside an interpolation: E1046 (placement —
         // the truthful preceding count is at least 1).
-        String src3 = "let s = `${ // @deal-version 1.2\n x}`;";
+        String src3 = "let s = `${ // @deal-version 1.3\n x}`;";
         ParseResult r3 = parse(src3);
         CompilerDiagnostic e1046 = diagOf(r3, "E1046");
         check(e1046 != null,

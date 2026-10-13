@@ -3837,7 +3837,7 @@ public class BytesCoverageTest {
                 + "\" } }";
         }
         Files.writeString(root.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\".\"],\n"
+            "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\".\"],\n"
                 + "  \"output\": \"out\",\n  \"backend\": \"" + backend + "\""
                 + externals + "\n}\n", StandardCharsets.UTF_8);
         String modulePath = corpusRel.substring(0,
@@ -3924,7 +3924,7 @@ public class BytesCoverageTest {
                     Files.writeString(entry, negative ? FIRST_CLASS_BYTES_NEGATIVE_SOURCE
                         : FIRST_CLASS_BYTES_ALLOCATE_SOURCE, StandardCharsets.UTF_8);
                     Files.writeString(root.resolve("deal.json"),
-                        "{\"languageVersion\":\"1.2\",\"moduleRoots\":[\"src\"],"
+                        "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"src\"],"
                             + "\"output\":\"out\",\"backend\":\"" + backend + "\"}",
                         StandardCharsets.UTF_8);
                     ManifestProject project = new ManifestProject(root, entry,

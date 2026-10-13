@@ -116,20 +116,20 @@ public class DirectiveTest {
             check(!r.directiveEvents().isEmpty()
                     && r.directiveEvents().get(0).name() == DirectiveName.EXTERN_C,
                 "extern-c under " + esc(terminator));
-            r = lex("// @deal-version 1.2" + suffix);
+            r = lex("// @deal-version 1.3" + suffix);
             check(!r.directiveEvents().isEmpty()
                     && r.directiveEvents().get(0).name() == DirectiveName.DEAL_VERSION
-                    && r.directiveEvents().get(0).trimmedArgument().equals("1.2")
-                    && r.directiveEvents().get(0).rawArgument().equals(" 1.2"),
+                    && r.directiveEvents().get(0).trimmedArgument().equals("1.3")
+                    && r.directiveEvents().get(0).rawArgument().equals(" 1.3"),
                 "deal-version raw/trimmed under " + esc(terminator));
         }
 
-        // Delimiter-free @deal-version1.2 (D2).
-        LexResult r = lex("// @deal-version1.2\nexport class C {}");
+        // Delimiter-free @deal-version1.3 (D2).
+        LexResult r = lex("// @deal-version1.3\nexport class C {}");
         check(!r.directiveEvents().isEmpty()
                 && r.directiveEvents().get(0).name() == DirectiveName.DEAL_VERSION
-                && r.directiveEvents().get(0).trimmedArgument().equals("1.2"),
-            "delimiter-free @deal-version1.2");
+                && r.directiveEvents().get(0).trimmedArgument().equals("1.3"),
+            "delimiter-free @deal-version1.3");
 
         // Recognized prefixes are never reclassified as unknown: the four
         // forbidden-argument forms parse to jsonable + argument, and the
@@ -246,7 +246,7 @@ public class DirectiveTest {
             "ordinary comment breaks the run without anchoring");
 
         // File directive breaks without anchoring (and stays unanchored).
-        r = lex("// @jsonable\n// @deal-version 1.2\nexport class C {}");
+        r = lex("// @jsonable\n// @deal-version 1.3\nexport class C {}");
         check(r.directiveEvents().size() == 2
                 && r.directiveEvents().get(0).declarationAnchorTokenIndex() == null
                 && r.directiveEvents().get(1).declarationAnchorTokenIndex() == null,
@@ -433,7 +433,7 @@ public class DirectiveTest {
     static void testVersionContract() {
         System.out.println("-- Declaration-version contract (D7) --");
 
-        for (String value : new String[]{"1.2", "01.02", "1.02"}) {
+        for (String value : new String[]{"1.3", "01.03", "1.03"}) {
             ParseResult r = parse("// @deal-version " + value
                 + "\nexport class C { x: int = 0; }");
             boolean clean = r.diagnostics().isEmpty();
@@ -441,8 +441,8 @@ public class DirectiveTest {
                 "@deal-version " + value + " accepted: " + r.diagnostics());
             check(r.program().fileDirectives().declaredDealVersion() != null
                     && r.program().fileDirectives().declaredDealVersion()
-                        .equals(new DealVersion(1, 2)),
-                value + " parses to (1,2)");
+                        .equals(new DealVersion(1, 3)),
+                value + " parses to (1,3)");
         }
 
         // Omission.
@@ -450,13 +450,13 @@ public class DirectiveTest {
         check(r.diagnostics().isEmpty() && r.program().fileDirectives()
                 .declaredDealVersion() == null
                 && r.program().fileDirectives().effectiveDealVersion()
-                    .equals(new DealVersion(1, 2)),
-            "omission defaults to effective (1,2)");
+                    .equals(new DealVersion(1, 3)),
+            "omission defaults to effective (1,3)");
 
         // Empty / multi-value → E1045.
         check(hasError(parse("// @deal-version\nexport class C { x: int = 0; }"),
             "E1045"), "empty argument → E1045");
-        check(hasError(parse("// @deal-version 1.2 1.3\nexport class C { x: int = 0; }"),
+        check(hasError(parse("// @deal-version 1.3 1.4\nexport class C { x: int = 0; }"),
             "E1045"), "multi-value argument → E1045");
 
         // Malformed → E1046.
@@ -468,20 +468,20 @@ public class DirectiveTest {
         }
 
         // Older/newer → E1046.
-        for (String bad : new String[]{"1.0", "1.1", "0.9", "1.3", "2.0"}) {
+        for (String bad : new String[]{"1.0", "1.1", "1.2", "0.9", "2.0"}) {
             check(hasError(parse("// @deal-version " + bad
                     + "\nexport class C { x: int = 0; }"), "E1046"),
                 "unsupported '" + bad + "' → E1046");
         }
 
         // Duplicate and post-token → E1046.
-        check(hasError(parse("// @deal-version 1.2\n// @deal-version 1.2"),
+        check(hasError(parse("// @deal-version 1.3\n// @deal-version 1.3"),
             "E1046"), "duplicate → E1046");
-        check(hasError(parse("class A { x: int = 0; }\n// @deal-version 1.2"),
+        check(hasError(parse("class A { x: int = 0; }\n// @deal-version 1.3"),
             "E1046"), "post-token → E1046");
 
-        check(hasError(parse("// @deal-version 1.1\nexport class C { x: int = 0; }"),
-            "E1046"), "1.1 is never migrated");
+        check(hasError(parse("// @deal-version 1.2\nexport class C { x: int = 0; }"),
+            "E1046"), "1.2 is never migrated");
 
         // Extern-c file-directive failures.
         check(hasError(parse("// @extern-c\nexport class C { x: int = 0; }"),
@@ -552,7 +552,7 @@ public class DirectiveTest {
 
         // @deal-version inside an interpolation: E1046 placement with a
         // truthful preceding count.
-        ParseResult r3 = parse("let s = `${ // @deal-version 1.2\n x}`;");
+        ParseResult r3 = parse("let s = `${ // @deal-version 1.3\n x}`;");
         check(hasError(r3, "E1046"),
             "embedded @deal-version → E1046 placement");
 
@@ -620,7 +620,7 @@ public class DirectiveTest {
             Path srcDir = tmp.resolve("src");
             Files.createDirectories(srcDir);
             Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.2\"}\n");
+                "{\"languageVersion\": \"1.3\"}\n");
             Files.writeString(srcDir.resolve("main.deal"),
                 "// @spec: Lexical elements — comment semantics\n"
                     + "export function main(): null { return null; }\n");
@@ -661,7 +661,7 @@ public class DirectiveTest {
     }
 
     // =========================================================================
-    // Production C FFI manifest policy (docs/spec-v1.2.md:1891)
+    // Production C FFI manifest policy (docs/spec-v1.3.md:1830)
     // =========================================================================
 
     static void testProductionCffiManifestPolicy() throws Exception {
@@ -675,7 +675,7 @@ public class DirectiveTest {
             // entry declares with nativeLibrary is rejected with exactly
             // one E2010 at the import span.
             Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"]}\n");
+                "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\".\"]}\n");
             Files.writeString(tmp.resolve("ffi_math.d.deal"),
                 "// @extern-c\n\nexport function add(a: int, b: int): int;\n");
             Path entry = tmp.resolve("main.deal");
@@ -713,7 +713,7 @@ public class DirectiveTest {
             // externals entry carrying nativeLibrary compiles with no
             // E2010 (the manifest policy's passing shape).
             Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"],"
+                "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\".\"],"
                     + " \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi_math.d.deal\", \"nativeLibrary\": \"math\"}}}\n");
             Files.writeString(entry,
@@ -770,7 +770,7 @@ public class DirectiveTest {
             }
 
             Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"],"
+                "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\".\"],"
                     + " \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi_math.d.deal\"}}}\n");
             ProjectLocator.LocateResult unbacked = ProjectLocator.locate(
