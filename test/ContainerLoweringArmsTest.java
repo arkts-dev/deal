@@ -48,6 +48,7 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -69,6 +70,7 @@ import deal.semantic.ir.ContainerOpsExecutor.BoundaryCheckRunner;
 import deal.semantic.ir.ContainerOpsExecutor.BoundaryResult;
 import deal.semantic.ir.ContainerOpsExecutor.Outcome;
 import deal.semantic.ir.ContainerOpsExecutor.Value;
+import deal.semantic.ir.DiagnosticOriginCarrier;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailureContractRegistry;
@@ -1948,6 +1950,91 @@ public class ContainerLoweringArmsTest {
         }
     }
 
+    /**
+     * ISSUE-0750 (design D2): the four source-bearing lowerer rejection
+     * signals implement the common {@link DiagnosticOriginCarrier}
+     * contract, so a consumer of that interface obtains the supplied
+     * span's own range without the private class switch; the no-span
+     * constructors stay genuinely originless, and a known-file offsetless
+     * span stays SYNTHETIC at its own file.
+     */
+    static void testLoweringSignalCarrierContract() {
+        System.out.println("-- the lowerer rejection signals implement the common "
+            + "DiagnosticOriginCarrier contract --");
+
+        Span span = new Span("carrier.deal", 2, 3, 2, 7, 10, 15);
+        DiagnosticRange expected = span.range();
+        List<RuntimeException> sourceSignals = List.of(
+            new SemanticLowerer.ConstructUnlowered("a construct", span),
+            new SemanticLowerer.ClassDefaultCapture("outside", span),
+            new SemanticLowerer.RetainedAbiDeferred("mod.C", span),
+            new SemanticLowerer.IntLiteralOutOfRange(2147483648L, span));
+        for (RuntimeException signal : sourceSignals) {
+            String what = signal.getClass().getSimpleName();
+            check(signal instanceof DiagnosticOriginCarrier,
+                what + " implements the common DiagnosticOriginCarrier contract");
+            DiagnosticRange carried = signal instanceof DiagnosticOriginCarrier carrier
+                ? carrier.diagnosticRange() : null;
+            check(expected.equals(carried),
+                what + " carries the supplied span's own range: " + carried);
+            check(carried != null && carried.origin() == RangeOrigin.SOURCE
+                    && "carrier.deal".equals(carried.file())
+                    && carried.startLine() == 2 && carried.startColumn() == 3
+                    && carried.endLine() == 2 && carried.endColumn() == 8
+                    && carried.startScalarOffset() == 10
+                    && carried.endScalarOffset() == 15
+                    && carried.scalarLength() == 5,
+                what + " carries the exact half-open SOURCE range "
+                    + "carrier.deal 2:3-2:8 [10,15) length 5: " + carried);
+            CompilerDiagnostic diagnostic = SemanticLowerer.loweringFailure(MODULE, signal);
+            check(diagnostic.range().equals(expected),
+                what + "'s E6005 projects the same exact range: " + diagnostic.range());
+            check(diagnostic.message().equals(FailureContractRegistry.instantiateMessage(
+                    SemanticLowerer.loweringFailureDetail(MODULE, signal))),
+                what + "'s message stays the unchanged registry instantiation: "
+                    + diagnostic.message());
+        }
+
+        List<RuntimeException> noSpanSignals = List.of(
+            new SemanticLowerer.ConstructUnlowered("a construct"),
+            new SemanticLowerer.ClassDefaultCapture("outside"),
+            new SemanticLowerer.RetainedAbiDeferred("mod.C"),
+            new SemanticLowerer.IntLiteralOutOfRange(2147483648L));
+        for (RuntimeException signal : noSpanSignals) {
+            String what = signal.getClass().getSimpleName();
+            check(signal instanceof DiagnosticOriginCarrier
+                    && ((DiagnosticOriginCarrier) signal).diagnosticRange() == null,
+                what + "'s no-span constructor identifies no source anchor");
+            CompilerDiagnostic diagnostic = SemanticLowerer.loweringFailure(MODULE, signal);
+            check(diagnostic.range().isCanonicalSynthetic()
+                    && "".equals(diagnostic.range().file()),
+                what + "'s originless projection stays the canonical empty-file "
+                    + "synthetic range: " + diagnostic.range());
+        }
+
+        SemanticLowerer.ConstructUnlowered offsetless =
+            new SemanticLowerer.ConstructUnlowered("a construct",
+                new Span("carrier.deal", 2, 3, 2, 7));
+        DiagnosticRange offsetlessRange = offsetless.diagnosticRange();
+        check(offsetlessRange != null
+                && offsetlessRange.origin() == RangeOrigin.SYNTHETIC
+                && "carrier.deal".equals(offsetlessRange.file())
+                && offsetlessRange.startLine() == 1 && offsetlessRange.startColumn() == 1
+                && offsetlessRange.startScalarOffset() == 0
+                && offsetlessRange.endScalarOffset() == 0
+                && offsetlessRange.scalarLength() == 0,
+            "a known-file offsetless span keeps its file and stays SYNTHETIC at the "
+                + "canonical anchor: " + offsetlessRange);
+        CompilerDiagnostic offsetlessDiagnostic =
+            SemanticLowerer.loweringFailure(MODULE, offsetless);
+        check(offsetlessDiagnostic.range().origin() == RangeOrigin.SYNTHETIC
+                && "carrier.deal".equals(offsetlessDiagnostic.range().file())
+                && offsetlessDiagnostic.range().startLine() == 1
+                && offsetlessDiagnostic.range().startColumn() == 1,
+            "the offsetless projection keeps the known file and stays SYNTHETIC: "
+                + offsetlessDiagnostic.range());
+    }
+
     // =========================================================================
     // 12. The combined dependency step — lower the slice to its validated unit
     //     and execute it through ContainerOpsExecutor (C3) with the fixture
@@ -2275,6 +2362,7 @@ public class ContainerLoweringArmsTest {
         testImportMemberCatalogMissOrigin();
         testDescriptorNegatives();
         testComparisonSelectorOrigin();
+        testLoweringSignalCarrierContract();
         testCombinedDependencyStep();
         testModuleCorpusDeterminism();
 

@@ -57,6 +57,7 @@ import deal.semantic.ir.AsyncStartSource;
 import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.ExternalAsyncLink;
+import deal.semantic.ir.DiagnosticOriginCarrier;
 import deal.semantic.ir.ExportInterface;
 import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.ExternalModuleKind;
@@ -555,7 +556,8 @@ public final class SemanticLowerer {
         // Static entry points plus the per-module lowering session; no instances.
     }
 
-    public static final class ConstructUnlowered extends RuntimeException {
+    public static final class ConstructUnlowered extends RuntimeException
+            implements DiagnosticOriginCarrier {
 
         private static final long serialVersionUID = 1L;
 
@@ -589,9 +591,15 @@ public final class SemanticLowerer {
         public Span span() {
             return span;
         }
+
+        @Override
+        public DiagnosticRange diagnosticRange() {
+            return span == null ? null : span.range();
+        }
     }
 
-    public static final class ClassDefaultCapture extends RuntimeException {
+    public static final class ClassDefaultCapture extends RuntimeException
+            implements DiagnosticOriginCarrier {
 
         private static final long serialVersionUID = 1L;
 
@@ -627,9 +635,15 @@ public final class SemanticLowerer {
         public Span span() {
             return span;
         }
+
+        @Override
+        public DiagnosticRange diagnosticRange() {
+            return span == null ? null : span.range();
+        }
     }
 
-    public static final class RetainedAbiDeferred extends RuntimeException {
+    public static final class RetainedAbiDeferred extends RuntimeException
+            implements DiagnosticOriginCarrier {
 
         private static final long serialVersionUID = 1L;
 
@@ -663,9 +677,15 @@ public final class SemanticLowerer {
         public Span span() {
             return span;
         }
+
+        @Override
+        public DiagnosticRange diagnosticRange() {
+            return span == null ? null : span.range();
+        }
     }
 
-    public static final class IntLiteralOutOfRange extends RuntimeException {
+    public static final class IntLiteralOutOfRange extends RuntimeException
+            implements DiagnosticOriginCarrier {
 
         private static final long serialVersionUID = 1L;
 
@@ -700,34 +720,28 @@ public final class SemanticLowerer {
         public Span span() {
             return span;
         }
+
+        @Override
+        public DiagnosticRange diagnosticRange() {
+            return span == null ? null : span.range();
+        }
     }
 
     /**
      * The offending source range of one lowering defect, or {@code null}
      * when the defect names a producer fact rather than one source construct
-     * (a guessed anchor is never manufactured).
+     * (a guessed anchor is never manufactured). Every source-bearing
+     * lowering signal implements the common
+     * {@link DiagnosticOriginCarrier} contract (design D2): the signals
+     * carry their own span, while the descriptor and comparison producers
+     * attach their offending construct's own range at the
+     * expression/literal boundary (D2); an unattached defect stays
+     * genuinely originless.
      */
     private static DiagnosticRange offendingRange(RuntimeException defect) {
-        Span span = switch (defect) {
-            case ConstructUnlowered unlowered -> unlowered.span();
-            case ClassDefaultCapture capture -> capture.span();
-            case RetainedAbiDeferred deferred -> deferred.span();
-            case IntLiteralOutOfRange outOfRange -> outOfRange.span();
-            default -> null;
-        };
-        if (span != null) {
-            return span.range();
-        }
-        // The descriptor and comparison producers attach their offending
-        // construct's own range at the expression/literal boundary (D2);
-        // an unattached defect stays genuinely originless.
-        return switch (defect) {
-            case ContainerPayloadDescriptors.Defect descriptorDefect ->
-                descriptorDefect.diagnosticRange();
-            case ComparisonSelectorLowering.Defect comparisonDefect ->
-                comparisonDefect.diagnosticRange();
-            default -> null;
-        };
+        return defect instanceof DiagnosticOriginCarrier carrier
+            ? carrier.diagnosticRange()
+            : null;
     }
 
     /**
@@ -4732,8 +4746,7 @@ public final class SemanticLowerer {
             registerBinding(decl.name(), binding, incarnation);
             OpId declarationBoundary = null;
             if (decl.typeAnnotation().isPresent()) {
-                RuntimeDescriptor descriptor =
-                    ContainerPayloadDescriptors.resultDescriptorOf(declaredTypeOf(decl));
+                RuntimeDescriptor descriptor = variableBoundaryDescriptor(decl);
                 FailurePolicyId boundaryPolicy = descriptor instanceof RuntimeDescriptor.Func
                     ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
                 // The materialization site's origin is the declared type
@@ -4759,6 +4772,22 @@ public final class SemanticLowerer {
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             if (creationRuleAnalysis) {
                 classifyVarDeclPosition(decl, value, declarationBoundary, initOp);
+            }
+        }
+
+        /**
+         * The declared-type descriptor of one annotated let boundary: the
+         * single {@link ContainerPayloadDescriptors} bridge over the
+         * checked declared type. A corrupted checked type fails closed at
+         * the declared type annotation's own range (D2) — the same span
+         * the VARIABLE_DECLARATION boundary carries — while an already
+         * attached (inner) range always wins.
+         */
+        private RuntimeDescriptor variableBoundaryDescriptor(VariableDeclaration decl) {
+            try {
+                return ContainerPayloadDescriptors.resultDescriptorOf(declaredTypeOf(decl));
+            } catch (ContainerPayloadDescriptors.Defect defect) {
+                throw defect.withRange(decl.typeAnnotation().get().span().range());
             }
         }
 
@@ -5685,8 +5714,16 @@ public final class SemanticLowerer {
             Symbol symbol = (scope == null ? checks.symbolTable() : scope)
                 .resolve(function.name());
             if (symbol instanceof Symbol.FunctionSymbol functionSymbol) {
-                return (RuntimeDescriptor.Func)
-                    ContainerPayloadDescriptors.resultDescriptorOf(functionSymbol.funcType());
+                try {
+                    return (RuntimeDescriptor.Func)
+                        ContainerPayloadDescriptors.resultDescriptorOf(functionSymbol.funcType());
+                } catch (ContainerPayloadDescriptors.Defect defect) {
+                    // The declaration owns the derivation: a corrupted
+                    // checked signature fails closed at the function
+                    // declaration's own range (D2), while an already
+                    // attached (inner) range always wins.
+                    throw defect.withRange(function.span().range());
+                }
             }
             throw new ConstructUnlowered("function declaration '" + function.name()
                 + "' without a checked FunctionSymbol fact (a missing checker fact is a "

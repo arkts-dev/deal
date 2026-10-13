@@ -1,6 +1,10 @@
 package deal.test;
 
+import deal.ast.FunctionDeclaration;
+import deal.ast.StatementNode;
 import deal.checker.BuiltinErrorDeclaration;
+import deal.checker.Symbol;
+import deal.checker.SymbolTable;
 import deal.codegen.Backend;
 import deal.codegen.SharedEmissionFailure;
 import deal.codegen.jvm.JvmSemanticEmitter;
@@ -18,10 +22,12 @@ import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
 import deal.publication.PublicationStager;
 import deal.semantic.CapabilityRegistry;
+import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectInput;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ContainerPayloadDescriptors;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
@@ -50,6 +56,7 @@ import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
+import deal.types.Type;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -156,7 +163,24 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
-    /** The bytes-bearing fixture: the lowering fails CONSTRUCT_UNLOWERED. */
+    /**
+     * The declaration-origin fixture: one plain function {@code f} whose
+     * checked signature the declaration-origin probe corrupts, plus the
+     * production entry.
+     */
+    private static final String DECLARATION_ORIGIN_APP_SOURCE = """
+        export function main(): null {
+          return null;
+        }
+
+        function f(): int {
+          return 41;
+        }
+        """;
+
+    /**
+     * The bytes-bearing fixture: the lowering fails CONSTRUCT_UNLOWERED.
+     */
     private static final String BYTES_APP_SOURCE = """
         export function main(): null {
           let n: int = 3;
@@ -1773,6 +1797,69 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
+     * ISSUE-0750: a declaration-owned descriptor failure through the real
+     * {@code lowerProject} entry — the corrupted checked function
+     * signature (the closed fact no checker-valid program produces) fails
+     * the project lowering closed with no project, and the shared E6005
+     * carries the function declaration's own exact range.
+     */
+    private static void testDeclarationSignatureOrigin() throws Exception {
+        System.out.println("-- the corrupted declared function signature keeps "
+            + "the declaration's own range through lowerProject --");
+
+        Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
+            "src/app.deal", DECLARATION_ORIGIN_APP_SOURCE)), Map.of());
+        try {
+            FunctionDeclaration target = null;
+            SymbolTable table = null;
+            for (CheckedModuleInput module : fixture.checkedProject().modules()) {
+                for (StatementNode statement : module.ast().statements()) {
+                    if (statement instanceof FunctionDeclaration function
+                            && function.name().equals("f")) {
+                        target = function;
+                        table = module.checks().symbolTable();
+                    }
+                }
+            }
+            check(target != null && table != null,
+                "the fixture carries the checked function declaration f");
+            if (target == null || table == null) {
+                return;
+            }
+            table.remove("f");
+            table.define("f", new Symbol.FunctionSymbol("f",
+                new Type.Func(List.of(), Type.Error.INSTANCE, false)));
+
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            check(result.project() == null && !result.diagnostics().isEmpty()
+                    && result.tables().isEmpty()
+                    && result.registries().isEmpty(),
+                "the corrupted signature fails the project lowering closed with "
+                    + "no project, tables, or registries");
+            if (result.diagnostics().isEmpty()) {
+                return;
+            }
+            CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+            DiagnosticRange expected = target.span().range();
+            check(expected.origin() == RangeOrigin.SOURCE
+                    && expected.file().endsWith("src/app.deal")
+                    && expected.scalarLength() > 0,
+                "the function declaration carries a real SOURCE span in its own "
+                    + "module file: " + expected);
+            check("E6005".equals(diagnostic.code())
+                    && diagnostic.message().contains(
+                        ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                "the corrupted signature converts to the unchanged E6005 "
+                    + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
+            checkEq(expected, diagnostic.range(),
+                "the failure carries exactly the function declaration's own "
+                    + "converted range");
+        } finally {
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /**
      * The production arm's own projection of one known-file offsetless
      * rejection: the synthetic shape keeps the supplied file and never
      * borrows the canonical empty one.
@@ -2561,6 +2648,7 @@ public class ProductionProjectEmissionTest {
             testIdentifiedSharedGuardOrigins();
             testAbsentDeclarationSurfaceEntries();
             testStdlibCatalogMissOrigin();
+            testDeclarationSignatureOrigin();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);

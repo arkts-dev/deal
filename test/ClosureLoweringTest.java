@@ -1,9 +1,17 @@
 package deal.test;
 
+import deal.ast.Block;
+import deal.ast.FunctionDeclaration;
+import deal.ast.LiteralExpr;
+import deal.ast.LiteralValue;
+import deal.ast.NamedType;
 import deal.ast.ProgramNode;
+import deal.ast.Span;
+import deal.ast.VariableDeclaration;
 import deal.checker.CheckResult;
 import deal.checker.ModuleResolver;
 import deal.checker.NameResolver;
+import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
@@ -17,6 +25,7 @@ import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
+import deal.semantic.ContainerPayloadDescriptors;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
@@ -41,12 +50,14 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.ValueId;
+import deal.types.Type;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 public class ClosureLoweringTest {
 
@@ -1193,6 +1204,187 @@ public class ClosureLoweringTest {
         }
     }
 
+    /**
+     * ISSUE-0750: declaration-owned descriptor failures keep the
+     * declaration's own identifiable origin — the function declaration's
+     * span around the checked-signature derivation and the declared type
+     * annotation's span around the let-boundary derivation. A corrupted
+     * checked fact (the closed fact no checker-valid program produces)
+     * fails closed exactly as before; only the carried E6005 range
+     * changes. Known-file offsetless spans stay SYNTHETIC at their own
+     * file, never at the canonical empty-file anchor.
+     */
+    static void testDeclarationDescriptorOrigins() {
+        System.out.println("-- declaration-owned descriptor failures carry the "
+            + "declaration's own range --");
+
+        // (a) Function-signature derivation (closure-core): the corrupted
+        // checked FunctionSymbol return type is identified by the function
+        // declaration's own exact SOURCE range.
+        CheckedSlice functionSlice = checkSlice("function f(): int {\n  return 1;\n}\n");
+        if (functionSlice != null) {
+            FunctionDeclaration function =
+                (FunctionDeclaration) functionSlice.program().statements().get(0);
+            functionSlice.checks().symbolTable().remove("f");
+            functionSlice.checks().symbolTable().define("f",
+                new Symbol.FunctionSymbol("f",
+                    new Type.Func(List.of(), Type.Error.INSTANCE, false)));
+            SemanticLowerer.ClosureCoreResult result = lowerSlice(functionSlice);
+            check(result != null && result.lowering().hasErrors()
+                    && result.lowering().unit() == null,
+                "the corrupted function signature fails hard with no unit");
+            if (result != null && result.lowering().hasErrors()) {
+                CompilerDiagnostic diagnostic = result.lowering().diagnostics().get(0);
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                        && diagnostic.message().contains(
+                            ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                    "the corrupted signature converts to the unchanged E6005 "
+                        + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
+                DiagnosticRange range = diagnostic.range();
+                check(range.origin() == RangeOrigin.SOURCE
+                        && "test.deal".equals(range.file())
+                        && range.startLine() == 1 && range.startColumn() == 1
+                        && range.endLine() == 4 && range.endColumn() == 2
+                        && range.startScalarOffset() == 0
+                        && range.endScalarOffset() == 34
+                        && range.scalarLength() == 34,
+                    "the function-signature failure carries the function declaration's "
+                        + "own exact SOURCE range test.deal 1:1-4:2 [0,34) length 34; got "
+                        + range);
+                check(range.equals(function.span().range()),
+                    "the range is exactly the function declaration's own span conversion; "
+                        + "got " + range);
+            }
+        }
+
+        // (b) The declared-variable boundary derivation (binding-core): the
+        // declared type annotation's own exact SOURCE range.
+        CheckedSlice variableSlice = checkSlice("let x: int = 1;\n");
+        if (variableSlice != null) {
+            VariableDeclaration declaration =
+                (VariableDeclaration) variableSlice.program().statements().get(0);
+            variableSlice.checks().symbolTable().remove("x");
+            variableSlice.checks().symbolTable().define("x",
+                new Symbol.VariableSymbol("x", Type.Error.INSTANCE, false));
+            SemanticLowerer.BindingCoreResult result = SemanticLowerer.lowerModuleBindingCore(
+                moduleOf(variableSlice), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
+                INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+            check(result != null && result.lowering().hasErrors()
+                    && result.lowering().unit() == null,
+                "the corrupted declared type fails hard with no unit");
+            if (result != null && result.lowering().hasErrors()) {
+                CompilerDiagnostic diagnostic = result.lowering().diagnostics().get(0);
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                        && diagnostic.message().contains(
+                            ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                    "the corrupted declared type converts to the unchanged E6005 "
+                        + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
+                DiagnosticRange range = diagnostic.range();
+                check(range.origin() == RangeOrigin.SOURCE
+                        && "test.deal".equals(range.file())
+                        && range.startLine() == 1 && range.startColumn() == 8
+                        && range.endLine() == 1 && range.endColumn() == 11
+                        && range.startScalarOffset() == 7
+                        && range.endScalarOffset() == 10
+                        && range.scalarLength() == 3,
+                    "the let-boundary failure carries the declared type annotation's own "
+                        + "exact SOURCE range test.deal 1:8-1:11 [7,10) length 3; got "
+                        + range);
+                check(range.equals(declaration.typeAnnotation().get().span().range()),
+                    "the range is exactly the annotation's own span conversion; got "
+                        + range);
+            }
+        }
+
+        // (c) Known-file offsetless control, let boundary: the same
+        // declaration-owned derivation with an offsetless annotation span
+        // stays SYNTHETIC at that file, never at the canonical empty-file
+        // anchor.
+        {
+            Span annotationSpan = new Span("writer.deal", 2, 5, 2, 8);
+            LiteralExpr initializer = new LiteralExpr(
+                new Span("writer.deal", 2, 11, 2, 12), new LiteralValue.IntLiteral(1));
+            VariableDeclaration declaration = new VariableDeclaration(
+                new Span("writer.deal", 2, 1, 2, 12), "x",
+                Optional.of(new NamedType(annotationSpan, "int")), initializer);
+            SymbolTable scope = new SymbolTable();
+            scope.define("x", new Symbol.VariableSymbol("x", Type.Error.INSTANCE, false));
+            CheckResult checks = new CheckResult(
+                Map.of(initializer, Type.Int.INSTANCE), scope, List.of());
+            SemanticLowerer.ModuleLowerer lowerer = new SemanticLowerer.ModuleLowerer(
+                MODULE, "writer.deal", checks,
+                SemanticIdAllocator.over(List.of(MODULE)), true,
+                new Span("writer.deal", 1, 1, 1, 1));
+            ContainerPayloadDescriptors.Defect defect = null;
+            try {
+                lowerer.lowerBindingModule(List.of(declaration));
+            } catch (ContainerPayloadDescriptors.Defect raised) {
+                defect = raised;
+            }
+            check(defect != null,
+                "the offsetless annotated declaration raises the bridge Defect");
+            if (defect != null) {
+                DiagnosticRange carried = defect.diagnosticRange();
+                check(carried != null && carried.origin() == RangeOrigin.SYNTHETIC
+                        && "writer.deal".equals(carried.file())
+                        && carried.startLine() == 1 && carried.startColumn() == 1
+                        && carried.endLine() == 1 && carried.endColumn() == 1
+                        && carried.startScalarOffset() == 0
+                        && carried.endScalarOffset() == 0
+                        && carried.scalarLength() == 0,
+                    "the offsetless annotation keeps its known file and stays SYNTHETIC "
+                        + "at the canonical anchor: " + carried);
+                CompilerDiagnostic diagnostic = SemanticLowerer.loweringFailure(MODULE,
+                    defect);
+                check(diagnostic.range().origin() == RangeOrigin.SYNTHETIC
+                        && "writer.deal".equals(diagnostic.range().file())
+                        && diagnostic.range().startLine() == 1
+                        && diagnostic.range().startColumn() == 1
+                        && diagnostic.range().startScalarOffset() == 0
+                        && diagnostic.range().endScalarOffset() == 0,
+                    "the projection keeps the known offsetless file and never borrows "
+                        + "the canonical empty-file anchor: " + diagnostic.range());
+            }
+        }
+
+        // (d) Known-file offsetless control, function declaration: the
+        // offsetless declaration span stays SYNTHETIC at its own file.
+        {
+            Span functionSpan = new Span("writer.deal", 3, 1, 5, 2);
+            FunctionDeclaration function = new FunctionDeclaration(functionSpan, "f",
+                List.of(), new NamedType(new Span("writer.deal", 3, 11, 3, 14), "int"),
+                new Block(new Span("writer.deal", 4, 1, 5, 2), List.of()), false, false);
+            SymbolTable scope = new SymbolTable();
+            scope.define("f", new Symbol.FunctionSymbol("f",
+                new Type.Func(List.of(), Type.Error.INSTANCE, false)));
+            CheckResult checks = new CheckResult(Map.of(), scope, List.of());
+            ProgramNode program = new ProgramNode(
+                new Span("writer.deal", 1, 1, 5, 2), List.of(function));
+            CheckedModuleInput module = new CheckedModuleInput(MODULE, "writer.deal",
+                Path.of("writer.deal"), program, checks, List.of(), List.of(),
+                CheckedModuleKind.IMPLEMENTATION);
+            SemanticLowerer.ClosureCoreResult result = SemanticLowerer.lowerModuleClosureCore(
+                module, SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+            check(result != null && result.lowering().hasErrors()
+                    && result.lowering().unit() == null,
+                "the offsetless corrupted function signature fails hard with no unit");
+            if (result != null && result.lowering().hasErrors()) {
+                DiagnosticRange range = result.lowering().diagnostics().get(0).range();
+                check(range.origin() == RangeOrigin.SYNTHETIC
+                        && "writer.deal".equals(range.file())
+                        && range.startLine() == 1 && range.startColumn() == 1
+                        && range.startScalarOffset() == 0
+                        && range.endScalarOffset() == 0
+                        && range.scalarLength() == 0,
+                    "the offsetless function declaration keeps its known file and stays "
+                        + "SYNTHETIC, never the canonical empty-file anchor: " + range);
+            }
+        }
+    }
+
     // =========================================================================
     // Runner
     // =========================================================================
@@ -1211,6 +1403,7 @@ public class ClosureLoweringTest {
         testCellKindClosureCaptureArm();
         testDeterminism(hoistedSlice, hoisted);
         testFailClosedNegatives();
+        testDeclarationDescriptorOrigins();
 
         System.out.println("\nClosure lowering: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {
