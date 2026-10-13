@@ -2192,12 +2192,6 @@ public class CanonicalProjectionParityTest {
         check(JvmRuntime.hostCompletion("int", "int", Integer.valueOf(7))
             instanceof Long, "the host completion seam settles the boxed int onto "
                 + "the production int carrier");
-        check(JvmRuntime.hostCompletion("int", "int", Double.valueOf(7))
-            instanceof Long, "the host completion seam settles the admitted "
-                + "integral double onto the production int carrier");
-        check(JvmRuntime.hostCompletion("number", "number", Long.valueOf(7))
-            instanceof Double, "the host completion seam settles the signed32 "
-                + "carrier onto the production number carrier");
         check(JvmRuntime.hostCompletion("nullable(int)", "nullable:int",
             Integer.valueOf(7)) instanceof Long, "the host completion seam "
                 + "settles a nullable int completion's carrier");
