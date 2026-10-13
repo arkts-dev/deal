@@ -1,6 +1,8 @@
 package deal.test;
 
 import deal.ast.Block;
+import deal.ast.ForInit;
+import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.LiteralExpr;
 import deal.ast.LiteralValue;
@@ -1381,6 +1383,160 @@ public class ClosureLoweringTest {
                         && range.scalarLength() == 0,
                     "the offsetless function declaration keeps its known file and stays "
                         + "SYNTHETIC, never the canonical empty-file anchor: " + range);
+            }
+        }
+
+        // (e) For-let counter descriptor (binding-core): the counter's
+        // corrupted checked type is identified by its own declared type
+        // annotation's exact SOURCE range, never the loop's or the
+        // canonical empty-file anchor.
+        CheckedSlice forLetSlice = checkSlice(
+            "for (let i: int = 0; i < 3; i = i + 1) { }\n");
+        if (forLetSlice != null) {
+            ForStatement forStatement =
+                (ForStatement) forLetSlice.program().statements().get(0);
+            VariableDeclaration counter = ((ForInit.VarDecl) forStatement.init().get()).decl();
+            SymbolTable forScope = forLetSlice.checks().scopeMap().get(forStatement);
+            check(forScope != null && forScope.containsLocally("i"),
+                "the for-let slice registers its counter in the loop scope");
+            if (forScope != null && forScope.containsLocally("i")) {
+                forScope.remove("i");
+                forScope.define("i",
+                    new Symbol.VariableSymbol("i", Type.Error.INSTANCE, false));
+                SemanticLowerer.BindingCoreResult result =
+                    SemanticLowerer.lowerModuleBindingCore(moduleOf(forLetSlice),
+                        SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                        REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+                check(result != null && result.lowering().hasErrors()
+                        && result.lowering().unit() == null,
+                    "the corrupted for-let counter fails hard in the binding-core "
+                        + "window with no unit");
+                if (result != null && result.lowering().hasErrors()) {
+                    CompilerDiagnostic diagnostic = result.lowering().diagnostics().get(0);
+                    check("E6005".equals(diagnostic.code())
+                            && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                            && diagnostic.message().contains(
+                                ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                        "the corrupted for-let counter converts to the unchanged E6005 "
+                            + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
+                    DiagnosticRange range = diagnostic.range();
+                    check(range.origin() == RangeOrigin.SOURCE
+                            && "test.deal".equals(range.file())
+                            && range.startLine() == 1 && range.startColumn() == 13
+                            && range.endLine() == 1 && range.endColumn() == 16
+                            && range.startScalarOffset() == 12
+                            && range.endScalarOffset() == 15
+                            && range.scalarLength() == 3,
+                        "the for-let counter failure carries its declared type "
+                            + "annotation's own exact SOURCE range test.deal "
+                            + "1:13-1:16 [12,15) length 3; got " + range);
+                    check(range.equals(counter.typeAnnotation().get().span().range()),
+                        "the range is exactly the counter annotation's own span "
+                            + "conversion; got " + range);
+                }
+            }
+        }
+
+        // (f) For-let counter descriptor with an inferred type
+        // (binding-core): without a declared annotation the counter
+        // declaration itself is the owning range, never the loop's or
+        // the canonical empty-file anchor.
+        CheckedSlice inferredSlice = checkSlice(
+            "for (let i = 0; i < 3; i = i + 1) { }\n");
+        if (inferredSlice != null) {
+            ForStatement inferredFor =
+                (ForStatement) inferredSlice.program().statements().get(0);
+            VariableDeclaration inferredCounter =
+                ((ForInit.VarDecl) inferredFor.init().get()).decl();
+            SymbolTable inferredScope = inferredSlice.checks().scopeMap().get(inferredFor);
+            check(inferredScope != null && inferredScope.containsLocally("i")
+                    && inferredCounter.typeAnnotation().isEmpty(),
+                "the inferred for-let slice carries the unannotated counter");
+            if (inferredScope != null && inferredScope.containsLocally("i")
+                    && inferredCounter.typeAnnotation().isEmpty()) {
+                inferredScope.remove("i");
+                inferredScope.define("i",
+                    new Symbol.VariableSymbol("i", Type.Error.INSTANCE, false));
+                SemanticLowerer.BindingCoreResult result =
+                    SemanticLowerer.lowerModuleBindingCore(moduleOf(inferredSlice),
+                        SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                        REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+                check(result != null && result.lowering().hasErrors()
+                        && result.lowering().unit() == null,
+                    "the corrupted inferred for-let counter fails hard with no unit");
+                if (result != null && result.lowering().hasErrors()) {
+                    CompilerDiagnostic diagnostic = result.lowering().diagnostics().get(0);
+                    check("E6005".equals(diagnostic.code())
+                            && diagnostic.message().contains(
+                                ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                        "the corrupted inferred counter converts to the unchanged "
+                            + "E6005 DESCRIPTOR_UNREPRESENTABLE; got "
+                            + diagnostic.message());
+                    DiagnosticRange range = diagnostic.range();
+                    check(range.origin() == RangeOrigin.SOURCE
+                            && "test.deal".equals(range.file())
+                            && range.startLine() == 1 && range.startColumn() == 6
+                            && range.endLine() == 1 && range.endColumn() == 16
+                            && range.startScalarOffset() == 5
+                            && range.endScalarOffset() == 15
+                            && range.scalarLength() == 10,
+                        "the inferred counter failure carries the counter "
+                            + "declaration's own exact SOURCE range test.deal "
+                            + "1:6-1:16 [5,15) length 10; got " + range);
+                    check(range.equals(inferredCounter.span().range()),
+                        "the inferred counter range is exactly its declaration's "
+                            + "own span conversion; got " + range);
+                }
+            }
+        }
+
+        // (g) Known-file offsetless control, for-let counter: the
+        // rebuilt offsetless declared type annotation keeps its known
+        // file and stays SYNTHETIC, never the canonical empty-file
+        // anchor.
+        {
+            CheckedSlice offsetlessSlice = checkSlice(
+                "for (let i: int = 0; i < 3; i = i + 1) { }\n");
+            if (offsetlessSlice != null) {
+                ForStatement parsed =
+                    (ForStatement) offsetlessSlice.program().statements().get(0);
+                VariableDeclaration decl = ((ForInit.VarDecl) parsed.init().get()).decl();
+                VariableDeclaration rebuilt = new VariableDeclaration(decl.span(), decl.name(),
+                    Optional.of(new NamedType(new Span("writer.deal", 2, 13, 2, 16), "int")),
+                    decl.initializer());
+                ForStatement rebuiltFor = new ForStatement(parsed.span(),
+                    Optional.of(new ForInit.VarDecl(rebuilt)), parsed.condition(),
+                    parsed.update(), parsed.body());
+                SymbolTable scope = new SymbolTable();
+                scope.define("i", new Symbol.VariableSymbol("i", Type.Error.INSTANCE, false));
+                CheckResult checks = new CheckResult(offsetlessSlice.checks().typeMap(),
+                    offsetlessSlice.checks().symbolTable(), Map.of(rebuiltFor, scope),
+                    List.of(), offsetlessSlice.checks().classScopes(),
+                    offsetlessSlice.checks().constructedClassDecls());
+                ProgramNode program = new ProgramNode(offsetlessSlice.program().span(),
+                    List.of(rebuiltFor));
+                CheckedModuleInput module = new CheckedModuleInput(MODULE, SOURCE_ID,
+                    Path.of("test.deal"), program, checks, List.of(), List.of(),
+                    CheckedModuleKind.IMPLEMENTATION);
+                SemanticLowerer.BindingCoreResult result =
+                    SemanticLowerer.lowerModuleBindingCore(module,
+                        SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                        REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+                check(result != null && result.lowering().hasErrors()
+                        && result.lowering().unit() == null,
+                    "the offsetless for-let counter fails hard with no unit");
+                if (result != null && result.lowering().hasErrors()) {
+                    DiagnosticRange range = result.lowering().diagnostics().get(0).range();
+                    check(range.origin() == RangeOrigin.SYNTHETIC
+                            && "writer.deal".equals(range.file())
+                            && range.startLine() == 1 && range.startColumn() == 1
+                            && range.startScalarOffset() == 0
+                            && range.endScalarOffset() == 0
+                            && range.scalarLength() == 0,
+                        "the offsetless for-let counter annotation keeps its known "
+                            + "file and stays SYNTHETIC, never the canonical "
+                            + "empty-file anchor: " + range);
+                }
             }
         }
     }

@@ -2,8 +2,11 @@ package deal.test;
 
 import deal.ast.ClassDeclaration;
 import deal.ast.ExportDeclaration;
+import deal.ast.ForInit;
+import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.StatementNode;
+import deal.ast.VariableDeclaration;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
@@ -190,6 +193,18 @@ public class ProductionProjectEmissionTest {
         // @jsonable
         export class Widget { n: int = 1; }
         export function main(): null { return null; }
+        """;
+
+    /**
+     * The for-let counter-origin fixture: the loop counter's declared
+     * type annotation is the declaration-owned descriptor subject the
+     * counter-origin probe corrupts, plus the production entry.
+     */
+    private static final String FOR_LET_COUNTER_APP_SOURCE = """
+        export function main(): null {
+          for (let i: int = 0; i < 2; i = i + 1) { }
+          return null;
+        }
         """;
 
     /**
@@ -1948,6 +1963,84 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
+     * ISSUE-0750: the for-let counter descriptor derivation is
+     * declaration-owned through the real {@code lowerProject} entry too:
+     * a corrupted checked counter type fails the project lowering closed
+     * with no project, and the shared E6005 carries the counter's own
+     * declared type annotation's exact range instead of the canonical
+     * empty-file synthetic anchor.
+     */
+    private static void testForLetCounterDescriptorOrigin() throws Exception {
+        System.out.println("-- the corrupted for-let counter descriptor keeps the "
+            + "counter's own declared-type range through lowerProject --");
+
+        Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
+            "src/app.deal", FOR_LET_COUNTER_APP_SOURCE)), Map.of());
+        try {
+            ForStatement target = null;
+            SymbolTable scope = null;
+            for (CheckedModuleInput module : fixture.checkedProject().modules()) {
+                for (StatementNode statement : module.ast().statements()) {
+                    StatementNode declaration = statement instanceof ExportDeclaration export
+                        ? export.declaration() : statement;
+                    if (!(declaration instanceof FunctionDeclaration function)) {
+                        continue;
+                    }
+                    for (StatementNode bodyStatement : function.body().statements()) {
+                        if (bodyStatement instanceof ForStatement forStatement) {
+                            target = forStatement;
+                            scope = module.checks().scopeMap().get(forStatement);
+                        }
+                    }
+                }
+            }
+            check(target != null && scope != null && scope.containsLocally("i"),
+                "the fixture carries the checked for-let counter and its loop scope");
+            if (target == null || scope == null || !scope.containsLocally("i")) {
+                return;
+            }
+            scope.remove("i");
+            scope.define("i", new Symbol.VariableSymbol("i", Type.Error.INSTANCE, false));
+            VariableDeclaration counter = ((ForInit.VarDecl) target.init().get()).decl();
+            check(counter.typeAnnotation().isPresent(),
+                "the fixture's counter carries its declared type annotation");
+            if (counter.typeAnnotation().isEmpty()) {
+                return;
+            }
+
+            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
+            check(result.project() == null && !result.diagnostics().isEmpty()
+                    && result.tables().isEmpty() && result.registries().isEmpty(),
+                "the corrupted for-let counter fails the project lowering closed with "
+                    + "no project, tables, or registries");
+            if (result.diagnostics().isEmpty()) {
+                return;
+            }
+            CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+            DiagnosticRange expected = counter.typeAnnotation().get().span().range();
+            check(expected.origin() == RangeOrigin.SOURCE
+                    && expected.file().endsWith("src/app.deal")
+                    && expected.startLine() == 2 && expected.startColumn() == 15
+                    && expected.endLine() == 2 && expected.endColumn() == 18
+                    && expected.startScalarOffset() == 45
+                    && expected.endScalarOffset() == 48
+                    && expected.scalarLength() == 3,
+                "the counter declares a real SOURCE annotation span 2:15-2:18 "
+                    + "[45,48) length 3: " + expected);
+            check("E6005".equals(diagnostic.code())
+                    && diagnostic.message().contains(
+                        ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                "the corrupted for-let counter converts to the unchanged E6005 "
+                    + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
+            checkEq(expected, diagnostic.range(),
+                "the failure carries exactly the counter annotation's own converted "
+                    + "range");
+        } finally {
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /**
      * The production arm's own projection of one known-file offsetless
      * rejection: the synthetic shape keeps the supplied file and never
      * borrows the canonical empty one.
@@ -2738,6 +2831,7 @@ public class ProductionProjectEmissionTest {
             testStdlibCatalogMissOrigin();
             testDeclarationSignatureOrigin();
             testGeneratedHelperDescriptorOrigins();
+            testForLetCounterDescriptorOrigin();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);

@@ -5769,7 +5769,7 @@ public final class SemanticLowerer {
             BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);
             Type counterType = counterTypeOf(statement, decl);
             if (closureCore
-                    && ContainerPayloadDescriptors.resultDescriptorOf(counterType)
+                    && counterDescriptor(counterType, decl)
                         instanceof RuntimeDescriptor.Func) {
                 throw new ConstructUnlowered("function-typed for-let counter (the "
                     + "per-iteration carry load's function identity is the registry "
@@ -5864,7 +5864,7 @@ public final class SemanticLowerer {
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId carry = emitSyntheticValueOp(SemanticOpKind.BINDING_LOAD,
                 new KindPayload.BindingLoadPayload(counter, INITIAL_LOOP_GENERATION),
-                decl.span(), ContainerPayloadDescriptors.resultDescriptorOf(counterType),
+                decl.span(), counterDescriptor(counterType, decl),
                 FailurePolicyId.NO_DEAL_FAILURE);
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
                 new KindPayload.BindingInitPayload(counter, 1L, carry),
@@ -6350,6 +6350,24 @@ public final class SemanticLowerer {
                 }
             }
             return checkedType(decl.initializer());
+        }
+
+        /**
+         * The for-let counter's own result descriptor (D2): the shared
+         * container-payload derivation with the counter's owning range
+         * attached — the declared type annotation when the counter
+         * declares one, the counter declaration itself for an inferred
+         * type. An already attached (inner) range always wins.
+         */
+        private RuntimeDescriptor counterDescriptor(Type counterType,
+                VariableDeclaration decl) {
+            try {
+                return ContainerPayloadDescriptors.resultDescriptorOf(counterType);
+            } catch (ContainerPayloadDescriptors.Defect defect) {
+                Span ownerSpan = decl.typeAnnotation().isPresent()
+                    ? decl.typeAnnotation().get().span() : decl.span();
+                throw defect.withRange(ownerSpan.range());
+            }
         }
 
         /**
