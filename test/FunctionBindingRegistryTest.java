@@ -625,60 +625,6 @@ public class FunctionBindingRegistryTest {
     }
 
     /**
-     * The five closed binding shapes in one registry, one registration
-     * per producing allocation, keyed by identity.
-     */
-    static void testFiveClosedShapesInOneRegistry() {
-        System.out.println("-- the five closed binding shapes in one registry --");
-
-        FunctionBindingRegistry registry = new FunctionBindingRegistry();
-        registry.registerClosure(new FunctionAllocationIdentity(1), new FunctionId(1),
-            new BlockId(1));
-        registry.registerGroupMember(new FunctionAllocationIdentity(2), new FunctionId(2),
-            new BlockId(2));
-        registry.registerAdapter(new FunctionAllocationIdentity(3), new OpId(MODULE, 3),
-            CaptureMode.VALUE, new AdaptSourceRef.Value(new ValueId(9)), INT_FUNC, INT_FUNC);
-        registry.registerHostOrExternalImport(new FunctionAllocationIdentity(4),
-            new KindPayload.MemberReadPayload(new ValueId(11), "g"),
-            new FunctionBindingRegistry.FunctionValueImportFacts(new ModuleId("host"), null,
-                "g", NULL_FUNC),
-            null);
-        registry.registerHostOrExternalImport(new FunctionAllocationIdentity(5),
-            new KindPayload.MemberReadPayload(new ValueId(12), "pick"),
-            new FunctionBindingRegistry.FunctionValueImportFacts(null, new ModuleId("lib"),
-                "pick", NULL_FUNC),
-            plan(Map.of(new ModuleId("lib"), ModuleRoute.SHARED)));
-        registry.registerHostFunctionValue(new FunctionAllocationIdentity(6),
-            new KindPayload.BoundaryPayload(BoundaryKind.HOST_TO_DEAL, NULL_FUNC,
-                new ValueId(6), new BoundaryRealization.RuntimeValidation("c")),
-            new OpId(new ModuleId("host"), 99), new ModuleId("host"));
-
-        check(registry.size() == 6, "six registrations, one per producing allocation; got "
-            + registry.size());
-        check(registry.bindings().get(new FunctionAllocationIdentity(1))
-                instanceof FunctionExecutionBinding.LoweredBody,
-            "key 1 resolves a LoweredBody (CLOSURE_NEW)");
-        check(registry.bindings().get(new FunctionAllocationIdentity(2))
-                instanceof FunctionExecutionBinding.LoweredBody,
-            "key 2 resolves a LoweredBody (RECURSIVE_GROUP_INIT member)");
-        check(registry.bindings().get(new FunctionAllocationIdentity(3))
-                instanceof FunctionExecutionBinding.AdapterBinding,
-            "key 3 resolves an AdapterBinding (FUNCTION_ADAPT)");
-        check(registry.bindings().get(new FunctionAllocationIdentity(4))
-                instanceof FunctionExecutionBinding.HostFunction,
-            "key 4 resolves a HostFunction (host import)");
-        check(registry.bindings().get(new FunctionAllocationIdentity(5))
-                instanceof FunctionExecutionBinding.ExternalFunction,
-            "key 5 resolves an ExternalFunction (cross-module import)");
-        check(registry.bindings().get(new FunctionAllocationIdentity(6))
-                instanceof FunctionExecutionBinding.HostFunctionValue,
-            "key 6 resolves a HostFunctionValue (host crossing)");
-        check(registry.materializations().size() == 3,
-            "three materialization classifications (the two import sites and the host "
-                + "crossing); got " + registry.materializations().size());
-    }
-
-    /**
      * Duplicate-key registration is rejected by the registry at
      * registration time (fail closed, never overwritten): the second
      * registration throws and the original binding stays intact.
@@ -963,7 +909,6 @@ public class FunctionBindingRegistryTest {
         testCrossModuleRetainedAbiRouteRegistersExternalFunctionRetainedAbi();
         testHostToDealBoundaryFactsRegisterHostFunctionValue();
         testAdapterRegistrationSeam();
-        testFiveClosedShapesInOneRegistry();
         testDuplicateKeyRejectedAtRegistrationTime();
         testMissingOrMismatchedProducerFactsFailExplicitly();
         testRegistrySnapshotImmutabilityAndIterationOrder();

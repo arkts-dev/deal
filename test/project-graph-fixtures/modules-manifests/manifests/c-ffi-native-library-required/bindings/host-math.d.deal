@@ -1,4 +1,0 @@
-
-// @extern-c
-
-export function add(a: int, b: int): int;

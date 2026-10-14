@@ -1,9 +1,0 @@
-// IR golden fixture: jvm-classes-slice-jvm-class-nominal-check-failure-table
-// Migrated IR-containment pin for legacy case 'jvm-class-nominal-check-failure-table' (ISSUE-0358).
-
-class Box { value: int = 0; }
-export function test(): int {
-  let holder: table = { item: { value: 1 } };
-  let b: Box = holder.item;
-  return b.value;
-}

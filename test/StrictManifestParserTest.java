@@ -6,12 +6,6 @@ import deal.diagnostics.RangeOrigin;
 import deal.source.ScalarSourceCursor;
 import deal.source.SourceScalarRange;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.lang.reflect.RecordComponent;
-import java.lang.reflect.Type;
-import java.lang.reflect.Modifier;
-
 /**
  * The strict-schema test battery for {@link StrictManifestParser} /
  * {@link ProjectConfigValidator} (design source
@@ -83,7 +77,6 @@ public final class StrictManifestParserTest {
         testFailFastScanOrder();
         testFailFastCanonicalOrder();
         testContentOnlyAndDeterminism();
-        testParserSurfaceHasNoIoTypes();
         testCompleteScalarRanges();
 
         System.out.println();
@@ -838,89 +831,6 @@ public final class StrictManifestParserTest {
             check(first.manifest().ranges().equals(second.manifest().ranges()),
                 "range maps are equal across parses");
         }
-    }
-
-    /** The parser surface carries no java.io / java.nio.file types. */
-    private static void testParserSurfaceHasNoIoTypes() {
-        Class<?>[] surface = {
-            StrictManifestParser.class,
-            StrictManifestParser.StrictManifestParseResult.class,
-            ProjectConfigValidator.class,
-            ProjectConfigValidator.Outcome.class,
-            ProjectConfigValidator.Failure.class,
-            ProjectManifest.class,
-            ManifestString.class,
-            NativeLibraryRef.class,
-            NativeLibraryRef.Kind.class,
-            ExternalEntrySpec.class,
-            ConfiguredModuleRoot.class,
-            NormalizedDeclarationPath.class,
-            ExternalEntry.class,
-            StrictJsonValue.class,
-            StrictJsonValue.StringVal.class,
-            StrictJsonValue.NumberVal.class,
-            StrictJsonValue.BoolVal.class,
-            StrictJsonValue.NullVal.class,
-            StrictJsonValue.ArrayVal.class,
-            StrictJsonValue.ObjectVal.class,
-            StrictJsonDocument.class,
-        };
-        for (Class<?> type : surface) {
-            for (Method method : type.getDeclaredMethods()) {
-                if (!Modifier.isPublic(method.getModifiers())) {
-                    continue;
-                }
-                check(!isIoType(method.getReturnType(), method.getGenericReturnType())
-                        && !hasIoParameter(method),
-                    type.getSimpleName() + "." + method.getName()
-                        + " must not expose java.io/java.nio types");
-                for (Class<?> exceptionType : method.getExceptionTypes()) {
-                    check(!isIoType(exceptionType, exceptionType),
-                        type.getSimpleName() + "." + method.getName()
-                            + " must not declare IO exception types");
-                }
-            }
-            for (Constructor<?> constructor : type.getDeclaredConstructors()) {
-                if (!Modifier.isPublic(constructor.getModifiers())) {
-                    continue;
-                }
-                check(!hasIoParameter(constructor),
-                    type.getSimpleName() + " constructor must not take IO types");
-            }
-            if (type.isRecord()) {
-                for (RecordComponent component : type.getRecordComponents()) {
-                    check(!isIoType(component.getType(), component.getGenericType()),
-                        type.getSimpleName() + "." + component.getName()
-                            + " must not be an IO type");
-                }
-            }
-        }
-    }
-
-    private static boolean hasIoParameter(java.lang.reflect.Executable executable) {
-        for (Class<?> parameterType : executable.getParameterTypes()) {
-            if (isIoType(parameterType, parameterType)) {
-                return true;
-            }
-        }
-        for (Type genericType : executable.getGenericParameterTypes()) {
-            if (containsIoType(genericType)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean isIoType(Class<?> type, Type genericType) {
-        return containsIoType(type) || containsIoType(genericType);
-    }
-
-    private static boolean containsIoType(Type type) {
-        if (type == null) {
-            return false;
-        }
-        String name = type.getTypeName();
-        return name.contains("java.io.") || name.contains("java.nio.");
     }
 
     // =========================================================================

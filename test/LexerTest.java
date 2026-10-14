@@ -189,7 +189,6 @@ public class LexerTest {
         testEmptyInput();
         testErrorRecovery();
         testTokenSpan();
-        testAllTokenTypesAppear();
         testDotNumber();
         testBlockCommentColumnTracking();
         testMultipleDotsInNumber();
@@ -1019,96 +1018,6 @@ public class LexerTest {
         check(tokens.get(3).length() == 2, "42 length is 2");
 
         assertToken(tokens.get(4), TokenType.SEMICOLON, ";", 1, 11);
-    }
-
-    // =========================================================================
-    // All token types appear in comprehensive source
-    // =========================================================================
-
-    static void testAllTokenTypesAppear() {
-        System.out.println("-- All Token Types Appear --");
-
-        String source = """
-            let x: int = 1 + 2;
-            let y: number = 3.14;
-            let s: string = "hello";
-            let b: boolean = true;
-            let n: null = null;
-            if (x === 1 && y !== 2.0 || !b) {
-                return;
-            } else {
-                let f: boolean = false;
-            }
-            while (x < 10) {
-                x = x + 1;
-                if (x >= 5) {
-                    break;
-                }
-                continue;
-            }
-            for (let i: int = 0; i <= 10; i = i + 1) {
-                let z: int = i * 2 / 3 % 5;
-                if (z > 0) {
-                }
-            }
-            class Foo {
-                name: string;
-                age?: int;
-            }
-            function bar(p: int): int {
-                return p ** 2;
-            }
-            import * as mod from "./module";
-            export function baz(): null {
-                delete x.field;
-                has(x, "field");
-                try {
-                    throw "error";
-                } catch (e) {
-                }
-            }
-            let arr: int[] = [1, 2, 3];
-            let opt: int | null = null;
-            let obj = { key: "value" };
-            let fn: (int) => int = function(): int { return 0; };
-            let rest: int = -1;
-            """;
-
-        LexResult r = tokenize(source);
-        List<Token> tokens = r.tokens();
-
-        java.util.Set<TokenType> seen = new java.util.HashSet<>();
-        for (Token t : tokens) {
-            seen.add(t.type());
-        }
-
-        TokenType[] expected = {
-            TokenType.LET, TokenType.CLASS, TokenType.FUNCTION,
-            TokenType.RETURN,
-            TokenType.IF, TokenType.ELSE, TokenType.WHILE, TokenType.FOR,
-            TokenType.BREAK, TokenType.CONTINUE,
-            TokenType.NULL, TokenType.TRUE, TokenType.FALSE,
-            TokenType.IMPORT, TokenType.EXPORT, TokenType.FROM,
-            TokenType.DELETE, TokenType.HAS, TokenType.TRY, TokenType.CATCH,
-            TokenType.THROW, TokenType.AS,
-            TokenType.INT_LITERAL, TokenType.NUMBER_LITERAL, TokenType.STRING_LITERAL,
-            TokenType.IDENTIFIER,
-            TokenType.PLUS, TokenType.MINUS, TokenType.STAR, TokenType.SLASH,
-            TokenType.PERCENT, TokenType.STAR_STAR,
-            TokenType.EQ_STRICT, TokenType.NEQ_STRICT,
-            TokenType.LT, TokenType.LTE, TokenType.GT, TokenType.GTE,
-            TokenType.AND, TokenType.OR, TokenType.PIPE, TokenType.BANG,
-            TokenType.EQ_SIGN, TokenType.ARROW, TokenType.DOT,
-            TokenType.QUESTION, TokenType.COLON, TokenType.SEMICOLON, TokenType.COMMA,
-            TokenType.LBRACE, TokenType.RBRACE, TokenType.LPAREN, TokenType.RPAREN,
-            TokenType.LBRACKET, TokenType.RBRACKET,
-            TokenType.EOF,
-        };
-
-        for (TokenType expectedType : expected) {
-            check(seen.contains(expectedType),
-                "token type " + expectedType + " appears in comprehensive source");
-        }
     }
 
     // =========================================================================

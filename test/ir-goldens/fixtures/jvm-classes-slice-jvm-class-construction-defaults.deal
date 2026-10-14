@@ -1,8 +1,0 @@
-// IR golden fixture: jvm-classes-slice-jvm-class-construction-defaults
-// Migrated IR-containment pin for legacy case 'jvm-class-construction-defaults' (ISSUE-0358).
-
-class Point { x: int = 10; y: int = 20; }
-export function test(): int {
-  let p: Point = {};
-  return p.x + p.y;
-}

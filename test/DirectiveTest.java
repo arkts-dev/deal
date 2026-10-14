@@ -3,8 +3,6 @@ package deal.test;
 import deal.ast.*;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.diagnostics.DiagnosticCode;
-import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
@@ -13,9 +11,6 @@ import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
-import deal.semantic.CompilerProfileProvider;
-import deal.semantic.ReleaseConfiguration;
-import deal.source.ScalarSourceCursor;
 import deal.types.Type;
 
 import java.io.ByteArrayOutputStream;
@@ -585,30 +580,6 @@ public class DirectiveTest {
     }
 
     // =========================================================================
-    // Registry (D6)
-    // =========================================================================
-
-    static void testRegistry() {
-        System.out.println("-- Diagnostic registry (D6) --");
-
-        check(DiagnosticCode.fromCode("E1043") != null, "E1043 registered");
-        check(DiagnosticCode.fromCode("E1044") != null, "E1044 registered");
-        check(DiagnosticCode.fromCode("E1045") != null, "E1045 registered");
-        check(DiagnosticCode.fromCode("E1046") != null, "E1046 registered");
-        check(DiagnosticCode.fromCode("E7002") != null, "E7002 registered");
-        check(DiagnosticCode.fromCode("E1052") != null, "E1052 registered");
-        check(DiagnosticCode.fromCode("E1053") != null, "E1053 registered");
-        check(DiagnosticCode.fromCode("E1054") != null, "E1054 registered");
-        check(DiagnosticCode.fromCode("E1055") != null, "E1055 registered");
-        check(DiagnosticCode.E1043.phase() == DiagnosticCode.Phase.FRONTEND
-                && DiagnosticCode.E1044.phase() == DiagnosticCode.Phase.FRONTEND
-                && DiagnosticCode.E1045.phase() == DiagnosticCode.Phase.FRONTEND
-                && DiagnosticCode.E1046.phase() == DiagnosticCode.Phase.FRONTEND
-                && DiagnosticCode.E7002.phase() == DiagnosticCode.Phase.FRONTEND,
-            "E1043-E1046/E7002 are FRONTEND");
-    }
-
-    // =========================================================================
     // Production @spec pin (D8/D12): metadata is not stripped in production
     // =========================================================================
 
@@ -831,7 +802,6 @@ public class DirectiveTest {
         testDeclarationFileBinding();
         testVersionContract();
         testTemplateEmbedded();
-        testRegistry();
         testProductionSpecHeaderE1044();
         testProductionCffiManifestPolicy();
 

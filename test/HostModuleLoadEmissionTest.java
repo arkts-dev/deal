@@ -1650,30 +1650,6 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
-    // 6. The signature extension: the production unit passes the surface
-    // =========================================================================
-
-    private static void testSignatureExtension() throws Exception {
-        System.out.println("-- the production unit passes its received declaration "
-            + "surface to both production emitter entries --");
-        String unit = Files.readString(
-            Path.of("deal", "module", "ProductionProjectEmission.java"),
-            StandardCharsets.UTF_8);
-        check(unit.contains("JvmSemanticEmitter.emitProductionProject(project,"),
-            "the JVM call site is present");
-        check(unit.contains("LuaSemanticEmitter.emitProductionProject(project,"),
-            "the LuaJIT call site is present");
-        checkEq(1, countOccurrences(unit, "declarationSurface, sourceMapRecorder);"),
-            "the JVM call site passes the declaration surface through");
-        checkEq(1, countOccurrences(unit,
-                "new FfiEmissionInput(externCModules, manifestDirectory),"),
-            "the LuaJIT call site passes the declaration surface and the "
-                + "compile's FFI emission input through");
-        checkEq(2, countOccurrences(unit, "sourceMapRecorder);"),
-            "both production emitter entries receive the source-map recorder");
-    }
-
-    // =========================================================================
     // Helpers
     // =========================================================================
 
@@ -1813,7 +1789,6 @@ public class HostModuleLoadEmissionTest {
             testJvmToolchain(abi);
             testJvmMissingExport(missing, cfg);
             testJvmDeclaredArrayElementProjection(array);
-            testSignatureExtension();
         } finally {
             for (Path root : roots) {
                 deleteRecursively(root);

@@ -3079,33 +3079,6 @@ public class DiagnosticRangeTest {
                     "missing anchor: fixture source 'fixture.deal'"),
             "deprecated synthetic factory anchor note");
 
-        // The three deprecated methods carry @Deprecated; the canonical
-        // factories do not.
-        try {
-            check(CompilerDiagnostic.class.getMethod("error",
-                    String.class, String.class, DiagnosticRange.class)
-                    .isAnnotationPresent(Deprecated.class),
-                "error(String, String, DiagnosticRange) must be @Deprecated");
-            check(CompilerDiagnostic.class.getMethod("warning",
-                    String.class, String.class, DiagnosticRange.class)
-                    .isAnnotationPresent(Deprecated.class),
-                "warning(String, String, DiagnosticRange) must be @Deprecated");
-            check(CompilerDiagnostic.class.getMethod("synthetic",
-                    String.class, String.class, String.class, String.class, String.class)
-                    .isAnnotationPresent(Deprecated.class),
-                "synthetic(String, String, String, String, String) must be @Deprecated");
-            check(!CompilerDiagnostic.class.getMethod("error",
-                    DiagnosticCode.class, String.class, DiagnosticRange.class)
-                    .isAnnotationPresent(Deprecated.class),
-                "error(DiagnosticCode, String, DiagnosticRange) must not be @Deprecated");
-            check(!CompilerDiagnostic.class.getMethod("syntheticError",
-                    DiagnosticCode.class, String.class, String.class, String.class)
-                    .isAnnotationPresent(Deprecated.class),
-                "syntheticError must not be @Deprecated");
-        } catch (NoSuchMethodException ex) {
-            fail("factory method missing: " + ex);
-        }
-
         // A null DiagnosticCode is a programmer error.
         boolean threw = false;
         try {

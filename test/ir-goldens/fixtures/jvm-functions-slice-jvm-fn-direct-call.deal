@@ -1,5 +1,0 @@
-// IR golden fixture: jvm-functions-slice-jvm-fn-direct-call
-// Migrated IR-containment pin for legacy case 'jvm-fn-direct-call' (ISSUE-0358).
-
-function greet(name: string): string { return "hi-" + name; }
-export function test(): string { return greet("jvm-fn"); }

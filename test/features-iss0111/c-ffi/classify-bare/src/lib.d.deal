@@ -1,3 +1,0 @@
-// @extern-c
-
-export function fixture_bare_add(a: int, b: int): int;

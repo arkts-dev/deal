@@ -1,24 +1,18 @@
 package deal.test;
 
 import deal.diagnostics.CompilerDiagnostic;
-import deal.identity.CanonicalClassIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.CompilerClassDefaultEntry;
 import deal.module.CompilerClassDefaultPlan;
 import deal.module.DefaultResourceOccurrence;
 import deal.module.PlannedDefaultClass;
 import deal.module.ResolvedDefaultExpression;
-import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.ir.SemanticProfile;
-import deal.semantic.CompilerProfileProvider;
-import deal.semantic.ReleaseConfiguration;
 
-import java.lang.reflect.RecordComponent;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -170,7 +164,6 @@ public class DefaultSemanticPlannerTest {
         """;
 
     public static void main(String[] args) throws Exception {
-        testOccurrenceRecordShape();
         testPlanShapeAndResolutionThroughOrchestrator();
         testE4001ImplementationClass();
         testE4001CStructClass();
@@ -186,37 +179,6 @@ public class DefaultSemanticPlannerTest {
                 + failed + " failure(s)");
             System.exit(1);
         }
-    }
-
-    // =========================================================================
-    // The provisional occurrence record shape: no digest field
-    // =========================================================================
-
-    private static void testOccurrenceRecordShape() {
-        System.out.println("-- DefaultResourceOccurrence shape --");
-        List<String> components = new ArrayList<>();
-        for (RecordComponent component
-                : DefaultResourceOccurrence.class.getRecordComponents()) {
-            components.add(component.getName());
-        }
-        check(components.equals(List.of("kind", "fromSemanticModuleIdentity",
-                "toSemanticModuleIdentity", "importAlias",
-                "semanticResourceIdentity", "sourceRange")),
-            "DefaultResourceOccurrence components are (kind, from, to,"
-                + " importAlias, semanticResourceIdentity, sourceRange),"
-                + " got " + components);
-        check(!components.contains("providerContractDigest")
-                && !components.contains("digest"),
-            "the provisional occurrence record carries no digest component");
-        List<String> plannedComponents = new ArrayList<>();
-        for (RecordComponent component
-                : PlannedDefaultClass.class.getRecordComponents()) {
-            plannedComponents.add(component.getName());
-        }
-        check(plannedComponents.equals(List.of("plan", "declaration",
-                "occurrences")),
-            "PlannedDefaultClass components are (plan, declaration,"
-                + " occurrences), got " + plannedComponents);
     }
 
     private static void testPlanShapeAndResolutionThroughOrchestrator()

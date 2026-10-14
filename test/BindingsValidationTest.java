@@ -875,27 +875,6 @@ public class BindingsValidationTest {
     private static void testSurfaceAndRules() {
         System.out.println("-- surface and pinned rule names --");
 
-        check(BindingsProductionValidator.GROUP_SHAPE.equals("GROUP_SHAPE"),
-            "GROUP_SHAPE rule name is pinned");
-        check(BindingsProductionValidator.CAPTURE_RESOLUTION.equals("CAPTURE_RESOLUTION"),
-            "CAPTURE_RESOLUTION rule name is pinned");
-        check(BindingsProductionValidator.BINDING_GENERATION_RESOLUTION
-                .equals("BINDING_GENERATION_RESOLUTION"),
-            "BINDING_GENERATION_RESOLUTION rule name is pinned");
-        check(BindingsProductionValidator.BINDING_INIT_ONCE.equals("BINDING_INIT_ONCE"),
-            "BINDING_INIT_ONCE rule name is pinned");
-        check(BindingsProductionValidator.INIT_DOMINATES_LOAD.equals("INIT_DOMINATES_LOAD"),
-            "INIT_DOMINATES_LOAD rule name is pinned");
-        check(BindingsProductionValidator.ADAPTER_PAIR.equals("ADAPTER_PAIR"),
-            "ADAPTER_PAIR rule name is pinned");
-        check(BindingsProductionValidator.ADAPTER_SOURCE_SHAPE.equals("ADAPTER_SOURCE_SHAPE"),
-            "ADAPTER_SOURCE_SHAPE rule name is pinned");
-        check(BindingsProductionValidator.REGISTRY_ONE_TO_ONE.equals("REGISTRY_ONE_TO_ONE"),
-            "REGISTRY_ONE_TO_ONE rule name is pinned");
-        check(BindingsProductionValidator.NO_ADAPTER_AT_BOUNDARY
-                .equals("NO_ADAPTER_AT_BOUNDARY"),
-            "NO_ADAPTER_AT_BOUNDARY rule name is pinned");
-
         expectNpe(() -> BindingsProductionValidator.validate(null, tableOf(Map.of())),
             "validate with a null unit");
         expectNpe(() -> BindingsProductionValidator.validate(

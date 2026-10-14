@@ -1,9 +1,0 @@
-// IR golden fixture: jvm-functions-slice-jvm-fn-void-recursion
-// Migrated IR-containment pin for legacy case 'jvm-fn-void-recursion' (ISSUE-0358).
-
-import * as console from "std/console"
-function walk(n: int): null {
-  console.log("step");
-  if (n > 0) { walk(n - 1); }
-}
-export function test(): null { walk(2); }

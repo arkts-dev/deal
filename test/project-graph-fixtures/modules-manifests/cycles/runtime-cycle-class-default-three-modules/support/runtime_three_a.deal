@@ -1,3 +1,0 @@
-
-import * as B from "./runtime_three_b";
-export class A { seed: int = B.get(1); }

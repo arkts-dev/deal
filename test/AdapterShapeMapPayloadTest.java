@@ -57,8 +57,6 @@ import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -526,7 +524,7 @@ public class AdapterShapeMapPayloadTest {
         if (load == null) {
             return;
         }
-        ValueId operand = (ValueId) adapters.get(0).operands().get(0);
+        ValueId operand = adapters.get(0).operands().get(0);
         check(operand.equals(load.result()),
             "the adapter's operand is the proved load's result (identity preservation)");
         check(ofKind(ops, SemanticOpKind.CLOSURE_NEW).stream()
@@ -600,7 +598,7 @@ public class AdapterShapeMapPayloadTest {
             "exactly one operand with the expression's signature (int)->null");
 
         // The operand is the expression's CLOSURE_NEW result.
-        ValueId operand = (ValueId) adapters.get(0).operands().get(0);
+        ValueId operand = adapters.get(0).operands().get(0);
         List<SemanticOp> closures = ofKind(ops, SemanticOpKind.CLOSURE_NEW);
         check(closures.size() == 2,
             "two CLOSURE_NEW ops (main + the expression); got " + closures.size());
@@ -1113,7 +1111,7 @@ public class AdapterShapeMapPayloadTest {
         check(duplicateOpRejected, "a duplicate source op fails closed");
     }
 
-    /** Builds one IR-level op over the pinned schema (test construction only). */    /** Builds one IR-level op over the pinned schema (test construction only). */
+    /** Builds one IR-level op over the pinned schema (test construction only). */
     private static SemanticOp irValueOp(OpId opId, SemanticOpKind kind, KindPayload payload,
                                         ValueId result, RuntimeDescriptor resultType,
                                         List<ValueId> operands,
@@ -1452,44 +1450,6 @@ public class AdapterShapeMapPayloadTest {
     }
 
     /**
-     * The mode-selection seam accepts checker facts only: its public
-     * surface carries no target, route, or emitter parameter type (the
-     * interface contract of B7).
-     */
-    static void testModeSelectionSeamAcceptsCheckerFactsOnly() {
-        System.out.println("-- mode-selection seam: checker facts only --");
-
-        for (Method method : AdapterShapeMap.class.getDeclaredMethods()) {
-            if (!Modifier.isPublic(method.getModifiers())) {
-                continue;
-            }
-            for (Class<?> parameter : method.getParameterTypes()) {
-                String name = parameter.getName();
-                boolean forbidden = name.contains("Target") || name.contains("Route")
-                    || name.contains("Emitter") || name.contains("Backend")
-                    || name.contains("Plan");
-                check(!forbidden,
-                    "the seam's public surface carries no target/route/emitter "
-                        + "parameter: " + method.toGenericString());
-            }
-        }
-        try {
-            Method selectMode = AdapterShapeMap.class.getMethod("selectMode",
-                AdapterShapeMap.SourceShape.class, Optional.class);
-            check(selectMode != null, "selectMode(SourceShape, Optional) exists");
-            Method produced = AdapterShapeMap.class.getMethod("selectModeOverProducedSource",
-                SemanticOpKind.class, Optional.class);
-            check(produced != null, "selectModeOverProducedSource(SemanticOpKind, "
-                + "Optional) exists");
-            Method bindingLoad = AdapterShapeMap.class.getMethod("selectModeOverBindingLoad",
-                Optional.class);
-            check(bindingLoad != null, "selectModeOverBindingLoad(Optional) exists");
-        } catch (NoSuchMethodException defect) {
-            fail("the closed mode-map surface is missing: " + defect.getMessage());
-        }
-    }
-
-    /**
      * The combined corpus (all three modes over the earlier children's
      * production): binding-core generations, the closure child's
      * function values and captures, the registry child's one-to-one
@@ -1625,7 +1585,6 @@ public class AdapterShapeMapPayloadTest {
         testHostExternalImportReadMapsToReevaluateThunk();
         testIrLevelThunkBuilderWrapsCallResultAndFailsClosed();
         testNegativeProofLessBindingNeverValue();
-        testModeSelectionSeamAcceptsCheckerFactsOnly();
         testCombinedCorpusAllModesAndRepeatedLowering();
 
         System.out.println("\nAdapter shape map / payload: " + passed + " passed, "

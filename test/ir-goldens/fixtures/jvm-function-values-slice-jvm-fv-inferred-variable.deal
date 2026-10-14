@@ -1,8 +1,0 @@
-// IR golden fixture: jvm-function-values-slice-jvm-fv-inferred-variable
-// Migrated IR-containment pin for legacy case 'jvm-fv-inferred-variable' (ISSUE-0358).
-
-function dbl(x: int): int { return x * 2; }
-export function test(): int {
-  let f = dbl;
-  return f(21);
-}

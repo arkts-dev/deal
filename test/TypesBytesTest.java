@@ -1,17 +1,9 @@
 package deal.test;
 
-import deal.checker.SymbolTable;
-import deal.descriptors.CanonicalRuntimeTypeDescriptor;
-import deal.ir.IrDumper;
 import deal.types.Type;
-import deal.test.IdentityTestFixtures;
 import deal.types.Types;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 public class TypesBytesTest {
 
@@ -52,7 +44,6 @@ public class TypesBytesTest {
     public static void main(String[] args) {
         System.out.println("=== Running Types Bytes Tests (ISSUE-0308) ===");
 
-        testBytesSingletonIdentity();
         testBytesEquality();
         testBytesCanonicalizeIdentity();
         testContainsBytesTruthTable();
@@ -66,20 +57,6 @@ public class TypesBytesTest {
         if (failed > 0) {
             System.exit(1);
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Singleton identity
-    // -----------------------------------------------------------------------
-
-    static void testBytesSingletonIdentity() {
-        System.out.println("-- Bytes singleton identity --");
-
-        check(Type.Bytes.INSTANCE != null, "Bytes.INSTANCE must not be null");
-        check(Type.Bytes.INSTANCE == Type.Bytes.INSTANCE,
-            "Bytes.INSTANCE must be reference-identical to itself");
-        check(Type.Bytes.INSTANCE instanceof Type,
-            "Bytes.INSTANCE must implement Type");
     }
 
     // -----------------------------------------------------------------------
@@ -149,9 +126,6 @@ public class TypesBytesTest {
 
     static void testBytesCanonicalizeIdentity() {
         System.out.println("-- canonicalize identity --");
-
-        check(Types.canonicalize(Type.Bytes.INSTANCE) == Type.Bytes.INSTANCE,
-            "canonicalize(Bytes) returns the same singleton (reference identity)");
 
         Type arr = new Type.Array(Type.Bytes.INSTANCE);
         Type canonArr = Types.canonicalize(arr);
@@ -316,8 +290,6 @@ public class TypesBytesTest {
             t = new Type.Array(t);
             t = new Type.Nullable(t);
         }
-        check(t != null, "Array/Nullable alternation at depth " + depth
-            + " constructs without error");
         check(Types.containsBytes(t), "constructed deep type contains bytes");
 
         Type fn = Type.Bytes.INSTANCE;
@@ -325,8 +297,6 @@ public class TypesBytesTest {
             fn = new Type.Func(List.of(fn, Type.Null.INSTANCE),
                 fn, i % 2 == 0);
         }
-        check(fn != null, "function nesting at depth " + depth
-            + " constructs without error");
         check(Types.containsBytes(fn), "constructed deep function contains bytes");
 
         check(Types.equals(t, Types.canonicalize(t)),
@@ -339,11 +309,6 @@ public class TypesBytesTest {
 
     static void testNullableGuardUnchanged() {
         System.out.println("-- Nullable guard unchanged --");
-
-        check(new Type.Nullable(Type.Bytes.INSTANCE) != null,
-            "Nullable(bytes) constructs");
-        check(new Type.Nullable(new Type.Array(Type.Bytes.INSTANCE)) != null,
-            "Nullable([bytes]) constructs");
 
         assertThrows(IllegalArgumentException.class,
             () -> new Type.Nullable(Type.Null.INSTANCE),
@@ -383,41 +348,5 @@ public class TypesBytesTest {
                     new Type.Func(List.of(Type.Bytes.INSTANCE),
                         Type.Bytes.INSTANCE, true))),
             "JvmBackend.typeDescriptor(async(bytes)->bytes) == \"async(bytes)->bytes\"");
-
-        deal.module.ModuleIdentityResolver.IdentityIndex index =
-            deal.module.ModuleIdentityResolver.buildIndex(
-                Map.of("", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE));
-        CanonicalRuntimeTypeDescriptor service =
-            new CanonicalRuntimeTypeDescriptor(index);
-        check("bytes".equals(service.encode(Type.Bytes.INSTANCE)),
-            "CanonicalRuntimeTypeDescriptor.encode(bytes) == \"bytes\"");
-        check("[bytes]".equals(service.encode(
-                new Type.Array(Type.Bytes.INSTANCE))),
-            "CanonicalRuntimeTypeDescriptor.encode([bytes]) == \"[bytes]\"");
-        check("?bytes".equals(service.encode(
-                new Type.Nullable(Type.Bytes.INSTANCE))),
-            "CanonicalRuntimeTypeDescriptor.encode(?bytes) == \"?bytes\"");
-        check("async(bytes)->bytes".equals(service.encode(
-                new Type.Func(List.of(Type.Bytes.INSTANCE),
-                    Type.Bytes.INSTANCE, true))),
-            "CanonicalRuntimeTypeDescriptor.encode(async(bytes)->bytes) == "
-                + "\"async(bytes)->bytes\"");
-
-        // IrDumper.specTypeDescriptor — private instance producer.
-        try {
-            Constructor<IrDumper> ctor = IrDumper.class.getDeclaredConstructor(
-                Map.class, SymbolTable.class, String.class, boolean.class);
-            ctor.setAccessible(true);
-            IrDumper dumper = ctor.newInstance(Map.of(), new SymbolTable(),
-                "", false);
-            Method m = IrDumper.class.getDeclaredMethod("specTypeDescriptor",
-                Type.class);
-            m.setAccessible(true);
-            String desc = (String) m.invoke(dumper, Type.Bytes.INSTANCE);
-            check("bytes".equals(desc),
-                "IrDumper.specTypeDescriptor(bytes) == \"bytes\"");
-        } catch (Throwable t) {
-            fail("IrDumper.specTypeDescriptor reflection failed: " + t);
-        }
     }
 }

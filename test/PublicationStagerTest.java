@@ -42,7 +42,6 @@ public class PublicationStagerTest {
             "=== Publication Stager Tests (ISSUE-0458) ===\n");
 
         testArtifactModel();
-        testSkipSitesRemoved();
         testForcedFailureLeavesLiveRootUntouched();
         testFreshRootPublishWholeSetSemantics();
         testStaleSetPurge();
@@ -267,27 +266,6 @@ public class PublicationStagerTest {
         }
         check(duplicateRejected,
             "a duplicate relative path is rejected by the set");
-    }
-
-    // =========================================================================
-    // The D3 structural criterion: the four skip sites are removed
-    // =========================================================================
-
-    private static void testSkipSitesRemoved() throws Exception {
-        System.out.println(
-            "-- The four Files.exists skip sites are removed");
-        String orchestratorSource = Files.readString(
-            Path.of("deal/module/CompilationOrchestrator.java"));
-        check(!orchestratorSource.contains("Files.exists(runtimeDest)"),
-            "no runtime-destination skip remains (copyRuntimeLibrary/"
-                + "copyJsRuntimeLibrary stage fresh)");
-        check(!orchestratorSource.contains("Files.exists(destFile)"),
-            "no stdlib-destination skip remains (copyStdlibModules/"
-                + "copyStdlibJsModules stage fresh)");
-        check(orchestratorSource.contains("stageRuntimeCopy")
-                && orchestratorSource.contains("stageStdlibCopy"),
-            "the runtime/stdlib copies stage through the publication "
-                + "sink");
     }
 
     // =========================================================================

@@ -1,3 +1,0 @@
-// @extern-c
-
-export function fixture_dual_combine(a: int, b: int): int;

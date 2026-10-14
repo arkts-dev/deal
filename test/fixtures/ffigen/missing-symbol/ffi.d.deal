@@ -1,3 +1,0 @@
-// @extern-c
-
-export function absent_symbol(): int;

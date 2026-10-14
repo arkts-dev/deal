@@ -1,4 +1,0 @@
-// IR golden fixture: jvm-skeleton-jvm-nonfinite-literal
-// Migrated IR-containment pin for legacy case 'jvm-nonfinite-literal' (ISSUE-0358).
-
-export function test(): number { let x: number = 1e999; return x; }

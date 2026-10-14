@@ -1,4 +1,0 @@
-// IR golden fixture: jvm-integration-join-jvm-join-nested-array-descriptor-ir
-// Migrated IR-containment pin for legacy case 'jvm-join-nested-array-descriptor-ir' (ISSUE-0358).
-
-function f(a: int[][]): null { return; }

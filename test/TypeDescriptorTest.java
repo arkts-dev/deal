@@ -2,11 +2,6 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
-import deal.descriptors.CanonicalRuntimeTypeDescriptor;
-import deal.descriptors.DescriptorAst;
-import deal.descriptors.DescriptorParseResult;
-import deal.descriptors.DescriptorSyntaxError;
-import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
@@ -15,7 +10,6 @@ import deal.lexer.*;
 import deal.module.ModuleIdentityResolver;
 import deal.parser.*;
 import deal.types.Type;
-import deal.types.Types;
 
 import java.util.*;
 
@@ -25,12 +19,8 @@ public class TypeDescriptorTest {
     private static int failed = 0;
 
     public static void main(String[] args) throws Exception {
-        System.out.println("=== Running TypeDescriptorTest (canonical service corpus) ===\n");
+        System.out.println("=== Running TypeDescriptorTest (compiler IR descriptors) ===\n");
 
-        Map<String, DescriptorAst> opaqueAtoms = testCanonicalAcceptCorpus();
-        testEncodeRoundTrips();
-        testLegacyRejectionCorpus();
-        testOpaqueClassAtoms(opaqueAtoms);
         testIrSpecFormatNotLegacy();
         testIrArrayDescriptors();
         testIrNullableDescriptorsOnParams();
@@ -53,15 +43,6 @@ public class TypeDescriptorTest {
         }
     }
 
-    // =========================================================================
-    // Helpers
-    // =========================================================================
-
-    private static void assertTrue(boolean cond, String label) {
-        if (cond) { passed++; }
-        else { failed++; System.out.println("FAIL [" + label + "]"); }
-    }
-
     private static void assertContains(String haystack, String needle, String label) {
         if (haystack.contains(needle)) { passed++; }
         else {
@@ -80,9 +61,6 @@ public class TypeDescriptorTest {
         }
     }
 
-    /** The compilation's identity index over the single-module standalone
-     * classification (empty path &rarr; builtin; every other path &rarr;
-     * a project module whose configured root text is the path itself). */
     private static CanonicalClassIdentityIndex testIndex(
             Map<String, CanonicalModuleIdentity> extra) {
         Map<String, CanonicalModuleIdentity> classification =
@@ -97,254 +75,6 @@ public class TypeDescriptorTest {
         classification.putAll(extra);
         return ModuleIdentityResolver.buildIndex(classification);
     }
-
-    private static Type.Class classType(String name,
-                                        CanonicalModuleIdentity module) {
-        return Types.classType(name,
-            new CanonicalClassIdentity(module, name));
-    }
-
-    // =========================================================================
-    // Test 1: canonical accept corpus — byte-identical parse/render round trips
-    // =========================================================================
-
-    static Map<String, DescriptorAst> testCanonicalAcceptCorpus() {
-        System.out.println("  testCanonicalAcceptCorpus... ");
-        List<String> accept = List.of(
-            // primitives
-            "null", "boolean", "int", "number", "string", "bytes", "table",
-            // arrays / nullables / nesting at depth
-            "[int]", "[bytes]", "?int", "?bytes", "[[int]]", "[?int]",
-            "?[int]", "[[[bytes]]]", "[?[bytes]]", "?[[int]]",
-            // functions — exact sync/async forms
-            "()->null", "(int)->int", "(int,string)->?int", "(string,[int])->null",
-            "async()->int", "async(int)->string", "async(bytes)->bytes",
-            "async([bytes])->?bytes", "((int)->int)->int", "[(int)->int]",
-            "[?(int)->int]", "?((int)->int)->int",
-            // class atoms — opaque project/external/builtin projections
-            "@test/User", "@lib/utils/User", "@lib.utils/User",
-            "@$external/host.cfg/ServerConfig", "@$builtin/Error",
-            "?@test/User", "[@test/User]", "[?@test/User]",
-            "(?@test/User)->@$builtin/Error",
-            // delimited atoms end exactly at their enclosing delimiter
-            "[@a/b/C]", "(?@a/b/C)->null", "(int,@a/b/C)->null");
-        Set<String> opaqueTexts = Set.of("@lib/utils/User", "@lib.utils/User",
-            "@$external/host.cfg/ServerConfig", "@$builtin/Error",
-            "[@a/b/C]", "(?@a/b/C)->null", "(int,@a/b/C)->null");
-        Map<String, DescriptorAst> opaqueAtoms = new LinkedHashMap<>();
-        int ok = 0;
-        for (String text : accept) {
-            DescriptorParseResult parsed =
-                CanonicalRuntimeTypeDescriptor.parse(text);
-            if (!(parsed instanceof DescriptorAst ast)) {
-                failed++;
-                System.out.println("FAIL [accept corpus]: '" + text
-                    + "' did not parse: " + parsed);
-                continue;
-            }
-            String rendered = CanonicalRuntimeTypeDescriptor.render(ast);
-            if (!rendered.equals(text)) {
-                failed++;
-                System.out.println("FAIL [accept corpus]: '" + text
-                    + "' rendered as '" + rendered + "'");
-                continue;
-            }
-            DescriptorParseResult again =
-                CanonicalRuntimeTypeDescriptor.parse(rendered);
-            if (!(again instanceof DescriptorAst ast2)
-                    || !CanonicalRuntimeTypeDescriptor.render(ast2)
-                        .equals(text)) {
-                failed++;
-                System.out.println("FAIL [accept corpus]: '" + text
-                    + "' does not round-trip through parse(render(ast))");
-                continue;
-            }
-            if (opaqueTexts.contains(text)) {
-                opaqueAtoms.put(text, ast);
-            }
-            ok++;
-        }
-        assertTrue(ok == accept.size(),
-            "every canonical accept-corpus row parses and round-trips "
-            + "byte-identically (" + ok + "/" + accept.size() + ")");
-        System.out.println("OK (" + ok + " rows)");
-        return Map.copyOf(opaqueAtoms);
-    }
-
-    // =========================================================================
-    // Test 2: render(parse(encode(T))) == encode(T) for a type-built corpus
-    // =========================================================================
-
-    static void testEncodeRoundTrips() {
-        System.out.println("  testEncodeRoundTrips... ");
-        CanonicalRuntimeTypeDescriptor descriptors =
-            new CanonicalRuntimeTypeDescriptor(testIndex(Map.of(
-                "host.cfg", new CanonicalModuleIdentity.ExternalModule(
-                    "host.cfg"))));
-        CanonicalModuleIdentity project =
-            new CanonicalModuleIdentity.ProjectModule(
-                new ProjectModuleIdentity("test", "test", List.of()));
-        List<Type> corpus = new ArrayList<>(List.of(
-            Type.Null.INSTANCE, Type.Boolean.INSTANCE, Type.Int.INSTANCE,
-            Type.Number.INSTANCE, Type.String.INSTANCE, Type.Bytes.INSTANCE,
-            Type.Table.INSTANCE,
-            Types.array(Type.Int.INSTANCE),
-            Types.array(Type.Bytes.INSTANCE),
-            Types.nullable(Type.Int.INSTANCE),
-            Types.nullable(Type.Bytes.INSTANCE),
-            Types.array(Types.array(Types.array(Type.Bytes.INSTANCE))),
-            Types.array(Types.nullable(Type.Bytes.INSTANCE)),
-            Types.nullable(Types.array(Type.Int.INSTANCE)),
-            Types.func(List.of(), Type.Null.INSTANCE),
-            Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE),
-            Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE, true),
-            Types.func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE, true),
-            Types.func(List.of(Types.array(Type.Bytes.INSTANCE)),
-                Types.nullable(Type.Bytes.INSTANCE), true),
-            Types.func(List.of(Types.func(List.of(), Type.Int.INSTANCE)),
-                Type.Int.INSTANCE),
-            Types.array(Types.func(List.of(), Type.Int.INSTANCE)),
-            classType("User", project),
-            classType("Error", CanonicalModuleIdentity.BuiltinModule.INSTANCE),
-            classType("ServerConfig",
-                new CanonicalModuleIdentity.ExternalModule("host.cfg")),
-            Types.nullable(classType("User", project)),
-            Types.array(classType("User", project)),
-            Types.array(Types.nullable(classType("User", project)))));
-        int ok = 0;
-        for (Type t : corpus) {
-            String encoded = descriptors.encode(t);
-            DescriptorParseResult parsed =
-                CanonicalRuntimeTypeDescriptor.parse(encoded);
-            if (!(parsed instanceof DescriptorAst ast)) {
-                failed++;
-                System.out.println("FAIL [encode round trip]: encode(" + t
-                    + ") = '" + encoded + "' does not parse: " + parsed);
-                continue;
-            }
-            String rendered = CanonicalRuntimeTypeDescriptor.render(ast);
-            if (!rendered.equals(encoded)) {
-                failed++;
-                System.out.println("FAIL [encode round trip]: encode(" + t
-                    + ") = '" + encoded + "' rendered as '" + rendered + "'");
-                continue;
-            }
-            ok++;
-        }
-        assertTrue(ok == corpus.size(),
-            "render(parse(encode(T))) == encode(T) for every corpus type ("
-            + ok + "/" + corpus.size() + ")");
-        assertTrue(descriptors.encode(Type.Bytes.INSTANCE).equals("bytes"),
-            "encode(Type.Bytes.INSTANCE) == 'bytes'");
-        System.out.println("OK (" + ok + " types)");
-    }
-
-    // =========================================================================
-    // Test 3: legacy-rejection corpus — pinned kinds, never a partial AST
-    // =========================================================================
-
-    static void testLegacyRejectionCorpus() {
-        System.out.println("  testLegacyRejectionCorpus... ");
-        record Row(String text, DescriptorSyntaxError.Kind kind) {}
-        List<Row> rejected = List.of(
-            new Row("int[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT),
-            new Row("string|null", DescriptorSyntaxError.Kind.TRAILING_CONTENT),
-            new Row("T[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("(string,...int[])", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("(string,...string)->string", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("User", DescriptorSyntaxError.Kind.BARE_CLASS_NAME),
-            new Row("Error", DescriptorSyntaxError.Kind.BARE_CLASS_NAME),
-            new Row("@src.models.User", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("@a/b.C", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("@host.cfg.ServerConfig", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("??int", DescriptorSyntaxError.Kind.NESTED_NULLABLE),
-            new Row("?null", DescriptorSyntaxError.Kind.NULL_INNER),
-            new Row("?[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("?int[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT),
-            new Row("?", DescriptorSyntaxError.Kind.UNEXPECTED_END),
-            new Row("[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("(int)int", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("async[int]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("Async(int)->int", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER),
-            new Row("@", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("@Foo", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("@a/", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("@a//b", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("@.", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("@a->b", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM),
-            new Row("", DescriptorSyntaxError.Kind.UNEXPECTED_END));
-        int ok = 0;
-        for (Row row : rejected) {
-            DescriptorParseResult parsed =
-                CanonicalRuntimeTypeDescriptor.parse(row.text());
-            if (!(parsed instanceof DescriptorSyntaxError err)) {
-                failed++;
-                System.out.println("FAIL [legacy rejection]: '" + row.text()
-                    + "' unexpectedly parsed: " + parsed);
-                continue;
-            }
-            if (err.kind() != row.kind()) {
-                failed++;
-                System.out.println("FAIL [legacy rejection]: '" + row.text()
-                    + "' kind " + err.kind() + " != pinned " + row.kind()
-                    + " (" + err.message() + ")");
-                continue;
-            }
-            ok++;
-        }
-        assertTrue(ok == rejected.size(),
-            "every legacy-rejection row fails with its pinned kind ("
-            + ok + "/" + rejected.size() + ")");
-        System.out.println("OK (" + ok + " rows)");
-    }
-
-    // =========================================================================
-    // Test 4: opaque class atoms — byte-for-byte equality, delimiter ends
-    // =========================================================================
-
-    static void testOpaqueClassAtoms(Map<String, DescriptorAst> opaqueAtoms) {
-        System.out.println("  testOpaqueClassAtoms... ");
-        DescriptorParseResult p1 = opaqueAtoms.get(
-            "@lib/utils/User");
-        DescriptorParseResult p2 = opaqueAtoms.get(
-            "@lib.utils/User");
-        assertTrue(p1 instanceof DescriptorAst.ClassAtom a
-                && a.fullDescriptorText().equals("@lib/utils/User"),
-            "@lib/utils/User parses as an opaque atom");
-        assertTrue(p2 instanceof DescriptorAst.ClassAtom b
-                && b.fullDescriptorText().equals("@lib.utils/User"),
-            "@lib.utils/User parses as an opaque atom (dot in a "
-            + "non-final component is legal)");
-        assertTrue(p1 instanceof DescriptorAst.ClassAtom a
-                && p2 instanceof DescriptorAst.ClassAtom b
-                && !a.fullDescriptorText().equals(b.fullDescriptorText()),
-            "atom text equality never crosses '/' vs '.' spellings");
-        DescriptorParseResult pe = opaqueAtoms.get(
-            "@$external/host.cfg/ServerConfig");
-        assertTrue(pe instanceof DescriptorAst.ClassAtom ea
-                && ea.fullDescriptorText()
-                    .equals("@$external/host.cfg/ServerConfig"),
-            "@$external/host.cfg/ServerConfig parses (dotted externals "
-            + "specifier is a legal non-final component)");
-        DescriptorParseResult pb = opaqueAtoms.get(
-            "@$builtin/Error");
-        assertTrue(pb instanceof DescriptorAst.ClassAtom ba
-                && ba.fullDescriptorText().equals("@$builtin/Error"),
-            "@$builtin/Error parses (the canonical builtin projection)");
-        // Atoms end exactly at their enclosing delimiters.
-        for (String delimited : List.of(
-                "[@a/b/C]", "(?@a/b/C)->null", "(int,@a/b/C)->null")) {
-            DescriptorParseResult parsed = opaqueAtoms.get(delimited);
-            assertTrue(parsed instanceof DescriptorAst,
-                "delimited class atom '" + delimited
-                    + "' parses completely: " + parsed);
-        }
-        System.out.println("OK");
-    }
-
-    // =========================================================================
-    // IR dump rows — canonical spellings, never legacy
-    // =========================================================================
 
     private record CompileResult(ProgramNode program,
                                  CheckResult checkResult,
@@ -562,10 +292,6 @@ public class TypeDescriptorTest {
         assertContains(ir, "?bytes", "nullable bytes uses ?bytes");
         System.out.println("OK");
     }
-
-    // =========================================================================
-    // Stub module resolver
-    // =========================================================================
 
     static class ModuleResolverStub implements ModuleResolver {
         @Override

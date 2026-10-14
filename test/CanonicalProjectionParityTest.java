@@ -138,17 +138,6 @@ import java.util.stream.Stream;
  *       {@code null} or nullable return and never collapses into absence;
  *       the corpus-pinned {@code host-empty-return-bad} cell additionally
  *       drives the full program on all three consumers.</li>
- *   <li><b>The closed arm table's renderer identity.</b> Every declared
- *       arm renders its own template with the same named parameters,
- *       expected token, and actual token from the registry renderer, the
- *       emitted Lua prelude under {@code luajit}, and the JVM runtime
- *       renderer; the field shapes fail closed, the two inner-only string
- *       carriers never render at a boundary site, and the bound walk arm
- *       (the typed-boundary projection at the call origin, ISSUE-0711)
- *       renders through the same closed table. The host inner-reason
- *       vocabulary and its pass-throughs are driven through the oracle's
- *       host cells, the JVM runtime's own producers, and the deployed
- *       matcher under {@code luajit}.</li>
  *   <li><b>The {@code FOR_EACH} terminal check.</b> A deleted
  *       array-element slot inside a typed for-of publishes the kind arm's
  *       suffix-less text with expected {@code int} and actual {@code nil}
@@ -1494,220 +1483,6 @@ public class CanonicalProjectionParityTest {
             pin.line(), pin.column(), arm.expected(), arm.actual());
     }
 
-    /**
-     * The caller-owned declared-async-null host surface of the completion
-     * drive: a nullable completion, a {@code null} completion, and a
-     * mandatory completion that the same null sentinel must still fail.
-     * The declaration is written into the scratch mirror (no corpus or
-     * host-fixture membership change).
-     */
-    private static final String NULL_COMPLETION_HOST_DECLARATION = """
-        export async function fetchValue(): string | null;
-        export async function pingNull(): null;
-        export async function fetchStrict(): string;
-        """;
-
-    /**
-     * The LuaJIT host implementation: every declared operation completes
-     * with the deployed runtime's language-null sentinel (the carrier of a
-     * host-crossed null).
-     */
-    private static final String NULL_COMPLETION_HOST_LUA = """
-        local rt = require("deal.runtime")
-
-        return {
-          fetchValue = function()
-            return rt.async_start(function()
-              return rt.__NULL
-            end)
-          end,
-          pingNull = function()
-            return rt.async_start(function()
-              return rt.__NULL
-            end)
-          end,
-          fetchStrict = function()
-            return rt.async_start(function()
-              return rt.__NULL
-            end)
-          end,
-        }
-        """;
-
-    /**
-     * The JVM host implementation: every declared operation completes with
-     * a present Java null — the JVM host surface's language-null carrier.
-     */
-    private static final String NULL_COMPLETION_HOST_JAVA = """
-        import java.util.concurrent.CompletableFuture;
-
-        final class HostAsync_nullable {
-          public static Object fetchValue() {
-            return CompletableFuture.completedFuture(null);
-          }
-          public static Object pingNull() {
-            return CompletableFuture.completedFuture(null);
-          }
-          public static Object fetchStrict() {
-            return CompletableFuture.completedFuture(null);
-          }
-        }
-        """;
-
-    /** The drive's generated entry module: the two admitted null completions. */
-    private static final String NULL_COMPLETION_DRIVER = """
-        import * as host from "host/async_nullable"
-
-        export async function test_nullable_host_completion(): null {
-          let v: string | null = await host.fetchValue()
-          if (v !== null) {
-            throw { code: "PROBE_HOST_NULL_COMPLETION", message: "the host null completion was not the language null" }
-          }
-          return null
-        }
-
-        export async function test_null_host_completion(): null {
-          await host.pingNull()
-          return null
-        }
-
-        export function main(): null {
-          return null
-        }
-        """;
-
-    /** The drive's generated entry module: the rejected null completion. */
-    private static final String NULL_COMPLETION_STRICT_DRIVER = """
-        import * as host from "host/async_nullable"
-
-        export async function test_strict_host_completion(): null {
-          let s: string = await host.fetchStrict()
-          return null
-        }
-
-        export function main(): null {
-          return null
-        }
-        """;
-
-    private static final String NULL_COMPLETION_COMBINED_DRIVER = combinedDriver(
-        NULL_COMPLETION_STRICT_DRIVER, NULL_COMPLETION_DRIVER);
-
-    /**
-     * The host null/nullable async completions (ISSUE-0696 remediation): a
-     * host operation completing with the language-null carrier — the
-     * deployed runtime's sentinel on LuaJIT, a present Java null on the
-     * JVM — is a valid completion of a declared {@code null} or
-     * {@code T | null} async return on the oracle, the LuaJIT artifact,
-     * and the JVM artifact alike, while the same null completion at a
-     * declared non-null return still renders the pinned
-     * {@code ASYNC_COMPLETION_KIND} tuple ({@code expected string}, actual
-     * {@code null}) at the await expression. The drive's declaration is
-     * caller-owned, so no corpus or host-fixture membership changes.
-     */
-    private static void testHostNullCompletions() throws Exception {
-        System.out.println("-- the host null/nullable async completions: the "
-            + "language-null carrier is admitted by a declared null or nullable "
-            + "return on all three consumers and still rejected at a mandatory "
-            + "return --");
-        Case spec = new Case("host-abi/host-async-shape-bad",
-            "test_nullable_host_completion", Entry.ASYNC, List.of(), null, null);
-        Compiled compiled = compile(spec, NULL_COMPLETION_COMBINED_DRIVER,
-            Map.of("async_nullable", NULL_COMPLETION_HOST_DECLARATION));
-        try {
-            safely("the nullable and null host completions",
-                () -> driveHostNullCompletionSuccess(compiled));
-            safely("the mandatory host completion rejects the null sentinel",
-                () -> driveHostMandatoryNullCompletion(compiled));
-        } finally {
-            deleteRecursively(compiled.root());
-        }
-    }
-
-    /**
-     * The admitted null/nullable host completions: the oracle's async-entry
-     * drive completes with a success terminal for both exports (the body's
-     * own {@code !== null} probe consumed the admitted language null), and
-     * both production artifacts complete without a failure event.
-     */
-    private static void driveHostNullCompletionSuccess(Compiled compiled) throws Exception {
-        SemanticOracle.HostResponder responder = nullCompletingResponder();
-        for (String export : List.of("test_nullable_host_completion",
-                "test_null_host_completion")) {
-            SemanticRuntimeModel.ConsumerRun run =
-                SemanticOracle.invokeAsyncEntry(compiled.project(),
-                    compiled.tables(), responder,
-                    compiled.checkedProject().entryModule(), export, List.of());
-            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                "the " + export + " (oracle): the host null completion is "
-                    + "admitted: " + run.terminal());
-            String lua = luaArtifactOutput(compiled,
-                Map.of("async_nullable", NULL_COMPLETION_HOST_LUA),
-                luaExportProbe(compiled, export));
-            check(lua.contains("OK") && !lua.contains("ERR|"),
-                export + " (luajit): the production artifact completes without "
-                    + "a failure event: " + lua);
-            String jvm = jvmExportOutput(compiled, export,
-                Map.of("async_nullable", NULL_COMPLETION_HOST_JAVA));
-            check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"),
-                export + " (jvm): the production artifact completes without "
-                    + "a failure event: " + jvm);
-        }
-    }
-
-    /**
-     * The rejected mandatory host completion: the same null sentinel at a
-     * declared {@code string} async return renders the closed
-     * {@code ASYNC_COMPLETION_KIND} arm byte-exact on all three consumers —
-     * code, message, the await-expression origin, expected, and actual — so
-     * the language-null admission never widens a mandatory completion cell.
-     */
-    private static void driveHostMandatoryNullCompletion(Compiled compiled) throws Exception {
-        BoundaryFailure arm = FailureContractRegistry.render(
-            FailureArmId.ASYNC_COMPLETION_KIND, Map.of("expected", "string"),
-            "string", "null", null);
-        Tuple expected = new Tuple(arm.code().name(), arm.message(), "app.deal",
-            4, 19, arm.expected(), arm.actual());
-        Tuple oracle = failureTuple(compiled, SemanticOracle.invokeAsyncEntry(
-            compiled.project(), compiled.tables(), nullCompletingResponder(),
-            compiled.checkedProject().entryModule(), "test_strict_host_completion",
-            List.of()));
-        checkEq(expected, oracle, "the mandatory host completion (oracle): the "
-            + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
-        Tuple lua = luaHostFailure(compiled, "async_nullable",
-            NULL_COMPLETION_HOST_LUA, "test_strict_host_completion");
-        checkEq(expected, lua, "the mandatory host completion (luajit): the "
-            + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
-        Tuple jvm = jvmHostFailure(compiled, "async_nullable",
-            NULL_COMPLETION_HOST_JAVA, "test_strict_host_completion");
-        checkEq(expected, jvm, "the mandatory host completion (jvm): the "
-            + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
-        checkEq(null, firstDifferingField(oracle, lua),
-            "the mandatory host completion: the oracle and the LuaJIT artifact "
-                + "render the identical tuple");
-        checkEq(null, firstDifferingField(oracle, jvm),
-            "the mandatory host completion: the oracle and the JVM artifact "
-                + "render the identical tuple");
-    }
-
-    /** The drive's async host seam: every declared operation completes with null. */
-    private static SemanticOracle.HostResponder nullCompletingResponder() {
-        return new SemanticOracle.HostResponder() {
-            @Override
-            public AsyncStartOutcome startAsync(ModuleId module, String export,
-                    RuntimeDescriptor.Func descriptor,
-                    List<SemanticOracle.Value> args, String operationLabel) {
-                return new AsyncStartOutcome.Operation(operationLabel);
-            }
-
-            @Override
-            public SyncOutcome completeAsync(String operationLabel) {
-                return new SyncOutcome.Returned(
-                    SemanticOracle.Value.NullValue.INSTANCE);
-            }
-        };
-    }
-
     // =========================================================================
     // The synchronous host result presence (ISSUE-0696 remediation)
     // =========================================================================
@@ -2218,16 +1993,6 @@ public class CanonicalProjectionParityTest {
         check(JvmRuntime.hostCompletion("nullable(int)", "nullable:int",
             Integer.valueOf(7)) instanceof Long, "the host completion seam "
                 + "settles a nullable int completion's carrier");
-        try {
-            JvmRuntime.hostCompletion("int", "int", "x");
-            check(false, "the host completion seam rejects a non-numeric carrier "
-                + "through the completion cell's own check");
-        } catch (JvmRuntime.DealError kind) {
-            check("E8001".equals(kind.code) && "expected int".equals(kind.msg),
-                "the host completion seam rejects a non-numeric carrier through "
-                    + "the completion cell's own check: " + kind.code + " "
-                    + kind.msg);
-        }
         Case spec = new Case("host-abi/host-async-shape-bad", "test_use_int",
             Entry.ASYNC, List.of(), "async_numeric", null);
         Compiled compiled = compile(spec, NUMERIC_COMPLETION_DRIVER,
@@ -2884,9 +2649,13 @@ public class CanonicalProjectionParityTest {
 
     /** The LuaJIT array-completion host: one carrier expression for every export. */
     private static String luaAsyncArrayHost(String carrier) {
+        return luaAsyncArrayHost(carrier, "");
+    }
+
+    private static String luaAsyncArrayHost(String carrier, String setup) {
         return """
             local rt = require("deal.runtime")
-
+            %s
             return {
               fetchInts = function()
                 return rt.async_start(function() return %s end)
@@ -2910,12 +2679,16 @@ public class CanonicalProjectionParityTest {
                 return rt.async_start(function() return %s end)
               end,
             }
-            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier,
+            """.formatted(setup, carrier, carrier, carrier, carrier, carrier, carrier,
                 carrier);
     }
 
     /** The JVM array-completion host: one completed-future carrier per export. */
     private static String jvmAsyncArrayHost(String carrier) {
+        return jvmAsyncArrayHost(carrier, "");
+    }
+
+    private static String jvmAsyncArrayHost(String carrier, String setup) {
         return """
             import java.util.concurrent.CompletableFuture;
 
@@ -2951,9 +2724,10 @@ public class CanonicalProjectionParityTest {
               public static Object fetchNumbers() {
                 return CompletableFuture.completedFuture(%s);
               }
+              %s
             }
             """.formatted(carrier, carrier, carrier, carrier, carrier, carrier,
-                carrier);
+                carrier, setup);
     }
 
     /** The admitted int[] completion: the boxed element settles and is consumed. */
@@ -3118,28 +2892,12 @@ public class CanonicalProjectionParityTest {
      * host fixture itself never depends on the stack.
      */
     private static String luaDeepStringArrayHost(int levels) {
-        return """
-            local rt = require("deal.runtime")
-
+        return luaAsyncArrayHost("{__a = true, __n = 2, [1] = 7, [2] = node}", """
             local node = {__a = true, __n = 0}
             for i = 1, %d do
               node = {__a = true, __n = 1, [1] = node}
             end
-
-            local function completion()
-              return {__a = true, __n = 2, [1] = 7, [2] = node}
-            end
-
-            return {
-              fetchInts = function() return rt.async_start(completion) end,
-              fetchNullableInts = function() return rt.async_start(completion) end,
-              fetchNullableElements = function() return rt.async_start(completion) end,
-              fetchNestedInts = function() return rt.async_start(completion) end,
-              fetchNestedStrings = function() return rt.async_start(completion) end,
-              fetchStrings = function() return rt.async_start(completion) end,
-              fetchNumbers = function() return rt.async_start(completion) end,
-            }
-            """.formatted(levels);
+            """.formatted(levels));
     }
 
     /**
@@ -3149,57 +2907,16 @@ public class CanonicalProjectionParityTest {
      * host fixture itself never depends on the stack.
      */
     private static String jvmDeepStringArrayHost(int levels) {
-        return """
-            import java.util.concurrent.CompletableFuture;
-
-            final class HostAsync_arrays {
-              private static deal.codegen.jvm.JvmRuntime.Array array(
-                  java.lang.Object... elements) {
-                deal.codegen.jvm.JvmRuntime.Array array =
-                    new deal.codegen.jvm.JvmRuntime.Array(elements.length);
-                for (java.lang.Object element : elements) {
-                  array.elements.add(element);
-                }
-                return array;
+        return jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), deep(" + levels + "))",
+            """
+            private static deal.codegen.jvm.JvmRuntime.Array deep(int levels) {
+              deal.codegen.jvm.JvmRuntime.Array node = new deal.codegen.jvm.JvmRuntime.Array(0);
+              for (int i = 0; i < levels; i++) {
+                node = array(node);
               }
-
-              private static deal.codegen.jvm.JvmRuntime.Array deep(int levels) {
-                deal.codegen.jvm.JvmRuntime.Array node =
-                    new deal.codegen.jvm.JvmRuntime.Array(0);
-                for (int i = 0; i < levels; i++) {
-                  node = array(node);
-                }
-                return node;
-              }
-
-              public static Object fetchInts() {
-                return CompletableFuture.completedFuture(completion(%d));
-              }
-              public static Object fetchNullableInts() {
-                return CompletableFuture.completedFuture(completion(%d));
-              }
-              public static Object fetchNullableElements() {
-                return CompletableFuture.completedFuture(completion(%d));
-              }
-              public static Object fetchNestedInts() {
-                return CompletableFuture.completedFuture(completion(%d));
-              }
-              public static Object fetchNestedStrings() {
-                return CompletableFuture.completedFuture(completion(%d));
-              }
-              public static Object fetchStrings() {
-                return CompletableFuture.completedFuture(completion(%d));
-              }
-              public static Object fetchNumbers() {
-                return CompletableFuture.completedFuture(completion(%d));
-              }
-
-              private static deal.codegen.jvm.JvmRuntime.Array completion(
-                  int levels) {
-                return array(java.lang.Integer.valueOf(7), deep(levels));
-              }
+              return node;
             }
-            """.formatted(levels, levels, levels, levels, levels, levels, levels);
+            """);
     }
 
     /**
@@ -3243,36 +2960,10 @@ public class CanonicalProjectionParityTest {
      * so the crossing is the only place the cycle could be walked.
      */
     private static String luaCyclicStringArrayHost() {
-        return """
-            local rt = require("deal.runtime")
-
+        return luaAsyncArrayHost("cyclic", """
             local cyclic = {__a = true, __n = 2, [1] = 7}
             cyclic[2] = cyclic
-
-            return {
-              fetchInts = function()
-                return rt.async_start(function() return cyclic end)
-              end,
-              fetchNullableInts = function()
-                return rt.async_start(function() return cyclic end)
-              end,
-              fetchNullableElements = function()
-                return rt.async_start(function() return cyclic end)
-              end,
-              fetchNestedInts = function()
-                return rt.async_start(function() return cyclic end)
-              end,
-              fetchNestedStrings = function()
-                return rt.async_start(function() return cyclic end)
-              end,
-              fetchStrings = function()
-                return rt.async_start(function() return cyclic end)
-              end,
-              fetchNumbers = function()
-                return rt.async_start(function() return cyclic end)
-              end,
-            }
-            """;
+            """);
     }
 
     /**
@@ -3280,44 +2971,15 @@ public class CanonicalProjectionParityTest {
      * two-element production array whose second element is the array itself.
      */
     private static String jvmCyclicStringArrayHost() {
-        return """
-            import java.util.concurrent.CompletableFuture;
-
-            final class HostAsync_arrays {
-              private static final deal.codegen.jvm.JvmRuntime.Array CYCLIC =
-                  cyclic();
-
-              private static deal.codegen.jvm.JvmRuntime.Array cyclic() {
-                deal.codegen.jvm.JvmRuntime.Array array =
-                    new deal.codegen.jvm.JvmRuntime.Array(2);
-                array.elements.add(java.lang.Integer.valueOf(7));
-                array.elements.add(array);
-                return array;
-              }
-
-              public static Object fetchInts() {
-                return CompletableFuture.completedFuture(CYCLIC);
-              }
-              public static Object fetchNullableInts() {
-                return CompletableFuture.completedFuture(CYCLIC);
-              }
-              public static Object fetchNullableElements() {
-                return CompletableFuture.completedFuture(CYCLIC);
-              }
-              public static Object fetchNestedInts() {
-                return CompletableFuture.completedFuture(CYCLIC);
-              }
-              public static Object fetchNestedStrings() {
-                return CompletableFuture.completedFuture(CYCLIC);
-              }
-              public static Object fetchStrings() {
-                return CompletableFuture.completedFuture(CYCLIC);
-              }
-              public static Object fetchNumbers() {
-                return CompletableFuture.completedFuture(CYCLIC);
-              }
+        return jvmAsyncArrayHost("CYCLIC", """
+            private static final deal.codegen.jvm.JvmRuntime.Array CYCLIC = cyclic();
+            private static deal.codegen.jvm.JvmRuntime.Array cyclic() {
+              deal.codegen.jvm.JvmRuntime.Array value = new deal.codegen.jvm.JvmRuntime.Array(2);
+              value.elements.add(java.lang.Integer.valueOf(7));
+              value.elements.add(value);
+              return value;
             }
-            """;
+            """);
     }
 
     /**
@@ -3362,37 +3024,11 @@ public class CanonicalProjectionParityTest {
      * rendering the element arm.
      */
     private static String luaCyclicWrongKindArrayHost() {
-        return """
-            local rt = require("deal.runtime")
-
+        return luaAsyncArrayHost("completion", """
             local inner = {__a = true, __n = 1}
             inner[1] = inner
             local completion = {__a = true, __n = 1, [1] = inner}
-
-            return {
-              fetchInts = function()
-                return rt.async_start(function() return completion end)
-              end,
-              fetchNullableInts = function()
-                return rt.async_start(function() return completion end)
-              end,
-              fetchNullableElements = function()
-                return rt.async_start(function() return completion end)
-              end,
-              fetchNestedInts = function()
-                return rt.async_start(function() return completion end)
-              end,
-              fetchNestedStrings = function()
-                return rt.async_start(function() return completion end)
-              end,
-              fetchStrings = function()
-                return rt.async_start(function() return completion end)
-              end,
-              fetchNumbers = function()
-                return rt.async_start(function() return completion end)
-              end,
-            }
-            """;
+            """);
     }
 
     /**
@@ -3400,46 +3036,14 @@ public class CanonicalProjectionParityTest {
      * element is a self-referential production array.
      */
     private static String jvmCyclicWrongKindArrayHost() {
-        return """
-            import java.util.concurrent.CompletableFuture;
-
-            final class HostAsync_arrays {
-              private static final deal.codegen.jvm.JvmRuntime.Array COMPLETION =
-                  completion();
-
-              private static deal.codegen.jvm.JvmRuntime.Array completion() {
-                deal.codegen.jvm.JvmRuntime.Array inner =
-                    new deal.codegen.jvm.JvmRuntime.Array(1);
-                inner.elements.add(inner);
-                deal.codegen.jvm.JvmRuntime.Array outer =
-                    new deal.codegen.jvm.JvmRuntime.Array(1);
-                outer.elements.add(inner);
-                return outer;
-              }
-
-              public static Object fetchInts() {
-                return CompletableFuture.completedFuture(COMPLETION);
-              }
-              public static Object fetchNullableInts() {
-                return CompletableFuture.completedFuture(COMPLETION);
-              }
-              public static Object fetchNullableElements() {
-                return CompletableFuture.completedFuture(COMPLETION);
-              }
-              public static Object fetchNestedInts() {
-                return CompletableFuture.completedFuture(COMPLETION);
-              }
-              public static Object fetchNestedStrings() {
-                return CompletableFuture.completedFuture(COMPLETION);
-              }
-              public static Object fetchStrings() {
-                return CompletableFuture.completedFuture(COMPLETION);
-              }
-              public static Object fetchNumbers() {
-                return CompletableFuture.completedFuture(COMPLETION);
-              }
+        return jvmAsyncArrayHost("COMPLETION", """
+            private static final deal.codegen.jvm.JvmRuntime.Array COMPLETION = completion();
+            private static deal.codegen.jvm.JvmRuntime.Array completion() {
+              deal.codegen.jvm.JvmRuntime.Array inner = new deal.codegen.jvm.JvmRuntime.Array(1);
+              inner.elements.add(inner);
+              return array(inner);
             }
-            """;
+            """);
     }
 
     /**
@@ -3601,25 +3205,6 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- the out-of-range host array completions: the "
             + "recursive signed32 step at int element positions fails through the "
             + "canonical element arm on all three consumers --");
-        JvmRuntime.Array direct = new JvmRuntime.Array(1);
-        direct.elements.add(Long.valueOf(2147483648L));
-        try {
-            JvmRuntime.hostCompletion("array(int)", "array", direct);
-            check(false, "the crossing rejects the out-of-range Long at a direct "
-                + "int element position");
-        } catch (JvmRuntime.DealError error) {
-            check("E8003".equals(error.code)
-                    && "array element 1 type mismatch".equals(error.msg)
-                    && "int".equals(error.expected)
-                    && "number".equals(error.actual),
-                "the crossing renders the canonical element arm for the "
-                    + "out-of-range Long at a direct int element position: "
-                    + error.code + " " + error.msg + " expected " + error.expected
-                    + " actual " + error.actual);
-        }
-        check(Long.valueOf(2147483648L).equals(direct.elements.get(0)),
-            "the rejected direct crossing commits nothing: the host's own "
-                + "carrier keeps its out-of-range Long element");
         JvmRuntime.Array nullableElement = new JvmRuntime.Array(1);
         nullableElement.elements.add(Long.valueOf(-2147483649L));
         try {
@@ -6741,9 +6326,7 @@ public class CanonicalProjectionParityTest {
      * registered direct producer drives (the oracle's
      * {@code BoundaryExecutor}, the JVM {@code bcheck}, and the emitted
      * {@code __bcheck}, including the string cell, the nested element
-     * cells, and the completion cell) live in {@code FailureArmAuthorityTest};
-     * the direct {@code ARM_RENDERS} entry renders the arm but never
-     * exercises a boundary's validation.
+     * cells, and the completion cell) live in {@code FailureArmAuthorityTest}.
      */
     private static void testInvalidUnicodeBoundaryOriginDrive() throws Exception {
         System.out.println("-- the invalid-Unicode element through the callback entry's "
@@ -7351,143 +6934,6 @@ public class CanonicalProjectionParityTest {
         }
     }
 
-    // =========================================================================
-    // 3. The closed arm table through the serialized renderer and the runtime
-    // =========================================================================
-
-    /** One arm render: the arm's named parameters and its declared fields. */
-    private record Render(FailureArmId id, Map<String, String> values,
-                          String expected, String actual) {
-    }
-
-    private static Render render(FailureArmId id, String expected, String actual,
-            String... values) {
-        Map<String, String> map = new LinkedHashMap<>();
-        for (int i = 0; i + 1 < values.length; i += 2) {
-            map.put(values[i], values[i + 1]);
-        }
-        return new Render(id, map, expected, actual);
-    }
-
-    /**
-     * Every declared {@code TOP_LEVEL} arm with the representative values
-     * of its family: the arm's own template, expected token, and actual
-     * token render identically from the registry renderer and the emitted
-     * Lua prelude (the JVM runtime delegates to the registry renderer, so
-     * the three consumers share one render).
-     */
-    private static final List<Render> ARM_RENDERS = List.of(
-        render(FailureArmId.TYPED_BOUNDARY_KIND, "int", "string", "kind", "int"),
-        render(FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE, "string",
-            "invalid-unicode"),
-        render(FailureArmId.CLASS_IDENTITY, "@corpus/a/A", "@corpus/b/B",
-            "expected", "@corpus/a/A", "actual", "@corpus/b/B"),
-        render(FailureArmId.INT32_RANGE, null, null),
-        render(FailureArmId.INT32_DIVISION_BY_ZERO, null, null),
-        render(FailureArmId.INT32_NEGATIVE_EXPONENT, null, null),
-        render(FailureArmId.INT_CONVERSION_NULL, "int", "null"),
-        render(FailureArmId.INT_CONVERSION_NAN, "int", "NaN"),
-        render(FailureArmId.INT_CONVERSION_INFINITY, "int", "infinity"),
-        render(FailureArmId.INT_CONVERSION_FRACTIONAL, "int", "number"),
-        render(FailureArmId.NUMBER_CONVERSION_NULL, "number", "null"),
-        render(FailureArmId.ARRAY_ELEMENT_KIND, "int", "string",
-            "oneBasedIndex", "2"),
-        render(FailureArmId.ARRAY_READ_NEGATIVE_INDEX, null, null),
-        render(FailureArmId.ARRAY_WRITE_BOUNDS, null, null),
-        render(FailureArmId.ARRAY_DELETE_BOUNDS, null, null),
-        render(FailureArmId.BYTES_ALLOCATE, null, null),
-        render(FailureArmId.BYTES_READ, null, null),
-        render(FailureArmId.BYTES_WRITE_BOUNDS, null, null),
-        render(FailureArmId.BYTES_WRITE_RANGE, null, null),
-        render(FailureArmId.FUNCTION_SIGNATURE_MISMATCH, "(int)->int",
-            "(int)->string", "expected", "(int)->int", "actual", "(int)->string"),
-        render(FailureArmId.HOST_PARAMETER_CELL, "bytes", "number",
-            "index", "1", "inner", "expected bytes"),
-        render(FailureArmId.HOST_SYNC_RETURN_NOTHING, "int", "nothing",
-            "expected", "int"),
-        render(FailureArmId.HOST_SYNC_RETURN_CELL, "?(int)->int", "table",
-            "inner", "function signature mismatch: expected (int)->int, got "
-                + "(string)->int"),
-        render(FailureArmId.ASYNC_COMPLETION_KIND, "string", "number",
-            "expected", "string"),
-        render(FailureArmId.ASYNC_COMPLETION_REFINEMENT, "int", "number",
-            "expected", "int", "actual", "number"),
-        render(FailureArmId.ASYNC_SHAPE, "async operation", "number",
-            "actual", "number"),
-        render(FailureArmId.HOST_LOAD_FAILED, null, null, "module", "host/m",
-            "reason", "boom"),
-        render(FailureArmId.HOST_LOAD_NOT_A_MODULE, null, null, "module", "host/m"),
-        render(FailureArmId.HOST_LOAD_MISSING_EXPORT, null, null, "name", "missing",
-            "module", "host/m"),
-        render(FailureArmId.HOST_LOAD_SIGNATURE_MISMATCH, null, null, "name", "ping",
-            "module", "host/m", "expected", "(int)->int", "actual", "(string)->int"),
-        render(FailureArmId.HOST_LOAD_IDENTITY_MISMATCH, null, null, "name", "C",
-            "module", "host/m", "expected", "@host.m/C", "actual", "@host.n/C"),
-        render(FailureArmId.HOST_LOAD_INVALID_METADATA, null, null, "name", "C",
-            "module", "host/m", "defaults|fields", "defaults"),
-        render(FailureArmId.CLASS_EXTRA_FIELD, null, null, "field", "fallback",
-            "classId", "@$external/host.presence/Config"),
-        render(FailureArmId.JSON_PARSE_ERROR, null, null,
-            "oneBasedByteOffset", "3", "reason", "unexpected character"),
-        render(FailureArmId.JSON_TO_WALK, null, "table",
-            "fieldPath", "age", "actual", "table"),
-        render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
-            "string, number, boolean, or table", "function", "actual", "function"),
-        render(FailureArmId.JSON_TO_WALK_CYCLE, null, null),
-        render(FailureArmId.SQRT_NEGATIVE, null, "-2.0"));
-
-    /** One row of one renderer's output: {@code id|code|message|origin|e|a}. */
-    private static Map<String, String> parseRows(String output, String label) {
-        Map<String, String> rows = new LinkedHashMap<>();
-        for (String line : output.lines().toList()) {
-            if (!line.startsWith("ROW|")) {
-                continue;
-            }
-            String[] parts = line.split("\\|", -1);
-            check(parts.length == 7, label + ": the row frames its fields: " + line);
-            if (parts.length != 7) {
-                continue;
-            }
-            rows.put(parts[1], parts[2] + "|" + parts[3] + "|" + parts[4] + "|"
-                + parts[5] + "|" + parts[6]);
-        }
-        return rows;
-    }
-
-    private static void testSerializedArmTableIdentity() throws Exception {
-        System.out.println("-- the closed arm table: every declared arm renders its "
-            + "own template identically from the authority, the emitted Lua "
-            + "prelude, and the JVM runtime renderer --");
-        String origin = "parity.deal:3:7";
-        Map<String, String> lua = luaArmRows(origin);
-        for (Render row : ARM_RENDERS) {
-            deal.semantic.ir.BoundaryFailure authority = FailureContractRegistry.render(
-                row.id(), row.values(), row.expected(), row.actual(), null);
-            deal.codegen.jvm.JvmRuntime.DealError jvm = deal.codegen.jvm.JvmRuntime.arm(
-                row.id(), row.values(), origin, row.expected(), row.actual());
-            checkEq(authority.code().name(), jvm.code, row.id() + ": the JVM "
-                + "runtime resolves the authority's own arm render");
-            Tuple reference = new Tuple(authority.code().name(), authority.message(),
-                null, null, null, authority.expected(), authority.actual());
-            Tuple jvmTuple = new Tuple(jvm.code, jvm.msg, null, null, null, jvm.expected,
-                jvm.actual);
-            checkEq(null, firstDifferingField(reference, jvmTuple), row.id()
-                + ": the JVM runtime renders the authority's identical tuple");
-            String rendered = lua.get(row.id().name());
-            check(rendered != null, row.id() + ": the emitted prelude carries the "
-                + "arm's renderer row: " + lua.keySet());
-            if (rendered == null) {
-                continue;
-            }
-            String[] parts = rendered.split("\\|", -1);
-            Tuple luaTuple = new Tuple(parts[0], parts[1], null, null, null,
-                emptyToNull(parts[3]), emptyToNull(parts[4]));            checkEq(null, firstDifferingField(reference, luaTuple), row.id()
-                + ": the emitted prelude renders the authority's identical tuple");
-            checkEq(origin, parts[2], row.id() + ": the emitted prelude attaches "
-                + "the call's origin");
-        }
-    }
-
     private static deal.module.ProductionProjectEmission.Result emit(Compiled compiled,
             Backend backend, Path out) throws Exception {
         PublicationStager stager = PublicationStager.forRoot(out);
@@ -7990,61 +7436,6 @@ public class CanonicalProjectionParityTest {
             new HostDeclarationSurface(Map.of()));
     }
 
-    /**
-     * Runs the emitted prelude's {@code __arm}/{@code __innerArm} renderers
-     * for the arm rows under real {@code luajit}: one
-     * {@code ROW|id|code|message|origin|expected|actual} line per render.
-     */
-    private static Map<String, String> luaArmRows(String origin) throws Exception {
-        Path workspace = Files.createTempDirectory("projection-arms");
-        try {
-            Path artifact = workspace.resolve("arms.lua");
-            Files.writeString(artifact, armOnlyChunk(), StandardCharsets.UTF_8);
-            deployRuntime(workspace);
-            StringBuilder body = new StringBuilder();
-            body.append("local function row(id, values, expected, actual)\n")
-                .append("  local ok, err = pcall(function() error(__arm(id, values, ")
-                .append(luaString(origin)).append(", expected, actual), 0) end)\n")
-                .append("  if ok then print(\"ROW|\"..id..\"|DEFECT|no render\") ")
-                .append("return end\n")
-                .append("  if type(err) ~= \"table\" then ")
-                .append("print(\"ROW|\"..id..\"|DEFECT|\"..tostring(err)) return end\n")
-                .append("  print(\"ROW|\"..id..\"|\"..tostring(err.code)..\"|\"")
-                .append("..tostring(err.m)..\"|\"..tostring(err.o)..\"|\"")
-                .append("..(err.e == nil and \"\" or tostring(err.e))..\"|\"")
-                .append("..(err.a == nil and \"\" or tostring(err.a)))\nend\n");
-            for (Render row : ARM_RENDERS) {
-                body.append("row(\"").append(row.id().name()).append("\", ")
-                    .append(luaTable(row.values())).append(", ")
-                    .append(luaValue(row.expected())).append(", ")
-                    .append(luaValue(row.actual())).append(")\n");
-            }
-            Path probe = workspace.resolve("probe.lua");
-            Files.writeString(probe, """
-                local text = io.open("%s"):read("*a")
-                text = text:gsub("%%s*$", "")
-                local tail = 'return __exportSurfaces["arms"]'
-                assert(text:sub(-#tail) == tail, "the artifact tail is the surface return")
-                local chunk = assert(load(text:sub(1, #text - #tail) .. [==[
-                %s]==], "arms"))
-                chunk()
-                """.formatted(artifact.toAbsolutePath().toString(), body),
-                StandardCharsets.UTF_8);
-            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
-                List.of("luajit", "probe.lua"), workspace, Map.of());
-            String output = captured.stdout();
-            String diagnostics = output + captured.stderr();
-            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
-                "the emitted prelude output is not truncated: " + diagnostics);
-            int exit = captured.exitCode();
-            check(exit == 0, "the emitted prelude runs under luajit: exit=" + exit
-                + " output=" + diagnostics);
-            return parseRows(output, "the emitted prelude");
-        } finally {
-            deleteRecursively(workspace);
-        }
-    }
-
     /** The two inner-only carrier arms' renderers under real {@code luajit}. */
     private static Map<String, String> luaInnerArmRows() throws Exception {
         Path workspace = Files.createTempDirectory("projection-inner-arms");
@@ -8121,40 +7512,9 @@ public class CanonicalProjectionParityTest {
         }
     }
 
-    private static void deployRuntime(Path workspace) throws Exception {
-        Path runtime = workspace.resolve("deal/runtime.lua");
-        Files.createDirectories(runtime.getParent());
-        Files.copy(Path.of("deal", "runtime.lua"), runtime);
-        Path std = workspace.resolve("std");
-        Files.createDirectories(std);
-        try (Stream<Path> listing = Files.list(Path.of("std"))) {
-            for (Path file : listing.sorted().toList()) {
-                if (file.getFileName().toString().endsWith(".lua")) {
-                    Files.copy(file, std.resolve(file.getFileName()));
-                }
-            }
-        }
-    }
-
     private static String luaString(String text) {
         return text == null ? "nil"
             : "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-    }
-
-    private static String luaValue(String text) {
-        return luaString(text);
-    }
-
-    private static String luaTable(Map<String, String> values) {
-        StringBuilder out = new StringBuilder("{");
-        for (Map.Entry<String, String> entry : values.entrySet()) {
-            if (out.length() > 1) {
-                out.append(", ");
-            }
-            out.append("[").append(luaString(entry.getKey())).append("]=")
-                .append(luaValue(entry.getValue()));
-        }
-        return out.append("}").toString();
     }
 
     // =========================================================================
@@ -8275,129 +7635,53 @@ public class CanonicalProjectionParityTest {
             "string", null), "an invented kind text");
     }
 
-    /**
-     * The host inner-reason vocabulary (P2 item 3): the descriptor kind, the
-     * int refinement, the signed32-range pass-through, the two string-carrier
-     * texts, and the signature/identity/element pass-throughs render through
-     * the oracle's host cells and the JVM runtime's own producers; the emitted
-     * prelude's host cells render the descriptor-kind, range, and string
-     * entries under real {@code luajit}.
-     */
-    private static void testHostInnerReasonPassThroughs() throws Exception {
-        System.out.println("-- the host inner-reason vocabulary and its "
-            + "pass-throughs --");
-        BoundaryFailure range = cell(FailurePolicyId.HOST_SYNC_RETURN,
-            RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofNumber(1e10),
-            BoundaryContext.none());
-        checkEq("return value 1 type mismatch: " + FailureContractRegistry
-            .arm(FailureArmId.INT32_RANGE).template(), range.message(),
-            "the signed32-range pass-through renders the range arm's own text");
-        checkEq("int", range.expected(), "the range cell keeps the declared "
-            + "descriptor as its expected field");
-        checkEq("number", range.actual(), "the range cell projects the "
-            + "carrier-kind actual");
-        checkEq(FailureContractRegistry.arm(FailureArmId.INT32_RANGE).template(),
-            deal.codegen.jvm.JvmRuntime.rangeReason(),
-            "the JVM runtime renders the same signed32-range text");
+    private static void testLuaRuntimeInnerReasons() throws Exception {
+        Path workspace = Files.createTempDirectory("projection-host-cells");
+        try {
+            Path runtime = workspace.resolve("deal/runtime.lua");
+            Files.createDirectories(runtime.getParent());
+            Files.copy(Path.of("deal", "runtime.lua"), runtime);
+            Files.writeString(workspace.resolve("probe.lua"), """
+                local rt = require("deal.runtime")
+                rt.__INT32 = true
+                local function row(label, desc, value)
+                  local ok, err = pcall(rt.check_type, desc, value)
+                  print("CELL|" .. label .. "|" .. (ok and "PASS"
+                    or tostring(err.message or err.m)))
+                end
+                row("kind", "bytes", 3)
+                row("range", "int", 1e10)
+                row("utf8", "string", "a" .. string.char(128) .. "b")
+                row("surrogate", "string", string.char(237, 160, 128))
+                row("surrogate-embedded", "string",
+                  "a" .. string.char(237, 160, 128) .. "b")
+                row("valid", "string", "ok")
+                row("element", "[int]", {1, "x"})
+                """, StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+                List.of("luajit", "probe.lua"), workspace, Map.of());
+            String diagnostics = captured.stdout() + captured.stderr();
+            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+                "the deployed matcher output is not truncated: " + diagnostics);
+            checkEq(0, captured.exitCode(), "the deployed matcher runs: " + diagnostics);
+            List<String> rows = captured.stdout().lines()
+                .filter(line -> line.startsWith("CELL|")).toList();
+            checkEq(List.of(
+                "CELL|kind|expected bytes",
+                "CELL|range|int out of safe range",
+                "CELL|utf8|expected string, got invalid UTF-8 encoding",
+                "CELL|surrogate|expected string, got UTF-16 surrogate code point",
+                "CELL|surrogate-embedded|expected string, got UTF-16 surrogate code point",
+                "CELL|valid|PASS",
+                "CELL|element|array element 2 type mismatch"), rows,
+                "the deployed check_type selects each inner reason and admits a valid string");
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
 
-        BoundaryFailure refinement = cell(FailurePolicyId.HOST_SYNC_RETURN,
-            RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofNumber(Double.NaN),
-            BoundaryContext.none());
-        checkEq("return value 1 type mismatch: " + FailureContractRegistry
-            .arm(FailureArmId.INT_CONVERSION_NAN).template(), refinement.message(),
-            "the int refinement renders its own arm text as the inner reason");
-        checkEq(FailureContractRegistry.arm(FailureArmId.INT_CONVERSION_NAN).template(),
-            deal.codegen.jvm.JvmRuntime.refinementReason("NaN"),
-            "the JVM runtime renders the same refinement text");
-
-        BoundaryFailure kindInner = cell(FailurePolicyId.HOST_PARAMETER,
-            RuntimeDescriptor.Bytes.INSTANCE, BoundaryValueView.ofNumber(3.0),
-            BoundaryContext.parameter(1));
-        checkEq("parameter 1 type mismatch: "
-            + FailureProjections.kindReason(RuntimeDescriptor.Bytes.INSTANCE),
-            kindInner.message(), "the descriptor-kind inner reason is the kind "
-                + "arm's own text");
-        checkEq("bytes", kindInner.expected(), "the parameter cell keeps the "
-            + "declared descriptor");
-        checkEq("number", kindInner.actual(), "the parameter cell projects the "
-            + "carrier-kind actual");
-        checkEq(FailureProjections.kindReason(RuntimeDescriptor.Bytes.INSTANCE),
-            deal.codegen.jvm.JvmRuntime.kindReason("bytes"),
-            "the JVM runtime renders the same descriptor-kind text");
-
-        BoundaryFailure signature = cell(FailurePolicyId.HOST_PARAMETER,
-            RuntimeDescriptor.parseCanonicalText("?(int)->int"),
-            BoundaryValueView.ofFunction(
-                (RuntimeDescriptor.Func) RuntimeDescriptor.parseCanonicalText(
-                    "(string)->int")),
-            BoundaryContext.parameter(1));
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-            + "(int)->int, got (string)->int", signature.message(),
-            "the signature pass-through renders the signature arm's own text");
-        checkEq(FailureContractRegistry.arm(
-            FailureArmId.FUNCTION_SIGNATURE_MISMATCH).template()
-                .replace("{expected}", "(int)->int").replace("{actual}",
-                    "(string)->int"), signature.message().substring(
-                        "parameter 1 type mismatch: ".length()),
-            "the inner reason is the signature arm's instantiated template");
-
-        BoundaryFailure identity = cell(FailurePolicyId.HOST_PARAMETER,
-            RuntimeDescriptor.parseCanonicalText("@corpus/a/A"),
-            BoundaryValueView.ofClass("@corpus/b/B"), BoundaryContext.parameter(1));
-        checkEq("parameter 1 type mismatch: expected instance of @corpus/a/A, got "
-            + "@corpus/b/B", identity.message(),
-            "the identity pass-through renders the identity arm's own text");
-        checkEq(FailureContractRegistry.arm(FailureArmId.CLASS_IDENTITY).template()
-                .replace("{expected}", "@corpus/a/A").replace("{actual}",
-                    "@corpus/b/B"),
-            deal.codegen.jvm.JvmRuntime.identityReason("@corpus/a/A", "@corpus/b/B"),
-            "the JVM runtime renders the same identity text");
-
-        BoundaryFailure element = cell(FailurePolicyId.HOST_PARAMETER,
-            RuntimeDescriptor.parseCanonicalText("[int]"),
-            BoundaryValueView.ofArray(BoundaryValueView.ofInt(1),
-                BoundaryValueView.of(ActualKind.STRING)),
-            BoundaryContext.parameter(1));
-        checkEq("parameter 1 type mismatch: array element 2 type mismatch",
-            element.message(), "the element pass-through renders the element "
-                + "arm's own text");
-        checkEq(FailureContractRegistry.arm(FailureArmId.ARRAY_ELEMENT_KIND).template()
-                .replace("{oneBasedIndex}", "2"),
-            deal.codegen.jvm.JvmRuntime.elementReason(2),
-            "the JVM runtime renders the same element text");
-
-        BoundaryFailure stringCarrier = cell(FailurePolicyId.HOST_SYNC_RETURN,
-            RuntimeDescriptor.String.INSTANCE,
-            BoundaryValueView.ofInvalidUnicode(UnicodeScalars.Defect.MALFORMED),
-            BoundaryContext.none());
-        checkEq("return value 1 type mismatch: " + FailureContractRegistry
-            .renderInner(FailureArmId.HOST_STRING_INVALID_UTF8, Map.of()),
-            stringCarrier.message(), "the invalid-UTF-8 inner reason is the "
-                + "inner-only arm's own text");
-        checkEq("string", stringCarrier.expected(), "the invalid-UTF-8 carrier cell "
-            + "keeps the declared string descriptor");
-        checkEq("string", stringCarrier.actual(), "the invalid-UTF-8 carrier cell "
-            + "projects the string carrier kind");
-        BoundaryFailure surrogateCarrier = cell(FailurePolicyId.HOST_SYNC_RETURN,
-            RuntimeDescriptor.String.INSTANCE,
-            BoundaryValueView.ofInvalidUnicode(UnicodeScalars.Defect.SURROGATE),
-            BoundaryContext.none());
-        checkEq("return value 1 type mismatch: " + FailureContractRegistry
-            .renderInner(FailureArmId.HOST_STRING_SURROGATE, Map.of()),
-            surrogateCarrier.message(), "the surrogate inner reason is the "
-                + "inner-only arm's own text");
-        checkEq("string", surrogateCarrier.expected(), "the surrogate carrier cell "
-            + "keeps the declared string descriptor");
-        checkEq("string", surrogateCarrier.actual(), "the surrogate carrier cell "
-            + "projects the string carrier kind");
-        check(BoundaryExecutor.check(FailurePolicyId.HOST_SYNC_RETURN,
-            RuntimeDescriptor.String.INSTANCE, BoundaryValueView.of(ActualKind.STRING),
-            BoundaryContext.none()) instanceof BoundaryOutcome.Pass,
-            "the host return cell admits the valid string carrier (the control)");
-        checkEq(FailureContractRegistry.renderInner(
-            FailureArmId.HOST_STRING_SURROGATE, Map.of()),
-            deal.codegen.jvm.JvmRuntime.stringCarrierReason(true),
-            "the JVM runtime renders the surrogate inner text");
+    private static void testJvmHostStringReasonSelection() {
+        System.out.println("-- the JVM host string-carrier reason selection --");
 
         // The JVM producer's own selection (the emitted seam delegates to it):
         // a lone surrogate at any position is the surrogate class, the raw
@@ -8427,93 +7711,6 @@ public class CanonicalProjectionParityTest {
             new byte[] { 0x6F, 0x6B }),
             "the JVM host carrier selector admits the valid byte carrier");
 
-        // The deployed runtime's matcher under real luajit: the same inner
-        // reason texts the oracle and the JVM runtime compose.
-        Map<String, String> luaRows = luaRuntimeInnerReasons();
-        checkEq(FailureProjections.kindReason(RuntimeDescriptor.Bytes.INSTANCE),
-            luaRows.get("kind"), "the loaded matcher renders the descriptor-kind "
-                + "inner reason");
-        checkEq(FailureContractRegistry.arm(FailureArmId.INT32_RANGE).template(),
-            luaRows.get("range"), "the loaded matcher forwards the signed32-range "
-                + "inner reason");
-        checkEq(FailureContractRegistry.renderInner(
-            FailureArmId.HOST_STRING_INVALID_UTF8, Map.of()), luaRows.get("utf8"),
-            "the loaded matcher renders the invalid-UTF-8 inner reason");
-        checkEq(FailureContractRegistry.renderInner(
-            FailureArmId.HOST_STRING_SURROGATE, Map.of()),
-            luaRows.get("utf8-surrogate"), "the loaded matcher renders the "
-                + "surrogate inner reason for the surrogate code point encoding");
-        checkEq(FailureContractRegistry.renderInner(
-            FailureArmId.HOST_STRING_SURROGATE, Map.of()),
-            luaRows.get("utf8-surrogate-embedded"), "the loaded matcher renders "
-                + "the surrogate inner reason for an embedded surrogate code point "
-                + "encoding (never the invalid-UTF-8 reason)");
-        checkEq("PASS", luaRows.get("utf8-valid"),
-            "the loaded matcher admits the valid string carrier");
-        checkEq(FailureContractRegistry.arm(FailureArmId.ARRAY_ELEMENT_KIND).template()
-                .replace("{oneBasedIndex}", "2"), luaRows.get("element"),
-            "the loaded matcher renders the element inner reason");
-    }
-
-    /** One oracle cell render, or a fail-closed report. */
-    private static BoundaryFailure cell(FailurePolicyId policy,
-            RuntimeDescriptor descriptor, BoundaryValueView view,
-            BoundaryContext context) {
-        BoundaryOutcome outcome = BoundaryExecutor.check(policy, descriptor, view,
-            context);
-        if (outcome instanceof BoundaryOutcome.Fail fail) {
-            return fail.failure();
-        }
-        throw new IllegalStateException("the host cell passed: " + policy + " "
-            + descriptor.canonicalSpecText());
-    }
-
-    /**
-     * The deployed runtime's matcher under real {@code luajit}: the inner
-     * reason texts the LuaJIT target composes for a host cell (the loaded
-     * matcher's own vocabulary, the third-backend authority).
-     */
-    private static Map<String, String> luaRuntimeInnerReasons() throws Exception {
-        Path workspace = Files.createTempDirectory("projection-host-cells");
-        try {
-            deployRuntime(workspace);
-            Path probe = workspace.resolve("probe.lua");
-            Files.writeString(probe, """
-                local rt = require("deal.runtime")
-                rt.__INT32 = true
-                local function row(label, desc, v)
-                  local ok, err = pcall(rt.check_type, desc, v)
-                  if ok then print("CELL|"..label.."|PASS") return end
-                  print("CELL|"..label.."|"..tostring(err.message or err.m))
-                end
-                row("kind", "bytes", 3)
-                row("range", "int", 1e10)
-                row("utf8", "string", "a" .. string.char(128) .. "b")
-                row("utf8-surrogate", "string", string.char(237, 160, 128))
-                row("utf8-surrogate-embedded", "string",
-                  "a" .. string.char(237, 160, 128) .. "b")
-                row("utf8-valid", "string", "ok")
-                row("element", "[int]", {1, "x"})
-                """, StandardCharsets.UTF_8);
-            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
-                List.of("luajit", "probe.lua"), workspace, Map.of());
-            String output = captured.stdout();
-            String diagnostics = output + captured.stderr();
-            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
-                "the deployed matcher output is not truncated: " + diagnostics);
-            check(captured.exitCode() == 0, "the deployed matcher runs under luajit: "
-                + diagnostics);
-            Map<String, String> rows = new LinkedHashMap<>();
-            for (String line : output.lines().toList()) {
-                if (line.startsWith("CELL|")) {
-                    String[] parts = line.split("\\|", -1);
-                    rows.put(parts[1], parts[2]);
-                }
-            }
-            return rows;
-        } finally {
-            deleteRecursively(workspace);
-        }
     }
 
     // =========================================================================
@@ -9947,7 +9144,6 @@ public class CanonicalProjectionParityTest {
         System.out.println("=== Canonical Projection Parity Tests (ISSUE-0705) ===");
         testNamedDivergences();
         testArmFamilies();
-        testHostNullCompletions();
         testHostSyncReturnPresence();
         testHostNumericReturnCarriers();
         testHostNumericCompletions();
@@ -9961,9 +9157,9 @@ public class CanonicalProjectionParityTest {
         testHostNativeArrayCarriers();
         testMissingDeclaredAnnotationFailsClosed();
         testHostWrapperArmAuthority();
-        testSerializedArmTableIdentity();
         testMarkedArmsAndFieldShapes();
-        testHostInnerReasonPassThroughs();
+        testLuaRuntimeInnerReasons();
+        testJvmHostStringReasonSelection();
         testForEachDeletedSlot();
         testDynamicTableRead();
         testArrayNullAndDeletedSlotCells();

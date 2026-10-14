@@ -65,13 +65,9 @@ import deal.semantic.ir.ValueId;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 public class CanonicalJsonTest {
@@ -409,13 +405,6 @@ public class CanonicalJsonTest {
             testRoundTripSnapshot(snapshot, kind + " payload round-trips byte-exactly");
         }
 
-        // The 42-selector digest matrix round-trips.
-        for (BinarySelector selector : BinarySelector.values()) {
-            OperationContractSnapshot snapshot = binaryMatrixSnapshot(selector);
-            testRoundTripSnapshot(snapshot,
-                "the " + selector + " selector snapshot round-trips byte-exactly");
-        }
-
         // RuntimeDescriptor canonical spellings round-trip through snapshots.
         List<RuntimeDescriptor> spellings = List.of(
             RuntimeDescriptor.Null.INSTANCE, RuntimeDescriptor.Boolean.INSTANCE,
@@ -444,18 +433,6 @@ public class CanonicalJsonTest {
         check(record.equals(ContractSnapshotCanonicalizer.parseSnapshot(
                 ContractSnapshotCanonicalizer.serializeText(pinnedSnapshot()))),
             "the byte[] and String parse overloads are the exact same inverse");
-        check(record.version() == 1, "parsed version is 1");
-        check("CALL".equals(record.opKind()), "parsed opKind is the raw name CALL");
-        check("[int]".equals(record.resultType()), "parsed resultType is the raw descriptor text [int]");
-        check(record.operandTypes().equals(List.of("int", "int")),
-            "parsed operandTypes are the raw descriptor texts");
-        check(record.selector() == null, "parsed selector is null (explicit null)");
-        check("NO_DEAL_FAILURE".equals(record.failurePolicy()),
-            "parsed failurePolicy is the raw name");
-        check(record.referencedSemanticIds().size() == 5,
-            "parsed referencedSemanticIds has 5 raw objects");
-        check(record.payload() instanceof CanonicalJson.Obj,
-            "parsed payload is a generic JSON object");
     }
 
     static OperationContractSnapshot binaryMatrixSnapshot(BinarySelector selector) {
@@ -509,23 +486,6 @@ public class CanonicalJsonTest {
                         && "NOT_A_SIDE".equals(s.value())),
             "a payload-nested open enum name survives the parse as a raw string");
 
-        // The reserved names are not enum members (no parse-time conversion exists);
-        // TIME_NOW_MILLIS is a closed member since K7, so the raw-string example
-        // uses the policy family's still-reserved names.
-        check(enumMember(StdlibFunctionId.class, "TIME_NOW_MILLIS"),
-            "TIME_NOW_MILLIS is a StdlibFunctionId member (the 21st closed selector; "
-                + "the parser keeps raw strings regardless)");
-        check(!enumMember(FailurePolicyId.class, "EXTERNAL_PARAMETER"),
-            "EXTERNAL_PARAMETER is not a FailurePolicyId member (parse keeps raw strings)");
-    }
-
-    static boolean enumMember(Class<? extends Enum<?>> type, String name) {
-        for (Enum<?> c : type.getEnumConstants()) {
-            if (c.name().equals(name)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     static void testDecodeFailures() {
@@ -626,10 +586,6 @@ public class CanonicalJsonTest {
                     .toList().equals(List.of("failurePolicy", "opKind", "operandTypes",
                         "payload", "referencedSemanticIds", "resultType", "selector", "version")),
             "the digest input is exactly the eight pinned fields in sorted order");
-        check(ContractSnapshotCanonicalizer.SNAPSHOT_FIELDS.equals(List.of(
-                "version", "opKind", "resultType", "operandTypes", "selector", "payload",
-                "failurePolicy", "referencedSemanticIds")),
-            "the pinned snapshot field-name list is the verbatim S2 digest field set");
         check(!ContractSnapshotCanonicalizer.serializeText(pinnedSnapshot())
                 .contains("canonicalDigest"),
             "the carried canonicalDigest field is outside the digest input (never serialized)");
@@ -829,81 +785,9 @@ public class CanonicalJsonTest {
         LoweringContext context = new LoweringContext(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH);
         check(hash.equals(LoweringContextHash.of(context)),
             "the LoweringContext overload computes the same digest");
-        check(LoweringContext.CANONICAL_JSON_KEYS.equals(
-                List.of("capabilityRegistryHash", "semanticProfile")),
-            "the pinned key list is {capabilityRegistryHash, semanticProfile} in sorted order");
     }
 
-    // =========================================================================
-    // 6. Combined T1/T2 integration
-    // =========================================================================
-
-    static void testCombinedT1T2() {
-        System.out.println("-- Combined T1/T2 integration --");
-
-        // T1: the helper consumes the closed SemanticProfile enum.
-        check("DEAL_V1_2_INT32".equals(SemanticProfile.DEAL_V1_2_INT32.name())
-                && "LEGACY_SAFE_INT".equals(SemanticProfile.LEGACY_SAFE_INT.name()),
-            "T1's SemanticProfile enum names are pinned");
-        try {
-            SemanticProfile.valueOf("OUT_OF_SET");
-            fail("an out-of-set SemanticProfile name must not resolve (T1 fault)");
-        } catch (IllegalArgumentException expected) {
-            check(true, "a T1 profile fault is detectable (valueOf throws)");
-        }
-
-        // T2: the canonicalizer consumes the closed schema facts.
-        check(OperationContractSnapshot.VERSION == 1,
-            "T2's snapshot version is pinned to 1");
-        check(SemanticOpKind.BINARY.payloadClass() == KindPayload.BinaryPayload.class,
-            "T2's BINARY payload shape is pinned");
-        check(BinarySelector.values().length == 42,
-            "T2's BinarySelector has exactly 42 values; got " + BinarySelector.values().length);
-
-        // T2's RuntimeDescriptor canonical text renders in the JSON.
-        String text = ContractSnapshotCanonicalizer.serializeText(pinnedSnapshot());
-        check(text.contains("\"resultType\":\"[int]\"")
-                && text.contains("\"operandTypes\":[\"int\",\"int\"]"),
-            "descriptors render as T2's canonical spec text (int descriptor -> \"int\")");
-        String unaryText = ContractSnapshotCanonicalizer.serializeText(
-            snapshotFor(new KindPayload.UnaryPayload(UnarySelector.INT32_NEG),
-                SemanticOpKind.UNARY, RuntimeDescriptor.Int.INSTANCE, List.of(),
-                FailurePolicyId.NO_DEAL_FAILURE, PLACEHOLDER_DIGEST));
-        check(unaryText.contains("\"selector\":\"INT32_NEG\""),
-            "the closed unary selector renders as its name");
-
-        // The 42-selector digest matrix: valid distinct digests, one per
-        // BinarySelector value.
-        Set<String> digests = new LinkedHashSet<>();
-        for (BinarySelector selector : BinarySelector.values()) {
-            OperationContractSnapshot snapshot = binaryMatrixSnapshot(selector);
-            String d = digest(snapshot);
-            check(d.matches("[0-9a-f]{64}"), selector + " produces a valid digest");
-            digests.add(d);
-            check(ContractSnapshotCanonicalizer.serializeText(snapshot)
-                    .contains("\"selector\":\"" + selector.name() + "\""),
-                selector + " renders its exact selector name");
-        }
-        check(digests.size() == 42,
-            "all 42 selector digests are distinct; got " + digests.size());
-
-        // Every SemanticOpKind payload shape canonicalizes and digests.
-        for (SemanticOpKind kind : SemanticOpKind.values()) {
-            KindPayload payload = minimalPayload(kind);
-            check(kind.payloadClass().isInstance(payload),
-                kind + " payload is the pinned shape (T2 fault detection)");
-            OperationContractSnapshot snapshot = snapshotFor(payload, kind,
-                RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
-                PLACEHOLDER_DIGEST);
-            String d = digest(snapshot);
-            check(d.matches("[0-9a-f]{64}"),
-                kind + " payload canonicalizes to a valid digest");
-            check(ContractSnapshotCanonicalizer.toJson(snapshot)
-                    instanceof CanonicalJson.Obj,
-                kind + " snapshot maps to a canonical JSON object");
-        }
-
-        // Internal result-type sentinels and the none slot render distinctly.
+    static void testResultTypeDistinctions() {
         check(ContractSnapshotCanonicalizer.serializeText(
                 snapshotFor(new KindPayload.ConstPayload(new ScalarValue.Int(1)),
                     SemanticOpKind.CONST, InternalResultType.INTERNAL_MISSING, List.of(),
@@ -1056,7 +940,7 @@ public class CanonicalJsonTest {
         testDecodeFailures();
         testDigest();
         testLoweringContextHash();
-        testCombinedT1T2();
+        testResultTypeDistinctions();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

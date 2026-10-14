@@ -1,6 +1,0 @@
-// ISSUE-0165 DIRECTIVES: the delimiter-free `@deal-version1.3` form
-// reaches numeric version validation and accepts exactly (1,3).
-// @deal-version1.3
-export function main(): null {
-  return null;
-}

@@ -1,5 +1,0 @@
-// IR golden fixture: jvm-skeleton-jvm-null-return-log
-// Migrated IR-containment pin for legacy case 'jvm-null-return-log' (ISSUE-0358).
-
-import * as console from "std/console"
-export function test(): null { return console.log("x"); }

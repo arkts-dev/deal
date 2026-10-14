@@ -1,7 +1,0 @@
-// @extern-c
-
-// @c-struct
-// @c-pointer
-export class DoubleMarked {
-  x: number = 0.0;
-}

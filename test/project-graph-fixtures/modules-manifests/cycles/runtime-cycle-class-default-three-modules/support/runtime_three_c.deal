@@ -1,3 +1,0 @@
-
-import * as A from "./runtime_three_a";
-export function get(value: int): int { return value + 1; }

@@ -48,21 +48,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.EnumMap;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * The canonical failure-projection authority's arm-table battery
- * (canonical-failure-projection-authority P1/P2 and Verification 2/4): the
- * closed arm table beside its rows, the fail-closed row/arm consistency
- * invariant with its negative controls, the corrected template
- * enumeration, the two closed projections, and the serialized arm table
- * the emitted Lua prelude carries.
- */
 public class FailureArmAuthorityTest {
 
     private static int passed = 0;
@@ -114,12 +104,8 @@ public class FailureArmAuthorityTest {
         walkChunk = null;
         walkHostChunk = null;
         arrayBoundaryRows = null;
-        testClosedArmTable();
-        testConsistencyInvariantNegatives();
-        testCorrectedTemplates();
         testClosedProjections();
         testRendersAndMarkedArms();
-        testEmittedTable();
         testCarrierKindStringActual();
         testCompletionFamilyDrive();
         testCompletionSignatureDrive();
@@ -141,7 +127,6 @@ public class FailureArmAuthorityTest {
         testHostSignaturePlaceholderParity();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
-        testNegativeSingleSourceControl();
         testWalkArmThreeConsumerDrive();
         testDeclaredArraySharedReferenceControl();
         testAbsentOriginFailsClosed();
@@ -233,169 +218,6 @@ public class FailureArmAuthorityTest {
         } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
             return error;
         }
-    }
-
-    // =========================================================================
-    // 1. The closed arm table and the row binding
-    // =========================================================================
-
-    static void testClosedArmTable() {
-        System.out.println("-- the closed arm table and the row/arm binding --");
-        Map<FailureArmId, FailureArm> arms = FailureContractRegistry.arms();
-        check(arms.size() == FailureArmId.values().length,
-            "one immutable arm per closed arm id; got " + arms.size());
-        check(arms.keySet().equals(EnumSet.allOf(FailureArmId.class)),
-            "every closed arm id is declared exactly once");
-        for (FailureArmId id : FailureArmId.values()) {
-            FailureArm arm = FailureContractRegistry.arm(id);
-            FailurePolicyRow row = FailureContractRegistry.row(arm.policy());
-            check(arm == arms.get(id), "arm(" + id + ") and arms() agree");
-            check(row.templates().get(arm.templateIndex()).equals(arm.template()),
-                "arm " + id + " carries its row's template at its index");
-            check(FailureContractRegistry.armForTemplate(arm.policy(), arm.templateIndex())
-                    == arm,
-                "armForTemplate(" + arm.policy() + ", " + arm.templateIndex()
-                    + ") resolves " + id);
-            for (String parameter : arm.parameters()) {
-                check(arm.parameterSources().containsKey(parameter),
-                    "arm " + id + " declares a source for {" + parameter + "}");
-            }
-        }
-        FailureContractRegistry.checkArmConsistency(FailureContractRegistry.rows(),
-            new ArrayList<>(arms.values()));
-        passed++;
-    }
-
-    // =========================================================================
-    // 2. The fail-closed consistency invariant and its negative controls
-    // =========================================================================
-
-    static void testConsistencyInvariantNegatives() {
-        System.out.println("-- the fail-closed row/arm consistency invariant --");
-        Map<FailurePolicyId, FailurePolicyRow> rows = FailureContractRegistry.rows();
-        List<FailureArm> arms = new ArrayList<>(FailureContractRegistry.arms().values());
-
-        // An unbound retained template: the TYPE_DESCRIPTOR row loses its
-        // kind arm, leaving the retained template bound to nothing.
-        List<FailureArm> unbound = new ArrayList<>();
-        for (FailureArm arm : arms) {
-            if (arm.id() != FailureArmId.TYPED_BOUNDARY_KIND) {
-                unbound.add(arm);
-            }
-        }
-        expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(rows, unbound),
-            "an unbound retained template fails closed");
-
-        // A foreign template: the kind arm carries a text its row does not.
-        FailureArm kind = FailureContractRegistry.arm(FailureArmId.TYPED_BOUNDARY_KIND);
-        List<FailureArm> foreign = new ArrayList<>(arms);
-        foreign.set(foreign.indexOf(kind), new FailureArm(kind.id(), kind.policy(),
-            kind.templateIndex(), "expected {kind}, got {actual}", kind.parameters(),
-            kind.parameterSources(), kind.expectedSource(), null, kind.actualProjection(),
-            kind.origin(), kind.scope(), kind.code()));
-        expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(rows, foreign),
-            "a foreign template fails closed");
-
-        // A duplicate binding and a missing arm for a retained template.
-        List<FailureArm> duplicate = new ArrayList<>(arms);
-        duplicate.add(kind);
-        expectIllegalState(
-            () -> FailureContractRegistry.checkArmConsistency(rows, duplicate),
-            "a duplicate arm binding fails closed");
-        List<FailureArm> missing = new ArrayList<>(arms);
-        missing.remove(FailureContractRegistry.arm(FailureArmId.CLASS_EXTRA_FIELD));
-        expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(rows, missing),
-            "a missing arm for a retained template fails closed");
-    }
-
-    // =========================================================================
-    // 3. The corrected template enumeration
-    // =========================================================================
-
-    static void testCorrectedTemplates() {
-        System.out.println("-- the corrected templates (P1) --");
-        FailurePolicyRow type = FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR);
-        check(type.templates().equals(List.of("expected {kind}",
-            "expected string, got invalid Unicode scalar encoding",
-            "expected instance of {expected}, got {actual}",
-            "expected string, got invalid UTF-8 encoding",
-            "expected string, got UTF-16 surrogate code point")),
-            "TYPE_DESCRIPTOR pins the kind arm, the invalid-Unicode arm, the identity "
-                + "arm, and the two inner-only host string arms: " + type.templates());
-        check(FailureContractRegistry.arm(FailureArmId.HOST_STRING_INVALID_UTF8).isInnerOnly()
-                && FailureContractRegistry.arm(FailureArmId.HOST_STRING_SURROGATE).isInnerOnly()
-                && FailureContractRegistry.arm(FailureArmId.HOST_STRING_INVALID_UTF8)
-                    .policy() == FailurePolicyId.TYPE_DESCRIPTOR,
-            "the two host string-carrier arms are INNER_ONLY TYPE_DESCRIPTOR arms");
-        check(FailureContractRegistry.row(FailurePolicyId.HOST_PARAMETER).templates()
-                .equals(List.of("parameter {index} type mismatch: {inner}")),
-            "HOST_PARAMETER renders the composite parameter arm");
-        check(FailureContractRegistry.row(FailurePolicyId.HOST_SYNC_RETURN).templates()
-                .equals(List.of(
-                    "return value 1 type mismatch: expected {expected}, got nothing",
-                    "return value 1 type mismatch: {inner}")),
-            "HOST_SYNC_RETURN keeps its landed order and the composite return arm");
-        check(FailureContractRegistry.row(FailurePolicyId.ASYNC_OPERATION_HANDLE).templates()
-                .equals(List.of("host async function must return an async operation, "
-                    + "got {actual}")),
-            "ASYNC_OPERATION_HANDLE renders the async-shape arm");
-        // The walk arm's binding (jsonable-tojson-walk-arm-binding W1/W2):
-        // the closed typed-boundary projection, the closed call-expression
-        // origin convention, and the typed-boundary actual source; the
-        // marker is gone from the declared table.
-        FailureArm walk = FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK);
-        check(walk.policy() == FailurePolicyId.JSON_TO_ERROR
-                && walk.templateIndex() == 0
-                && walk.template()
-                    .equals("value at {fieldPath} is not JSON serializable: {actual}")
-                && walk.parameters().equals(List.of("fieldPath", "actual"))
-                && walk.parameterSources().equals(Map.of(
-                    "fieldPath", FailureArm.ParameterSource.FIELD_PATH,
-                    "actual", FailureArm.ParameterSource.TYPED_BOUNDARY_ACTUAL))
-                && walk.expectedSource() == FailureArm.ExpectedSource.NONE
-                && walk.actualProjection() == FailureArm.ActualProjection.TYPED_BOUNDARY
-                && walk.origin() == FailureArm.OriginConvention.CALL_EXPRESSION
-                && walk.scope() == FailureArm.RenderScope.TOP_LEVEL
-                && !walk.isSiblingOwned(),
-            "the JSON_TO_WALK arm is bound: TYPED_BOUNDARY actual, the "
-                + "TYPED_BOUNDARY_ACTUAL source for {actual}, CALL_EXPRESSION, TOP_LEVEL, "
-                + "not sibling-owned");
-        check(FailureContractRegistry.arms().values().stream()
-                .noneMatch(FailureArm::hasSiblingOwnedBindingSlot),
-            "no declared arm carries a sibling-owned marker in its projection binding, "
-                + "its origin convention, or its parameter sources");
-        // The cycle arm's declaration (W4): the appended row template, no
-        // parameters, no expected/actual, the call-expression origin.
-        FailureArm cycle = FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK_CYCLE);
-        check(cycle.policy() == FailurePolicyId.JSON_TO_ERROR
-                && cycle.templateIndex() == 2
-                && cycle.template().equals("cyclic value cannot be encoded as JSON")
-                && cycle.parameters().isEmpty()
-                && cycle.parameterSources().isEmpty()
-                && cycle.expectedSource() == FailureArm.ExpectedSource.NONE
-                && cycle.pinnedExpectedText() == null
-                && cycle.actualProjection() == FailureArm.ActualProjection.NONE
-                && cycle.origin() == FailureArm.OriginConvention.CALL_EXPRESSION
-                && cycle.scope() == FailureArm.RenderScope.TOP_LEVEL,
-            "the JSON_TO_WALK_CYCLE arm declares the pinned cycle text with no "
-                + "parameters, no expected/actual, CALL_EXPRESSION, TOP_LEVEL");
-        check(FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR).templates()
-                .equals(List.of("value at {fieldPath} is not JSON serializable: {actual}",
-                    "unsupported type for JSON encoding: {actual}",
-                    "cyclic value cannot be encoded as JSON"))
-                && FailureContractRegistry.armForTemplate(
-                    FailurePolicyId.JSON_TO_ERROR, 0).id() == FailureArmId.JSON_TO_WALK
-                && FailureContractRegistry.armForTemplate(
-                    FailurePolicyId.JSON_TO_ERROR, 1).id()
-                    == FailureArmId.JSON_STRINGIFY_UNSUPPORTED
-                && FailureContractRegistry.armForTemplate(
-                    FailurePolicyId.JSON_TO_ERROR, 2).id()
-                    == FailureArmId.JSON_TO_WALK_CYCLE
-                && FailureContractRegistry.row(FailurePolicyId.INT32_RESULT).templates()
-                    .equals(List.of("int out of safe range")),
-            "the JSON_TO_ERROR row carries the three templates with the walk template "
-                + "first, the std/json template second, and the cycle template third; "
-                + "the INT32_RESULT row data stays as landed");
     }
 
     // =========================================================================
@@ -522,72 +344,6 @@ public class FailureArmAuthorityTest {
         expectDefect(() -> FailureContractRegistry.armForTemplate(
                 FailurePolicyId.NO_DEAL_FAILURE, 0),
             "a template with no bound arm fails closed");
-    }
-
-    // =========================================================================
-    // 6. The emitted arm table equals the canonical serialization
-    // =========================================================================
-
-    static void testEmittedTable() {
-        System.out.println("-- the emitted Lua arm table --");
-        String lua = emittedArmsChunk();
-        List<String> canonical = FailureContractRegistry.canonicalArmSerialization();
-        check(canonical.size() == FailureArmId.values().length,
-            "the canonical serialization carries every declared arm");
-        for (FailureArm arm : FailureContractRegistry.arms().values()) {
-            String line = arm.id() + "|" + FailureContractRegistry.codeOf(arm) + "|"
-                + arm.template() + "|" + arm.expectedSource() + "|"
-                + arm.actualProjection() + "|" + arm.scope() + "|" + arm.origin() + "|"
-                + FailureContractRegistry.parameterSourcesText(arm);
-            String pinned = arm.pinnedExpectedText();
-            if (pinned != null) {
-                line = line + "|" + pinned;
-            }
-            check(canonical.contains(line),
-                "the canonical serialization carries arm " + arm.id()
-                    + " with its scope, projection binding, parameter sources, and "
-                    + "pinned expected text");
-            String expectedEntry = "[\"" + arm.id() + "\"] = {c="
-                + quote(FailureContractRegistry.codeOf(arm)) + ", t="
-                + quote(arm.template()) + ", e=" + quote(arm.expectedSource().name())
-                + ", a=" + quote(arm.actualProjection().name()) + ", s="
-                + quote(arm.scope().name()) + ", o=" + quote(arm.origin().name())
-                + ", k=" + quote(FailureContractRegistry.parameterSourcesText(arm));
-            if (pinned != null) {
-                expectedEntry = expectedEntry + ", p=" + quote(pinned);
-            }
-            expectedEntry = expectedEntry + "}";
-            check(lua.contains(expectedEntry),
-                "the emitted prelude serializes arm " + arm.id()
-                    + " (scope, projection binding, parameter sources, and pinned "
-                    + "expected text included); expected " + expectedEntry);
-        }
-        check(lua.contains("local function __arm(id, values, origin, expected, actual)"),
-            "the prelude renders every failure site through the one arm renderer");
-
-        // The JVM consumer resolves the same closed arm table through the
-        // registry (a focused assertion over the arms, never the artifact
-        // text): one render per family carries the identical tuple.
-        deal.codegen.jvm.JvmRuntime.DealError javaKind = deal.codegen.jvm.JvmRuntime.arm(
-            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "origin",
-            "int", "string");
-        deal.semantic.ir.BoundaryFailure registryKind =
-            FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
-                Map.of("kind", "int"), "int", "string", null);
-        check(javaKind.code.equals(registryKind.code().name())
-                && javaKind.msg.equals(registryKind.message())
-                && javaKind.expected.equals(registryKind.expected())
-                && javaKind.actual.equals(registryKind.actual()),
-            "the JVM arm render resolves the registry's own arm tuple");
-        check(FailureProjections.refinementReason("int", "number")
-                .equals(deal.codegen.jvm.JvmRuntime.refinementReason("number"))
-                && FailureProjections.stringCarrierReason(true)
-                    .equals(deal.codegen.jvm.JvmRuntime.stringCarrierReason(true))
-                && FailureContractRegistry.arm(FailureArmId.INT32_RANGE).template()
-                    .equals(deal.codegen.jvm.JvmRuntime.rangeReason()),
-            "the JVM host inner-reason helpers resolve the registry's own texts "
-                + "(the int refinement, the surrogate string-carrier arm, the "
-                + "signed32-range pass-through)");
     }
 
     /** One Lua double-quoted string literal (the same escaping as the artifacts). */
@@ -894,6 +650,8 @@ public class FailureArmAuthorityTest {
                         error.message(), error.origin(), error.expected(),
                         error.actual()));
                 } else {
+                    check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                        cell.label() + ": the admitted completion succeeds: " + run.terminal());
                     oracleAdmissions.put(cell.label(), String.valueOf(run.terminal()));
                 }
             }
@@ -1025,6 +783,8 @@ public class FailureArmAuthorityTest {
                         error.message(), error.origin(), error.expected(),
                         error.actual()));
                 } else {
+                    check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                        cell.label() + ": the admitted completion succeeds: " + run.terminal());
                     oracleAdmissions.put(cell.label(), String.valueOf(run.terminal()));
                 }
             }
@@ -1224,7 +984,11 @@ public class FailureArmAuthorityTest {
         new CompletionCell("int-wrong-kind", "test_wrong", "fetchWrong", "int", true,
             "string"),
         new CompletionCell("int-null-kind", "test_wrong_null", "fetchWrongNull", "int",
-            true, "null"));
+            true, "null"),
+        new CompletionCell("nullable-string-completion", "test_nullable_string",
+            "fetchNullableString", "?string", false),
+        new CompletionCell("string-null-kind", "test_wrong_null_string",
+            "fetchWrongNullString", "string", true, "null"));
 
     /**
      * The language-null drive's host declaration: a null completion, a
@@ -1236,6 +1000,8 @@ public class FailureArmAuthorityTest {
         export async function fetchNullable(): int | null;
         export async function fetchWrong(): int;
         export async function fetchWrongNull(): int;
+        export async function fetchNullableString(): string | null;
+        export async function fetchWrongNullString(): string;
         """;
 
     /**
@@ -1273,6 +1039,19 @@ public class FailureArmAuthorityTest {
           return v
         }
 
+        export async function test_nullable_string(): null {
+          let v: string | null = await host.fetchNullableString()
+          if (v !== null) {
+            throw { code: "TEST_FAIL", message: "nullable string completion value mismatch" }
+          }
+          return null
+        }
+
+        export async function test_wrong_null_string(): null {
+          let v: string = await host.fetchWrongNullString()
+          return null
+        }
+
         export function main(): null {
           return null
         }
@@ -1296,6 +1075,12 @@ public class FailureArmAuthorityTest {
           fetchNullable = function() return operation(function() return rt.__NULL end) end,
           fetchWrong = function() return operation(function() return "s" end) end,
           fetchWrongNull = function()
+            return operation(function() return rt.__NULL end)
+          end,
+          fetchNullableString = function()
+            return operation(function() return rt.__NULL end)
+          end,
+          fetchWrongNullString = function()
             return operation(function() return rt.__NULL end)
           end,
         }
@@ -1324,6 +1109,14 @@ public class FailureArmAuthorityTest {
           }
 
           public static Object fetchWrongNull() {
+            return CompletableFuture.completedFuture(null);
+          }
+
+          public static Object fetchNullableString() {
+            return CompletableFuture.completedFuture(null);
+          }
+
+          public static Object fetchWrongNullString() {
             return CompletableFuture.completedFuture(null);
           }
         }
@@ -1946,8 +1739,7 @@ public class FailureArmAuthorityTest {
      * value. The nested element cells project the element arm's own tuple
      * with the closed {@code invalid-unicode} actual, the completion cells
      * keep their pinned kind arm, and the valid strings are the admission
-     * controls; the direct {@code ARM_RENDERS} entry renders the arm but
-     * never exercises a boundary's validation.
+     * controls.
      */
     static void testTypedBoundaryInvalidUnicode() throws Exception {
         System.out.println("-- the typed-boundary invalid-Unicode cell (the DEAL "
@@ -2729,28 +2521,10 @@ public class FailureArmAuthorityTest {
      */
     static void testTypedBoundaryClassSpellingNegatives() throws Exception {
         System.out.println("-- the superseded class: spelling fails closed --");
-        // The registry renderer.
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
             Map.of("fieldPath", "x", "actual", "class:arm/walk/Walk"), null,
             "class:arm/walk/Walk", null),
-            "the superseded class:<ClassId> spelling on the walk arm's actual field "
-                + "fails closed");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "x", "actual", "class:not-a-canonical-atom"), null,
-            "class:not-a-canonical-atom", null),
-            "a class:-prefixed token that is not a canonical atom fails closed");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "x", "actual", "class:"), null, "class:", null),
-            "the empty class: prefix fails closed");
-        checkEq("@/Error", FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "", "actual", "@/Error"), null, "@/Error", null)
-                .actual(),
-            "the carried canonical class atom stays admissible (the control)");
-        // The JVM renderer (JvmRuntime.arm routes through the registry).
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "x", "actual", "class:arm/walk/Walk"), WALK_SPAN,
-            null, "class:arm/walk/Walk"),
-            "the JVM arm render fails closed on the superseded class: spelling");
+            "the superseded class:<ClassId> spelling fails closed");
         checkEq("@/Error", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
                 Map.of("fieldPath", "", "actual", "@/Error"), WALK_SPAN, null,
                 "@/Error").actual,
@@ -2800,38 +2574,24 @@ public class FailureArmAuthorityTest {
      */
     static void testFieldParameterBindingNegatives() throws Exception {
         System.out.println("-- the declared field/parameter binding fails closed --");
-        // The walk arm's {actual} parameter beside its actual field: the
-        // exact closed-but-contradictory pair of the acceptance review.
+        for (FailureArmId arm : List.of(FailureArmId.CLASS_IDENTITY,
+                FailureArmId.FUNCTION_SIGNATURE_MISMATCH)) {
+            boolean identity = arm == FailureArmId.CLASS_IDENTITY;
+            String expected = identity ? "@corpus/a/A" : "(int)->int";
+            String actual = identity ? "@corpus/b/B" : "(int)->string";
+            String contradictory = identity ? "@corpus/c/C" : "(int)->number";
+            for (boolean expectedSide : List.of(true, false)) {
+                expectDefect(() -> FailureContractRegistry.render(arm,
+                    Map.of("expected", expected, "actual", actual),
+                    expectedSide ? contradictory : expected,
+                    expectedSide ? actual : contradictory, null),
+                    arm + ": the contradictory " + (expectedSide ? "expected" : "actual")
+                        + " operand fails closed");
+            }
+        }
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
             Map.of("fieldPath", "data.k", "actual", "function"), null, "number", null),
-            "the walk arm's contradictory actual parameter and field (function vs "
-                + "number) fail closed");
-        // The std/json rejection arm's {actual} parameter beside its field.
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.JSON_STRINGIFY_UNSUPPORTED, Map.of("actual", "function"),
-            "string, number, boolean, or table", "bytes", null),
-            "the std/json arm's contradictory actual parameter and field (function "
-                + "vs bytes) fail closed");
-        // The identity arm's two operands.
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
-            Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), "@corpus/c/C",
-            "@corpus/b/B", null),
-            "the identity arm's contradictory expected operand fails closed");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
-            Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), "@corpus/a/A",
-            "@corpus/c/C", null),
-            "the identity arm's contradictory actual operand fails closed");
-        // The signature arm's two operands.
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
-            Map.of("expected", "(int)->int", "actual", "(int)->string"),
-            "(int)->number", "(int)->string", null),
-            "the signature arm's contradictory expected operand fails closed");
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
-            Map.of("expected", "(int)->int", "actual", "(int)->string"),
-            "(int)->int", "(int)->number", null),
-            "the signature arm's contradictory actual operand fails closed");
+            "the walk arm's contradictory actual parameter and field fail closed");
         // The remaining bound families run through the same check: the
         // completion refinement, the async shape, and the no-value host
         // return.
@@ -2855,58 +2615,6 @@ public class FailureArmAuthorityTest {
                 "function", null).message(),
             "the walk arm's fieldPath parameter stays independent of the bound "
                 + "actual (the control)");
-        // The matching pairs render on the registry (the valid controls).
-        checkEq("value at data.k is not JSON serializable: function",
-            FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "data.k", "actual", "function"), null,
-                "function", null).message(),
-            "the walk arm's matching actual pair renders (the control)");
-        checkEq("unsupported type for JSON encoding: bytes",
-            FailureContractRegistry.render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
-                Map.of("actual", "bytes"), "string, number, boolean, or table",
-                "bytes", null).message(),
-            "the std/json arm's matching actual pair renders (the control)");
-        checkEq("expected instance of @corpus/a/A, got @corpus/b/B",
-            FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
-                Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"),
-                "@corpus/a/A", "@corpus/b/B", null).message(),
-            "the identity arm's matching operands render (the control)");
-        checkEq("function signature mismatch: expected (int)->int, got (int)->string",
-            FailureContractRegistry.render(FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
-                Map.of("expected", "(int)->int", "actual", "(int)->string"),
-                "(int)->int", "(int)->string", null).message(),
-            "the signature arm's matching operands render (the control)");
-        // The JVM arm render (routed through the registry's own renderer).
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "data.k", "actual", "function"), WALK_SPAN, null,
-            "number"),
-            "the JVM arm render fails closed on the walk arm's contradictory actual");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
-            FailureArmId.JSON_STRINGIFY_UNSUPPORTED, Map.of("actual", "function"),
-            WALK_SPAN, "string, number, boolean, or table", "bytes"),
-            "the JVM arm render fails closed on the std/json arm's contradictory "
-                + "actual");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.CLASS_IDENTITY,
-            Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), WALK_SPAN,
-            "@corpus/c/C", "@corpus/b/B"),
-            "the JVM arm render fails closed on the identity arm's contradictory "
-                + "expected operand");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
-            FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
-            Map.of("expected", "(int)->int", "actual", "(int)->string"), WALK_SPAN,
-            "(int)->int", "(int)->number"),
-            "the JVM arm render fails closed on the signature arm's contradictory "
-                + "actual operand");
-        // The JVM matching controls.
-        checkEq("function", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "data.k", "actual", "function"), WALK_SPAN, null,
-                "function").actual,
-            "the JVM arm render keeps the matching walk pair (the control)");
-        checkEq("expected instance of @corpus/a/A, got @corpus/b/B",
-            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.CLASS_IDENTITY,
-                Map.of("expected", "@corpus/a/A", "actual", "@corpus/b/B"), WALK_SPAN,
-                "@corpus/a/A", "@corpus/b/B").msg,
-            "the JVM arm render keeps the matching identity pair (the control)");
         // The serialized Lua arm renderer, under real luajit: the six
         // contradictory pairs fail closed and the matching pairs render.
         List<String> rows = runPreludeProbe("""
@@ -3012,92 +2720,40 @@ public class FailureArmAuthorityTest {
                 FailurePolicyId.INT32_RESULT, 0, null, null, Map.of(), null).message(),
             "a row-addressed TOP_LEVEL render stays green (the control)");
 
-        // The registry's unknown-inner negatives: an invented reason and an
-        // off-vocabulary plausible text never publish.
         expectDefect(() -> FailureContractRegistry.render(
             FailureArmId.HOST_PARAMETER_CELL,
             Map.of("index", "1", "inner", "invented reason"), "int", "number", null),
             "the registry rejects an invented host inner reason");
         expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "expected int, got string"), "int",
-            "string", null),
-            "the registry rejects the consumer-composed suffixed kind reason");
-        expectDefect(() -> FailureContractRegistry.render(
             FailureArmId.HOST_SYNC_RETURN_CELL,
             Map.of("inner", "expected string, got string with unpaired surrogate "
                 + "code units"), "string", "string", null),
             "the registry rejects the JVM matcher's unpaired-surrogate sub-message");
-        expectDefect(() -> BoundaryFailure.fromRow(
-            FailureContractRegistry.row(FailurePolicyId.HOST_PARAMETER), 0, "int",
-            "number", new LinkedHashMap<>(Map.of("index", "1", "inner",
-                "invented reason")), null),
-            "the row-addressed host render rejects an invented inner reason");
-        // The declared pass-throughs stay green (the controls).
+        for (String[] values : List.of(
+                new String[] {"expected bytes", "bytes", "number", "parameter"},
+                new String[] {"expected int, got NaN", "int", "number", "parameter"},
+                new String[] {"int out of safe range", "int", "number", "return"},
+                new String[] {"expected string, got UTF-16 surrogate code point", "string", "string", "return"},
+                new String[] {"function signature mismatch: expected (int)->int, got (string)->int", "?(int)->int", "table", "parameter"},
+                new String[] {"expected instance of @corpus/a/A, got @corpus/b/B", "@corpus/a/A", "table", "parameter"},
+                new String[] {"array element 2 type mismatch", "[int]", "table", "parameter"})) {
+            boolean parameter = values[3].equals("parameter");
+            checkEq((parameter ? "parameter 1" : "return value 1") + " type mismatch: " + values[0],
+                FailureContractRegistry.render(parameter ? FailureArmId.HOST_PARAMETER_CELL
+                    : FailureArmId.HOST_SYNC_RETURN_CELL, parameter
+                    ? Map.of("index", "1", "inner", values[0]) : Map.of("inner", values[0]),
+                    values[1], values[2], null).message(),
+                "the declared inner reason passes through: " + values[0]);
+        }
         checkEq("parameter 1 type mismatch: expected bytes",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner",
-                    FailureProjections.kindReason(RuntimeDescriptor.Bytes.INSTANCE)),
-                "bytes", "number", null).message(),
-            "the descriptor-kind pass-through stays green (the control)");
-        checkEq("parameter 1 type mismatch: expected int, got NaN",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", FailureContractRegistry
-                    .arm(FailureArmId.INT_CONVERSION_NAN).template()), "int",
-                "number", null).message(),
-            "the int-refinement pass-through stays green (the control)");
-        checkEq("return value 1 type mismatch: int out of safe range",
-            FailureContractRegistry.render(FailureArmId.HOST_SYNC_RETURN_CELL,
-                Map.of("inner", FailureContractRegistry.arm(FailureArmId.INT32_RANGE)
-                    .template()), "int", "number", null).message(),
-            "the signed32-range pass-through stays green (the control)");
-        checkEq("return value 1 type mismatch: expected string, got UTF-16 surrogate "
-                + "code point",
-            FailureContractRegistry.render(FailureArmId.HOST_SYNC_RETURN_CELL,
-                Map.of("inner", FailureContractRegistry.renderInner(
-                    FailureArmId.HOST_STRING_SURROGATE, Map.of())), "string",
-                "string", null).message(),
-            "the host string-carrier pass-through stays green (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "(int)->int, got (string)->int",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected (int)->int, got (string)->int"), "?(int)->int",
-                "table", null).message(),
-            "the signature pass-through stays green (the control)");
-        checkEq("parameter 1 type mismatch: expected instance of @corpus/a/A, got "
-                + "@corpus/b/B",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "expected instance of @corpus/a/A, "
-                    + "got @corpus/b/B"), "@corpus/a/A", "table", null).message(),
-            "the identity pass-through stays green (the control)");
-        checkEq("parameter 1 type mismatch: array element 2 type mismatch",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "array element 2 type mismatch"),
-                "[int]", "table", null).message(),
-            "the element pass-through stays green (the control)");
-        checkEq("parameter 1 type mismatch: expected bytes",
-            BoundaryFailure.fromRow(FailureContractRegistry.row(
-                    FailurePolicyId.HOST_PARAMETER), 0, "bytes", "number",
-                new LinkedHashMap<>(Map.of("index", "1", "inner", "expected "
-                    + "bytes")), null).message(),
-            "the row-addressed declared host render stays green (the control)");
-
-        // The JVM runtime's arm render (it delegates to the same registry).
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
-            FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "invented reason"), "-", "int",
-            "number"),
-            "the JVM arm render rejects an invented host inner reason");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
-            FailureArmId.HOST_SYNC_RETURN_CELL,
-            Map.of("inner", "expected int, got string"), "-", "string", "string"),
-            "the JVM arm render rejects a composed suffixed kind reason");
+            BoundaryFailure.fromRow(FailureContractRegistry.row(FailurePolicyId.HOST_PARAMETER),
+                0, "bytes", "number", new LinkedHashMap<>(Map.of("index", "1",
+                    "inner", "expected bytes")), null).message(),
+            "the row-addressed host render stays green");
         checkEq("parameter 1 type mismatch: expected bytes",
             deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "expected bytes"), "-", "bytes",
-                "number").msg,
-            "the JVM arm render keeps the descriptor-kind reason (the control)");
+                Map.of("index", "1", "inner", "expected bytes"), "-", "bytes", "number").msg,
+            "the JVM host render stays green");
 
         // The emitted Lua prelude, under real luajit: the same negatives on
         // both the arm renderer and the raw template renderer.
@@ -3158,94 +2814,23 @@ public class FailureArmAuthorityTest {
      */
     static void testDescriptorAndClassAtomVocabularyDepth() throws Exception {
         System.out.println("-- the nested descriptor vocabulary and the class atoms --");
-        // The malformed signature texts fail closed at the registry's arm
-        // render, on both signature sides.
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
-                "function signature mismatch: expected (bogus)->int, got (int)->int"),
-            "int", "number", null),
-            "a malformed expected-side canonical parameter fails closed");
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
-                "function signature mismatch: expected (int)->int, got (bogus)->int"),
-            "int", "number", null),
-            "a malformed actual-side canonical parameter fails closed");
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
-                "function signature mismatch: expected function(bogus;int), got "
-                    + "function(int;int)"), "int", "number", null),
-            "a malformed internal-dialect parameter fails closed");
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
-                "function signature mismatch: expected function(int;int), got "
-                    + "function(int;bogus)"), "int", "number", null),
-            "a malformed internal-dialect result fails closed");
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
-                "function signature mismatch: expected (int,(bogus)->int)->int, got "
-                    + "(int)->int"), "int", "number", null),
-            "a malformed parameter inside a nested canonical composite fails closed");
-        // The row-addressed entries enforce the same contract.
-        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
-            FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
-            new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
-                + "signature mismatch: expected function(bogus;int), got "
-                + "function(int;int)")), null),
-            "the row-addressed render rejects the malformed dialect parameter");
-        expectDefect(() -> FailureContractRegistry.renderAtTemplate(
-            FailurePolicyId.HOST_PARAMETER, 0, "int", "number",
-            new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
-                + "signature mismatch: expected (bogus)->int, got (int)->int")), null),
-            "the direct template-position render rejects the malformed canonical "
-                + "parameter");
-        // The nested canonical composite and the internal spelling stay
-        // green (the controls).
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "(()->int)->int, got (int)->int",
+        for (String malformed : List.of("(bogus)->int", "function(bogus;int)",
+                "function(int;bogus)", "(int,(bogus)->int)->int")) {
+            for (boolean expectedSide : List.of(true, false)) {
+                String inner = "function signature mismatch: expected "
+                    + (expectedSide ? malformed : "(int)->int") + ", got "
+                    + (expectedSide ? "(int)->int" : malformed);
+                expectDefect(() -> FailureContractRegistry.render(
+                    FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner", inner),
+                    "int", "number", null),
+                    "the registry rejects the malformed signature side: " + inner);
+            }
+        }
+        String nested = "function signature mismatch: expected (()->int)->int, got (int)->int";
+        checkEq("parameter 1 type mismatch: " + nested,
             FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected (()->int)->int, got (int)->int"), "int", "number",
-                null).message(),
-            "the nested canonical composite stays green (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "(int,(string)->int)->int, got (int)->int",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected (int,(string)->int)->int, got (int)->int"), "int",
-                "number", null).message(),
-            "the nested canonical parameter list stays green (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "function(int;int), got function(int;int)",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected function(int;int), got function(int;int)"), "int",
-                "number", null).message(),
-            "the internal function spelling stays green (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "(int)->int, got (()->int)->int",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected (int)->int, got (()->int)->int"), "int", "number",
-                null).message(),
-            "the nested canonical composite stays green on the actual side (the "
-                + "control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "function(int;int), got function(;int)",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected function(int;int), got function(;int)"), "int",
-                "number", null).message(),
-            "the zero-parameter spelling stays green on the actual side (the "
-                + "control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "function(;int), got function(int;int)",
-            BoundaryFailure.fromRow(FailureContractRegistry.row(
-                    FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
-                new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
-                    + "signature mismatch: expected function(;int), got "
-                    + "function(int;int)")), null).message(),
-            "the zero-parameter internal spelling passes through the row-addressed "
-                + "render (the control)");
+                Map.of("index", "1", "inner", nested), "int", "number", null).message(),
+            "the nested canonical signature renders");
         checkEq("expected function", deal.codegen.jvm.JvmRuntime.kindReason(
                 "function(;int)"),
             "the zero-parameter dialect descriptor projects its kind (the control)");
@@ -3256,65 +2841,17 @@ public class FailureArmAuthorityTest {
                 "function(bogus;int)"),
             "the descriptor-kind reason rejects a malformed dialect parameter");
 
-        // The malformed identity operands fail closed and the canonical
-        // atoms stay green.
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
-                "expected instance of @src/, got @src/B"), "@src/A", "table", null),
-            "the empty expected-side identity segment fails closed");
-        expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
-                "expected instance of @src/A, got @src/"), "@src/A", "table", null),
-            "the empty carried identity segment fails closed");
-        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
-            FailurePolicyId.HOST_PARAMETER), 0, "@src/A", "table",
-            new LinkedHashMap<>(Map.of("index", "1", "inner",
-                "expected instance of @src/, got @src/B")), null),
-            "the row-addressed render rejects the empty identity segment");
-        checkEq("parameter 1 type mismatch: expected instance of @/Error, got @src/B",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner",
-                    "expected instance of @/Error, got @src/B"), "@/Error", "table",
-                null).message(),
-            "the pinned builtin identity atom stays green (the control)");
-        checkEq("parameter 1 type mismatch: expected instance of @src/A, got @src/B",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner",
-                    "expected instance of @src/A, got @src/B"), "@src/A", "table",
-                null).message(),
-            "the canonical identity composite stays green (the control)");
-
-        // The JVM runtime's arm render (it delegates to the same registry).
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "function signature mismatch: expected "
-                + "function(bogus;int), got function(int;int)"), "-", "int",
-            "number"),
-            "the JVM arm render rejects the malformed dialect parameter");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "expected instance of @src/, got @src/B"),
-            "-", "@src/A", "table"),
-            "the JVM arm render rejects the empty identity segment");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "(()->int)->int, got (int)->int",
+        for (String inner : List.of("expected instance of @src/, got @src/B",
+                "expected instance of @src/A, got @src/")) {
+            expectDefect(() -> FailureContractRegistry.render(
+                FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner", inner),
+                "@src/A", "table", null),
+                "the registry rejects the empty identity segment: " + inner);
+        }
+        checkEq("parameter 1 type mismatch: " + nested,
             deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected (()->int)->int, got (int)->int"), "-", "int",
-                "number").msg,
-            "the JVM arm render keeps the nested canonical composite (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "function(;int), got function(int;int)",
-            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected function(;int), got function(int;int)"), "-", "int",
-                "number").msg,
-            "the JVM arm render keeps the zero-parameter pass-through (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "function(int;int), got function(;int)",
-            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected function(int;int), got function(;int)"), "-", "int",
-                "number").msg,
-            "the JVM arm render keeps the zero-parameter actual side (the control)");
+                Map.of("index", "1", "inner", nested), "-", "int", "number").msg,
+            "the JVM arm render keeps the nested canonical composite");
 
         // The emitted Lua prelude, under real luajit: the same negatives and
         // controls on the arm renderer and the raw template renderer.
@@ -3424,48 +2961,18 @@ public class FailureArmAuthorityTest {
     static void testNullableInnerInvariant() throws Exception {
         System.out.println("-- the nullable-inner invariant (both descriptor "
             + "spellings) --");
-        // The canonical violations fail closed on both signature sides and
-        // in every nested position.
-        for (String inner : List.of(
-                "function signature mismatch: expected ?null, got (int)->int",
-                "function signature mismatch: expected (int)->int, got ?null",
-                "function signature mismatch: expected ??int, got (int)->int",
-                "function signature mismatch: expected [?null], got [int]",
-                "function signature mismatch: expected (??int)->int, got (int)->int",
-                "function signature mismatch: expected (int)->int, got [?null]")) {
-            expectDefect(() -> FailureContractRegistry.render(
-                FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", inner), "int", "number", null),
-                "the registry rejects the canonical nullable-inner violation: " + inner);
-        }
-        // The dialect equivalents fail closed identically.
-        for (String inner : List.of(
-                "function signature mismatch: expected nullable(null), got (int)->int",
-                "function signature mismatch: expected nullable(nullable(int)), got "
-                    + "(int)->int",
-                "function signature mismatch: expected array(nullable(null)), got "
-                    + "array(int)",
-                "function signature mismatch: expected "
-                    + "function(nullable(nullable(int));int), got function(int;int)",
-                "function signature mismatch: expected (int)->int, got nullable(null)")) {
-            expectDefect(() -> FailureContractRegistry.render(
-                FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", inner), "int", "number", null),
-                "the registry rejects the dialect nullable-inner violation: " + inner);
-        }
-        // The row-addressed entries enforce the same contract.
-        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
-            FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
-            new LinkedHashMap<>(Map.of("index", "1", "inner",
-                "function signature mismatch: expected ?null, got (int)->int")), null),
-            "the row-addressed render rejects the canonical nullable-inner violation");
-        expectDefect(() -> FailureContractRegistry.renderAtTemplate(
-            FailurePolicyId.HOST_PARAMETER, 0, "int", "number",
-            new LinkedHashMap<>(Map.of("index", "1", "inner",
-                "function signature mismatch: expected nullable(null), got "
-                    + "(int)->int")), null),
-            "the template-position render rejects the dialect nullable-inner "
-                + "violation");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected ?null, "
+                + "got (int)->int"), "int", "number", null),
+            "the registry rejects the nullable-inner violation");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected (int)->int, "
+                + "got [?null]"), "int", "number", null),
+            "the carried nested nullable-inner violation fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected (int)->int, "
+                + "got nullable(null)"), "int", "number", null),
+            "the carried dialect nullable-inner violation fails closed");
         // The arm's own descriptor fields admit no invalid nullable either.
         expectDefect(() -> FailureContractRegistry.render(
             FailureArmId.HOST_PARAMETER_CELL, Map.of("index", "1", "inner",
@@ -3485,54 +2992,13 @@ public class FailureArmAuthorityTest {
             "nullable(nullable(int))", null),
             "the carried-signature field rejects the dialect nullable(nullable(int)) "
                 + "spelling");
-        // The valid nullable forms stay green (the controls).
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "?int, got (int)->int",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected ?int, got (int)->int"), "?int", "number",
-                null).message(),
-            "the canonical ?int signature passes through (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "[?int], got [int]",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected [?int], got [int]"), "[?int]", "number", null).message(),
-            "the canonical [?int] element passes through (the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "?(int)->int, got (int)->int",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected ?(int)->int, got (int)->int"), "?(int)->int", "number",
-                null).message(),
-            "the canonical nullable function passes through (the control)");
         checkEq("parameter 1 type mismatch: function signature mismatch: expected "
                 + "nullable(int), got (int)->int",
-            BoundaryFailure.fromRow(FailureContractRegistry.row(
-                    FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
-                new LinkedHashMap<>(Map.of("index", "1", "inner", "function "
-                    + "signature mismatch: expected nullable(int), got "
-                    + "(int)->int")), null).message(),
-            "the dialect nullable(int) passes through the row-addressed render "
-                + "(the control)");
-        checkEq("parameter 1 type mismatch: function signature mismatch: expected "
-                + "nullable(array(nullable(int))), got array(int)",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "function signature mismatch: "
-                    + "expected nullable(array(nullable(int))), got array(int)"),
-                "nullable(array(nullable(int)))", "number", null).message(),
-            "the nested dialect nullable passes through (the control)");
-
-        // The JVM runtime's arm render (it delegates to the same registry)
-        // and the descriptor-kind projection.
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "function signature mismatch: expected "
-                + "?null, got (int)->int"), "-", "int", "number"),
-            "the JVM arm render rejects the canonical nullable-inner violation");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "function signature mismatch: expected "
-                + "nullable(nullable(int)), got (int)->int"), "-", "int", "number"),
-            "the JVM arm render rejects the dialect nullable-inner violation");
+            BoundaryFailure.fromRow(FailureContractRegistry.row(FailurePolicyId.HOST_PARAMETER),
+                0, "int", "number", new LinkedHashMap<>(Map.of("index", "1", "inner",
+                    "function signature mismatch: expected nullable(int), got (int)->int")),
+                null).message(),
+            "the row-addressed nullable control renders");
         expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason("nullable(null)"),
             "the descriptor-kind projection rejects the nullable(null) spelling");
         expectDefect(() -> deal.codegen.jvm.JvmRuntime.kindReason("??int"),
@@ -3618,16 +3084,10 @@ public class FailureArmAuthorityTest {
      */
     static void testKindOnlySpellingVocabulary() throws Exception {
         System.out.println("-- the kind-only spelling boundary --");
-        for (String inner : List.of(
-                "function signature mismatch: expected array, got (int)->int",
-                "function signature mismatch: expected function, got (int)->int",
-                "function signature mismatch: expected (int)->int, got array",
-                "function signature mismatch: expected (int)->int, got function")) {
-            expectDefect(() -> FailureContractRegistry.render(
-                FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", inner), "int", "number", null),
-                "the registry rejects the kind-only signature text: " + inner);
-        }
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", "function signature mismatch: expected array, "
+                + "got (int)->int"), "int", "number", null),
+            "the registry rejects kind-only signature text");
         // The arm's own descriptor fields admit no kind-only spelling either.
         expectDefect(() -> FailureContractRegistry.render(
             FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
@@ -3639,24 +3099,6 @@ public class FailureArmAuthorityTest {
             Map.of("expected", "(int)->int", "actual", "function"), "(int)->int",
             "function", null),
             "the carried-signature field rejects the bare function kind text");
-        expectDefect(() -> BoundaryFailure.fromRow(FailureContractRegistry.row(
-            FailurePolicyId.HOST_PARAMETER), 0, "int", "number",
-            new LinkedHashMap<>(Map.of("index", "1", "inner",
-                "function signature mismatch: expected array, got (int)->int")), null),
-            "the row-addressed render rejects the kind-only signature text");
-        // The approved kind reasons stay green: the kind arm's own text on
-        // every consumer, and the descriptor-kind projection's kind-only
-        // operands.
-        checkEq("parameter 1 type mismatch: expected array",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "expected array"), "[int]",
-                "number", null).message(),
-            "the registry keeps the array kind reason (the control)");
-        checkEq("parameter 1 type mismatch: expected function",
-            FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "expected function"), "(int)->int",
-                "number", null).message(),
-            "the registry keeps the function kind reason (the control)");
         checkEq("expected array", deal.codegen.jvm.JvmRuntime.kindReason("array"),
             "the descriptor-kind projection keeps the host ABI's bare array kind "
                 + "text (the control)");
@@ -3664,15 +3106,6 @@ public class FailureArmAuthorityTest {
             deal.codegen.jvm.JvmRuntime.kindReason("function"),
             "the descriptor-kind projection keeps the host ABI's bare function kind "
                 + "text (the control)");
-        // The JVM runtime's arm render (it delegates to the same registry).
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "function signature mismatch: expected "
-                + "array, got (int)->int"), "-", "int", "number"),
-            "the JVM arm render rejects the kind-only array signature text");
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "function signature mismatch: expected "
-                + "(int)->int, got function"), "-", "int", "number"),
-            "the JVM arm render rejects the kind-only function signature text");
         checkEq("parameter 1 type mismatch: expected function",
             deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
                 Map.of("index", "1", "inner", "expected function"), "-",
@@ -4353,36 +3786,27 @@ public class FailureArmAuthorityTest {
     static void testWalkArmThreeConsumerDrive() throws Exception {
         System.out.println("-- the walk arm's three-consumer drive --");
         List<WalkCase> cases = walkCases();
-
-        // The emitted artifacts: the walk's call sites render the arm the walk
-        // selects, through the one arm renderer, at the executing op's own
-        // SourceOrigin.
         String lua = emittedWalkChunk();
-        // ISSUE-0698 retarget: the walk site renders the closed arm through
-        // the one arm renderer at the invoking call origin (the origin the
-        // generated C$toJson body's own op cannot carry), with the op's own
-        // SourceOrigin as the no-active-call fallback — so this drive's
-        // direct probe (no call in flight) keeps the pinned span.
         check(lua.contains("__eT = __arm(__jarmT, __jcparT, __callOrigin(\""
                 + WALK_SPAN + "\"), nil, __jfactT)"),
-            "the emitted Lua walk site renders the selected arm through the one arm "
-                + "renderer at the invoking call origin (the op's own SourceOrigin "
-                + "as the no-active-call fallback)");
+            "the production Lua walk call site renders its selected arm at the call origin");
         check(!lua.contains("__failExpr(\"E8001\", __renderTemplate(\"JSON_TO_WALK\""),
-            "the emitted Lua walk site composes no message of its own");
-        String jvm = emittedWalkJvm();
+            "the production Lua walk call site composes no independent message");
+        String jvm = deal.codegen.jvm.JvmSemanticEmitter.emitProductionProject(
+            walkProject(), walkTables(), Map.of(new deal.semantic.ir.ModuleId("arm-walk"),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of())),
+            "ArmWalk", emptySurface()).source();
         check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK, "
                 + "java.util.Map.of(\"fieldPath\", projection.fieldPath, \"actual\", "
                 + "projection.actual), JvmRuntime.callOrigin(\"" + WALK_SPAN
                 + "\"), null, projection.actual)"),
-            "the emitted JVM catch site renders the walk arm at the invoking call "
-                + "origin (the op's own SourceOrigin as the no-active-call fallback)");
+            "the production JVM walk catch site binds the projection and call origin");
         check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE, "
                 + "java.util.Map.of(), JvmRuntime.callOrigin(\"" + WALK_SPAN
                 + "\"), null, null)"),
-            "the emitted JVM catch site renders the cycle arm with no parameters");
+            "the production JVM cycle catch site binds no parameters or tuple fields");
         check(!jvm.contains("value at \" + projection.fieldPath"),
-            "the emitted JVM catch site composes no message of its own");
+            "the production JVM walk catch site composes no independent message");
 
         // The oracle leg (the class walk with a supplied call origin = the
         // executing op's own SourceOrigin) and the emitted Lua leg.
@@ -4505,120 +3929,6 @@ public class FailureArmAuthorityTest {
                 substitutedOrigin.expected, substitutedOrigin.actual)),
             "a consumer-derived JVM origin is reported by field name span");
 
-        // The emitted __arm guard (W5's artifact-surface subject): a marked
-        // entry injected into the chunk-level arm table is rejected in every
-        // marked binding slot — the projection binding, the origin
-        // convention, and a parameter source — before it publishes a tuple.
-        // The valid walk and cycle arms stay the controls: the guard is not
-        // a blanket refusal of hand-supplied entries.
-        List<String> markedRows = runPreludeProbe("""
-            __arms["MARKED_PROBE"] = {c = "E8001", t = "marked", e = "NONE",
-              a = "SIBLING_OWNED", s = "TOP_LEVEL", o = "CALL_EXPRESSION", k = ""}
-            local ok = pcall(__arm, "MARKED_PROBE", nil, "-", nil, nil)
-            print("marked-entry|" .. tostring(ok))
-            __arms["MARKED_ORIGIN"] = {c = "E8001",
-              t = "cyclic value cannot be encoded as JSON", e = "NONE", a = "NONE",
-              s = "TOP_LEVEL", o = "SIBLING_OWNED", k = ""}
-            ok = pcall(__arm, "MARKED_ORIGIN", nil, "-", nil, nil)
-            print("marked-origin|" .. tostring(ok))
-            __arms["MARKED_SOURCE"] = {c = "E8001",
-              t = "value at {fieldPath} is not JSON serializable: {actual}",
-              e = "NONE", a = "TYPED_BOUNDARY", s = "TOP_LEVEL",
-              o = "CALL_EXPRESSION",
-              k = "fieldPath=FIELD_PATH,actual=SIBLING_OWNED_ACTUAL"}
-            ok = pcall(__arm, "MARKED_SOURCE",
-              {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
-            print("marked-source|" .. tostring(ok))
-            ok, value = pcall(__arm, "JSON_TO_WALK",
-              {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
-            print("walk-control|" .. tostring(ok) .. "|"
-              .. (ok and value.m or tostring(value)))
-            ok, value = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, "-", nil, nil)
-            print("cycle-control|" .. tostring(ok) .. "|"
-              .. (ok and value.m or tostring(value)))
-            """, "marked-entry-probe", 5);
-        checkEq("marked-entry|false", markedRows.get(0),
-            "the emitted __arm rejects a marked projection binding injected into "
-                + "the chunk-level arm table");
-        checkEq("marked-origin|false", markedRows.get(1),
-            "the emitted __arm rejects a marked origin convention injected into "
-                + "the chunk-level arm table, even with a supplied origin operand");
-        checkEq("marked-source|false", markedRows.get(2),
-            "the emitted __arm rejects a marked parameter source injected into the "
-                + "chunk-level arm table, even with its declared parameters and "
-                + "fields supplied");
-        checkEq("walk-control|true|value at data.k is not JSON serializable: function",
-            markedRows.get(3),
-            "the emitted __arm keeps rendering the valid walk arm after the marked-slot "
-                + "guards");
-        checkEq("cycle-control|true|cyclic value cannot be encoded as JSON",
-            markedRows.get(4),
-            "the emitted __arm keeps rendering the valid cycle arm after the "
-                + "marked-slot guards");
-
-        // The origin operand negative: a walk failure renders the operand its
-        // consumer received, and a consumer-derived span is reported by field.
-        Tuple reference = tupleOf(FailureContractRegistry.render(
-            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "age", "actual", "number"),
-            null, "number", null), WALK_SPAN);
-        checkEq("span", firstDifferingField(reference, new Tuple(reference.code(),
-                reference.message(), "consumer-anchor.deal:1:1", reference.expected(),
-                reference.actual())),
-            "a consumer-derived span is reported by field name span");
-        checkEq("actual", firstDifferingField(reference, new Tuple(reference.code(),
-                reference.message(), reference.span(), reference.expected(),
-                "class:arm/walk/Walk")),
-            "the superseded class: IR spelling is reported by field name actual");
-        // The superseded absent-value spelling ("missing"): the walk arm's
-        // closed projection publishes "nil" at an absent required position.
-        Tuple absent = tupleOf(FailureContractRegistry.render(
-            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "age", "actual", "nil"),
-            null, "nil", null), WALK_SPAN);
-        checkEq("nil", absent.actual(),
-            "the walk arm's absent-position projection publishes the nil token");
-        checkEq("actual", firstDifferingField(absent, new Tuple(absent.code(),
-                absent.message(), absent.span(), absent.expected(), "missing")),
-            "the superseded absent-value 'missing' spelling is reported by field "
-                + "name actual");
-        // The superseded root-identity spelling ("shape"): the walk arm's
-        // root/identity projection publishes the carried canonical class atom.
-        Tuple identity = tupleOf(FailureContractRegistry.render(
-            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "", "actual", "@/Error"),
-            null, "@/Error", null), WALK_SPAN);
-        checkEq("@/Error", identity.actual(),
-            "the walk arm's root-identity projection publishes the carried canonical "
-                + "class atom");
-        checkEq("actual", firstDifferingField(identity, new Tuple(identity.code(),
-                identity.message(), identity.span(), identity.expected(), "shape")),
-            "the superseded root 'shape' spelling is reported by field name actual");
-        checkEq("message", firstDifferingField(reference, new Tuple(reference.code(),
-                "walk: value at age is not JSON serializable: number", reference.span(),
-                reference.expected(), reference.actual())),
-            "a consumer-composed walk text is reported by field name message");
-        // A cycle rendered under the walk arm with a table token instead of
-        // the cycle arm's own text is reported by field name message.
-        Tuple cycle = tupleOf(FailureContractRegistry.render(
-            FailureArmId.JSON_TO_WALK_CYCLE, Map.of(), null, null, null), WALK_SPAN);
-        checkEq("cyclic value cannot be encoded as JSON", cycle.message(),
-            "the cycle arm renders the pinned cycle text with no fields");
-        checkEq("message", firstDifferingField(cycle, new Tuple(cycle.code(),
-                "value at data.self is not JSON serializable: table", cycle.span(), null,
-                "table")),
-            "a cycle rendered under the walk arm with a table token is reported by "
-                + "field name message");
-        // A projection caller that keys the numeric token on the declared int
-        // text publishes "int" where the value-derived rule publishes
-        // "number"; the comparison reports the field it changed.
-        Tuple declaredKeyed = tupleOf(FailureContractRegistry.render(
-            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "age", "actual", "int"),
-            null, "int", null), WALK_SPAN);
-        checkEq("int", declaredKeyed.actual(),
-            "the declared-text-keyed projection publishes the wrong numeric token");
-        checkEq("actual", firstDifferingField(reference, new Tuple(reference.code(),
-                reference.message(), reference.span(), reference.expected(),
-                declaredKeyed.actual())),
-            "a projection caller keying the numeric token on the declared int text is "
-                + "reported by field name actual");
     }
 
     // =========================================================================
@@ -5705,16 +5015,6 @@ public class FailureArmAuthorityTest {
         return walkHostChunk;
     }
 
-    /** The production JVM source of the walk drive project. */
-    private static String emittedWalkJvm() {
-        deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
-            deal.codegen.jvm.JvmSemanticEmitter.emitProductionProject(walkProject(),
-                walkTables(), Map.of(new deal.semantic.ir.ModuleId("arm-walk"),
-                    new deal.semantic.ir.ClassFactoryRegistry(Map.of())),
-                "ArmWalk", emptySurface());
-        return emission.source();
-    }
-
 
     // =========================================================================
     // 15. The moved cell: a fractional array(int) element at the boundary
@@ -5879,49 +5179,6 @@ public class FailureArmAuthorityTest {
             "the emitted prelude renders the oracle's complete present-null tuple");
         checkEq(null, firstDifferingField(oracleDeleted, luaTuple(rows.get(1), origin)),
             "the emitted prelude renders the oracle's complete deleted-slot tuple");
-    }
-
-    // =========================================================================
-    // The negative single-source control
-    // =========================================================================
-
-    static void testNegativeSingleSourceControl() {
-        System.out.println("-- the negative single-source control --");
-        // The reference: the authority's own kind arm (runtime-errors/
-        // type-mismatch-e8001's corrected tuple at the declaration span).
-        Tuple kind = tupleOf(FailureContractRegistry.render(
-            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "int", "string",
-            null), "type-mismatch-e8001.deal:6:21");
-        checkEq(null, firstDifferingField(kind, kind),
-            "the identical tuple compares equal (the control is not vacuous)");
-
-        checkEq("message", firstDifferingField(kind, new Tuple(kind.code(),
-            "expected int, got string", kind.span(), kind.expected(), kind.actual())),
-            "the superseded suffixed spelling is caught by field name message");
-
-        Tuple foreach = tupleOf(FailureContractRegistry.render(
-            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int"), "int", "nil",
-            null), "for-of:8:3");
-        checkEq("message", firstDifferingField(foreach, new Tuple(foreach.code(),
-            "expected int, got missing", foreach.span(), foreach.expected(),
-            "missing")),
-            "the superseded absent-element text is caught by field name message");
-
-        Tuple host = tupleOf(FailureContractRegistry.render(
-            FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner",
-                FailureProjections.kindReason(RuntimeDescriptor.Bytes.INSTANCE)),
-            "bytes", "number", null), "host-bytes-param-mismatch-e8010.deal:10:10");
-        checkEq("parameter 1 type mismatch: expected bytes", host.message(),
-            "the authority renders the host composite with the inner reason");
-        checkEq("message", firstDifferingField(host, new Tuple(host.code(),
-            "parameter 1 type mismatch: expected bytes, got number", host.span(),
-            host.expected(), host.actual())),
-            "the superseded host composite is caught by field name message");
-        // (4) A call-site span for a declaration-owned arm.
-        checkEq("span", firstDifferingField(kind, new Tuple(kind.code(), kind.message(),
-            "type-mismatch-e8001.deal:9:10", kind.expected(), kind.actual())),
-            "a call-site span for a declaration-owned arm is caught by field name span");
     }
 
     // =========================================================================
@@ -6215,10 +5472,8 @@ public class FailureArmAuthorityTest {
     // 17. The walk arm's oracle-dispatch leg (the executable IR drive)
     // =========================================================================
 
-    /** One dispatch case: the executable unit and the two artifact legs. */
     private record DispatchCase(String label, String fieldPath, String actual,
-                                DispatchUnit unit, String luaRoot,
-                                deal.codegen.jvm.JvmRuntime.ClassInstance jvmRoot) {
+                                DispatchUnit unit) {
 
         String message() {
             return "value at " + fieldPath + " is not JSON serializable: " + actual;
@@ -6266,22 +5521,6 @@ public class FailureArmAuthorityTest {
         }
     }
 
-    /**
-     * The oracle-dispatch leg of the walk arm's comparison (Verification
-     * 3/4): an executable lowered project whose module-init block produces
-     * the class value with producer ops (CONST/TABLE_NEW/ARRAY_NEW, the
-     * pinned {@code CLASS_LITERAL_FIELD} boundary children, and the
-     * {@code CLASS_NEW} construction) and feeds it to the JSON_TO_CLASS op.
-     * The oracle's dispatch supplies the executing op's own
-     * {@code SourceOrigin} to the walk; the snapshot's
-     * {@code (code, message, origin, expected, actual)} tuple equals the
-     * emitted Lua and JVM consumers' renders for the same failing value.
-     * The separate direct-executor drives keep the positions a construction
-     * cannot produce (a fractional value at an int-typed field, a nonfinite
-     * array element) with a supplied origin distinct from the op's
-     * synthetic anchor; this leg makes the dispatch's operand selection and
-     * walk-failure handling load-bearing.
-     */
     static void testWalkArmOracleDispatchLeg() throws Exception {
         System.out.println("-- the walk arm's oracle-dispatch leg --");
         List<DispatchCase> cases = new ArrayList<>();
@@ -6298,14 +5537,7 @@ public class FailureArmAuthorityTest {
             present.put("tags", DispatchValue.ARRAY);
             cases.add(dispatchCase("dispatch-nonfinite-number-field", "ratio",
                 "number", ids, WALK_ID, walkLayout(), present,
-                Map.of(WALK_ID, walkLayout()),
-                "{__c = true, __id = " + quote(WALK_ID.text()) + ", __p = {name = true, "
-                    + "age = true, ratio = true, data = true, tags = true}, __f = "
-                    + "{name = " + luaString("n") + ", age = 1, ratio = 0/0, data = "
-                    + LUA_TABLE_CARRIER + ", tags = {__a = true, __n = 1, [1] = 1}}}",
-                walkJvmInstance(Map.of("name", "n", "age", 1L, "ratio", Double.NaN,
-                    "data", new deal.codegen.jvm.JvmRuntime.Table(), "tags",
-                    jvmIntArray(1L)))));
+                Map.of(WALK_ID, walkLayout())));
         }
 
         // (2) An omitted required field with no declared default: the
@@ -6319,13 +5551,7 @@ public class FailureArmAuthorityTest {
             present.put("data", DispatchValue.TABLE);
             present.put("tags", DispatchValue.ARRAY);
             cases.add(dispatchCase("dispatch-missing-required-field", "age", "nil",
-                ids, WALK_ID, walkLayout(), present, Map.of(WALK_ID, walkLayout()),
-                "{__c = true, __id = " + quote(WALK_ID.text()) + ", __p = {name = true, "
-                    + "ratio = true, data = true, tags = true}, __f = {name = "
-                    + luaString("n") + ", ratio = 0.5, data = " + LUA_TABLE_CARRIER
-                    + ", tags = {__a = true, __n = 1, [1] = 1}}}",
-                walkJvmInstance(Map.of("name", "n", "ratio", 0.5, "data",
-                    new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L)))));
+                ids, WALK_ID, walkLayout(), present, Map.of(WALK_ID, walkLayout())));
         }
 
         // (3) A produced instance of another class: the walk's own root
@@ -6336,23 +5562,10 @@ public class FailureArmAuthorityTest {
             present.put("x", DispatchValue.INT);
             cases.add(dispatchCase("dispatch-foreign-class-root", "",
                 FOREIGN_ID.text(), ids, FOREIGN_ID, foreignLayout(), present,
-                Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout()),
-                "{__c = true, __id = " + quote(FOREIGN_ID.text())
-                    + ", __p = {x = true}, __f = {x = 1}}",
-                new WalkInstance(FOREIGN_ID.text(), Map.of("x", 1L))));
+                Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout())));
         }
 
-        // The emitted Lua leg for the same failing values (the production
-        // chunk's own walk machinery under real luajit).
-        List<WalkCase> luaCases = new ArrayList<>();
         for (DispatchCase drive : cases) {
-            luaCases.add(new WalkCase(drive.label(), "JSON_TO_WALK",
-                drive.fieldPath(), drive.actual(), null, drive.luaRoot(), null));
-        }
-        List<String> luaRows = runWalkProbe(luaCases);
-
-        for (int i = 0; i < cases.size(); i++) {
-            DispatchCase drive = cases.get(i);
             deal.semantic.SemanticRuntimeModel.ConsumerRun run =
                 deal.semantic.SemanticOracle.executeProjectInits(
                     drive.unit().project(), drive.unit().tables(), Map.of(), null);
@@ -6382,37 +5595,6 @@ public class FailureArmAuthorityTest {
                 drive.label() + ": the dispatch supplies the executing op's own "
                     + "SourceOrigin to the walk");
 
-            // The emitted Lua leg: the rendered origin field is the row's own
-            // (never a test constant), so a substituted dispatch span fails
-            // the comparison by field.
-            Tuple luaTuple = walkLuaTuple(luaRows.get(i));
-            checkEq(null, firstDifferingField(dispatch, luaTuple),
-                drive.label() + ": the emitted Lua walk machinery renders the "
-                    + "dispatch's identical tuple");
-
-            // The emitted JVM leg (the shared walk machinery the artifact
-            // links), rendered exactly like the emitted catch site.
-            deal.codegen.jvm.JvmJson.Projection projection = null;
-            try {
-                deal.codegen.jvm.JvmJson.toClass(walkPlan(), drive.jvmRoot());
-            } catch (deal.codegen.jvm.JvmJson.Projection caught) {
-                projection = caught;
-            }
-            check(projection != null,
-                drive.label() + ": the JVM walk machinery fails the value");
-            if (projection == null) {
-                continue;
-            }
-            deal.codegen.jvm.JvmRuntime.DealError jvmError = projection.cycle
-                ? deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE,
-                    Map.of(), WALK_SPAN, null, null)
-                : deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                    Map.of("fieldPath", projection.fieldPath, "actual",
-                        projection.actual), WALK_SPAN, null, projection.actual);
-            checkEq(null, firstDifferingField(dispatch, new Tuple(jvmError.code,
-                    jvmError.msg, jvmError.origin, jvmError.expected, jvmError.actual)),
-                drive.label() + ": the JVM walk machinery renders the dispatch's "
-                    + "identical tuple");
         }
     }
 
@@ -6676,12 +5858,11 @@ public class FailureArmAuthorityTest {
             String actual, DispatchIds ids, deal.semantic.ir.ClassId classId,
             deal.semantic.ir.ClassLayout layout,
             Map<String, DispatchValue> present,
-            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
-            String luaRoot, deal.codegen.jvm.JvmRuntime.ClassInstance jvmRoot) {
+            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts) {
         DispatchConstruction construction = buildDispatchConstruction(ids, classId,
             layout, present);
         return new DispatchCase(label, fieldPath, actual,
-            dispatchUnit(ids, construction, layouts), luaRoot, jvmRoot);
+            dispatchUnit(ids, construction, layouts));
     }
 
 

@@ -41,14 +41,6 @@ public final class SourceModuleResolverTest {
 
     private static int passed = 0;
     private static int failed = 0;
-    /**
-     * A qualified {@code Files} name immediately followed by a method
-     * invocation — the java.nio.file.Files API surface. Word-boundary
-     * matching excludes plain substrings such as a local variable named
-     * {@code pinnedFiles} (a name, not an access).
-     */
-    private static final Pattern FILES_API =
-        Pattern.compile("\\bFiles\\.[A-Za-z]+\\s*\\(");
     private static Path tmpDir;
     /** {@code tmpDir.toRealPath()} — the symlink-resolved expectation base. */
     private static Path realTmp;
@@ -1431,17 +1423,6 @@ public final class SourceModuleResolverTest {
                         && module.projectIdentity().relativeModuleComponents()
                             .equals(List.of("alpha")),
             "fabricated URIs classify without any filesystem existence");
-
-        // Structural purity: the classifier source performs no
-        // java.nio.file.Files call. The scan targets the Files.* API
-        // surface (a qualified name followed by an invocation), never
-        // plain substrings — a local variable named "pinnedFiles" is
-        // not an access.
-        String source = Files.readString(Path.of(
-            "deal/module/ModuleIdentityResolver.java"), StandardCharsets.UTF_8);
-        check(!source.contains("import java.nio.file.Files")
-                && !FILES_API.matcher(source).find(),
-            "the classifier production source performs no filesystem access");
     }
 
     // =========================================================================

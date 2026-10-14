@@ -1,9 +1,0 @@
-{
-  "languageVersion": "1.3",
-  "moduleRoots": ["src"],
-  "backend": "luajit",
-  "output": "build/lua",
-  "externals": {
-    "native/math": "legacy-string-form"
-  }
-}

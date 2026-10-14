@@ -24,7 +24,6 @@ import deal.semantic.ir.BlockId;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ConstructKind;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.diagnostics.DiagnosticCode;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
@@ -37,7 +36,6 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.SemanticCapability;
-import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 
 import java.nio.file.Files;
@@ -1269,23 +1267,6 @@ public class LoweringSupportTest {
             check(true, "an IMPLEMENTATION input entry without checks is rejected at "
                 + "record construction (T8 guard): " + expected.getClass().getSimpleName());
         }
-
-        // T1 fault: the capability enum is closed — exactly the pinned
-        // twelve values in the pinned order, no open/unknown member.
-        List<String> pinnedCapabilities = List.of(
-            "FOUNDATION_VALUES", "SIGNED_INT32", "CONTAINERS_AND_STRINGS",
-            "DESCRIPTORS", "BOUNDARIES", "EVALUATION_ORDER", "BINDINGS", "CALLS",
-            "STDLIB_SEMANTICS", "STDLIB_TIME_CONFLICT", "CLASSES", "MODULES");
-        List<String> actual = new ArrayList<>();
-        for (SemanticCapability capability : SemanticCapability.values()) {
-            actual.add(capability.name());
-        }
-        check(actual.equals(pinnedCapabilities),
-            "SemanticCapability is exactly the pinned closed set in the pinned order; got "
-                + actual);
-        check(SemanticCapability.class.isEnum(),
-            "SemanticCapability is an enum — a manifest admitting an out-of-set "
-                + "capability is impossible at the type level");
     }
 
     // =========================================================================

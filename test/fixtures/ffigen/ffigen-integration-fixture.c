@@ -1,11 +1,5 @@
 /*
  * ffigen-integration-fixture.c — minimal non-DEAL C99 support library
- * for the LuaJIT FFIGEN boundary integration
- * (luajit-ffigen-boundary-integration D4). Compiled at driver bootstrap
- * by the test bootstrap with GCC to build/ffigen-integration-fixture.so;
- * the integration loads it exclusively through the production
- * __rt.load_ffi path.
- *
  * The generated cdef bundle declares private types for every symbol
  * below (adopted D2): this source never declares a real target-function
  * prototype shared with DEAL.
@@ -37,9 +31,6 @@ static int fixture_counter = 0;
  * C-owned; DEAL copies it and never frees it). */
 static char fixture_echo_buffer[64];
 
-/* Append one line to the compile-time event file. Best-effort: the file
- * lives under the integration-owned build/ directory created by the
- * bootstrap step before any dlopen. */
 static void fixture_event_line(const char *line)
 {
     FILE *f = fopen(FIXTURE_EVENTS_PATH, "a");

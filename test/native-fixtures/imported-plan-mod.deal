@@ -1,5 +1,0 @@
-// The imported class whose default plan is the runtime dependency edge
-// of the imported-plan evidence fixture (D5).
-export class Imported {
-  v: int = 7;
-}

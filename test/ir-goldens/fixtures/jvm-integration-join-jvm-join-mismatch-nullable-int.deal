@@ -1,9 +1,0 @@
-// IR golden fixture: jvm-integration-join-jvm-join-mismatch-nullable-int
-// Migrated IR-containment pin for legacy case 'jvm-join-mismatch-nullable-int' (ISSUE-0358).
-
-export function test(): int {
-  let holder: table = { item: "wrong" };
-  let n: int | null = holder.item;
-  if (n !== null) { return n; }
-  return 0;
-}
