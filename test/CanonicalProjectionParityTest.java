@@ -4128,8 +4128,10 @@ public class CanonicalProjectionParityTest {
         export function writeArray(value: (int | null)[]): string;
         export function stashArray(value: (int | null)[]): string;
         export function sameAsStash(value: (int | null)[]): string;
+        export function writeNestedArray(value: (int | null)[][]): string;
         export async function asyncTakeSharedArray(first: (int | null)[], second: (int | null)[]): string;
         export async function asyncRoundtripArray(value: (int | null)[]): (int | null)[];
+        export async function asyncWriteArray(value: (int | null)[]): string;
         export function takeNullBadReturn(value: null): string;
         export function takeTable(value: table): string;
         export function takeArray(value: int[]): string;
@@ -4566,6 +4568,57 @@ public class CanonicalProjectionParityTest {
           return null
         }
 
+        export function test_nested_write_nullable_array(): null {
+          let inner: (int | null)[] = [null, 7]
+          let outer: (int | null)[][] = [inner, inner]
+          let written: string = host.writeNestedArray(outer)
+          if (written !== "written") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nested nullable-array argument did not reach the host" }
+          }
+          let viaFirst: int | null = outer[0][1]
+          if (viaFirst !== null) {
+            if (viaFirst !== 8) {
+              throw { code: "PROBE_NULL_ARRAY", message: "the host write to the nested nullable-array element stayed invisible to the DEAL side" }
+            }
+          } else {
+            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nested nullable-array element to null" }
+          }
+          let viaAlias: int | null = outer[1][1]
+          if (viaAlias !== null) {
+            if (viaAlias !== 8) {
+              throw { code: "PROBE_NULL_ARRAY", message: "the nested alias did not observe the host write" }
+            }
+          } else {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nested alias observed the host write as null" }
+          }
+          let firstElement: int | null = outer[0][0]
+          if (firstElement !== null) {
+            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nested nullable-array null element" }
+          }
+          return null
+        }
+
+        export async function test_async_write_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let written: string = await host.asyncWriteArray(xs)
+          if (written !== "written") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the async nullable-array argument did not reach the host" }
+          }
+          let second: int | null = xs[1]
+          if (second !== null) {
+            if (second !== 8) {
+              throw { code: "PROBE_NULL_ARRAY", message: "the async host write to the nullable-array argument stayed invisible to the DEAL side" }
+            }
+          } else {
+            throw { code: "PROBE_NULL_ARRAY", message: "the async host write changed the nullable-array element to null" }
+          }
+          let first: int | null = xs[0]
+          if (first !== null) {
+            throw { code: "PROBE_NULL_ARRAY", message: "the async host write changed the nullable-array null element" }
+          }
+          return null
+        }
+
         export function main(): null {
           return null
         }
@@ -4644,6 +4697,24 @@ public class CanonicalProjectionParityTest {
                   return "written"
                 end
                 return "other"
+              end,
+              writeNestedArray = function(value)
+                -- The nested host-write probe: the write lands in the
+                -- shared inner carrier, so both the DEAL outer read and
+                -- the aliased nested element observe it after the call.
+                if type(value) == "table" and type(value[1]) == "table" then
+                  value[1][2] = 8
+                  return "written"
+                end
+                return "other"
+              end,
+              asyncWriteArray = function(value)
+                -- The async host-write probe: the start commits the write
+                -- into the shared carrier before completing.
+                if type(value) == "table" then
+                  value[2] = 8
+                end
+                return rt.async_start(function() return "written" end)
               end,
               stashArray = function(value)
                 stash = value
@@ -4796,6 +4867,22 @@ public class CanonicalProjectionParityTest {
                   value.data[1] = java.lang.Integer.valueOf(8);
                 }
                 return "written";
+              }
+              public static Object writeNestedArray($DealRt.__RefArray value) {
+                if (value.data.length > 0
+                    && value.data[0]
+                        instanceof deal.codegen.jvm.JvmRuntime.Array inner
+                    && inner.elements.size() > 1) {
+                  inner.elements.set(1, java.lang.Long.valueOf(8));
+                }
+                return "written";
+              }
+              public static Object asyncWriteArray($DealRt.__IntOrNullArray value) {
+                if (value.data.length > 1) {
+                  value.data[1] = java.lang.Integer.valueOf(8);
+                }
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    "written");
               }
               public static Object stashArray($DealRt.__IntOrNullArray value) {
                 return "stashed";
@@ -4981,6 +5068,19 @@ public class CanonicalProjectionParityTest {
                     // The async roundtrip probe: the completed value is the
                     // very array value the start received.
                     asyncReturned.put(operationLabel, args.get(0));
+                } else if ("asyncWriteArray".equals(export)) {
+                    // The async host-write probe: the start commits the write
+                    // into the shared array value's own element list before
+                    // completing, so the DEAL side reads it back after the
+                    // await.
+                    if (args.size() == 1
+                            && args.get(0)
+                                instanceof SemanticOracle.Value.ArrayValue array
+                            && array.elements().size() > 1) {
+                        array.elements().set(1,
+                            new SemanticOracle.Value.IntValue(8L));
+                    }
+                    asyncSeen.put(operationLabel, "written");
                 }
                 return new AsyncStartOutcome.Operation(operationLabel);
             }
@@ -5029,6 +5129,24 @@ public class CanonicalProjectionParityTest {
                                     instanceof SemanticOracle.Value.ArrayValue array
                                 && array.elements().size() > 1) {
                             array.elements().set(1,
+                                new SemanticOracle.Value.IntValue(8L));
+                        }
+                        yield new SyncOutcome.Returned(
+                            new SemanticOracle.Value.StrValue("written"));
+                    }
+                    case "writeNestedArray" -> {
+                        // The nested host-write probe: the write lands in the
+                        // shared inner array value's own element list, so the
+                        // outer read and the aliased nested element both
+                        // observe it after the call.
+                        if (args.size() == 1
+                                && args.get(0)
+                                    instanceof SemanticOracle.Value.ArrayValue outer
+                                && !outer.elements().isEmpty()
+                                && outer.elements().get(0)
+                                    instanceof SemanticOracle.Value.ArrayValue inner
+                                && inner.elements().size() > 1) {
+                            inner.elements().set(1,
                                 new SemanticOracle.Value.IntValue(8L));
                         }
                         yield new SyncOutcome.Returned(
@@ -5185,11 +5303,11 @@ public class CanonicalProjectionParityTest {
             "the host roundtrip of the nullable-array argument");
         assertNullCrossingSharedAdmission(compiled, "test_stash_nullable_array",
             "the nullable-array argument's identity across two host calls");
-        assertAsyncNullCrossingIdentityAdmission(compiled,
+        assertAsyncNullCrossingSharedAdmission(compiled,
             "test_async_shared_nullable_array",
             "the same async nullable-array argument and its nested alias at "
                 + "two recorded argument positions");
-        assertAsyncNullCrossingIdentityAdmission(compiled,
+        assertAsyncNullCrossingSharedAdmission(compiled,
             "test_async_roundtrip_nullable_array",
             "the async host roundtrip of the nullable-array argument");
     }
@@ -5199,12 +5317,20 @@ public class CanonicalProjectionParityTest {
      * host's in-place write to the shared carrier must be visible to the
      * DEAL side after the call — the oracle's scenario host commits into
      * the shared array value's element list, and the LuaJIT artifact's raw
-     * host into the shared table.
+     * host into the shared table. A nested write must also reach the DEAL
+     * outer read and the aliased nested element, and an async start's
+     * write must be visible after the await.
      */
     private static void driveNullCrossingArrayWrite(Compiled compiled)
             throws Exception {
         assertNullCrossingSharedAdmission(compiled, "test_write_nullable_array",
             "the host write to the nullable-array argument");
+        assertNullCrossingSharedAdmission(compiled,
+            "test_nested_write_nullable_array",
+            "the host write to the nested nullable-array element and its alias");
+        assertAsyncNullCrossingSharedAdmission(compiled,
+            "test_async_write_nullable_array",
+            "the async host write to the nullable-array argument");
     }
 
     /**
@@ -5231,7 +5357,7 @@ public class CanonicalProjectionParityTest {
     }
 
     /** One admitted async crossing on the oracle and the LuaJIT artifact. */
-    private static void assertAsyncNullCrossingIdentityAdmission(Compiled compiled,
+    private static void assertAsyncNullCrossingSharedAdmission(Compiled compiled,
             String export, String what) throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
             compiled.project(), compiled.tables(), nullCrossingResponder(),
