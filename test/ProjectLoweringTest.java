@@ -27,6 +27,7 @@ import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ClassFactoryId;
+import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
@@ -249,6 +250,49 @@ public class ProjectLoweringTest {
         """;
 
     private static final ClassId SEGMENT = new ClassId("src", "Segment");
+
+    /**
+     * The companion-ownership fixture (ISSUE-0816): one module-level class
+     * with a defaulted field and an ordinary closure with a captured
+     * variable (the exporting module), one plain module without class
+     * content interleaved in the dependency closure, and a consumer that
+     * constructs the imported class and detaches the imported closure.
+     */
+    private static final ModuleId MID = new ModuleId("mid");
+
+    private static final String OWNERSHIP_UTIL_SOURCE = """
+        export class Point {
+          x: int = 0;
+          y: int = 1;
+        }
+
+        export function makeCounter(start: int): () => int {
+          let n: int = start;
+          function bump(): int {
+            n = n + 1;
+            return n;
+          }
+          return bump;
+        }
+        """;
+
+    private static final String OWNERSHIP_MID_SOURCE = """
+        export function answer(): int {
+          return 42;
+        }
+        """;
+
+    private static final String OWNERSHIP_APP_SOURCE = """
+        import * as u from "util"
+        import * as m from "mid"
+
+        export function main(): null {
+          let p: u.Point = {x: 4};
+          let c: () => int = u.makeCounter(1);
+          let v: int = m.answer();
+          return null;
+        }
+        """;
 
     // The compiler's canonical module path of a root-contained module is
     // the configured root text plus the source's relative directory
@@ -664,6 +708,179 @@ public class ProjectLoweringTest {
             checkEq(cfg == null ? List.of("missing") : cfg.aliasCells(),
                 dumpedHostCells,
                 "the dumped MODULE_IMPORT payloads carry the registered cells");
+        }
+    }
+
+    /**
+     * The complete unit/project ownership (ISSUE-0816): the unit owns the
+     * body table, the class-factory registry, the JSON-default child table
+     * and the parameter/import initialization facts; the executable project
+     * owns the class registration seeds; and every retained lowering-result
+     * accessor is exactly that owned record — never a detached copy. The
+     * fixture carries a module-level class, an imported class and an
+     * ordinary closure with a captured variable, with a plain module
+     * interleaved between them.
+     */
+    private static void testUnitProjectCompanionOwnership() throws Exception {
+        System.out.println("-- the complete unit/project companion ownership: the "
+            + "unit owns bodyTable/classFactories/jsonDefaults/classBindingFacts, "
+            + "the project owns classSeeds, and the result accessors are those "
+            + "exact records --");
+        RealProject project = compileProject(OWNERSHIP_APP_SOURCE,
+            Map.of("src/util.deal", OWNERSHIP_UTIL_SOURCE,
+                "src/mid.deal", OWNERSHIP_MID_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the ownership fixture lowers: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            check(lowered.classSeeds() != null,
+                "the executable project owns its class registration seeds");
+            check(lowered.classSeeds() == result.seeds(),
+                "result.seeds() is exactly project.classSeeds(), never a detached "
+                    + "copy");
+            checkEq(Set.of(UTIL, MID, APP), result.tables().keySet(),
+                "the result carries one body table per closure module");
+            checkEq(Set.of(UTIL, MID, APP), result.registries().keySet(),
+                "the result carries one class-factory registry per closure module");
+
+            boolean sawClassModule = false;
+            boolean sawPlainModule = false;
+            boolean sawImportingModule = false;
+            for (LoweredModuleUnit unit : lowered.modules().values()) {
+                ModuleId module = unit.moduleId();
+                StructuredBodyTable body = unit.bodyTable();
+                ClassFactoryRegistry factories = unit.classFactories();
+                JsonDefaultChildTable defaults = unit.jsonDefaults();
+                ClassBindingFacts bindingFacts = unit.classBindingFacts();
+                check(body != null && factories != null && defaults != null
+                        && bindingFacts != null,
+                    "module " + module + " carries every mandatory companion as a "
+                        + "present record, never null");
+                if (body == null || factories == null || defaults == null
+                        || bindingFacts == null) {
+                    continue;
+                }
+                // The retained result accessors are the unit's own records.
+                check(result.tableOf(module) == body
+                        && result.tables().get(module) == body,
+                    "result.tableOf(" + module + ") is the unit's own bodyTable, "
+                        + "not a detached copy");
+                check(result.registryOf(module) == factories
+                        && result.registries().get(module) == factories,
+                    "result.registryOf(" + module + ") is the unit's own "
+                        + "classFactories, not a detached copy");
+                // Both membership directions are the exact inverses over the
+                // unit's own operations.
+                for (Map.Entry<BlockId, List<OpId>> entry : body.blockOps().entrySet()) {
+                    for (OpId member : entry.getValue()) {
+                        checkEq(entry.getKey(), body.opBlocks().get(member),
+                            "the block table's opBlocks is the exact inverse of "
+                                + "blockOps at " + member + " of " + module);
+                    }
+                }
+                for (Map.Entry<OpId, BlockId> entry : body.opBlocks().entrySet()) {
+                    check(body.blockOps().getOrDefault(entry.getValue(), List.of())
+                            .contains(entry.getKey()),
+                        "the block table's blockOps lists " + entry.getKey()
+                            + " of " + module);
+                }
+                // Every registered factory names a produced CLASS_FACTORY of
+                // this unit, and every JSON-default child a produced op.
+                for (Map.Entry<ClassFactoryId, OpId> entry
+                        : factories.factories().entrySet()) {
+                    SemanticOp factory = opOf(unit, entry.getValue());
+                    check(factory != null
+                            && factory.kind() == SemanticOpKind.CLASS_FACTORY
+                            && factory.opId().module().equals(module),
+                        "the registry entry " + entry.getKey() + " of " + module
+                            + " names this unit's CLASS_FACTORY op");
+                }
+                for (Map.Entry<OpId, List<OpId>> entry
+                        : defaults.defaultChildren().entrySet()) {
+                    check(opOf(unit, entry.getKey()) != null,
+                        "the JSON-default site " + entry.getKey() + " of " + module
+                            + " is a produced op");
+                    for (OpId child : entry.getValue()) {
+                        check(opOf(unit, child) != null,
+                            "the JSON-default child " + child + " of " + module
+                                + " is a produced op");
+                    }
+                }
+                // Every parameter/import fact names a produced BINDING_ALLOC
+                // of this unit.
+                Set<BindingId> allocated = new LinkedHashSet<>();
+                for (SemanticOp op : unit.ops()) {
+                    if (op.payload() instanceof KindPayload.BindingAllocPayload alloc) {
+                        allocated.add(alloc.binding());
+                    }
+                }
+                for (BindingId parameter : bindingFacts.parameters()) {
+                    check(allocated.contains(parameter),
+                        "the parameter fact " + parameter + " of " + module
+                            + " names a produced BINDING_ALLOC");
+                }
+                for (BindingId alias : bindingFacts.importAliases()) {
+                    check(allocated.contains(alias),
+                        "the import-alias fact " + alias + " of " + module
+                            + " names a produced BINDING_ALLOC");
+                }
+
+                if (module.equals(UTIL)) {
+                    sawClassModule = true;
+                    check(unit.classLayouts().containsKey(POINT),
+                        "the class module's own layout is in its classLayouts");
+                    check(unit.classLayouts().get(POINT).classId().equals(POINT),
+                        "the own layout's classId agrees with its registry key");
+                    check(!factories.factories().isEmpty(),
+                        "the class module's registry carries the exported "
+                            + "CLASS_FACTORY registration");
+                    check(lowered.classSeeds().registrationFor(POINT) == null,
+                        "an in-project class is owned by the unit's own classLayouts, "
+                            + "never merged into the declaration seeds");
+                    check(lowered.classSeeds().registrationFor(BUILTIN_ERROR) != null,
+                        "the project's class seeds carry the compiler-owned builtin "
+                            + "Error registration");
+                    check((Object) unit.classFactories()
+                            != (Object) lowered.classSeeds(),
+                        "the unit registry and the project seeds stay separate "
+                            + "records");
+                }
+                if (module.equals(MID)) {
+                    sawPlainModule = true;
+                    // A module without class content and without parameters or
+                    // imports carries present-empty companions.
+                    check(unit.classLayouts().isEmpty(),
+                        "the plain module carries no own class layout");
+                    check(factories.factories().isEmpty(),
+                        "the plain module carries an empty class-factory "
+                            + "registry");
+                    checkEq(new JsonDefaultChildTable(Map.of()), defaults,
+                        "the plain module carries an empty JSON-default table");
+                    checkEq(ClassBindingFacts.empty(), bindingFacts,
+                        "the plain module carries empty parameter/import facts");
+                }
+                if (module.equals(APP)) {
+                    sawImportingModule = true;
+                    check(unit.classLayouts().isEmpty(),
+                        "the importing module owns no local class layout");
+                    check(factories.factories().isEmpty(),
+                        "the importing module's registry is present and empty");
+                    check(!bindingFacts.importAliases().isEmpty(),
+                        "the importing module's import-alias facts are recorded "
+                            + "in the unit");
+                    check(!unit.classLayouts().containsKey(POINT),
+                        "the imported class's seed layout never merges into the "
+                            + "consumer's classLayouts");
+                }
+            }
+            check(sawClassModule && sawPlainModule && sawImportingModule,
+                "the closure carries the class, plain and importing modules");
+        } finally {
+            deleteRecursively(project.root());
         }
     }
 
@@ -1453,8 +1670,7 @@ public class ProjectLoweringTest {
                         project.index().interfaceIndexDigest(),
                         SemanticProfile.DEAL_V1_2_INT32,
                         invocation().capabilityRegistryHash()),
-                    deal.semantic.BindingsProductionValidator.PinnedWriteFacts
-                        .empty(),
+                    app.classBindingFacts(),
                     result.registryOf(APP),
                     new JsonDefaultChildTable(Map.of()),
                     project.index().modules().get(APP), Map.of(),
@@ -1539,8 +1755,7 @@ public class ProjectLoweringTest {
                         project.index().interfaceIndexDigest(),
                         SemanticProfile.DEAL_V1_2_INT32,
                         invocation().capabilityRegistryHash()),
-                    deal.semantic.BindingsProductionValidator.PinnedWriteFacts
-                        .empty(),
+                    app.classBindingFacts(),
                     result.registryOf(APP),
                     new JsonDefaultChildTable(Map.of()),
                     project.index().modules().get(APP), Map.of());
@@ -1643,8 +1858,7 @@ public class ProjectLoweringTest {
                         project.index().interfaceIndexDigest(),
                         SemanticProfile.DEAL_V1_2_INT32,
                         invocation().capabilityRegistryHash()),
-                    deal.semantic.BindingsProductionValidator.PinnedWriteFacts
-                        .empty(),
+                    app.classBindingFacts(),
                     result.registryOf(APP),
                     new JsonDefaultChildTable(Map.of()),
                     project.index().modules().get(APP), Map.of(),
@@ -1732,8 +1946,7 @@ public class ProjectLoweringTest {
                         project.index().interfaceIndexDigest(),
                         SemanticProfile.DEAL_V1_2_INT32,
                         invocation().capabilityRegistryHash()),
-                    deal.semantic.BindingsProductionValidator.PinnedWriteFacts
-                        .empty(),
+                    corrupted.classBindingFacts(),
                     new ClassFactoryRegistry(Map.of()),
                     new JsonDefaultChildTable(Map.of()),
                     project.index().modules().get(APP), Map.of());
@@ -1788,7 +2001,8 @@ public class ProjectLoweringTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
-            unit.exportPlan(), unit.functionBindings(), ops);
+            unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(),
+            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
     }
 
     private static void testMissingModuleSeed(LoweredProject baseline)
@@ -1810,7 +2024,8 @@ public class ProjectLoweringTest {
                 }
             }
             ExecutableLoweredProject missing = new ExecutableLoweredProject(
-                SemanticProfile.DEAL_V1_2_INT32, project.index(), shortened, APP);
+                SemanticProfile.DEAL_V1_2_INT32, project.index(), shortened, APP,
+                result.project().classSeeds());
             Optional<CompilerDiagnostic> failure = SemanticIrValidator.validate(
                 missing, new SemanticIrValidator.ComparisonFacts(
                     project.index().interfaceIndexDigest(),
@@ -1971,6 +2186,7 @@ public class ProjectLoweringTest {
                 lower(project, invocation()));
             testOneProjectLoweringAndDeterminism(baseline);
             testSeedsIntrinsicsAndNamespaces(baseline);
+            testUnitProjectCompanionOwnership();
             testNamespaceRegistrationFailureOrigins(baseline);
             testComposedChainOverUnifiedUnits(baseline);
             testInProjectClassArm();

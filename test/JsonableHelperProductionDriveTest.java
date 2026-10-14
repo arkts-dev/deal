@@ -1902,7 +1902,9 @@ public class JsonableHelperProductionDriveTest {
             unit.semanticProfile(), unit.moduleId(), unit.interfaceHash(),
             unit.loweringContextHash(), unit.requiredCapabilities(),
             unit.constructCoverage(), unit.classLayouts(), unit.functions(),
-            unit.moduleInit(), unit.exportPlan(), unit.functionBindings(), ops);
+            unit.moduleInit(), unit.exportPlan(), unit.functionBindings(), ops,
+            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
         Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
         for (Map.Entry<ModuleId, LoweredModuleUnit> entry
                 : lowered.project().modules().entrySet()) {
@@ -1911,7 +1913,8 @@ public class JsonableHelperProductionDriveTest {
         }
         ExecutableLoweredProject project = new ExecutableLoweredProject(
             lowered.project().semanticProfile(), lowered.project().interfaceIndex(),
-            modules, lowered.project().entryModule());
+            modules, lowered.project().entryModule(),
+            lowered.project().classSeeds());
         StructuredBodyTable table = lowered.tables().get(module);
         Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
         for (Map.Entry<BlockId, List<OpId>> entry : table.blockOps().entrySet()) {

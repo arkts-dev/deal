@@ -28,7 +28,11 @@ import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.InitializationMode;
+import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleInitPlan;
@@ -1141,7 +1145,12 @@ public class LoweringSupportTest {
             Map.of(),
             new ModuleInitPlan(List.of(), new BlockId(0)),
             ExportPlan.empty(),
-            Map.of());
+            Map.of(),
+            List.of(),
+            new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
         check(unit.constructCoverage().equals(manifest.constructCoverage()),
             "the synthetic unit's constructCoverage equals the manifest's rows — the "
                 + "rows are the S1 coverage fact the unit producer records at "
@@ -1149,6 +1158,16 @@ public class LoweringSupportTest {
         check(unit.constructCoverage().containsKey(ConstructKind.STDLIB_TIME_NOW_MILLIS),
             "the std/time.nowMillis row is carried onto the unit's coverage (S1) like "
                 + "every other recorded row");
+        check(unit.bodyTable() != null && unit.classFactories() != null
+                && unit.jsonDefaults() != null && unit.classBindingFacts() != null,
+            "a synthetic unit with no operations still carries every mandatory "
+                + "companion as a present record, never null");
+        check(unit.bodyTable().blockOps().isEmpty()
+                && unit.bodyTable().opBlocks().isEmpty()
+                && unit.classFactories().factories().isEmpty()
+                && unit.jsonDefaults().defaultChildren().isEmpty()
+                && unit.classBindingFacts().equals(ClassBindingFacts.empty()),
+            "the operation-free unit's companions are the present-empty records");
     }
 
     // =========================================================================

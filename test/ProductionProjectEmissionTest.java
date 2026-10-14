@@ -1386,7 +1386,8 @@ public class ProductionProjectEmissionTest {
                         new ExecutableLoweredProject(
                             result.project().semanticProfile(),
                             result.project().interfaceIndex(), modules,
-                            result.project().entryModule());
+                            result.project().entryModule(),
+                            result.project().classSeeds());
                     assertSharedGuardOrigin("the duplicated async entry", duplicate,
                         "the exported declaration '" + entry.moduleId().path()
                             + "#" + exportName + " records two async"
@@ -2120,7 +2121,8 @@ public class ProductionProjectEmissionTest {
         ExecutableLoweredProject project = new ExecutableLoweredProject(
             lowering.project().semanticProfile(),
             lowering.project().interfaceIndex(), modules,
-            lowering.project().entryModule());
+            lowering.project().entryModule(),
+            lowering.project().classSeeds());
         String expectedMessage = fieldRead.kind() + " " + fieldRead.opId()
             + " has no UNTYPED_CLASS_INPUT boundary child: the pinned field-op"
             + " shape carries it parented to the op (producer defect)";
@@ -2164,7 +2166,8 @@ public class ProductionProjectEmissionTest {
             new LinkedHashMap<>(project.modules());
         modules.put(unit.moduleId(), withUnitOps(unit, ops));
         return new ExecutableLoweredProject(project.semanticProfile(),
-            project.interfaceIndex(), modules, project.entryModule());
+            project.interfaceIndex(), modules, project.entryModule(),
+            project.classSeeds());
     }
 
     private static LoweredModuleUnit withUnitOps(LoweredModuleUnit unit,
@@ -2173,7 +2176,8 @@ public class ProductionProjectEmissionTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
-            unit.exportPlan(), unit.functionBindings(), ops);
+            unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(),
+            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
     }
 
     /** One emitter rejection of the doctored membership table, or null on no throw. */

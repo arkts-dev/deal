@@ -1,5 +1,7 @@
 package deal.semantic.ir;
 
+import deal.semantic.ClassRegistrationSeeds;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -12,7 +14,7 @@ import java.util.Objects;
  * ExecutableLoweredProject {
  *   semanticProfile: DEAL_V1_2_INT32,
  *   interfaceIndex, modules: Map<ModuleId, LoweredModuleUnit>,   // complete implementation closure
- *   entryModule
+ *   entryModule, classSeeds
  * }
  * }</pre>
  *
@@ -26,18 +28,30 @@ import java.util.Objects;
  * it is represented to shared dependants by {@link ExternalModuleInterface}
  * plus the target ABI record (foundation F5/F6).</p>
  *
+ * <p>{@code classSeeds} is the project's class registration seed set: the
+ * compiler-owned builtin {@code Error} entry plus one declaration class
+ * registration per declared class of every declaration module. The seeds
+ * stay separate from every unit's own {@code classLayouts} — a seed layout
+ * is never merged into a unit's local layouts to obtain a coverage waiver
+ * — and {@link ClassRegistrationSeeds.ClassRegistration} keeps the
+ * registration key and the contained layout {@code classId} as separate
+ * facts. The lowering result's seed accessor is a read-only view of
+ * exactly this record.</p>
+ *
  */
 public record ExecutableLoweredProject(
     SemanticProfile semanticProfile,
     ProjectInterfaceIndex interfaceIndex,
     Map<ModuleId, LoweredModuleUnit> modules,
-    ModuleId entryModule
+    ModuleId entryModule,
+    ClassRegistrationSeeds classSeeds
 ) {
 
     public ExecutableLoweredProject(SemanticProfile semanticProfile,
                                     ProjectInterfaceIndex interfaceIndex,
                                     Map<ModuleId, LoweredModuleUnit> modules,
-                                    ModuleId entryModule) {
+                                    ModuleId entryModule,
+                                    ClassRegistrationSeeds classSeeds) {
         this.semanticProfile = Objects.requireNonNull(semanticProfile, "semanticProfile must not be null");
         if (semanticProfile != SemanticProfile.DEAL_V1_2_INT32) {
             throw new IllegalArgumentException(
@@ -52,5 +66,6 @@ public record ExecutableLoweredProject(
             throw new IllegalArgumentException(
                 "entryModule " + entryModule + " must be present in the complete implementation closure");
         }
+        this.classSeeds = Objects.requireNonNull(classSeeds, "classSeeds must not be null");
     }
 }

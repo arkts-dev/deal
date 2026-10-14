@@ -33,7 +33,12 @@ import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.InitializationMode;
 import deal.semantic.ir.InternalResultType;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ClassRegistrationSeeds;
+import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleInitPlan;
@@ -165,7 +170,9 @@ public class SemanticIrValidatorTest {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_2_INT32, new ModuleId(module), IFACE, LCH, caps, coverage,
             Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
-            bindings, ops);
+            bindings, ops, new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
     }
 
     private static LoweredModuleUnit unit(Set<SemanticCapability> caps,
@@ -494,7 +501,7 @@ public class SemanticIrValidatorTest {
                 new LinkedHashMap<>() {{
                     put(MOD, caller);
                     put(MOD_B, callee);
-                }}, MOD);
+                }}, MOD, ClassRegistrationSeeds.builtinErrorOnly());
             assertE6005(SemanticIrValidator.validate(project, FACTS),
                 "R-EXTERNAL-ENTRY", "SHARED_BODY", "\"f\"");
         }
@@ -563,7 +570,9 @@ public class SemanticIrValidatorTest {
                     SemanticProfile.DEAL_V1_2_INT32, MOD, "wrong-interface-digest", LCH, Set.of(),
                     Map.of(), Map.of(), Map.of(),
                     new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
-                    List.of(constOp())), FACTS),
+                    List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
+                    new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+                    ClassBindingFacts.empty()), FACTS),
             "R-PROFILE", "interfaceHash");
 
         // R-PROFILE: loweringContextHash computed by T3's helper for a
@@ -577,7 +586,11 @@ public class SemanticIrValidatorTest {
                         SemanticProfile.DEAL_V1_2_INT32, MOD, IFACE, wrongHash, Set.of(),
                         Map.of(), Map.of(), Map.of(),
                         new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
-                        Map.of(), List.of(constOp())), FACTS),
+                        Map.of(), List.of(constOp()),
+                        new StructuredBodyTable(Map.of(), Map.of()),
+                        new ClassFactoryRegistry(Map.of()),
+                        new JsonDefaultChildTable(Map.of()),
+                        ClassBindingFacts.empty()), FACTS),
                 "R-PROFILE", "loweringContextHash");
         }
     }
@@ -685,7 +698,7 @@ public class SemanticIrValidatorTest {
                 new LinkedHashMap<>() {{
                     put(MOD, unitA);
                     put(MOD_B, unitB);
-                }}, MOD);
+                }}, MOD, ClassRegistrationSeeds.builtinErrorOnly());
             assertPass(SemanticIrValidator.validate(project, FACTS), "project injection base");
             String text = substituteProjectUnitLeaf(SemanticIrValidator.toProjectText(project),
                 1, "semanticProfile", "DEAL_V1_2_INT32", "LEGACY_SAFE_INT");

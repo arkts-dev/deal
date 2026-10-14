@@ -21,7 +21,8 @@ import java.util.Set;
  *   constructCoverage: Map<ConstructKind, [SemanticOpKind]>,   // enum-keyed; recorded at lowering start
  *   classLayouts, functions, moduleInit, exportPlan,
  *   functionBindings: Map<FunctionAllocationIdentity, FunctionExecutionBinding>
- *   ops: [SemanticOp]                            // the unit's produced operations in source order
+ *   ops: [SemanticOp],                           // the unit's produced operations in source order
+ *   bodyTable, classFactories, jsonDefaults, classBindingFacts
  * }
  * }</pre>
  *
@@ -37,6 +38,17 @@ import java.util.Set;
  * evidence it), and a module whose manifest claims
  * {@code STDLIB_TIME_CONFLICT} is never lowered at all.</p>
  *
+ * <p>The unit is the single owner of the structural companions the
+ * transport and the composed admission need: {@link #bodyTable()} (both
+ * block-membership directions), {@link #classFactories()} (the
+ * construction-entry → {@code CLASS_FACTORY} registry), {@link
+ * #jsonDefaults()} (the per-site {@code JSON_FROM_CLASS} default children)
+ * and {@link #classBindingFacts()} (the parameter/import initialization
+ * facts). They are mandatory facts of every unit: a unit without class
+ * content carries present-empty records, never null or absent. The
+ * lowering-result table, registry and seed accessors are read-only views
+ * of exactly these records, never independent authorities.</p>
+ *
  * <p>{@code loweringContextHash} is the pinned digest
  * {@code SHA-256(canonical JSON {semanticProfile, capabilityRegistryHash})}
  * computed at lowering start over the invocation's facts (see
@@ -50,10 +62,7 @@ import java.util.Set;
  * {@code constructCoverage} obligations, and the per-op rules
  * (R-ENUM, R-POLICY-KIND, R-BOUNDARY-TRIPLE, R-ELIDED-PLACEMENT,
  * R-FUNCTION-BINDING, R-ALIAS-CYCLE, R-TOKEN-REUSE, R-PRIVATE-STEP,
- * R-RESERVED-NAME, R-DIGEST) walk exactly this list. The 12-argument
- * constructor overload (without {@code ops}) is a convenience for
- * operation-free synthetic units and delegates to the full constructor
- * with an empty list.</p>
+ * R-RESERVED-NAME, R-DIGEST) walk exactly this list.</p>
  *
  */
 public record LoweredModuleUnit(
@@ -69,41 +78,30 @@ public record LoweredModuleUnit(
     ModuleInitPlan moduleInit,
     ExportPlan exportPlan,
     Map<FunctionAllocationIdentity, FunctionExecutionBinding> functionBindings,
-    List<SemanticOp> ops
+    List<SemanticOp> ops,
+    StructuredBodyTable bodyTable,
+    ClassFactoryRegistry classFactories,
+    JsonDefaultChildTable jsonDefaults,
+    ClassBindingFacts classBindingFacts
 ) {
 
     /** The pinned IR format version string. */
     public static final String FORMAT_VERSION = "deal.semantic-ir/1";
 
-    /**
-     * Convenience constructor for operation-free synthetic units: the
-     * produced-operation list is empty. The validator's per-op rules are
-     * vacuous over an empty list while the unit-level rules (R-COVERAGE,
-     * R-CAPABILITY, R-EXTERNAL-ENTRY, R-ALIAS-CYCLE, R-TOKEN-REUSE,
-     * R-PROFILE) still apply.
-     */
-    public LoweredModuleUnit(String formatVersion, SemanticProfile semanticProfile, ModuleId moduleId,
-                             String interfaceHash, String loweringContextHash,
-                             Set<SemanticCapability> requiredCapabilities,
-                             Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
-                             Map<ClassId, ClassLayout> classLayouts,
-                             Map<FunctionId, LoweredFunction> functions,
-                             ModuleInitPlan moduleInit, ExportPlan exportPlan,
-                             Map<FunctionAllocationIdentity, FunctionExecutionBinding> functionBindings) {
-        this(formatVersion, semanticProfile, moduleId, interfaceHash, loweringContextHash,
-            requiredCapabilities, constructCoverage, classLayouts, functions, moduleInit,
-            exportPlan, functionBindings, List.of());
-    }
-
-    public LoweredModuleUnit(String formatVersion, SemanticProfile semanticProfile, ModuleId moduleId,
-                             String interfaceHash, String loweringContextHash,
+    public LoweredModuleUnit(String formatVersion, SemanticProfile semanticProfile,
+                             ModuleId moduleId, String interfaceHash,
+                             String loweringContextHash,
                              Set<SemanticCapability> requiredCapabilities,
                              Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
                              Map<ClassId, ClassLayout> classLayouts,
                              Map<FunctionId, LoweredFunction> functions,
                              ModuleInitPlan moduleInit, ExportPlan exportPlan,
                              Map<FunctionAllocationIdentity, FunctionExecutionBinding> functionBindings,
-                             List<SemanticOp> ops) {
+                             List<SemanticOp> ops,
+                             StructuredBodyTable bodyTable,
+                             ClassFactoryRegistry classFactories,
+                             JsonDefaultChildTable jsonDefaults,
+                             ClassBindingFacts classBindingFacts) {
         this.formatVersion = Objects.requireNonNull(formatVersion, "formatVersion must not be null");
         if (!FORMAT_VERSION.equals(formatVersion)) {
             throw new IllegalArgumentException(
@@ -146,5 +144,13 @@ public record LoweredModuleUnit(
 
         Objects.requireNonNull(ops, "ops must not be null");
         this.ops = List.copyOf(ops);
+
+        this.bodyTable = Objects.requireNonNull(bodyTable, "bodyTable must not be null");
+        this.classFactories = Objects.requireNonNull(classFactories,
+            "classFactories must not be null");
+        this.jsonDefaults = Objects.requireNonNull(jsonDefaults,
+            "jsonDefaults must not be null");
+        this.classBindingFacts = Objects.requireNonNull(classBindingFacts,
+            "classBindingFacts must not be null");
     }
 }

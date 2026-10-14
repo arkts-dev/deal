@@ -232,7 +232,8 @@ public class ClassConstructionValidatorTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            ops);
+            ops, unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
     }
 
     private static LoweredModuleUnit unitWithLayouts(LoweredModuleUnit unit,
@@ -241,7 +242,8 @@ public class ClassConstructionValidatorTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), layouts,
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops());
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
     }
 
     private static List<SemanticOp> ofKind(LoweredModuleUnit unit, SemanticOpKind kind) {

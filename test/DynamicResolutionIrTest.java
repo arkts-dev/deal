@@ -33,6 +33,10 @@ import deal.semantic.ir.InitializationMode;
 import deal.semantic.ir.InternalResultType;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
+import deal.semantic.ClassRegistrationSeeds;
+import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
@@ -162,7 +166,9 @@ public class DynamicResolutionIrTest {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_2_INT32, module, IFACE, LCH, Set.of(), Map.of(), Map.of(),
             functions, new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
-            bindings, ops);
+            bindings, ops, new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
     }
 
     private static LoweredModuleUnit unit(
@@ -459,7 +465,8 @@ public class DynamicResolutionIrTest {
                 MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
                     List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD);
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
+            ClassRegistrationSeeds.builtinErrorOnly());
         assertPass(SemanticIrValidator.validate(project, FACTS),
             "the cross-unit dynamic CALL validates at project level (typed)");
         assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(project),
@@ -1473,7 +1480,8 @@ public class DynamicResolutionIrTest {
                 MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
                     List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         return new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD);
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
+            ClassRegistrationSeeds.builtinErrorOnly());
     }
 
     /**
@@ -1779,7 +1787,8 @@ public class DynamicResolutionIrTest {
                 MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
                     List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD);
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
+            ClassRegistrationSeeds.builtinErrorOnly());
         Map<ModuleId, StructuredBodyTable> tables = Map.of(MOD, sharedTable, MOD_B,
             calleeTable);
         SemanticRuntimeModel.ConsumerRun sharedRun = SemanticOracle.execute(project, tables,

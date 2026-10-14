@@ -56,6 +56,9 @@ import deal.semantic.ir.SemanticValue;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
+import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
@@ -392,7 +395,7 @@ public class BindingsValidationTest {
             List.of(aliasAllocA, aliasAllocB, completion)));
         Optional<CompilerDiagnostic> originless = BindingsProductionValidator.validate(
             unitAlias, tableAlias,
-            new BindingsProductionValidator.PinnedWriteFacts(Set.of(), Set.of(aliasB)));
+            new ClassBindingFacts(Set.of(), Set.of(aliasB)));
         assertE6005(originless, "BINDING_INIT_ONCE",
             "the import alias named by no completion",
             "is named by no MODULE_IMPORT completion");
@@ -815,7 +818,9 @@ public class BindingsValidationTest {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_2_INT32, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
             functions, new ModuleInitPlan(List.of(), INIT_BLOCK), ExportPlan.empty(), registry,
-            ops);
+            ops, new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
     }
 
     /** Builds a table from block → ops and derives the exact inverse map. */
@@ -1582,7 +1587,7 @@ public class BindingsValidationTest {
             Map.entry(INIT_BLOCK, List.of(paramClosure)),
             Map.entry(paramBody, List.of(paramAlloc, rogueParamInit))));
         assertE6005(BindingsProductionValidator.validate(unitParam, tableParam,
-                new BindingsProductionValidator.PinnedWriteFacts(Set.of(parameter), Set.of())),
+                new ClassBindingFacts(Set.of(parameter), Set.of())),
             "BINDING_INIT_ONCE", "an INIT targeting a parameter cell", "parameter cell");
 
         // An INIT targeting an import-alias cell: the unit payload
@@ -1600,7 +1605,7 @@ public class BindingsValidationTest {
         StructuredBodyTable tableAlias = tableOf(Map.of(INIT_BLOCK,
             List.of(aliasAlloc, rogueAliasInit, moduleImport)));
         assertE6005(BindingsProductionValidator.validate(unitAlias, tableAlias,
-                new BindingsProductionValidator.PinnedWriteFacts(Set.of(), Set.of(alias))),
+                new ClassBindingFacts(Set.of(), Set.of(alias))),
             "BINDING_INIT_ONCE", "an INIT targeting an import-alias cell",
             "import-alias cell");
     }

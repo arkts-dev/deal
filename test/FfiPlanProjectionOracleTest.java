@@ -970,7 +970,8 @@ public class FfiPlanProjectionOracleTest {
             new LinkedHashMap<>(project.modules());
         modules.put(unit.moduleId(), withOps(unit, ops));
         return new ExecutableLoweredProject(project.semanticProfile(),
-            project.interfaceIndex(), modules, project.entryModule());
+            project.interfaceIndex(), modules, project.entryModule(),
+            project.classSeeds());
     }
 
     /** The first published value id of one unit. */
@@ -1505,7 +1506,8 @@ public class FfiPlanProjectionOracleTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
-            unit.exportPlan(), unit.functionBindings(), ops);
+            unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(),
+            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
     }
 
     private static SemanticOp rebuildOp(SemanticOp original, KindPayload payload) {

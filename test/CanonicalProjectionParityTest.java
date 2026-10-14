@@ -8085,7 +8085,12 @@ public class CanonicalProjectionParityTest {
                 "context", Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(),
                     new deal.semantic.ir.BlockId(0)),
-                new deal.semantic.ir.ExportPlan(List.of()), Map.of());
+                new deal.semantic.ir.ExportPlan(List.of()), Map.of(),
+                List.of(),
+                new deal.semantic.ir.StructuredBodyTable(Map.of(), Map.of()),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()),
+                deal.semantic.ir.ClassBindingFacts.empty());
         Map<ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
             new LinkedHashMap<>();
         modules.put(entry, unit);
@@ -8095,7 +8100,8 @@ public class CanonicalProjectionParityTest {
                 deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
                 List.of(), deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry);
+            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry,
+            deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
         tables.put(entry, new StructuredBodyTable(
             Map.of(new deal.semantic.ir.BlockId(0), List.of()), Map.of()));

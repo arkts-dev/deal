@@ -45,6 +45,9 @@ import deal.semantic.ir.InternalResultType;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
+import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
@@ -227,7 +230,7 @@ public class DynamicFunctionValueGateTest {
      * plus the session's pinned write facts.
      */
     private record RawLowering(LoweredModuleUnit unit, StructuredBodyTable table,
-                               BindingsProductionValidator.PinnedWriteFacts pinnedWriteFacts) {
+                               ClassBindingFacts pinnedWriteFacts) {
     }
 
     private static RawLowering rawLower(Fixture fixture, String what) {
@@ -387,7 +390,9 @@ public class DynamicFunctionValueGateTest {
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), registry, ops);
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), registry, ops,
+            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
     }
 
     private static LoweredModuleUnit withRegistry(LoweredModuleUnit unit,
@@ -430,7 +435,10 @@ public class DynamicFunctionValueGateTest {
             SemanticProfile.DEAL_V1_2_INT32, MODULE, INTERFACE_HASH,
             LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH),
             Set.of(), Map.of(), Map.of(), functions,
-            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), registry, ops);
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), registry, ops,
+            new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
     }
 
     private static StructuredBodyTable syntheticTable(List<SemanticOp> ops) {

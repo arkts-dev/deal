@@ -79,6 +79,7 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ControlSelector;
@@ -1329,8 +1330,8 @@ public final class SemanticLowerer {
                 return projectFailureResult(List.of(namespaceFailure.get()));
             }
             units.put(module.moduleId(), lowered.unit());
-            tables.put(module.moduleId(), lowered.table());
-            registries.put(module.moduleId(), lowered.registry());
+            tables.put(module.moduleId(), lowered.unit().bodyTable());
+            registries.put(module.moduleId(), lowered.unit().classFactories());
             if (!lowered.externalEntries().isEmpty()) {
                 calleeExternalEntries.put(module.moduleId(), lowered.externalEntries());
             }
@@ -1338,18 +1339,20 @@ public final class SemanticLowerer {
                 inProjectFactoryFacts);
         }
 
-        // (5) The project-form gate over the complete closure.
+        // (5) The project-form gate over the complete closure. The project
+        // owns the produced class registration seeds; the lowering result's
+        // seed view is exactly that record.
         ExecutableLoweredProject project = new ExecutableLoweredProject(
             SemanticProfile.DEAL_V1_2_INT32, interfaceIndex, units,
-            checkedProject.entryModule());
+            checkedProject.entryModule(), seeds.seeds());
         Optional<CompilerDiagnostic> projectGate = SemanticIrValidator.validate(
             project, comparisonFacts);
         if (projectGate.isPresent()) {
             return projectFailureResult(List.of(projectGate.get()));
         }
         NamespaceRegistrations.Assembly namespaceAssembly = namespaceRecorder.build();
-        return new ProjectLoweringResult(project, tables, registries, seeds.seeds(),
-            namespaceAssembly.registrations(), List.of());
+        return new ProjectLoweringResult(project, tables, registries,
+            project.classSeeds(), namespaceAssembly.registrations(), List.of());
     }
 
     /**
@@ -1463,17 +1466,14 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
-        StructuredBodyTable table = lowerer.bodyTable();
-        Optional<CompilerDiagnostic> unitChain = validateProjectUnit(unit, table,
-            comparisonFacts, lowerer.pinnedWriteFacts(), lowerer.factoryRegistry(),
-            lowerer.jsonDefaultChildren(), ownInterface, Map.copyOf(sharedFactories),
-            seeds.registrations());
+        Optional<CompilerDiagnostic> unitChain = validateProjectUnit(unit,
+            unit.bodyTable(), comparisonFacts, unit.classBindingFacts(),
+            unit.classFactories(), unit.jsonDefaults(), ownInterface,
+            Map.copyOf(sharedFactories), seeds.registrations());
         if (unitChain.isPresent()) {
             return LoweredProjectModule.failure(List.of(unitChain.get()));
         }
-        return new LoweredProjectModule(unit, table, lowerer.factoryRegistry(),
-            lowerer.jsonDefaultChildren(), lowerer.recordedEntries(),
-            lowerer.pinnedWriteFacts(), List.of());
+        return new LoweredProjectModule(unit, lowerer.recordedEntries(), List.of());
     }
 
     private static void accumulateInProjectFactoryFacts(
@@ -1486,8 +1486,8 @@ public final class SemanticLowerer {
             if (layout == null) {
                 continue;
             }
-            OpId factoryOpId =
-                lowered.registry().factoryFor(classEntry.constructionEntry());
+            OpId factoryOpId = lowered.unit().classFactories()
+                .factoryFor(classEntry.constructionEntry());
             if (factoryOpId == null) {
                 continue;
             }
@@ -1514,12 +1514,12 @@ public final class SemanticLowerer {
             LoweredModuleUnit unit,
             StructuredBodyTable table,
             SemanticIrValidator.ComparisonFacts facts,
-            BindingsProductionValidator.PinnedWriteFacts pinnedWrites,
+            ClassBindingFacts bindingFacts,
             deal.semantic.ir.ClassFactoryRegistry factories,
             deal.semantic.ir.JsonDefaultChildTable jsonDefaults,
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories) {
-        return validateProjectUnit(unit, table, facts, pinnedWrites, factories,
+        return validateProjectUnit(unit, table, facts, bindingFacts, factories,
             jsonDefaults, ownInterface, sharedFactories, Map.of());
     }
 
@@ -1527,7 +1527,7 @@ public final class SemanticLowerer {
             LoweredModuleUnit unit,
             StructuredBodyTable table,
             SemanticIrValidator.ComparisonFacts facts,
-            BindingsProductionValidator.PinnedWriteFacts pinnedWrites,
+            ClassBindingFacts bindingFacts,
             deal.semantic.ir.ClassFactoryRegistry factories,
             deal.semantic.ir.JsonDefaultChildTable jsonDefaults,
             deal.semantic.ir.ExternalModuleInterface ownInterface,
@@ -1536,7 +1536,7 @@ public final class SemanticLowerer {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
-        Objects.requireNonNull(pinnedWrites, "pinnedWrites must not be null");
+        Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
         Objects.requireNonNull(jsonDefaults, "jsonDefaults must not be null");
         Objects.requireNonNull(ownInterface, "ownInterface must not be null");
@@ -1558,7 +1558,7 @@ public final class SemanticLowerer {
             return controlFlow;
         }
         Optional<CompilerDiagnostic> bindings = BindingsProductionValidator.validate(
-            unit, table, pinnedWrites);
+            unit, table, bindingFacts);
         if (bindings.isPresent()) {
             return bindings;
         }
@@ -1642,13 +1642,14 @@ public final class SemanticLowerer {
         }
     }
 
+    /**
+     * One lowered module of the project walk: its produced unit (the owner
+     * of the structural companions) and the session's recorded external
+     * entries, or exactly the first E6005 and no unit.
+     */
     private record LoweredProjectModule(
             LoweredModuleUnit unit,
-            StructuredBodyTable table,
-            deal.semantic.ir.ClassFactoryRegistry registry,
-            deal.semantic.ir.JsonDefaultChildTable jsonDefaults,
             Map<String, OpId> externalEntries,
-            BindingsProductionValidator.PinnedWriteFacts pinnedWrites,
             List<CompilerDiagnostic> diagnostics) {
 
         LoweredProjectModule {
@@ -1660,8 +1661,7 @@ public final class SemanticLowerer {
         }
 
         static LoweredProjectModule failure(List<CompilerDiagnostic> diagnostics) {
-            return new LoweredProjectModule(null, null, null, null, Map.of(),
-                BindingsProductionValidator.PinnedWriteFacts.empty(), diagnostics);
+            return new LoweredProjectModule(null, Map.of(), diagnostics);
         }
     }
 
@@ -2468,6 +2468,24 @@ public final class SemanticLowerer {
 
         private final java.util.LinkedHashMap<OpId, List<OpId>> jsonDefaultChildren =
             new java.util.LinkedHashMap<>();
+
+        /**
+         * The produced structural companions of this session's unit (S1
+         * ownership): the exact records the unit owns, captured by
+         * {@link #buildUnit} so {@link #bodyTable()},
+         * {@link #factoryRegistry()}, {@link #jsonDefaultChildren()} and
+         * {@link #pinnedWriteFacts()} return the same instances the unit
+         * carries — the retained result views are these records, never
+         * detached copies. A session that has not built its unit yet
+         * derives fresh (equal) records from the live walk state.
+         */
+        private StructuredBodyTable producedBodyTable;
+
+        private deal.semantic.ir.ClassFactoryRegistry producedClassFactories;
+
+        private deal.semantic.ir.JsonDefaultChildTable producedJsonDefaults;
+
+        private ClassBindingFacts producedClassBindingFacts;
 
         private record ClassDefaultFact(OpId opId, ValueId result) {
 
@@ -3490,16 +3508,26 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The walk's pinned-write binding facts (B1/B9): the parameter
-         * and import-alias bindings the session recorded during the
-         * walk — the checker-fact arms
+         * The walk's parameter/import initialization facts (B1/B9) — the
+         * exact facts the produced unit owns as its
+         * {@code classBindingFacts} companion: the parameter and
+         * import-alias bindings the session recorded during the walk, the
+         * checker-fact arms
          * {@code BindingsProductionValidator.BINDING_INIT_ONCE}
          * consumes (the unit payload alone cannot distinguish these two
          * pinned-write cells).
          *
          */
-        public BindingsProductionValidator.PinnedWriteFacts pinnedWriteFacts() {
-            return new BindingsProductionValidator.PinnedWriteFacts(parameterBindings,
+        public ClassBindingFacts pinnedWriteFacts() {
+            if (producedClassBindingFacts != null) {
+                return producedClassBindingFacts;
+            }
+            return computePinnedWriteFacts();
+        }
+
+        /** The fresh parameter/import fact record of the live session state. */
+        private ClassBindingFacts computePinnedWriteFacts() {
+            return new ClassBindingFacts(parameterBindings,
                 importAliasBindings);
         }
 
@@ -4711,11 +4739,27 @@ public final class SemanticLowerer {
         }
 
         public deal.semantic.ir.ClassFactoryRegistry factoryRegistry() {
+            if (producedClassFactories != null) {
+                return producedClassFactories;
+            }
+            return computeFactoryRegistry();
+        }
+
+        /** The fresh construction-entry registry of the live session state. */
+        private deal.semantic.ir.ClassFactoryRegistry computeFactoryRegistry() {
             return new deal.semantic.ir.ClassFactoryRegistry(
                 new LinkedHashMap<>(factoryRegistry));
         }
 
         public deal.semantic.ir.JsonDefaultChildTable jsonDefaultChildren() {
+            if (producedJsonDefaults != null) {
+                return producedJsonDefaults;
+            }
+            return computeJsonDefaultChildren();
+        }
+
+        /** The fresh default-child table of the live session state. */
+        private deal.semantic.ir.JsonDefaultChildTable computeJsonDefaultChildren() {
             return new deal.semantic.ir.JsonDefaultChildTable(
                 new LinkedHashMap<>(jsonDefaultChildren));
         }
@@ -7947,6 +7991,10 @@ public final class SemanticLowerer {
                         + "producer while the unit claims exactly its derived claim set — a "
                         + "producer defect: " + seam.failure().origin());
             }
+            this.producedBodyTable = computeBodyTable();
+            this.producedClassFactories = computeFactoryRegistry();
+            this.producedJsonDefaults = computeJsonDefaultChildren();
+            this.producedClassBindingFacts = computePinnedWriteFacts();
             return new LoweredModuleUnit(
                 LoweredModuleUnit.FORMAT_VERSION,
                 SemanticProfile.DEAL_V1_2_INT32,
@@ -7961,7 +8009,11 @@ public final class SemanticLowerer {
                 new ModuleInitPlan(List.copyOf(imports), moduleInitBlock),
                 ExportPlan.empty(),
                 registry.bindings(),
-                ops());
+                ops(),
+                producedBodyTable,
+                producedClassFactories,
+                producedJsonDefaults,
+                producedClassBindingFacts);
         }
 
         /**
@@ -7976,6 +8028,14 @@ public final class SemanticLowerer {
          *
          */
         public StructuredBodyTable bodyTable() {
+            if (producedBodyTable != null) {
+                return producedBodyTable;
+            }
+            return computeBodyTable();
+        }
+
+        /** The fresh block-membership table of the live session state. */
+        private StructuredBodyTable computeBodyTable() {
             Map<BlockId, List<OpId>> ordered = new java.util.LinkedHashMap<>();
             for (Map.Entry<BlockId, List<OpId>> entry : blockOps.entrySet()) {
                 ordered.put(entry.getKey(), List.copyOf(entry.getValue()));

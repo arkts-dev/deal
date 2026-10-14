@@ -1196,7 +1196,8 @@ public class CrossModuleCallRealizationTest {
             }
         }
         return new ExecutableLoweredProject(project.semanticProfile(),
-            project.interfaceIndex(), modules, project.entryModule());
+            project.interfaceIndex(), modules, project.entryModule(),
+            project.classSeeds());
     }
 
     /**
@@ -1253,7 +1254,8 @@ public class CrossModuleCallRealizationTest {
             }
         }
         return new ExecutableLoweredProject(project.semanticProfile(),
-            project.interfaceIndex(), modules, project.entryModule());
+            project.interfaceIndex(), modules, project.entryModule(),
+            project.classSeeds());
     }
 
     private static LoweredModuleUnit withOps(LoweredModuleUnit unit,
@@ -1268,7 +1270,8 @@ public class CrossModuleCallRealizationTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
-            unit.exportPlan(), bindings, ops);
+            unit.exportPlan(), bindings, ops, unit.bodyTable(), unit.classFactories(),
+            unit.jsonDefaults(), unit.classBindingFacts());
     }
 
     /**
@@ -1314,7 +1317,8 @@ public class CrossModuleCallRealizationTest {
             }
         }
         return new ExecutableLoweredProject(project.semanticProfile(),
-            project.interfaceIndex(), modules, project.entryModule());
+            project.interfaceIndex(), modules, project.entryModule(),
+            project.classSeeds());
     }
 
     /**

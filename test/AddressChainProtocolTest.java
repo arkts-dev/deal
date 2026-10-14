@@ -21,7 +21,11 @@ import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.IndexMode;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleInitPlan;
@@ -183,7 +187,10 @@ public class AddressChainProtocolTest {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_2_INT32, MOD, "interface-digest-1", LCH, Set.of(),
             Map.of(), Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)),
-            ExportPlan.empty(), Map.of(), ops);
+            ExportPlan.empty(), Map.of(), ops,
+            new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
     }
 
     private static void assertPass(Optional<CompilerDiagnostic> diagnostic, String what) {

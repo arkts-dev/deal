@@ -29,6 +29,7 @@ import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.InternalResultType;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
@@ -353,7 +354,7 @@ public class DynamicProducerRuleTest {
 
     /** The direct per-module project walk (the produced, pre-gate unit). */
     private record RawLowering(LoweredModuleUnit unit, StructuredBodyTable table,
-                               BindingsProductionValidator.PinnedWriteFacts pinnedWriteFacts) {
+                               ClassBindingFacts pinnedWriteFacts) {
     }
 
     private static RawLowering rawLower(Fixture fixture, String what) {
@@ -1132,7 +1133,9 @@ public class DynamicProducerRuleTest {
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops());
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops(),
+            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
     }
 
     private static LoweredModuleUnit withRegistration(LoweredModuleUnit unit,
@@ -1143,7 +1146,9 @@ public class DynamicProducerRuleTest {
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops());
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops(),
+            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
     }
 
     private static void testNegativeSeeds(RawLowering raw) {

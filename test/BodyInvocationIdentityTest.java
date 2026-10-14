@@ -38,6 +38,7 @@ import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IntrinsicKind;
+import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -1117,7 +1118,8 @@ public class BodyInvocationIdentityTest {
             new LinkedHashMap<>(project.modules());
         modules.put(unit.moduleId(), unit);
         return new ExecutableLoweredProject(project.semanticProfile(),
-            project.interfaceIndex(), modules, project.entryModule());
+            project.interfaceIndex(), modules, project.entryModule(),
+            project.classSeeds());
     }
 
     /**
@@ -1193,7 +1195,7 @@ public class BodyInvocationIdentityTest {
                 project.interfaceIndex().interfaceIndexDigest(),
                 SemanticProfile.DEAL_V1_2_INT32,
                 invocation().capabilityRegistryHash()),
-            deal.semantic.BindingsProductionValidator.PinnedWriteFacts.empty(),
+            ClassBindingFacts.empty(),
             result.registryOf(unit.moduleId()),
             new JsonDefaultChildTable(Map.of()),
             project.interfaceIndex().modules().get(unit.moduleId()),
@@ -1384,7 +1386,8 @@ public class BodyInvocationIdentityTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
-            unit.exportPlan(), unit.functionBindings(), ops);
+            unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(),
+            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
     }
 
     // =========================================================================

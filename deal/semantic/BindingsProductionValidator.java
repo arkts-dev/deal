@@ -9,6 +9,7 @@ import deal.semantic.ir.BindingImmutabilityProof;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
@@ -88,24 +89,24 @@ public final class BindingsProductionValidator {
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit,
                                                         StructuredBodyTable table) {
-        return validate(unit, table, PinnedWriteFacts.empty());
+        return validate(unit, table, ClassBindingFacts.empty());
     }
 
     /**
      * Validates one unit plus its block-membership table plus the
-     * walk's pinned-write binding facts against the B9 rule set.
-     * {@link PinnedWriteFacts} carries the two checker-fact arms the
-     * unit payload cannot express — parameter bindings and import
-     * aliases ({@code BINDING_INIT_ONCE} consumes them; the catch,
-     * group-member, and {@code FOR_EACH} arms are unit-derivable).
-     * Returns empty on pass and exactly one E6005 diagnostic naming
-     * the first failing rule on failure. No mutation; deterministic;
-     * linear in ops plus block edges and capture chains.
+     * unit's parameter/import initialization facts against the B9 rule
+     * set. The {@link ClassBindingFacts} companion carries the two
+     * checker-fact arms the unit payload cannot express — parameter
+     * bindings and import aliases ({@code BINDING_INIT_ONCE} consumes
+     * them; the catch, group-member, and {@code FOR_EACH} arms are
+     * unit-derivable). Returns empty on pass and exactly one E6005
+     * diagnostic naming the first failing rule on failure. No mutation;
+     * deterministic; linear in ops plus block edges and capture chains.
      *
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit,
                                                         StructuredBodyTable table,
-                                                        PinnedWriteFacts facts) {
+                                                        ClassBindingFacts facts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
@@ -146,33 +147,6 @@ public final class BindingsProductionValidator {
         return checkNoAdapterAtBoundary(model);
     }
 
-    /**
-     * The walk's pinned-write binding facts supplied to the validator
-     * ({@code BINDING_INIT_ONCE}'s two checker-fact arms). The unit
-     * payload alone cannot distinguish a parameter ALLOC from a local
-     * ALLOC (both {@code mutable=true}, generation 0, body-root block)
-     * or an import-alias ALLOC from an intrinsic ALLOC (both
-     * module-region {@code mutable=false} ALLOCs) — the walk owns the
-     * checker facts and supplies them here. The remaining pinned
-     * initializing writes (catch binding, group member,
-     * {@code FOR_EACH} iteration binding) are unit-derivable and need
-     * no fact arm.
-     */
-    public record PinnedWriteFacts(Set<BindingId> parameters, Set<BindingId> importAliases) {
-
-        /** The empty fact set (the non-walk validation surface's default). */
-        public static PinnedWriteFacts empty() {
-            return new PinnedWriteFacts(Set.of(), Set.of());
-        }
-
-        public PinnedWriteFacts {
-            Objects.requireNonNull(parameters, "parameters must not be null");
-            Objects.requireNonNull(importAliases, "importAliases must not be null");
-            parameters = Set.copyOf(parameters);
-            importAliases = Set.copyOf(importAliases);
-        }
-    }
-
     /** One derived cell kind of an incarnation (the {@link #deriveCellKinds} row). */
     public record DerivedCellKind(IncarnationKey key, BindingCellKind kind) {
     }
@@ -200,7 +174,7 @@ public final class BindingsProductionValidator {
                                                         StructuredBodyTable table) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
-        Model model = Model.build(unit, table, PinnedWriteFacts.empty());
+        Model model = Model.build(unit, table, ClassBindingFacts.empty());
         List<DerivedCellKind> derived = new ArrayList<>();
         // The for-let per-iteration detection: a binding with both a
         // generation-0 incarnation and a generation-1 incarnation is
@@ -382,7 +356,7 @@ public final class BindingsProductionValidator {
         final Map<BlockId, SemanticOp> loopOfBlock = new LinkedHashMap<>();
 
         Model(LoweredModuleUnit unit, StructuredBodyTable table, BlockId moduleRoot,
-              PinnedWriteFacts facts) {
+              ClassBindingFacts facts) {
             this.unit = unit;
             this.table = table;
             this.moduleRoot = moduleRoot;
@@ -396,7 +370,7 @@ public final class BindingsProductionValidator {
         }
 
         static Model build(LoweredModuleUnit unit, StructuredBodyTable table,
-                           PinnedWriteFacts facts) {
+                           ClassBindingFacts facts) {
             BlockId moduleRoot = unit.moduleInit().initBlock();
             Model model = new Model(unit, table, moduleRoot, facts);
             for (SemanticOp op : unit.ops()) {

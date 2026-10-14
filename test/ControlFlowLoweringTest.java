@@ -1303,7 +1303,8 @@ public class ControlFlowLoweringTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            ops);
+            ops, unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
     }
 
     private static StructuredBodyTable rebuildTable(Map<BlockId, List<OpId>> blocks,

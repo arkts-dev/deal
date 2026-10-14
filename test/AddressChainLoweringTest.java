@@ -1351,7 +1351,8 @@ public class AddressChainLoweringTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), Map.of(), Map.of(),
             new ModuleInitPlan(List.of(), new deal.semantic.ir.BlockId(0)),
-            ExportPlan.empty(), Map.of(), ops);
+            ExportPlan.empty(), Map.of(), ops, unit.bodyTable(),
+            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
     }
 
     private static void checkE6005(Optional<CompilerDiagnostic> diagnostic, String rule,
@@ -1414,6 +1415,9 @@ public class AddressChainLoweringTest {
             return;
         }
         LoweredModuleUnit unit = first.unit();
+        check(first.table() == unit.bodyTable(),
+            "the single-module result's table is the unit's own bodyTable, not a "
+                + "detached copy");
         Optional<CompilerDiagnostic> protocol = AddressChainProtocol.validate(unit);
         check(protocol.isEmpty(),
             "the corpus unit passes the production-time address-chain protocol: "

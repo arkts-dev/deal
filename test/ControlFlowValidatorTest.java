@@ -22,6 +22,9 @@ import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
+import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
@@ -223,7 +226,10 @@ public class ControlFlowValidatorTest {
             List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_2_INT32, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
-            functions, new ModuleInitPlan(List.of(), INIT), ExportPlan.empty(), Map.of(), ops);
+            functions, new ModuleInitPlan(List.of(), INIT), ExportPlan.empty(), Map.of(), ops,
+            new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
     }
 
     /** Builds a table from block → ops and derives the exact inverse map. */
