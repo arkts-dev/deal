@@ -36,8 +36,11 @@ import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.IntrinsicKind;
+import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.SemanticOp;
+import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.UnicodeScalars;
 import deal.test.conformance.CorpusDiscovery;
@@ -109,6 +112,22 @@ import java.util.stream.Stream;
  *       composite on all three consumers, and the JVM probe observes that
  *       the rejected return left every retained slot and the nested array
  *       alias untouched.</li>
+ *   <li><b>The namespace surface at the array boundaries.</b> The
+ *       {@code lib} module's identity-keyed namespace surface (a plain
+ *       table without a carrier mark) is stored in a table field through
+ *       the import alias cell and read at the declared {@code int[]} and
+ *       {@code int[][]} bindings: the unmarked table carrier rejects with
+ *       the value-derived {@code table} actual token on all three
+ *       consumers, never the expected {@code array} kind substituted for
+ *       its own representation. A real array carrier at the {@code table}
+ *       descriptor keeps its own {@code array} token in the same matrix.
+ *       Every seed is additionally driven through the release-owned
+ *       production endpoints — the compiled LuaJIT project artifact the
+ *       invocation publishes and the staged JVM production artifact under
+ *       {@code javac --release 25 -proc:none} plus {@code java} — and each
+ *       captured tuple is field-identical to the oracle's, so a
+ *       regression confined to production emission, publication, or
+ *       failure transport cannot pass the trace matrix alone.</li>
  *   <li><b>The synchronous host result presence.</b> The recorded
  *       {@code HOST_SYNC_RETURN} cell selects
  *       {@code HOST_SYNC_RETURN_NOTHING} for a host invocation that
@@ -9347,6 +9366,376 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 4f. The module namespace surface at the direct and nested array
+    //     boundaries (ISSUE-0807)
+    // =========================================================================
+
+    /**
+     * The namespace library module of the two-module seed: one exported
+     * function, so the module publishes the identity-keyed namespace
+     * surface (a plain table without a carrier mark) its import alias cell
+     * holds.
+     */
+    private static final String NAMESPACE_LIB_SOURCE = """
+        export function ping(): int {
+          return 1;
+        }
+        """;
+
+    /**
+     * The direct array boundary: the import alias cell holds the
+     * {@code lib} module's namespace surface, the table field stores it,
+     * and the declared {@code int[]} binding reads it through the deferred
+     * contextual-read seam.
+     */
+    private static final String NAMESPACE_DIRECT_SOURCE = """
+        import * as lib from "./lib"
+
+        export function main(): null {
+          let holder: table = { ns: lib };
+          let xs: int[] = holder.ns;
+          return null;
+        }
+        """;
+
+    /**
+     * The nested array boundary: the same namespace surface at a declared
+     * {@code int[][]} binding (the nested descriptor's outer array cell).
+     */
+    private static final String NAMESPACE_NESTED_SOURCE = """
+        import * as lib from "./lib"
+
+        export function main(): null {
+          let holder: table = { ns: lib };
+          let xs: int[][] = holder.ns;
+          return null;
+        }
+        """;
+
+    /**
+     * The stored form: the namespace surface is written into an existing
+     * table field after the table's creation (not the literal entry), then
+     * read at the declared array boundary.
+     */
+    private static final String NAMESPACE_WRITTEN_SOURCE = """
+        import * as lib from "./lib"
+
+        export function main(): null {
+          let holder: table = { ns: [1] };
+          holder.ns = lib;
+          let xs: int[] = holder.ns;
+          return null;
+        }
+        """;
+
+    /**
+     * The value-derived control: a real array carrier read at the
+     * {@code table} descriptor keeps its own {@code array} token, so the
+     * unmarked-table classification is a value rule, never a blanket
+     * spelling of every table-carried value.
+     */
+    private static final String NAMESPACE_ARRAY_CONTROL_SOURCE = """
+        import * as lib from "./lib"
+
+        export function main(): null {
+          let payload: int[] = [1];
+          let holder: table = { ns: payload };
+          let t: table = holder.ns;
+          return null;
+        }
+        """;
+
+    /**
+     * The module namespace surface at the direct and nested array boundaries
+     * (ISSUE-0807): the import alias cell holds the module's namespace
+     * surface — a plain table without a carrier mark — and a declared array
+     * binding over that surface rejects it with the value-derived
+     * {@code table} actual token on the semantic oracle, the shared LuaJIT
+     * artifact, and the shared JVM artifact alike. The declared static kind
+     * never replaces the value's own classification: the expected
+     * {@code array} kind is not substituted for the unmarked table carrier,
+     * so the three consumers render the identical complete tuple. The
+     * array-carrier control pins the other half of the same rule. Each seed
+     * also drives the release-owned production endpoints — the published
+     * LuaJIT artifact and the staged JVM artifact under real
+     * {@code luajit} and {@code javac --release 25 -proc:none} plus
+     * {@code java} — and every captured field is asserted against the
+     * oracle's own tuple.
+     */
+    private static void testNamespaceSurfaceArrayBoundaries() throws Exception {
+        System.out.println("-- the module namespace surface at the direct and "
+            + "nested array boundaries: the unmarked table carrier projects "
+            + "`table` on all three consumers --");
+        driveNamespaceFailure("the namespace at the direct array boundary",
+            NAMESPACE_DIRECT_SOURCE, 5, 11, "expected array", "array", "table");
+        driveNamespaceFailure("the namespace at the nested array boundary",
+            NAMESPACE_NESTED_SOURCE, 5, 11, "expected array", "array", "table");
+        driveNamespaceFailure("the namespace written into a table field",
+            NAMESPACE_WRITTEN_SOURCE, 6, 11, "expected array", "array", "table");
+        driveNamespaceFailure("the array-carrier table control",
+            NAMESPACE_ARRAY_CONTROL_SOURCE, 6, 18, "expected table", "table",
+            "array");
+    }
+
+    /**
+     * One namespace seed through the three-consumer project matrix: the
+     * whole two-module project compiles through the release-owned
+     * invocation, lowers through the one project lowering, and each
+     * consumer renders the identical complete tuple at the boundary's own
+     * origin. The seed's provenance is asserted first: the app unit imports
+     * the lib module through its alias cell and the lib unit publishes its
+     * export, so the stored value is the module's namespace surface, never
+     * a synthesized stand-in.
+     */
+    private static void driveNamespaceFailure(String what, String appSource,
+            int line, int column, String message, String expected, String actual)
+            throws Exception {
+        Path root = Files.createTempDirectory("projection-namespace");
+        Path workspace = Files.createTempDirectory("projection-namespace-run");
+        try {
+            Compiled seed = namespaceSeed(what, root, appSource);
+            if (seed == null) {
+                return;
+            }
+            assertNamespaceSurfaceProvenance(what, seed);
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runProject(seed.project(),
+                    seed.tables(), seed.registries(),
+                    SemanticDifferentialHarness.Expectation.failure(what, List.of(),
+                        "E8001", null),
+                    workspace);
+            checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
+                + "consumers: " + verdict.failures());
+            check(verdict.pass(), what + ": the three-consumer verdict passes: "
+                + verdict.failures() + "\n" + verdict.report());
+            Tuple reference = null;
+            Tuple oracleTuple = null;
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                check(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                    run.consumer() + " (" + what + "): the boundary rejects the "
+                        + "value: " + run.terminal());
+                if (!(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+                    continue;
+                }
+                SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+                checkEq("E8001", error.code(), run.consumer() + " (" + what
+                    + "): the typed-boundary kind arm's code");
+                checkEq(message, error.message(), run.consumer() + " (" + what
+                    + "): the typed-boundary kind arm's message");
+                checkEq(expected, error.expected(), run.consumer() + " (" + what
+                    + "): the expected token");
+                checkEq(actual, error.actual(), run.consumer() + " (" + what
+                    + "): the value-derived actual token (never the declared "
+                    + "array kind substituted for the unmarked table carrier)");
+                check(error.origin() != null && error.origin().endsWith(
+                        "src/app.deal:" + line + ":" + column),
+                    run.consumer() + " (" + what + "): the boundary's own origin "
+                        + "src/app.deal:" + line + ":" + column + ": "
+                        + error.origin());
+                Tuple tuple = new Tuple(error.code(), error.message(), "app.deal",
+                    line, column, error.expected(), error.actual());
+                if ("semantic-oracle".equals(run.consumer())) {
+                    oracleTuple = tuple;
+                }
+                if (reference == null) {
+                    reference = tuple;
+                } else {
+                    checkEq(null, firstDifferingField(reference, tuple),
+                        "the " + run.consumer() + " (" + what + ") tuple is "
+                            + "field-identical to the first consumer's");
+                }
+            }
+            // The registered production-endpoint drive (ISSUE-0807 review):
+            // the trace matrix above selects the shared trace sessions; the
+            // compiled production LuaJIT artifact and the release-owned JVM
+            // production artifact are executed themselves and must capture
+            // the oracle's own tuple.
+            assertNamespaceProductionArtifacts(what, seed, oracleTuple);
+        } finally {
+            deleteRecursively(workspace);
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The registered production-endpoint drive of one namespace seed
+     * (ISSUE-0807): the compiled production LuaJIT artifact published by
+     * the release-owned invocation under {@code out/} and the release-owned
+     * JVM production artifact staged through {@link ProductionProjectEmission}
+     * are executed under real {@code luajit} and {@code javac --release 25
+     * -proc:none} plus {@code java}. Each artifact captures the boundary's
+     * complete tuple — {@code code}, {@code message}, the boundary's own
+     * origin, {@code expected}, and the value-derived {@code actual} — and
+     * every field is asserted against the oracle's. The trace matrix above
+     * drives the shared trace sessions, so a regression confined to
+     * production emission, publication, or failure transport can pass it;
+     * these endpoints execute the production artifacts themselves, never
+     * inferred from compilation success.
+     */
+    private static void assertNamespaceProductionArtifacts(String what,
+            Compiled seed, Tuple oracle) throws Exception {
+        if (oracle == null) {
+            fail(what + ": the trace matrix captured no semantic-oracle tuple "
+                + "to compare the production artifacts against");
+            return;
+        }
+        String artifact = artifactPath(seed);
+        check(Files.isRegularFile(Path.of(artifact)), what + ": the release-owned "
+            + "invocation published the production LuaJIT artifact: " + artifact);
+        assertNamespaceProductionTuple(what, "the production LuaJIT artifact",
+            oracle, luaArtifact(seed));
+        assertNamespaceProductionTuple(what, "the production JVM artifact",
+            oracle, jvmArtifact(seed));
+    }
+
+    /**
+     * One production artifact's captured tuple against the oracle's: every
+     * compared field is asserted by name, so a production-only divergence
+     * — for example the declared {@code array} kind substituted for the
+     * unmarked table carrier's own {@code table} token — fails on the field
+     * it moved.
+     */
+    private static void assertNamespaceProductionTuple(String what, String consumer,
+            Tuple reference, Tuple captured) {
+        if (captured == null) {
+            fail(what + " (" + consumer + "): the drive captured no failure "
+                + "tuple");
+            return;
+        }
+        checkEq(reference.code(), captured.code(), what + " (" + consumer
+            + "): the captured code");
+        checkEq(reference.message(), captured.message(), what + " (" + consumer
+            + "): the captured message");
+        checkEq(reference.span(), captured.span(), what + " (" + consumer
+            + "): the captured origin (the boundary's own span)");
+        checkEq(reference.expected(), captured.expected(), what + " (" + consumer
+            + "): the captured expected token");
+        checkEq(reference.actual(), captured.actual(), what + " (" + consumer
+            + "): the captured actual token (the value-derived classification, "
+            + "never the declared array kind substituted for the unmarked "
+            + "table carrier)");
+        checkEq(null, firstDifferingField(reference, captured), what + " ("
+            + consumer + "): the captured tuple is field-identical to the "
+            + "oracle's");
+    }
+
+    /**
+     * The two-module namespace project through the release-owned production
+     * invocation: {@code src/lib.deal} publishes its namespace surface and
+     * {@code src/app.deal} stores the import alias cell's value in a table
+     * field and reads it at a declared array boundary. The returned
+     * production context carries the orchestrator's own published LuaJIT
+     * artifact under {@code out/} and the checked inputs the release-owned
+     * JVM production artifact is staged from. Its {@code Case} is the
+     * drive's own descriptive metadata: the seed is not a corpus fixture,
+     * so only the capture messages read it.
+     */
+    private static Compiled namespaceSeed(String what, Path root,
+            String appSource) throws Exception {
+        Path moduleRoot = root.resolve("src");
+        Files.createDirectories(moduleRoot);
+        Files.writeString(moduleRoot.resolve("lib.deal"), NAMESPACE_LIB_SOURCE,
+            StandardCharsets.UTF_8);
+        Files.writeString(moduleRoot.resolve("app.deal"), appSource,
+            StandardCharsets.UTF_8);
+        Path entry = moduleRoot.resolve("app.deal").toAbsolutePath();
+        CompilerInvocation invocation = productionInvocation();
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(entry,
+            root.resolve("out"), false, false, false, false, Backend.LUAJIT, Map.of(),
+            List.of(moduleRoot.toAbsolutePath()), null, null, invocation);
+        boolean compiled = orchestrator.compile();
+        CheckedProjectBuildResult built = orchestrator.checkedProject();
+        RequirementManifestResult manifests = orchestrator.requirementManifests();
+        check(compiled && built != null && built.input() != null
+                && built.index() != null && !built.hasErrors() && manifests != null
+                && manifests.manifests() != null
+                && orchestrator.hostDeclarationSurface() != null,
+            what + ": the two-module namespace project compiles through the "
+                + "release-owned production invocation: "
+                + (built == null ? "no checked project" : built.diagnostics())
+                + " / " + orchestrator.diagnostics());
+        if (!compiled || built == null || built.input() == null || built.index() == null
+                || built.hasErrors() || manifests == null
+                || manifests.manifests() == null
+                || orchestrator.hostDeclarationSurface() == null) {
+            return null;
+        }
+        SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
+            invocation, built.input(), built.index(), manifests.manifests(),
+            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
+            BuiltinErrorDeclaration.synthesized(
+                built.input().modules().stream()
+                    .filter(module -> module.moduleId()
+                        .equals(built.input().entryModule()))
+                    .findFirst().orElseThrow().ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW),
+            Set.of());
+        check(lowering != null && !lowering.hasErrors() && lowering.project() != null,
+            what + ": the two-module namespace project lowers through the one "
+                + "project lowering with zero diagnostics: "
+                + (lowering == null ? "null" : String.valueOf(lowering.diagnostics())));
+        if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
+            return null;
+        }
+        return new Compiled(root, moduleRoot, new Case(what, "main", Entry.MAIN,
+            List.of(), null, null), invocation, built.input(), built.index(),
+            manifests.manifests(), orchestrator.hostDeclarationSurface(),
+            Map.of(), Map.of(), Map.of("app.deal", 0, "lib.deal", 0),
+            lowering.project(), lowering.tables(), lowering.registries(), Set.of(),
+            Map.of("app", "app.deal", "lib", "lib.deal"), Map.of(),
+            new JvmPreparation());
+    }
+
+    /**
+     * The namespace-surface provenance of one seed: the app unit carries
+     * exactly one {@code MODULE_IMPORT} of the lib module with its alias
+     * cell (the completion write the emitted artifact performs — the cell
+     * holds the module-identity-keyed surface), and the lib unit publishes
+     * its export onto that surface. The value the app stores in the table
+     * field is therefore the module's namespace surface, never a
+     * synthesized stand-in.
+     */
+    private static void assertNamespaceSurfaceProvenance(String what,
+            Compiled seed) {
+        ExecutableLoweredProject project = seed.project();
+        ModuleId lib = new ModuleId("lib");
+        check(project.modules().containsKey(lib), what + ": the project carries "
+            + "the lib module");
+        if (!project.modules().containsKey(lib)) {
+            return;
+        }
+        List<SemanticOp> imports = new ArrayList<>();
+        for (SemanticOp op : project.modules().get(project.entryModule()).ops()) {
+            if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                    && ((KindPayload.ModuleImportPayload) op.payload())
+                        .resolvedModule().equals(lib)) {
+                imports.add(op);
+            }
+        }
+        checkEq(1, imports.size(), what + ": the app unit carries exactly one "
+            + "MODULE_IMPORT of the lib module (the alias cell holding the "
+            + "namespace surface)");
+        if (imports.size() == 1) {
+            check(!((KindPayload.ModuleImportPayload) imports.get(0).payload())
+                    .aliasCells().isEmpty(),
+                what + ": the lib import records its alias cell");
+        }
+        boolean published = false;
+        for (SemanticOp op : project.modules().get(lib).ops()) {
+            if (op.kind() == SemanticOpKind.EXPORT_PUBLISH
+                    && "ping".equals(((KindPayload.ExportPublishPayload) op.payload())
+                        .name())) {
+                published = true;
+            }
+        }
+        check(published, what + ": the lib module publishes its ping export onto "
+            + "the namespace surface the alias cell holds");
+    }
+
+    // =========================================================================
     // 5. The row/arm completeness negatives and the single-source control
     // =========================================================================
 
@@ -9638,6 +10027,7 @@ public class CanonicalProjectionParityTest {
         testArrayNullAndDeletedSlotCells();
         testArrayLiteralElementCells();
         testLuaTableCarrierClassification();
+        testNamespaceSurfaceArrayBoundaries();
         testCompletenessAndSingleSourceNegatives();
         testComparisonContract();
         testRawProfileInputControls();
