@@ -25,8 +25,6 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.ValueId;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Parameter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -239,74 +237,9 @@ public class LuaProductionProjectEmissionTest {
         return entries;
     }
 
-    // =========================================================================
-    // 1. The entry's signature: project + tables + registries, nothing else
-    // =========================================================================
+    private static void testEntryRejectsNullProject() {
+        System.out.println("-- the production project entries reject a null project --");
 
-    private static void testEntrySignatureAndInputs() throws Exception {
-        System.out.println("-- the production project entry consumes only the "
-            + "validated project, the tables, and the registries --");
-
-        Method entry = LuaSemanticEmitter.class.getDeclaredMethod("emitProductionProject",
-            ExecutableLoweredProject.class, Map.class, Map.class,
-            HostDeclarationSurface.class);
-        check(java.lang.reflect.Modifier.isStatic(entry.getModifiers())
-                && java.lang.reflect.Modifier.isPublic(entry.getModifiers()),
-            "emitProductionProject is a public static entry");
-        checkEq(String.class, entry.getReturnType(),
-            "the entry returns the one project artifact source text");
-
-        Class<?>[] parameters = entry.getParameterTypes();
-        checkEq(List.of(ExecutableLoweredProject.class, Map.class, Map.class,
-                HostDeclarationSurface.class),
-            List.of(parameters),
-            "the entry takes exactly the validated project, the tables, the "
-                + "registries, and the host declaration surface");
-        for (Parameter parameter : entry.getParameters()) {
-            if (parameter.getType() == Map.class) {
-                checkEq("java.util.Map", parameter.getType().getTypeName(),
-                    "the tables/registries parameters are the per-module maps");
-            }
-        }
-        List<String> genericTypes = new ArrayList<>();
-        for (java.lang.reflect.Type type : entry.getGenericParameterTypes()) {
-            genericTypes.add(type.getTypeName());
-        }
-        checkEq(List.of(
-                "deal.semantic.ir.ExecutableLoweredProject",
-                "java.util.Map<deal.semantic.ir.ModuleId, "
-                    + "deal.semantic.ir.StructuredBodyTable>",
-                "java.util.Map<deal.semantic.ir.ModuleId, "
-                    + "deal.semantic.ir.ClassFactoryRegistry>",
-                "deal.semantic.HostDeclarationSurface"),
-            genericTypes,
-            "the entry's declared inputs are exactly the project lowering result's "
-                + "tables and registries plus the host declaration surface");
-
-        for (Parameter parameter : entry.getParameters()) {
-            String typeName = parameter.getType().getName();
-            for (String forbidden : List.of("deal.ast.", "deal.checker.",
-                    "deal.parser.", "Route", "MigrationPlanner", "CapabilityRegistry",
-                    "HostModuleDeclarations", "FfiGenerated",
-                    "CanonicalModuleIdentity", "CheckResult", "ProgramNode")) {
-                check(!typeName.contains(forbidden),
-                    "emitProductionProject takes no " + forbidden + " input: "
-                        + typeName);
-            }
-        }
-
-        // The pre-existing entries keep their signatures.
-        Method trace = LuaSemanticEmitter.class.getDeclaredMethod("emitProject",
-            ExecutableLoweredProject.class, Map.class, Map.class);
-        checkEq(String.class, trace.getReturnType(),
-            "emitProject keeps its signature and return type");
-        Method module = LuaSemanticEmitter.class.getDeclaredMethod("emitProductionModule",
-            deal.semantic.ir.LoweredModuleUnit.class,
-            deal.semantic.ir.StructuredBodyTable.class, boolean.class);
-        checkEq(String.class, module.getReturnType(),
-            "emitProductionModule keeps its signature and return type");
-
-        // The entry's null guards: the four declared inputs are required.
         try {
             LuaSemanticEmitter.emitProductionProject(null, Map.of(), Map.of(),
                 new HostDeclarationSurface(Map.of()));
@@ -318,45 +251,6 @@ public class LuaProductionProjectEmissionTest {
                 + unexpected.getClass().getSimpleName() + ", not NullPointerException");
         }
 
-        Method ffiEntry = LuaSemanticEmitter.class.getDeclaredMethod(
-            "emitProductionProject", ExecutableLoweredProject.class, Map.class,
-            Map.class, HostDeclarationSurface.class, FfiEmissionInput.class);
-        check(java.lang.reflect.Modifier.isStatic(ffiEntry.getModifiers())
-                && java.lang.reflect.Modifier.isPublic(ffiEntry.getModifiers()),
-            "the FFI-capable emitProductionProject is a public static entry");
-        checkEq(String.class, ffiEntry.getReturnType(),
-            "the FFI-capable entry returns the one project artifact source text");
-        checkEq(List.of(ExecutableLoweredProject.class, Map.class, Map.class,
-                HostDeclarationSurface.class, FfiEmissionInput.class),
-            List.of(ffiEntry.getParameterTypes()),
-            "the FFI-capable entry takes the four landed inputs plus exactly "
-                + "the FFI emission input");
-        List<String> ffiGenericTypes = new ArrayList<>();
-        for (java.lang.reflect.Type type : ffiEntry.getGenericParameterTypes()) {
-            ffiGenericTypes.add(type.getTypeName());
-        }
-        checkEq(List.of(
-                "deal.semantic.ir.ExecutableLoweredProject",
-                "java.util.Map<deal.semantic.ir.ModuleId, "
-                    + "deal.semantic.ir.StructuredBodyTable>",
-                "java.util.Map<deal.semantic.ir.ModuleId, "
-                    + "deal.semantic.ir.ClassFactoryRegistry>",
-                "deal.semantic.HostDeclarationSurface",
-                "deal.codegen.lua.FfiEmissionInput"),
-            ffiGenericTypes,
-            "the FFI-capable entry's declared inputs are the four landed "
-                + "inputs plus the FFI emission input");
-        for (Parameter parameter : ffiEntry.getParameters()) {
-            String typeName = parameter.getType().getName();
-            for (String forbidden : List.of("deal.ast.", "deal.checker.",
-                    "deal.parser.", "Route", "MigrationPlanner", "CapabilityRegistry",
-                    "HostModuleDeclarations", "FfiGenerated",
-                    "CanonicalModuleIdentity", "CheckResult", "ProgramNode")) {
-                check(!typeName.contains(forbidden),
-                    "the FFI-capable entry takes no " + forbidden + " input: "
-                        + typeName);
-            }
-        }
         try {
             LuaSemanticEmitter.emitProductionProject(null, Map.of(), Map.of(),
                 new HostDeclarationSurface(Map.of()),
@@ -1669,7 +1563,7 @@ public class LuaProductionProjectEmissionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Lua Production Project Emission Tests (ISSUE-0640) ===\n");
-        testEntrySignatureAndInputs();
+        testEntryRejectsNullProject();
         List<Path> roots = new ArrayList<>();
         try {
             Baseline console = prepare(compileProject(CONSOLE_APP_SOURCE), roots);

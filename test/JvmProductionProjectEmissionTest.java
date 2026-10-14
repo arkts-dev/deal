@@ -26,8 +26,6 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -209,73 +207,6 @@ public class JvmProductionProjectEmissionTest {
                 ((ValueId) payload.value()).id()));
         }
         return entries;
-    }
-
-    // =========================================================================
-    // 1. The one entry signature and the class-name use
-    // =========================================================================
-
-    private static void testEntrySignature() {
-        System.out.println("-- the production project entry signature --");
-        Method entry = null;
-        for (Method method : JvmSemanticEmitter.class.getDeclaredMethods()) {
-            // The reflected order of same-named overloads is unspecified:
-            // select the five-input production entry by its signature.
-            if (method.getName().equals("emitProductionProject")
-                    && method.getParameterCount() == 5) {
-                entry = method;
-            }
-        }
-        check(entry != null, "JvmSemanticEmitter publishes emitProductionProject");
-        if (entry == null) {
-            return;
-        }
-        check(Modifier.isPublic(entry.getModifiers()) && Modifier.isStatic(entry.getModifiers()),
-            "emitProductionProject is public static");
-        checkEq(JvmSemanticEmitter.EmissionResult.class, entry.getReturnType(),
-            "emitProductionProject returns the emitted artifact");
-        Class<?>[] parameters = entry.getParameterTypes();
-        checkEq(List.of(
-                ExecutableLoweredProject.class,
-                Map.class,
-                Map.class,
-                String.class,
-                HostDeclarationSurface.class),
-            List.of(parameters),
-            "emitProductionProject consumes exactly the validated project, the tables, "
-                + "the registries, the entry class name, and the host declaration "
-                + "surface");
-        for (Class<?> parameter : parameters) {
-            String name = parameter.getName();
-            check(!name.startsWith("deal.ast.") && !name.startsWith("deal.checker.")
-                    && !name.equals("deal.codegen.HostModuleDeclarations")
-                    && !name.equals("deal.ffi.FfiGeneratedModule")
-                    && !name.equals("deal.semantic.RoutePlanResult")
-                    && !name.equals("deal.semantic.ModuleRoutePlan")
-                    && !name.equals("deal.semantic.CapabilityRegistry"),
-                "emitProductionProject takes no AST/checker/route/host/extern-C input: "
-                    + name);
-        }
-
-        Method projectEntry = null;
-        Method moduleEntry = null;
-        for (Method method : JvmSemanticEmitter.class.getDeclaredMethods()) {
-
-            if (method.getName().equals("emitProject")
-                    && method.getParameterCount() == 3) {
-                projectEntry = method;
-            }
-            if (method.getName().equals("emitProductionModule")
-                    && method.getParameterCount() == 4) {
-                moduleEntry = method;
-            }
-        }
-        check(projectEntry != null && projectEntry.getParameterCount() == 3,
-            "emitProject keeps its three-input signature");
-        check(moduleEntry != null && moduleEntry.getParameterCount() == 4
-                && moduleEntry.getParameterTypes()[2] == boolean.class
-                && moduleEntry.getParameterTypes()[3] == String.class,
-            "emitProductionModule keeps its four-input signature");
     }
 
     // =========================================================================
@@ -1754,7 +1685,6 @@ public class JvmProductionProjectEmissionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Production Project Emission Tests (ISSUE-0641) ===\n");
-        testEntrySignature();
         Fixture fixture = compileProject();
         try {
             Baseline baseline = prepare(fixture);

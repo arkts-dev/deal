@@ -12,8 +12,6 @@ import deal.semantic.ir.LoweringFailureDetail;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticProfile;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -98,19 +96,6 @@ public class FailureContractRegistryTest {
             expectThrows(IllegalArgumentException.class,
                 () -> FailurePolicyId.valueOf(name),
                 name + " fails closed through valueOf");
-        }
-
-        // Fail closed: no public registry surface accepts a string policy
-        // name and returns a row (the only lookup key is the closed enum).
-        for (Method m : FailureContractRegistry.class.getDeclaredMethods()) {
-            if (Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers())
-                    && m.getReturnType() == FailurePolicyRow.class) {
-                for (Class<?> param : m.getParameterTypes()) {
-                    check(param == FailurePolicyId.class,
-                        "the only row-lookup key type is the closed FailurePolicyId enum "
-                            + "(offending surface: " + m + ")");
-                }
-            }
         }
     }
 

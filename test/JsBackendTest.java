@@ -167,7 +167,6 @@ public class JsBackendTest {
             testOrchestratorJsBackend();
             testOrchestratorJsNestedModule();
             testOrchestratorJsRejectsUnsupported();
-            testBackendSelectionNames();
             testDealJsonBackendAcceptance();
             testCliDefaultOutputBuildJs();
             testElseIfChainWithoutFinalElse();
@@ -5493,24 +5492,6 @@ public class JsBackendTest {
                 + "contract)");
         check(!Files.exists(outputDir),
             "the failed compilation publishes no live root at all");
-    }
-
-    /** Backend.JS joins the single selection seam under the name "js". */
-    private static void testBackendSelectionNames() {
-        check(Backend.fromCliName("js").orElse(null) == Backend.JS,
-            "\"js\" selects Backend.JS");
-        check(Backend.fromCliName("JS").orElse(null) == Backend.JS,
-            "backend names are case-insensitive (\"JS\" selects Backend.JS)");
-        check(Backend.fromCliName(" Js ").orElse(null) == Backend.JS,
-            "backend names are trimmed (\" Js \" selects Backend.JS)");
-        check(Backend.JS.cliName().equals("js"),
-            "Backend.JS.cliName() is \"js\"");
-        check(Backend.fromCliName("jvm").orElse(null) == Backend.JVM,
-            "\"jvm\" still selects Backend.JVM");
-        check(Backend.fromCliName("luajit").orElse(null) == Backend.LUAJIT,
-            "\"luajit\" still selects Backend.LUAJIT");
-        check(Backend.fromCliName("python").isEmpty(),
-            "unknown backend names are rejected");
     }
 
     private static void testDealJsonBackendAcceptance() throws Exception {

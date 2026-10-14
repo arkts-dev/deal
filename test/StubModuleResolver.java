@@ -2,34 +2,22 @@ package deal.test;
 
 import deal.ast.ExportDeclaration;
 import deal.ast.FunctionDeclaration;
-import deal.ast.NamedType;
 import deal.ast.ProgramNode;
 import deal.ast.StatementNode;
-import deal.ast.TypeNode;
 import deal.checker.ModuleResolver;
 import deal.checker.Symbol;
-import deal.codegen.jvm.JvmBackend;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.StdlibModuleResolver;
 import deal.types.Type;
 
-import java.io.File;
 import java.io.IOException;
-import java.io.StringWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import javax.tools.DiagnosticCollector;
-import javax.tools.JavaCompiler;
-import javax.tools.JavaFileObject;
-import javax.tools.StandardJavaFileManager;
-import javax.tools.ToolProvider;
 
 /**
  * Stub module resolver for unit-testing the checker without a real module system.
@@ -38,20 +26,10 @@ final class StubModuleResolver implements ModuleResolver {
 
     private final Map<String, Map<String, Type>> modules = new HashMap<>();
     private final Map<String, Symbol.ClassSymbol> classSymbols = new HashMap<>();
-    private final boolean acceptUnknownModules;
 
     StubModuleResolver() {
-        this(false);
-    }
-
-    private StubModuleResolver(boolean acceptUnknownModules) {
-        this.acceptUnknownModules = acceptUnknownModules;
         modules.putAll(StdlibModuleResolver.stdlibExports(
             Path.of("std").toAbsolutePath().normalize().toString()));
-    }
-
-    static StubModuleResolver acceptingUnknownModules() {
-        return new StubModuleResolver(true);
     }
 
     /**
@@ -76,9 +54,6 @@ final class StubModuleResolver implements ModuleResolver {
         Map<String, Type> exports = modules.get(modulePath);
         if (exports != null) {
             return exports;
-        }
-        if (acceptUnknownModules) {
-            return Map.of();
         }
         throw new ModuleNotFoundException("Module not found: " + modulePath);
     }
@@ -137,102 +112,6 @@ final class StubModuleResolver implements ModuleResolver {
         return false;
     }
 
-    static boolean compileWithJavac(Path dir, List<String> javaFiles,
-                                    StringBuilder err) {
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        if (compiler == null) {
-            err.append("no system Java compiler available (javax.tools)");
-            return false;
-        }
-        DiagnosticCollector<JavaFileObject> diagnostics =
-            new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler
-                .getStandardFileManager(diagnostics, null,
-                    StandardCharsets.UTF_8)) {
-            List<File> files = new ArrayList<>();
-            for (String name : javaFiles) {
-                files.add(dir.resolve(name).toFile());
-            }
-            Iterable<? extends JavaFileObject> units =
-                fileManager.getJavaFileObjectsFromFiles(files);
-            StringWriter messages = new StringWriter();
-            List<String> options = List.of(
-                "-encoding", "UTF-8",
-                "-classpath", dir.toString(),
-                "-d", dir.toString(),
-                "-proc:none",
-                "-implicit:none",
-                "-g:none");
-            Boolean ok = compiler.getTask(messages, fileManager, diagnostics,
-                options, null, units).call();
-            if (!Boolean.TRUE.equals(ok)) {
-                err.append(messages);
-                for (javax.tools.Diagnostic<? extends JavaFileObject> diagnostic
-                        : diagnostics.getDiagnostics()) {
-                    err.append(diagnostic).append('\n');
-                }
-                return false;
-            }
-            return true;
-        } catch (IOException e) {
-            err.append(e);
-            return false;
-        }
-    }
-
-    static String buildJvmRunner(ProgramNode program, String className) {
-        StringBuilder source = new StringBuilder();
-        source.append("public final class JvmConformanceRunner {\n");
-        source.append("    public static void main(String[] args) {\n");
-        source.append("        try {\n");
-        boolean invoked = false;
-        for (StatementNode statement : program.statements()) {
-            if (statement instanceof ExportDeclaration exported
-                    && exported.declaration() instanceof FunctionDeclaration function
-                    && function.params().isEmpty()) {
-                invoked = true;
-                String name = JvmBackend.javaName(function.name());
-                if (isNullReturnType(function.returnType())) {
-                    source.append("            ").append(className).append('.')
-                        .append(name).append("();\n");
-                } else {
-                    source.append("            System.out.println(")
-                        .append(className).append('.').append(name)
-                        .append("());\n");
-                }
-            }
-        }
-        if (!invoked) {
-            source.append("            try { Class.forName(\"")
-                .append(className).append("\"); }\n");
-            source.append("            catch (ClassNotFoundException e) { throw new RuntimeException(e); }\n");
-        }
-        source.append("        } catch (Throwable e) {\n");
-        source.append("            reportError(e);\n");
-        source.append("        }\n");
-        source.append("    }\n");
-        source.append("    private static void reportError(Throwable e) {\n");
-        source.append("        Throwable t = e;\n");
-        source.append("        while (t instanceof ExceptionInInitializerError && t.getCause() != null) { t = t.getCause(); }\n");
-        source.append("        String code = null;\n");
-        source.append("        if (\"DealError\".equals(t.getClass().getSimpleName())) {\n");
-        source.append("            try {\n");
-        source.append("                java.lang.reflect.Field f = t.getClass().getDeclaredField(\"code\");\n");
-        source.append("                f.setAccessible(true);\n");
-        source.append("                code = String.valueOf(f.get(t));\n");
-        source.append("            } catch (ReflectiveOperationException ignored) { }\n");
-        source.append("        }\n");
-        source.append("        if (code != null) {\n");
-        source.append("            System.out.println(\"DEAL_ERROR_CODE: \" + code + \" \" + t.getMessage());\n");
-        source.append("        } else {\n");
-        source.append("            System.out.println(\"DEAL_ERROR_CODE: \" + (t.getMessage() == null ? t.toString() : t.getMessage()));\n");
-        source.append("        }\n");
-        source.append("        System.exit(1);\n");
-        source.append("    }\n");
-        source.append("}\n");
-        return source.toString();
-    }
-
     static void deployJsSupport(Path dir) throws IOException {
         Path runtimeDir = dir.resolve("deal");
         Files.createDirectories(runtimeDir);
@@ -289,7 +168,4 @@ final class StubModuleResolver implements ModuleResolver {
         return source.toString();
     }
 
-    private static boolean isNullReturnType(TypeNode type) {
-        return type instanceof NamedType named && "null".equals(named.name());
-    }
 }

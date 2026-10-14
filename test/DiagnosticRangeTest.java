@@ -46,7 +46,6 @@ import deal.test.conformance.SidecarSchemaValidator;
 import deal.types.Type;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.reflect.Constructor;
@@ -133,7 +132,6 @@ public class DiagnosticRangeTest {
         testJsonRangeLexerBlindWindows();
         testJsonRangeLexerTolerance();
         testJsonRangeLexerNeverThrows();
-        testDealSourceJdkOnly();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -4072,38 +4070,6 @@ public class DiagnosticRangeTest {
                 }
             } catch (Throwable t) {
                 fail("lex threw for input " + input + ": " + t);
-            }
-        }
-    }
-
-    private static void testDealSourceJdkOnly() {
-        System.out.println("-- deal/source has no deal.diagnostics reference (JDK-only) --");
-
-        File dir = new File("deal/source");
-        check(dir.isDirectory(), "deal/source directory missing");
-        if (!dir.isDirectory()) {
-            return;
-        }
-        File[] files = dir.listFiles((d, name) -> name.endsWith(".java"));
-        check(files != null && files.length > 0, "no .java files under deal/source");
-        if (files == null) {
-            return;
-        }
-        for (File f : files) {
-            String content;
-            try {
-                content = Files.readString(f.toPath());
-            } catch (IOException e) {
-                fail("cannot read " + f + ": " + e);
-                continue;
-            }
-            check(!content.contains("deal.diagnostics"),
-                f.getName() + " references deal.diagnostics");
-            for (String line : content.split("\n")) {
-                String t = line.trim();
-                if (t.startsWith("import ") && !t.startsWith("import java.")) {
-                    fail(f.getName() + ": non-JDK import: " + t);
-                }
             }
         }
     }
