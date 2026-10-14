@@ -387,18 +387,10 @@ public class ClassConstructionValidatorTest {
     // 2. FACTORY_COHERENCE negatives
     // =========================================================================
 
-    private static void testFactoryNegatives() {
+    private static void testFactoryNegatives(LoweredSlice lowered) {
         System.out.println("-- factory negatives: unregistered/fabricated entries, "
             + "reordered children, parented factory, duplicate defaults --");
 
-        String source = """
-            export class Point {
-              x: int = 40 + 2;
-              tag: string = "p";
-              note?: string;
-            }
-            """;
-        LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
             lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
@@ -488,19 +480,10 @@ public class ClassConstructionValidatorTest {
     // 3. CONSTRUCTION_COHERENCE negatives
     // =========================================================================
 
-    private static void testConstructionNegatives() {
+    private static void testConstructionNegatives(LoweredSlice lowered) {
         System.out.println("-- construction negatives: layout identity, undeclared "
             + "provided field, boundary order/input/kind, owner shapes --");
 
-        String source = """
-            class Point {
-              x: int = 40 + 2;
-              tag: string = "p";
-              note?: string;
-            }
-            let p: Point = {x: 1}
-            """;
-        LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
             lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
@@ -618,17 +601,6 @@ public class ClassConstructionValidatorTest {
             }
         }
 
-        // (f) A LOCAL shape carrying a factory ref.
-        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
-            replaceOp(unit, rebuild(classNew,
-                new KindPayload.ClassNewPayload(payload.classId(), payload.layout(),
-                    payload.providedFields(), DefaultOwner.LOCAL,
-                    payload.classDefaultOpIds(), new ClassFactoryId(77),
-                    payload.fieldBoundaries())))),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()),
-            ClassConstructionValidator.CONSTRUCTION_COHERENCE);
-
         // (g) A RETAINED_ABI owner (E10's shape, never produced here).
         expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
             replaceOp(unit, rebuild(classNew,
@@ -726,18 +698,10 @@ public class ClassConstructionValidatorTest {
     // 5. DEFAULT_BLOCK_ADMISSION negatives
     // =========================================================================
 
-    private static void testDefaultBlockAdmissionNegatives() {
+    private static void testDefaultBlockAdmissionNegatives(LoweredSlice lowered) {
         System.out.println("-- default-block admission negatives: an enclosing-function "
             + "load and a nested capture inside the default closure --");
 
-        // The baseline: a module-level binding plus a defaulted class.
-        final String source = """
-            let base: int = 5
-            export class Point {
-              x: int = base;
-            }
-            """;
-        LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
             lowered == null ? null : lowered.result();
         check(result != null && !result.lowering().hasErrors()
@@ -773,6 +737,7 @@ public class ClassConstructionValidatorTest {
             new OperationContractSnapshot(OperationContractSnapshot.VERSION,
                 SemanticOpKind.BINDING_ALLOC, null, List.of(), null, allocPayload,
                 FailurePolicyId.NO_DEAL_FAILURE, List.of(), allocDigest)));
+        List<SemanticOp> allocatedOps = List.copyOf(ops);
         KindPayload.BindingLoadPayload loadPayload =
             new KindPayload.BindingLoadPayload(foreignBinding, 0);
         String loadDigest = ContractSnapshotCanonicalizer.digest(new
@@ -834,18 +799,43 @@ public class ClassConstructionValidatorTest {
                 SemanticOpKind.CLOSURE_NEW, closureSignature, List.of(), null,
                 closurePayload, FailurePolicyId.NO_DEAL_FAILURE, List.of(),
                 closureDigest));
-        List<SemanticOp> captureOps = new ArrayList<>(ops);
+        Map<BlockId, List<OpId>> captureBlocks = new LinkedHashMap<>(
+            result.lowering().table().blockOps());
+        captureBlocks.put(foreignBlock, List.of(new OpId(MODULE, 97_776)));
+        captureBlocks.put(closureBody, List.of());
+        Map<OpId, BlockId> captureInverse = new LinkedHashMap<>(
+            result.lowering().table().opBlocks());
+        captureInverse.put(new OpId(MODULE, 97_776), foreignBlock);
+        StructuredBodyTable allocatedTable = new StructuredBodyTable(captureBlocks,
+            captureInverse);
+        check(ClassConstructionValidator.validate(unitWithOps(unit, allocatedOps),
+            allocatedTable, result.registry(), result.jsonDefaults(), own, Map.of()).isEmpty(),
+            "the fresh foreign-allocation seed validates before adding the capture");
+        List<SemanticOp> captureOps = new ArrayList<>(allocatedOps);
         captureOps.add(closure);
-        List<OpId> captureMembers = new ArrayList<>(blockOps.getOrDefault(defaultBlock,
-            List.of()));
-        captureMembers.add(new OpId(MODULE, 97_772));
-        blockOps.put(defaultBlock, captureMembers);
-        blockOps.put(closureBody, List.of());
-        opBlocks.put(new OpId(MODULE, 97_772), defaultBlock);
-        StructuredBodyTable captureTable = new StructuredBodyTable(blockOps, opBlocks);
-        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, captureOps),
-            captureTable, result.registry(), result.jsonDefaults(), own, Map.of()),
-            ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION);
+        List<OpId> captureMembers = new ArrayList<>(captureBlocks.get(defaultBlock));
+        captureMembers.add(closure.opId());
+        captureBlocks.put(defaultBlock, captureMembers);
+        captureInverse.put(closure.opId(), defaultBlock);
+        StructuredBodyTable captureTable = new StructuredBodyTable(captureBlocks,
+            captureInverse);
+        Optional<CompilerDiagnostic> captureFailure = ClassConstructionValidator.validate(
+            unitWithOps(unit, captureOps), captureTable, result.registry(),
+            result.jsonDefaults(), own, Map.of());
+        expectE6005(captureFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION);
+        check(captureFailure.isPresent() && captureFailure.get().message().endsWith(
+            admissionSubject(defaultOp, foreignBinding, "sits in block " + foreignBlock)),
+            "the nested capture rejects the foreign allocation with the exact admission detail");
+        check(captureFailure.isPresent()
+                && closure.origin().span().range().equals(captureFailure.get().range()),
+            "the nested capture failure carries the closure's own offsetless range");
+        KindPayload.ClosureNewPayload admittedCapture = new KindPayload.ClosureNewPayload(
+            closurePayload.function(), closurePayload.signature(), List.of(),
+            closurePayload.binding());
+        check(ClassConstructionValidator.validate(unitWithOps(unit,
+            replaceOp(unitWithOps(unit, captureOps), rebuild(closure, admittedCapture))),
+            captureTable, result.registry(), result.jsonDefaults(), own, Map.of()).isEmpty(),
+            "removing only the foreign capture restores admission");
     }
 
     // =========================================================================
@@ -1379,7 +1369,7 @@ public class ClassConstructionValidatorTest {
      * offending op keeps the canonical synthetic range. Codes, messages,
      * and validation order are unchanged.
      */
-    private static void testFailureRangeOrigins() {
+    private static void testFailureRangeOrigins(LoweredSlice constructionLowered) {
         System.out.println("-- failure origins: an offending op's exact source range "
             + "survives the shared E6005; a genuinely originless failure keeps the "
             + "canonical empty-file synthetic range --");
@@ -1427,13 +1417,6 @@ public class ClassConstructionValidatorTest {
         // (b) A second converted branch: a CLASS_NEW-carried failure keeps
         // the CLASS_NEW op's own range (its origin), not the synthetic
         // anchor — proven against the op's own converted span.
-        String constructionSource = """
-            class Point {
-              x: int;
-            }
-            let p: Point = {x: 1}
-            """;
-        LoweredSlice constructionLowered = lowerModule(constructionSource);
         SemanticLowerer.ClassDeclarationCoreResult constructionResult =
             constructionLowered == null ? null : constructionLowered.result();
         if (constructionResult != null && !constructionResult.lowering().hasErrors()
@@ -1452,6 +1435,11 @@ public class ClassConstructionValidatorTest {
                     constructionResult.jsonDefaults(), constructionLowered.ownInterface(),
                     Map.of());
             expectE6005(classNewFailure, ClassConstructionValidator.CONSTRUCTION_COHERENCE);
+            check(classNewFailure.isPresent() && classNewFailure.get().message().endsWith(
+                "CLASS_NEW " + classNew.opId() + " carries classFactoryRef "
+                    + new ClassFactoryId(77)
+                    + " under LOCAL: the pinned LOCAL shape carries a null factory ref)"),
+                "the LOCAL factory-ref failure keeps the exact construction detail");
             if (classNewFailure.isPresent()) {
                 DiagnosticRange expected = classNew.origin().span().range();
                 check(classNewFailure.get().range().origin() == RangeOrigin.SOURCE
@@ -1495,14 +1483,23 @@ public class ClassConstructionValidatorTest {
     public static void main(String[] args) {
         System.out.println("=== Class Construction Validator Tests (ISSUE-0516 K-D11) ===");
         testPositiveCorpus();
-        testFactoryNegatives();
-        testConstructionNegatives();
+        LoweredSlice shared = lowerModule("""
+            let base: int = 40;
+            export class Point {
+              x: int = base + 2;
+              tag: string = "p";
+              note?: string;
+            }
+            let p: Point = {x: 1};
+            """);
+        testFactoryNegatives(shared);
+        testConstructionNegatives(shared);
         testFieldOperationNegatives();
-        testDefaultBlockAdmissionNegatives();
+        testDefaultBlockAdmissionNegatives(shared);
         testDefaultBlockAdmissionReferenceOrigins();
         testJsonNegatives();
         testDetailsDumpDeterminism();
-        testFailureRangeOrigins();
+        testFailureRangeOrigins(shared);
         System.out.println();
         if (failed == 0) {
             System.out.println("ClassConstructionValidatorTest: " + passed + " passed, "

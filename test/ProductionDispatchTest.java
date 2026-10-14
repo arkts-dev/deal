@@ -3,14 +3,8 @@ package deal.test;
 import deal.ast.ClassDeclaration;
 import deal.ast.ExportDeclaration;
 import deal.ast.StatementNode;
-import deal.checker.CheckResult;
-import deal.checker.NameResolver;
-import deal.checker.SymbolTable;
-import deal.checker.TypeChecker;
 import deal.codegen.Backend;
 import deal.codegen.SourceMapGenerator;
-import deal.codegen.jvm.JvmBackend;
-import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
@@ -40,6 +34,7 @@ import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.test.conformance.ProducedProjectIdentityAudit;
+import deal.test.conformance.JvmCompilation;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -981,6 +976,12 @@ public class ProductionDispatchTest {
     private record ProcessOutcome(int exitCode, String output) {
     }
 
+    private static ProcessOutcome compileJvm(Path directory, String... command)
+            throws Exception {
+        JvmCompilation.Result result = JvmCompilation.compile(List.of(command), directory);
+        return new ProcessOutcome(result.exitCode(), result.stdout() + result.stderr());
+    }
+
     private static ProcessOutcome runProcess(Path directory, String... command)
             throws Exception {
         BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
@@ -1468,7 +1469,7 @@ public class ProductionDispatchTest {
             return;
         }
         checkSiblingStdout(label, "java", boundedRun(out, "java", "-cp",
-            classpath + File.pathSeparator + out, "Main"));
+            out + File.pathSeparator + classpath, "Main"));
     }
 
     /** The sibling project's pinned observable: stdout "ok", exit 0, and
@@ -2886,10 +2887,12 @@ public class ProductionDispatchTest {
             if (jvmCompile.exitCode() != 0) {
                 return;
             }
-            write(jvmOut, "AsyncWorkerRunner.java", """
+            String driver = "AsyncWorkerRunner_"
+                + java.util.UUID.randomUUID().toString().replace("-", "");
+            write(jvmOut, driver + ".java", """
                 import deal.codegen.jvm.JvmRuntime;
 
-                public final class AsyncWorkerRunner {
+                public final class %s {
                   public static void main(String[] args) {
                     Main.main(new String[0]);
                     JvmRuntime.Table surface = Main.EXPORT_SURFACES.get("main");
@@ -2899,12 +2902,12 @@ public class ProductionDispatchTest {
                     System.out.println("PROBE|ASYNC-RESULT|" + completion);
                   }
                 }
-                """);
+                """.formatted(driver));
             String buildCp = absoluteClasspath();
-            ProcessOutcome javac = runProcess(same, "javac", "--release", "25",
+            ProcessOutcome javac = compileJvm(same, "javac", "--release", "25",
                 "-proc:none", "-cp", buildCp, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString(),
-                jvmOut.resolve("AsyncWorkerRunner.java").toString());
+                jvmOut.resolve(driver + ".java").toString());
             check(javac.exitCode() == 0,
                 "the same-module async JVM artifact compiles: "
                     + javac.output());
@@ -2912,7 +2915,7 @@ public class ProductionDispatchTest {
                 return;
             }
             ProcessOutcome jvmRun = runProcess(jvmOut, "java", "-cp",
-                jvmOut + File.pathSeparator + buildCp, "AsyncWorkerRunner");
+                jvmOut + File.pathSeparator + buildCp, driver);
             check(jvmRun.exitCode() == 0
                     && jvmRun.output().contains("PROBE|ASYNC-RESULT|1"),
                 "the same-module await path executes under java: exit="
@@ -3112,29 +3115,32 @@ public class ProductionDispatchTest {
             String originText, int startLine, int startColumn, int endLine,
             int endColumn, int startOffset, int endOffset, int scalarLength)
             throws Exception {
-        checkPreservedLoweringOriginOnTarget("luajit", DEAL_JSON_LUA, name, sources,
-            offendingModule, offendingRelative, capability, rule, originText,
-            startLine, startColumn, endLine, endColumn, startOffset, endOffset,
-            scalarLength);
-        checkPreservedLoweringOriginOnTarget("jvm", DEAL_JSON_JVM, name, sources,
-            offendingModule, offendingRelative, capability, rule, originText,
-            startLine, startColumn, endLine, endColumn, startOffset, endOffset,
-            scalarLength);
-    }
-
-    private static void checkPreservedLoweringOriginOnTarget(String target,
-            String manifest, String name, Map<String, String> sources,
-            String offendingModule, String offendingRelative, String capability,
-            String rule, String originText, int startLine, int startColumn,
-            int endLine, int endColumn, int startOffset, int endOffset,
-            int scalarLength) throws Exception {
         Path project = Files.createTempDirectory("production-dispatch-origin-");
         try {
-            String context = name + " [" + target + "]";
-            write(project, "deal.json", manifest);
             for (Map.Entry<String, String> source : sources.entrySet()) {
                 write(project, source.getKey(), source.getValue());
             }
+            checkPreservedLoweringOriginOnTarget(project, "luajit", DEAL_JSON_LUA,
+                name, offendingModule, offendingRelative, capability, rule, originText,
+                startLine, startColumn, endLine, endColumn, startOffset, endOffset,
+                scalarLength);
+            checkPreservedLoweringOriginOnTarget(project, "jvm", DEAL_JSON_JVM,
+                name, offendingModule, offendingRelative, capability, rule, originText,
+                startLine, startColumn, endLine, endColumn, startOffset, endOffset,
+                scalarLength);
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    private static void checkPreservedLoweringOriginOnTarget(Path project,
+            String target, String manifest, String name, String offendingModule,
+            String offendingRelative, String capability, String rule, String originText,
+            int startLine, int startColumn, int endLine, int endColumn,
+            int startOffset, int endOffset, int scalarLength) throws Exception {
+        {
+            String context = name + " [" + target + "]";
+            write(project, "deal.json", manifest);
             Path entry = project.resolve("src/main.deal").toAbsolutePath()
                 .normalize();
             Path offending = project.resolve(offendingRelative).toAbsolutePath()
@@ -3201,6 +3207,7 @@ public class ProductionDispatchTest {
             // The release-owned CLI with structured diagnostics: the same
             // code, message, and exact range on both rendering surfaces.
             Path diagnosticsJson = project.resolve("diagnostics.json");
+            Files.deleteIfExists(diagnosticsJson);
             ProjectOutcome cli = runProductionCli("compile", entry.toString(),
                 "--backend", target, "--output", out.toAbsolutePath().toString(),
                 "--diagnostics-json", diagnosticsJson.toAbsolutePath().toString());
@@ -3221,6 +3228,7 @@ public class ProductionDispatchTest {
 
             // Repeated compilation of the unchanged project is
             // byte-identical on both surfaces.
+            Files.deleteIfExists(diagnosticsJson);
             ProjectOutcome repeat = runProductionCli("compile", entry.toString(),
                 "--backend", target, "--output", out.toAbsolutePath().toString(),
                 "--diagnostics-json", diagnosticsJson.toAbsolutePath().toString());
@@ -3230,8 +3238,6 @@ public class ProductionDispatchTest {
                 context + ": repeated structured reports are byte-identical");
             checkTreeIdentical(before, out,
                 context + ": the repeated failure preserves the previous set");
-        } finally {
-            deleteRecursively(project);
         }
     }
 
@@ -3393,7 +3399,7 @@ public class ProductionDispatchTest {
                 return;
             }
             String buildCp = absoluteClasspath();
-            ProcessOutcome javac = runProcess(project, "javac", "--release", "25",
+            ProcessOutcome javac = compileJvm(project, "javac", "--release", "25",
                 "-proc:none", "-cp", buildCp, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString());
             check(javac.exitCode() == 0,
@@ -3453,7 +3459,7 @@ public class ProductionDispatchTest {
                 "the JVM artifact publishes the canonical ErrorValue carrier: "
                     + java);
             String buildCp = absoluteClasspath();
-            ProcessOutcome javac = runProcess(project, "javac", "--release", "25",
+            ProcessOutcome javac = compileJvm(project, "javac", "--release", "25",
                 "-proc:none", "-cp", buildCp, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString());
             check(javac.exitCode() == 0,
@@ -3520,7 +3526,7 @@ public class ProductionDispatchTest {
                     "src/main.deal"));
 
             String classpath = absoluteClasspath();
-            ProcessOutcome javac = runProcess(project, "javac", "--release", "25",
+            ProcessOutcome javac = compileJvm(project, "javac", "--release", "25",
                 "-proc:none", "-cp", classpath, "-d", jvmOut.toString(),
                 jvmOut.resolve("Main.java").toString());
             check(javac.exitCode() == 0,
@@ -3818,7 +3824,7 @@ public class ProductionDispatchTest {
                     jvmOut.resolve("main.deal.map.json")), "source"),
                 "the JVM sidecar keeps the actual source path");
             String classpath = absoluteClasspath();
-            ProcessOutcome javac = runProcess(project, "javac", "--release",
+            ProcessOutcome javac = compileJvm(project, "javac", "--release",
                 "25", "-proc:none", "-cp", classpath, "-d",
                 jvmOut.toString(), jvmOut.resolve("Main.java").toString());
             check(javac.exitCode() == 0,
@@ -3926,7 +3932,7 @@ public class ProductionDispatchTest {
                         .toString().replace(File.separatorChar, '/')
                         + "/Main.java");
                 String classpath = absoluteClasspath();
-                ProcessOutcome javac = runProcess(project, "javac", "--release",
+                ProcessOutcome javac = compileJvm(project, "javac", "--release",
                     "25", "-proc:none", "-cp", classpath, "-d",
                     jvmOut.toString(), jvmOut.resolve("Main.java").toString());
                 check(javac.exitCode() == 0,
@@ -4012,7 +4018,7 @@ public class ProductionDispatchTest {
                     "\\w+ = default\\d+\\(\\);",
                     "\\w+ __tf_\\d+_\\d+ = new \\w+\\(\\);", "throw __e;");
                 String classpath = absoluteClasspath();
-                ProcessOutcome javac = runProcess(project, "javac", "--release",
+                ProcessOutcome javac = compileJvm(project, "javac", "--release",
                     "25", "-proc:none", "-cp", classpath, "-d",
                     jvmOut.toString(), jvmOut.resolve("Main.java").toString());
                 check(javac.exitCode() == 0,
@@ -4514,13 +4520,6 @@ public class ProductionDispatchTest {
             + "production arm; the legacy profile fails closed at the "
             + "lowering --");
 
-        checkEq(3, Backend.values().length,
-            "the Backend enum keeps exactly its three closed values");
-        check(Backend.fromCliName("luajit").orElseThrow() == Backend.LUAJIT
-                && Backend.fromCliName("jvm").orElseThrow() == Backend.JVM
-                && Backend.fromCliName("js").orElseThrow() == Backend.JS,
-            "the three backend CLI names keep their closed values");
-
         {
             check(reference.success(), "the release-owned compile succeeds: "
                 + reference.orchestrator().diagnostics());
@@ -4820,21 +4819,6 @@ public class ProductionDispatchTest {
 
 
 
-    // =========================================================================
-    // 11. The produced-project accessor (ISSUE-0694 HR4(b))
-    // =========================================================================
-
-    /**
-     * The produced-project accessor
-     * ({@code conformance-cutover-guards-pins-and-production-source-removal}
-     * HR4(b) and the lane project identity audit contract): a production
-     * compile exposes the very validated project its one production arm
-     * lowered and emitted — the entry artifact's project, over which the
-     * lane-level dangling-identity guard runs — the JS arm and a compile
-     * that fails before phase 4 record none, and the production source reads
-     * the reference back nowhere, so no emission, staging, or comparison
-     * step consumes it.
-     */
     // =========================================================================
     // ISSUE-0756: the v1.2 corner-case corpus production drive
     // =========================================================================

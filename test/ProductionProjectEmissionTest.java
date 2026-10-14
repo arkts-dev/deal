@@ -8,6 +8,7 @@ import deal.ast.FunctionDeclaration;
 import deal.ast.StatementNode;
 import deal.ast.VariableDeclaration;
 import deal.checker.BuiltinErrorDeclaration;
+import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.codegen.Backend;
@@ -61,12 +62,12 @@ import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
+import deal.test.conformance.JvmCompilation;
 import deal.types.Type;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -406,6 +407,47 @@ public class ProductionProjectEmissionTest {
             DistributionHome.forManifestDirectory(src.toString()));
     }
 
+    private static SymbolTable copyScope(SymbolTable scope,
+            Map<SymbolTable, SymbolTable> copies) {
+        if (scope == null) {
+            return null;
+        }
+        SymbolTable copy = copies.get(scope);
+        if (copy == null) {
+            copy = new SymbolTable(copyScope(scope.parent(), copies));
+            copies.put(scope, copy);
+            scope.symbols().forEach(copy::define);
+        }
+        return copy;
+    }
+
+    private static Fixture freshCheckedFacts(Fixture fixture) {
+        List<CheckedModuleInput> modules = new ArrayList<>();
+        for (CheckedModuleInput module : fixture.checkedProject().modules()) {
+            CheckResult checks = module.checks();
+            Map<SymbolTable, SymbolTable> copies = new java.util.IdentityHashMap<>();
+            SymbolTable root = copyScope(checks.symbolTable(), copies);
+            Map<StatementNode, SymbolTable> scopes = new java.util.IdentityHashMap<>();
+            checks.scopeMap().forEach((node, scope) ->
+                scopes.put(node, copyScope(scope, copies)));
+            Map<ClassDeclaration, SymbolTable> classes = new java.util.IdentityHashMap<>();
+            checks.classScopes().forEach((node, scope) ->
+                classes.put(node, copyScope(scope, copies)));
+            CheckResult fresh = new CheckResult(
+                new java.util.IdentityHashMap<>(checks.typeMap()), root, scopes,
+                checks.diagnostics(), classes,
+                new java.util.IdentityHashMap<>(checks.constructedClassDecls()));
+            modules.add(new CheckedModuleInput(module.moduleId(), module.sourceId(),
+                module.sourcePath(), module.ast(), fresh, module.imports(),
+                module.exports(), module.kind()));
+        }
+        CheckedProjectInput checked = fixture.checkedProject();
+        return new Fixture(fixture.root(), new CheckedProjectInput(checked.invocation(),
+            checked.entryModule(), modules, checked.releaseStateHash()), fixture.index(),
+            fixture.manifests(), fixture.surface(), fixture.externCModules(),
+            fixture.declarationIdentities(), fixture.distributionHome());
+    }
+
     private static Fixture twoModuleFixture(String appSource) throws Exception {
         return compileProject(new LinkedHashMap<>(Map.of(
                 "src/lib.deal", LIB_SOURCE,
@@ -554,65 +596,8 @@ public class ProductionProjectEmissionTest {
     // 1. The unit: one production source unit, one public static entry
     // =========================================================================
 
-    private static void testUnitShapeAndConstants(Fixture fixture) throws Exception {
-        System.out.println("-- the unit is one production source unit with one "
-            + "public static entry --");
-
-        Class<?> unit = ProductionProjectEmission.class;
-        check(Modifier.isPublic(unit.getModifiers())
-                && Modifier.isFinal(unit.getModifiers()),
-            "ProductionProjectEmission is a public final production unit");
-        checkEq("deal.module", unit.getPackageName(),
-            "the unit sits in the production module package");
-
-        List<String> publicStatic = new ArrayList<>();
-        for (Method method : unit.getDeclaredMethods()) {
-            if (Modifier.isPublic(method.getModifiers())
-                    && Modifier.isStatic(method.getModifiers())) {
-                publicStatic.add(method.getName());
-            }
-        }
-        checkEq(List.of("run"), publicStatic,
-            "the unit publishes exactly one public static entry");
-
-        Method entry = unit.getMethod("run", CompilerInvocation.class,
-            CheckedProjectInput.class, ProjectInterfaceIndex.class, List.class,
-            HostDeclarationSurface.class, Map.class, Map.class, String.class,
-            BuiltinErrorDeclaration.class, List.class, Set.class, Backend.class,
-            boolean.class, DistributionHome.class, PublicationStager.class);
-        checkEq(ProductionProjectEmission.Result.class, entry.getReturnType(),
-            "the entry returns the run outcome");
-        List<String> parameterTypes = new ArrayList<>();
-        for (Class<?> parameter : entry.getParameterTypes()) {
-            parameterTypes.add(parameter.getSimpleName());
-        }
-        checkEq(List.of("CompilerInvocation", "CheckedProjectInput",
-                "ProjectInterfaceIndex", "List", "HostDeclarationSurface", "Map",
-                "Map", "String", "BuiltinErrorDeclaration", "List", "Set", "Backend",
-                "boolean", "DistributionHome", "PublicationStager"),
-            parameterTypes,
-            "the entry consumes the compile's declared inputs (the extern-C"
-                + " generated modules and the manifest-directory text feeding"
-                + " the Lua session's FFI emission input), the backend, the"
-                + " effective source-map flag, the deployment-copy resolver, and the"
-                + " staging surface");
-        for (Class<?> parameter : entry.getParameterTypes()) {
-            String name = parameter.getName();
-            for (String forbidden : List.of("deal.ast.", "deal.parser.",
-                    "Route", "MigrationPlanner", "CapabilityRegistry",
-                    "HostModuleDeclarations", "CheckResult", "ProgramNode")) {
-                check(!name.contains(forbidden),
-                    "the entry takes no " + forbidden + " input: " + name);
-            }
-        }
-
-        checkEq("SHARED_EMITTER_COVERAGE",
-            ProductionProjectEmission.SHARED_EMITTER_COVERAGE,
-            "the registered emitter-coverage rule id");
-        checkEq("HOST_MODULE_IMPORT", ProductionProjectEmission.HOST_MODULE_IMPORT,
-            "the stable extern-C declaration-import guard token");
-
-        // The JS target is not a production arm.
+    private static void testJsBackendRejection(Fixture fixture) throws Exception {
+        System.out.println("-- the JS target is rejected without staging --");
         {
             PublicationStager stager =
                 PublicationStager.forRoot(fixture.root().resolve("js-out"));
@@ -911,7 +896,8 @@ public class ProductionProjectEmissionTest {
     // 5. The pre-emission closure guard
     // =========================================================================
 
-    private static void testHostImportGuard() throws Exception {
+    private static void testHostImportGuard(Fixture fixture, Fixture externC)
+            throws Exception {
         System.out.println("-- the HOST-declaration import emits its declared-map "
             + "load and stages; the extern-C declaration import emits its "
             + "load_ffi prelude --");
@@ -919,9 +905,8 @@ public class ProductionProjectEmissionTest {
         // The HOST-declaration-kind import: realized by the host load of
         // the module init walk (H1), so the production run stages its one
         // project artifact and no guard fires.
-        Fixture fixture = hostFixture();
         Path out = fixture.root().resolve("out-arm");
-        try {
+        {
             PublicationStager stager = PublicationStager.forRoot(out);
             ProductionProjectEmission.Result result;
             String chunk;
@@ -960,13 +945,10 @@ public class ProductionProjectEmissionTest {
                 "the load runs inline in the module init walk");
             check(!chunk.contains(ProductionProjectEmission.HOST_MODULE_IMPORT),
                 "the emitted chunk carries no guard token");
-        } finally {
-            deleteRecursively(fixture.root());
         }
 
-        Fixture externC = externCFixture();
         Path externCOut = externC.root().resolve("out-arm");
-        try {
+        {
             checkEq(HostDeclarationSurface.DeclarationKind.EXTERN_C,
                 externC.surface().require(NATIVE_MATH).kind(),
                 "the probe's declaration module is EXTERN_C-kind");
@@ -1007,8 +989,6 @@ public class ProductionProjectEmissionTest {
                 "the emitted chunk carries no guard token");
             check(!chunk.contains("ffi.C") && !chunk.contains("cdef("),
                 "the emitted chunk carries no ffi.C/cdef text");
-        } finally {
-            deleteRecursively(externC.root());
         }
     }
 
@@ -1021,12 +1001,11 @@ public class ProductionProjectEmissionTest {
      * offending origin of the emission failure, never the empty-file
      * synthetic anchor — and stages nothing.
      */
-    private static void testFfiProviderGapOrigin() throws Exception {
+    private static void testFfiProviderGapOrigin(Fixture externC) throws Exception {
         System.out.println("-- the emission provider gap carries the "
             + "extern-C import statement's own origin --");
 
-        Fixture externC = externCFixture();
-        try {
+        {
             FfiGeneratedModule original =
                 externC.externCModules().get(NATIVE_MATH);
             check(original != null,
@@ -1110,8 +1089,6 @@ public class ProductionProjectEmissionTest {
             } finally {
                 stager.discard();
             }
-        } finally {
-            deleteRecursively(externC.root());
         }
     }
 
@@ -1256,7 +1233,9 @@ public class ProductionProjectEmissionTest {
      * checker-valid program produces (a direct corrupted-IR boundary),
      * driven through both shared targets where the guard is shared.
      */
-    private static void testIdentifiedSharedGuardOrigins() throws Exception {
+    private static void testIdentifiedSharedGuardOrigins(Fixture crossAsync,
+            SemanticLowerer.ProjectLoweringResult asyncLowering, Fixture host,
+            SemanticLowerer.ProjectLoweringResult hostLowering) throws Exception {
         System.out.println("-- the remaining identified shared emission guards "
             + "carry the offending op's own exact range --");
 
@@ -1319,9 +1298,8 @@ public class ProductionProjectEmissionTest {
         // whose recorded link names a module outside the closure. The
         // async external-entry guard identifies the start op and carries
         // its own exact range.
-        Fixture crossAsync = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(crossAsync);
+        {
+            SemanticLowerer.ProjectLoweringResult result = asyncLowering;
             check(!result.hasErrors(),
                 "the cross-module async fixture lowers: " + result.diagnostics());
             if (!result.hasErrors()) {
@@ -1362,18 +1340,14 @@ public class ProductionProjectEmissionTest {
                         result, crossAsync);
                 }
             }
-        } finally {
-            deleteRecursively(crossAsync.root());
         }
 
         // (d) The entry module's duplicated async EXTERNAL_ENTRY: the
         // second recorded entry (a distinct origin) is the operation whose
         // processing detects the collision, so the guard carries its own
         // exact range on both targets.
-        Fixture duplicatedAsync =
-            asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(duplicatedAsync);
+        {
+            SemanticLowerer.ProjectLoweringResult result = asyncLowering;
             check(!result.hasErrors(),
                 "the duplicate-async-entry fixture lowers: " + result.diagnostics());
             if (!result.hasErrors()) {
@@ -1417,18 +1391,15 @@ public class ProductionProjectEmissionTest {
                         "the exported declaration '" + entry.moduleId().path()
                             + "#" + exportName + " records two async"
                             + " EXTERNAL_ENTRY ops (producer defect)",
-                        duplicated, result, duplicatedAsync);
+                        duplicated, result, crossAsync);
                 }
             }
-        } finally {
-            deleteRecursively(duplicatedAsync.root());
         }
 
         // (e) The JVM declaration-kind mismatch: the entry's HOST import is
         // described by a declaration surface of the extern-C kind.
-        Fixture host = hostFixture();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(host);
+        {
+            SemanticLowerer.ProjectLoweringResult result = hostLowering;
             check(!result.hasErrors(),
                 "the host-import fixture lowers: " + result.diagnostics());
             if (!result.hasErrors()) {
@@ -1486,8 +1457,6 @@ public class ProductionProjectEmissionTest {
                     }
                 }
             }
-        } finally {
-            deleteRecursively(host.root());
         }
     }
 
@@ -1506,13 +1475,14 @@ public class ProductionProjectEmissionTest {
      * canonical empty-file synthetic anchor. A genuinely originless emitter
      * refusal keeps the canonical synthetic projection.
      */
-    private static void testAbsentDeclarationSurfaceEntries() throws Exception {
+    private static void testAbsentDeclarationSurfaceEntries(Fixture host,
+            SemanticLowerer.ProjectLoweringResult hostLowering, Fixture externC,
+            SemanticLowerer.ProjectLoweringResult externLowering) throws Exception {
         System.out.println("-- an absent declaration-surface entry carries the "
             + "identifying MODULE_IMPORT's own exact range on both targets --");
 
-        Fixture host = hostFixture();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(host);
+        {
+            SemanticLowerer.ProjectLoweringResult result = hostLowering;
             check(!result.hasErrors(),
                 "the host-import fixture lowers: " + result.diagnostics());
             if (!result.hasErrors()) {
@@ -1560,16 +1530,13 @@ public class ProductionProjectEmissionTest {
                     }
                 }
             }
-        } finally {
-            deleteRecursively(host.root());
         }
 
         // The FFI emission input's absent generated-module entry: the same
         // import boundary identifies the extern-C MODULE_IMPORT whose own
         // range must survive the fail-closed lookup.
-        Fixture externC = externCFixture();
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(externC);
+        {
+            SemanticLowerer.ProjectLoweringResult result = externLowering;
             check(!result.hasErrors(),
                 "the extern-C fixture lowers: " + result.diagnostics());
             if (!result.hasErrors()) {
@@ -1611,8 +1578,6 @@ public class ProductionProjectEmissionTest {
                     }
                 }
             }
-        } finally {
-            deleteRecursively(externC.root());
         }
     }
 
@@ -1900,10 +1865,11 @@ public class ProductionProjectEmissionTest {
         System.out.println("-- the corrupted generated @jsonable helper signatures keep "
             + "the class declaration's own range through lowerProject --");
 
-        for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
-            Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
-                "src/app.deal", GENERATED_HELPER_APP_SOURCE)), Map.of());
-            try {
+        Fixture prepared = compileProject(Map.of(
+            "src/app.deal", GENERATED_HELPER_APP_SOURCE), Map.of());
+        try {
+            for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
+                Fixture fixture = freshCheckedFacts(prepared);
                 ClassDeclaration target = null;
                 SymbolTable table = null;
                 for (CheckedModuleInput module : fixture.checkedProject().modules()) {
@@ -1956,9 +1922,9 @@ public class ProductionProjectEmissionTest {
                 check(range.equals(target.span().range()),
                     "the " + helper + " range is exactly the class declaration's own "
                         + "converted range; got " + range);
-            } finally {
-                deleteRecursively(fixture.root());
             }
+        } finally {
+            deleteRecursively(prepared.root());
         }
     }
 
@@ -2317,10 +2283,12 @@ public class ProductionProjectEmissionTest {
                 "the emitted JVM class carries no superseded guard token");
             check(!source.contains("SharedM"),
                 "the emitted JVM class references no per-module class");
-            writeFileIn(crossJvmOut, "AsyncCrossRunner.java", """
+            String crossDriver = "AsyncCrossRunner_"
+                + java.util.UUID.randomUUID().toString().replace("-", "");
+            writeFileIn(crossJvmOut, crossDriver + ".java", """
                 import deal.codegen.jvm.JvmRuntime;
 
-                public final class AsyncCrossRunner {
+                public final class %s {
                   public static void main(String[] args) {
                     App.main(new String[0]);
                     JvmRuntime.Table surface = App.EXPORT_SURFACES.get("app");
@@ -2330,13 +2298,13 @@ public class ProductionProjectEmissionTest {
                     System.out.println("PROBE|ASYNC-RESULT|" + completion);
                   }
                 }
-                """);
+                """.formatted(crossDriver));
             Files.createDirectories(crossJvmClasses);
             String classpath = absoluteClasspath();
-            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+            ProcessOutcome javacRun = compileJvm(List.of("javac", "--release", "25",
                 "-proc:none", "-cp", classpath, "-d", crossJvmClasses.toString(),
                 crossJvmOut.resolve("App.java").toAbsolutePath().toString(),
-                crossJvmOut.resolve("AsyncCrossRunner.java").toAbsolutePath().toString()),
+                crossJvmOut.resolve(crossDriver + ".java").toAbsolutePath().toString()),
                 cross.root());
             checkEq(0, javacRun.exitCode(),
                 "the cross-module async JVM artifact compiles: "
@@ -2344,7 +2312,7 @@ public class ProductionProjectEmissionTest {
             if (javacRun.exitCode() == 0) {
                 ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
                     crossJvmClasses + java.io.File.pathSeparator + classpath,
-                    "AsyncCrossRunner"), cross.root());
+                    crossDriver), cross.root());
                 checkEq(0, jvmRun.exitCode(),
                     "the cross-module await path executes under java: "
                         + jvmRun.output());
@@ -2424,10 +2392,12 @@ public class ProductionProjectEmissionTest {
             }
             check(Files.isRegularFile(jvmOut.resolve("App.java")),
                 "the published same-module async JVM artifact exists");
-            writeFileIn(jvmOut, "AsyncWorkerRunner.java", """
+            String sameDriver = "AsyncWorkerRunner_"
+                + java.util.UUID.randomUUID().toString().replace("-", "");
+            writeFileIn(jvmOut, sameDriver + ".java", """
                 import deal.codegen.jvm.JvmRuntime;
 
-                public final class AsyncWorkerRunner {
+                public final class %s {
                   public static void main(String[] args) {
                     App.main(new String[0]);
                     JvmRuntime.Table surface = App.EXPORT_SURFACES.get("app");
@@ -2437,13 +2407,13 @@ public class ProductionProjectEmissionTest {
                     System.out.println("PROBE|ASYNC-RESULT|" + completion);
                   }
                 }
-                """);
+                """.formatted(sameDriver));
             Files.createDirectories(jvmClasses);
             String classpath = absoluteClasspath();
-            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+            ProcessOutcome javacRun = compileJvm(List.of("javac", "--release", "25",
                 "-proc:none", "-cp", classpath, "-d", jvmClasses.toString(),
                 jvmOut.resolve("App.java").toAbsolutePath().toString(),
-                jvmOut.resolve("AsyncWorkerRunner.java").toAbsolutePath().toString()),
+                jvmOut.resolve(sameDriver + ".java").toAbsolutePath().toString()),
                 same.root());
             checkEq(0, javacRun.exitCode(),
                 "the same-module async JVM artifact compiles: "
@@ -2451,7 +2421,7 @@ public class ProductionProjectEmissionTest {
             if (javacRun.exitCode() == 0) {
                 ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
                     jvmClasses + java.io.File.pathSeparator + classpath,
-                    "AsyncWorkerRunner"), same.root());
+                    sameDriver), same.root());
                 checkEq(0, jvmRun.exitCode(),
                     "the same-module await path executes under java: "
                         + jvmRun.output());
@@ -2769,6 +2739,12 @@ public class ProductionProjectEmissionTest {
         return resolved.toString();
     }
 
+    private static ProcessOutcome compileJvm(List<String> command, Path workDir)
+            throws Exception {
+        JvmCompilation.Result result = JvmCompilation.compile(command, workDir);
+        return new ProcessOutcome(result.exitCode(), result.stdout(), result.stderr());
+    }
+
     private static ProcessOutcome runProcess(List<String> command, Path workDir)
             throws Exception {
         BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
@@ -2815,28 +2791,37 @@ public class ProductionProjectEmissionTest {
         Fixture cross = null;
         Fixture same = null;
         Fixture failing = null;
+        Fixture host = null;
+        Fixture externC = null;
         try {
             fixture = twoModuleFixture(APP_SOURCE);
-            testUnitShapeAndConstants(fixture);
+            testJsBackendRejection(fixture);
             UnmappedLua unmapped = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
             failing = adapterSourceFixture();
             testAtomicFailures(failing);
-            testHostImportGuard();
-            testFfiProviderGapOrigin();
+            host = hostFixture();
+            externC = externCFixture();
+            cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
+            SemanticLowerer.ProjectLoweringResult hostLowering = lower(host);
+            SemanticLowerer.ProjectLoweringResult externLowering = lower(externC);
+            SemanticLowerer.ProjectLoweringResult asyncLowering = lower(cross);
+            testHostImportGuard(host, externC);
+            testFfiProviderGapOrigin(externC);
             testRejectedOpEmissionOrigins();
-            testIdentifiedSharedGuardOrigins();
-            testAbsentDeclarationSurfaceEntries();
+            testIdentifiedSharedGuardOrigins(cross, asyncLowering, host, hostLowering);
+            testAbsentDeclarationSurfaceEntries(host, hostLowering, externC, externLowering);
             testStdlibCatalogMissOrigin();
             testDeclarationSignatureOrigin();
             testGeneratedHelperDescriptorOrigins();
             testForLetCounterDescriptorOrigin();
-            cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
             testSourceMapEmission(fixture, failing, unmapped);
         } finally {
+            deleteRecursively(externC == null ? null : externC.root());
+            deleteRecursively(host == null ? null : host.root());
             deleteRecursively(failing == null ? null : failing.root());
             deleteRecursively(same == null ? null : same.root());
             deleteRecursively(cross == null ? null : cross.root());

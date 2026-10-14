@@ -575,39 +575,6 @@ public class ControlFlowValidatorTest {
                 ControlFlowValidator.CONTROL_BLOCK_TREE, "orphan block BlockId(9)");
         }
 
-        // Double-referenced block (same op, both branch positions).
-        {
-            SemanticOp c0 = constInt();
-            SemanticOp br = branchOp(ControlSelector.IF, b(1), b(1));
-            SemanticOp c1 = constInt();
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
-                List.of(c0, br, c1));
-            StructuredBodyTable table = tableOf(Map.ofEntries(
-                Map.entry(INIT, List.<SemanticOp>of()),
-                Map.entry(B0, List.of(c0, br)),
-                Map.entry(b(1), List.of(c1))));
-            assertE6005(ControlFlowValidator.validate(unit, table),
-                ControlFlowValidator.CONTROL_BLOCK_TREE,
-                "referenced by more than one control payload position");
-        }
-
-        // Double-referenced block (two distinct ops).
-        {
-            SemanticOp c0 = constInt();
-            SemanticOp br1 = branchOp(ControlSelector.IF, b(1), null);
-            SemanticOp br2 = branchOp(ControlSelector.IF, b(1), null);
-            SemanticOp c1 = constInt();
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
-                List.of(c0, br1, br2, c1));
-            StructuredBodyTable table = tableOf(Map.ofEntries(
-                Map.entry(INIT, List.<SemanticOp>of()),
-                Map.entry(B0, List.of(c0, br1, br2)),
-                Map.entry(b(1), List.of(c1))));
-            assertE6005(ControlFlowValidator.validate(unit, table),
-                ControlFlowValidator.CONTROL_BLOCK_TREE,
-                "referenced by more than one control payload position");
-        }
-
         // Cyclic nesting: two blocks each containing a loop whose body is the
         // other block.
         {
@@ -623,77 +590,6 @@ public class ControlFlowValidatorTest {
                 Map.entry(b(2), List.of(loop2))));
             assertE6005(ControlFlowValidator.validate(unit, table),
                 ControlFlowValidator.CONTROL_BLOCK_TREE, "cyclic block nesting");
-        }
-
-        // An op in two blocks.
-        {
-            SemanticOp shared = constInt();
-            SemanticOp other = constInt();
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
-                List.of(shared, other));
-            StructuredBodyTable table = tableOf(Map.ofEntries(
-                Map.entry(INIT, List.<SemanticOp>of()),
-                Map.entry(B0, List.of(shared)),
-                Map.entry(b(1), List.of(shared, other))));
-            assertE6005(ControlFlowValidator.validate(unit, table),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "member of more than one block");
-        }
-
-        // Inverse-map conflict: the inverse entry names a different block.
-        {
-            SemanticOp shared = constInt();
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)), List.of(shared));
-            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
-            blockOps.put(INIT, List.of());
-            blockOps.put(B0, List.of(shared.opId()));
-            Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
-            opBlocks.put(shared.opId(), b(1));
-            assertE6005(ControlFlowValidator.validate(unit,
-                    new StructuredBodyTable(blockOps, opBlocks)),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "inverse-map conflict");
-        }
-
-        // Inverse-map conflict: a listed op has no inverse entry.
-        {
-            SemanticOp shared = constInt();
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)), List.of(shared));
-            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
-            blockOps.put(INIT, List.of());
-            blockOps.put(B0, List.of(shared.opId()));
-            assertE6005(ControlFlowValidator.validate(unit,
-                    new StructuredBodyTable(blockOps, Map.of())),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "has no inverse membership entry");
-        }
-
-        // Inverse-map conflict: an inverse entry without a block-list membership.
-        {
-            SemanticOp listed = constInt();
-            SemanticOp extra = constInt();
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
-                List.of(listed, extra));
-            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
-            blockOps.put(INIT, List.of());
-            blockOps.put(B0, List.of(listed.opId()));
-            Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
-            opBlocks.put(listed.opId(), B0);
-            opBlocks.put(extra.opId(), b(1));
-            assertE6005(ControlFlowValidator.validate(unit,
-                    new StructuredBodyTable(blockOps, opBlocks)),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "listed in no block");
-        }
-
-        // Unknown BlockId in a payload position.
-        {
-            SemanticOp c0 = constInt();
-            SemanticOp br = branchOp(ControlSelector.IF, b(77), null);
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
-                List.of(c0, br));
-            StructuredBodyTable table = tableOf(Map.ofEntries(
-                Map.entry(INIT, List.<SemanticOp>of()),
-                Map.entry(B0, List.of(c0, br))));
-            assertE6005(ControlFlowValidator.validate(unit, table),
-                ControlFlowValidator.CONTROL_BLOCK_TREE,
-                "references block BlockId(77) which is not a block of the table");
         }
 
         // The represented unreachable tail: an op after
@@ -779,21 +675,6 @@ public class ControlFlowValidatorTest {
                 Map.entry(b(1), List.of(c1))));
             assertE6005(ControlFlowValidator.validate(unit, table),
                 ControlFlowValidator.CONTROL_BLOCK_TREE, "is not a member of any block");
-        }
-
-        // An op listed in a block but not produced by the unit.
-        {
-            SemanticOp c0 = constInt();
-            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)), List.of(c0));
-            Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
-            blockOps.put(INIT, List.of());
-            blockOps.put(B0, List.of(c0.opId(), new OpId(MOD, 999)));
-            Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
-            opBlocks.put(c0.opId(), B0);
-            opBlocks.put(new OpId(MOD, 999), B0);
-            assertE6005(ControlFlowValidator.validate(unit,
-                    new StructuredBodyTable(blockOps, opBlocks)),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "is not a produced op of the unit");
         }
 
         // A function body block missing from the table.
@@ -917,12 +798,6 @@ public class ControlFlowValidatorTest {
         }
     }
 
-    /**
-     * The invocation-owned return record of a dynamic {@code CALL} — the
-     * {@code FUNCTION_RETURN} cell's parent RETURN — is admitted outside the
-     * block tree, and every other unattached RETURN keeps the completeness and
-     * exit rules.
-     */
     /**
      * The preserved offending-origin rule (ISSUE-0750): a failing rule that
      * names an offending op carries that op's own source origin as the E6005

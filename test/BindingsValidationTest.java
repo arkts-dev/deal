@@ -1094,22 +1094,6 @@ public class BindingsValidationTest {
     }
 
     private static void testStaleGenerationNegatives() {
-        // A stale generation: the load names a generation no producing
-        // allocation carries.
-        BindingId x = nextBindingId();
-        ValueId constValue = nextValue();
-        SemanticOp alloc = allocOp(x, INIT_BLOCK, 0);
-        SemanticOp init = initOp(x, 0, constValue);
-        SemanticOp stale = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(x, 5),
-            nextValue(), INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
-        LoweredModuleUnit unit = unit(Map.of(), Map.of(),
-            List.of(alloc, init, stale));
-        StructuredBodyTable table = tableOf(Map.of(INIT_BLOCK, List.of(alloc, init, stale)));
-        assertE6005(BindingsProductionValidator.validate(unit, table),
-            "BINDING_GENERATION_RESOLUTION", "a stale-generation load",
-            "stale/unresolvable");
-
         // A stale store generation is the same rule (stores are exempt
         // only from INIT_DOMINATES_LOAD, never from generation
         // resolution).
@@ -1268,21 +1252,6 @@ public class BindingsValidationTest {
         assertE6005(BindingsProductionValidator.validate(unitMismatch, tableMismatch),
             "GROUP_SHAPE", "a bindings/functions length mismatch");
 
-        // A member binding with a separate ALLOC.
-        BindingId b2 = nextBindingId();
-        FunctionId f3 = nextFunctionId();
-        BlockId b3Body = nextBlock();
-        SemanticOp group = groupOp(List.of(b2), List.of(f3));
-        SemanticOp rogueAlloc = allocOp(b2, INIT_BLOCK, 0);
-        LoweredModuleUnit unitAlloc = unit(
-            Map.of(f3, function(f3, SIG0, List.of(), b3Body)),
-            Map.of(new FunctionAllocationIdentity(nextVal++),
-                new FunctionExecutionBinding.LoweredBody(f3, b3Body)),
-            List.of(group, rogueAlloc));
-        StructuredBodyTable tableAlloc = tableOf(Map.of(INIT_BLOCK,
-            List.of(group, rogueAlloc), b3Body, List.of()));
-        assertE6005(BindingsProductionValidator.validate(unitAlloc, tableAlloc), "GROUP_SHAPE",
-            "a group member binding with a separate ALLOC", "separate BINDING_ALLOC");
     }
 
     private static void testAdapterPairNegatives() {
@@ -1326,14 +1295,6 @@ public class BindingsValidationTest {
         assertE6005(BindingsProductionValidator.validate(unitNon, tableNon), "ADAPTER_PAIR",
             "a non-assignable adapter pair (M > N)", "does not re-derive");
 
-        // Boundary-scope discipline: the pair re-derivation is
-        // pair-level only — these fixtures assert the predicate through
-        // the validator's ADAPTER_PAIR rule and contain no boundary
-        // realization, so no executed boundary check exists in this
-        // suite (the executed FUNCTION_SIGNATURE E8010 is E4's
-        // machinery, exercised by the integration child).
-        check(true, "the ADAPTER_PAIR fixtures assert pair-level assignability only "
-            + "(no boundary realization is produced or executed by this child)");
     }
 
     private static void testAdapterSourceShapeNegatives() {

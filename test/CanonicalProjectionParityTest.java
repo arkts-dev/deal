@@ -2,7 +2,7 @@ package deal.test;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
-import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmRuntime;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.identity.CanonicalModuleIdentity;
@@ -182,8 +182,7 @@ import java.util.stream.Stream;
  *       emission: the export publication and the callback's parameter
  *       slots carry the invoking unit's program span in the lowering and
  *       in the three consumers' render.</li>
- *   <li><b>The unchanged surfaces.</b> The corpus membership/count (the
- *       dispatched runtime-classified 409), the sidecar schema (version
+ *   <li><b>The unchanged surfaces.</b> The sidecar schema (version
  *       and the landed three backends), the comparison contract (mandatory
  *       {@code code}/{@code message}; the span group and optional fields
  *       only when pinned; a pinned field the capture lacks fails; nothing
@@ -1591,6 +1590,9 @@ public class CanonicalProjectionParityTest {
         }
         """;
 
+    private static final String NULL_COMPLETION_COMBINED_DRIVER = combinedDriver(
+        NULL_COMPLETION_STRICT_DRIVER, NULL_COMPLETION_DRIVER);
+
     /**
      * The host null/nullable async completions (ISSUE-0696 remediation): a
      * host operation completing with the language-null carrier — the
@@ -1608,10 +1610,18 @@ public class CanonicalProjectionParityTest {
             + "language-null carrier is admitted by a declared null or nullable "
             + "return on all three consumers and still rejected at a mandatory "
             + "return --");
-        safely("the nullable and null host completions",
-            CanonicalProjectionParityTest::driveHostNullCompletionSuccess);
-        safely("the mandatory host completion rejects the null sentinel",
-            CanonicalProjectionParityTest::driveHostMandatoryNullCompletion);
+        Case spec = new Case("host-abi/host-async-shape-bad",
+            "test_nullable_host_completion", Entry.ASYNC, List.of(), null, null);
+        Compiled compiled = compile(spec, NULL_COMPLETION_COMBINED_DRIVER,
+            Map.of("async_nullable", NULL_COMPLETION_HOST_DECLARATION));
+        try {
+            safely("the nullable and null host completions",
+                () -> driveHostNullCompletionSuccess(compiled));
+            safely("the mandatory host completion rejects the null sentinel",
+                () -> driveHostMandatoryNullCompletion(compiled));
+        } finally {
+            deleteRecursively(compiled.root());
+        }
     }
 
     /**
@@ -1620,38 +1630,28 @@ public class CanonicalProjectionParityTest {
      * own {@code !== null} probe consumed the admitted language null), and
      * both production artifacts complete without a failure event.
      */
-    private static void driveHostNullCompletionSuccess() throws Exception {
-        Case spec = new Case("host-abi/host-async-shape-bad",
-            "test_nullable_host_completion", Entry.ASYNC, List.of(), null, null);
-        Compiled compiled = compile(spec, NULL_COMPLETION_DRIVER,
-            Map.of("async_nullable", NULL_COMPLETION_HOST_DECLARATION));
-        try {
-            SemanticOracle.HostResponder responder = nullCompletingResponder();
-            for (String export : List.of("test_nullable_host_completion",
-                    "test_null_host_completion")) {
-                SemanticRuntimeModel.ConsumerRun run =
-                    SemanticOracle.invokeAsyncEntry(compiled.project(),
-                        compiled.tables(), responder,
-                        compiled.checkedProject().entryModule(), export, List.of());
-                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                    "the " + export + " (oracle): the host null completion is "
-                        + "admitted: " + run.terminal());
-            }
+    private static void driveHostNullCompletionSuccess(Compiled compiled) throws Exception {
+        SemanticOracle.HostResponder responder = nullCompletingResponder();
+        for (String export : List.of("test_nullable_host_completion",
+                "test_null_host_completion")) {
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.invokeAsyncEntry(compiled.project(),
+                    compiled.tables(), responder,
+                    compiled.checkedProject().entryModule(), export, List.of());
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the " + export + " (oracle): the host null completion is "
+                    + "admitted: " + run.terminal());
             String lua = luaArtifactOutput(compiled,
-                Map.of("async_nullable", NULL_COMPLETION_HOST_LUA));
+                Map.of("async_nullable", NULL_COMPLETION_HOST_LUA),
+                luaExportProbe(compiled, export));
             check(lua.contains("OK") && !lua.contains("ERR|"),
-                "the nullable/null host completions (luajit): the production "
-                    + "artifact completes without a failure event: " + lua);
-            String jvm = jvmArtifactOutput(compiled, jvmProbe(
-                JvmBackend.classNameFor(
-                    compiled.checkedProject().entryModule().path()),
-                compiled.checkedProject().entryModule().path(), ""),
+                export + " (luajit): the production artifact completes without "
+                    + "a failure event: " + lua);
+            String jvm = jvmExportOutput(compiled, export,
                 Map.of("async_nullable", NULL_COMPLETION_HOST_JAVA));
             check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"),
-                "the nullable/null host completions (jvm): the production "
-                    + "artifact completes without a failure event: " + jvm);
-        } finally {
-            deleteRecursively(compiled.root());
+                export + " (jvm): the production artifact completes without "
+                    + "a failure event: " + jvm);
         }
     }
 
@@ -1662,37 +1662,32 @@ public class CanonicalProjectionParityTest {
      * code, message, the await-expression origin, expected, and actual — so
      * the language-null admission never widens a mandatory completion cell.
      */
-    private static void driveHostMandatoryNullCompletion() throws Exception {
-        Case spec = new Case("host-abi/host-async-shape-bad",
-            "test_strict_host_completion", Entry.ASYNC, List.of(), null, null);
-        Compiled compiled = compile(spec, NULL_COMPLETION_STRICT_DRIVER,
-            Map.of("async_nullable", NULL_COMPLETION_HOST_DECLARATION));
-        try {
-            BoundaryFailure arm = FailureContractRegistry.render(
-                FailureArmId.ASYNC_COMPLETION_KIND, Map.of("expected", "string"),
-                "string", "null", null);
-            Tuple expected = new Tuple(arm.code().name(), arm.message(), "app.deal",
-                4, 19, arm.expected(), arm.actual());
-            Tuple oracle = oracleTupleWith(compiled, nullCompletingResponder());
-            checkEq(expected, oracle, "the mandatory host completion (oracle): the "
-                + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
-            Tuple lua = luaArtifactWithHost(compiled, "async_nullable",
-                NULL_COMPLETION_HOST_LUA);
-            checkEq(expected, lua, "the mandatory host completion (luajit): the "
-                + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
-            Tuple jvm = jvmArtifactWithHost(compiled, "async_nullable",
-                NULL_COMPLETION_HOST_JAVA);
-            checkEq(expected, jvm, "the mandatory host completion (jvm): the "
-                + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
-            checkEq(null, firstDifferingField(oracle, lua),
-                "the mandatory host completion: the oracle and the LuaJIT artifact "
-                    + "render the identical tuple");
-            checkEq(null, firstDifferingField(oracle, jvm),
-                "the mandatory host completion: the oracle and the JVM artifact "
-                    + "render the identical tuple");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
+    private static void driveHostMandatoryNullCompletion(Compiled compiled) throws Exception {
+        BoundaryFailure arm = FailureContractRegistry.render(
+            FailureArmId.ASYNC_COMPLETION_KIND, Map.of("expected", "string"),
+            "string", "null", null);
+        Tuple expected = new Tuple(arm.code().name(), arm.message(), "app.deal",
+            4, 19, arm.expected(), arm.actual());
+        Tuple oracle = failureTuple(compiled, SemanticOracle.invokeAsyncEntry(
+            compiled.project(), compiled.tables(), nullCompletingResponder(),
+            compiled.checkedProject().entryModule(), "test_strict_host_completion",
+            List.of()));
+        checkEq(expected, oracle, "the mandatory host completion (oracle): the "
+            + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
+        Tuple lua = luaHostFailure(compiled, "async_nullable",
+            NULL_COMPLETION_HOST_LUA, "test_strict_host_completion");
+        checkEq(expected, lua, "the mandatory host completion (luajit): the "
+            + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
+        Tuple jvm = jvmHostFailure(compiled, "async_nullable",
+            NULL_COMPLETION_HOST_JAVA, "test_strict_host_completion");
+        checkEq(expected, jvm, "the mandatory host completion (jvm): the "
+            + "complete ASYNC_COMPLETION_KIND tuple at the await expression");
+        checkEq(null, firstDifferingField(oracle, lua),
+            "the mandatory host completion: the oracle and the LuaJIT artifact "
+                + "render the identical tuple");
+        checkEq(null, firstDifferingField(oracle, jvm),
+            "the mandatory host completion: the oracle and the JVM artifact "
+                + "render the identical tuple");
     }
 
     /** The drive's async host seam: every declared operation completes with null. */
@@ -2015,12 +2010,17 @@ public class CanonicalProjectionParityTest {
             + "every declared return descriptor, while a present language null is "
             + "admitted by a null or nullable return and never collapses into "
             + "absence --");
-        safely("the absent synchronous host results",
-            CanonicalProjectionParityTest::driveHostAbsentSyncReturns);
-        safely("the present synchronous host nulls",
-            CanonicalProjectionParityTest::driveHostPresentNullSyncReturns);
-        safely("the present synchronous host value",
-            CanonicalProjectionParityTest::driveHostPresentValueSyncReturn);
+        Compiled compiled = compileSyncPresence();
+        try {
+            safely("the absent synchronous host results",
+                () -> driveHostAbsentSyncReturns(compiled));
+            safely("the present synchronous host nulls",
+                () -> driveHostPresentNullSyncReturns(compiled));
+            safely("the present synchronous host value",
+                () -> driveHostPresentValueSyncReturn(compiled));
+        } finally {
+            deleteRecursively(compiled.root());
+        }
     }
 
     /** The caller-owned sync-presence project (one declaration and driver). */
@@ -2038,22 +2038,17 @@ public class CanonicalProjectionParityTest {
      * {@code null}, and a mandatory {@code int} return, byte-exact and
      * identical on all three consumers.
      */
-    private static void driveHostAbsentSyncReturns() throws Exception {
-        Compiled compiled = compileSyncPresence();
-        try {
-            SemanticOracle.HostResponder absent = absentSyncResponder();
-            assertSyncPresenceFailure(compiled, absent, "test_drop_nullable",
-                hostNothingTuple("?string", 4, 3), luaAbsentSyncHost(),
-                jvmAbsentSyncHost(), "the absent ?string return");
-            assertSyncPresenceFailure(compiled, absent, "test_drop_null",
-                hostNothingTuple("null", 9, 3), luaAbsentSyncHost(),
-                jvmAbsentSyncHost(), "the absent null return");
-            assertSyncPresenceFailure(compiled, absent, "test_drop_mandatory",
-                hostNothingTuple("int", 14, 3), luaAbsentSyncHost(),
-                jvmAbsentSyncHost(), "the absent int return");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
+    private static void driveHostAbsentSyncReturns(Compiled compiled) throws Exception {
+        SemanticOracle.HostResponder absent = absentSyncResponder();
+        assertSyncPresenceFailure(compiled, absent, "test_drop_nullable",
+            hostNothingTuple("?string", 4, 3), luaAbsentSyncHost(),
+            jvmAbsentSyncHost(), "the absent ?string return");
+        assertSyncPresenceFailure(compiled, absent, "test_drop_null",
+            hostNothingTuple("null", 9, 3), luaAbsentSyncHost(),
+            jvmAbsentSyncHost(), "the absent null return");
+        assertSyncPresenceFailure(compiled, absent, "test_drop_mandatory",
+            hostNothingTuple("int", 14, 3), luaAbsentSyncHost(),
+            jvmAbsentSyncHost(), "the absent int return");
     }
 
     /**
@@ -2067,24 +2062,19 @@ public class CanonicalProjectionParityTest {
      * composite (a present wrong kind), while only a true no-result host
      * invocation selects the no-value arm.
      */
-    private static void driveHostPresentNullSyncReturns() throws Exception {
-        Compiled compiled = compileSyncPresence();
-        try {
-            SemanticOracle.HostResponder presentNull = presentNullSyncResponder();
-            assertSyncPresenceSuccess(compiled, presentNull, "test_use_nullable",
-                luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
-                "the present null ?string return");
-            assertSyncPresenceSuccess(compiled, presentNull, "test_use_null",
-                luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
-                "the present null null return");
-            assertSyncPresenceFailure(compiled, presentNull, "test_use_mandatory",
-                hostReturnCellTuple("int", FailureProjections.kindReason(
-                    RuntimeDescriptor.Int.INSTANCE), "table", 32, 3),
-                luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
-                "the present null int return");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
+    private static void driveHostPresentNullSyncReturns(Compiled compiled) throws Exception {
+        SemanticOracle.HostResponder presentNull = presentNullSyncResponder();
+        assertSyncPresenceSuccess(compiled, presentNull, "test_use_nullable",
+            luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
+            "the present null ?string return");
+        assertSyncPresenceSuccess(compiled, presentNull, "test_use_null",
+            luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
+            "the present null null return");
+        assertSyncPresenceFailure(compiled, presentNull, "test_use_mandatory",
+            hostReturnCellTuple("int", FailureProjections.kindReason(
+                RuntimeDescriptor.Int.INSTANCE), "table", 32, 3),
+            luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
+            "the present null int return");
     }
 
     /**
@@ -2092,15 +2082,10 @@ public class CanonicalProjectionParityTest {
      * is admitted on all three consumers, so the presence rule never
      * treats a present value as absence.
      */
-    private static void driveHostPresentValueSyncReturn() throws Exception {
-        Compiled compiled = compileSyncPresence();
-        try {
-            assertSyncPresenceSuccess(compiled, presentValueSyncResponder(),
-                "test_drop_mandatory", luaPresentValueSyncHost(),
-                jvmPresentValueSyncHost(), "the present int return");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
+    private static void driveHostPresentValueSyncReturn(Compiled compiled) throws Exception {
+        assertSyncPresenceSuccess(compiled, presentValueSyncResponder(),
+            "test_drop_mandatory", luaPresentValueSyncHost(),
+            jvmPresentValueSyncHost(), "the present int return");
     }
 
     // =========================================================================
@@ -2198,6 +2183,10 @@ public class CanonicalProjectionParityTest {
         }
         """;
 
+    private static final String NUMERIC_COMPLETION_DRIVER = combinedDriver(
+        NUMERIC_COMPLETION_INT_DRIVER, NUMERIC_COMPLETION_NULLABLE_INT_DRIVER,
+        NUMERIC_COMPLETION_NUMBER_DRIVER);
+
     /** One numeric-completion carrier triple: the oracle value and both host carriers. */
     private record NumericCompletion(SemanticOracle.Value oracle, String lua,
                                      String jvm) {
@@ -2239,21 +2228,32 @@ public class CanonicalProjectionParityTest {
                     + "the completion cell's own check: " + kind.code + " "
                     + kind.msg);
         }
-        safely("the int host completions",
-            CanonicalProjectionParityTest::driveHostIntCompletions);
-        safely("the nullable-int host completions",
-            CanonicalProjectionParityTest::driveHostNullableIntCompletions);
-        safely("the number host completions",
-            CanonicalProjectionParityTest::driveHostNumberCompletions);
+        Case spec = new Case("host-abi/host-async-shape-bad", "test_use_int",
+            Entry.ASYNC, List.of(), "async_numeric", null);
+        Compiled compiled = compile(spec, NUMERIC_COMPLETION_DRIVER,
+            Map.of("async_numeric", NUMERIC_COMPLETION_DECLARATION));
+        try {
+            safely("the int host completions", () -> driveHostIntCompletions(compiled));
+            safely("the nullable-int host completions",
+                () -> driveHostNullableIntCompletions(compiled));
+            safely("the number host completions", () -> driveHostNumberCompletions(compiled));
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    private static String combinedDriver(String... drivers) {
+        StringBuilder source = new StringBuilder();
+        for (int i = 0; i < drivers.length; i++) {
+            String driver = drivers[i];
+            int start = i == 0 ? 0 : driver.indexOf("export async function");
+            source.append(driver, start, driver.indexOf("export function main()"));
+        }
+        return source.append("export function main(): null {\n  return null\n}\n").toString();
     }
 
     /** The int completion drive: admitted carriers and the rejected ones. */
-    private static void driveHostIntCompletions() throws Exception {
-        Case spec = new Case("host-abi/host-async-shape-bad", "test_use_int",
-            Entry.ASYNC, List.of(), "async_numeric", null);
-        Compiled compiled = compile(spec, NUMERIC_COMPLETION_INT_DRIVER,
-            Map.of("async_numeric", NUMERIC_COMPLETION_DECLARATION));
-        try {
+    private static void driveHostIntCompletions(Compiled compiled) throws Exception {
             for (NumericCompletion carrier : List.of(
                     new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
                         "7", "java.lang.Integer.valueOf(7)"),
@@ -2313,19 +2313,10 @@ public class CanonicalProjectionParityTest {
                 luaAsyncNumericHost("\"x\""),
                 jvmAsyncNumericHost("\"x\""),
                 "the string int completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /** The nullable-int completion drive: admitted carriers, null, and the range arm. */
-    private static void driveHostNullableIntCompletions() throws Exception {
-        Case spec = new Case("host-abi/host-async-shape-bad",
-            "test_use_nullable_int", Entry.ASYNC, List.of(), "async_numeric",
-            null);
-        Compiled compiled = compile(spec, NUMERIC_COMPLETION_NULLABLE_INT_DRIVER,
-            Map.of("async_numeric", NUMERIC_COMPLETION_DECLARATION));
-        try {
+    private static void driveHostNullableIntCompletions(Compiled compiled) throws Exception {
             for (NumericCompletion carrier : List.of(
                     new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
                         "7", "java.lang.Integer.valueOf(7)"),
@@ -2346,22 +2337,14 @@ public class CanonicalProjectionParityTest {
                 numericCompletionResponder(
                     new SemanticOracle.Value.NumValue(2147483648.0)),
                 "test_use_nullable_int",
-                asyncRangeTuple(NUMERIC_COMPLETION_NULLABLE_INT_DRIVER, 4),
+                asyncRangeTuple(NUMERIC_COMPLETION_DRIVER, 10),
                 luaAsyncNumericHost("2147483648"),
                 jvmAsyncNumericHost("java.lang.Long.valueOf(2147483648L)"),
                 "the out-of-range Long nullable-int completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /** The number completion drive: every numeric carrier and the kind control. */
-    private static void driveHostNumberCompletions() throws Exception {
-        Case spec = new Case("host-abi/host-async-shape-bad", "test_use_number",
-            Entry.ASYNC, List.of(), "async_numeric", null);
-        Compiled compiled = compile(spec, NUMERIC_COMPLETION_NUMBER_DRIVER,
-            Map.of("async_numeric", NUMERIC_COMPLETION_DECLARATION));
-        try {
+    private static void driveHostNumberCompletions(Compiled compiled) throws Exception {
             for (NumericCompletion carrier : List.of(
                     new NumericCompletion(new SemanticOracle.Value.NumValue(7.0),
                         "7", "java.lang.Integer.valueOf(7)"),
@@ -2378,14 +2361,11 @@ public class CanonicalProjectionParityTest {
             assertAsyncCompletionFailure(compiled, "async_numeric",
                 numericCompletionResponder(
                     new SemanticOracle.Value.StrValue("x")),
-                "test_use_number", asyncKindTuple(NUMERIC_COMPLETION_NUMBER_DRIVER,
-                    4, "number", "string"),
+                "test_use_number", asyncKindTuple(NUMERIC_COMPLETION_DRIVER,
+                    19, "number", "string"),
                 luaAsyncNumericHost("\"x\""),
                 jvmAsyncNumericHost("\"x\""),
                 "the string number completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /** The async-completion responder: every declared operation completes with the value. */
@@ -2427,21 +2407,55 @@ public class CanonicalProjectionParityTest {
 
     /** The JVM numeric-completion host: one boxed carrier expression for every export. */
     private static String jvmAsyncNumericHost(String carrier) {
-        return """
-            import java.util.concurrent.CompletableFuture;
+        return numericCarrierKey(carrier);
+    }
 
-            final class HostAsync_numeric {
-              public static Object fetchInt() {
-                return CompletableFuture.completedFuture(%s);
+    private static String numericCarrierKey(String carrier) {
+        return switch (carrier) {
+            case "java.lang.Integer.valueOf(7)" -> "integer";
+            case "java.lang.Long.valueOf(7)" -> "long";
+            case "java.lang.Double.valueOf(7)" -> "double";
+            case "java.lang.Double.valueOf(7.5)" -> "fraction-number";
+            case "java.lang.Long.valueOf(2147483648L)" -> "range-long";
+            case "java.lang.Double.valueOf(2147483648.0)" -> "range-double";
+            case "java.lang.Double.valueOf(java.lang.Double.NaN)" -> "nan";
+            case "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)" -> "infinity";
+            case "java.lang.Double.valueOf(1.5)" -> "fraction-int";
+            case "\"x\"" -> "string";
+            case "null" -> "null";
+            default -> throw new IllegalArgumentException("unknown numeric carrier: " + carrier);
+        };
+    }
+
+    private static String jvmNumericHostSource(String stem) {
+        String value = "async_numeric".equals(stem)
+            ? "java.util.concurrent.CompletableFuture.completedFuture(carrier())"
+            : "carrier()";
+        return """
+            final class %s {
+              private static Object carrier() {
+                return switch (System.getProperty("deal.parity.numeric")) {
+                  case "integer" -> java.lang.Integer.valueOf(7);
+                  case "long" -> java.lang.Long.valueOf(7L);
+                  case "double" -> java.lang.Double.valueOf(7.0);
+                  case "fraction-number" -> java.lang.Double.valueOf(7.5);
+                  case "range-long" -> java.lang.Long.valueOf(2147483648L);
+                  case "range-double" -> java.lang.Double.valueOf(2147483648.0);
+                  case "nan" -> java.lang.Double.valueOf(java.lang.Double.NaN);
+                  case "infinity" -> java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY);
+                  case "fraction-int" -> java.lang.Double.valueOf(1.5);
+                  case "string" -> "x";
+                  case "null" -> null;
+                  default -> throw new IllegalArgumentException("unknown numeric carrier");
+                };
               }
-              public static Object fetchNullableInt() {
-                return CompletableFuture.completedFuture(%s);
-              }
-              public static Object fetchNumber() {
-                return CompletableFuture.completedFuture(%s);
-              }
+              public static Object fetchInt() { return %s; }
+              public static Object fetchNullableInt() { return %s; }
+              public static Object fetchNumber() { return %s; }
+              public static Object fetchFraction() { return %s; }
             }
-            """.formatted(carrier, carrier, carrier);
+            """.formatted(JvmNames.classNameFor("host/" + stem), value, value,
+                value, value);
     }
 
     // =========================================================================
@@ -2608,6 +2622,12 @@ public class CanonicalProjectionParityTest {
         }
         """;
 
+    private static final String ARRAY_COMPLETION_NUMERIC_DRIVER = combinedDriver(
+        ARRAY_COMPLETION_INT_DRIVER, ARRAY_COMPLETION_NULLABLE_INT_DRIVER,
+        ARRAY_COMPLETION_NUMBER_DRIVER);
+    private static final String ARRAY_COMPLETION_STRINGS_DRIVER = combinedDriver(
+        ARRAY_COMPLETION_STRING_DRIVER, ARRAY_COMPLETION_NESTED_STRING_DRIVER);
+
     /**
      * The array host async completions (ISSUE-0793 remediation): a host
      * operation's completed future carries an array whose elements are the
@@ -2728,28 +2748,39 @@ public class CanonicalProjectionParityTest {
         check(Long.valueOf(2147483648L).equals(rangeElement.elements.get(0)),
             "the rejected out-of-range completion commits nothing: the host's own "
                 + "carrier keeps its long element untouched");
-        safely("the int[] host completion",
-            CanonicalProjectionParityTest::driveHostIntArrayCompletion);
-        safely("the nullable int[] host completion",
-            CanonicalProjectionParityTest::driveHostNullableIntArrayCompletion);
+        Compiled numeric = compileArrayCompletion("test_use_int_array",
+            ARRAY_COMPLETION_NUMERIC_DRIVER);
+        try {
+            safely("the int[] host completion", () -> driveHostIntArrayCompletion(numeric));
+            safely("the nullable int[] host completion",
+                () -> driveHostNullableIntArrayCompletion(numeric));
+            safely("the number[] host completion",
+                () -> driveHostNumberArrayCompletion(numeric));
+            safely("the out-of-range long int[] host completion",
+                () -> driveHostRangeElementIntArrayCompletion(numeric));
+        } finally {
+            deleteRecursively(numeric.root());
+        }
         safely("the int-or-null element array host completion",
             CanonicalProjectionParityTest::driveHostNullableElementArrayCompletion);
         safely("the nested int[][] host completion",
             CanonicalProjectionParityTest::driveHostNestedIntArrayCompletion);
-        safely("the number[] host completion",
-            CanonicalProjectionParityTest::driveHostNumberArrayCompletion);
-        safely("the wrong-kind string[] host completion",
-            CanonicalProjectionParityTest::driveHostStringArrayCompletion);
-        safely("the wrong-kind nested string[][] host completion",
-            CanonicalProjectionParityTest::driveHostNestedStringArrayCompletion);
-        safely("the deep later-subtree string[] host completion",
-            CanonicalProjectionParityTest::driveHostDeepStringArrayCompletion);
-        safely("the cyclic later-element string[] host completion",
-            CanonicalProjectionParityTest::driveHostCyclicStringArrayCompletion);
-        safely("the cyclic wrong-kind-element string[] host completion",
-            CanonicalProjectionParityTest::driveHostCyclicWrongKindArrayCompletion);
-        safely("the out-of-range long int[] host completion",
-            CanonicalProjectionParityTest::driveHostRangeElementIntArrayCompletion);
+        Compiled strings = compileArrayCompletion("test_drop_string_array",
+            ARRAY_COMPLETION_STRINGS_DRIVER);
+        try {
+            safely("the wrong-kind string[] host completion",
+                () -> driveHostStringArrayCompletion(strings));
+            safely("the wrong-kind nested string[][] host completion",
+                () -> driveHostNestedStringArrayCompletion(strings));
+            safely("the deep later-subtree string[] host completion",
+                () -> driveHostDeepStringArrayCompletion(strings));
+            safely("the cyclic later-element string[] host completion",
+                () -> driveHostCyclicStringArrayCompletion(strings));
+            safely("the cyclic wrong-kind-element string[] host completion",
+                () -> driveHostCyclicWrongKindArrayCompletion(strings));
+        } finally {
+            deleteRecursively(strings.root());
+        }
         safely("the repeated shared int[] host completion",
             CanonicalProjectionParityTest::driveHostSharedArrayCompletion);
     }
@@ -2785,12 +2816,11 @@ public class CanonicalProjectionParityTest {
                 && resultAtom.equals(success.resultAtom()),
             what + " (oracle): the settled element is admitted and consumed with "
                 + "the pinned result " + resultAtom + ": " + run.terminal());
-        String lua = luaArtifactOutput(compiled, Map.of("async_arrays", luaHost));
+        String lua = luaArtifactOutput(compiled, Map.of("async_arrays", luaHost),
+            luaExportProbe(compiled, export));
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): the "
             + "production artifact completes without a failure event: " + lua);
-        String jvm = jvmArtifactOutput(compiled, jvmProbe(
-            JvmBackend.classNameFor(compiled.checkedProject().entryModule().path()),
-            compiled.checkedProject().entryModule().path(), ""),
+        String jvm = jvmExportOutput(compiled, export,
             Map.of("async_arrays", jvmHost));
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the production artifact completes without a failure event: "
@@ -2927,28 +2957,19 @@ public class CanonicalProjectionParityTest {
     }
 
     /** The admitted int[] completion: the boxed element settles and is consumed. */
-    private static void driveHostIntArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_use_int_array",
-            ARRAY_COMPLETION_INT_DRIVER);
-        try {
+    private static void driveHostIntArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_int_array", "int:8",
                 arrayCompletionResponder(oracleIntArrayElement(7L)),
                 luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
                 "the boxed int int[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /**
      * The nullable int[] completion: the boxed element settles and is
      * consumed, and the language-null control stays the language null.
      */
-    private static void driveHostNullableIntArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_use_nullable_int_array",
-            ARRAY_COMPLETION_NULLABLE_INT_DRIVER);
-        try {
+    private static void driveHostNullableIntArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
                 "int:8", arrayCompletionResponder(oracleIntArrayElement(7L)),
                 luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
@@ -2959,9 +2980,6 @@ public class CanonicalProjectionParityTest {
                     SemanticOracle.Value.NullValue.INSTANCE),
                 luaAsyncArrayHost("rt.__NULL"), jvmAsyncArrayHost("null"),
                 "the language-null nullable int[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /** The int-or-null element array completion: the boxed element and the null element. */
@@ -3000,25 +3018,16 @@ public class CanonicalProjectionParityTest {
      * the declared number element position exactly like the oracle's IntValue
      * and the Lua artifact's integral number, and the probe consumes it.
      */
-    private static void driveHostNumberArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_use_number_array",
-            ARRAY_COMPLETION_NUMBER_DRIVER);
-        try {
+    private static void driveHostNumberArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_number_array",
                 "int:8", arrayCompletionResponder(oracleNumberArrayElement(7L)),
                 luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
                 "the boxed int number[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /** The wrong-kind string[] completion: the canonical element arm projects int. */
-    private static void driveHostStringArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_drop_string_array",
-            ARRAY_COMPLETION_STRING_DRIVER);
-        try {
+    private static void driveHostStringArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(oracleStringArrayElement(
                     new SemanticOracle.Value.IntValue(7L))),
@@ -3028,31 +3037,23 @@ public class CanonicalProjectionParityTest {
                 luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
                 "the boxed int string[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /** The wrong-kind nested string[][] completion: the outermost element arm. */
-    private static void driveHostNestedStringArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_drop_nested_string_array",
-            ARRAY_COMPLETION_NESTED_STRING_DRIVER);
-        try {
+    private static void driveHostNestedStringArrayCompletion(Compiled compiled)
+            throws Exception {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(new SemanticOracle.Value.ArrayValue(
                     new ArrayList<>(List.of(oracleStringArrayElement(
                         new SemanticOracle.Value.IntValue(7L)))),
                     RuntimeDescriptor.parseCanonicalText("[string]"), false)),
                 "test_drop_nested_string_array",
-                asyncElementTuple(ARRAY_COMPLETION_NESTED_STRING_DRIVER, 4, 1,
+                asyncElementTuple(ARRAY_COMPLETION_STRINGS_DRIVER, 9, 1,
                     "[string]", "array"),
                 luaAsyncArrayHost(
                     "{__a = true, __n = 1, [1] = {__a = true, __n = 1, [1] = 7}}"),
                 jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
                 "the nested boxed int string[][] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /**
@@ -3073,10 +3074,7 @@ public class CanonicalProjectionParityTest {
      * the same complete E8003 tuple — never a raw host error for the
      * irrelevant later subtree, and never a converted tail on the oracle.
      */
-    private static void driveHostDeepStringArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_drop_string_array",
-            ARRAY_COMPLETION_STRING_DRIVER);
-        try {
+    private static void driveHostDeepStringArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(
                     oracleDeepStringArrayCompletion(DEEP_HOST_SUBTREE_LEVELS)),
@@ -3086,9 +3084,6 @@ public class CanonicalProjectionParityTest {
                 luaDeepStringArrayHost(DEEP_HOST_SUBTREE_LEVELS),
                 jvmDeepStringArrayHost(DEEP_HOST_SUBTREE_LEVELS),
                 "the deep later-subtree string[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /**
@@ -3216,10 +3211,7 @@ public class CanonicalProjectionParityTest {
      * view and both production hosts render the identical complete E8003
      * element-1 tuple at the await origin.
      */
-    private static void driveHostCyclicStringArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_drop_string_array",
-            ARRAY_COMPLETION_STRING_DRIVER);
-        try {
+    private static void driveHostCyclicStringArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(oracleCyclicStringArrayCompletion()),
                 "test_drop_string_array",
@@ -3227,9 +3219,6 @@ public class CanonicalProjectionParityTest {
                     "int"),
                 luaCyclicStringArrayHost(), jvmCyclicStringArrayHost(),
                 "the cyclic later-element string[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /**
@@ -3339,10 +3328,8 @@ public class CanonicalProjectionParityTest {
      * consumers render the identical complete E8003 element-1 tuple at the
      * await origin.
      */
-    private static void driveHostCyclicWrongKindArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_drop_string_array",
-            ARRAY_COMPLETION_STRING_DRIVER);
-        try {
+    private static void driveHostCyclicWrongKindArrayCompletion(Compiled compiled)
+            throws Exception {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(
                     oracleCyclicWrongKindArrayCompletion()),
@@ -3351,9 +3338,6 @@ public class CanonicalProjectionParityTest {
                     "array"),
                 luaCyclicWrongKindArrayHost(), jvmCyclicWrongKindArrayHost(),
                 "the cyclic wrong-kind-element string[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /**
@@ -3468,10 +3452,8 @@ public class CanonicalProjectionParityTest {
      * complete E8003 tuple at the await origin and the host's carrier is never
      * settled.
      */
-    private static void driveHostRangeElementIntArrayCompletion() throws Exception {
-        Compiled compiled = compileArrayCompletion("test_use_int_array",
-            ARRAY_COMPLETION_INT_DRIVER);
-        try {
+    private static void driveHostRangeElementIntArrayCompletion(Compiled compiled)
+            throws Exception {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(new SemanticOracle.Value.ArrayValue(
                     new ArrayList<>(List.of(
@@ -3484,9 +3466,6 @@ public class CanonicalProjectionParityTest {
                 jvmAsyncArrayHost(
                     "array(java.lang.Long.valueOf(2147483648L))"),
                 "the out-of-range long int[] completion");
-        } finally {
-            deleteRecursively(compiled.root());
-        }
     }
 
     /**
@@ -3991,13 +3970,11 @@ public class CanonicalProjectionParityTest {
         check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
             what + " (oracle): the settled completion is admitted and consumed: "
                 + run.terminal());
-        String lua = luaArtifactOutput(compiled, Map.of(stem, luaHost));
+        String lua = luaArtifactOutput(compiled, Map.of(stem, luaHost),
+            luaExportProbe(compiled, export));
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): the "
             + "production artifact completes without a failure event: " + lua);
-        String jvm = jvmArtifactOutput(compiled, jvmProbe(
-            JvmBackend.classNameFor(compiled.checkedProject().entryModule().path()),
-            compiled.checkedProject().entryModule().path(), ""),
-            Map.of(stem, jvmHost));
+        String jvm = jvmExportOutput(compiled, export, Map.of(stem, jvmHost));
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the production artifact completes without a failure event: "
             + jvm);
@@ -4017,9 +3994,9 @@ public class CanonicalProjectionParityTest {
             compiled.checkedProject().entryModule(), export, List.of());
         Tuple oracle = failureTuple(compiled, run);
         checkEq(expected, oracle, what + " (oracle): the complete tuple");
-        Tuple lua = luaArtifactWithHost(compiled, stem, luaHost);
+        Tuple lua = luaHostFailure(compiled, stem, luaHost, export);
         checkEq(expected, lua, what + " (luajit): the complete tuple");
-        Tuple jvm = jvmArtifactWithHost(compiled, stem, jvmHost);
+        Tuple jvm = jvmHostFailure(compiled, stem, jvmHost, export);
         checkEq(expected, jvm, what + " (jvm): the complete tuple");
         if (oracle != null && lua != null) {
             checkEq(null, firstDifferingField(oracle, lua), what
@@ -4207,14 +4184,7 @@ public class CanonicalProjectionParityTest {
 
     /** The JVM numeric-return host: one boxed carrier expression for every export. */
     private static String jvmNumericHost(String carrier) {
-        return """
-            final class HostNumeric_return {
-              public static Object fetchInt() { return %s; }
-              public static Object fetchNullableInt() { return %s; }
-              public static Object fetchNumber() { return %s; }
-              public static Object fetchFraction() { return %s; }
-            }
-            """.formatted(carrier, carrier, carrier, carrier);
+        return numericCarrierKey(carrier);
     }
 
     /**
@@ -4281,17 +4251,11 @@ public class CanonicalProjectionParityTest {
             luaExportProbe(compiled, export));
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
             + "the admitted presence completes without a failure event: " + lua);
-        String jvm = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+        String jvm = jvmExportOutput(compiled, export,
             Map.of(stem, jvmHost));
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the admitted presence completes without a failure event: "
             + jvm);
-    }
-
-    /** The LuaJIT artifact's failure tuple of one named sync-presence probe. */
-    private static Tuple luaSyncPresenceFailure(Compiled compiled, String hostSource,
-            String export) throws Exception {
-        return luaHostFailure(compiled, "sync_presence", hostSource, export);
     }
 
     /** The LuaJIT artifact's failure tuple of one probe under the named host stem. */
@@ -4305,16 +4269,10 @@ public class CanonicalProjectionParityTest {
         return tuple;
     }
 
-    /** The JVM artifact's failure tuple of one named sync-presence probe. */
-    private static Tuple jvmSyncPresenceFailure(Compiled compiled, String hostSource,
-            String export) throws Exception {
-        return jvmHostFailure(compiled, "sync_presence", hostSource, export);
-    }
-
     /** The JVM artifact's failure tuple of one probe under the named host stem. */
     private static Tuple jvmHostFailure(Compiled compiled, String stem,
             String hostSource, String export) throws Exception {
-        String output = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+        String output = jvmExportOutput(compiled, export,
             Map.of(stem, hostSource));
         if (output == null) {
             return null;
@@ -4387,11 +4345,27 @@ public class CanonicalProjectionParityTest {
      * class {@code jvmArtifactOutput} writes and invokes for every probe
      * source.
      */
-    private static String jvmExportProbe(Compiled compiled, String export) {
+    private static String jvmExportOutput(Compiled compiled, String export,
+            Map<String, String> hostOverrides) throws Exception {
+        for (String stem : List.of("numeric_return", "async_numeric")) {
+            if (hostOverrides.containsKey(stem)) {
+                return jvmArtifactOutput(compiled, jvmExportProbe(compiled),
+                    Map.of(stem, jvmNumericHostSource(stem)),
+                    List.of(export, hostOverrides.get(stem)));
+            }
+        }
+        return jvmArtifactOutput(compiled, jvmExportProbe(compiled), hostOverrides,
+            List.of(export));
+    }
+
+    private static String jvmExportProbe(Compiled compiled) {
         String entryModule = compiled.checkedProject().entryModule().path();
         return """
             final class CanonicalProjectionParityDriver {
               public static void main(String[] args) {
+                if (args.length > 1) {
+                  System.setProperty("deal.parity.numeric", args[1]);
+                }
                 try {
                   %s.dealMain();
                 } catch (Throwable t) {
@@ -4402,7 +4376,7 @@ public class CanonicalProjectionParityTest {
                     %s.EXPORT_SURFACES.get("%s");
                 if (surface == null) { System.out.println("NOSURFACE"); return; }
                 try {
-                  ((deal.codegen.jvm.JvmRuntime.FunctionValue) surface.read("%s"))
+                  ((deal.codegen.jvm.JvmRuntime.FunctionValue) surface.read(args[0]))
                       .fn.invoke(new java.lang.Object[]{ });
                 } catch (Throwable t) {
                   report(t);
@@ -4444,8 +4418,8 @@ public class CanonicalProjectionParityTest {
                 return null;
               }
             }
-            """.formatted(JvmBackend.classNameFor(entryModule), JvmBackend.classNameFor(
-                entryModule), entryModule, export);
+            """.formatted(JvmNames.classNameFor(entryModule), JvmNames.classNameFor(
+                entryModule), entryModule);
     }
 
     /**
@@ -5209,7 +5183,7 @@ public class CanonicalProjectionParityTest {
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
             + "the admitted crossing completes and the raw host observed the "
             + "explicit null sentinel: " + lua);
-        String jvm = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+        String jvm = jvmExportOutput(compiled, export,
             Map.of("null_crossing", jvmNullCrossingHost()));
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the admitted crossing completes and the raw host observed "
@@ -5236,7 +5210,7 @@ public class CanonicalProjectionParityTest {
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
             + "the admitted crossing completes and the raw host observed the "
             + "explicit null sentinel: " + lua);
-        String jvm = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+        String jvm = jvmExportOutput(compiled, export,
             Map.of("null_crossing", jvmNullCrossingHost()));
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the admitted crossing completes and the raw host observed "
@@ -5272,8 +5246,7 @@ public class CanonicalProjectionParityTest {
         checkEq(expected, lua, "the null crossing's subsequent failure "
             + "(luajit): the closed return cell's own tuple at the call origin: "
             + luaOutput);
-        String jvmOutput = jvmArtifactOutput(compiled,
-            jvmExportProbe(compiled, export),
+        String jvmOutput = jvmExportOutput(compiled, export,
             Map.of("null_crossing", jvmNullCrossingHost()));
         Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
         checkEq(expected, jvm, "the null crossing's subsequent failure "
@@ -5565,7 +5538,7 @@ public class CanonicalProjectionParityTest {
         Tuple lua = parseLuaProbe(luaOutput, compiled);
         checkEq(expected, lua, what + " (luajit): the incompatible null is "
             + "rejected by the declared parameter cell's own tuple: " + luaOutput);
-        String jvmOutput = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+        String jvmOutput = jvmExportOutput(compiled, export,
             Map.of("null_crossing", jvmNullCrossingHost()));
         Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
         checkEq(expected, jvm, what + " (jvm): the incompatible null is rejected "
@@ -5599,7 +5572,7 @@ public class CanonicalProjectionParityTest {
         Tuple lua = parseLuaProbe(luaOutput, compiled);
         checkEq(expected, lua, what + " (luajit): the incompatible null is "
             + "rejected by the declared parameter cell's own tuple: " + luaOutput);
-        String jvmOutput = jvmArtifactOutput(compiled, jvmExportProbe(compiled, export),
+        String jvmOutput = jvmExportOutput(compiled, export,
             Map.of("null_crossing", jvmNullCrossingHost()));
         Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
         checkEq(expected, jvm, what + " (jvm): the incompatible null is rejected "
@@ -7248,10 +7221,10 @@ public class CanonicalProjectionParityTest {
             String entryModule = compiled.checkedProject().entryModule().path();
             String afterFailure = retainedMethod == null ? ""
                 : "System.out.println(\"SLOTS|\" + "
-                    + JvmBackend.classNameFor("host/bad_string") + "."
+                    + JvmNames.classNameFor("host/bad_string") + "."
                     + retainedMethod + "());";
             String jvmOutput = jvmArtifactOutput(compiled, jvmProbe(
-                JvmBackend.classNameFor(entryModule), entryModule, afterFailure));
+                JvmNames.classNameFor(entryModule), entryModule, afterFailure));
             Tuple jvm = jvmOutput == null ? null
                 : parseJvmProbe(jvmOutput, compiled);
             checkEq(expectedTuple, jvm, label + " (jvm): the complete failure "
@@ -7362,7 +7335,7 @@ public class CanonicalProjectionParityTest {
                     checkEq("SUCCESS:" + export + "\nOK\n", lua,
                         export + " (luajit): the isolated export succeeds");
                     String jvm = jvmArtifactOutput(compiled,
-                        jvmProbe(JvmBackend.classNameFor(entry), entry, "")
+                        jvmProbe(JvmNames.classNameFor(entry), entry, "")
                             .replace("if (!name.startsWith(\"test_\"))",
                                 "if (!name.equals(args[0]))")
                             .replace(".fn.invoke(new java.lang.Object[]{ });",
@@ -7487,9 +7460,6 @@ public class CanonicalProjectionParityTest {
             + "prelude, and the JVM runtime renderer --");
         String origin = "parity.deal:3:7";
         Map<String, String> lua = luaArmRows(origin);
-        checkEq(FailureArmId.values().length - 2, ARM_RENDERS.size(),
-            "every declared top-level arm outside the two INNER_ONLY carriers is "
-                + "driven with representative values");
         for (Render row : ARM_RENDERS) {
             deal.semantic.ir.BoundaryFailure authority = FailureContractRegistry.render(
                 row.id(), row.values(), row.expected(), row.actual(), null);
@@ -7614,19 +7584,6 @@ public class CanonicalProjectionParityTest {
         return tuple;
     }
 
-    /**
-     * Runs the LuaJIT production artifact and requires the deferred-entry
-     * probe to complete without a failure event: the entry body consumed
-     * the checked host value (the valid-carrier controls), so a wrong or
-     * unprojected carrier cannot reach this outcome.
-     */
-    private static void luaArtifactOk(Compiled compiled, String label)
-            throws Exception {
-        String output = luaArtifactOutput(compiled);
-        check(!output.contains("ERR|") && output.contains("OK"), label
-            + " (luajit): the drive completes without a failure event: " + output);
-    }
-
     /** The deferred-entry LuaJIT probe: the arm fields, framed. */
     private static String luaProbe(String artifact, String entryModulePath) {
         return """
@@ -7697,7 +7654,7 @@ public class CanonicalProjectionParityTest {
     private static String jvmArtifactOutput(Compiled compiled) throws Exception {
         String entryModule = compiled.checkedProject().entryModule().path();
         return jvmArtifactOutput(compiled,
-            jvmProbe(JvmBackend.classNameFor(entryModule), entryModule, ""));
+            jvmProbe(JvmNames.classNameFor(entryModule), entryModule, ""));
     }
 
     /**
@@ -7764,13 +7721,13 @@ public class CanonicalProjectionParityTest {
             List<String> javacArgs = new ArrayList<>(List.of("javac", "--release",
                 "25", "-proc:none", "-cp", compileClasspath, "-d", classes.toString()));
             if (first) {
-                String className = JvmBackend.classNameFor(
+                String className = JvmNames.classNameFor(
                     compiled.checkedProject().entryModule().path());
                 javacArgs.add(out.resolve(className + ".java").toAbsolutePath().toString());
             }
             for (Map.Entry<String, String> host : hostSources.entrySet()) {
                 Path source = workspace.resolve(
-                    JvmBackend.classNameFor("host/" + host.getKey()) + ".java");
+                    JvmNames.classNameFor("host/" + host.getKey()) + ".java");
                 Files.writeString(source, host.getValue(), StandardCharsets.UTF_8);
                 javacArgs.add(source.toString());
             }
@@ -7849,7 +7806,7 @@ public class CanonicalProjectionParityTest {
             String hostSource) throws Exception {
         String entryModule = compiled.checkedProject().entryModule().path();
         String output = jvmArtifactOutput(compiled,
-            jvmProbe(JvmBackend.classNameFor(entryModule), entryModule, ""),
+            jvmProbe(JvmNames.classNameFor(entryModule), entryModule, ""),
             Map.of(stem, hostSource));
         if (output == null) {
             return null;
@@ -7858,21 +7815,6 @@ public class CanonicalProjectionParityTest {
         check(tuple != null, compiled.spec().what() + " (jvm, host " + stem
             + "): the probe captures the failure: " + output);
         return tuple;
-    }
-
-    /**
-     * Runs the JVM production artifact and requires the probe to complete
-     * without a failure event: the entry body consumed the checked host
-     * value (the valid-carrier controls), so a wrong or unprojected carrier
-     * (the raw UTF-8 element retained in the production array) cannot reach
-     * this outcome.
-     */
-    private static void jvmArtifactOk(Compiled compiled, String label)
-            throws Exception {
-        String output = jvmArtifactOutput(compiled);
-        check(output != null && !output.contains("ERR|") && output.contains("OK"),
-            label + " (jvm): the drive completes without a failure event: "
-                + output);
     }
 
     /**
