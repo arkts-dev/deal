@@ -686,6 +686,18 @@ public final class LuaSemanticEmitter {
 
             if (bindsHostRuntime()) {
                 out.append("local __rt = require(\"deal.runtime\")\n");
+                // The one language-null representation (ISSUE-0814): the
+                // chunk's null sentinel becomes the deployed runtime's own
+                // __rt.__NULL, the identity every representation-only
+                // runtime matcher (the loaded host wrapper's recursive
+                // array/nullable rows) and every raw host observes. One
+                // shared object means a shared array carrier's null elements
+                // cross a host boundary with no projection at all: the
+                // carrier keeps its identity, its aliases, and the host's
+                // in-place writes, exactly like a null-free array (a copy
+                // would detach all three). The prelude's own sentinel
+                // remains the fallback of a chunk that binds no runtime.
+                out.append("__NULL = __rt.__NULL\n");
                 out.append("__rtNull = __rt.__NULL\n");
                 out.append("__rtMissing = __rt.__MISSING\n");
                 // The host-load arm renderer (canonical failure-projection
@@ -782,6 +794,10 @@ public final class LuaSemanticEmitter {
             } else if (bindsBytesRuntime()) {
 
                 out.append("local __rt = require(\"deal.runtime\")\n");
+                // The bytes session binds the same deployed runtime, so it
+                // adopts the same one language-null representation
+                // (ISSUE-0814): the chunk's sentinel aliases __rt.__NULL.
+                out.append("__NULL = __rt.__NULL\n");
                 out.append("__rtNull = __rt.__NULL\n");
                 out.append("__rtMissing = __rt.__MISSING\n");
             }
@@ -6330,15 +6346,16 @@ public final class LuaSemanticEmitter {
             out.append("    else\n");
             out.append("      __tA.value = __tA.handle.__result\n");
             // The completion cell consumes the language null (the runtime's
-            // own __rt.__NULL sentinel, a value distinct from this chunk's
-            // __NULL) as the neutral null the completion effect, the
-            // completion boundary and the admitted slot all observe: the
-            // production handle path is the one route that supplies the
-            // deployed runtime's sentinel, so it normalizes before the
-            // ASYNC_COMPLETE_RETURN effect atomization and before the
-            // __bcheck null/nullable admissions (a null or nullable cell
-            // admits nil, exactly like the oracle's NullValue and the JVM's
-            // null carrier; the await origin stays the lowering's own).
+            // own __rt.__NULL sentinel — the very object this chunk's own
+            // __NULL aliases whenever it binds the deployed runtime) as the
+            // neutral nil the completion effect, the completion boundary
+            // and the admitted slot all observe: the production handle path
+            // is the one route that supplies the runtime's sentinel raw, so
+            // it normalizes before the ASYNC_COMPLETE_RETURN effect
+            // atomization and before the __bcheck null/nullable admissions
+            // (a null or nullable cell admits nil, exactly like the oracle's
+            // NullValue and the JVM's null carrier; the await origin stays
+            // the lowering's own).
             out.append("      if __tA.value == __rt.__NULL then __tA.value = nil end\n");
             if (trace) {
                 out.append("      io.stderr:write(\"F|ASYNC_COMPLETE_RETURN|-|\""
@@ -8250,64 +8267,6 @@ __factories.__hostDeclKind = function(desc)
   end
   return desc
 end
--- The host-facing projection of one declared host-crossing array value:
--- a fresh carrier whose null elements are the deployed runtime's explicit
--- null sentinel — the representation the loaded matcher admits at a
--- nullable element position and the raw host observes, exactly like the
--- oracle's NullValue element and the JVM's present null — recursing
--- through the nested array positions the declared descriptor names. A nil
--- descriptor is the async crossing's mark-directed walk (the recorded
--- argument carries no declared position beside it), which projects every
--- nested array carrier. The source carrier is never mutated: the DEAL
--- side keeps its own language-null sentinel, its identity, and its
--- aliases (the host crossing's shared-value discipline), and the
--- projection returns the source unchanged when no element at any walked
--- depth is the chunk's null, so a null-free array keeps the landed
--- shared-value crossing. The identity memo keeps one source array one
--- projected carrier (an aliased or repeated inner array stays one host
--- array) and makes a self-referential carrier terminate. The helper
--- rides the chunk's one factory store like the other host-crossing
--- helpers (no main-chunk local), so a retained export keeps its own
--- chunk's projection.
-__factories.__hostArgArray = function(desc, v, memo)
-  if type(v) ~= "table" or not v.__a then return v end
-  local inner = nil
-  local elementIsArray = desc == nil
-  if desc ~= nil then
-    local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
-    if string.sub(body, 1, 1) ~= "[" then return v end
-    inner = string.sub(body, 2, -2)
-    local innerBody = string.sub(inner, 1, 1) == "?"
-      and string.sub(inner, 2) or inner
-    elementIsArray = string.sub(innerBody, 1, 1) == "["
-  end
-  if memo == nil then memo = {} end
-  local mapped = memo[v]
-  if mapped ~= nil then return mapped end
-  local out = {__a = true, __n = v.__n, __nK = v.__nK}
-  memo[v] = out
-  local changed = false
-  for i = 1, #v do
-    local element = v[i]
-    if element == __NULL then
-      out[i] = __rt.__NULL
-      changed = true
-    elseif elementIsArray and type(element) == "table" and element.__a then
-      local nested = __factories.__hostArgArray(inner, element, memo)
-      out[i] = nested
-      if nested ~= element then
-        changed = true
-      end
-    else
-      out[i] = element
-    end
-  end
-  if not changed then
-    memo[v] = v
-    return v
-  end
-  return out
-end
 -- The admission of one declared host position before the loaded matcher:
 -- the chunk's language-null representation — the raw nil the null literal
 -- emits and the chunk's own __NULL sentinel — crosses as the deployed
@@ -8347,15 +8306,14 @@ __factories.__hostParamAdmit = function(desc, index, v, origin)
       origin, desc, __typedBoundaryKind("missing", v)), 0)
   end
   if v ~= nil and v ~= __NULL then
-    -- The declared array position's host-facing projection: a projected
-    -- carrier carries the deployed runtime's explicit null sentinel at
-    -- every null element (nested declared array positions recurse), while
-    -- the DEAL-side carrier keeps its own sentinel and identity. The
-    -- projection is the identity for a null-free array and for every
-    -- non-array declared position.
-    if type(v) == "table" and v.__a then
-      return __factories.__hostArgArray(desc, v)
-    end
+    -- The shared carrier of a declared array position crosses unchanged,
+    -- null elements included: the chunk's null sentinel is the deployed
+    -- runtime's own __rt.__NULL (the runtime-binding preamble aliases
+    -- them), so the loaded matcher admits a null element at a nullable
+    -- element position and the raw host observes the sentinel, while the
+    -- DEAL side keeps the same carrier object — its identity, its aliases,
+    -- and every host in-place write (ISSUE-0814). No projection runs, so a
+    -- repeated or nested reference stays one host array.
     return v
   end
   if desc == "null" or string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
@@ -8368,8 +8326,9 @@ end
 -- matcher (the wrapper's cell), projected through the pinned E8010
 -- parameter template at the call origin. The crossing admits a
 -- language-null representation only at a declared null or nullable
--- position (normalized to the deployed runtime's explicit null sentinel;
--- the two sentinels are distinct values) and renders the closed
+-- position (normalized to the deployed runtime's explicit null sentinel,
+-- the one the chunk's own sentinel aliases in a runtime-binding chunk) and
+-- renders the closed
 -- parameter cell's own failure at an incompatible descriptor before the
 -- loaded matcher can project its carrier. A genuine absence (the
 -- __MISSING marker, the chunk's own or the deployed runtime's) is never
@@ -8420,9 +8379,8 @@ end
 -- projection recurses through declared array element positions, so a
 -- nested array the host returned is a usable DEAL array at every level
 -- (the chunk's own carrier mark), never a plain table the ordinary DEAL
--- boundaries would reject. A language-null position is not an array: both
--- null sentinels are preserved before any recursion (the deployed
--- runtime's own sentinel normalizes to the chunk's), so a null nested
+-- boundaries would reject. A language-null position is not an array: the
+-- one shared null sentinel is preserved before any recursion, so a null nested
 -- array element stays the language null, never an empty array carrier a
 -- host-boundary read would observe as a different value. The recursion
 -- carries an identity-keyed memo through the complete return projection:
@@ -8511,20 +8469,14 @@ end
 -- by the next chunk) without spending a main-chunk local.
 __factories.__hostAsyncArg = function(v)
   if v == nil or v == __NULL then return __rt.__NULL end
-  if type(v) == "table" then
-    if v.__jn then return v.d end
-    -- The recorded array argument's host-facing projection, the async
-    -- twin of the sync crossing's declared array parameter cell: the raw
-    -- host observes the deployed runtime's explicit null sentinel at every
-    -- null element (nested arrays included) while the DEAL-side carrier
-    -- keeps its own sentinel and identity. The async-start crossing
-    -- carries no declared parameter descriptor (the loaded wrapper's own
-    -- matcher checks the projected values at the start), so the carrier's
-    -- own array mark selects the mark-directed walk.
-    if v.__a then
-      return __factories.__hostArgArray(nil, v)
-    end
-  end
+  if type(v) == "table" and v.__jn then return v.d end
+  -- Every other value crosses unchanged in both directions, the shared
+  -- array carrier included: the chunk's null sentinel is the deployed
+  -- runtime's own __rt.__NULL (the runtime-binding preamble aliases
+  -- them), so the loaded wrapper's matcher admits a null element at a
+  -- nullable position and the raw host observes the sentinel while the
+  -- DEAL side keeps the carrier's identity, its aliases, and the host's
+  -- in-place writes (ISSUE-0814).
   return v
 end
 -- The host-facing projection of one declared function position (H7): the
@@ -8784,13 +8736,15 @@ end
 local __MISSING = setmetatable({}, {__tostring = function() return "missing" end})
 local __NULL = setmetatable({}, {__tostring = function() return "null" end})
 -- The deployed runtime's own language-null sentinel (deal/runtime.lua's
--- __rt.__NULL — a value distinct from this chunk's __NULL). The chunk's
--- runtime binding assigns it when the chunk binds the deployed runtime
--- (a host or bytes session); a host-free chunk leaves it nil. The
--- typed-boundary projection classifies it as the language null exactly
--- like the chunk's own sentinel, so a runtime-produced carrier (a
--- host-crossed table entry, a runtime class field) reaching a failing
--- walk position renders "null", never the table spelling.
+-- __rt.__NULL). The chunk's runtime binding assigns it when the chunk
+-- binds the deployed runtime (a host or bytes session) and aliases the
+-- chunk's own __NULL to the same object, so one language-null
+-- representation crosses a host boundary (ISSUE-0814); a host-free chunk
+-- leaves it nil and keeps its own sentinel. The typed-boundary projection
+-- classifies it as the language null exactly like the chunk's own
+-- sentinel, so a runtime-produced carrier (a host-crossed table entry, a
+-- runtime class field) reaching a failing walk position renders "null",
+-- never the table spelling.
 local __rtNull = nil
 -- The deployed runtime's own absent-marker sentinel (deal/runtime.lua's
 -- __rt.__MISSING — a value distinct from this chunk's __MISSING). The

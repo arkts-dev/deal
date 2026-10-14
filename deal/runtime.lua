@@ -10,7 +10,14 @@
 local __rt = {}
 
 -- ===== Sentinels =====
-__rt.__NULL = {}
+-- __rt.__NULL is the one language-null representation of the deployed
+-- runtime and of every emitted chunk that binds it (ISSUE-0814): the
+-- generated chunk aliases its own __NULL to this object, so a shared array
+-- carrier's null elements reach the loaded matcher and the raw host with
+-- no projection. The __tostring spelling carries the emitted chunk's own
+-- representation contract (a null atomized at a declared non-null kind
+-- renders "null", never a table address), which the aliasing must keep.
+__rt.__NULL = setmetatable({}, {__tostring = function() return "null" end})
 __rt.__MISSING = {}
 
 -- ===== Process-wide int32 gate (signed-int32 foundation I4) =====

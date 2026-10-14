@@ -4123,6 +4123,13 @@ public class CanonicalProjectionParityTest {
         export function takeNestedNullableArray(value: (int | null)[][]): string;
         export function takeNullableArrayBadReturn(value: (int | null)[]): string;
         export async function asyncTakeNullableArray(value: (int | null)[]): string;
+        export function takeSharedArray(first: (int | null)[], second: (int | null)[]): string;
+        export function roundtripArray(value: (int | null)[]): (int | null)[];
+        export function writeArray(value: (int | null)[]): string;
+        export function stashArray(value: (int | null)[]): string;
+        export function sameAsStash(value: (int | null)[]): string;
+        export async function asyncTakeSharedArray(first: (int | null)[], second: (int | null)[]): string;
+        export async function asyncRoundtripArray(value: (int | null)[]): (int | null)[];
         export function takeNullBadReturn(value: null): string;
         export function takeTable(value: table): string;
         export function takeArray(value: int[]): string;
@@ -4477,6 +4484,88 @@ public class CanonicalProjectionParityTest {
           return null
         }
 
+        export function test_shared_nullable_array_argument(): null {
+          let xs: (int | null)[] = [null, 7]
+          let seen: string = host.takeSharedArray(xs, xs)
+          if (seen !== "same") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the same nullable-array argument crossed as two carriers" }
+          }
+          let inner: (int | null)[] = [null, 7]
+          let outer: (int | null)[][] = [inner, inner]
+          let nested: string = host.takeSharedArray(outer[0], outer[1])
+          if (nested !== "same") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the aliased nested nullable-array element crossed as two carriers" }
+          }
+          return null
+        }
+
+        export function test_roundtrip_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let back: (int | null)[] = host.roundtripArray(xs)
+          if (back !== xs) {
+            throw { code: "PROBE_NULL_ARRAY", message: "the host roundtrip detached the nullable-array argument" }
+          }
+          return null
+        }
+
+        export function test_stash_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let stashed: string = host.stashArray(xs)
+          if (stashed !== "stashed") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument did not reach the host" }
+          }
+          let same: string = host.sameAsStash(xs)
+          if (same !== "same") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its identity across host calls" }
+          }
+          return null
+        }
+
+        export function test_write_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let written: string = host.writeArray(xs)
+          if (written !== "written") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument did not reach the host" }
+          }
+          let second: int | null = xs[1]
+          if (second !== null) {
+            if (second !== 8) {
+              throw { code: "PROBE_NULL_ARRAY", message: "the host write to the nullable-array argument stayed invisible to the DEAL side" }
+            }
+          } else {
+            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nullable-array argument's element to null" }
+          }
+          let first: int | null = xs[0]
+          if (first !== null) {
+            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nullable-array argument's null element" }
+          }
+          return null
+        }
+
+        export async function test_async_shared_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let seen: string = await host.asyncTakeSharedArray(xs, xs)
+          if (seen !== "same") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the same async nullable-array argument crossed as two carriers" }
+          }
+          let inner: (int | null)[] = [null, 7]
+          let outer: (int | null)[][] = [inner, inner]
+          let nested: string = await host.asyncTakeSharedArray(outer[0], outer[1])
+          if (nested !== "same") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the aliased nested async nullable-array element crossed as two carriers" }
+          }
+          return null
+        }
+
+        export async function test_async_roundtrip_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let back: (int | null)[] = await host.asyncRoundtripArray(xs)
+          if (back !== xs) {
+            throw { code: "PROBE_NULL_ARRAY", message: "the async host roundtrip detached the nullable-array argument" }
+          }
+          return null
+        }
+
         export function main(): null {
           return null
         }
@@ -4500,6 +4589,8 @@ public class CanonicalProjectionParityTest {
               end
               return "other"
             end
+
+            local stash = nil
 
             return {
               takeNull = function(value)
@@ -4530,6 +4621,46 @@ public class CanonicalProjectionParityTest {
                   return "nested"
                 end
                 return "other"
+              end,
+              takeSharedArray = function(first, second)
+                -- The identity probe: the two argument positions must
+                -- observe one and the same carrier table.
+                if type(first) == "table" and first == second then
+                  return "same"
+                end
+                return "different"
+              end,
+              roundtripArray = function(value)
+                -- The roundtrip probe: the raw host hands back the very
+                -- table it received, so the DEAL side observes its own
+                -- carrier again.
+                return value
+              end,
+              writeArray = function(value)
+                -- The host-write probe: the write lands in the shared
+                -- carrier, so the DEAL side reads it back after the call.
+                if type(value) == "table" then
+                  value[2] = 8
+                  return "written"
+                end
+                return "other"
+              end,
+              stashArray = function(value)
+                stash = value
+                return "stashed"
+              end,
+              sameAsStash = function(value)
+                if value == stash then return "same" end
+                return "different"
+              end,
+              asyncTakeSharedArray = function(first, second)
+                if type(first) == "table" and first == second then
+                  return rt.async_start(function() return "same" end)
+                end
+                return rt.async_start(function() return "different" end)
+              end,
+              asyncRoundtripArray = function(value)
+                return rt.async_start(function() return value end)
               end,
               takeNullableArrayBadReturn = function(value)
                 return 7
@@ -4646,6 +4777,40 @@ public class CanonicalProjectionParityTest {
                     value.data.length == 2 && value.data[0] == null
                         && java.lang.Integer.valueOf(7).equals(value.data[1])
                             ? "sentinel+7" : "other");
+              }
+              // The declared identity/write surface: the JVM host ABI
+              // materializes one carrier per array parameter crossing and
+              // copies declared-array writes back at normal return, so the
+              // identity probes stay LuaJIT/oracle-owned while every
+              // declared export still needs its load-surface method.
+              public static Object takeSharedArray($DealRt.__IntOrNullArray first,
+                  $DealRt.__IntOrNullArray second) {
+                return first == second ? "same" : "different";
+              }
+              public static $DealRt.__IntOrNullArray roundtripArray(
+                  $DealRt.__IntOrNullArray value) {
+                return value;
+              }
+              public static Object writeArray($DealRt.__IntOrNullArray value) {
+                if (value.data.length > 1) {
+                  value.data[1] = java.lang.Integer.valueOf(8);
+                }
+                return "written";
+              }
+              public static Object stashArray($DealRt.__IntOrNullArray value) {
+                return "stashed";
+              }
+              public static Object sameAsStash($DealRt.__IntOrNullArray value) {
+                return "same";
+              }
+              public static Object asyncTakeSharedArray($DealRt.__IntOrNullArray first,
+                  $DealRt.__IntOrNullArray second) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    first == second ? "same" : "different");
+              }
+              public static Object asyncRoundtripArray(
+                  $DealRt.__IntOrNullArray value) {
+                return java.util.concurrent.CompletableFuture.completedFuture(value);
               }
               public static Object takeTable(Object value) {
                 return "unexpected-table-admission";
@@ -4769,6 +4934,9 @@ public class CanonicalProjectionParityTest {
             }
 
             private final Map<String, String> asyncSeen = new LinkedHashMap<>();
+            private final Map<String, SemanticOracle.Value> asyncReturned =
+                new LinkedHashMap<>();
+            private SemanticOracle.Value stashed;
 
             @Override
             public AsyncStartOutcome startAsync(ModuleId module, String export,
@@ -4803,12 +4971,26 @@ public class CanonicalProjectionParityTest {
                             ? "sentinel+7" : "other");
                 } else if ("asyncTakeNullableArray".equals(export)) {
                     asyncSeen.put(operationLabel, nullableArrayElement(args, 7));
+                } else if ("asyncTakeSharedArray".equals(export)) {
+                    // The async identity probe: the two argument positions
+                    // must observe the same array value.
+                    asyncSeen.put(operationLabel,
+                        args.size() == 2 && args.get(0) == args.get(1)
+                            ? "same" : "different");
+                } else if ("asyncRoundtripArray".equals(export)) {
+                    // The async roundtrip probe: the completed value is the
+                    // very array value the start received.
+                    asyncReturned.put(operationLabel, args.get(0));
                 }
                 return new AsyncStartOutcome.Operation(operationLabel);
             }
 
             @Override
             public SyncOutcome completeAsync(String operationLabel) {
+                SemanticOracle.Value returned = asyncReturned.get(operationLabel);
+                if (returned != null) {
+                    return new SyncOutcome.Returned(returned);
+                }
                 return new SyncOutcome.Returned(new SemanticOracle.Value.StrValue(
                     asyncSeen.getOrDefault(operationLabel, "other")));
             }
@@ -4832,6 +5014,35 @@ public class CanonicalProjectionParityTest {
                     case "takeNestedNullableArray" -> new SyncOutcome.Returned(
                         new SemanticOracle.Value.StrValue(
                             nestedNullableArrayElement(args, 7, 8)));
+                    case "takeSharedArray" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.StrValue(
+                            args.size() == 2 && args.get(0) == args.get(1)
+                                ? "same" : "different"));
+                    case "roundtripArray" -> new SyncOutcome.Returned(args.get(0));
+                    case "writeArray" -> {
+                        // The host-write probe: the scenario host commits the
+                        // write into the shared array value's own element list,
+                        // which is how the oracle models a host's in-place
+                        // mutation of a reference value.
+                        if (args.size() == 1
+                                && args.get(0)
+                                    instanceof SemanticOracle.Value.ArrayValue array
+                                && array.elements().size() > 1) {
+                            array.elements().set(1,
+                                new SemanticOracle.Value.IntValue(8L));
+                        }
+                        yield new SyncOutcome.Returned(
+                            new SemanticOracle.Value.StrValue("written"));
+                    }
+                    case "stashArray" -> {
+                        stashed = args.get(0);
+                        yield new SyncOutcome.Returned(
+                            new SemanticOracle.Value.StrValue("stashed"));
+                    }
+                    case "sameAsStash" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.StrValue(
+                            args.size() == 1 && args.get(0) == stashed
+                                ? "same" : "different"));
                     case "takeNullableArrayBadReturn" -> new SyncOutcome.Returned(
                         new SemanticOracle.Value.IntValue(7L));
                     case "takeTable", "takeArray" -> new SyncOutcome.Returned(
@@ -4880,6 +5091,10 @@ public class CanonicalProjectionParityTest {
                 () -> driveNullCrossingAdmissions(compiled));
             safely("the null-crossing array admissions",
                 () -> driveNullCrossingArrayAdmissions(compiled));
+            safely("the nullable-array identity crossings",
+                () -> driveNullCrossingArrayIdentity(compiled));
+            safely("the nullable-array host-write crossing",
+                () -> driveNullCrossingArrayWrite(compiled));
             safely("the null crossing's incompatible-position rejections",
                 () -> driveNullCrossingRejections(compiled));
             safely("the null crossing's subsequent failure projection",
@@ -4949,6 +5164,87 @@ public class CanonicalProjectionParityTest {
         assertAsyncNullCrossingAdmission(compiled, "test_async_take_nullable_array",
             "the async nullable-array argument at a nullable-element host "
                 + "parameter");
+    }
+
+    /**
+     * The nullable-array identity crossings (ISSUE-0814): the same DEAL
+     * array crossing two declared parameter positions, a nested element
+     * alias, a host roundtrip, and an across-calls stash probe must all
+     * observe one carrier on the oracle and the LuaJIT artifact — the two
+     * consumers whose shared array value keeps its reference identity. A
+     * detached projection would materialize two carriers per argument pair,
+     * hand the host a copy per crossing, and break the roundtrip identity.
+     */
+    private static void driveNullCrossingArrayIdentity(Compiled compiled)
+            throws Exception {
+        assertNullCrossingSharedAdmission(compiled,
+            "test_shared_nullable_array_argument",
+            "the same nullable-array argument and its nested alias at two "
+                + "declared parameter positions");
+        assertNullCrossingSharedAdmission(compiled, "test_roundtrip_nullable_array",
+            "the host roundtrip of the nullable-array argument");
+        assertNullCrossingSharedAdmission(compiled, "test_stash_nullable_array",
+            "the nullable-array argument's identity across two host calls");
+        assertAsyncNullCrossingIdentityAdmission(compiled,
+            "test_async_shared_nullable_array",
+            "the same async nullable-array argument and its nested alias at "
+                + "two recorded argument positions");
+        assertAsyncNullCrossingIdentityAdmission(compiled,
+            "test_async_roundtrip_nullable_array",
+            "the async host roundtrip of the nullable-array argument");
+    }
+
+    /**
+     * The nullable-array host-write crossing (ISSUE-0814): the scenario
+     * host's in-place write to the shared carrier must be visible to the
+     * DEAL side after the call — the oracle's scenario host commits into
+     * the shared array value's element list, and the LuaJIT artifact's raw
+     * host into the shared table.
+     */
+    private static void driveNullCrossingArrayWrite(Compiled compiled)
+            throws Exception {
+        assertNullCrossingSharedAdmission(compiled, "test_write_nullable_array",
+            "the host write to the nullable-array argument");
+    }
+
+    /**
+     * One admitted crossing on the oracle and the LuaJIT artifact — the two
+     * consumers whose shared array value keeps its reference identity, so
+     * the identity and host-write probes are observable there (the JVM host
+     * ABI materializes one carrier per parameter crossing).
+     */
+    private static void assertNullCrossingSharedAdmission(Compiled compiled,
+            String export, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+            compiled.project(), compiled.tables(), compiled.registries(),
+            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
+            List.of());
+        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            what + " (oracle): the shared-crossing probe completes: "
+                + run.terminal());
+        String lua = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
+            + "the shared-crossing probe completes and observes one shared "
+            + "carrier: " + lua);
+    }
+
+    /** One admitted async crossing on the oracle and the LuaJIT artifact. */
+    private static void assertAsyncNullCrossingIdentityAdmission(Compiled compiled,
+            String export, String what) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+            compiled.project(), compiled.tables(), nullCrossingResponder(),
+            compiled.checkedProject().entryModule(), export, List.of());
+        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            what + " (oracle): the async shared-crossing probe completes: "
+                + run.terminal());
+        String lua = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
+            + "the async shared-crossing probe completes and observes one "
+            + "shared carrier: " + lua);
     }
 
     /**

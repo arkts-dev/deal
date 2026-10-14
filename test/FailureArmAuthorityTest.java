@@ -5306,19 +5306,18 @@ public class FailureArmAuthorityTest {
     // =========================================================================
 
     /**
-     * The runtime-produced language-null sentinel at a failing walk position
-     * (jsonable-tojson-walk-arm-binding W1's language-null classification):
-     * {@code deal/runtime.lua}'s {@code __rt.__NULL} is a distinct value from
-     * the chunk's own {@code __NULL}, and the landed host crossing preserves
-     * it — {@code __hostReturnCell} returns a host-returned table's entries
-     * unchanged and {@code __hostDealProject} keeps a runtime class
-     * instance's non-class field values. The host-binding production chunk
-     * binds the deployed runtime's sentinel beside the runtime it requires
-     * (a project with a host import), and the typed-boundary projection
-     * classifies that sentinel as the language null at the walk's failing
-     * positions: the message and the actual field both carry {@code null}.
-     * The flat-table control at the same position keeps the table spelling,
-     * so the classification is by sentinel identity, not by table shape.
+     * The runtime-produced language-null sentinel at the walk: the chunk's
+     * own {@code __NULL} aliases {@code deal/runtime.lua}'s
+     * {@code __rt.__NULL} in a host-binding chunk (the single
+     * representation ISSUE-0814 lands), and the landed host crossing
+     * preserves the object — {@code __hostReturnCell} returns a
+     * host-returned table's entries unchanged and {@code __hostDealProject}
+     * keeps a runtime class instance's non-class field values. The one
+     * language null is the JSON-shaped null leaf in table content (the
+     * oracle's own admission: it spells {@code null}), while a null at a
+     * declared non-nullable field keeps the failing walk position's null
+     * token and the flat-table control keeps the table spelling — the
+     * classification is by sentinel identity, not by table shape.
      */
     static void testRuntimeNullSentinelAtWalk() throws Exception {
         System.out.println("-- the deployed runtime's language-null sentinel at the walk --");
@@ -5327,12 +5326,17 @@ public class FailureArmAuthorityTest {
                 && lua.contains("__rtNull = __rt.__NULL\n"),
             "the host-binding production chunk binds the deployed runtime's "
                 + "language-null sentinel");
+        check(lua.contains("__NULL = __rt.__NULL\n"),
+            "the host-binding production chunk aliases its own null sentinel to "
+                + "the deployed runtime's (ISSUE-0814)");
         check(lua.contains("__rt.load_host(\"host/runtime\""),
             "the host-binding walk chunk carries its host import");
         String body = "local rt = require(\"deal.runtime\")\n"
             + "local sentinel = rt.check_type(\"?string\", nil)\n"
             + "print(\"runtime-sentinel-binding|\" .. (__rtNull == sentinel and "
             + "\"OK\" or \"MISSING\") .. \"|\")\n"
+            + "print(\"chunk-null-aliases-runtime-sentinel|\" .. (__NULL == sentinel "
+            + "and \"OK\" or \"MISSING\") .. \"|\")\n"
             + "local returned = __hostReturnCell(\"table\", {k = sentinel}, "
             + quote(WALK_SPAN) + ", false)\n"
             + "local dataRoot = {__c = true, __id = " + quote(WALK_ID.text())
@@ -5357,30 +5361,36 @@ public class FailureArmAuthorityTest {
             + "  local c = cases[i]\n"
             + "  local ok, text, arm, params, actual = __jsonToClassOp("
             + quote(WALK_ID.text()) + ", c.root)\n"
-            + "  if ok then print(c.label .. \"|OK|\") return end\n"
-            + "  local value = __arm(arm, params, " + quote(WALK_SPAN)
+            + "  if ok then\n"
+            + "    print(c.label .. \"|OK|\" .. text .. \"|\")\n"
+            + "  else\n"
+            + "    local value = __arm(arm, params, " + quote(WALK_SPAN)
             + ", nil, actual)\n"
-            + "  print(c.label .. \"|\" .. value.code .. \"|\" .. "
+            + "    print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
             + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
             + "tostring(value.o))\n"
+            + "  end\n"
             + "end\n";
-        List<String> rows = runProbe(lua, "arm-walk", body, "walk-runtime-null", 4,
+        List<String> rows = runProbe(lua, "arm-walk", body, "walk-runtime-null", 5,
             true);
         checkEq("runtime-sentinel-binding|OK|", rows.get(0),
             "the emitted chunk's own binding is the deployed runtime's sentinel");
-        checkEq(new Tuple("E8001",
-                "value at data.k is not JSON serializable: null", WALK_SPAN, null,
-                "null"), walkLuaTuple(rows.get(1)),
-            "the runtime null in a host-returned table entry renders null in the "
-                + "message and the actual field");
+        checkEq("chunk-null-aliases-runtime-sentinel|OK|", rows.get(1),
+            "the host-binding chunk's null sentinel is the deployed runtime's "
+                + "object (ISSUE-0814)");
+        checkEq("host-returned-table-null-entry|OK|"
+                + "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":null},"
+                + "\"tags\":[1]}|", rows.get(2),
+            "the one runtime null in a host-returned table entry is the JSON-shaped "
+                + "null leaf and spells null");
         checkEq(new Tuple("E8001",
                 "value at data.k is not JSON serializable: table", WALK_SPAN, null,
-                "table"), walkLuaTuple(rows.get(2)),
+                "table"), walkLuaTuple(rows.get(3)),
             "the flat-table control at the same position keeps the table spelling");
         checkEq(new Tuple("E8001",
                 "value at name is not JSON serializable: null", WALK_SPAN, null,
-                "null"), walkLuaTuple(rows.get(3)),
+                "null"), walkLuaTuple(rows.get(4)),
             "the runtime null at a runtime class instance's declared field renders "
                 + "null in the message and the actual field");
     }
