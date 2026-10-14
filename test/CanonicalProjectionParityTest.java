@@ -134,6 +134,21 @@ import java.util.stream.Stream;
  *       array-element slot inside a typed for-of publishes the kind arm's
  *       suffix-less text with expected {@code int} and actual {@code nil}
  *       at the op's own origin on all three consumers.</li>
+ *   <li><b>The array-literal element cells.</b> Every
+ *       {@code ARRAY_LITERAL_ELEMENT} child's recorded
+ *       {@code ARRAY_ELEMENT_DESCRIPTOR} policy renders the canonical
+ *       element arm — the literal's one-based index, the element
+ *       descriptor's canonical expected text, the failing value's own
+ *       reference-kind actual token, and the boundary child's own
+ *       lowerer-owned origin — identically on the three consumers for
+ *       the composite element, the nested literal's element, the second
+ *       literal position, a DEAL table carrier, and a nested element
+ *       walk failure, while the admitted deferred and absent nullable
+ *       elements succeed and the production artifacts publish the same
+ *       code; the emitted Lua prelude's {@code __typedBoundaryKind}
+ *       projects a mark-less table as the actual {@code table} token at
+ *       an array-named cell (never the expected array kind) under real
+ *       {@code luajit}.</li>
  *   <li><b>The negatives.</b> The row/arm completeness invariants and the
  *       single-source control fail by name (an unbound retained template,
  *       a foreign template, a duplicate binding, an {@code INNER_ONLY}
@@ -8990,6 +9005,348 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 4d. The array-literal element cells (ISSUE-0806)
+    // =========================================================================
+
+    /**
+     * The composite element seed: the literal child's own recorded
+     * {@code ARRAY_ELEMENT_DESCRIPTOR} policy decides the deferred
+     * contextual array read, so the element cell — never the generic
+     * descriptor cell — renders the failure at {@code t.x}.
+     */
+    private static final String ARRAY_LITERAL_COMPOSITE_ELEMENT_SOURCE = """
+        function main(): null {
+          let t: table = { x: "bad" };
+          let ys: int[][] = [t.x];
+          return null;
+        }
+        """;
+
+    /**
+     * The nested literal seed: the failing cell belongs to the inner
+     * literal, so the element failure is nested inside an outer literal's
+     * own element position.
+     */
+    private static final String ARRAY_LITERAL_NESTED_ELEMENT_SOURCE = """
+        function main(): null {
+          let t: table = { x: "bad" };
+          let ys: int[][][] = [[t.x]];
+          return null;
+        }
+        """;
+
+    /**
+     * The second-position seed: the failing element is the literal's
+     * second child, so the arm renders its one-based literal index 2.
+     */
+    private static final String ARRAY_LITERAL_SECOND_ELEMENT_SOURCE = """
+        function main(): null {
+          let t: table = { x: "bad" };
+          let ys: int[][] = [[1, 2], t.x];
+          return null;
+        }
+        """;
+
+    /**
+     * The table-carrier seed: the deferred read's value is a DEAL table,
+     * so the element arm's actual field is the value's own table kind.
+     */
+    private static final String ARRAY_LITERAL_TABLE_ELEMENT_SOURCE = """
+        function main(): null {
+          let t: table = { x: { y: 1 } };
+          let ys: int[][] = [t.x];
+          return null;
+        }
+        """;
+
+    /**
+     * The nested-element-failure seed: the failing cell's own value is an
+     * array carrier whose element walk fails at its deleted slot, so the
+     * literal cell's tuple is the outer element arm over the array token
+     * (the one-based literal index, the element descriptor's expected
+     * text, and the value's own reference kind).
+     */
+    private static final String ARRAY_LITERAL_NESTED_FAILURE_SOURCE = """
+        function main(): null {
+          let inner: int[] = [1, 2];
+          let t: table = { xs: inner };
+          delete inner[0];
+          let ys: int[][] = [t.xs];
+          return null;
+        }
+        """;
+
+    /** The admitted composite element control: the deferred read passes the cell. */
+    private static final String ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE = """
+        function main(): null {
+          let t: table = { x: [1, 2] };
+          let ys: int[][] = [t.x];
+          return null;
+        }
+        """;
+
+    /**
+     * The admitted absent element control: the deferred read of an absent
+     * key reaches the nullable element cell, whose named missing→null
+     * mapping admits the element on every consumer.
+     */
+    private static final String ARRAY_LITERAL_MISSING_ELEMENT_SOURCE = """
+        function main(): null {
+          let t: table = { y: 1 };
+          let ys: (int | null)[] = [t.x];
+          return null;
+        }
+        """;
+
+    /**
+     * The array-literal element cells (ISSUE-0806): the recorded
+     * {@code ARRAY_ELEMENT_DESCRIPTOR} policy of every
+     * {@code ARRAY_LITERAL_ELEMENT} child renders the canonical element
+     * arm — its one-based literal index, the element descriptor's
+     * canonical text as expected, the failing value's own reference-kind
+     * token as actual, and the boundary child's own lowerer-owned origin —
+     * identically on the oracle, the LuaJIT artifact, and the JVM
+     * artifact. The composite element, the nested literal's element, the
+     * second literal position, a DEAL table carrier, and a nested element
+     * walk failure inside the element value are each driven through the
+     * three consumers, and the deferred admitted element and the absent
+     * nullable element stay successes.
+     */
+    private static void testArrayLiteralElementCells() throws Exception {
+        System.out.println("-- the array-literal element cells: the recorded "
+            + "element policy, index, projections, and origin on the three "
+            + "consumers --");
+        Path workspace = Files.createTempDirectory("projection-array-literal");
+        try {
+            driveArrayLiteralElementFailure("the composite element",
+                ARRAY_LITERAL_COMPOSITE_ELEMENT_SOURCE,
+                workspace.resolve("composite"), "test.deal:3:22", 1, "[int]",
+                "string");
+            driveArrayLiteralElementFailure("the nested literal element",
+                ARRAY_LITERAL_NESTED_ELEMENT_SOURCE,
+                workspace.resolve("nested-literal"), "test.deal:3:25", 1, "[int]",
+                "string");
+            driveArrayLiteralElementFailure("the second literal element",
+                ARRAY_LITERAL_SECOND_ELEMENT_SOURCE,
+                workspace.resolve("second-element"), "test.deal:3:30", 2, "[int]",
+                "string");
+            driveArrayLiteralElementFailure("the table carrier element",
+                ARRAY_LITERAL_TABLE_ELEMENT_SOURCE,
+                workspace.resolve("table-carrier"), "test.deal:3:22", 1, "[int]",
+                "table");
+            driveArrayLiteralElementFailure("the nested element walk failure",
+                ARRAY_LITERAL_NESTED_FAILURE_SOURCE,
+                workspace.resolve("nested-failure"), "test.deal:5:22", 1, "[int]",
+                "array");
+            driveArrayLiteralElementAdmission("the admitted composite element",
+                ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE,
+                workspace.resolve("admitted"));
+            driveArrayLiteralElementAdmission("the admitted absent nullable "
+                + "element", ARRAY_LITERAL_MISSING_ELEMENT_SOURCE,
+                workspace.resolve("admitted-missing"));
+            driveArrayLiteralElementProduction("the production element terminal",
+                ARRAY_LITERAL_COMPOSITE_ELEMENT_SOURCE,
+                workspace.resolve("production"));
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /**
+     * One array-literal element-cell seed through the three-consumer
+     * matrix: every consumer renders the identical complete tuple — the
+     * E8003 element arm's message with the literal's own one-based index,
+     * the element descriptor's canonical expected text, the value's own
+     * reference-kind actual token, and the boundary child's own origin.
+     */
+    private static void driveArrayLiteralElementFailure(String what, String source,
+            Path workspace, String originText, int oneBasedIndex, String expected,
+            String actual) throws Exception {
+        Seed seed = lowerSeed(source, what);
+        if (seed == null) {
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            seed.unit(), seed.table(), SemanticDifferentialHarness.Expectation.failure(
+                what, List.of(), "E8003", originText), workspace);
+        checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
+            + "consumers: " + verdict.failures());
+        check(verdict.pass(), what + ": the three-consumer verdict passes: "
+            + verdict.failures() + "\n" + verdict.report());
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            check(run.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                run.consumer() + " (" + what + "): the cell fails: "
+                    + run.terminal());
+            if (!(run.terminal()
+                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
+                continue;
+            }
+            SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+            System.out.println("   " + run.consumer() + ": " + error.code() + " | "
+                + error.message() + " | " + error.origin() + " | " + error.expected()
+                + " | " + error.actual());
+            checkEq("E8003", error.code(), run.consumer()
+                + ": the recorded element policy's code");
+            checkEq("array element " + oneBasedIndex + " type mismatch",
+                error.message(), run.consumer()
+                    + ": the element arm's own message with the literal index");
+            checkEq(originText, error.origin(), run.consumer()
+                + ": the boundary child's own lowerer-owned origin");
+            checkEq(expected, error.expected(), run.consumer()
+                + ": the element descriptor's canonical expected text");
+            checkEq(actual, error.actual(), run.consumer()
+                + ": the value's own reference-kind actual token");
+        }
+    }
+
+    /**
+     * The admitted deferred element through the same matrix: every consumer
+     * passes the element cell, so the seed runs to success.
+     */
+    private static void driveArrayLiteralElementAdmission(String what, String source,
+            Path workspace) throws Exception {
+        Seed seed = lowerSeed(source, what);
+        if (seed == null) {
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            seed.unit(), seed.table(), SemanticDifferentialHarness.Expectation.success(
+                what, List.of(), "null"), workspace);
+        checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
+            + "consumers: " + verdict.failures());
+        check(verdict.pass(), what + ": the three-consumer verdict passes: "
+            + verdict.failures() + "\n" + verdict.report());
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                run.consumer() + " (" + what + "): the admitted element passes "
+                    + "the cell: " + run.terminal());
+        }
+    }
+
+    /**
+     * The production artifacts of one array-literal element-cell seed: the
+     * real production chunk under luajit and the real production JVM class
+     * under {@code javac --release 25 -proc:none} plus {@code java} both
+     * terminate with the recorded element policy's E8003 code line and
+     * exit 1 — the element arm is the production path's projection, not a
+     * trace-only surface.
+     */
+    private static void driveArrayLiteralElementProduction(String what, String source,
+            Path workspace) throws Exception {
+        Seed seed = lowerSeed(source, what);
+        if (seed == null) {
+            return;
+        }
+        Files.createDirectories(workspace);
+        String chunk = LuaSemanticEmitter.emitProductionModule(seed.unit(),
+            seed.table(), true);
+        Files.writeString(workspace.resolve("main.lua"), chunk,
+            StandardCharsets.UTF_8);
+        BoundedProcess.BoundedResult luaRun = BoundedProcess.runCaptured(
+            List.of("luajit", "main.lua"), workspace, Map.of());
+        checkEq(1, luaRun.exitCode(), what + " (luajit production): the element "
+            + "failure exits 1: " + luaRun.stdout() + luaRun.stderr());
+        checkEq("DEAL_ERROR_CODE: E8003\n", luaRun.stdout(), what
+            + " (luajit production): the terminal publishes the recorded "
+            + "element policy's code line");
+        deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
+            deal.codegen.jvm.JvmSemanticEmitter.emitProductionModule(seed.unit(),
+                seed.table(), true, "ProjectionArrayLiteralDrive");
+        Path sourcePath = workspace.resolve(emission.className() + ".java");
+        Files.writeString(sourcePath, emission.source(), StandardCharsets.UTF_8);
+        Path classes = workspace.resolve("jvm-classes");
+        Files.createDirectories(classes);
+        String classpath = absoluteClasspath();
+        JvmCompilation.Result compile = JvmCompilation.compile(List.of("javac",
+            "--release", "25", "-proc:none", "-cp", classpath, "-d",
+            classes.toString(), sourcePath.toAbsolutePath().toString()), workspace);
+        checkEq(0, compile.exitCode(), what + " (jvm production): the emitted "
+            + "class compiles: " + compile.stdout() + compile.stderr());
+        BoundedProcess.BoundedResult jvmRun = BoundedProcess.runCaptured(
+            List.of("java", "-cp", classes + File.pathSeparator + classpath,
+                emission.className()), workspace, Map.of());
+        checkEq(1, jvmRun.exitCode(), what + " (jvm production): the element "
+            + "failure exits 1: " + jvmRun.stdout() + jvmRun.stderr());
+        checkEq("DEAL_ERROR_CODE: E8003\n", jvmRun.stdout(), what
+            + " (jvm production): the terminal publishes the recorded element "
+            + "policy's code line");
+    }
+
+    // =========================================================================
+    // 4e. The emitted Lua prelude's table-carrier classification (ISSUE-0806)
+    // =========================================================================
+
+    /** The classification probe's trivial production seed. */
+    private static final String TABLE_CARRIER_CLASSIFICATION_SOURCE = """
+        function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The emitted Lua prelude's table-carrier classification: a mark-less
+     * Lua table at an array-named cell projects the actual table token,
+     * never the declared/expected array kind, exactly like the oracle's
+     * value view and the JVM runtime's actual-kind projection, while a
+     * DEAL table and the real (and decoded) array carriers keep their own
+     * kinds. The probe inserts its drive before the real production
+     * chunk's retained-caller surface tail and loads the chunk under real
+     * luajit, so it calls the artifact's own {@code __typedBoundaryKind}.
+     */
+    private static void testLuaTableCarrierClassification() throws Exception {
+        System.out.println("-- the emitted Lua prelude's table-carrier "
+            + "classification: the production artifact's own kind projection "
+            + "under real luajit --");
+        Seed seed = lowerSeed(TABLE_CARRIER_CLASSIFICATION_SOURCE,
+            "the table-carrier classification seed");
+        if (seed == null) {
+            return;
+        }
+        Path workspace = Files.createTempDirectory("projection-table-carrier");
+        try {
+            String chunk = LuaSemanticEmitter.emitProductionModule(seed.unit(),
+                seed.table(), true);
+            String tail = "return __exportSurfaces[\"main\"]";
+            check(chunk.endsWith(tail + "\n"), "the production chunk carries "
+                + "the retained-caller surface tail: " + tailText(chunk));
+            String probe = "io.write(\"KIND|\""
+                + " .. __typedBoundaryKind(\"array\", {}) .. \"|\""
+                + " .. __typedBoundaryKind(\"array\", { x = 1 }) .. \"|\""
+                + " .. __typedBoundaryKind(\"array\", { __t = true }) .. \"|\""
+                + " .. __typedBoundaryKind(\"array\", { __a = true, __n = 0 })"
+                + " .. \"|\""
+                + " .. __typedBoundaryKind(\"array\", { __a = true, __n = 0,"
+                + " __da = true }) .. \"\\n\")\n";
+            Path artifact = workspace.resolve("kind-probe.lua");
+            Files.writeString(artifact, chunk.substring(0,
+                chunk.length() - (tail + "\n").length()) + probe + tail + "\n",
+                StandardCharsets.UTF_8);
+            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+                List.of("luajit", "kind-probe.lua"), workspace,
+                Map.of("DEAL_DEFER_MAIN", "1"));
+            String output = captured.stdout() + captured.stderr();
+            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+                "the classification probe output is not truncated: " + output);
+            checkEq(0, captured.exitCode(), "the classification probe runs under "
+                + "real luajit: " + output);
+            checkEq("KIND|table|table|table|array|array\n", captured.stdout(),
+                "a mark-less table projects the actual table token at an "
+                    + "array-named cell (never the declared array kind), the "
+                    + "DEAL table its own table kind, and the real and decoded "
+                    + "array carriers their array kind");
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /** The trailing text of one emitted chunk (the tail assertion's detail). */
+    private static String tailText(String chunk) {
+        return "\"" + chunk.substring(Math.max(0, chunk.length() - 60))
+            .replace("\n", "\\n") + "\"";
+    }
+
+    // =========================================================================
     // 5. The row/arm completeness negatives and the single-source control
     // =========================================================================
 
@@ -9279,6 +9636,8 @@ public class CanonicalProjectionParityTest {
         testForEachDeletedSlot();
         testDynamicTableRead();
         testArrayNullAndDeletedSlotCells();
+        testArrayLiteralElementCells();
+        testLuaTableCarrierClassification();
         testCompletenessAndSingleSourceNegatives();
         testComparisonContract();
         testRawProfileInputControls();

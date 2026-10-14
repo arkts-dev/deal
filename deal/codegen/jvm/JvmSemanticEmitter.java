@@ -1950,14 +1950,48 @@ public final class JvmSemanticEmitter {
                 ValueId input = payload.values().get(i);
                 emitBoundaryStart(boundary, slot(input), payload.elementDescriptor(),
                     indent);
-                out.append(indent(indent)).append("Object __be_").append(boundary.opId().id())
-                    .append(" = ")
+                String checked = "__be_" + boundary.opId().id();
+                String caught = "__bee_" + boundary.opId().id();
+                String elementError = "__bre_" + boundary.opId().id();
+                out.append(indent(indent)).append("Object ").append(checked)
+                    .append(";\n");
+                out.append(indent(indent)).append("try {\n");
+                out.append(indent(indent + 1)).append(checked).append(" = ")
                     .append(bcheckArgs(payload.elementDescriptor(), slot(input)))
                     .append(";\n");
+                out.append(indent(indent)).append("} catch (JvmRuntime.DealError ")
+                    .append(caught).append(") {\n");
+                // The recorded ARRAY_LITERAL_ELEMENT cell (the child's own
+                // ARRAY_ELEMENT_DESCRIPTOR policy): the element-descriptor
+                // check inside the closed element arm — the literal
+                // position as the one-based index, the element descriptor's
+                // canonical text as expected, and the failing value's
+                // reference-kind token as actual — raised at the boundary
+                // child's own lowerer-owned origin, exactly like the
+                // oracle's executeArrayNew element cell.
+                out.append(indent(indent + 1)).append("JvmRuntime.DealError ")
+                    .append(elementError).append(" = JvmRuntime.arm(deal.semantic."
+                        + "ir.FailureArmId.ARRAY_ELEMENT_KIND, java.util.Map.of("
+                        + "\"oneBasedIndex\", \"")
+                    .append(i + 1).append("\"), ")
+                    .append(javaString(originOf(boundary))).append(", ")
+                    .append(javaString(payload.elementDescriptor()
+                        .canonicalSpecText()))
+                    .append(", JvmRuntime.elementActualOf(")
+                    .append(javaString(staticKind(payload.elementDescriptor())))
+                    .append(", ").append(slot(input)).append("));\n");
+                if (trace) {
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "JvmRuntime.errtext(" + elementError + ")", indent + 1);
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(" + elementError + ")", indent + 1);
+                }
+                out.append(indent(indent + 1)).append("throw ")
+                    .append(elementError).append(";\n");
+                out.append(indent(indent)).append("}\n");
                 out.append(indent(indent)).append("((JvmRuntime.Array) ").append(target)
-                    .append(").elements.add(__be_").append(boundary.opId().id())
-                    .append(");\n");
-                emitBoundarySuccess(boundary, "__be_" + boundary.opId().id(),
+                    .append(").elements.add(").append(checked).append(");\n");
+                emitBoundarySuccess(boundary, checked,
                     payload.elementDescriptor(), indent);
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);

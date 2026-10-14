@@ -1805,18 +1805,47 @@ public final class LuaSemanticEmitter {
                 SemanticOp boundary = opsById.get(boundaryId);
                 ValueId input = payload.values().get(i);
                 emitBoundaryStart(boundary, slot(input), payload.elementDescriptor());
-                out.append("__chk = ")
-                    .append(bcheckExpr(payload.elementDescriptor(), slot(input)))
-                    .append("\n");
+                emitArrayElementAdmission(op, boundary, payload.elementDescriptor(),
+                    slot(input), i + 1);
                 out.append(target).append("[").append(i + 1)
-                    .append("] = __chk == nil and __NULL or __chk\n");
+                    .append("] = __chkB == nil and __NULL or __chkB\n");
                 out.append("__numKey(").append(target).append(", ")
                     .append(i + 1).append(", ").append(slot(input)).append(", ")
                     .append(isNumberKind(producerKind(input)) ? "true" : "false")
                     .append(")\n");
-                emitBoundarySuccess(boundary, "__chk", payload.elementDescriptor());
+                emitBoundarySuccess(boundary, "__chkB", payload.elementDescriptor());
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * The recorded {@code ARRAY_LITERAL_ELEMENT} cell of one
+         * array-literal child (the child's own
+         * {@code ARRAY_ELEMENT_DESCRIPTOR} policy): the element-descriptor
+         * check inside the closed element arm — the literal position as
+         * the one-based index, the element descriptor's canonical text as
+         * expected, and the failing value's reference-kind token as actual
+         * — raised at the boundary child's own lowerer-owned origin, with
+         * the boundary and owner FAILURE events, exactly like the oracle's
+         * {@code executeArrayNew} element cell. A passing check leaves the
+         * admitted value in {@code __chkB}.
+         */
+        private void emitArrayElementAdmission(SemanticOp op, SemanticOp boundary,
+                RuntimeDescriptor descriptor, String inputExpr, int oneBasedIndex) {
+            out.append("__okB, __chkB = pcall(__bcheck, ")
+                .append(bcheckArgs(descriptor, inputExpr)).append(")\n");
+            out.append("if not __okB then\n");
+            out.append("  __chkB = __arm(\"ARRAY_ELEMENT_KIND\", {oneBasedIndex = ")
+                .append(oneBasedIndex).append("}, ")
+                .append(luaString(originOf(boundary))).append(", ")
+                .append(luaString(descriptor.canonicalSpecText())).append(", ")
+                .append("__elemRefKind(").append(luaString(staticKind(descriptor)))
+                .append(", ").append(inputExpr).append("))\n");
+            emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                "__errtext(__chkB)");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__chkB)");
+            out.append("  error(__chkB, 0)\n");
+            out.append("end\n");
         }
 
         private void emitTableNew(SemanticOp op) {
@@ -9951,9 +9980,9 @@ local function __typedBoundaryKind(staticKind, v)
     -- A value without a closed carrier mark projects its own kind: the
     -- declared static kind never replaces the value's own classification
     -- (a non-Error value at an Error-class boundary is a table on the
-    -- oracle and the JVM alike).
-    if staticKind == "table" then return "table" end
-    if staticKind == "array" then return "array" end
+    -- oracle and the JVM alike, and a mark-less table stays the table
+    -- carrier at an array-named cell — the expected array kind never
+    -- replaces the actual table token).
     return "table"
   end
   if t == "function" then return "function" end
