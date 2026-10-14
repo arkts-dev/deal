@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI — Declaration-file format
+// @description: Classified support module — a declaration-file class whose ignored @jsonable marker generates no helper (no C$fromJson/C$toJson declaration either).
+// @expected: companion
+
+// @jsonable
+export class Model { n: int = 0; }

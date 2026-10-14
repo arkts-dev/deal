@@ -24,6 +24,7 @@ import deal.checker.NameResolver;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
+import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalModuleIdentity;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -1250,9 +1251,12 @@ public class DiagnosticRangeTest {
         Field depsField = TypeChecker.class.getDeclaredField("jsonableClassDeps");
         depsField.setAccessible(true);
         @SuppressWarnings("unchecked")
-        Map<String, Set<String>> deps =
-            (Map<String, Set<String>>) depsField.get(checker);
-        deps.put("A", Set.of("A"));
+        Map<CanonicalClassIdentity, Set<CanonicalClassIdentity>> deps =
+            (Map<CanonicalClassIdentity, Set<CanonicalClassIdentity>>)
+                depsField.get(checker);
+        CanonicalClassIdentity identityA =
+            IdentityTestFixtures.identityOf("fallback.deal", "A");
+        deps.put(identityA, Set.of(identityA));
 
         Method detect = TypeChecker.class.getDeclaredMethod("detectJsonableCycles");
         detect.setAccessible(true);
@@ -2182,9 +2186,14 @@ public class DiagnosticRangeTest {
                 CanonicalModuleIdentity declaringModule,
                 String importingModule) throws ModuleNotFoundException {
             for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
+                // The corpus resolver's export maps and re-resolved type
+                // nodes carry the declaring fixture's corpus-path identity
+                // (the single-module standalone convention of the
+                // ExportExtractor/NameResolver seams this resolver owns),
+                // so identity-keyed lookups compare against that same key.
                 if (declaringModule.equals(
                         IdentityTestFixtures.moduleIdentityOf(
-                            stem(dependency)))) {
+                            dependency.corpusPath()))) {
                     Symbol.ClassSymbol symbol =
                         classSymbolsOf(dependency).get(className);
                     if (symbol != null) {
@@ -2206,16 +2215,17 @@ public class DiagnosticRangeTest {
             for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
                 if (declaringModule.equals(
                         IdentityTestFixtures.moduleIdentityOf(
-                            stem(dependency)))) {
-                    for (StatementNode statement
-                            : parse(dependency).program().statements()) {
-                        if (statement instanceof ExportDeclaration export
-                                && export.declaration()
-                                    instanceof FunctionDeclaration function
-                                && function.name().equals(functionName)) {
-                            return true;
-                        }
-                    }
+                            dependency.corpusPath()))) {
+                    // The dependency's export map is the authority: it
+                    // carries the explicitly declared helper functions
+                    // and the synthetics of every generated @jsonable
+                    // class (a declaration-file marker contributes
+                    // neither).
+                    ExportExtractor extractor = new ExportExtractor(
+                        dependency.corpusPath(),
+                        dependency.corpusPath().endsWith(".d.deal"));
+                    return extractor.extract(parse(dependency).program())
+                        .containsKey(functionName);
                 }
             }
             return false;
@@ -2296,7 +2306,8 @@ public class DiagnosticRangeTest {
                         symbols.put(declaration.name(),
                             new Symbol.ClassSymbol(declaration.name(),
                                 declaration.fields(), dotted,
-                                IdentityTestFixtures.identityOf(dotted,
+                                IdentityTestFixtures.identityOf(
+                                    dependency.corpusPath(),
                                     declaration.name())));
                     }
                 }

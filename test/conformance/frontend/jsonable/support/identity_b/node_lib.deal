@@ -1,0 +1,6 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: Classified support module — a generated @jsonable class Node carrying this module's canonical identity (library B of the same-name identity pair).
+// @expected: companion
+
+// @jsonable
+export class Node { value: int = 0; }

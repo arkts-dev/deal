@@ -1,0 +1,19 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: Same-named generated @jsonable classes from two modules keep distinct canonical identities: array and nullable fields of both plus a distinct local same-named class validate without E4007/E4008.
+// @expected: compile-ok
+// @features: jsonable, modules, nominal-identity
+
+import * as A from "./support/identity_a/node_lib"
+import * as B from "./support/identity_b/node_lib"
+
+// @jsonable
+export class Node { local: int = 0; }
+
+// @jsonable
+export class Holder {
+  first: A.Node[] = [];
+  second: B.Node | null = null;
+  local: Node = {};
+}
+
+export function main(): null { return null; }

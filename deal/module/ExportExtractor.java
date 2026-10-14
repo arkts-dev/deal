@@ -161,9 +161,11 @@ public final class ExportExtractor {
 
         // D6: Add synthetic C$fromJson and C$toJson exports for @jsonable classes.
         // These ensure cross-module NameResolver.isFunctionExportedFromModule()
-        // queries succeed during Phase 3, particularly when modules are in
-        // declaration-only import cycles where the target module's Phase 3
-        // correction may not have run yet.
+        // queries succeed during Phase 3: an importing module's @jsonable
+        // field validation and dependency-edge membership are keyed by the
+        // declaring module's canonical class identity. The metadata is never
+        // set for a declaration-file class, so an ignored declaration-only
+        // @jsonable marker generates no helper and contributes no export.
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ExportDeclaration exp
                     && exp.declaration() instanceof ClassDeclaration cd

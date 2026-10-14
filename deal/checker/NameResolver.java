@@ -316,9 +316,13 @@ public final class NameResolver {
         checkNoDollar(alias, imp.span());
 
         // F2: Circular import detection — check if the IMPORTED module
-        // is already being resolved (not the importing module).
+        // is already being resolved (not the importing module). Every
+        // import cycle is a compile-time error (v1.3); the
+        // orchestrator's phase-2 complete-graph admission owns the
+        // production rejection, and this recursion guard keeps the
+        // frontend entrypoints fail-closed when a resolver recurses.
         if (modulesInProgress.contains(path)) {
-            error(DiagnosticCode.E2005, "Circular import with runtime dependency: '" + path + "'",
+            error(DiagnosticCode.E2005, "Circular import: '" + path + "'",
                 imp.span());
             return;
         }

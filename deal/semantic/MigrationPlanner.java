@@ -136,17 +136,6 @@ public final class MigrationPlanner {
                 }
                 ModuleRoute route = routeOf(invocation, registry, target, manifest,
                     shadowRequested);
-                if (route == ModuleRoute.SHARED
-                        && !allImplementationImportsRouted(module, entries)) {
-                    // A tolerated declaration-only import cycle (foundation
-                    // F3's atomic-component input shape): the shared
-                    // module's implementation import has no route yet in
-                    // the planner's single ordered pass. Silent plan-time
-                    // LEGACY reroute — complete retained modules selected
-                    // before lowering, never E6005, never a within-run
-                    // fallback (the rollback reroute contract).
-                    route = ModuleRoute.LEGACY;
-                }
                 if (route == ModuleRoute.SHARED) {
                     verifySharedEdges(invocation, module, index);
                     if (shadowRequested) {
@@ -581,26 +570,14 @@ public final class MigrationPlanner {
     // =========================================================================
 
     /**
-     * The plan-time routedness precondition of a SHARED route: every
+     * Collects one shared module's plan-time ABI edges: every
      * implementation import of the module must already carry a route
-     * entry in the planner's single ordered pass. A missing route is the
-     * tolerated declaration-only cycle shape (foundation F3 — the
-     * orchestrator's atomic-component input) and reroutes the module
-     * LEGACY at plan time, never an exception and never an E6005 class.
+     * entry in the planner's single ordered pass. The dependency-ordered
+     * checked input (the orchestrator's complete-graph admission rejects
+     * every import cycle before checking) guarantees this; a missing
+     * route is broken wiring and this method fails closed — there is no
+     * tolerated declaration-only cycle reroute.
      */
-    private static boolean allImplementationImportsRouted(CheckedModuleInput module,
-                                                          Map<ModuleId, ModuleRoute> entries) {
-        for (ResolvedImport resolvedImport : module.imports()) {
-            if (resolvedImport.kind() != ExternalModuleKind.IMPLEMENTATION) {
-                continue;
-            }
-            if (!entries.containsKey(resolvedImport.resolvedModuleId())) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private static void collectAbiEdges(CheckedModuleInput shared,
                                         Map<ModuleId, ModuleRoute> entries,
                                         ProjectInterfaceIndex index,

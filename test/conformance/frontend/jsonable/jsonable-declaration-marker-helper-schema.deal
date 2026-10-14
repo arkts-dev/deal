@@ -1,0 +1,13 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: A declaration-file class whose ignored @jsonable marker generates no helper but whose explicitly declared C$fromJson/C$toJson functions exist is a jsonable field type (no E4007).
+// @expected: compile-ok
+// @features: jsonable, declarations, modules
+
+import * as M from "./support/declared_json_model"
+
+// @jsonable
+export class Holder {
+  m: M.Model | null = null;
+}
+
+export function main(): null { return null; }

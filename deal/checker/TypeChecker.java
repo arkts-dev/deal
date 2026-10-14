@@ -124,11 +124,13 @@ public final class TypeChecker {
     private final Map<ClassDeclaration, SymbolTable> classDeclarationScopes =
         new LinkedHashMap<>();
 
-    // -- Jsonable cycle detection (D3) --
-    // Maps @jsonable class name → same-module @jsonable dependency names
-    private final Map<String, Set<String>> jsonableClassDeps = new LinkedHashMap<>();
-    // Maps @jsonable class name → its class declaration span (for E4008)
-    private final Map<String, Span> jsonableClassSpans = new LinkedHashMap<>();
+    // -- Jsonable dependency graph (D3): nodes and edges are canonical
+    //    class identities, so same-named classes in different modules
+    //    never conflate (identity, not name, establishes identity). --
+    private final Map<CanonicalClassIdentity, Set<CanonicalClassIdentity>>
+        jsonableClassDeps = new LinkedHashMap<>();
+    // Maps @jsonable class identity → its class declaration span (E4008 anchor)
+    private final Map<CanonicalClassIdentity, Span> jsonableClassSpans = new LinkedHashMap<>();
 
     private TypeChecker(String modulePath, SymbolTable rootTable,
                         NameResolver nameResolver,
@@ -299,11 +301,22 @@ public final class TypeChecker {
             return; // nothing extra to check for non-jsonable classes
         }
 
-        // Store the class declaration span for later use in E4008 emission
-        jsonableClassSpans.put(cd.name(), cd.span());
+        CanonicalClassIdentity identity = jsonableIdentityOf(cd);
+        if (identity == null) {
+            // Defensive: a @jsonable declaration whose class symbol and
+            // module identity are both unresolvable carries no canonical
+            // identity and can neither be a dependency node nor close a
+            // cycle; the unresolved-name diagnostics already fired.
+            return;
+        }
 
-        // Validate each field type and collect same-module dependencies
-        Set<String> deps = new LinkedHashSet<>();
+        // Store the class declaration span for later use in E4008 emission
+        jsonableClassSpans.put(identity, cd.span());
+
+        // Validate each field type and collect the carried jsonable
+        // class dependencies (canonical identities; declaration-only
+        // classes generate no helpers and contribute no edge)
+        Set<CanonicalClassIdentity> deps = new LinkedHashSet<>();
         for (ClassField cf : cd.fields()) {
             Type fieldType = nameResolver.resolveTypeNode(cf.type());
             if (fieldType == Type.Error.INSTANCE) continue;
@@ -314,14 +327,11 @@ public final class TypeChecker {
                     cf.span());
             }
 
-            // Collect same-module @jsonable class dependencies for cycle detection
-            Set<String> fieldDeps = new HashSet<>();
-            collectSameModuleJsonableClassDeps(fieldType, fieldDeps);
-            deps.addAll(fieldDeps);
+            collectJsonableClassDeps(fieldType, deps);
         }
 
         if (!deps.isEmpty()) {
-            jsonableClassDeps.put(cd.name(), deps);
+            jsonableClassDeps.put(identity, deps);
         }
     }
 
@@ -331,7 +341,11 @@ public final class TypeChecker {
 
     /**
      * Checks whether a type is valid for a @jsonable field (D3).
-     * Recursively unwraps Array and Nullable wrappers.
+     * Recursively unwraps Array and Nullable wrappers. A class type is
+     * jsonable by its carried canonical identity: the class's module
+     * must expose both generated-signature helpers (the declaration-file
+     * case declares them explicitly; the ignored declaration-only
+     * marker contributes nothing).
      */
     private boolean isJsonableType(Type t) {
         return switch (t) {
@@ -344,46 +358,40 @@ public final class TypeChecker {
             case Type.Bytes ignored      -> false;
             case Type.Array arr          -> isJsonableType(arr.element());
             case Type.Nullable n         -> isJsonableType(n.inner());
-            case Type.Class cls          -> {
-                boolean hasFromJson = isFunctionExportedFromClassModule(
-                    cls, cls.name() + "$fromJson");
-                boolean hasToJson = isFunctionExportedFromClassModule(
-                    cls, cls.name() + "$toJson");
-                yield hasFromJson && hasToJson;
-            }
+            case Type.Class cls          -> isJsonableClass(cls);
             default -> false;
         };
     }
 
     /**
-     * Checks whether a Type.Class refers to a same-module @jsonable class.
-     * Used for cycle detection — a same-module @jsonable class dependency
-     * is a candidate for E4008.
+     * True when the class type carries both generated-signature helper
+     * exports ({@code C$fromJson} and {@code C$toJson}) — the class arm
+     * of {@link #isJsonableType} and the dependency-edge membership of
+     * {@link #collectJsonableClassDeps}. The query is keyed by the
+     * carried canonical identity (never the bare class name), so a
+     * same-named class in another module is never mistaken for this
+     * one.
      */
-    private boolean isSameModuleJsonable(Type.Class cls) {
-        if (!sameModule(cls)) {
-            return false;
-        }
-        // Check if C$fromJson exists in root symbol table (means the class is @jsonable)
-        Symbol sym = rootTable.resolve(cls.name() + "$fromJson");
-        return sym instanceof Symbol.FunctionSymbol;
+    private boolean isJsonableClass(Type.Class cls) {
+        return isFunctionExportedFromClassModule(cls, cls.name() + "$fromJson")
+            && isFunctionExportedFromClassModule(cls, cls.name() + "$toJson");
     }
 
     /**
-     * True when the class type's carried identity declares in THIS
-     * module (v1.2 identity carriage): the builtin Error identity and
-     * every foreign identity are not same-module.
+     * The canonical identity of one walked {@code @jsonable} class
+     * declaration: the resolved class symbol's identity (the module
+     * identity layer's single allocation), falling back to the
+     * resolver module's identity plus the declared name, or
+     * {@code null} when neither carries one.
      */
-    private boolean sameModule(Type.Class cls) {
-        // The local scope is the authority for locality: two files in
-        // one directory share the module identity (the relative
-        // components exclude the file stem), so identity equality alone
-        // cannot distinguish a local class from a companion's class —
-        // a LOCAL class resolves by bare name to its ClassSymbol in the
-        // current scope.
-        Symbol sym = currentScope.resolve(cls.name());
-        return sym instanceof Symbol.ClassSymbol cs
-            && cs.identity().equals(cls.identity());
+    private CanonicalClassIdentity jsonableIdentityOf(ClassDeclaration cd) {
+        Symbol sym = currentScope.resolve(cd.name());
+        if (sym instanceof Symbol.ClassSymbol classSymbol) {
+            return classSymbol.identity();
+        }
+        CanonicalModuleIdentity moduleIdentity = nameResolver.moduleIdentity();
+        return moduleIdentity == null ? null
+            : new CanonicalClassIdentity(moduleIdentity, cd.name());
     }
 
     /**
@@ -412,23 +420,30 @@ public final class TypeChecker {
     }
 
     /**
-     * Recursively extracts same-module @jsonable class references from a
-     * resolved field type by unwrapping Array and Nullable wrappers (D3 cycle 7).
+     * Recursively extracts the jsonable class identities a resolved
+     * field type references, unwrapping Array and Nullable wrappers
+     * (D3 cycle 7).
      *
-     * <p>This mirrors the recursion in {@link #isJsonableType} but collects
-     * dependency class names instead of returning a boolean.
+     * <p>Membership is the identity-keyed helper visibility of
+     * {@link #isJsonableClass}: local and imported generated classes
+     * contribute their canonical identity, so two same-named classes
+     * stay distinct nodes. A declaration-only class generates no
+     * helpers (its source marker is ignored) and contributes no edge;
+     * its explicitly declared helper schema is still accepted by
+     * {@link #isJsonableType}.</p>
      */
-    private void collectSameModuleJsonableClassDeps(Type t, Set<String> deps) {
+    private void collectJsonableClassDeps(Type t,
+                                          Set<CanonicalClassIdentity> deps) {
         switch (t) {
             case Type.Class cls -> {
-                if (isSameModuleJsonable(cls)) {
-                    deps.add(cls.name());
+                if (isJsonableClass(cls)) {
+                    deps.add(cls.identity());
                 }
             }
             case Type.Array arr ->
-                collectSameModuleJsonableClassDeps(arr.element(), deps);
+                collectJsonableClassDeps(arr.element(), deps);
             case Type.Nullable n ->
-                collectSameModuleJsonableClassDeps(n.inner(), deps);
+                collectJsonableClassDeps(n.inner(), deps);
             case Type.Bytes ignored -> { /* stop: no class references possible */ }
             default -> { /* stop: no deeper class references possible */ }
         }
@@ -439,38 +454,47 @@ public final class TypeChecker {
     // =======================================================================
 
     /**
-     * DFS-based cycle detection on same-module @jsonable class dependencies.
-     * Emits E4008 for each cycle found.
+     * DFS-based cycle detection on the @jsonable class dependency graph,
+     * keyed throughout by canonical class identity. Emits E4008 for
+     * each cycle found.
      *
      * <p>Called after all statements have been walked, so
-     * {@link #jsonableClassDeps} is fully populated.
+     * {@link #jsonableClassDeps} is fully populated. A dependency on an
+     * imported generated class is a graph node without outgoing edges
+     * in this module's walk: a cross-module class cycle is a module
+     * import cycle, rejected with E2005 before checking, so no
+     * cross-module generated cycle can reach this detector.</p>
      */
     private void detectJsonableCycles() {
         if (jsonableClassDeps.isEmpty()) return;
 
         // Colors: 0 = white (unvisited), 1 = gray (in current path), 2 = black (done)
-        Map<String, Integer> color = new HashMap<>();
-        Map<String, String> parent = new HashMap<>();
-        for (String className : jsonableClassDeps.keySet()) {
-            color.put(className, 0);
+        Map<CanonicalClassIdentity, Integer> color = new HashMap<>();
+        Map<CanonicalClassIdentity, CanonicalClassIdentity> parent = new HashMap<>();
+        for (CanonicalClassIdentity identity : jsonableClassDeps.keySet()) {
+            color.put(identity, 0);
         }
 
-        for (String start : jsonableClassDeps.keySet()) {
+        for (CanonicalClassIdentity start : jsonableClassDeps.keySet()) {
             if (color.get(start) == 0) {
                 dfsDetectCycle(start, color, parent);
             }
         }
     }
 
-    private void dfsDetectCycle(String node, Map<String, Integer> color,
-                                 Map<String, String> parent) {
+    private void dfsDetectCycle(CanonicalClassIdentity node,
+                                Map<CanonicalClassIdentity, Integer> color,
+                                Map<CanonicalClassIdentity,
+                                    CanonicalClassIdentity> parent) {
         color.put(node, 1); // gray — in current path
 
-        Set<String> deps = jsonableClassDeps.getOrDefault(node, Set.of());
-        for (String neighbor : deps) {
+        Set<CanonicalClassIdentity> deps = jsonableClassDeps.getOrDefault(
+            node, Set.of());
+        for (CanonicalClassIdentity neighbor : deps) {
             Integer neighborColor = color.get(neighbor);
             if (neighborColor == null) {
-                // Neighbor is not a @jsonable class (should not happen, but safe)
+                // Neighbor is not a generated jsonable class (should not
+                // happen, but safe)
                 continue;
             }
             if (neighborColor == 1) {
@@ -478,13 +502,13 @@ public final class TypeChecker {
                 // Walk the parent chain from node back to neighbor to
                 // reconstruct the full cycle path.
                 List<String> cyclePath = new ArrayList<>();
-                cyclePath.add(neighbor);
-                String cur = node;
+                cyclePath.add(neighbor.className());
+                CanonicalClassIdentity cur = node;
                 while (cur != null && !cur.equals(neighbor)) {
-                    cyclePath.add(cur);
+                    cyclePath.add(cur.className());
                     cur = parent.get(cur);
                 }
-                cyclePath.add(neighbor); // close the cycle
+                cyclePath.add(neighbor.className()); // close the cycle
 
                 // Build the cycle path string
                 StringBuilder pathStr = new StringBuilder();
@@ -508,7 +532,7 @@ public final class TypeChecker {
                         "Circular @jsonable class dependency: " + pathStr,
                         modulePath,
                         "missing anchor: class declaration span for cycle node '"
-                            + node + "'"));
+                            + node.className() + "'"));
                 }
             } else if (neighborColor == 0) {
                 parent.put(neighbor, node);

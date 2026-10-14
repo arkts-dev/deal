@@ -7,6 +7,7 @@ import deal.ast.ExportDeclaration;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionType;
 import deal.ast.FunctionTypeParam;
+import deal.ast.ImportDeclaration;
 import deal.ast.NamedType;
 import deal.ast.NullableType;
 import deal.ast.Parameter;
@@ -23,6 +24,7 @@ import deal.checker.TypeChecker;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.RangeOrigin;
 import deal.ir.IrDumper;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -58,6 +60,10 @@ import deal.types.Type;
 import deal.types.Types;
 import deal.test.IdentityTestFixtures;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -1098,6 +1104,359 @@ public class CheckedProjectBuilderTest {
     }
 
     // =========================================================================
+    // 10. Complete import-graph cycle rejection (ISSUE-0784)
+    // =========================================================================
+
+    /** Silences the orchestrator's stderr report around one compile. */
+    private static boolean compileQuietly(CompilationOrchestrator orchestrator)
+            throws IOException {
+        PrintStream originalErr = System.err;
+        try {
+            System.setErr(new PrintStream(new ByteArrayOutputStream(), true,
+                StandardCharsets.UTF_8));
+            return orchestrator.compile();
+        } finally {
+            System.setErr(originalErr);
+        }
+    }
+
+    /** Writes one scratch project source file and returns its path. */
+    private static Path writeSource(Path src, String name, String text)
+            throws IOException {
+        Files.createDirectories(src);
+        Path file = src.resolve(name);
+        Files.writeString(file, text, StandardCharsets.UTF_8);
+        return file.toAbsolutePath().normalize();
+    }
+
+    /** The first import declaration's span of one scratch source file. */
+    private static Span firstImportSpan(Path file) throws IOException {
+        String source = Files.readString(file, StandardCharsets.UTF_8);
+        LexResult lex = new Lexer(source, file.toString()).tokenize();
+        ParseResult parsed = new Parser(lex.tokens(), file.toString(),
+            lex.directiveEvents()).parse();
+        return ((ImportDeclaration) parsed.program().statements().get(0))
+            .span();
+    }
+
+    /** The single E2005 diagnostic of one rejected compile, or null. */
+    private static CompilerDiagnostic onlyCycleDiagnostic(
+            List<CompilerDiagnostic> diagnostics, String what) {
+        check(diagnostics.size() == 1,
+            what + ": exactly one diagnostic, got " + diagnostics);
+        if (diagnostics.size() != 1) {
+            return null;
+        }
+        CompilerDiagnostic diagnostic = diagnostics.get(0);
+        check("E2005".equals(diagnostic.code())
+                && "error".equals(diagnostic.severity()),
+            what + ": error E2005, got " + diagnostic);
+        return diagnostic;
+    }
+
+    /**
+     * The complete resolved import graph admission: type-only, mixed and
+     * declaration-only cycles plus self-imports reject exactly before
+     * checking/lowering with no publication, while the acyclic diamond
+     * passes (ISSUE-0784).
+     */
+    static void testImportCycleRejection() throws Exception {
+        System.out.println("-- Complete import-graph cycle rejection (E2005) --");
+
+        // 1. Acyclic diamond: entry -> a -> d and entry -> b -> d. The
+        //    complete resolved graph is acyclic, so the compile succeeds
+        //    and publishes the artifact set — the positive control of the
+        //    cycle admission.
+        Path diamond = Files.createTempDirectory("deal-graph-diamond");
+        try {
+            Path src = diamond.resolve("src");
+            writeSource(src, "main.deal",
+                "import * as A from \"./a\"\n"
+                    + "import * as B from \"./b\"\n"
+                    + "export function main(): null { return null; }\n");
+            writeSource(src, "a.deal",
+                "import * as D from \"./d\"\n"
+                    + "export class Alpha { d: D.Delta | null = null; }\n");
+            writeSource(src, "b.deal",
+                "import * as D from \"./d\"\n"
+                    + "export class Beta { d: D.Delta | null = null; }\n");
+            writeSource(src, "d.deal",
+                "export class Delta { n: int = 0; }\n");
+            Path output = diamond.resolve("out");
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), output, false,
+                null, List.of(src.toAbsolutePath()), null);
+            check(compileQuietly(orchestrator),
+                "an acyclic diamond compiles: " + orchestrator.diagnostics());
+            check(orchestrator.checkedProject() != null
+                    && !orchestrator.checkedProject().hasErrors(),
+                "the diamond build produces the checked project");
+            check(Files.exists(output.resolve("main.lua")),
+                "the diamond compile publishes its artifact set");
+        } finally {
+            deleteRecursively(diamond);
+        }
+
+        // 2. Type-only implementation cycle: the class-only imports carry
+        //    no runtime edge. The complete-graph admission rejects before
+        //    checking/lowering, anchors at the actual import declaration
+        //    and names the reproducible cycle path; nothing is published.
+        Path typeOnly = Files.createTempDirectory("deal-graph-type-only");
+        try {
+            Path src = typeOnly.resolve("src");
+            writeSource(src, "main.deal",
+                "import * as A from \"./a\"\n"
+                    + "export function main(): null { return null; }\n");
+            Path aFile = writeSource(src, "a.deal",
+                "import * as B from \"./b\"\n"
+                    + "export class Alpha { b: B.Beta | null = null; }\n");
+            Path bFile = writeSource(src, "b.deal",
+                "import * as A from \"./a\"\n"
+                    + "export class Beta { a: A.Alpha | null = null; }\n");
+            Path output = typeOnly.resolve("out");
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), output, false,
+                null, List.of(src.toAbsolutePath()), null);
+            check(!compileQuietly(orchestrator),
+                "a type-only implementation cycle fails the compile");
+            CompilerDiagnostic e2005 = onlyCycleDiagnostic(
+                orchestrator.diagnostics(), "type-only cycle");
+            if (e2005 != null) {
+                Span importSpan = firstImportSpan(aFile);
+                check(e2005.range().origin() == RangeOrigin.SOURCE
+                        && e2005.range().equals(importSpan.range()),
+                    "the E2005 anchor equals a.deal's import declaration"
+                        + " range: " + e2005.range() + " vs "
+                        + importSpan.range());
+                String a = aFile.toString();
+                String b = bFile.toString();
+                check(e2005.message().equals("Circular import: " + a + " -> "
+                        + b + " -> " + a),
+                    "the cycle path is reproducible and ordered by the real"
+                        + " edges: " + e2005.message());
+            }
+            check(orchestrator.producedProject() == null,
+                "a rejected graph produces no lowered project");
+            check(orchestrator.checkedProject() == null,
+                "a rejected graph produces no checked project");
+            check(!Files.exists(output),
+                "a rejected graph publishes no artifact set");
+        } finally {
+            deleteRecursively(typeOnly);
+        }
+
+        // 3. Self-import: the module's own import edge is a one-member
+        //    cyclic component and rejects exactly like every other cycle.
+        Path selfImport = Files.createTempDirectory("deal-graph-self");
+        try {
+            Path src = selfImport.resolve("src");
+            Path mainFile = writeSource(src, "main.deal",
+                "import * as S from \"./main\"\n"
+                    + "export function main(): null { return null; }\n");
+            Path output = selfImport.resolve("out");
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                mainFile, output, false, null,
+                List.of(src.toAbsolutePath()), null);
+            check(!compileQuietly(orchestrator),
+                "a self-import fails the compile");
+            CompilerDiagnostic e2005 = onlyCycleDiagnostic(
+                orchestrator.diagnostics(), "self-import");
+            if (e2005 != null) {
+                check(e2005.range().origin() == RangeOrigin.SOURCE
+                        && e2005.range().equals(
+                            firstImportSpan(mainFile).range()),
+                    "the self-import E2005 anchors at the import"
+                        + " declaration: " + e2005.range());
+                check(e2005.message().equals("Circular import: "
+                        + mainFile + " -> " + mainFile),
+                    "the self-import cycle path closes on its own module: "
+                        + e2005.message());
+            }
+            check(!Files.exists(output),
+                "the self-import publishes no artifact set");
+        } finally {
+            deleteRecursively(selfImport);
+        }
+
+        // 4. Mixed generated-jsonable implementation cycle: the class
+        //    defaults carry runtime edges and the same two modules form
+        //    the type-level SCC — exactly one E2005 for the one cyclic
+        //    component (runtime edges are additional facts, never a
+        //    second rejection).
+        Path mixed = Files.createTempDirectory("deal-graph-mixed");
+        try {
+            Path src = mixed.resolve("src");
+            writeSource(src, "main.deal",
+                "import * as L from \"./lib\"\n"
+                    + "// @jsonable\n"
+                    + "export class A { b: L.B = {}; }\n"
+                    + "export function main(): null { return null; }\n");
+            writeSource(src, "lib.deal",
+                "import * as M from \"./main\"\n"
+                    + "// @jsonable\n"
+                    + "export class B { a: M.A = {}; }\n");
+            Path output = mixed.resolve("out");
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), output, false,
+                null, List.of(src.toAbsolutePath()), null);
+            check(!compileQuietly(orchestrator),
+                "a mixed type/runtime cycle fails the compile");
+            CompilerDiagnostic e2005 = onlyCycleDiagnostic(
+                orchestrator.diagnostics(), "mixed cycle");
+            check(e2005 != null
+                    && e2005.message().contains(" -> "),
+                "the mixed cycle E2005 carries the cycle path");
+            check(!Files.exists(output),
+                "the mixed cycle publishes no artifact set");
+        } finally {
+            deleteRecursively(mixed);
+        }
+
+        // 5. Declaration-only cycle: two externals-declared .d.deal files
+        //    import each other. The former tolerated declaration-only
+        //    exception is removed — the complete graph rejects exactly
+        //    like the implementation case, before any checking.
+        Path declarations = Files.createTempDirectory("deal-graph-decl");
+        try {
+            Path root = declarations;
+            writeSource(root, "main.deal",
+                "import * as A from \"./support/decl_two_a\"\n"
+                    + "export function probe(x: A.A): A.A { return x; }\n"
+                    + "export function main(): null { return null; }\n");
+            Path support = root.resolve("support");
+            Path declA = writeSource(support, "decl_two_a.d.deal",
+                "import * as B from \"./decl_two_b\"\n"
+                    + "export class A { value: int = 1; }\n"
+                    + "export function accept(x: B.B): B.B;\n");
+            Path declB = writeSource(support, "decl_two_b.d.deal",
+                "import * as A from \"./decl_two_a\"\n"
+                    + "export class B { value: int = 2; }\n"
+                    + "export function accept(x: A.A): A.A;\n");
+            Map<String, String> externals = new LinkedHashMap<>();
+            externals.put("decl_two_a", "support/decl_two_a.d.deal");
+            externals.put("decl_two_b", "support/decl_two_b.d.deal");
+            Path output = declarations.resolve("out");
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                root.resolve("main.deal").toAbsolutePath(), output, false,
+                externals, List.of(root.toAbsolutePath()), null);
+            check(!compileQuietly(orchestrator),
+                "a declaration-only cycle fails the compile");
+            CompilerDiagnostic e2005 = onlyCycleDiagnostic(
+                orchestrator.diagnostics(), "declaration-only cycle");
+            if (e2005 != null) {
+                check(e2005.range().origin() == RangeOrigin.SOURCE
+                        && e2005.range().equals(
+                            firstImportSpan(declA).range()),
+                    "the declaration-cycle E2005 anchors at decl_two_a's"
+                        + " import declaration: " + e2005.range());
+                String a = declA.toString();
+                String b = declB.toString();
+                check(e2005.message().equals("Circular import: " + a + " -> "
+                        + b + " -> " + a),
+                    "the declaration cycle path is reproducible: "
+                        + e2005.message());
+            }
+            check(orchestrator.checkedProject() == null,
+                "a declaration-only cycle produces no checked project");
+            check(!Files.exists(output),
+                "a declaration-only cycle publishes no artifact set");
+        } finally {
+            deleteRecursively(declarations);
+        }
+
+        // 6. Two disjoint cycles: one E2005 per cyclic component, in
+        //    deterministic discovery order of each component's first
+        //    member.
+        Path disjoint = Files.createTempDirectory("deal-graph-disjoint");
+        try {
+            Path src = disjoint.resolve("src");
+            writeSource(src, "main.deal",
+                "import * as A from \"./a\"\n"
+                    + "import * as X from \"./x\"\n"
+                    + "export function main(): null { return null; }\n");
+            writeSource(src, "a.deal",
+                "import * as B from \"./b\"\n"
+                    + "export class Alpha { b: B.Beta | null = null; }\n");
+            writeSource(src, "b.deal",
+                "import * as A from \"./a\"\n"
+                    + "export class Beta { a: A.Alpha | null = null; }\n");
+            writeSource(src, "x.deal",
+                "import * as Y from \"./y\"\n"
+                    + "export class Chi { y: Y.Psi | null = null; }\n");
+            writeSource(src, "y.deal",
+                "import * as X from \"./x\"\n"
+                    + "export class Psi { x: X.Chi | null = null; }\n");
+            Path output = disjoint.resolve("out");
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), output, false,
+                null, List.of(src.toAbsolutePath()), null);
+            check(!compileQuietly(orchestrator),
+                "two disjoint cycles fail the compile");
+            List<CompilerDiagnostic> diagnostics = orchestrator.diagnostics();
+            check(diagnostics.size() == 2
+                    && diagnostics.stream().allMatch(d -> "E2005".equals(
+                        d.code()) && "error".equals(d.severity())),
+                "exactly two error E2005 diagnostics (one per component),"
+                    + " got " + diagnostics);
+            if (diagnostics.size() == 2) {
+                check(diagnostics.get(0).message().contains(
+                        "a.deal -> ")
+                        && diagnostics.get(1).message().contains(
+                            "x.deal -> "),
+                    "the components report in deterministic discovery"
+                        + " order: " + diagnostics);
+            }
+        } finally {
+            deleteRecursively(disjoint);
+        }
+
+        // 7. Reproducible path versus node order: the entry discovers a
+        //    and b before a's own import discovers c, so the SCC's node
+        //    order (a, b, c) is not a path. The witness path follows the
+        //    real edges (a -> c -> b -> a), and the anchor is a's actual
+        //    import declaration of c.
+        Path outOfOrder = Files.createTempDirectory("deal-graph-path");
+        try {
+            Path src = outOfOrder.resolve("src");
+            writeSource(src, "main.deal",
+                "import * as A from \"./a\"\n"
+                    + "import * as B from \"./b\"\n"
+                    + "export function main(): null { return null; }\n");
+            Path aFile = writeSource(src, "a.deal",
+                "import * as C from \"./c\"\n"
+                    + "export class Alpha { c: C.Gamma | null = null; }\n");
+            Path bFile = writeSource(src, "b.deal",
+                "import * as A from \"./a\"\n"
+                    + "export class Beta { a: A.Alpha | null = null; }\n");
+            Path cFile = writeSource(src, "c.deal",
+                "import * as B from \"./b\"\n"
+                    + "export class Gamma { b: B.Beta | null = null; }\n");
+            Path output = outOfOrder.resolve("out");
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), output, false,
+                null, List.of(src.toAbsolutePath()), null);
+            check(!compileQuietly(orchestrator),
+                "the out-of-node-order cycle fails the compile");
+            CompilerDiagnostic e2005 = onlyCycleDiagnostic(
+                orchestrator.diagnostics(), "out-of-node-order cycle");
+            if (e2005 != null) {
+                check(e2005.message().equals("Circular import: "
+                        + aFile + " -> " + cFile + " -> " + bFile
+                        + " -> " + aFile),
+                    "the witness path follows the real edges, not the"
+                        + " node order: " + e2005.message());
+                check(e2005.range().origin() == RangeOrigin.SOURCE
+                        && e2005.range().equals(
+                            firstImportSpan(aFile).range()),
+                    "the witness anchors at a.deal's import of c: "
+                        + e2005.range());
+            }
+        } finally {
+            deleteRecursively(outOfOrder);
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1113,6 +1472,7 @@ public class CheckedProjectBuilderTest {
         testNoFrontendMutation();
         testConstructionEntryDerivation();
         testDeterminismAndDigestGolden();
+        testImportCycleRejection();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

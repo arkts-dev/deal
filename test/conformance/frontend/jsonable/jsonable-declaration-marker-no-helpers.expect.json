@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E4007",
+    "line": 10,
+    "column": 3,
+    "message": "Field type is not jsonable: Model | null"
+  }
+}

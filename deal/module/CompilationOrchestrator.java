@@ -1226,29 +1226,61 @@ public final class CompilationOrchestrator {
     }
 
     // =========================================================================
-    // Phase 2: Dependency graph and topological ordering
-    // ... (unchanged)
+    // Phase 2: Dependency graph, cycle admission, and topological ordering
     // =========================================================================
 
     private List<String> buildCheckOrder() {
+        List<String> nodes = new ArrayList<>(modules.keySet());
         Map<String, Set<String>> deps = new LinkedHashMap<>();
-        for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
-            String sourcePath = entry.getKey();
-            ModuleInfo info = entry.getValue();
+        // The E2005 anchor chain inputs of this phase: each module's
+        // import-edge spans (resolved target -> import declaration
+        // span) and program span, identical to the phase-3.85 graph
+        // pass inputs so both phases anchor cycles the same way.
+        Map<String, Map<String, Span>> edgeSpans = new LinkedHashMap<>();
+        Map<String, Span> programSpans = new LinkedHashMap<>();
+        for (String sourcePath : nodes) {
+            ModuleInfo info = modules.get(sourcePath);
             Set<String> imports = new LinkedHashSet<>();
-            for (StatementNode stmt : info.rawAst.statements()) {
-                if (stmt instanceof ImportDeclaration imp) {
-                    String resolved = resolveImportPath(imp.modulePath(),
-                        Path.of(sourcePath), imp.span());
-                    if (resolved != null && modules.containsKey(resolved)) {
-                        imports.add(resolved);
+            Map<String, Span> spans = new LinkedHashMap<>();
+            if (info.rawAst != null) {
+                for (StatementNode stmt : info.rawAst.statements()) {
+                    if (stmt instanceof ImportDeclaration imp) {
+                        String resolved = resolveImportPath(imp.modulePath(),
+                            Path.of(sourcePath), imp.span());
+                        if (resolved != null
+                                && modules.containsKey(resolved)) {
+                            imports.add(resolved);
+                            if (imp.span() != null) {
+                                spans.put(resolved, imp.span());
+                            }
+                        }
                     }
+                }
+                if (info.rawAst.span() != null) {
+                    programSpans.put(sourcePath, info.rawAst.span());
                 }
             }
             deps.put(sourcePath, imports);
+            edgeSpans.put(sourcePath, spans);
         }
-        return ModuleDependencyGraph.initializationOrder(
-            new ArrayList<>(modules.keySet()), deps);
+        // Complete resolved import graph admission
+        // (complete_dependency_graph): every multi-module SCC and every
+        // self-import is a compile-time E2005 before dependency-ordered
+        // checking and lowering — implementation, declaration and
+        // type-only edges alike; runtime-resource/default dependencies
+        // are additional checked facts, never an exemption. A rejected
+        // graph publishes no checked project, no plan and no artifact.
+        List<CompilerDiagnostic> cycleDiagnostics =
+            ModuleDependencyGraph.importCycleDiagnostics(nodes, deps,
+                edgeSpans, programSpans);
+        if (!cycleDiagnostics.isEmpty()) {
+            diagnostics.addAll(cycleDiagnostics);
+            hasErrors = true;
+            log("  Import graph rejected: " + cycleDiagnostics.size()
+                + " cyclic component(s)");
+            return null;
+        }
+        return ModuleDependencyGraph.initializationOrder(nodes, deps);
     }
 
     public static CompilerDiagnostic e2005Diagnostic(List<String> cycle,
@@ -1630,8 +1662,11 @@ public final class CompilationOrchestrator {
             ModuleDependencyGraph.digestFreePass(inputs,
                 plannedDefaultClasses, edgeSpans, programSpans);
         if (free.failed()) {
-            // E2005: a runtime SCC — publish no plan, no FFI metadata,
-            // and no artifact; the provisional plans are discarded.
+            // E2005: a cyclic import component (defensive — the phase-2
+            // complete-graph admission already rejects every cyclic
+            // component before checking) publishes no plan, no FFI
+            // metadata, and no artifact; the provisional plans are
+            // discarded.
             diagnostics.addAll(free.diagnostics());
             hasErrors = true;
             plannedDefaultClasses.clear();

@@ -89,7 +89,7 @@ public class CheckerTest {
     }
 
     private static CheckerOutput checkProgramWithModule(String source,
-            String filename, StubModuleResolver resolver) {
+            String filename, ModuleResolver resolver) {
         LexResult lex = new Lexer(source, filename).tokenize();
         ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
 
@@ -411,6 +411,9 @@ public class CheckerTest {
         testJsonableNonCircularChain();
         testJsonableImportedClass_valid();
         testJsonableImportedClass_invalid();
+        testJsonableImportedSameNameDistinctIdentity();
+        testJsonableImportedThroughArrayAndNullable();
+        testJsonableLocalCycleWithSameNamedImported();
 
         testSymbolTableSymbolsInsertionOrder();
         testSymbolTableAliasSelectionDefinitionOrder();
@@ -3205,25 +3208,59 @@ public class CheckerTest {
     }
 
     // =========================================================================
-    // F2: E2005 — circular import with runtime dependency
+    // F2: E2005 — circular import
     // =========================================================================
 
     static void testE2005_circularImport() {
-        System.out.println("-- F2: E2005 circular import --");
-        // To test E2005, we create a custom StubModuleResolver.
-        // The NameResolver adds the imported module to modulesInProgress
-        // before calling resolveModule. If the resolver itself then triggers
-        // another import of the same module, E2005 fires.
-        // For a unit test, we use a resolver that records the call.
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", java.util.Map.of("value", deal.types.Type.Int.INSTANCE));
+        System.out.println("-- F2: E2005 circular import (recursion guard) --");
+        // The NameResolver adds the imported module path to
+        // modulesInProgress before resolving it. A resolver that
+        // recursively resolves the imported module's own imports — the
+        // pre-discovery frontend shape — re-enters the guard and reports
+        // E2005 for the cycle. The production orchestrator additionally
+        // rejects the complete resolved graph before checking;
+        // CheckedProjectBuilderTest owns the whole-project cycle
+        // negatives.
+        List<CompilerDiagnostic> nestedDiagnostics = new ArrayList<>();
+        ModuleResolver recursive = new ModuleResolver() {
+            @Override
+            public Map<String, Type> resolveModule(String modulePath,
+                    String importingModule, Set<String> modulesInProgress)
+                    throws ModuleNotFoundException {
+                boolean first = modulePath.equals("./a");
+                String source = first
+                    ? "import * as B from \"./b\";\nexport function fa(): int;\n"
+                    : "import * as A from \"./a\";\nexport function fb(): int;\n";
+                String filename = first ? "a.deal" : "b.deal";
+                LexResult lex = new Lexer(source, filename).tokenize();
+                ParseResult parse = new Parser(lex.tokens(), filename,
+                    lex.directiveEvents()).parse();
+                NameResolver nested = new NameResolver(filename, this,
+                    modulesInProgress);
+                nested.resolve(parse.program());
+                nestedDiagnostics.addAll(nested.diagnostics());
+                return Map.of(first ? "fa" : "fb", Type.Int.INSTANCE);
+            }
 
-        CheckerOutput out = checkProgramWithModule(
-            "import * as Lib from \"./lib\";\n" +
-            "let x: int = 1;",
-            resolver
+            @Override
+            public Symbol.ClassSymbol resolveClassSymbol(String className,
+                    String modulePath, String importingModule) {
+                return null;
+            }
+        };
+
+        checkProgramWithModule(
+            "import * as A from \"./a\";\n"
+            + "let x: int = 1;\n",
+            "test.deal",
+            recursive
         );
-        assertNoErrors(out, "circular import detection infrastructure present");
+        boolean rejected = nestedDiagnostics.stream().anyMatch(d ->
+            "E2005".equals(d.code())
+                && "error".equals(d.severity())
+                && "Circular import: './a'".equals(d.message()));
+        check(rejected, "the frontend recursion guard rejects the cycle with"
+            + " error E2005: " + nestedDiagnostics);
     }
 
     // =========================================================================
@@ -4027,6 +4064,110 @@ public class CheckerTest {
             resolver
         );
         assertError(out, "E4007", "imported non-@jsonable class field → E4007");
+    }
+
+    /**
+     * A local {@code @jsonable} class and an imported jsonable class of
+     * the same name carry distinct canonical identities: the imported
+     * class is a valid field type and neither class creates a false
+     * dependency edge on the other (ISSUE-0784).
+     */
+    static void testJsonableImportedSameNameDistinctIdentity() {
+        System.out.println("-- @jsonable: distinct same-named imported class identity --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        Type foreignB = IdentityTestFixtures.classType("B", "./foreign");
+        Map<String, Type> exports = new HashMap<>();
+        exports.put("B", foreignB);
+        exports.put("B$fromJson", new Type.Func(List.of(Type.String.INSTANCE),
+            Types.nullable(foreignB)));
+        exports.put("B$toJson", new Type.Func(List.of(foreignB),
+            Type.String.INSTANCE));
+        resolver.register("./foreign", exports);
+
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  local: int = 0;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  other: Other.B | null = null;\n" +
+            "  local: B = {};\n" +
+            "}\n",
+            resolver
+        );
+        assertNoErrors(out, "a local and an imported same-named jsonable class"
+            + " are distinct identities");
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
+        check(diags.stream().noneMatch(d -> d.code().equals("E4008")),
+            "no false E4008 from the same-named imported class: " + diags);
+        check(diags.stream().noneMatch(d -> d.code().equals("E4007")),
+            "no false E4007 from the same-named imported class: " + diags);
+    }
+
+    /**
+     * Imported generated jsonable classes are valid field types through
+     * array and nullable wrappers (the identity-keyed helper visibility
+     * recursion of ISSUE-0784).
+     */
+    static void testJsonableImportedThroughArrayAndNullable() {
+        System.out.println("-- @jsonable: imported jsonable class through array/nullable --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        Type foreign = IdentityTestFixtures.classType("Widget", "./foreign");
+        Map<String, Type> exports = new HashMap<>();
+        exports.put("Widget", foreign);
+        exports.put("Widget$fromJson", new Type.Func(
+            List.of(Type.String.INSTANCE), Types.nullable(foreign)));
+        exports.put("Widget$toJson", new Type.Func(List.of(foreign),
+            Type.String.INSTANCE));
+        resolver.register("./foreign", exports);
+
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n" +
+            "// @jsonable\n" +
+            "export class Holder {\n" +
+            "  items: Other.Widget[] = [];\n" +
+            "  note: Other.Widget | null = null;\n" +
+            "}\n",
+            resolver
+        );
+        assertNoErrors(out, "imported jsonable classes are valid through"
+            + " array and nullable wrappers");
+    }
+
+    /**
+     * A local generated cycle still rejects with E4008 while an imported
+     * jsonable class of the same name exists: identity, not name,
+     * decides both the dependency edge and the cycle (ISSUE-0784).
+     */
+    static void testJsonableLocalCycleWithSameNamedImported() {
+        System.out.println("-- @jsonable: local cycle with same-named imported class --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        Type foreignB = IdentityTestFixtures.classType("B", "./foreign");
+        Map<String, Type> exports = new HashMap<>();
+        exports.put("B", foreignB);
+        exports.put("B$fromJson", new Type.Func(List.of(Type.String.INSTANCE),
+            Types.nullable(foreignB)));
+        exports.put("B$toJson", new Type.Func(List.of(foreignB),
+            Type.String.INSTANCE));
+        resolver.register("./foreign", exports);
+
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n" +
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  b: B;\n" +
+            "  other: Other.B | null = null;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  a: A;\n" +
+            "}\n",
+            resolver
+        );
+        assertError(out, "E4008",
+            "the local A <-> B cycle still rejects with E4008");
     }
 
     /**

@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI — Declaration-file format
+// @description: Classified support module — a declaration file whose @jsonable marker is ignored must generate no helper while its explicitly declared C$fromJson/C$toJson schema stays visible.
+// @expected: companion
+
+// @jsonable
+export class Model { n: int = 0; }
+export function Model$fromJson(s: string): Model | null;
+export function Model$toJson(v: Model): string;

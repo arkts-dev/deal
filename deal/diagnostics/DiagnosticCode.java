@@ -173,8 +173,8 @@ public enum DiagnosticCode {
     E2003(Phase.FRONTEND, "Module not found"),
     /** Export not found in module. */
     E2004(Phase.FRONTEND, "Export not found in module"),
-    /** Circular import with runtime dependency. */
-    E2005(Phase.FRONTEND, "Circular import with runtime dependency"),
+    /** Circular import (every multi-module SCC and self-import). */
+    E2005(Phase.FRONTEND, "Circular import"),
 
     E2006(Phase.FRONTEND, "Import-shadowed by earlier declaration"),
     /** Declaration shadowed by earlier import. */

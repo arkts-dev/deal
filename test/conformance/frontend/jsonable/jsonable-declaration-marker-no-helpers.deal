@@ -1,0 +1,13 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: A declaration-file @jsonable marker generates no helper, so an implementation module's field of that class type is not jsonable and rejects with E4007.
+// @expected: compile-error E4007
+// @features: jsonable, declarations, modules
+
+import * as M from "./support/declared_json_model_marker_only"
+
+// @jsonable
+export class Holder {
+  m: M.Model | null = null;
+}
+
+export function main(): null { return null; }

@@ -20,6 +20,7 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -176,9 +177,15 @@ public final class ModuleDependencyGraph {
      * occurrences (D7(a)), merges them with the planner's default
      * occurrences (D7(b)) over the one carrier shape, classifies the
      * strongly connected components of the import-edge graph, and emits
-     * one E2005 diagnostic per runtime SCC with a note for every
-     * runtime edge inside it. No provider digest is computed or
-     * requested anywhere in this pass.
+     * one E2005 diagnostic per cyclic component (every multi-module SCC
+     * and self-import) with a note for every runtime edge inside it. No
+     * provider digest is computed or requested anywhere in this pass.
+     *
+     * <p>The orchestrator rejects the complete resolved import graph
+     * before ordered checking ({@link #importCycleDiagnostics}), so a
+     * cyclic graph reaching this pass is a producer defect the pass
+     * still fails closed on rather than tolerating a
+     * declaration-only/type-only exception.</p>
      *
      */
     public static DigestFreeResult digestFreePass(
@@ -358,60 +365,37 @@ public final class ModuleDependencyGraph {
         }
 
         /**
-         * Tarjan over the import-edge graph; every SCC containing at
-         * least one runtime edge (either reason) emits one E2005
-         * diagnostic with a note per runtime edge inside the SCC.
-         * Runtime SCCs are reported in discovery order of their first
-         * member.
+         * Tarjan over the import-edge graph; every cyclic component
+         * (every multi-module SCC and every self-import) emits one
+         * E2005 diagnostic carrying the reproducible cycle path, plus
+         * a note per runtime edge inside the component. Components are
+         * reported in discovery order of their first member.
          */
         private void classifyCycles() {
-            List<List<String>> sccs = stronglyConnectedComponents(
-                new ArrayList<>(modules.keySet()), typeEdges);
-            List<List<String>> runtimeSccs = new ArrayList<>();
-            for (List<String> scc : sccs) {
-                if (scc.isEmpty()) {
-                    continue;
-                }
-                Set<String> members = new LinkedHashSet<>(scc);
-                List<ProvisionalEdge> edgesInScc = new ArrayList<>();
-                for (ProvisionalEdge edge : mergedEdges) {
-                    if (members.contains(sourcePathByUri.get(
-                            edge.from().canonicalResolvedSourceUri()))
-                            && members.contains(sourcePathByUri.get(
-                                edge.to().canonicalResolvedSourceUri()))) {
-                        edgesInScc.add(edge);
-                    }
-                }
-                if (!edgesInScc.isEmpty()) {
-                    runtimeSccs.add(scc);
-                }
-            }
-            if (runtimeSccs.isEmpty()) {
+            List<String> nodes = new ArrayList<>(modules.keySet());
+            List<List<String>> cycles =
+                ModuleDependencyGraph.importCycles(nodes, typeEdges);
+            if (cycles.isEmpty()) {
                 return;
             }
             failed = true;
-            // Deterministic report order: first member's discovery
-            // index ascending.
-            List<String> nodes = new ArrayList<>(modules.keySet());
-            runtimeSccs.sort((a, b) -> Integer.compare(
-                nodes.indexOf(a.get(0)), nodes.indexOf(b.get(0))));
-            for (List<String> scc : runtimeSccs) {
-                diagnostics.add(runtimeCycleDiagnostic(scc));
+            for (List<String> component : cycles) {
+                List<String> path =
+                    ModuleDependencyGraph.cyclePath(component, typeEdges);
+                diagnostics.add(runtimeCycleDiagnostic(component, path));
             }
         }
 
         private CompilerDiagnostic runtimeCycleDiagnostic(
-                List<String> cycle) {
-            String chain = String.join(" -> ", cycle) + " -> "
-                + cycle.get(0);
-            String message = "Circular import with runtime dependency: "
-                + chain;
+                List<String> component, List<String> path) {
+            String chain = String.join(" -> ", path);
+            String message = "Circular import: " + chain;
             CompilerDiagnostic anchored =
-                CompilationOrchestrator.e2005Diagnostic(cycle,
+                CompilationOrchestrator.e2005Diagnostic(path,
                     importEdgeSpans, programSpans, message);
             List<DiagnosticNote> notes =
                 new ArrayList<>(anchored.notes());
-            Set<String> members = new LinkedHashSet<>(cycle);
+            Set<String> members = new LinkedHashSet<>(component);
             for (ProvisionalEdge edge : mergedEdges) {
                 String fromPath = sourcePathByUri.get(edge.from()
                     .canonicalResolvedSourceUri());
@@ -430,145 +414,150 @@ public final class ModuleDependencyGraph {
                 anchored.severity(), anchored.message(), anchored.range(),
                 notes, anchored.diagnosticCode());
         }
+    }
 
-        /**
-         * Tarjan's strongly connected components over the given nodes
-         * and ordered adjacency lists; every returned member list is
-         * in the node order. Deterministic: nodes are visited in the
-         * given order and adjacency lists keep their insertion order.
-         */
-        private static List<List<String>> stronglyConnectedComponents(
-                List<String> nodes, Map<String, List<String>> edges) {
-            Map<String, Integer> index = new LinkedHashMap<>();
-            Map<String, Integer> lowlink = new LinkedHashMap<>();
-            Deque<String> stack = new ArrayDeque<>();
-            Set<String> onStack = new HashSet<>();
-            List<List<String>> sccs = new ArrayList<>();
-            int[] counter = {0};
-            for (String node : nodes) {
-                if (!index.containsKey(node)) {
-                    strongconnect(node, nodes, edges, index, lowlink,
-                        stack, onStack, sccs, counter);
-                }
-            }
-            return sccs;
+    // =========================================================================
+    // Complete import-graph cycle admission
+    // =========================================================================
+
+    /**
+     * The cyclic strongly connected components of one import graph:
+     * every SCC with more than one member plus every self-import, in
+     * deterministic discovery order of the component's first member
+     * (node order). Each returned component lists its members in node
+     * order.
+     *
+     * <p>Edges are the complete resolved import graph (implementation,
+     * declaration and type-only imports alike); a reference to a node
+     * outside {@code nodes} is ignored as a broken dependency
+     * reference. Deterministic: nodes and adjacency lists keep their
+     * given order.</p>
+     */
+    public static List<List<String>> importCycles(List<String> nodes,
+            Map<String, ? extends Collection<String>> edges) {
+        Objects.requireNonNull(nodes, "nodes");
+        Objects.requireNonNull(edges, "edges");
+        Map<String, Integer> nodeIndex = new LinkedHashMap<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            nodeIndex.put(nodes.get(i), i);
         }
+        List<List<String>> cycles = new ArrayList<>();
+        for (List<String> component
+                : stronglyConnectedComponents(nodes, edges)) {
+            boolean cyclic = component.size() > 1;
+            if (!cyclic && !component.isEmpty()) {
+                Collection<String> selfDeps = edges.get(component.get(0));
+                cyclic = selfDeps != null
+                    && selfDeps.contains(component.get(0));
+            }
+            if (cyclic) {
+                cycles.add(component);
+            }
+        }
+        cycles.sort((a, b) -> Integer.compare(
+            nodeIndex.getOrDefault(a.get(0), Integer.MAX_VALUE),
+            nodeIndex.getOrDefault(b.get(0), Integer.MAX_VALUE)));
+        return List.copyOf(cycles);
+    }
 
-        private static void strongconnect(String node, List<String> nodes,
-                Map<String, List<String>> edges,
-                Map<String, Integer> index, Map<String, Integer> lowlink,
-                Deque<String> stack, Set<String> onStack,
-                List<List<String>> sccs, int[] counter) {
-            index.put(node, counter[0]);
-            lowlink.put(node, counter[0]);
-            counter[0]++;
-            stack.push(node);
-            onStack.add(node);
-            for (String target : edges.getOrDefault(node, List.of())) {
-                if (!nodes.contains(target)) {
+    /**
+     * One reproducible concrete cycle path inside a cyclic component:
+     * the shortest path {@code start -> ... -> start} through the
+     * component's edges (start is the component's first member in node
+     * order), rendered as {@code [start, ..., closing, start]}.
+     * Deterministic by node and adjacency order. Falls back to the
+     * component plus its first member when no witness is derivable (a
+     * defensive shape: a cyclic SCC always derives one).
+     */
+    public static List<String> cyclePath(List<String> members,
+            Map<String, ? extends Collection<String>> edges) {
+        Objects.requireNonNull(members, "members");
+        Objects.requireNonNull(edges, "edges");
+        if (members.isEmpty()) {
+            return List.of();
+        }
+        String start = members.get(0);
+        Set<String> memberSet = new LinkedHashSet<>(members);
+        Map<String, String> parent = new LinkedHashMap<>();
+        Map<String, Integer> depth = new LinkedHashMap<>();
+        Deque<String> queue = new ArrayDeque<>();
+        depth.put(start, 0);
+        queue.add(start);
+        String closingFrom = null;
+        while (!queue.isEmpty() && closingFrom == null) {
+            String node = queue.poll();
+            Collection<String> targets = edges.get(node);
+            if (targets == null) {
+                continue;
+            }
+            for (String target : targets) {
+                if (!memberSet.contains(target)) {
                     continue;
                 }
-                if (!index.containsKey(target)) {
-                    strongconnect(target, nodes, edges, index, lowlink,
-                        stack, onStack, sccs, counter);
-                    lowlink.put(node, Math.min(lowlink.get(node),
-                        lowlink.get(target)));
-                } else if (onStack.contains(target)) {
-                    lowlink.put(node, Math.min(lowlink.get(node),
-                        index.get(target)));
-                }
-            }
-            if (lowlink.get(node).equals(index.get(node))) {
-                List<String> members = new ArrayList<>();
-                String member;
-                do {
-                    member = stack.pop();
-                    onStack.remove(member);
-                    members.add(member);
-                } while (!member.equals(node));
-                // Node order for determinism.
-                List<String> ordered = new ArrayList<>();
-                for (String candidate : nodes) {
-                    if (members.contains(candidate)) {
-                        ordered.add(candidate);
-                    }
-                }
-                sccs.add(List.copyOf(ordered));
-            }
-        }
-    }
-
-    // =========================================================================
-    // Initialization order (the one shared ordering algorithm)
-    // =========================================================================
-
-    /**
-     * The one shared initialization ordering: Kahn over the import
-     * edges in node (module discovery) order; when no module is ready,
-     * exactly the remaining cycle members (computed on the remaining
-     * subgraph) are appended in node order and the sweep resumes.
-     * Modules reachable only from a cycle are appended once the cycle
-     * members exist, so an importer never precedes its imported module.
-     * The orchestrator's phase-2 check order and the graph's
-     * initialization order both derive from this method, so they are
-     * byte-identical for every compilation.
-     *
-     */
-    public static List<String> initializationOrder(
-            List<String> nodes,
-            Map<String, ? extends Collection<String>> typeEdges) {
-        Objects.requireNonNull(nodes, "nodes");
-        Objects.requireNonNull(typeEdges, "typeEdges");
-        List<String> order = new ArrayList<>();
-        Set<String> remaining = new LinkedHashSet<>(nodes);
-        while (!remaining.isEmpty()) {
-            boolean progress = false;
-            for (java.util.Iterator<String> it =
-                    remaining.iterator(); it.hasNext(); ) {
-                String node = it.next();
-                Collection<String> deps = typeEdges.get(node);
-                if (deps == null) {
-                    deps = List.of();
-                }
-                boolean ready = deps.stream().allMatch(order::contains);
-                if (ready) {
-                    order.add(node);
-                    it.remove();
-                    progress = true;
-                }
-            }
-            if (!progress) {
-                Set<String> cycleMembers =
-                    cycleMembersWithin(remaining, typeEdges);
-                if (cycleMembers.isEmpty()) {
-                    // Defensive: broken dependency references to nodes
-                    // outside the module set; append the leftovers in
-                    // node order (the old leftover fallback).
-                    for (String node : remaining) {
-                        order.add(node);
-                    }
+                if (target.equals(start)) {
+                    closingFrom = node;
                     break;
                 }
-                for (java.util.Iterator<String> it =
-                        remaining.iterator(); it.hasNext(); ) {
-                    String node = it.next();
-                    if (cycleMembers.contains(node)) {
-                        order.add(node);
-                        it.remove();
-                    }
+                if (!depth.containsKey(target)) {
+                    depth.put(target, depth.get(node) + 1);
+                    parent.put(target, node);
+                    queue.add(target);
                 }
             }
         }
-        return List.copyOf(order);
+        if (closingFrom == null) {
+            List<String> fallback = new ArrayList<>(members);
+            fallback.add(start);
+            return List.copyOf(fallback);
+        }
+        LinkedList<String> path = new LinkedList<>();
+        String cursor = closingFrom;
+        while (cursor != null) {
+            path.addFirst(cursor);
+            cursor = parent.get(cursor);
+        }
+        path.add(start);
+        return List.copyOf(path);
     }
 
     /**
-     * The members of every cycle (SCC of size &gt; 1 or a self-import)
-     * among the given remaining nodes, in node order.
+     * The E2005 diagnostics of the complete resolved import graph: one
+     * per cyclic component (multi-module SCC or self-import) in
+     * deterministic discovery order, anchored at the first actual
+     * import declaration range inside the cycle, carrying the
+     * reproducible cycle path. Empty exactly when the graph is
+     * acyclic. The orchestrator runs this before ordered
+     * checking/lowering; no plan or artifact is published on failure.
      */
-    private static Set<String> cycleMembersWithin(Set<String> remaining,
-            Map<String, ? extends Collection<String>> typeEdges) {
-        List<String> nodes = new ArrayList<>(remaining);
+    public static List<CompilerDiagnostic> importCycleDiagnostics(
+            List<String> nodes,
+            Map<String, ? extends Collection<String>> edges,
+            Map<String, Map<String, Span>> edgeSpans,
+            Map<String, Span> programSpans) {
+        Objects.requireNonNull(nodes, "nodes");
+        Objects.requireNonNull(edges, "edges");
+        Objects.requireNonNull(edgeSpans, "edgeSpans");
+        Objects.requireNonNull(programSpans, "programSpans");
+        List<CompilerDiagnostic> diagnostics = new ArrayList<>();
+        for (List<String> component : importCycles(nodes, edges)) {
+            List<String> path = cyclePath(component, edges);
+            diagnostics.add(CompilationOrchestrator.e2005Diagnostic(path,
+                edgeSpans, programSpans,
+                "Circular import: " + String.join(" -> ", path)));
+        }
+        return List.copyOf(diagnostics);
+    }
+
+    /**
+     * Tarjan's strongly connected components over the given nodes and
+     * ordered adjacency lists; every returned member list is in node
+     * order. Deterministic: nodes are visited in the given order and
+     * adjacency lists keep their insertion order. References outside
+     * the node set are ignored.
+     */
+    private static List<List<String>> stronglyConnectedComponents(
+            List<String> nodes,
+            Map<String, ? extends Collection<String>> edges) {
         Map<String, Integer> index = new LinkedHashMap<>();
         Map<String, Integer> lowlink = new LinkedHashMap<>();
         Deque<String> stack = new ArrayDeque<>();
@@ -577,30 +566,15 @@ public final class ModuleDependencyGraph {
         int[] counter = {0};
         for (String node : nodes) {
             if (!index.containsKey(node)) {
-                strongconnectSet(node, remaining, typeEdges, index,
-                    lowlink, stack, onStack, sccs, counter);
+                strongconnect(node, nodes, edges, index, lowlink,
+                    stack, onStack, sccs, counter);
             }
         }
-        Set<String> members = new LinkedHashSet<>();
-        for (List<String> scc : sccs) {
-            boolean cyclic = scc.size() > 1;
-            if (!cyclic) {
-                String node = scc.get(0);
-                Collection<String> selfDeps = typeEdges.get(node);
-                cyclic = selfDeps != null
-                    && selfDeps.contains(node);
-            }
-            if (cyclic) {
-                members.addAll(scc);
-            }
-        }
-        return members;
+        return sccs;
     }
 
-    /** Tarjan over a node-set restriction (the remaining subgraph). */
-    private static void strongconnectSet(String node,
-            Set<String> allowed,
-            Map<String, ? extends Collection<String>> typeEdges,
+    private static void strongconnect(String node, List<String> nodes,
+            Map<String, ? extends Collection<String>> edges,
             Map<String, Integer> index, Map<String, Integer> lowlink,
             Deque<String> stack, Set<String> onStack,
             List<List<String>> sccs, int[] counter) {
@@ -609,17 +583,17 @@ public final class ModuleDependencyGraph {
         counter[0]++;
         stack.push(node);
         onStack.add(node);
-        Collection<String> targets = typeEdges.get(node);
+        Collection<String> targets = edges.get(node);
         if (targets == null) {
             targets = List.of();
         }
         for (String target : targets) {
-            if (!allowed.contains(target)) {
+            if (!nodes.contains(target)) {
                 continue;
             }
             if (!index.containsKey(target)) {
-                strongconnectSet(target, allowed, typeEdges, index,
-                    lowlink, stack, onStack, sccs, counter);
+                strongconnect(target, nodes, edges, index, lowlink,
+                    stack, onStack, sccs, counter);
                 lowlink.put(node, Math.min(lowlink.get(node),
                     lowlink.get(target)));
             } else if (onStack.contains(target)) {
@@ -635,8 +609,75 @@ public final class ModuleDependencyGraph {
                 onStack.remove(member);
                 members.add(member);
             } while (!member.equals(node));
-            sccs.add(List.copyOf(members));
+            // Node order for determinism.
+            List<String> ordered = new ArrayList<>();
+            for (String candidate : nodes) {
+                if (members.contains(candidate)) {
+                    ordered.add(candidate);
+                }
+            }
+            sccs.add(List.copyOf(ordered));
         }
+    }
+
+    // =========================================================================
+    // Initialization order (the one shared ordering algorithm)
+    // =========================================================================
+
+    /**
+     * The one shared initialization ordering: Kahn over the import
+     * edges in node (module discovery) order. The caller must supply an
+     * acyclic graph — every multi-module SCC and self-import is
+     * rejected with E2005 before ordering
+     * ({@link #importCycleDiagnostics}) — and a stalled sweep is
+     * therefore a producer defect, not a tolerated cycle: the method
+     * fails closed with an {@link IllegalStateException} instead of
+     * silently ordering cycle members. Modules reachable only from a
+     * cycle cannot occur on this contract, so an importer never
+     * precedes its imported module. The orchestrator's phase-2 check
+     * order and the graph's initialization order both derive from this
+     * method, so they are byte-identical for every compilation.
+     *
+     */
+    public static List<String> initializationOrder(
+            List<String> nodes,
+            Map<String, ? extends Collection<String>> typeEdges) {
+        Objects.requireNonNull(nodes, "nodes");
+        Objects.requireNonNull(typeEdges, "typeEdges");
+        Set<String> nodeSet = new LinkedHashSet<>(nodes);
+        List<String> order = new ArrayList<>();
+        Set<String> remaining = new LinkedHashSet<>(nodes);
+        while (!remaining.isEmpty()) {
+            boolean progress = false;
+            for (java.util.Iterator<String> it =
+                    remaining.iterator(); it.hasNext(); ) {
+                String node = it.next();
+                Collection<String> deps = typeEdges.get(node);
+                if (deps == null) {
+                    deps = List.of();
+                }
+                // A reference outside the node set is a broken
+                // dependency reference (defensive): it can never
+                // become ready and is ignored, exactly as the SCC pass
+                // ignores it.
+                boolean ready = deps.stream().filter(nodeSet::contains)
+                    .allMatch(order::contains);
+                if (ready) {
+                    order.add(node);
+                    it.remove();
+                    progress = true;
+                }
+            }
+            if (!progress) {
+                throw new IllegalStateException(
+                    "dependency ordering requires an acyclic import graph"
+                        + " (every multi-module SCC and self-import is"
+                        + " rejected with E2005 before ordering);"
+                        + " remaining modules: "
+                        + new ArrayList<>(remaining));
+            }
+        }
+        return List.copyOf(order);
     }
 
     /**
