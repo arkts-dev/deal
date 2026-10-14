@@ -3574,14 +3574,15 @@ public class CanonicalProjectionParityTest {
      * int carrier, so the crossing's signed32 range step — the step the
      * crossing already applies at a top-level int position — must apply at
      * every checked int element position recursively: the direct, the
-     * nullable-element, and the nested positions included. The oracle
-     * supplies the raw out-of-range carrier as its number view (a closed
-     * signed32 INT view cannot carry it), and both production consumers
-     * classify the same raw value {@code number}, so the enclosing array
-     * fails through the canonical element arm at the await origin on all
-     * three consumers, the first failing element decides before any
-     * settlement commits, and a rejected crossing leaves the host's own
-     * carrier untouched.
+     * nullable-element, and the nested positions included. The oracle's
+     * boundary view classifies the raw out-of-range host long as its number
+     * view (a closed signed32 INT view cannot carry it, and the oracle's own
+     * signed32-only INT factory keeps its invariant), exactly like both
+     * production consumers classify the same raw value {@code number}, so
+     * the enclosing array fails through the canonical element arm at the
+     * await origin on all three consumers, the first failing element decides
+     * before any settlement commits, and a rejected crossing leaves the
+     * host's own carrier untouched.
      */
     private static void testHostOutOfRangeArrayCompletions() throws Exception {
         System.out.println("-- the out-of-range host array completions: the "
@@ -3792,40 +3793,42 @@ public class CanonicalProjectionParityTest {
         """;
 
     /**
-     * The oracle's one-element out-of-range raw numeric int array completion
-     * value: the raw carrier outside signed32 is not the closed int carrier,
-     * so the oracle supplies it as the number view both production consumers
+     * The oracle's one-element out-of-range raw host-long int array
+     * completion value: the JVM host's completed carrier is the unrestricted
+     * raw {@code long} the public {@link SemanticOracle.Value.IntValue} seam
+     * admits, and the oracle's boundary view classifies an integral raw
+     * carrier outside signed32 as the number view both production consumers
      * project for the same raw value.
      */
-    private static SemanticOracle.Value oracleOutOfRangeIntArrayElement() {
+    private static SemanticOracle.Value oracleOutOfRangeIntArrayElement(long value) {
         return new SemanticOracle.Value.ArrayValue(
-            new ArrayList<>(List.of(
-                new SemanticOracle.Value.NumValue(2147483648d))),
+            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
             RuntimeDescriptor.Int.INSTANCE, false);
     }
 
     /**
-     * The oracle's nested out-of-range raw numeric int array completion
+     * The oracle's nested out-of-range raw host-long int array completion
      * value: the number view at the nested int element position.
      */
-    private static SemanticOracle.Value oracleOutOfRangeNestedIntArrayElement() {
+    private static SemanticOracle.Value oracleOutOfRangeNestedIntArrayElement(
+            long value) {
         return new SemanticOracle.Value.ArrayValue(
             new ArrayList<>(List.of(new SemanticOracle.Value.ArrayValue(
-                new ArrayList<>(List.of(
-                    new SemanticOracle.Value.NumValue(2147483648d))),
+                new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
                 RuntimeDescriptor.Int.INSTANCE, false))),
             RuntimeDescriptor.parseCanonicalText("[int]"), false);
     }
 
     /**
      * The oracle's early wrong-kind int followed by the out-of-range raw
-     * numeric carrier: the first failing element decides before the later
+     * host-long carrier: the first failing element decides before the later
      * number view is inspected.
      */
-    private static SemanticOracle.Value oracleOrderedStringArrayElement() {
+    private static SemanticOracle.Value oracleOrderedStringArrayElement(
+            long laterValue) {
         return new SemanticOracle.Value.ArrayValue(
             new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(7L),
-                new SemanticOracle.Value.NumValue(2147483648d))),
+                new SemanticOracle.Value.IntValue(laterValue))),
             RuntimeDescriptor.String.INSTANCE, false);
     }
 
@@ -3838,7 +3841,8 @@ public class CanonicalProjectionParityTest {
             ARRAY_COMPLETION_DROP_INT_DRIVER);
         try {
             assertAsyncCompletionFailure(compiled, "async_arrays",
-                arrayCompletionResponder(oracleOutOfRangeIntArrayElement()),
+                arrayCompletionResponder(
+                    oracleOutOfRangeIntArrayElement(2147483648L)),
                 "test_drop_int_array",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_INT_DRIVER, 4, 1, "int",
                     "number"),
@@ -3861,12 +3865,13 @@ public class CanonicalProjectionParityTest {
             ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER);
         try {
             assertAsyncCompletionFailure(compiled, "async_arrays",
-                arrayCompletionResponder(oracleOutOfRangeIntArrayElement()),
+                arrayCompletionResponder(
+                    oracleOutOfRangeIntArrayElement(-2147483649L)),
                 "test_drop_nullable_elements",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER, 4, 1,
                     "?int", "number"),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 2147483648}"),
-                jvmAsyncArrayHost("array(java.lang.Long.valueOf(2147483648L))"),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = -2147483649}"),
+                jvmAsyncArrayHost("array(java.lang.Long.valueOf(-2147483649L))"),
                 "the out-of-range Long (int | null)[] completion");
         } finally {
             deleteRecursively(compiled.root());
@@ -3884,7 +3889,8 @@ public class CanonicalProjectionParityTest {
             ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER);
         try {
             assertAsyncCompletionFailure(compiled, "async_arrays",
-                arrayCompletionResponder(oracleOutOfRangeNestedIntArrayElement()),
+                arrayCompletionResponder(
+                    oracleOutOfRangeNestedIntArrayElement(2147483648L)),
                 "test_drop_nested_int_array",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER, 4, 1,
                     "[int]", "array"),
@@ -3909,7 +3915,8 @@ public class CanonicalProjectionParityTest {
             ARRAY_COMPLETION_DROP_ORDER_DRIVER);
         try {
             assertAsyncCompletionFailure(compiled, "async_arrays",
-                arrayCompletionResponder(oracleOrderedStringArrayElement()),
+                arrayCompletionResponder(
+                    oracleOrderedStringArrayElement(2147483648L)),
                 "test_drop_ordered_strings",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_ORDER_DRIVER, 4, 1, "string",
                     "int"),

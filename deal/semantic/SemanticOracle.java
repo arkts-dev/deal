@@ -3750,7 +3750,7 @@ public final class SemanticOracle {
                     // marker's MISSING view).
                     BoundaryValueView.of(ActualKind.NOTHING);
                 case Value.BoolValue bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
-                case Value.IntValue intValue -> BoundaryValueView.ofInt(intValue.value());
+                case Value.IntValue intValue -> intBoundaryViewOf(intValue.value());
                 case Value.NumValue num -> BoundaryValueView.ofNumber(num.value());
                 case Value.StrValue str -> {
                     UnicodeScalars.Defect defect = str.defect() != null
@@ -3784,6 +3784,26 @@ public final class SemanticOracle {
                     BoundaryValueView.ofClass(classValue.classId().text());
                 case Value.SlotValue slot -> BoundaryValueView.of(ActualKind.INT);
             };
+        }
+
+        /**
+         * The typed-boundary classification of one raw integer carrier: the
+         * closed int carrier is signed32, so an integral raw long outside
+         * that range is not the int carrier — the raw carrier projection
+         * keeps its own numeric variant and classifies it {@code number},
+         * exactly like the emitted Lua prelude's {@code __typedBoundaryKind}
+         * and the JVM host surface's {@code actualOf} classify the same raw
+         * value. The number view lets the int path's canonical range step
+         * ({@code E8004}) select the failure, and an enclosing array's
+         * element arm render the element's own {@code number} token, while
+         * {@link BoundaryValueView#ofInt(long)} keeps its signed32
+         * invariant: an out-of-range raw host long is never re-spelled as an
+         * int carrier and never fails closed as a producer defect.
+         */
+        private static BoundaryValueView intBoundaryViewOf(long value) {
+            return value < Integer.MIN_VALUE || value > Integer.MAX_VALUE
+                ? BoundaryValueView.ofNumber(value)
+                : BoundaryValueView.ofInt(value);
         }
 
         /**
