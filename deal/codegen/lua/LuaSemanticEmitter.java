@@ -9889,10 +9889,18 @@ local function __typedBoundaryKind(staticKind, v)
   if t == "boolean" then return "boolean" end
   if t == "number" then
     -- The value-derived numeric classification: a numeric failing value
-    -- projects by its own variant — an integral finite value is the int
-    -- carrier, a fractional or nonfinite value the number carrier — never
-    -- by the declared descriptor text beside the position.
-    if v % 1 == 0 then return "int" end
+    -- projects by its own variant — an integral finite value inside the
+    -- signed32 int range is the int carrier, every other numeric value
+    -- (fractional, nonfinite, or integral but outside signed32, which is
+    -- not the closed int carrier) the number carrier — never by the
+    -- declared descriptor text beside the position. The classification
+    -- agrees with the host crossing's own variant materialization
+    -- (__hostNumVar) and with the oracle's signed32 IntValue / NumValue
+    -- model, so an out-of-range raw host number projects the same
+    -- number token on every consumer.
+    if v % 1 == 0 and v >= -2147483648 and v <= 2147483647 then
+      return "int"
+    end
     return "number"
   end
   if t == "string" then

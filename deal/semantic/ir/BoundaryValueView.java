@@ -1,7 +1,9 @@
 package deal.semantic.ir;
 
+import java.util.AbstractList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.IntFunction;
 
 public record BoundaryValueView(
     ActualKind kind,
@@ -107,8 +109,68 @@ public record BoundaryValueView(
                     + "(the two pinned host string-carrier reasons); use "
                     + "ofInvalidUnicode(Defect)");
         }
-        if (elements != null) {
+        if (elements != null && !(elements instanceof LazyElementViews)) {
+            // A lazily materialized element list is already immutable by
+            // construction: copying it here would materialize every element
+            // view the boundary check has not reached yet.
             elements = List.copyOf(elements);
+        }
+    }
+
+    /**
+     * The lazily materialized element views of one ARRAY view: element i's
+     * view is produced on the first read of index i and memoized, so a
+     * descriptor-directed boundary walk converts exactly the elements it
+     * inspects. A later or wrong-kind subtree the declared descriptor never
+     * descends into is never converted: a reference-cyclic carrier
+     * terminates through the descriptor's finite depth, and the canonical
+     * first-failing-element rule decides the tuple before any later element
+     * is visited. Identity equality and hashing keep record comparison from
+     * materializing (or recursing through) the list.
+     */
+    private static final class LazyElementViews extends AbstractList<BoundaryValueView> {
+
+        private final int size;
+        private final IntFunction<BoundaryValueView> producer;
+        private final BoundaryValueView[] cache;
+
+        LazyElementViews(int size, IntFunction<BoundaryValueView> producer) {
+            if (size < 0) {
+                throw new IllegalArgumentException(
+                    "an ARRAY view's element count must be non-negative, got " + size);
+            }
+            this.size = size;
+            this.producer = Objects.requireNonNull(producer,
+                "the lazy element-view producer must not be null");
+            this.cache = new BoundaryValueView[size];
+        }
+
+        @Override
+        public BoundaryValueView get(int index) {
+            Objects.checkIndex(index, size);
+            BoundaryValueView view = cache[index];
+            if (view == null) {
+                view = Objects.requireNonNull(producer.apply(index),
+                    "the lazy element-view producer returned no view for index "
+                        + index);
+                cache[index] = view;
+            }
+            return view;
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return this == other;
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(this);
         }
     }
 
@@ -194,6 +256,26 @@ public record BoundaryValueView(
     /** A {@code NUMBER} view carrying its IEEE-754 value (NaN/infinity included). */
     public static BoundaryValueView ofNumber(double value) {
         return new BoundaryValueView(ActualKind.NUMBER, null, value, null, null, false);
+    }
+
+    /**
+     * A lazily materialized {@code ARRAY} view: element {@code i}'s view is
+     * produced on the first read of that index and memoized, so the
+     * boundary engine's descriptor-directed walk converts only the elements
+     * it inspects (a subtree the declared descriptor never descends into is
+     * never converted, and a reference-cyclic carrier terminates).
+     */
+    public static BoundaryValueView ofLazyArray(
+            int size, IntFunction<BoundaryValueView> elementViews) {
+        return new BoundaryValueView(ActualKind.ARRAY, null, null, null,
+            new LazyElementViews(size, elementViews), false);
+    }
+
+    /** {@link #ofLazyArray(int, IntFunction)} carrying the decoded-array mark. */
+    public static BoundaryValueView ofLazyDecodedArray(
+            int size, IntFunction<BoundaryValueView> elementViews) {
+        return new BoundaryValueView(ActualKind.ARRAY, null, null, null,
+            new LazyElementViews(size, elementViews), true);
     }
 
     /** A {@code CLASS} view carrying the canonical {@code @modulePath/ClassName} atom text. */

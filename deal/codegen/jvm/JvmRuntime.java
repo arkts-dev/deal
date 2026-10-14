@@ -1100,8 +1100,18 @@ public final class JvmRuntime {
         if (v instanceof Boolean) {
             return "boolean";
         }
-        if (v instanceof Integer || v instanceof Long) {
+        if (v instanceof Integer) {
             return "int";
+        }
+        if (v instanceof Long longValue) {
+            // The closed int carrier is signed32: an integral carrier
+            // outside the signed32 range is not the int carrier, so it
+            // projects the number carrier's own token — exactly like the
+            // oracle's NumValue and the emitted Lua prelude's classification
+            // (a raw host long outside signed32 is a number carrier, never
+            // a re-spelled int carrier).
+            return longValue >= -2147483648L && longValue <= 2147483647L
+                ? "int" : "number";
         }
         if (v instanceof Double) {
             return "number";
@@ -1451,6 +1461,19 @@ public final class JvmRuntime {
         }
         if ("int".equals(desc)) {
             if (v instanceof Long longValue) {
+                if (hostCompletionCrossing
+                        && (longValue < -2147483648L || longValue > 2147483647L)) {
+                    // The signed32 range step of the pinned int ladder at
+                    // the crossing's element positions: the recursive
+                    // host-completion check admits only the signed32 long
+                    // carrier, exactly like the crossing's top-level rule
+                    // and the emitted host ABI's own int branch, so an
+                    // out-of-range long element can never be admitted
+                    // (the enclosing element arm then renders the
+                    // element's own number-carrier token).
+                    throw arm(deal.semantic.ir.FailureArmId.INT32_RANGE,
+                        java.util.Map.of(), "-", null, null);
+                }
                 return v;
             }
             if (hostCompletionCrossing && v instanceof Integer intValue) {

@@ -75,6 +75,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 public final class SemanticOracle {
@@ -3707,20 +3708,24 @@ public final class SemanticOracle {
         }
 
         /**
-         * The runtime value → closed boundary view. Array carriers
-         * materialize their element views recursively; every other kind's
-         * view is the shallow classification view
-         * ({@link #shallowViewOfValue}).
+         * The runtime value → closed boundary view. Array carriers are
+         * lazily materialized element views: the boundary engine's
+         * descriptor-directed walk reads element {@code i} only when the
+         * declared descriptor descends to element {@code i}, so a later or
+         * wrong-kind subtree — a deep chain the descriptor never inspects
+         * or a reference-cyclic carrier — is never converted, and the
+         * canonical first-failing-element rule decides the tuple exactly
+         * like both production targets. Every other kind's view is the
+         * shallow classification view ({@link #shallowViewOfValue}).
          */
         private BoundaryValueView viewOfValue(Value value) {
             if (value instanceof Value.ArrayValue array) {
-                List<BoundaryValueView> elements = new ArrayList<>();
-                for (Value element : array.elements()) {
-                    elements.add(viewOfValue(element));
-                }
+                List<Value> elements = array.elements();
+                IntFunction<BoundaryValueView> elementViews =
+                    index -> viewOfValue(elements.get(index));
                 return array.decodedArray()
-                    ? BoundaryValueView.ofDecodedArray(elements)
-                    : BoundaryValueView.ofArray(elements);
+                    ? BoundaryValueView.ofLazyDecodedArray(elements.size(), elementViews)
+                    : BoundaryValueView.ofLazyArray(elements.size(), elementViews);
             }
             return shallowViewOfValue(value);
         }

@@ -2673,6 +2673,27 @@ public class CanonicalProjectionParityTest {
             check(false, "the host completion seam's cyclic carrier walk must "
                 + "terminate through the identity memo, never overflow");
         }
+        JvmRuntime.Array rangeElement = new JvmRuntime.Array(1);
+        rangeElement.elements.add(Long.valueOf(2147483648L));
+        try {
+            Object admitted = JvmRuntime.hostCompletion("array(int)", "array",
+                rangeElement);
+            check(false, "the host completion seam rejects the out-of-range "
+                + "Long int element: " + admitted);
+        } catch (JvmRuntime.DealError rangeFailure) {
+            check("E8003".equals(rangeFailure.code)
+                    && "array element 1 type mismatch".equals(rangeFailure.msg)
+                    && "int".equals(rangeFailure.expected)
+                    && "number".equals(rangeFailure.actual),
+                "the host completion seam renders the out-of-range Long element "
+                    + "through the element arm with the number carrier's own "
+                    + "token: " + rangeFailure.code + " " + rangeFailure.msg
+                    + " expected " + rangeFailure.expected + " actual "
+                    + rangeFailure.actual);
+        }
+        check(Long.valueOf(2147483648L).equals(rangeElement.elements.get(0)),
+            "the rejected out-of-range completion commits nothing: the host's own "
+                + "carrier keeps its long element untouched");
         safely("the int[] host completion",
             CanonicalProjectionParityTest::driveHostIntArrayCompletion);
         safely("the nullable int[] host completion",
@@ -2689,6 +2710,12 @@ public class CanonicalProjectionParityTest {
             CanonicalProjectionParityTest::driveHostNestedStringArrayCompletion);
         safely("the deep later-subtree string[] host completion",
             CanonicalProjectionParityTest::driveHostDeepStringArrayCompletion);
+        safely("the cyclic later-element string[] host completion",
+            CanonicalProjectionParityTest::driveHostCyclicStringArrayCompletion);
+        safely("the cyclic wrong-kind-element string[] host completion",
+            CanonicalProjectionParityTest::driveHostCyclicWrongKindArrayCompletion);
+        safely("the out-of-range long int[] host completion",
+            CanonicalProjectionParityTest::driveHostRangeElementIntArrayCompletion);
         safely("the repeated shared int[] host completion",
             CanonicalProjectionParityTest::driveHostSharedArrayCompletion);
     }
@@ -3003,25 +3030,22 @@ public class CanonicalProjectionParityTest {
     private static final int DEEP_HOST_SUBTREE_LEVELS = 20000;
 
     /**
-     * The deep later-subtree string[] completion: the production hosts
-     * complete the declared string array operation with the early wrong-kind
-     * boxed int followed by a deep acyclic chain of production array
-     * carriers. The canonical first-failing-element rule must decide the
-     * tuple before any settlement traversal visits the raw host graph, so the
-     * JVM artifact renders the same complete E8003 tuple as the oracle and
-     * the LuaJIT artifact — never a raw host error for the irrelevant later
-     * subtree. The oracle's completion value carries the same early
-     * wrong-kind element only: the depth is a raw-host-carrier fact of the
-     * two production hosts, and the canonical tuple is already decided at the
-     * first failing element.
+     * The deep later-subtree string[] completion: all three consumers are
+     * supplied the same graph — the early wrong-kind boxed int followed by a
+     * deep acyclic chain of production array carriers. The canonical
+     * first-failing-element rule must decide the tuple before any conversion
+     * or settlement traversal visits the raw host graph, so the oracle's
+     * lazily converted boundary view and both production artifacts render
+     * the same complete E8003 tuple — never a raw host error for the
+     * irrelevant later subtree, and never a converted tail on the oracle.
      */
     private static void driveHostDeepStringArrayCompletion() throws Exception {
         Compiled compiled = compileArrayCompletion("test_drop_string_array",
             ARRAY_COMPLETION_STRING_DRIVER);
         try {
             assertAsyncCompletionFailure(compiled, "async_arrays",
-                arrayCompletionResponder(oracleStringArrayElement(
-                    new SemanticOracle.Value.IntValue(7L))),
+                arrayCompletionResponder(
+                    oracleDeepStringArrayCompletion(DEEP_HOST_SUBTREE_LEVELS)),
                 "test_drop_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
                     "int"),
@@ -3031,6 +3055,31 @@ public class CanonicalProjectionParityTest {
         } finally {
             deleteRecursively(compiled.root());
         }
+    }
+
+    /**
+     * The oracle's deep later-subtree completion graph: the same early
+     * wrong-kind element followed by the same deep acyclic chain of
+     * production array carriers the two hosts complete with, built
+     * iteratively so the harness itself never depends on the stack. The
+     * oracle's lazy boundary view converts only the element the declared
+     * descriptor inspects, so the deep tail is a graph fact shared by all
+     * three consumers without a conversion walk.
+     */
+    private static SemanticOracle.Value oracleDeepStringArrayCompletion(int levels) {
+        SemanticOracle.Value node = new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(), RuntimeDescriptor.Int.INSTANCE, false);
+        for (int i = 0; i < levels; i++) {
+            List<SemanticOracle.Value> elements = new ArrayList<>();
+            elements.add(node);
+            node = new SemanticOracle.Value.ArrayValue(elements,
+                RuntimeDescriptor.parseCanonicalText("[int]"), false);
+        }
+        List<SemanticOracle.Value> elements = new ArrayList<>();
+        elements.add(new SemanticOracle.Value.IntValue(7L));
+        elements.add(node);
+        return new SemanticOracle.Value.ArrayValue(elements,
+            RuntimeDescriptor.String.INSTANCE, false);
     }
 
     /**
@@ -3122,6 +3171,288 @@ public class CanonicalProjectionParityTest {
               }
             }
             """.formatted(levels, levels, levels, levels, levels, levels, levels);
+    }
+
+    /**
+     * The cyclic later-element string[] completion: the completed array's
+     * first element is the wrong-kind boxed int and its second element is the
+     * array itself. The canonical first-failing-element rule must decide the
+     * tuple before any conversion reaches the later cyclic element, and no
+     * consumer may traverse the cycle: the oracle's lazily converted boundary
+     * view and both production hosts render the identical complete E8003
+     * element-1 tuple at the await origin.
+     */
+    private static void driveHostCyclicStringArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_string_array",
+            ARRAY_COMPLETION_STRING_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(oracleCyclicStringArrayCompletion()),
+                "test_drop_string_array",
+                asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
+                    "int"),
+                luaCyclicStringArrayHost(), jvmCyclicStringArrayHost(),
+                "the cyclic later-element string[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The oracle's cyclic later-element completion: the two-element
+     * production array whose first element is the wrong-kind boxed int and
+     * whose second element is the array itself. The value is written through
+     * the mutable element list the oracle's own arrays carry, so one array
+     * graph is shared by the drive.
+     */
+    private static SemanticOracle.Value oracleCyclicStringArrayCompletion() {
+        List<SemanticOracle.Value> elements = new ArrayList<>();
+        SemanticOracle.Value cyclic = new SemanticOracle.Value.ArrayValue(elements,
+            RuntimeDescriptor.String.INSTANCE, false);
+        elements.add(new SemanticOracle.Value.IntValue(7L));
+        elements.add(cyclic);
+        return cyclic;
+    }
+
+    /**
+     * The cyclic later-element LuaJIT host: the completed value is the
+     * two-element production array whose second element is the array itself,
+     * so the crossing is the only place the cycle could be walked.
+     */
+    private static String luaCyclicStringArrayHost() {
+        return """
+            local rt = require("deal.runtime")
+
+            local cyclic = {__a = true, __n = 2, [1] = 7}
+            cyclic[2] = cyclic
+
+            return {
+              fetchInts = function()
+                return rt.async_start(function() return cyclic end)
+              end,
+              fetchNullableInts = function()
+                return rt.async_start(function() return cyclic end)
+              end,
+              fetchNullableElements = function()
+                return rt.async_start(function() return cyclic end)
+              end,
+              fetchNestedInts = function()
+                return rt.async_start(function() return cyclic end)
+              end,
+              fetchNestedStrings = function()
+                return rt.async_start(function() return cyclic end)
+              end,
+              fetchStrings = function()
+                return rt.async_start(function() return cyclic end)
+              end,
+              fetchNumbers = function()
+                return rt.async_start(function() return cyclic end)
+              end,
+            }
+            """;
+    }
+
+    /**
+     * The cyclic later-element JVM host: the completed future carries the
+     * two-element production array whose second element is the array itself.
+     */
+    private static String jvmCyclicStringArrayHost() {
+        return """
+            import java.util.concurrent.CompletableFuture;
+
+            final class HostAsync_arrays {
+              private static final deal.codegen.jvm.JvmRuntime.Array CYCLIC =
+                  cyclic();
+
+              private static deal.codegen.jvm.JvmRuntime.Array cyclic() {
+                deal.codegen.jvm.JvmRuntime.Array array =
+                    new deal.codegen.jvm.JvmRuntime.Array(2);
+                array.elements.add(java.lang.Integer.valueOf(7));
+                array.elements.add(array);
+                return array;
+              }
+
+              public static Object fetchInts() {
+                return CompletableFuture.completedFuture(CYCLIC);
+              }
+              public static Object fetchNullableInts() {
+                return CompletableFuture.completedFuture(CYCLIC);
+              }
+              public static Object fetchNullableElements() {
+                return CompletableFuture.completedFuture(CYCLIC);
+              }
+              public static Object fetchNestedInts() {
+                return CompletableFuture.completedFuture(CYCLIC);
+              }
+              public static Object fetchNestedStrings() {
+                return CompletableFuture.completedFuture(CYCLIC);
+              }
+              public static Object fetchStrings() {
+                return CompletableFuture.completedFuture(CYCLIC);
+              }
+              public static Object fetchNumbers() {
+                return CompletableFuture.completedFuture(CYCLIC);
+              }
+            }
+            """;
+    }
+
+    /**
+     * The cyclic wrong-kind-element string[] completion: the completed array's
+     * only element is itself a reference-cyclic array. The element's own
+     * carrier kind (array) decides the element arm before its contents are
+     * inspected, so the cyclic interior must not be traversed and all three
+     * consumers render the identical complete E8003 element-1 tuple at the
+     * await origin.
+     */
+    private static void driveHostCyclicWrongKindArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_string_array",
+            ARRAY_COMPLETION_STRING_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(
+                    oracleCyclicWrongKindArrayCompletion()),
+                "test_drop_string_array",
+                asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
+                    "array"),
+                luaCyclicWrongKindArrayHost(), jvmCyclicWrongKindArrayHost(),
+                "the cyclic wrong-kind-element string[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The oracle's cyclic wrong-kind-element completion: the declared string
+     * array whose only element is a self-referential array.
+     */
+    private static SemanticOracle.Value oracleCyclicWrongKindArrayCompletion() {
+        List<SemanticOracle.Value> innerElements = new ArrayList<>();
+        SemanticOracle.Value inner = new SemanticOracle.Value.ArrayValue(
+            innerElements, RuntimeDescriptor.String.INSTANCE, false);
+        innerElements.add(inner);
+        List<SemanticOracle.Value> elements = new ArrayList<>();
+        elements.add(inner);
+        return new SemanticOracle.Value.ArrayValue(elements,
+            RuntimeDescriptor.String.INSTANCE, false);
+    }
+
+    /**
+     * The cyclic wrong-kind-element LuaJIT host: the completed value's only
+     * element is a self-referential production array, so a conversion that
+     * descended into the wrong-kind element would recurse forever instead of
+     * rendering the element arm.
+     */
+    private static String luaCyclicWrongKindArrayHost() {
+        return """
+            local rt = require("deal.runtime")
+
+            local inner = {__a = true, __n = 1}
+            inner[1] = inner
+            local completion = {__a = true, __n = 1, [1] = inner}
+
+            return {
+              fetchInts = function()
+                return rt.async_start(function() return completion end)
+              end,
+              fetchNullableInts = function()
+                return rt.async_start(function() return completion end)
+              end,
+              fetchNullableElements = function()
+                return rt.async_start(function() return completion end)
+              end,
+              fetchNestedInts = function()
+                return rt.async_start(function() return completion end)
+              end,
+              fetchNestedStrings = function()
+                return rt.async_start(function() return completion end)
+              end,
+              fetchStrings = function()
+                return rt.async_start(function() return completion end)
+              end,
+              fetchNumbers = function()
+                return rt.async_start(function() return completion end)
+              end,
+            }
+            """;
+    }
+
+    /**
+     * The cyclic wrong-kind-element JVM host: the completed future's only
+     * element is a self-referential production array.
+     */
+    private static String jvmCyclicWrongKindArrayHost() {
+        return """
+            import java.util.concurrent.CompletableFuture;
+
+            final class HostAsync_arrays {
+              private static final deal.codegen.jvm.JvmRuntime.Array COMPLETION =
+                  completion();
+
+              private static deal.codegen.jvm.JvmRuntime.Array completion() {
+                deal.codegen.jvm.JvmRuntime.Array inner =
+                    new deal.codegen.jvm.JvmRuntime.Array(1);
+                inner.elements.add(inner);
+                deal.codegen.jvm.JvmRuntime.Array outer =
+                    new deal.codegen.jvm.JvmRuntime.Array(1);
+                outer.elements.add(inner);
+                return outer;
+              }
+
+              public static Object fetchInts() {
+                return CompletableFuture.completedFuture(COMPLETION);
+              }
+              public static Object fetchNullableInts() {
+                return CompletableFuture.completedFuture(COMPLETION);
+              }
+              public static Object fetchNullableElements() {
+                return CompletableFuture.completedFuture(COMPLETION);
+              }
+              public static Object fetchNestedInts() {
+                return CompletableFuture.completedFuture(COMPLETION);
+              }
+              public static Object fetchNestedStrings() {
+                return CompletableFuture.completedFuture(COMPLETION);
+              }
+              public static Object fetchStrings() {
+                return CompletableFuture.completedFuture(COMPLETION);
+              }
+              public static Object fetchNumbers() {
+                return CompletableFuture.completedFuture(COMPLETION);
+              }
+            }
+            """;
+    }
+
+    /**
+     * The out-of-range long int[] completion: the completed array's element is
+     * a raw host long outside signed32. The crossing's pinned int ladder
+     * rejects it through the shared signed32-range arm, wrapped by the element
+     * arm's own render; the failing carrier's own token is the number
+     * carrier's (the closed int carrier is signed32), so the oracle's
+     * NumValue model and both production artifacts render the identical
+     * complete E8003 tuple at the await origin and the host's carrier is never
+     * settled.
+     */
+    private static void driveHostRangeElementIntArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_use_int_array",
+            ARRAY_COMPLETION_INT_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(new SemanticOracle.Value.ArrayValue(
+                    new ArrayList<>(List.of(
+                        new SemanticOracle.Value.NumValue(2147483648.0))),
+                    RuntimeDescriptor.Int.INSTANCE, false)),
+                "test_use_int_array",
+                asyncElementTuple(ARRAY_COMPLETION_INT_DRIVER, 4, 1, "int",
+                    "number"),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 2147483648}"),
+                jvmAsyncArrayHost(
+                    "array(java.lang.Long.valueOf(2147483648L))"),
+                "the out-of-range long int[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
     }
 
     /**
