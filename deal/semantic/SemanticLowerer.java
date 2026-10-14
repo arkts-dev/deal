@@ -128,6 +128,7 @@ import deal.types.Types;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -884,6 +885,13 @@ public final class SemanticLowerer {
      * address-chain protocol violation, or a control-flow validation
      * rejection).
      *
+     * <p>The retained body table is exactly the produced unit's owned
+     * {@link LoweredModuleUnit#bodyTable()} — the same instance — so the
+     * result can never expose a second table authority describing a
+     * different graph. A supplied table that disagrees with the unit
+     * rejects before exposure; a content-equal detached table is replaced
+     * by the owned record.</p>
+     *
      */
     public record LoweringResult(LoweredModuleUnit unit, StructuredBodyTable table,
                                  List<CompilerDiagnostic> diagnostics) {
@@ -891,6 +899,14 @@ public final class SemanticLowerer {
         public LoweringResult {
             Objects.requireNonNull(diagnostics, "diagnostics must not be null");
             diagnostics = List.copyOf(diagnostics);
+            if (unit != null) {
+                if (table == null || !table.equals(unit.bodyTable())) {
+                    throw new IllegalArgumentException(
+                        "the retained result table must be exactly the produced"
+                            + " unit's owned bodyTable, never an independent table");
+                }
+                table = unit.bodyTable();
+            }
         }
 
         /** True iff the lowering failed (no unit was produced). */
@@ -1594,6 +1610,20 @@ public final class SemanticLowerer {
             List.copyOf(diagnostics));
     }
 
+    /**
+     * The result of the one project lowering: the executable project (the
+     * owner of the class registration seeds), the session's namespace
+     * registrations, and exactly the first E6005 on failure.
+     *
+     * <p>No second authority describes a different graph: {@link #tables()}
+     * and {@link #registries()} are exactly the project modules' owned
+     * {@code bodyTable}/{@code classFactories}, and {@link #seeds()} is
+     * exactly the project's owned {@code classSeeds}. A supplied companion
+     * view that disagrees with the project rejects before any successful
+     * exposure; a content-equal detached view is replaced by the owned
+     * record. A failed lowering carries no project, no tables, no
+     * registries, no seeds and no namespace registrations.</p>
+     */
     public record ProjectLoweringResult(
             ExecutableLoweredProject project,
             Map<ModuleId, StructuredBodyTable> tables,
@@ -1620,8 +1650,64 @@ public final class SemanticLowerer {
                         + " no project, no tables, no registries, no seeds, and no"
                         + " namespace registrations");
             }
-            tables = Map.copyOf(tables);
-            registries = Map.copyOf(registries);
+            if (project == null) {
+                tables = Map.of();
+                registries = Map.of();
+            } else {
+                // The successful companion views are derived from the
+                // project's own records. A supplied view that disagrees with
+                // the project rejects before successful exposure, and the
+                // canonical owned instance is retained (never an independent
+                // authority).
+                Map<ModuleId, StructuredBodyTable> ownedTables =
+                    ownedTables(project);
+                Map<ModuleId, deal.semantic.ir.ClassFactoryRegistry>
+                    ownedRegistries = ownedRegistries(project);
+                if (!ownedTables.equals(tables)) {
+                    throw new IllegalArgumentException(
+                        "the result tables are not the project modules' owned"
+                            + " body tables: supplied modules " + tables.keySet()
+                            + ", the project owns " + ownedTables.keySet());
+                }
+                if (!ownedRegistries.equals(registries)) {
+                    throw new IllegalArgumentException(
+                        "the result registries are not the project modules' owned"
+                            + " class-factory registries: supplied modules "
+                            + registries.keySet() + ", the project owns "
+                            + ownedRegistries.keySet());
+                }
+                if (!Objects.equals(seeds, project.classSeeds())) {
+                    throw new IllegalArgumentException(
+                        "the result seeds are not the project's owned class"
+                            + " registration seeds");
+                }
+                tables = ownedTables;
+                registries = ownedRegistries;
+                seeds = project.classSeeds();
+            }
+        }
+
+        /** The project modules' owned body tables, keyed as the modules are. */
+        private static Map<ModuleId, StructuredBodyTable> ownedTables(
+                ExecutableLoweredProject project) {
+            Map<ModuleId, StructuredBodyTable> owned = new LinkedHashMap<>();
+            for (Map.Entry<ModuleId, LoweredModuleUnit> entry
+                    : project.modules().entrySet()) {
+                owned.put(entry.getKey(), entry.getValue().bodyTable());
+            }
+            return Collections.unmodifiableMap(owned);
+        }
+
+        /** The project modules' owned class-factory registries. */
+        private static Map<ModuleId, deal.semantic.ir.ClassFactoryRegistry>
+                ownedRegistries(ExecutableLoweredProject project) {
+            Map<ModuleId, deal.semantic.ir.ClassFactoryRegistry> owned =
+                new LinkedHashMap<>();
+            for (Map.Entry<ModuleId, LoweredModuleUnit> entry
+                    : project.modules().entrySet()) {
+                owned.put(entry.getKey(), entry.getValue().classFactories());
+            }
+            return Collections.unmodifiableMap(owned);
         }
 
         /** Whether the lowering failed (no project was produced). */

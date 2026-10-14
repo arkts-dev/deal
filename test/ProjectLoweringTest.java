@@ -14,6 +14,7 @@ import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectInput;
 import deal.semantic.ClassConstructionValidator;
+import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.HostDeclarationSurface;
@@ -37,6 +38,7 @@ import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.IntrinsicKind;
@@ -44,6 +46,7 @@ import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
+import deal.semantic.ir.LoweringFailureDetail;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.ModuleInitPlan;
@@ -52,6 +55,7 @@ import deal.semantic.ir.NamespaceRegistrations;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.SemanticIrValidator;
@@ -101,6 +105,24 @@ public class ProjectLoweringTest {
     private static void checkEq(Object expected, Object actual, String message) {
         check(java.util.Objects.equals(expected, actual),
             message + " (expected " + expected + ", got " + actual + ")");
+    }
+
+    /**
+     * Asserts that the action rejects with an
+     * {@link IllegalArgumentException} — the producer-defect contract of
+     * the lowering-result boundaries.
+     */
+    private static void expectIllegalArgument(Runnable action, String message) {
+        try {
+            action.run();
+            fail(message + " (expected IllegalArgumentException, got no failure)");
+        } catch (IllegalArgumentException expected) {
+            passed++;
+        } catch (RuntimeException other) {
+            fail(message + " (expected IllegalArgumentException, got "
+                + other.getClass().getSimpleName() + ": " + other.getMessage()
+                + ")");
+        }
     }
 
     // =========================================================================
@@ -283,8 +305,8 @@ public class ProjectLoweringTest {
         """;
 
     private static final String OWNERSHIP_APP_SOURCE = """
-        import * as u from "util"
-        import * as m from "mid"
+        import * as u from "util";
+        import * as m from "mid";
 
         export function main(): null {
           let p: u.Point = {x: 4};
@@ -879,9 +901,190 @@ public class ProjectLoweringTest {
             }
             check(sawClassModule && sawPlainModule && sawImportingModule,
                 "the closure carries the class, plain and importing modules");
+            testResultBoundaryViewOwnership(lowered, result.namespaces());
         } finally {
             deleteRecursively(project.root());
         }
+    }
+
+    /**
+     * The lowering-result boundary (ISSUE-0816 review): a successful
+     * {@link SemanticLowerer.ProjectLoweringResult} can never expose a
+     * companion view that disagrees with its project — a missing, extra or
+     * differing table/registry/seed view rejects before successful exposure
+     * — and a content-equal detached view is replaced by the project's own
+     * record. A failed result carries exactly the first E6005 and no
+     * companions.
+     */
+    private static void testResultBoundaryViewOwnership(
+            ExecutableLoweredProject lowered,
+            NamespaceRegistrations namespaces) {
+        System.out.println("-- the lowering-result boundary: missing, extra and "
+            + "differing companion views reject, content-equal detached views are "
+            + "replaced by the project's owned records, and the failure path "
+            + "carries no companions --");
+        Map<ModuleId, LoweredModuleUnit> modules = lowered.modules();
+        ModuleId classModule = null;
+        for (ModuleId module : modules.keySet()) {
+            classModule = module;
+            break;
+        }
+        LoweredModuleUnit unit = modules.get(classModule);
+        StructuredBodyTable ownedTable = unit.bodyTable();
+        ClassFactoryRegistry ownedRegistry = unit.classFactories();
+        check(!ownedTable.blockOps().isEmpty(),
+            "the boundary fixture's first module owns a non-empty body table");
+        check(!ownedRegistry.factories().isEmpty(),
+            "the boundary fixture's first module owns a non-empty factory "
+                + "registry");
+        check(!lowered.classSeeds().registrations().isEmpty(),
+            "the boundary fixture's project owns its class registration seeds");
+
+        // (1) The exact owned views and content-equal detached copies are
+        // accepted; the retained accessors are the project's own records.
+        Map<ModuleId, StructuredBodyTable> copiedTables = new LinkedHashMap<>();
+        Map<ModuleId, ClassFactoryRegistry> copiedRegistries = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, LoweredModuleUnit> entry : modules.entrySet()) {
+            StructuredBodyTable body = entry.getValue().bodyTable();
+            ClassFactoryRegistry registry = entry.getValue().classFactories();
+            copiedTables.put(entry.getKey(),
+                new StructuredBodyTable(body.blockOps(), body.opBlocks()));
+            copiedRegistries.put(entry.getKey(),
+                new ClassFactoryRegistry(registry.factories()));
+        }
+        SemanticLowerer.ProjectLoweringResult canonical =
+            new SemanticLowerer.ProjectLoweringResult(lowered, copiedTables,
+                copiedRegistries,
+                new ClassRegistrationSeeds(lowered.classSeeds().registrations()),
+                namespaces, List.of());
+        for (Map.Entry<ModuleId, LoweredModuleUnit> entry : modules.entrySet()) {
+            check(canonical.tables().get(entry.getKey())
+                    == entry.getValue().bodyTable(),
+                "the result table of " + entry.getKey() + " is the unit's owned "
+                    + "bodyTable even when a content-equal copy was supplied");
+            check(canonical.registries().get(entry.getKey())
+                    == entry.getValue().classFactories(),
+                "the result registry of " + entry.getKey() + " is the unit's "
+                    + "owned classFactories even when a content-equal copy was "
+                    + "supplied");
+        }
+        check(canonical.seeds() == lowered.classSeeds(),
+            "the result seeds are the project's owned classSeeds even when a "
+                + "content-equal copy was supplied");
+
+        // (2) Missing, extra and differing table views reject.
+        Map<ModuleId, StructuredBodyTable> missingTables =
+            new LinkedHashMap<>(copiedTables);
+        missingTables.remove(classModule);
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, missingTables, copiedRegistries, lowered.classSeeds(),
+                namespaces, List.of()),
+            "a result table view missing the module " + classModule + " rejects");
+        Map<ModuleId, StructuredBodyTable> extraTables =
+            new LinkedHashMap<>(copiedTables);
+        extraTables.put(new ModuleId("extra"),
+            new StructuredBodyTable(Map.of(), Map.of()));
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, extraTables, copiedRegistries, lowered.classSeeds(),
+                namespaces, List.of()),
+            "a result table view with an extra module rejects");
+        Map<ModuleId, StructuredBodyTable> differingTables =
+            new LinkedHashMap<>(copiedTables);
+        differingTables.put(classModule,
+            new StructuredBodyTable(Map.of(), ownedTable.opBlocks()));
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, differingTables, copiedRegistries, lowered.classSeeds(),
+                namespaces, List.of()),
+            "a result table view differing from the owned bodyTable rejects");
+
+        // (3) Missing, extra and differing registry views reject.
+        Map<ModuleId, ClassFactoryRegistry> missingRegistries =
+            new LinkedHashMap<>(copiedRegistries);
+        missingRegistries.remove(classModule);
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, copiedTables, missingRegistries, lowered.classSeeds(),
+                namespaces, List.of()),
+            "a result registry view missing the module " + classModule
+                + " rejects");
+        Map<ModuleId, ClassFactoryRegistry> extraRegistries =
+            new LinkedHashMap<>(copiedRegistries);
+        extraRegistries.put(new ModuleId("extra"),
+            new ClassFactoryRegistry(Map.of()));
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, copiedTables, extraRegistries, lowered.classSeeds(),
+                namespaces, List.of()),
+            "a result registry view with an extra module rejects");
+        Map<ModuleId, ClassFactoryRegistry> differingRegistries =
+            new LinkedHashMap<>(copiedRegistries);
+        differingRegistries.put(classModule, new ClassFactoryRegistry(Map.of()));
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, copiedTables, differingRegistries, lowered.classSeeds(),
+                namespaces, List.of()),
+            "a result registry view differing from the owned classFactories "
+                + "rejects");
+
+        // (4) Missing and differing seed views reject.
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, copiedTables, copiedRegistries, null, namespaces,
+                List.of()),
+            "a result without the project's seeds rejects");
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, copiedTables, copiedRegistries,
+                new ClassRegistrationSeeds(Map.of()), namespaces, List.of()),
+            "a seed view differing from the project's classSeeds rejects");
+
+        // (5) A successful result carrying diagnostics rejects.
+        CompilerDiagnostic diagnostic = FailureContractRegistry.e6005(
+            new LoweringFailureDetail(APP.path(),
+                SemanticCapability.FOUNDATION_VALUES, "RESULT_BOUNDARY_TEST",
+                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                "ProjectLoweringTest"));
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                lowered, copiedTables, copiedRegistries, lowered.classSeeds(),
+                namespaces, List.of(diagnostic)),
+            "a successful project lowering carrying diagnostics rejects");
+
+        // (6) The failure path still carries exactly the first E6005 and no
+        // project, tables, registries, seeds or namespace registrations.
+        SemanticLowerer.ProjectLoweringResult failure =
+            new SemanticLowerer.ProjectLoweringResult(null, Map.of(), Map.of(),
+                null, null, List.of(diagnostic));
+        check(failure.hasErrors() && failure.project() == null
+                && failure.tables().isEmpty() && failure.registries().isEmpty()
+                && failure.seeds() == null && failure.namespaces() == null,
+            "a failed project lowering exposes no project, tables, registries, "
+                + "seeds or namespace registrations");
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(null,
+                copiedTables, Map.of(), null, null, List.of(diagnostic)),
+            "a failed project lowering carrying tables rejects");
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(null,
+                Map.of(), copiedRegistries, null, null, List.of(diagnostic)),
+            "a failed project lowering carrying registries rejects");
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(null,
+                Map.of(), Map.of(), lowered.classSeeds(), null,
+                List.of(diagnostic)),
+            "a failed project lowering carrying seeds rejects");
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(null,
+                Map.of(), Map.of(), null, namespaces, List.of(diagnostic)),
+            "a failed project lowering carrying namespace registrations "
+                + "rejects");
+        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(null,
+                Map.of(), Map.of(), null, null, List.of()),
+            "a failed project lowering without a diagnostic rejects");
+
+        // (7) The single-module result exposes the unit's own table.
+        expectIllegalArgument(() -> new SemanticLowerer.LoweringResult(unit,
+                new StructuredBodyTable(Map.of(), ownedTable.opBlocks()), List.of()),
+            "a single-module result table disagreeing with the unit rejects");
+        SemanticLowerer.LoweringResult single = new SemanticLowerer.LoweringResult(
+            unit, new StructuredBodyTable(ownedTable.blockOps(),
+                ownedTable.opBlocks()), List.of());
+        check(single.table() == ownedTable,
+            "the single-module result table is the unit's owned bodyTable even "
+                + "when a content-equal copy was supplied");
+        expectIllegalArgument(() -> new SemanticLowerer.LoweringResult(unit, null,
+                List.of()),
+            "a single-module result without the unit's table rejects");
     }
 
     /**
