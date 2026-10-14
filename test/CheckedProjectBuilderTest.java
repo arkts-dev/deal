@@ -29,7 +29,12 @@ import deal.ir.IrDumper;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
+import deal.module.DefaultPlanImport;
+import deal.module.ModuleDependencyGraph;
+import deal.module.SemanticModuleIdentity;
+import deal.module.SourceModuleLocation;
 import deal.project.ProjectContext;
+import deal.project.ProjectDeploymentIdentity;
 import deal.project.ProjectLocator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
@@ -1457,10 +1462,152 @@ public class CheckedProjectBuilderTest {
     }
 
     // =========================================================================
+    // 11. Digest-free cycle-witness determinism (ISSUE-0784 review)
+    // =========================================================================
+
+    /**
+     * The probe module paths: a imports b then c (or in the given
+     * order); b and c both import a, so a's component has two competing
+     * witnesses and the declaration order alone decides which one the
+     * E2005 path names.
+     */
+    private static final String WITNESS_A = "/probe/a.deal";
+    private static final String WITNESS_B = "/probe/b.deal";
+    private static final String WITNESS_C = "/probe/c.deal";
+
+    /** One synthetic declaration-module input of the witness probe. */
+    private static ModuleDependencyGraph.ModuleInput witnessProbeInput(
+            String sourcePath, List<String> importTargets) {
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        for (int i = 0; i < importTargets.size(); i++) {
+            String target = importTargets.get(i);
+            imports.put("t" + i, new DefaultPlanImport(target,
+                target.substring("/probe/".length()),
+                new ProgramNode(null, List.of()),
+                witnessProbeLocation(target), Map.of(), null, true, false));
+        }
+        return new ModuleDependencyGraph.ModuleInput(sourcePath,
+            sourcePath.substring("/probe/".length()),
+            new ProgramNode(null, List.of()),
+            witnessProbeLocation(sourcePath), null, null, imports, Map.of(),
+            true);
+    }
+
+    private static SourceModuleLocation witnessProbeLocation(String path) {
+        return new SourceModuleLocation(path, new SemanticModuleIdentity(
+            new ProjectDeploymentIdentity("file:///probe/deal.json",
+                "0".repeat(64)), "file://" + path),
+            "m0000000000000000", null, null);
+    }
+
+    /** The identical multi-witness module set with a's import targets in
+     * the given declaration order. */
+    private static Map<String, ModuleDependencyGraph.ModuleInput>
+            witnessProbeModules(List<String> firstImports) {
+        Map<String, ModuleDependencyGraph.ModuleInput> modules =
+            new LinkedHashMap<>();
+        modules.put(WITNESS_A, witnessProbeInput(WITNESS_A, firstImports));
+        modules.put(WITNESS_B,
+            witnessProbeInput(WITNESS_B, List.of(WITNESS_A)));
+        modules.put(WITNESS_C,
+            witnessProbeInput(WITNESS_C, List.of(WITNESS_A)));
+        return modules;
+    }
+
+    /** The first digest-free diagnostic message of the probe graph (no
+     * assertions: shared by the in-process checks and the fresh-JVM
+     * {@code --digest-free-witness} mode). */
+    private static String witnessProbeMessage(List<String> firstImports) {
+        ModuleDependencyGraph.DigestFreeResult result =
+            ModuleDependencyGraph.digestFreePass(
+                witnessProbeModules(firstImports), Map.of(), Map.of(),
+                Map.of());
+        return result.diagnostics().isEmpty() ? "<no diagnostic>"
+            : result.diagnostics().get(0).message();
+    }
+
+    /**
+     * The digest-free backstop's cycle witness is deterministic: the
+     * module input preserves the import-declaration order of its import
+     * surface, so a component with two competing witnesses always
+     * selects the declaration-order path, in-process and across fresh
+     * JVM starts. A hash-ordered import copy let the E2005 message vary
+     * with the JVM's iteration salt (ISSUE-0784 review).
+     */
+    static void testDigestFreeWitnessDeterminism() throws Exception {
+        System.out.println("-- Digest-free cycle-witness determinism"
+            + " (ISSUE-0784) --");
+
+        // The two competing witnesses: a -> b -> a (b is a's
+        // first-declared import) and a -> c -> a. The declaration order
+        // decides, so both insertion directions select their own path.
+        ModuleDependencyGraph.DigestFreeResult forwardResult =
+            ModuleDependencyGraph.digestFreePass(
+                witnessProbeModules(List.of(WITNESS_B, WITNESS_C)),
+                Map.of(), Map.of(), Map.of());
+        check(forwardResult.failed()
+                && forwardResult.diagnostics().size() == 1,
+            "the multi-witness graph rejects with exactly one E2005: "
+                + forwardResult.diagnostics());
+        String forward = witnessProbeMessage(List.of(WITNESS_B, WITNESS_C));
+        check(forward.equals("Circular import: " + WITNESS_A + " -> "
+                + WITNESS_B + " -> " + WITNESS_A),
+            "the first-declared import selects the witness: " + forward);
+        String reverse = witnessProbeMessage(List.of(WITNESS_C, WITNESS_B));
+        check(reverse.equals("Circular import: " + WITNESS_A + " -> "
+                + WITNESS_C + " -> " + WITNESS_A),
+            "the reversed declaration order selects the other witness: "
+                + reverse);
+
+        // The structural half of the same contract: the module input's
+        // import surface iterates in insertion order, never a hash
+        // order (the adjacency the witness walk consumes).
+        List<String> adjacency = new ArrayList<>();
+        for (DefaultPlanImport provider : witnessProbeInput(WITNESS_A,
+                List.of(WITNESS_B, WITNESS_C)).imports().values()) {
+            adjacency.add(provider.sourcePath());
+        }
+        check(adjacency.equals(List.of(WITNESS_B, WITNESS_C)),
+            "the import surface preserves its insertion order: "
+                + adjacency);
+
+        // Across JVM starts: six fresh JVM probes of the identical
+        // graph must print the identical declaration-order witness. The
+        // digest-free rejection is the fail-closed backstop (the
+        // production compile rejects at the phase-2 complete-graph
+        // admission first), so it is exercised directly.
+        String expected = "WITNESS:Circular import: " + WITNESS_A + " -> "
+            + WITNESS_B + " -> " + WITNESS_A;
+        String classpath = System.getProperty("java.class.path", "");
+        for (int run = 1; run <= 6; run++) {
+            BoundedProcess.BoundedResult child = BoundedProcess.runCaptured(
+                List.of(Path.of(System.getProperty("java.home"), "bin",
+                        "java").toString(), "-cp", classpath,
+                    CheckedProjectBuilderTest.class.getName(),
+                    "--digest-free-witness"));
+            check(child.exitCode() == 0,
+                "fresh-JVM witness probe " + run + " exits 0: "
+                    + child.stderr());
+            check(child.stdout().strip().equals(expected),
+                "fresh-JVM witness probe " + run + " prints the"
+                    + " declaration-order witness: " + child.stdout());
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 0 && args[0].equals("--digest-free-witness")) {
+            // The fresh-JVM determinism probe of
+            // testDigestFreeWitnessDeterminism: the identical
+            // multi-witness graph must print the identical
+            // declaration-order E2005 message in every JVM start.
+            System.out.println("WITNESS:" + witnessProbeMessage(
+                List.of(WITNESS_B, WITNESS_C)));
+            return;
+        }
         System.out.println("=== Checked Project Builder Test (ISSUE-0288) ===\n");
 
         testHostFixtureIndexAndInput();
@@ -1473,6 +1620,7 @@ public class CheckedProjectBuilderTest {
         testConstructionEntryDerivation();
         testDeterminismAndDigestGolden();
         testImportCycleRejection();
+        testDigestFreeWitnessDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

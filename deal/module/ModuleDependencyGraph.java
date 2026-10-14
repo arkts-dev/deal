@@ -43,6 +43,12 @@ public final class ModuleDependencyGraph {
      * declaration modules), the import surface, the module-identity
      * classification, and the declaration flag.
      *
+     * <p>The import surface iterates in import-declaration order (an
+     * insertion-ordered read-only copy, never a hash order): the
+     * type-level cycle-witness adjacency and the recorder's first-match
+     * alias selection consume that order, so both are reproducible
+     * across JVM starts.</p>
+     *
      */
     public record ModuleInput(
         String sourcePath,
@@ -61,7 +67,15 @@ public final class ModuleDependencyGraph {
             Objects.requireNonNull(modulePath, "modulePath");
             Objects.requireNonNull(program, "program");
             Objects.requireNonNull(location, "location");
-            imports = Map.copyOf(Objects.requireNonNull(imports, "imports"));
+            // The import surface keeps its declaration order: the
+            // type-level adjacency (and therefore the cycle witness)
+            // is iterated in this order, so a hash-ordered copy would
+            // let the E2005 message select a different witness across
+            // JVM starts (the determinism invariant: no
+            // order-unspecified structure feeds a diagnostic or a
+            // selection).
+            imports = Collections.unmodifiableMap(new LinkedHashMap<>(
+                Objects.requireNonNull(imports, "imports")));
             classification = Map.copyOf(Objects.requireNonNull(
                 classification, "classification"));
             if (isDeclarationFile != (checkResult == null)) {
