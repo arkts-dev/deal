@@ -3563,6 +3563,367 @@ public class CanonicalProjectionParityTest {
         }
     }
 
+    // =========================================================================
+    // The out-of-range host array completions (ISSUE-0795 acceptance remediation)
+    // =========================================================================
+
+    /**
+     * The out-of-range host array completions (ISSUE-0795 acceptance
+     * remediation): a completed array whose element is a raw host numeric
+     * carrier outside the closed signed32 int range is not the production
+     * int carrier, so the crossing's signed32 range step — the step the
+     * crossing already applies at a top-level int position — must apply at
+     * every checked int element position recursively: the direct, the
+     * nullable-element, and the nested positions included. The oracle
+     * supplies the raw out-of-range carrier as its number view (a closed
+     * signed32 INT view cannot carry it), and both production consumers
+     * classify the same raw value {@code number}, so the enclosing array
+     * fails through the canonical element arm at the await origin on all
+     * three consumers, the first failing element decides before any
+     * settlement commits, and a rejected crossing leaves the host's own
+     * carrier untouched.
+     */
+    private static void testHostOutOfRangeArrayCompletions() throws Exception {
+        System.out.println("-- the out-of-range host array completions: the "
+            + "recursive signed32 step at int element positions fails through the "
+            + "canonical element arm on all three consumers --");
+        JvmRuntime.Array direct = new JvmRuntime.Array(1);
+        direct.elements.add(Long.valueOf(2147483648L));
+        try {
+            JvmRuntime.hostCompletion("array(int)", "array", direct);
+            check(false, "the crossing rejects the out-of-range Long at a direct "
+                + "int element position");
+        } catch (JvmRuntime.DealError error) {
+            check("E8003".equals(error.code)
+                    && "array element 1 type mismatch".equals(error.msg)
+                    && "int".equals(error.expected)
+                    && "number".equals(error.actual),
+                "the crossing renders the canonical element arm for the "
+                    + "out-of-range Long at a direct int element position: "
+                    + error.code + " " + error.msg + " expected " + error.expected
+                    + " actual " + error.actual);
+        }
+        check(Long.valueOf(2147483648L).equals(direct.elements.get(0)),
+            "the rejected direct crossing commits nothing: the host's own "
+                + "carrier keeps its out-of-range Long element");
+        JvmRuntime.Array nullableElement = new JvmRuntime.Array(1);
+        nullableElement.elements.add(Long.valueOf(-2147483649L));
+        try {
+            JvmRuntime.hostCompletion("array(nullable(int))", "array",
+                nullableElement);
+            check(false, "the crossing rejects the out-of-range Long at a "
+                + "nullable int element position");
+        } catch (JvmRuntime.DealError error) {
+            check("E8003".equals(error.code)
+                    && "array element 1 type mismatch".equals(error.msg)
+                    && "?int".equals(error.expected)
+                    && "number".equals(error.actual),
+                "the crossing renders the canonical element arm for the "
+                    + "out-of-range Long at a nullable int element position: "
+                    + error.code + " " + error.msg + " expected " + error.expected
+                    + " actual " + error.actual);
+        }
+        check(Long.valueOf(-2147483649L).equals(nullableElement.elements.get(0)),
+            "the rejected nullable-element crossing commits nothing: the host's "
+                + "own carrier keeps its out-of-range Long element");
+        JvmRuntime.Array nestedInner = new JvmRuntime.Array(1);
+        nestedInner.elements.add(Long.valueOf(2147483648L));
+        JvmRuntime.Array nestedOuter = new JvmRuntime.Array(1);
+        nestedOuter.elements.add(nestedInner);
+        try {
+            JvmRuntime.hostCompletion("array(array(int))", "array", nestedOuter);
+            check(false, "the crossing rejects the out-of-range Long at a nested "
+                + "int element position");
+        } catch (JvmRuntime.DealError error) {
+            check("E8003".equals(error.code)
+                    && "array element 1 type mismatch".equals(error.msg)
+                    && "[int]".equals(error.expected)
+                    && "array".equals(error.actual),
+                "the crossing renders the canonical outer element arm for the "
+                    + "out-of-range Long at a nested int element position: "
+                    + error.code + " " + error.msg + " expected " + error.expected
+                    + " actual " + error.actual);
+        }
+        check(nestedOuter.elements.get(0) == nestedInner
+                && Long.valueOf(2147483648L).equals(nestedInner.elements.get(0)),
+            "the rejected nested crossing commits nothing: the inner carrier "
+                + "stays the same array with its out-of-range Long element");
+        JvmRuntime.Array nullableArray = new JvmRuntime.Array(1);
+        nullableArray.elements.add(Long.valueOf(2147483648L));
+        try {
+            JvmRuntime.hostCompletion("nullable(array(int))", "array",
+                nullableArray);
+            check(false, "the crossing rejects the out-of-range Long at an int "
+                + "element position of a nullable array completion");
+        } catch (JvmRuntime.DealError error) {
+            check("E8003".equals(error.code) && "int".equals(error.expected)
+                    && "number".equals(error.actual),
+                "the crossing renders the canonical element arm behind the "
+                    + "nullable array completion: " + error.code + " " + error.msg);
+        }
+        JvmRuntime.Array ordered = new JvmRuntime.Array(2);
+        ordered.elements.add(Integer.valueOf(7));
+        ordered.elements.add(Long.valueOf(2147483648L));
+        try {
+            JvmRuntime.hostCompletion("array(string)", "array", ordered);
+            check(false, "the crossing rejects the early wrong-kind element of "
+                + "the ordered carrier");
+        } catch (JvmRuntime.DealError error) {
+            check("E8003".equals(error.code)
+                    && "array element 1 type mismatch".equals(error.msg)
+                    && "string".equals(error.expected)
+                    && "int".equals(error.actual),
+                "the first failing element decides before the later out-of-range "
+                    + "Long is inspected: " + error.code + " " + error.msg
+                    + " expected " + error.expected + " actual " + error.actual);
+        }
+        check(Integer.valueOf(7).equals(ordered.elements.get(0))
+                && Long.valueOf(2147483648L).equals(ordered.elements.get(1)),
+            "the rejected ordered crossing commits nothing: both the early "
+                + "wrong-kind element and the later out-of-range Long stay raw");
+        JvmRuntime.Array laterRange = new JvmRuntime.Array(2);
+        laterRange.elements.add(Integer.valueOf(7));
+        laterRange.elements.add(Long.valueOf(2147483649L));
+        try {
+            JvmRuntime.hostCompletion("array(int)", "array", laterRange);
+            check(false, "the crossing rejects the out-of-range Long at the "
+                + "second int element position");
+        } catch (JvmRuntime.DealError error) {
+            check("E8003".equals(error.code)
+                    && "array element 2 type mismatch".equals(error.msg)
+                    && "int".equals(error.expected)
+                    && "number".equals(error.actual),
+                "the crossing renders the element arm of the second position "
+                    + "after admitting the first: " + error.code + " " + error.msg
+                    + " expected " + error.expected + " actual " + error.actual);
+        }
+        check(Integer.valueOf(7).equals(laterRange.elements.get(0))
+                && Long.valueOf(2147483649L).equals(laterRange.elements.get(1)),
+            "the rejected crossing commits no partial admission: the earlier "
+                + "admitted boxed int element stays the raw Integer carrier");
+        JvmRuntime.Array numberCarrier = new JvmRuntime.Array(1);
+        numberCarrier.elements.add(Long.valueOf(2147483648L));
+        Object admittedNumber = JvmRuntime.hostCompletion("array(number)", "array",
+            numberCarrier);
+        check(admittedNumber == numberCarrier
+                && Long.valueOf(2147483648L).equals(numberCarrier.elements.get(0)),
+            "a declared number element position admits the out-of-range Long "
+                + "unchanged (the number carrier keeps its own variant)");
+        try {
+            JvmRuntime.hostCompletion("nullable(int)", "nullable:int",
+                Long.valueOf(2147483648L));
+            check(false, "the crossing rejects the out-of-range Long at the "
+                + "top-level nullable int position");
+        } catch (JvmRuntime.DealError error) {
+            check("E8004".equals(error.code)
+                    && "int out of safe range".equals(error.msg),
+                "the crossing's top-level range step and its element-position "
+                    + "step render the same closed range arm: " + error.code + " "
+                    + error.msg);
+        }
+        safely("the out-of-range int[] host completion",
+            CanonicalProjectionParityTest::driveHostOutOfRangeIntArrayCompletion);
+        safely("the out-of-range nullable-element array host completion",
+            CanonicalProjectionParityTest::driveHostOutOfRangeNullableElementCompletion);
+        safely("the out-of-range nested int[][] host completion",
+            CanonicalProjectionParityTest::driveHostOutOfRangeNestedIntArrayCompletion);
+        safely("the out-of-range later-element string[] host completion",
+            CanonicalProjectionParityTest::driveHostOutOfRangeLaterElementCompletion);
+    }
+
+    /** The discarded-await out-of-range int-array probe. */
+    private static final String ARRAY_COMPLETION_DROP_INT_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_drop_int_array(): null {
+          await host.fetchInts()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The discarded-await out-of-range nullable-element array probe. */
+    private static final String ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_drop_nullable_elements(): null {
+          await host.fetchNullableElements()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /** The discarded-await out-of-range nested-int-array probe. */
+    private static final String ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_drop_nested_int_array(): null {
+          await host.fetchNestedInts()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The discarded-await later-out-of-range string-array probe: the awaited
+     * result is discarded and the canonical first failing element must decide
+     * before the later out-of-range raw carrier is inspected.
+     */
+    private static final String ARRAY_COMPLETION_DROP_ORDER_DRIVER = """
+        import * as host from "host/async_arrays"
+
+        export async function test_drop_ordered_strings(): null {
+          await host.fetchStrings()
+          return null
+        }
+
+        export function main(): null {
+          return null
+        }
+        """;
+
+    /**
+     * The oracle's one-element out-of-range raw numeric int array completion
+     * value: the raw carrier outside signed32 is not the closed int carrier,
+     * so the oracle supplies it as the number view both production consumers
+     * project for the same raw value.
+     */
+    private static SemanticOracle.Value oracleOutOfRangeIntArrayElement() {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(
+                new SemanticOracle.Value.NumValue(2147483648d))),
+            RuntimeDescriptor.Int.INSTANCE, false);
+    }
+
+    /**
+     * The oracle's nested out-of-range raw numeric int array completion
+     * value: the number view at the nested int element position.
+     */
+    private static SemanticOracle.Value oracleOutOfRangeNestedIntArrayElement() {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(new SemanticOracle.Value.ArrayValue(
+                new ArrayList<>(List.of(
+                    new SemanticOracle.Value.NumValue(2147483648d))),
+                RuntimeDescriptor.Int.INSTANCE, false))),
+            RuntimeDescriptor.parseCanonicalText("[int]"), false);
+    }
+
+    /**
+     * The oracle's early wrong-kind int followed by the out-of-range raw
+     * numeric carrier: the first failing element decides before the later
+     * number view is inspected.
+     */
+    private static SemanticOracle.Value oracleOrderedStringArrayElement() {
+        return new SemanticOracle.Value.ArrayValue(
+            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(7L),
+                new SemanticOracle.Value.NumValue(2147483648d))),
+            RuntimeDescriptor.String.INSTANCE, false);
+    }
+
+    /**
+     * The out-of-range Long at a direct int[] completion on all three
+     * consumers: the element arm's complete tuple at the discarded await.
+     */
+    private static void driveHostOutOfRangeIntArrayCompletion() throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_int_array",
+            ARRAY_COMPLETION_DROP_INT_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(oracleOutOfRangeIntArrayElement()),
+                "test_drop_int_array",
+                asyncElementTuple(ARRAY_COMPLETION_DROP_INT_DRIVER, 4, 1, "int",
+                    "number"),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 2147483648}"),
+                jvmAsyncArrayHost("array(java.lang.Long.valueOf(2147483648L))"),
+                "the out-of-range Long int[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The out-of-range Long at an (int | null)[] completion on all three
+     * consumers: the nullable element position applies the same recursive
+     * range step and renders the element's own canonical tuple.
+     */
+    private static void driveHostOutOfRangeNullableElementCompletion()
+            throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_nullable_elements",
+            ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(oracleOutOfRangeIntArrayElement()),
+                "test_drop_nullable_elements",
+                asyncElementTuple(ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER, 4, 1,
+                    "?int", "number"),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 2147483648}"),
+                jvmAsyncArrayHost("array(java.lang.Long.valueOf(2147483648L))"),
+                "the out-of-range Long (int | null)[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The out-of-range Long at an int[][] completion on all three consumers:
+     * the nested element position applies the same recursive range step and
+     * the outermost element arm renders the complete tuple.
+     */
+    private static void driveHostOutOfRangeNestedIntArrayCompletion()
+            throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_nested_int_array",
+            ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(oracleOutOfRangeNestedIntArrayElement()),
+                "test_drop_nested_int_array",
+                asyncElementTuple(ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER, 4, 1,
+                    "[int]", "array"),
+                luaAsyncArrayHost("{__a = true, __n = 1, [1] = {__a = true, "
+                    + "__n = 1, [1] = 2147483648}}"),
+                jvmAsyncArrayHost("array(array(java.lang.Long.valueOf(2147483648L)))"),
+                "the out-of-range Long int[][] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The early wrong-kind element followed by the out-of-range Long at a
+     * string[] completion on all three consumers: the canonical
+     * first-failing-element rule decides the tuple before the later
+     * out-of-range raw carrier is inspected.
+     */
+    private static void driveHostOutOfRangeLaterElementCompletion()
+            throws Exception {
+        Compiled compiled = compileArrayCompletion("test_drop_ordered_strings",
+            ARRAY_COMPLETION_DROP_ORDER_DRIVER);
+        try {
+            assertAsyncCompletionFailure(compiled, "async_arrays",
+                arrayCompletionResponder(oracleOrderedStringArrayElement()),
+                "test_drop_ordered_strings",
+                asyncElementTuple(ARRAY_COMPLETION_DROP_ORDER_DRIVER, 4, 1, "string",
+                    "int"),
+                luaAsyncArrayHost(
+                    "{__a = true, __n = 2, [1] = 7, [2] = 2147483648}"),
+                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), "
+                    + "java.lang.Long.valueOf(2147483648L))"),
+                "the early wrong-kind element before the out-of-range Long "
+                    + "string[] completion");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
     /** The element arm's own tuple (E8003) at one await origin. */
     private static Tuple asyncElementTuple(String driver, int line,
             int oneBasedIndex, String expected, String actual) {
@@ -8896,6 +9257,7 @@ public class CanonicalProjectionParityTest {
         testHostNumericReturnCarriers();
         testHostNumericCompletions();
         testHostArrayCompletions();
+        testHostOutOfRangeArrayCompletions();
         testHostNullParameterCrossing();
         testCallbackEntrySlot();
         testInvalidUnicodeBoundaryOriginDrive();
