@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: jsonable, declarations, modules
 
-import * as M from "./support/declared_json_model"
+import * as M from "./support/declared_json_model";
 
 // @jsonable
 export class Holder {

@@ -1171,14 +1171,14 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = diamond.resolve("src");
             writeSource(src, "main.deal",
-                "import * as A from \"./a\"\n"
-                    + "import * as B from \"./b\"\n"
+                "import * as A from \"./a\";\n"
+                    + "import * as B from \"./b\";\n"
                     + "export function main(): null { return null; }\n");
             writeSource(src, "a.deal",
-                "import * as D from \"./d\"\n"
+                "import * as D from \"./d\";\n"
                     + "export class Alpha { d: D.Delta | null = null; }\n");
             writeSource(src, "b.deal",
-                "import * as D from \"./d\"\n"
+                "import * as D from \"./d\";\n"
                     + "export class Beta { d: D.Delta | null = null; }\n");
             writeSource(src, "d.deal",
                 "export class Delta { n: int = 0; }\n");
@@ -1205,13 +1205,13 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = typeOnly.resolve("src");
             writeSource(src, "main.deal",
-                "import * as A from \"./a\"\n"
+                "import * as A from \"./a\";\n"
                     + "export function main(): null { return null; }\n");
             Path aFile = writeSource(src, "a.deal",
-                "import * as B from \"./b\"\n"
+                "import * as B from \"./b\";\n"
                     + "export class Alpha { b: B.Beta | null = null; }\n");
             Path bFile = writeSource(src, "b.deal",
-                "import * as A from \"./a\"\n"
+                "import * as A from \"./a\";\n"
                     + "export class Beta { a: A.Alpha | null = null; }\n");
             Path output = typeOnly.resolve("out");
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -1251,7 +1251,7 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = selfImport.resolve("src");
             Path mainFile = writeSource(src, "main.deal",
-                "import * as S from \"./main\"\n"
+                "import * as S from \"./main\";\n"
                     + "export function main(): null { return null; }\n");
             Path output = selfImport.resolve("out");
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -1287,12 +1287,12 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = mixed.resolve("src");
             writeSource(src, "main.deal",
-                "import * as L from \"./lib\"\n"
+                "import * as L from \"./lib\";\n"
                     + "// @jsonable\n"
                     + "export class A { b: L.B = {}; }\n"
                     + "export function main(): null { return null; }\n");
             writeSource(src, "lib.deal",
-                "import * as M from \"./main\"\n"
+                "import * as M from \"./main\";\n"
                     + "// @jsonable\n"
                     + "export class B { a: M.A = {}; }\n");
             Path output = mixed.resolve("out");
@@ -1320,16 +1320,16 @@ public class CheckedProjectBuilderTest {
         try {
             Path root = declarations;
             writeSource(root, "main.deal",
-                "import * as A from \"./support/decl_two_a\"\n"
+                "import * as A from \"./support/decl_two_a\";\n"
                     + "export function probe(x: A.A): A.A { return x; }\n"
                     + "export function main(): null { return null; }\n");
             Path support = root.resolve("support");
             Path declA = writeSource(support, "decl_two_a.d.deal",
-                "import * as B from \"./decl_two_b\"\n"
+                "import * as B from \"./decl_two_b\";\n"
                     + "export class A { value: int = 1; }\n"
                     + "export function accept(x: B.B): B.B;\n");
             Path declB = writeSource(support, "decl_two_b.d.deal",
-                "import * as A from \"./decl_two_a\"\n"
+                "import * as A from \"./decl_two_a\";\n"
                     + "export class B { value: int = 2; }\n"
                     + "export function accept(x: A.A): A.A;\n");
             Map<String, String> externals = new LinkedHashMap<>();
@@ -1371,20 +1371,20 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = disjoint.resolve("src");
             writeSource(src, "main.deal",
-                "import * as A from \"./a\"\n"
-                    + "import * as X from \"./x\"\n"
+                "import * as A from \"./a\";\n"
+                    + "import * as X from \"./x\";\n"
                     + "export function main(): null { return null; }\n");
             writeSource(src, "a.deal",
-                "import * as B from \"./b\"\n"
+                "import * as B from \"./b\";\n"
                     + "export class Alpha { b: B.Beta | null = null; }\n");
             writeSource(src, "b.deal",
-                "import * as A from \"./a\"\n"
+                "import * as A from \"./a\";\n"
                     + "export class Beta { a: A.Alpha | null = null; }\n");
             writeSource(src, "x.deal",
-                "import * as Y from \"./y\"\n"
+                "import * as Y from \"./y\";\n"
                     + "export class Chi { y: Y.Psi | null = null; }\n");
             writeSource(src, "y.deal",
-                "import * as X from \"./x\"\n"
+                "import * as X from \"./x\";\n"
                     + "export class Psi { x: X.Chi | null = null; }\n");
             Path output = disjoint.resolve("out");
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -1419,17 +1419,17 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = outOfOrder.resolve("src");
             writeSource(src, "main.deal",
-                "import * as A from \"./a\"\n"
-                    + "import * as B from \"./b\"\n"
+                "import * as A from \"./a\";\n"
+                    + "import * as B from \"./b\";\n"
                     + "export function main(): null { return null; }\n");
             Path aFile = writeSource(src, "a.deal",
-                "import * as C from \"./c\"\n"
+                "import * as C from \"./c\";\n"
                     + "export class Alpha { c: C.Gamma | null = null; }\n");
             Path bFile = writeSource(src, "b.deal",
-                "import * as A from \"./a\"\n"
+                "import * as A from \"./a\";\n"
                     + "export class Beta { a: A.Alpha | null = null; }\n");
             Path cFile = writeSource(src, "c.deal",
-                "import * as B from \"./b\"\n"
+                "import * as B from \"./b\";\n"
                     + "export class Gamma { b: B.Beta | null = null; }\n");
             Path output = outOfOrder.resolve("out");
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(

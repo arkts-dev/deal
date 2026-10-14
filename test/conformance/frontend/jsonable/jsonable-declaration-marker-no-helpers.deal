@@ -3,7 +3,7 @@
 // @expected: compile-error E4007
 // @features: jsonable, declarations, modules
 
-import * as M from "./support/declared_json_model_marker_only"
+import * as M from "./support/declared_json_model_marker_only";
 
 // @jsonable
 export class Holder {

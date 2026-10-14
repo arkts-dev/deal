@@ -3,8 +3,8 @@
 // @expected: compile-ok
 // @features: jsonable, modules, nominal-identity
 
-import * as A from "./support/identity_a/node_lib"
-import * as B from "./support/identity_b/node_lib"
+import * as A from "./support/identity_a/node_lib";
+import * as B from "./support/identity_b/node_lib";
 
 // @jsonable
 export class Node { local: int = 0; }
