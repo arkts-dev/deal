@@ -8250,6 +8250,64 @@ __factories.__hostDeclKind = function(desc)
   end
   return desc
 end
+-- The host-facing projection of one declared host-crossing array value:
+-- a fresh carrier whose null elements are the deployed runtime's explicit
+-- null sentinel — the representation the loaded matcher admits at a
+-- nullable element position and the raw host observes, exactly like the
+-- oracle's NullValue element and the JVM's present null — recursing
+-- through the nested array positions the declared descriptor names. A nil
+-- descriptor is the async crossing's mark-directed walk (the recorded
+-- argument carries no declared position beside it), which projects every
+-- nested array carrier. The source carrier is never mutated: the DEAL
+-- side keeps its own language-null sentinel, its identity, and its
+-- aliases (the host crossing's shared-value discipline), and the
+-- projection returns the source unchanged when no element at any walked
+-- depth is the chunk's null, so a null-free array keeps the landed
+-- shared-value crossing. The identity memo keeps one source array one
+-- projected carrier (an aliased or repeated inner array stays one host
+-- array) and makes a self-referential carrier terminate. The helper
+-- rides the chunk's one factory store like the other host-crossing
+-- helpers (no main-chunk local), so a retained export keeps its own
+-- chunk's projection.
+__factories.__hostArgArray = function(desc, v, memo)
+  if type(v) ~= "table" or not v.__a then return v end
+  local inner = nil
+  local elementIsArray = desc == nil
+  if desc ~= nil then
+    local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
+    if string.sub(body, 1, 1) ~= "[" then return v end
+    inner = string.sub(body, 2, -2)
+    local innerBody = string.sub(inner, 1, 1) == "?"
+      and string.sub(inner, 2) or inner
+    elementIsArray = string.sub(innerBody, 1, 1) == "["
+  end
+  if memo == nil then memo = {} end
+  local mapped = memo[v]
+  if mapped ~= nil then return mapped end
+  local out = {__a = true, __n = v.__n, __nK = v.__nK}
+  memo[v] = out
+  local changed = false
+  for i = 1, #v do
+    local element = v[i]
+    if element == __NULL then
+      out[i] = __rt.__NULL
+      changed = true
+    elseif elementIsArray and type(element) == "table" and element.__a then
+      local nested = __factories.__hostArgArray(inner, element, memo)
+      out[i] = nested
+      if nested ~= element then
+        changed = true
+      end
+    else
+      out[i] = element
+    end
+  end
+  if not changed then
+    memo[v] = v
+    return v
+  end
+  return out
+end
 -- The admission of one declared host position before the loaded matcher:
 -- the chunk's language-null representation — the raw nil the null literal
 -- emits and the chunk's own __NULL sentinel — crosses as the deployed
@@ -8288,7 +8346,18 @@ __factories.__hostParamAdmit = function(desc, index, v, origin)
     return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
       origin, desc, __typedBoundaryKind("missing", v)), 0)
   end
-  if v ~= nil and v ~= __NULL then return v end
+  if v ~= nil and v ~= __NULL then
+    -- The declared array position's host-facing projection: a projected
+    -- carrier carries the deployed runtime's explicit null sentinel at
+    -- every null element (nested declared array positions recurse), while
+    -- the DEAL-side carrier keeps its own sentinel and identity. The
+    -- projection is the identity for a null-free array and for every
+    -- non-array declared position.
+    if type(v) == "table" and v.__a then
+      return __factories.__hostArgArray(desc, v)
+    end
+    return v
+  end
   if desc == "null" or string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
   local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
     {kind = __factories.__hostDeclKind(desc)})
@@ -8442,7 +8511,20 @@ end
 -- by the next chunk) without spending a main-chunk local.
 __factories.__hostAsyncArg = function(v)
   if v == nil or v == __NULL then return __rt.__NULL end
-  if type(v) == "table" and v.__jn then return v.d end
+  if type(v) == "table" then
+    if v.__jn then return v.d end
+    -- The recorded array argument's host-facing projection, the async
+    -- twin of the sync crossing's declared array parameter cell: the raw
+    -- host observes the deployed runtime's explicit null sentinel at every
+    -- null element (nested arrays included) while the DEAL-side carrier
+    -- keeps its own sentinel and identity. The async-start crossing
+    -- carries no declared parameter descriptor (the loaded wrapper's own
+    -- matcher checks the projected values at the start), so the carrier's
+    -- own array mark selects the mark-directed walk.
+    if v.__a then
+      return __factories.__hostArgArray(nil, v)
+    end
+  end
   return v
 end
 -- The host-facing projection of one declared function position (H7): the

@@ -4119,6 +4119,10 @@ public class CanonicalProjectionParityTest {
     private static final String NULL_CROSSING_DECLARATION = """
         export function takeNull(value: null): string;
         export function takeNullableInt(value: int | null): string;
+        export function takeNullableArray(value: (int | null)[]): string;
+        export function takeNestedNullableArray(value: (int | null)[][]): string;
+        export function takeNullableArrayBadReturn(value: (int | null)[]): string;
+        export async function asyncTakeNullableArray(value: (int | null)[]): string;
         export function takeNullBadReturn(value: null): string;
         export function takeTable(value: table): string;
         export function takeArray(value: int[]): string;
@@ -4426,6 +4430,53 @@ public class CanonicalProjectionParityTest {
           return null
         }
 
+        export function test_take_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let seen: string = host.takeNullableArray(xs)
+          if (seen !== "sentinel+7") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument did not reach the host as the null sentinel" }
+          }
+          if (xs.length !== 2) {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its length" }
+          }
+          let first: int | null = xs[0]
+          if (first !== null) {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its language null after the crossing" }
+          }
+          let second: int | null = xs[1]
+          if (second !== null) {
+            if (second !== 7) {
+              throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument changed its element after the crossing" }
+            }
+          } else {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its element after the crossing" }
+          }
+          return null
+        }
+
+        export function test_take_nested_nullable_array(): null {
+          let xs: (int | null)[][] = [[null, 7], [8]]
+          let seen: string = host.takeNestedNullableArray(xs)
+          if (seen !== "nested") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the nested nullable-array argument did not reach the host as the null sentinel" }
+          }
+          return null
+        }
+
+        export function test_take_nullable_array_bad_return(): null {
+          host.takeNullableArrayBadReturn([null, 7])
+          return null
+        }
+
+        export async function test_async_take_nullable_array(): null {
+          let xs: (int | null)[] = [null, 7]
+          let seen: string = await host.asyncTakeNullableArray(xs)
+          if (seen !== "sentinel+7") {
+            throw { code: "PROBE_NULL_ARRAY", message: "the async nullable-array argument did not reach the host as the null sentinel" }
+          }
+          return null
+        }
+
         export function main(): null {
           return null
         }
@@ -4460,6 +4511,39 @@ public class CanonicalProjectionParityTest {
                 if value == rt.__NULL then return "sentinel" end
                 if value == nil then return "plain-nil" end
                 return "other"
+              end,
+              takeNullableArray = function(value)
+                if type(value) == "table" and value[1] == rt.__NULL
+                    and value[2] == 7 then
+                  return "sentinel+7"
+                end
+                if type(value) == "table" and value[1] == nil
+                    and value[2] == 7 then
+                  return "plain-nil+7"
+                end
+                return "other"
+              end,
+              takeNestedNullableArray = function(value)
+                if type(value) == "table" and type(value[1]) == "table"
+                    and value[1][1] == rt.__NULL and value[1][2] == 7
+                    and type(value[2]) == "table" and value[2][1] == 8 then
+                  return "nested"
+                end
+                return "other"
+              end,
+              takeNullableArrayBadReturn = function(value)
+                return 7
+              end,
+              asyncTakeNullableArray = function(value)
+                if type(value) == "table" and value[1] == rt.__NULL
+                    and value[2] == 7 then
+                  return rt.async_start(function() return "sentinel+7" end)
+                end
+                if type(value) == "table" and value[1] == nil
+                    and value[2] == 7 then
+                  return rt.async_start(function() return "plain-nil+7" end)
+                end
+                return rt.async_start(function() return "other" end)
               end,
               takeTable = function(value)
                 return "unexpected-table-admission"
@@ -4535,6 +4619,34 @@ public class CanonicalProjectionParityTest {
               public static Object takeNullableInt(Integer value) {
                 return value == null ? "sentinel" : "other";
               }
+              public static Object takeNullableArray($DealRt.__IntOrNullArray value) {
+                return value.data.length == 2 && value.data[0] == null
+                    && java.lang.Integer.valueOf(7).equals(value.data[1])
+                        ? "sentinel+7" : "other";
+              }
+              public static Object takeNestedNullableArray($DealRt.__RefArray value) {
+                if (value.data.length != 2) { return "other"; }
+                if (!(value.data[0] instanceof deal.codegen.jvm.JvmRuntime.Array inner)
+                    || inner.elements.size() != 2 || inner.elements.get(0) != null
+                    || !java.lang.Long.valueOf(7).equals(inner.elements.get(1))) {
+                  return "other";
+                }
+                if (!(value.data[1] instanceof deal.codegen.jvm.JvmRuntime.Array tail)
+                    || tail.elements.size() != 1
+                    || !java.lang.Long.valueOf(8).equals(tail.elements.get(0))) {
+                  return "other";
+                }
+                return "nested";
+              }
+              public static Object takeNullableArrayBadReturn($DealRt.__IntOrNullArray value) {
+                return java.lang.Integer.valueOf(7);
+              }
+              public static Object asyncTakeNullableArray($DealRt.__IntOrNullArray value) {
+                return java.util.concurrent.CompletableFuture.completedFuture(
+                    value.data.length == 2 && value.data[0] == null
+                        && java.lang.Integer.valueOf(7).equals(value.data[1])
+                            ? "sentinel+7" : "other");
+              }
               public static Object takeTable(Object value) {
                 return "unexpected-table-admission";
               }
@@ -4577,6 +4689,57 @@ public class CanonicalProjectionParityTest {
               }
             }
             """;
+    }
+
+    /**
+     * The oracle-side nullable-array argument probe: one argument whose
+     * array value carries the language null at element 1 and the given int
+     * at element 2 — the shape every raw host reports as the sentinel tuple.
+     */
+    private static String nullableArrayElement(
+            List<SemanticOracle.Value> args, long intValue) {
+        return args.size() == 1
+                && args.get(0) instanceof SemanticOracle.Value.ArrayValue array
+                && array.elements().size() == 2
+                && array.elements().get(0)
+                    instanceof SemanticOracle.Value.NullValue
+                && array.elements().get(1)
+                    instanceof SemanticOracle.Value.IntValue value
+                && value.value() == intValue
+            ? "sentinel+7" : "other";
+    }
+
+    /**
+     * The oracle-side nested nullable-array argument probe: one argument
+     * whose first element is the nullable array {@code [null, inner]} and
+     * whose second element is the array {@code [tail]}.
+     */
+    private static String nestedNullableArrayElement(
+            List<SemanticOracle.Value> args, long inner, long tail) {
+        if (args.size() != 1
+                || !(args.get(0) instanceof SemanticOracle.Value.ArrayValue array)
+                || array.elements().size() != 2) {
+            return "other";
+        }
+        if (!(array.elements().get(0)
+                    instanceof SemanticOracle.Value.ArrayValue first)
+                || first.elements().size() != 2
+                || !(first.elements().get(0)
+                    instanceof SemanticOracle.Value.NullValue)
+                || !(first.elements().get(1)
+                    instanceof SemanticOracle.Value.IntValue one)
+                || one.value() != inner) {
+            return "other";
+        }
+        if (!(array.elements().get(1)
+                    instanceof SemanticOracle.Value.ArrayValue second)
+                || second.elements().size() != 1
+                || !(second.elements().get(0)
+                    instanceof SemanticOracle.Value.IntValue two)
+                || two.value() != tail) {
+            return "other";
+        }
+        return "nested";
     }
 
     /**
@@ -4638,6 +4801,8 @@ public class CanonicalProjectionParityTest {
                                     instanceof SemanticOracle.Value.IntValue intValue
                                 && intValue.value() == 7
                             ? "sentinel+7" : "other");
+                } else if ("asyncTakeNullableArray".equals(export)) {
+                    asyncSeen.put(operationLabel, nullableArrayElement(args, 7));
                 }
                 return new AsyncStartOutcome.Operation(operationLabel);
             }
@@ -4660,6 +4825,14 @@ public class CanonicalProjectionParityTest {
                                     instanceof SemanticOracle.Value.NullValue
                                 ? "sentinel" : "other"));
                     case "takeNullBadReturn" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.IntValue(7L));
+                    case "takeNullableArray" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.StrValue(
+                            nullableArrayElement(args, 7)));
+                    case "takeNestedNullableArray" -> new SyncOutcome.Returned(
+                        new SemanticOracle.Value.StrValue(
+                            nestedNullableArrayElement(args, 7, 8)));
+                    case "takeNullableArrayBadReturn" -> new SyncOutcome.Returned(
                         new SemanticOracle.Value.IntValue(7L));
                     case "takeTable", "takeArray" -> new SyncOutcome.Returned(
                         new SemanticOracle.Value.StrValue("unexpected-admission"));
@@ -4705,10 +4878,14 @@ public class CanonicalProjectionParityTest {
         try {
             safely("the null crossing admissions",
                 () -> driveNullCrossingAdmissions(compiled));
+            safely("the null-crossing array admissions",
+                () -> driveNullCrossingArrayAdmissions(compiled));
             safely("the null crossing's incompatible-position rejections",
                 () -> driveNullCrossingRejections(compiled));
             safely("the null crossing's subsequent failure projection",
                 () -> driveNullCrossingBadReturn(compiled));
+            safely("the nullable-array crossing's subsequent failure projection",
+                () -> driveNullCrossingArrayBadReturn(compiled));
             safely("the null crossing's two-load retained exports",
                 () -> driveNullCrossingTwoLoadRetention(compiled));
         } finally {
@@ -4752,6 +4929,74 @@ public class CanonicalProjectionParityTest {
             "the dynamic async null literal before a non-null int parameter");
         assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_pair",
             "the dynamic async null literal before a non-null argument (both nullable)");
+    }
+
+    /**
+     * The nullable-array null crossings: a valid nullable-array argument
+     * (and its nested form) reaches the raw host with the explicit null
+     * sentinel at its null element, the DEAL-side array keeps its language
+     * null after the crossing, and the async start projects the same
+     * argument — complete without a failure event on the oracle, the LuaJIT
+     * artifact, and the JVM artifact.
+     */
+    private static void driveNullCrossingArrayAdmissions(Compiled compiled)
+            throws Exception {
+        assertNullCrossingAdmission(compiled, "test_take_nullable_array",
+            "the nullable-array argument at a nullable-element host parameter");
+        assertNullCrossingAdmission(compiled, "test_take_nested_nullable_array",
+            "the nested nullable-array argument at a nullable-element host "
+                + "parameter");
+        assertAsyncNullCrossingAdmission(compiled, "test_async_take_nullable_array",
+            "the async nullable-array argument at a nullable-element host "
+                + "parameter");
+    }
+
+    /**
+     * The nullable-array crossing's subsequent failure projection: the raw
+     * host returns a real int for the declared {@code string} return after
+     * the nullable-array argument was admitted, so the closed
+     * {@code HOST_SYNC_RETURN_CELL} arm renders its own tuple at the call
+     * origin — byte-exact and identical on the oracle, the LuaJIT artifact,
+     * and the JVM artifact. An unprojected array element would fail earlier
+     * with a different tuple, so the projection also proves the admission.
+     */
+    private static void driveNullCrossingArrayBadReturn(Compiled compiled)
+            throws Exception {
+        String export = "test_take_nullable_array_bad_return";
+        Tuple expected = hostReturnCellTuple("string",
+            FailureProjections.kindReason(RuntimeDescriptor.String.INSTANCE),
+            "number", 320, 3);
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
+            compiled.project(), compiled.tables(), compiled.registries(),
+            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
+            List.of());
+        Tuple oracle = failureTuple(compiled, run);
+        checkEq(expected, oracle, "the nullable-array crossing's subsequent "
+            + "failure (oracle): the closed return cell's own tuple at the call "
+            + "origin");
+        String luaOutput = luaArtifactOutput(compiled,
+            Map.of("null_crossing", luaNullCrossingHost()),
+            luaExportProbe(compiled, export));
+        Tuple lua = parseLuaProbe(luaOutput, compiled);
+        checkEq(expected, lua, "the nullable-array crossing's subsequent "
+            + "failure (luajit): the closed return cell's own tuple at the call "
+            + "origin: " + luaOutput);
+        String jvmOutput = jvmExportOutput(compiled, export,
+            Map.of("null_crossing", jvmNullCrossingHost()));
+        Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
+        checkEq(expected, jvm, "the nullable-array crossing's subsequent "
+            + "failure (jvm): the closed return cell's own tuple at the call "
+            + "origin: " + jvmOutput);
+        if (oracle != null && lua != null) {
+            checkEq(null, firstDifferingField(oracle, lua),
+                "the nullable-array crossing's subsequent failure: the oracle "
+                    + "and the LuaJIT artifact render the identical tuple");
+        }
+        if (oracle != null && jvm != null) {
+            checkEq(null, firstDifferingField(oracle, jvm),
+                "the nullable-array crossing's subsequent failure: the oracle "
+                    + "and the JVM artifact render the identical tuple");
+        }
     }
 
     /** One admitted crossing through the async host start. */
