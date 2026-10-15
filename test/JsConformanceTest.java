@@ -1209,8 +1209,10 @@ public class JsConformanceTest {
      * explicit {@link #LANE_INVOCATION} (the sole
      * {@code DEAL_V1_3_INT32} release invocation) drives the
      * compilation, so the emitted artifacts run the signed-32 gate from
-     * runtime load and the shared stdlib-edge time fixture raises E8004
-     * at the retained {@code nowMillis} exit check. Stdout/stderr is
+     * runtime load and the shared stdlib-edge time fixture crosses the
+     * declared number return of {@code nowMillis} unchanged (a
+     * contemporary epoch-millisecond reading above the signed-32 range).
+     * Stdout/stderr is
      * captured so per-test output stays clean.
      */
     private static OrchestratorRun runOrchestrator(Path projectRoot,

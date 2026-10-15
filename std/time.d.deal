@@ -1,2 +1,2 @@
 // DEAL Standard Library: std/time (declaration)
-export function nowMillis(): int;
+export function nowMillis(): number;

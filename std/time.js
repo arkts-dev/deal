@@ -21,17 +21,19 @@ const $rt = require("../deal/runtime");
 // members — no missing member, no extra export.
 const $time = {};
 
-// nowMillis: ()->int — the epoch-millisecond second truncation pinned by
-// the objective (std/time.lua's os.time() * 1000; the JVM backend's
-// (System.currentTimeMillis() / 1000L) * 1000L). The result is always an
-// integer with % 1000 === 0, in the current-second window of Date.now().
-// There are no value parameters, so $f declares only the trailing span
-// parameters ($file, $line, $column) — the emitter passes literal
-// call-site spans on every .$f call — and forwards them to the exit check:
-// checkInt is the declared-return check at exit and is total over the
-// computed value (js-stdlib-modules D2/D9). Stateless; no caching.
-$time.nowMillis = $rt.function("()->int", function($file, $line, $column) {
-  return $rt.checkInt(($Math.trunc($Date.now() / 1000)) * 1000, $file, $line, $column);
+// nowMillis: ()->number — the epoch-millisecond reading at the existing
+// backend clock resolution (std/time.lua's os.time() * 1000; the JVM
+// backend's System.currentTimeMillis()). The result is an integer with
+// % 1000 === 0, in the current-second window of Date.now(), and crosses
+// the declared number return: contemporary readings exceed the signed-32
+// range and no int terminal exists (v1.3). There are no value parameters,
+// so $f declares only the trailing span parameters ($file, $line, $column)
+// — the emitter passes literal call-site spans on every .$f call — and
+// forwards them to the exit check: checkNumber is the declared-return
+// check at exit and is total over the computed value (js-stdlib-modules
+// D2/D9). Stateless; no caching.
+$time.nowMillis = $rt.function("()->number", function($file, $line, $column) {
+  return $rt.checkNumber(($Math.trunc($Date.now() / 1000)) * 1000, $file, $line, $column);
 });
 
 module.exports = $time;

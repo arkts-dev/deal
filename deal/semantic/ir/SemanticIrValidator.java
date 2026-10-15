@@ -1845,11 +1845,12 @@ public final class SemanticIrValidator {
             case STRING_LENGTH -> FailurePolicyId.INT32_RESULT;
             case STRING_SUBSTRING, STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH,
                  STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS, MATH_FLOOR, MATH_CEIL,
-                 MATH_ABS_NUMBER, MATH_MIN_INT, MATH_MAX_INT -> FailurePolicyId.NO_DEAL_FAILURE;
+                 MATH_ABS_NUMBER, MATH_MIN_INT, MATH_MAX_INT, TIME_NOW_MILLIS ->
+                FailurePolicyId.NO_DEAL_FAILURE;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
             case MATH_SQRT -> FailurePolicyId.SQRT_NEGATIVE;
-            case MATH_ABS_INT, TIME_NOW_MILLIS -> FailurePolicyId.INT32_RESULT;
+            case MATH_ABS_INT -> FailurePolicyId.INT32_RESULT;
         };
     }
 

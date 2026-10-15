@@ -319,7 +319,7 @@ let ceil: number = m.ceil(3.2);
 
 // time
 import * as time from "std/time";
-let ms: int = time.nowMillis();
+let ms: number = time.nowMillis();
 
 // conversion intrinsics — built-in, no import:
 let i: int = int(3.0);    // number → int

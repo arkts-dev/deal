@@ -94,7 +94,7 @@ export function absNumber(x: number): number;
 export function minInt(a: int, b: int): int;
 export function maxInt(a: int, b: int): int;
 // std/time
-export function nowMillis(): int;
+export function nowMillis(): number;
 ```
 
 String positions count Unicode scalars. Extend the available surface through declared, implemented host modules.

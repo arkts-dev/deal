@@ -2553,8 +2553,11 @@ public final class JvmRuntime {
      * at the {@code STDLIB_CALL} call origin with the active frames.
      * {@code TIME_NOW_MILLIS} reads the target clock
      * ({@link System#currentTimeMillis()}) and its single terminal is the
-     * declared int {@code STDLIB_RETURN} boundary, never an algorithm
-     * failure. The two console ids are the row invoker's
+     * declared number {@code STDLIB_RETURN} boundary under the
+     * descriptor-kind rule — a contemporary epoch-millisecond reading
+     * (above the signed-32 range) crosses unchanged, never an algorithm
+     * failure and never an int terminal (v1.3). The two console ids are
+     * the row invoker's
      * ({@link #stdlibInvoke}), never this surface's. The {@code kind}
      * parameter is the invoking op's own event kind label (the direct
      * {@code STDLIB_CALL} arm's own kind, or the dynamic dispatch's CALL
@@ -2714,12 +2717,12 @@ public final class JvmRuntime {
                     return Long.valueOf(Math.max(longOf(args[0]), longOf(args[1])));
                 }
                 case "TIME_NOW_MILLIS" -> {
-                    // The K7 target-clock read: the declared int
-                    // STDLIB_RETURN boundary (INT32_RESULT) is the single
-                    // terminal, so a contemporary epoch-millisecond
-                    // reading fails E8004 int out of safe range at the
-                    // call origin (the same observable the LuaJIT
-                    // artifact and the oracle produce).
+                    // The K7 target-clock read: the declared number
+                    // STDLIB_RETURN boundary (descriptor-kind rule) admits
+                    // the contemporary epoch-millisecond reading above the
+                    // signed-32 range unchanged — no int terminal exists
+                    // (v1.3). The same observable the LuaJIT artifact and
+                    // the oracle produce.
                     return Double.valueOf(System.currentTimeMillis());
                 }
                 default -> throw new StdlibFailure("E8001",

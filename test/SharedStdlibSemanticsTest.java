@@ -1299,7 +1299,7 @@ public class SharedStdlibSemanticsTest {
                       let f16: number = math.absNumber(-1.5);
                       let i17: int = math.minInt(2, 3);
                       let i18: int = math.maxInt(2, 3);
-                      let now: int = time.nowMillis();
+                      let now: number = time.nowMillis();
                       return null;
                     }
 

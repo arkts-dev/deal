@@ -690,8 +690,8 @@ public sealed interface KindPayload
      * order; the result passes {@code STDLIB_RETURN}; the op's
      * {@code failurePolicy} is the named algorithm policy from the closed
      * stdlib table. {@code TIME_NOW_MILLIS} is the 21st member (K7): zero
-     * declared parameters, the declared {@code int} return boundary, and
-     * the {@code INT32_RESULT} terminal.
+     * declared parameters, the declared {@code number} return boundary
+     * (the descriptor-kind rule), and no int terminal (v1.3).
      */
     record StdlibCallPayload(StdlibFunctionId function, List<ValueId> args,
                              SemanticCapability effectCapability)

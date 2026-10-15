@@ -129,7 +129,7 @@ public final class StdlibFunctionCatalog {
             List.of(INT, INT), INT),
         // std.time (K7)
         new Entry(StdlibFunctionId.TIME_NOW_MILLIS, "std.time", "nowMillis",
-            List.of(), INT)
+            List.of(), NUMBER)
     );
 
     /**

@@ -151,7 +151,7 @@ test("every stdlib member is a $rt.function wrapper with the pinned signature", 
       minInt: "(int,int)->int",
       maxInt: "(int,int)->int",
     }],
-    [time, "std/time", { nowMillis: "()->int" }],
+    [time, "std/time", { nowMillis: "()->number" }],
   ];
   for (const entry of surfaces) {
     const mod = entry[0];
@@ -238,10 +238,13 @@ test("valid calls return values that re-validate through the $rt checks", functi
   assertEqual(rt.checkNumber(math.floor.$f(1.9, "f.js", 1, 1), "f.js", 1, 1), 1, "floor result");
   assertEqual(rt.checkInt(math.absInt.$f(-3, "f.js", 1, 1), "f.js", 1, 1), 3, "absInt result");
   assertEqual(rt.checkInt(math.minInt.$f(2, 3, "f.js", 1, 1), "f.js", 1, 1), 2, "minInt result");
-  // The declared int return of std/time.nowMillis is the current epoch
-  // millisecond count, which is outside the signed-32 range and raises
-  // E8004 at the declared-return boundary (the LuaJIT lane's disposition).
-  assertErrorCode(function() { time.nowMillis.$f("f.js", 1, 1); }, "E8004");
+  // The declared number return of std/time.nowMillis is the current epoch
+  // millisecond count: a contemporary reading exceeds the signed-32 range
+  // and crosses the number boundary unchanged (no int terminal exists).
+  const now = time.nowMillis.$f("f.js", 1, 1);
+  assertEqual(typeof now, "number", "nowMillis result kind");
+  assert(now > 2147483647, "nowMillis result exceeds the signed-32 range");
+  assertEqual(rt.checkNumber(now, "f.js", 1, 1), now, "nowMillis result re-validates");
 });
 
 // ===========================================================================
@@ -641,14 +644,23 @@ test("math.absInt/minInt/maxInt validate ints at entry and exit", function() {
 });
 
 // ===========================================================================
-// std/time parity: second-truncated nowMillis
+// std/time parity: epoch-millisecond number return
 // ===========================================================================
 
-test("time.nowMillis raises E8004 under the signed-32 gate", function() {
-  // The declared return is int; the current epoch-millisecond value is
-  // outside the signed-32 range, so the declared-return check raises
-  // E8004 exactly like the LuaJIT lane.
-  assertErrorCode(function() { time.nowMillis.$f("f.js", 1, 1); }, "E8004");
+test("time.nowMillis returns a number above the signed-32 range", function() {
+  // The declared return is number; the current epoch-millisecond value is
+  // outside the signed-32 range and crosses the boundary unchanged.
+  const now = time.nowMillis.$f("f.js", 1, 1);
+  assertEqual(typeof now, "number", "nowMillis result kind");
+  assert(now > 2147483647, "nowMillis result exceeds the signed-32 range");
+});
+
+test("time.nowMillis tracks the backend clock within its resolution", function() {
+  // The reading keeps the existing second resolution, so it stays within
+  // one second of Date.now() and lands on a whole second.
+  const now = time.nowMillis.$f("f.js", 1, 1);
+  assert(now % 1000 === 0, "nowMillis lands on a whole second");
+  assert(Math.abs(now - Date.now()) <= 2000, "nowMillis is within the clock's resolution");
 });
 
 // ===========================================================================

@@ -462,7 +462,7 @@ public final class IrGoldenTest {
             ));
 
             map.put("std/time", module(
-                fn("nowMillis", list(), intType())
+                fn("nowMillis", list(), numType())
             ));
 
             return map;

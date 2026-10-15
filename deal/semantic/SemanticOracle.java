@@ -6307,9 +6307,9 @@ public final class SemanticOracle {
          * ({@code TIME_NOW_MILLIS}, K7 item 4): the oracle never reads
          * the host clock, so its trace stays deterministic. The pinned
          * reading is a contemporary epoch-millisecond value (outside the
-         * signed32 range), so the declared {@code int} return boundary
-         * fails with the same pinned E8004 projection the real targets
-         * produce for their own clock readings.
+         * signed32 range), so the declared {@code number} return boundary
+         * admits it unchanged — the same semantic outcome the real
+         * targets produce for their own clock readings (v1.3).
          */
         private static final long ORACLE_CLOCK_MILLIS = 1_700_000_000_000L;
 
