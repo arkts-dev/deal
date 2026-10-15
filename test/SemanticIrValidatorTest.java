@@ -416,7 +416,7 @@ public class SemanticIrValidatorTest {
         Map<StdlibFunctionId, FailurePolicyId> stdlib = Map.of(
             StdlibFunctionId.CONSOLE_LOG, FailurePolicyId.INFRASTRUCTURE_ONLY,
             StdlibFunctionId.STRING_LENGTH, FailurePolicyId.INT32_RESULT,
-            StdlibFunctionId.TIME_NOW_MILLIS, FailurePolicyId.INT32_RESULT,
+            StdlibFunctionId.TIME_NOW_MILLIS, FailurePolicyId.NO_DEAL_FAILURE,
             StdlibFunctionId.JSON_PARSE, FailurePolicyId.JSON_PARSE_SYNTAX,
             StdlibFunctionId.JSON_STRINGIFY, FailurePolicyId.JSON_TO_ERROR,
             StdlibFunctionId.MATH_SQRT, FailurePolicyId.SQRT_NEGATIVE,

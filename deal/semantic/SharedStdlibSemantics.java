@@ -1481,12 +1481,11 @@ public final class SharedStdlibSemantics {
      * operation: the target-clock reading returned as a
      * {@link Value.Number} (epoch milliseconds — an exact double for
      * contemporary readings). The operation has no parameter boundary and
-     * its single terminal is the declared {@code int} {@code STDLIB_RETURN}
-     * boundary with policy {@code INT32_RESULT}: a reading outside
-     * {@code [-2147483648, 2147483647]} fails E8004
-     * {@code int out of safe range} at the call origin — exactly what
-     * every contemporary epoch-millisecond reading produces. Policy
-     * {@code INT32_RESULT}; the reading itself never fails.
+     * its single terminal is the declared {@code number}
+     * {@code STDLIB_RETURN} boundary under the descriptor-kind rule: a
+     * contemporary epoch-millisecond reading (above the signed-32 range)
+     * crosses unchanged, and no int terminal exists (v1.3). Policy
+     * {@code NO_DEAL_FAILURE}; the reading itself never fails.
      *
      */
     public static Outcome<Value> timeNowMillis(SourceOrigin origin, Clock clock) {

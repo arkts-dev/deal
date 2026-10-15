@@ -113,12 +113,12 @@ public enum ConstructKind {
 
     /**
      * Required common form: {@code STDLIB_CALL(TIME_NOW_MILLIS)} with the
-     * declared {@code int} return boundary and its {@code INT32_RESULT}
-     * terminal — the recognized cataloged call through the closed
+     * declared {@code number} return boundary (the descriptor-kind rule) —
+     * the recognized cataloged call through the closed
      * {@code std.time}/{@code nowMillis} row (K7).
      */
-    STDLIB_TIME_NOW_MILLIS("STDLIB_CALL(TIME_NOW_MILLIS) with the declared int "
-        + "return boundary and its INT32_RESULT terminal",
+    STDLIB_TIME_NOW_MILLIS("STDLIB_CALL(TIME_NOW_MILLIS) with the declared number "
+        + "return boundary",
         List.of(SemanticOpKind.STDLIB_CALL, SemanticOpKind.BOUNDARY));
 
     private final String requiredCommonForm;

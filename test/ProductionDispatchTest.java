@@ -763,10 +763,28 @@ public class ProductionDispatchTest {
 
     private static final String TIME_SOURCE = """
         import * as time from "std/time";
+        import * as lib from "./lib";
 
         export function main(): null {
-          let t: int = time.nowMillis();
+          let direct: number = time.nowMillis();
+          if (direct < 2147483648.0) { throw { code: "TEST_FAIL", message: "direct time.nowMillis not above the signed-32 range" }; }
+          let stored: () => number = time.nowMillis;
+          let adapted: number = stored();
+          if (adapted <= 0.0) { throw { code: "TEST_FAIL", message: "stored time.nowMillis not positive" }; }
+          let imported: () => number = lib.getNow();
+          let cross: number = imported();
+          if (cross <= 0.0) { throw { code: "TEST_FAIL", message: "imported time.nowMillis not positive" }; }
+          if (cross < 2147483648.0) { throw { code: "TEST_FAIL", message: "imported time.nowMillis not above the signed-32 range" }; }
           return null;
+        }
+        """;
+
+    /** The cross-module {@code nowMillis} provider of the time fixture. */
+    private static final String TIME_LIB_SOURCE = """
+        import * as time from "std/time";
+
+        export function getNow(): () => number {
+          return time.nowMillis;
         }
         """;
 
@@ -2516,17 +2534,19 @@ public class ProductionDispatchTest {
 
     /**
      * The K7 {@code time.nowMillis} coverage through the release-owned
-     * production invocation (the fixture this battery pinned fail-closed):
-     * the closure emits exactly one project artifact per target and both
-     * artifacts execute under their real toolchains with the pinned E8004
-     * {@code int out of safe range} terminal — the declared {@code int}
-     * boundary is the single terminal of the target-clock read.
+     * production invocation: the closure emits exactly one project
+     * artifact per target and both artifacts execute under their real
+     * toolchains with the declared {@code number} return crossing
+     * unchanged — the direct call, the stored/adapted function value, and
+     * the cross-module import all carry contemporary epoch-millisecond
+     * readings above the signed-32 range (v1.3 — no int terminal).
      */
     private static void checkTimeNowMillisCoverage() throws Exception {
         Path project = Files.createTempDirectory("production-dispatch-time-");
         try {
             write(project, "deal.json", DEAL_JSON_LUA);
             write(project, "src/main.deal", TIME_SOURCE);
+            write(project, "src/lib.deal", TIME_LIB_SOURCE);
             ProjectOutcome luaCompile = productionCompile(project, "src/main.deal",
                 "out");
             check(luaCompile.exitCode() == 0,
@@ -2535,9 +2555,8 @@ public class ProductionDispatchTest {
             if (luaCompile.exitCode() == 0) {
                 ProcessOutcome run = runProcess(project.resolve("out"),
                     "luajit", "main.lua");
-                check(run.exitCode() == 1
-                        && run.output().contains("DEAL_ERROR_CODE: E8004"),
-                    "the LuaJIT artifact publishes the pinned E8004 terminal: exit="
+                check(run.exitCode() == 0 && run.output().isEmpty(),
+                    "the LuaJIT artifact crosses the number return unchanged: exit="
                         + run.exitCode() + " output=" + run.output());
             }
 
@@ -2563,9 +2582,8 @@ public class ProductionDispatchTest {
             }
             ProcessOutcome javaRun = runProcess(jvmOut, "java", "-cp",
                 jvmOut + File.pathSeparator + buildCp, "Main");
-            check(javaRun.exitCode() == 1
-                    && javaRun.output().contains("DEAL_ERROR_CODE: E8004"),
-                "the JVM artifact publishes the pinned E8004 terminal: exit="
+            check(javaRun.exitCode() == 0 && javaRun.output().isEmpty(),
+                "the JVM artifact crosses the number return unchanged: exit="
                     + javaRun.exitCode() + " output=" + javaRun.output());
         } finally {
             deleteRecursively(project);

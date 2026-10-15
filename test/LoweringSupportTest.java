@@ -306,7 +306,7 @@ public class LoweringSupportTest {
             check(fixture.ok(), "the direct time fixture compiles for execution");
             if (fixture.ok()) {
                 verifyProduction(runProduction(fixture.orchestrator(), tmp.resolve("build")),
-                    "the direct time.nowMillis() production drive", "E8004");
+                    "the direct time.nowMillis() production drive", null);
             }
             RequirementManifestResult result = fixture.manifests();
             testSyntheticUnitCopy(result);
@@ -338,7 +338,7 @@ public class LoweringSupportTest {
                     import * as time from "std/time";
 
                     export function main(): null {
-                      let f: () => int = time.nowMillis;
+                      let f: () => number = time.nowMillis;
                       f();
                       return null;
                     }
@@ -347,7 +347,7 @@ public class LoweringSupportTest {
                 return;
             }
             check((manifestOf(result, "main") != null),
-                "let f: () => int = time.nowMillis; f(); carries no "
+                "let f: () => number = time.nowMillis; f(); carries no "
                     + "time-conflict routing-marker claim — the value-position read claims nothing "
                     + "from the read (D3) and the retired trigger never fires");
         } finally {
@@ -370,7 +370,7 @@ public class LoweringSupportTest {
 
                     export function main(): null {
                       let t = time;
-                      let g: () => int = t.nowMillis;
+                      let g: () => number = t.nowMillis;
                       g();
                       return null;
                     }
@@ -379,7 +379,7 @@ public class LoweringSupportTest {
                 return;
             }
             check((manifestOf(result, "main") != null),
-                "let t = time; let g: () => int = t.nowMillis; g(); carries no "
+                "let t = time; let g: () => number = t.nowMillis; g(); carries no "
                     + "time-conflict routing-marker claim — the table-typed escape is the K15 "
                     + "namespace-value slice, never a reroute claim");
         } finally {
@@ -396,12 +396,12 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as time from "std/time";
 
-                    export function pick(t: table): () => int {
+                    export function pick(t: table): () => number {
                       return t.nowMillis;
                     }
 
                     export function main(): null {
-                      let g: () => int = pick(time);
+                      let g: () => number = pick(time);
                       g();
                       return null;
                     }
@@ -439,7 +439,7 @@ public class LoweringSupportTest {
 
                     export function main(): null {
                       let t: table = a.getTime();
-                      let g: () => int = t.nowMillis;
+                      let g: () => number = t.nowMillis;
                       g();
                       return null;
                     }
@@ -484,7 +484,7 @@ public class LoweringSupportTest {
 
                     export function main(): null {
                       let t: table = b.getTime2();
-                      let g: () => int = t.nowMillis;
+                      let g: () => number = t.nowMillis;
                       g();
                       return null;
                     }
@@ -517,7 +517,7 @@ public class LoweringSupportTest {
                 "a.deal", """
                     import * as time from "std/time";
 
-                    export function getNow(): () => int {
+                    export function getNow(): () => number {
                       return time.nowMillis;
                     }
                     """,
@@ -525,7 +525,7 @@ public class LoweringSupportTest {
                     import * as a from "./a";
 
                     export function main(): null {
-                      let g: () => int = a.getNow();
+                      let g: () => number = a.getNow();
                       g();
                       return null;
                     }
@@ -555,14 +555,14 @@ public class LoweringSupportTest {
                 "a.deal", """
                     import * as time from "std/time";
 
-                    export function getNow(): () => int {
+                    export function getNow(): () => number {
                       return time.nowMillis;
                     }
                     """,
                 "b.deal", """
                     import * as a from "./a";
 
-                    export function getNow2(): () => int {
+                    export function getNow2(): () => number {
                       return a.getNow();
                     }
                     """,
@@ -570,7 +570,7 @@ public class LoweringSupportTest {
                     import * as b from "./b";
 
                     export function main(): null {
-                      let g: () => int = b.getNow2();
+                      let g: () => number = b.getNow2();
                       g();
                       return null;
                     }
@@ -681,7 +681,7 @@ public class LoweringSupportTest {
 
                     export function main(): null {
                       let t: table = unrelated();
-                      let g: () => int = t.nowMillis;
+                      let g: () => number = t.nowMillis;
                       g();
                       return null;
                     }
@@ -717,7 +717,7 @@ public class LoweringSupportTest {
 
                     export function main(): null {
                       let t: table = a.getTable();
-                      let g: () => int = t.nowMillis;
+                      let g: () => number = t.nowMillis;
                       g();
                       return null;
                     }
@@ -746,7 +746,7 @@ public class LoweringSupportTest {
                 "a.deal", """
                     import * as time from "std/time";
 
-                    export function getNow(): () => int {
+                    export function getNow(): () => number {
                       return time.nowMillis;
                     }
                     """,
@@ -1061,9 +1061,9 @@ public class LoweringSupportTest {
                       sum = sum + g();
                       sum = sum + await asyncOne();
                       sum = sum + helper.helperFn();
-                      let now: int = time.nowMillis();
+                      let now: number = time.nowMillis();
                       try {
-                        if (now < 0) { throw { code: "E", message: "x" }; }
+                        if (now < 0.0) { throw { code: "E", message: "x" }; }
                       } catch (e) {
                         sum = 9;
                       }
@@ -1302,7 +1302,7 @@ public class LoweringSupportTest {
 
                 export function main(): null {
                   let p: Point = { x: 2, y: 3 };
-                  let g: () => int = time.nowMillis;
+                  let g: () => number = time.nowMillis;
                   g();
                   return null;
                 }

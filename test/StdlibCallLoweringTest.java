@@ -316,7 +316,7 @@ public class StdlibCallLoweringTest {
     private static FailurePolicyId expectedPolicy(StdlibFunctionId function) {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
-            case STRING_LENGTH, MATH_ABS_INT, TIME_NOW_MILLIS -> FailurePolicyId.INT32_RESULT;
+            case STRING_LENGTH, MATH_ABS_INT -> FailurePolicyId.INT32_RESULT;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
             case MATH_SQRT -> FailurePolicyId.SQRT_NEGATIVE;
@@ -342,9 +342,9 @@ public class StdlibCallLoweringTest {
             "RESERVED_NAMES is empty (the superseded D8 reservation is retired) while the "
                 + "reserved-name guard stays");
         check(SemanticIrValidator.stdlibPolicy(StdlibFunctionId.TIME_NOW_MILLIS)
-                == FailurePolicyId.INT32_RESULT,
-            "stdlibPolicy(TIME_NOW_MILLIS) = INT32_RESULT — the declared int boundary is "
-                + "the single terminal");
+                == FailurePolicyId.NO_DEAL_FAILURE,
+            "stdlibPolicy(TIME_NOW_MILLIS) = NO_DEAL_FAILURE — the declared number "
+                + "boundary admits every reading and no int terminal exists (v1.3)");
         check(StdlibFunctionCatalog.lookup("std.time", "nowMillis")
                 .map(entry -> entry.function() == StdlibFunctionId.TIME_NOW_MILLIS
                     && entry.parameterDescriptors().isEmpty())
@@ -405,7 +405,7 @@ public class StdlibCallLoweringTest {
                       let f16: number = math.absNumber(-1.5);
                       let i17: int = math.minInt(2, 3);
                       let i18: int = math.maxInt(2, 3);
-                      let now: int = time.nowMillis();
+                      let now: number = time.nowMillis();
                       return null;
                     }
 
@@ -1242,7 +1242,7 @@ public class StdlibCallLoweringTest {
                     import * as t from "std/time";
 
                     function run(): null {
-                      let n: int = t.nowMillis();
+                      let n: number = t.nowMillis();
                       return null;
                     }
 
@@ -1286,8 +1286,9 @@ public class StdlibCallLoweringTest {
 
             // A direct forced lowering drive produces the K7 shape: one
             // STDLIB_CALL(TIME_NOW_MILLIS) with zero parameter boundaries,
-            // one STDLIB_RETURN on the declared int, and the INT32_RESULT
-            // terminal at the call origin.
+            // one STDLIB_RETURN on the declared number under the
+            // descriptor-kind rule, and the NO_DEAL_FAILURE algorithm
+            // policy at the call origin (v1.3 — no int terminal).
             SemanticLowerer.LoweringResult lowering = lowerSubject(checked, "lib", manifests);
             check(lowering != null && !lowering.hasErrors() && lowering.unit() != null,
                 "the forced lowering of the time module produces a validated unit: "
@@ -1298,8 +1299,8 @@ public class StdlibCallLoweringTest {
                 check(timeOp != null,
                     "the unit carries exactly one STDLIB_CALL(TIME_NOW_MILLIS)");
                 if (timeOp != null) {
-                    check(timeOp.failurePolicy() == FailurePolicyId.INT32_RESULT,
-                        "the op stamps the INT32_RESULT terminal from the single "
+                    check(timeOp.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+                        "the op stamps the NO_DEAL_FAILURE policy from the single "
                             + "stdlibPolicy table; got " + timeOp.failurePolicy());
                     check(timeOp.operands().isEmpty() && timeOp.operandTypes().isEmpty(),
                         "the zero-parameter row produces no parameter operands");
@@ -1315,8 +1316,8 @@ public class StdlibCallLoweringTest {
                         if (boundary.kind() == BoundaryKind.STDLIB_RETURN) {
                             returns++;
                             check(boundary.descriptor().equals(
-                                    DescriptorService.describe(Type.Int.INSTANCE)),
-                                "the STDLIB_RETURN boundary carries the declared int "
+                                    DescriptorService.describe(Type.Number.INSTANCE)),
+                                "the STDLIB_RETURN boundary carries the declared number "
                                     + "descriptor");
                         } else if (boundary.kind() == BoundaryKind.STDLIB_PARAMETER) {
                             params++;

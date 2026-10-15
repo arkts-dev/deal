@@ -343,8 +343,8 @@ public class CheckedProjectBuilderTest {
             check(stdlib != null && stdlib.kind() == ExternalModuleKind.STDLIB,
                 "std/time is a STDLIB index entry");
             check(stdlib.exports().equals(List.of(
-                    new ExportInterface("nowMillis", "() => int"))),
-                "the STDLIB entry carries exports = [nowMillis: () => int]; got "
+                    new ExportInterface("nowMillis", "() => number"))),
+                "the STDLIB entry carries exports = [nowMillis: () => number]; got "
                     + stdlib.exports());
             check(stdlib.imports().isEmpty() && stdlib.classes().isEmpty(),
                 "the STDLIB entry carries imports = [] and classes = []");
@@ -900,11 +900,11 @@ public class CheckedProjectBuilderTest {
 
     /** The pinned canonical JSON of the combined fixture index (golden). */
     private static final String PINNED_INDEX_JSON =
-        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(int, int) => int\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => int\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => null\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"host/lib\",\"resolvedModuleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
+        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(int, int) => int\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => number\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => null\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"host/lib\",\"resolvedModuleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
 
     /** The pinned interface index digest of the combined fixture (golden). */
     private static final String PINNED_INDEX_DIGEST =
-        "25b6e4816b1e2ade780ce9c0582a547756d07a285e61ed9ef9257b69b5bac336";
+        "800c1586da1295c3229f7eb335d0baa348a00380eb58ec26926c35d2f117f06f";
 
     private static Path writeCombinedFixture(Path dir) throws Exception {
         Path src = dir.resolve("src");

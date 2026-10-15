@@ -1128,12 +1128,17 @@ end)
 
 local timelib = require("std.time")
 
-test("time.nowMillis raises E8004 under the signed-int32 gate", function()
-  assert_error_code(function() timelib.nowMillis.f() end, "E8004")
+test("time.nowMillis returns the epoch-millisecond reading as a number", function()
+  local ts = timelib.nowMillis.f()
+  assert(type(ts) == "number", "expected a number, got " .. type(ts))
+  assert(ts > 2147483647, "a contemporary reading exceeds the signed-32 range")
+  assert(ts % 1000 == 0, "the reading keeps the existing second resolution")
 end)
 
-test("time.nowMillis ratio case raises E8004 under the signed-int32 gate", function()
-  assert_error_code(function() timelib.nowMillis.f() end, "E8004")
+test("time.nowMillis tracks the backend clock within its resolution", function()
+  local ts = timelib.nowMillis.f()
+  local now = os.time() * 1000
+  assert(math.abs(ts - now) <= 1000, "the reading is within one second of os.time()")
 end)
 
 -- ===========================================================================

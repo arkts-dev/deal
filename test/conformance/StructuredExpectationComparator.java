@@ -223,12 +223,8 @@ public final class StructuredExpectationComparator {
             }
         }
         // The span group (sourceFile, line, column): emitted exactly
-        // when the sidecar pins it. The one sanctioned span-less shape —
-        // the locked time selector's retained nowMillis wrapper raising
-        // E8004 with no file/line/column
-        // (luajit-time-selector-disposition, Failure and operations) —
-        // pins none of the three, so a lane emitting the group there is
-        // a mismatch and a lane suppressing it matches.
+        // when the sidecar pins it, so a lane emitting an unpinned group
+        // is a mismatch and a lane suppressing a pinned one matches.
         boolean spanPinned = expectation.pinsSpan();
         boolean spanEmitted = fields.pinsSpan();
         if (spanPinned && !spanEmitted) {
@@ -244,8 +240,8 @@ public final class StructuredExpectationComparator {
             return Optional.of(new GateMismatch(
                 MismatchClass.ERROR_SNAPSHOT_MISMATCH, backend,
                 "the lane emitted the span group (sourceFile/line/column)"
-                    + " the sidecar does not pin — the sanctioned "
-                    + "span-less shape must stay span-less"));
+                    + " the sidecar does not pin — an unpinned span group"
+                    + " must stay off the snapshot"));
         }
         if (spanPinned) {
             for (String field : List.of("sourceFile", "line", "column")) {

@@ -19,9 +19,7 @@ import java.util.Optional;
  * <p>Canonical serialization is fully pinned: one single-line JSON object
  * with the fixed key order {@code code}, {@code message}, then the span
  * group {@code sourceFile}, {@code line}, {@code column} — emitted
- * exactly when pinned; the one sanctioned span-less shape (the locked
- * time selector's retained {@code nowMillis} wrapper raising E8004 with
- * no span) omits the whole group — then pinned optional fields in spec
+ * exactly when pinned — then pinned optional fields in spec
  * order {@code expected}, {@code actual}, {@code frames},
  * {@code cause}; only pinned fields are emitted. Strings use minimal
  * RFC 8259 section-7 escaping: only the double quote and the backslash
@@ -75,10 +73,7 @@ public final class ErrorSnapshot {
         first = appendStringField(sb, "code", fields.code(), first);
         first = appendStringField(sb, "message", fields.message(), first);
         // The span group (sourceFile, line, column) is emitted exactly
-        // when pinned; the sanctioned span-less shape (the locked time
-        // selector's retained nowMillis wrapper raising E8004 with no
-        // span — luajit-time-selector-disposition, Failure and
-        // operations) omits all three.
+        // when pinned; an unpinned group omits all three.
         if (fields.pinsSpan()) {
             first = appendStringField(sb, "sourceFile", fields.sourceFile(), first);
             first = appendIntField(sb, "line", fields.line(), first);
@@ -212,10 +207,8 @@ public final class ErrorSnapshot {
         }
         // code and message are always mandatory; the span group
         // (sourceFile, line, column) is emitted exactly when pinned —
-        // the sanctioned span-less shape (the locked time selector's
-        // retained nowMillis wrapper raising E8004 with no span) omits
-        // all three, and a snapshot carrying the group must carry it
-        // complete.
+        // an unpinned group omits all three, and a snapshot carrying the
+        // group must carry it complete.
         for (String mandatory : List.of("code", "message")) {
             if (!fields.containsKey(mandatory)) {
                 throw new IllegalArgumentException(

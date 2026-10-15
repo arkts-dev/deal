@@ -26,16 +26,10 @@ import java.util.OptionalInt;
  * {@code sourceFile}/{@code line}/{@code column}, and the pinned optional
  * fields exactly {@code expected}/{@code actual}/{@code frames}/
  * {@code cause} (C2 — the lane emits exactly the fields the sidecar pins
- * and suppresses every unpinned one). The span group is pinned by every
- * runtime-error sidecar except the one sanctioned span-less shape: the
- * locked time selector's retained {@code nowMillis} wrapper raises E8004
- * with no file/line/column at all
- * ({@code luajit-time-selector-disposition}, Failure and operations —
- * "the E8004 carries the route's existing shape (the retained wrapper
- * passes no span)"), so
- * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}'s
- * sidecar omits the whole span group (all three fields null) — a sidecar
- * must never pin span values the runtime cannot produce.</p>
+ * and suppresses every unpinned one). Every runtime-error sidecar pins
+ * the whole span group ({@link SidecarSchemaValidator} rejects a sidecar
+ * without it); the typed model keeps the group pinnable as a unit so a
+ * sidecar can never pin span values the runtime cannot produce.</p>
  */
 public final class SidecarExpectations {
 
@@ -47,11 +41,9 @@ public final class SidecarExpectations {
      * One Error Expectation (C2): the mandatory DEALRuntimeError fields
      * {@code code}/{@code message}, the span group
      * {@code sourceFile}/{@code line}/{@code column} (all three non-null
-     * when pinned, all three null for the one sanctioned span-less shape
-     * — the locked time selector's retained {@code nowMillis} wrapper
-     * raises E8004 with no span), and the pinned optional fields. An
-     * empty optional means "not pinned" (the lane must suppress the
-     * field).
+     * when pinned, all three null when the group is unpinned), and the
+     * pinned optional fields. An empty optional means "not pinned" (the
+     * lane must suppress the field).
      */
     public record ErrorExpectation(
         String code,
@@ -72,8 +64,7 @@ public final class SidecarExpectations {
                     || (sourceFile == null) != (column == null)) {
                 throw new IllegalArgumentException(
                     "the span group (sourceFile, line, column) is pinned "
-                        + "together: all three non-null or all three null "
-                        + "(the sanctioned span-less shape)");
+                        + "together: all three non-null or all three null");
             }
             expected = Objects.requireNonNull(expected, "expected must not be null");
             actual = Objects.requireNonNull(actual, "actual must not be null");
@@ -321,7 +312,7 @@ public final class SidecarExpectations {
 
     /**
      * The nullable string field (the span group's {@code sourceFile}):
-     * absent is null — the sanctioned span-less error shape.
+     * absent is null (the span group is pinned as one unit).
      */
     private static String nullableStringField(CanonicalJson.Obj obj,
             String key) {
@@ -338,8 +329,8 @@ public final class SidecarExpectations {
 
     /**
      * The nullable integer field (the span group's {@code line}/
-     * {@code column}): absent is null — the sanctioned span-less error
-     * shape.
+     * {@code column}): absent is null (the span group is pinned as one
+     * unit).
      */
     private static Integer nullableIntField(CanonicalJson.Obj obj,
             String key) {
