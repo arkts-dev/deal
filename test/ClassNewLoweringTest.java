@@ -218,7 +218,7 @@ public class ClassNewLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class Point { x: int; tag: string; }
-            let p: Point = {tag: "t", x: 3}
+            let p: Point = {tag: "t", x: 3};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -362,7 +362,7 @@ public class ClassNewLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class Point { x: int = 1; y: int = 2; tag?: string; }
-            let p: Point = {y: 20}
+            let p: Point = {y: 20};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -446,7 +446,7 @@ public class ClassNewLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class P { a: int = 5; b: string = "b"; }
-            let p: P = {}
+            let p: P = {};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -512,7 +512,7 @@ public class ClassNewLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             export class Point { x: int = 40 + 2; tag?: string; }
-            let p: Point = {}
+            let p: Point = {};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -647,9 +647,9 @@ public class ClassNewLoweringTest {
         String source = """
             export class Line { a: int = 1; b?: string; }
             class Point { x: int = 2; }
-            let p: Point = {}
-            let q: Point = {x: 9}
-            let l: Line = {b: "t"}
+            let p: Point = {};
+            let q: Point = {x: 9};
+            let l: Line = {b: "t"};
             """;
         SemanticLowerer.ClassDeclarationCoreResult first = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult second = lowerModule(source);

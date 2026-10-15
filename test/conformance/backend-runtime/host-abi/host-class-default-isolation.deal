@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, classes
 
-import * as cfg from "host/cfg"
+import * as cfg from "host/cfg";
 
 export function test_host_class_default_isolation(): string {
   // First instance omits the optional tags/note fields: construction

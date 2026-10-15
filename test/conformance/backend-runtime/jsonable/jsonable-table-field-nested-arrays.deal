@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, tables, arrays
 
-import * as Lib from "./jsonable_batch2_lib"
+import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_table_field_nested_arrays(): null {
   let w: Lib.TableWrap = Lib.makeTableWrap();

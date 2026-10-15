@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi
 
-import * as host from "host/extra_export"
+import * as host from "host/extra_export";
 
 export function test_host_extra_export_ignored(): string {
   let pong: string = host.ping();

@@ -1,7 +1,7 @@
 // @spec: Lexical elements — Operators
-// @description: number remainder keeps the floor-style result -5.0 % 2.0 = 1.0 (v1.2 defect snippet 53 — no alternative behavior is prescribed)
-// @expected: runtime-ok
-// @features: runtime, number, modulo, v1.2
+// @description: The v1.3 expression-type table admits '%' for int operands only, so a number remainder is rejected at admission (E3007). The v1.2 floor-result subject (-5.0 % 2.0) is retained as a rejection control.
+// @expected: compile-error E3007
+// @features: types, operators, diagnostics, arithmetic
 
 export function test_number_modulo_floor(): null {
   let n: number = -5.0 % 2.0;

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi
 
-import * as host from "host/nullable_return"
+import * as host from "host/nullable_return";
 
 export function test_host_nullable_return_ok(): null {
   let found: string | null = host.find("hello");

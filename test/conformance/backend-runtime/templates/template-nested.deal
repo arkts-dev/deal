@@ -1,11 +1,12 @@
 // @spec: Lexical elements — Template literals — Nested template literal
 // @description: A template literal inside ${} (nested template) compiles and runs correctly.
-//   The inner backticks are escaped so the lexer does not close the outer template prematurely.
+//   The inner backticks are written raw: the interpolation lexical state keeps them from
+//   closing the outer template.
 // @expected: runtime-ok
 // @features: template-literal, nested-template
 
 export function test_nested(): string {
-  let result: string = `[${ \`inner\` }]`;
+  let result: string = `[${ `inner` }]`;
   if (result !== "[inner]") {
     throw { code: "TEST_FAIL", message: "nested template literal result mismatch" };
   }

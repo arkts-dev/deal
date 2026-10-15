@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, string, unicode, runtime-errors
 
-import * as host from "host/bad_string"
+import * as host from "host/bad_string";
 
 export function test_host_bad_utf8(): string {
   // The raw host returns "a\x80b" — a stray UTF-8 continuation byte.

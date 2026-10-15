@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, runtime-errors
 
-import * as host from "host/nullreturn_bad"
+import * as host from "host/nullreturn_bad";
 
 export function test_host_null_return_bad(): null {
   host.ping();

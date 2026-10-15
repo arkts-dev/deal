@@ -1264,49 +1264,49 @@ public class SharedStdlibSemanticsTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console"
-                    import * as str from "std/string"
-                    import * as tbl from "std/table"
-                    import * as json from "std/json"
-                    import * as math from "std/math"
-                    import * as time from "std/time"
+                    import * as console from "std/console";
+                    import * as str from "std/string";
+                    import * as tbl from "std/table";
+                    import * as json from "std/json";
+                    import * as math from "std/math";
+                    import * as time from "std/time";
 
                     function run(): null {
                       console.log("log");
-                      console.error("error")
-                      let n1: int = str.length("abc")
-                      let s2: string = str.substring("abc", 1, 2)
-                      let b3: boolean = str.contains("abc", "b")
-                      let b4: boolean = str.startsWith("abc", "a")
-                      let b5: boolean = str.endsWith("abc", "c")
-                      let s6: string = str.replace("aba", "a", "z")
-                      let xs7: string[] = str.split("a,b", ",")
-                      let s8: string = str.trim(" x ")
-                      let t: table = {k: 1}
-                      let ks9: string[] = tbl.keys(t)
-                      let jt10: table = json.parse("{\\"a\\": 1}")
-                      let js11: string = json.stringify(t)
-                      let f12: number = math.floor(1.5)
-                      let f13: number = math.ceil(1.5)
-                      let f14: number = math.sqrt(4.0)
-                      let i15: int = math.absInt(-3)
-                      let f16: number = math.absNumber(-1.5)
-                      let i17: int = math.minInt(2, 3)
-                      let i18: int = math.maxInt(2, 3)
-                      let now: int = time.nowMillis()
-                      return null
+                      console.error("error");
+                      let n1: int = str.length("abc");
+                      let s2: string = str.substring("abc", 1, 2);
+                      let b3: boolean = str.contains("abc", "b");
+                      let b4: boolean = str.startsWith("abc", "a");
+                      let b5: boolean = str.endsWith("abc", "c");
+                      let s6: string = str.replace("aba", "a", "z");
+                      let xs7: string[] = str.split("a,b", ",");
+                      let s8: string = str.trim(" x ");
+                      let t: table = {k: 1};
+                      let ks9: string[] = tbl.keys(t);
+                      let jt10: table = json.parse("{\\"a\\": 1}");
+                      let js11: string = json.stringify(t);
+                      let f12: number = math.floor(1.5);
+                      let f13: number = math.ceil(1.5);
+                      let f14: number = math.sqrt(4.0);
+                      let i15: int = math.absInt(-3);
+                      let f16: number = math.absNumber(-1.5);
+                      let i17: int = math.minInt(2, 3);
+                      let i18: int = math.maxInt(2, 3);
+                      let now: int = time.nowMillis();
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {

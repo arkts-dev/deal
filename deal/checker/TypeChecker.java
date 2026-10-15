@@ -1360,10 +1360,20 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        // Other arithmetic: types must match and be int or number
+        // Other arithmetic: types must match and be int or number.
+        // v1.3 restricts the remainder operator to int operands
+        // (docs/spec-v1.3.md type-of-expression table: '%' is defined for
+        // int only).
         if (!Types.equals(leftType, rightType)) {
             error(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
                 + typeName(leftType) + " and " + typeName(rightType), bin.span());
+            return Type.Error.INSTANCE;
+        }
+        if (op == BinaryOp.MOD && !(leftType instanceof Type.Int)) {
+            error(DiagnosticCode.E3007,
+                "Remainder '%' requires int operands, got "
+                    + typeName(leftType) + " and " + typeName(rightType),
+                bin.span());
             return Type.Error.INSTANCE;
         }
         if (leftType instanceof Type.Int || leftType instanceof Type.Number) {

@@ -889,7 +889,7 @@ public class JsonClassLoweringTest {
             }
             """;
         String callerSource = """
-            import * as Owner from "owner"
+            import * as Owner from "owner";
 
             // @jsonable
             export class Person {

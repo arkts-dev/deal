@@ -95,58 +95,58 @@ public class DynamicProducerRuleTest {
      */
     private static final String PARAMETER_ALIAS_SOURCE = """
         function apply(f: (x: int) => int): (x: int) => int {
-          let g: (x: int) => int = f
-          return g
+          let g: (x: int) => int = f;
+          return g;
         }
 
         function double(x: int): int {
-          return x * 2
+          return x * 2;
         }
 
         export function main(): null {
-          let h: (x: int) => int = apply(double)
-          let r: int = h(21)
-          return null
+          let h: (x: int) => int = apply(double);
+          let r: int = h(21);
+          return null;
         }
         """;
 
     /** The member-read arm: a function-typed table member read. */
     private static final String MEMBER_READ_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x }
-          let holder: table = { g: id }
-          let g: (x: int) => int = holder.g
-          let r: int = g(1)
-          return null
+          let id: (x: int) => int = function(x: int): int { return x; };
+          let holder: table = { g: id };
+          let g: (x: int) => int = holder.g;
+          let r: int = g(1);
+          return null;
         }
         """;
 
     /** The index-read arm: a function-typed array element read. */
     private static final String INDEX_READ_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x }
-          let fns: ((x: int) => int)[] = [id]
-          let g: (x: int) => int = fns[0]
-          let r: int = g(1)
-          return null
+          let id: (x: int) => int = function(x: int): int { return x; };
+          let fns: ((x: int) => int)[] = [id];
+          let g: (x: int) => int = fns[0];
+          let r: int = g(1);
+          return null;
         }
         """;
 
     /** The field-read arm: a function-typed class field read. */
     private static final String FIELD_READ_SOURCE = """
         class Holder {
-          f: (x: int) => int = compute
+          f: (x: int) => int = compute;
         }
 
         function compute(x: int): int {
-          return x
+          return x;
         }
 
         export function main(): null {
-          let h: Holder = { f: compute }
-          let g: (x: int) => int = h.f
-          let r: int = g(1)
-          return null
+          let h: Holder = { f: compute };
+          let g: (x: int) => int = h.f;
+          let r: int = g(1);
+          return null;
         }
         """;
 
@@ -158,29 +158,29 @@ public class DynamicProducerRuleTest {
      */
     private static final String OPTIONAL_READ_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x }
-          let holder: table = { g: id }
-          let f: ((x: int) => int) | null = holder.g
+          let id: (x: int) => int = function(x: int): int { return x; };
+          let holder: table = { g: id };
+          let f: ((x: int) => int) | null = holder.g;
           if (f !== null) {
-            let r: int = f(1)
+            let r: int = f(1);
           }
-          return null
+          return null;
         }
         """;
 
     /** The call-of-call arm: the callee value is a function-typed call result. */
     private static final String CALL_OF_CALL_SOURCE = """
         function pick(f: (x: int) => int): (x: int) => int {
-          return f
+          return f;
         }
 
         function double(x: int): int {
-          return x * 2
+          return x * 2;
         }
 
         export function main(): null {
-          let r: int = pick(double)(1)
-          return null
+          let r: int = pick(double)(1);
+          return null;
         }
         """;
 
@@ -191,47 +191,47 @@ public class DynamicProducerRuleTest {
      */
     private static final String AWAIT_SOURCE = """
         async function makeAsync(): (x: int) => int {
-          return function(x: int): int { return x }
+          return function(x: int): int { return x; };
         }
 
         async function run(): int {
-          let g: (x: int) => int = await makeAsync()
-          return g(1)
+          let g: (x: int) => int = await makeAsync();
+          return g(1);
         }
 
         async function apply(f: async () => ((x: int) => int)): int {
-          let g: (x: int) => int = await f()
-          return g(1)
+          let g: (x: int) => int = await f();
+          return g(1);
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The iteration-binding arm: a function-typed for-of binding load. */
     private static final String ITERATION_BINDING_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x }
-          let fns: ((x: int) => int)[] = [id]
+          let id: (x: int) => int = function(x: int): int { return x; };
+          let fns: ((x: int) => int)[] = [id];
           for (let f: (x: int) => int of fns) {
-            let r: int = f(1)
+            let r: int = f(1);
           }
-          return null
+          return null;
         }
         """;
 
     /** The tracked alias arm: a declared function's identity, republished twice. */
     private static final String TRACKED_ALIAS_SOURCE = """
         function make(x: int): int {
-          return x
+          return x;
         }
 
         export function main(): null {
-          let g: (x: int) => int = make
-          let h: (x: int) => int = g
-          let r: int = h(1)
-          return null
+          let g: (x: int) => int = make;
+          let h: (x: int) => int = g;
+          let r: int = h(1);
+          return null;
         }
         """;
 
@@ -866,27 +866,27 @@ public class DynamicProducerRuleTest {
 
     private static final String LIB_SOURCE = """
         export function double(x: int): int {
-          return x * 2
+          return x * 2;
         }
 
         export function make(): (x: int) => int {
-          return function(x: int): int { return x }
+          return function(x: int): int { return x; };
         }
         """;
 
     private static final String IMPORT_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         function apply(f: (x: int) => int): int {
-          return f(1)
+          return f(1);
         }
 
         export function main(): null {
-          let f: (x: int) => int = lib.double
-          let g: (x: int) => int = lib.make()
-          let r: int = g(1)
-          let s: int = apply(f)
-          return null
+          let f: (x: int) => int = lib.double;
+          let g: (x: int) => int = lib.make();
+          let r: int = g(1);
+          let s: int = apply(f);
+          return null;
         }
         """;
 
@@ -918,21 +918,21 @@ public class DynamicProducerRuleTest {
     }
 
     private static final String STDLIB_READ_SOURCE = """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         export function main(): null {
-          let f: (x: string) => null = console.log
-          return null
+          let f: (x: string) => null = console.log;
+          return null;
         }
         """;
 
     private static final String NAMESPACE_READ_SOURCE = """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         export function main(): null {
-          let c: table = console
-          let g: (x: string) => null = c.log
-          return null
+          let c: table = console;
+          let g: (x: string) => null = c.log;
+          return null;
         }
         """;
 

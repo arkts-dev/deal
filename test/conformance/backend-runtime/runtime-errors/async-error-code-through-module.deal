@@ -3,7 +3,7 @@
 // @expected: runtime-error ASYNC_MODULE_FAIL
 // @features: async, modules, runtime-errors
 
-import * as Lib from "./async_error_lib"
+import * as Lib from "./async_error_lib";
 
 export async function test_async_error_code_through_module(): int {
   return await Lib.fail();

@@ -698,9 +698,11 @@ public final class NameResolver {
             return;
         }
 
-        // Check for $ in class field names (E2008)
+        // Check for $ in class field names (E2008), and record ordinary
+        // function-expression scopes inside defaults before type checking.
         for (ClassField cf : cd.fields()) {
             checkNoDollar(cf.name(), cf.span());
+            cf.defaultExpr().ifPresent(this::walkExpression);
         }
 
         if (!currentScope.containsLocally(name)) {

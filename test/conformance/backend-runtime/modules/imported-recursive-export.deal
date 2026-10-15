@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, exports, recursion
 
-import * as Lib from "./recursive_export_lib"
+import * as Lib from "./recursive_export_lib";
 
 export function test_imported_recursive_export(): int {
   let result: int = Lib.fib(6);

@@ -615,8 +615,8 @@ public class CanonicalProjectionParityTest {
                 0, spec.fixtureFile().length() - ".deal".length());
             Path app = mirror.resolve("app.deal");
             Files.writeString(app, "import * as fx from \"./" + fixtureSpec
-                + "\"\n\nexport function main(): null {\n  fx." + spec.probe()
-                + "()\n  return null\n}\n", StandardCharsets.UTF_8);
+                + "\";\n\nexport function main(): null {\n  fx." + spec.probe()
+                + "();\n  return null;\n}\n", StandardCharsets.UTF_8);
             stripped.put("app.deal", 0);
             modulePathToCorpus.put("app", "app.deal");
             modulePathToCorpus.put("app.deal", "app.deal");
@@ -1544,43 +1544,43 @@ public class CanonicalProjectionParityTest {
      * driven alone and its own pinned call origin is the compared span.
      */
     private static final String SYNC_PRESENCE_DRIVER = """
-        import * as host from "host/sync_presence"
+        import * as host from "host/sync_presence";
 
         export function test_drop_nullable(): null {
-          host.fetchNullable()
-          return null
+          host.fetchNullable();
+          return null;
         }
 
         export function test_drop_null(): null {
-          host.pingNull()
-          return null
+          host.pingNull();
+          return null;
         }
 
         export function test_drop_mandatory(): null {
-          host.fetchMandatory()
-          return null
+          host.fetchMandatory();
+          return null;
         }
 
         export function test_use_nullable(): null {
-          let v: string | null = host.fetchNullable()
+          let v: string | null = host.fetchNullable();
           if (v !== null) {
-            throw { code: "PROBE_SYNC_PRESENCE", message: "the host null return was not the language null" }
+            throw { code: "PROBE_SYNC_PRESENCE", message: "the host null return was not the language null" };
           }
-          return null
+          return null;
         }
 
         export function test_use_null(): null {
-          host.pingNull()
-          return null
+          host.pingNull();
+          return null;
         }
 
         export function test_use_mandatory(): null {
-          host.fetchMandatory()
-          return null
+          host.fetchMandatory();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -1606,55 +1606,55 @@ public class CanonicalProjectionParityTest {
      * own.
      */
     private static final String NUMERIC_RETURN_DRIVER = """
-        import * as host from "host/numeric_return"
+        import * as host from "host/numeric_return";
 
         export function test_use_int(): null {
-          let v: int = host.fetchInt()
+          let v: int = host.fetchInt();
           if (v !== 7) {
-            throw { code: "PROBE_NUMERIC_RETURN", message: "the int return lost its value" }
+            throw { code: "PROBE_NUMERIC_RETURN", message: "the int return lost its value" };
           }
-          return null
+          return null;
         }
 
         export function test_use_nullable_int(): null {
-          let v: int | null = host.fetchNullableInt()
+          let v: int | null = host.fetchNullableInt();
           if (v !== null) {
             if (v !== 7) {
-              throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return lost its value" }
+              throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return lost its value" };
             }
-            return null
+            return null;
           }
-          throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return was the language null" }
+          throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return was the language null" };
         }
 
         export function test_use_number(): null {
-          let v: number = host.fetchNumber()
+          let v: number = host.fetchNumber();
           if (v !== 7.0) {
-            throw { code: "PROBE_NUMERIC_RETURN", message: "the number return lost its value" }
+            throw { code: "PROBE_NUMERIC_RETURN", message: "the number return lost its value" };
           }
-          return null
+          return null;
         }
 
         export function test_use_fraction(): null {
-          let v: number = host.fetchFraction()
+          let v: number = host.fetchFraction();
           if (v !== 7.5) {
-            throw { code: "PROBE_NUMERIC_RETURN", message: "the fractional number return lost its value" }
+            throw { code: "PROBE_NUMERIC_RETURN", message: "the fractional number return lost its value" };
           }
-          return null
+          return null;
         }
 
         export function test_drop_int(): null {
-          host.fetchInt()
-          return null
+          host.fetchInt();
+          return null;
         }
 
         export function test_drop_nullable_int(): null {
-          host.fetchNullableInt()
-          return null
+          host.fetchNullableInt();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -1939,49 +1939,49 @@ public class CanonicalProjectionParityTest {
      * production int) cannot reach the probe's success.
      */
     private static final String NUMERIC_COMPLETION_INT_DRIVER = """
-        import * as host from "host/async_numeric"
+        import * as host from "host/async_numeric";
 
         export async function test_use_int(): int {
-          let v: int = await host.fetchInt()
-          let w: int = v + 1
-          return w
+          let v: int = await host.fetchInt();
+          let w: int = v + 1;
+          return w;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The nullable-int-completion probe: the settled completion is consumed. */
     private static final String NUMERIC_COMPLETION_NULLABLE_INT_DRIVER = """
-        import * as host from "host/async_numeric"
+        import * as host from "host/async_numeric";
 
         export async function test_use_nullable_int(): int {
-          let v: int | null = await host.fetchNullableInt()
+          let v: int | null = await host.fetchNullableInt();
           if (v !== null) {
-            let w: int = v + 1
-            return w
+            let w: int = v + 1;
+            return w;
           }
-          return 0
+          return 0;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The number-completion probe: the settled completion is consumed. */
     private static final String NUMERIC_COMPLETION_NUMBER_DRIVER = """
-        import * as host from "host/async_numeric"
+        import * as host from "host/async_numeric";
 
         export async function test_use_number(): number {
-          let v: number = await host.fetchNumber()
-          let w: number = v + 0.5
-          return w
+          let v: number = await host.fetchNumber();
+          let w: number = v + 0.5;
+          return w;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -2041,7 +2041,7 @@ public class CanonicalProjectionParityTest {
             int start = i == 0 ? 0 : driver.indexOf("export async function");
             source.append(driver, start, driver.indexOf("export function main()"));
         }
-        return source.append("export function main(): null {\n  return null\n}\n").toString();
+        return source.append("export function main(): null {\n  return null;\n}\n").toString();
     }
 
     /** The int completion drive: admitted carriers and the rejected ones. */
@@ -2279,40 +2279,40 @@ public class CanonicalProjectionParityTest {
      * cannot reach the probe's success.
      */
     private static final String ARRAY_COMPLETION_INT_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_use_int_array(): int {
-          let xs: int[] = await host.fetchInts()
-          let v: int = xs[0]
+          let xs: int[] = await host.fetchInts();
+          let v: int = xs[0];
           if (v !== 7) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" }
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" };
           }
-          return v + 1
+          return v + 1;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The admitted nullable-int-array probe (and its language-null control). */
     private static final String ARRAY_COMPLETION_NULLABLE_INT_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_use_nullable_int_array(): int {
-          let xs: int[] | null = await host.fetchNullableInts()
+          let xs: int[] | null = await host.fetchNullableInts();
           if (xs !== null) {
-            let v: int = xs[0]
+            let v: int = xs[0];
             if (v !== 7) {
-              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable boxed int element did not land 7" }
+              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable boxed int element did not land 7" };
             }
-            return v + 1
+            return v + 1;
           }
-          return 0
+          return 0;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -2321,45 +2321,45 @@ public class CanonicalProjectionParityTest {
      * settles and is consumed, and the language-null element stays null.
      */
     private static final String ARRAY_COMPLETION_NULLABLE_ELEMENT_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_use_nullable_elements(): int {
-          let xs: (int | null)[] = await host.fetchNullableElements()
-          let v: int | null = xs[0]
-          let w: int | null = xs[1]
+          let xs: (int | null)[] = await host.fetchNullableElements();
+          let v: int | null = xs[0];
+          let w: int | null = xs[1];
           if (w !== null) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the null element did not stay null" }
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the null element did not stay null" };
           }
           if (v !== null) {
             if (v !== 7) {
-              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable-element boxed int did not land 7" }
+              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable-element boxed int did not land 7" };
             }
-            let total: int = v + 1
-            return total
+            let total: int = v + 1;
+            return total;
           }
-          return 0
+          return 0;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The admitted nested-int-array probe. */
     private static final String ARRAY_COMPLETION_NESTED_INT_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_use_nested_int_array(): int {
-          let xs: int[][] = await host.fetchNestedInts()
-          let v: int = xs[0][0]
+          let xs: int[][] = await host.fetchNestedInts();
+          let v: int = xs[0][0];
           if (v !== 7) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the nested boxed int element did not land 7" }
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the nested boxed int element did not land 7" };
           }
-          return v + 1
+          return v + 1;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -2371,47 +2371,47 @@ public class CanonicalProjectionParityTest {
      * probe's success.
      */
     private static final String ARRAY_COMPLETION_NUMBER_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_use_number_array(): int {
-          let xs: number[] = await host.fetchNumbers()
-          let v: number = xs[0]
+          let xs: number[] = await host.fetchNumbers();
+          let v: number = xs[0];
           if (v !== 7.0) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" }
+            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" };
           }
-          return 8
+          return 8;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The wrong-kind string-array probe: only the crossing's own check rejects it. */
     private static final String ARRAY_COMPLETION_STRING_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_drop_string_array(): null {
-          let xs: string[] = await host.fetchStrings()
-          return null
+          let xs: string[] = await host.fetchStrings();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The wrong-kind nested string-array probe. */
     private static final String ARRAY_COMPLETION_NESTED_STRING_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_drop_nested_string_array(): null {
-          let xs: string[][] = await host.fetchNestedStrings()
-          return null
+          let xs: string[][] = await host.fetchNestedStrings();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -3118,24 +3118,24 @@ public class CanonicalProjectionParityTest {
      * or per-crossing rebuilt array fails the probe before it can return.
      */
     private static final String SHARED_ARRAY_COMPLETION_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_reuse_int_array(): int {
-          let xs: int[] = await host.fetchSharedInts()
-          let ys: int[] = await host.fetchSharedInts()
+          let xs: int[] = await host.fetchSharedInts();
+          let ys: int[] = await host.fetchSharedInts();
           if (xs !== ys) {
-            throw { code: "PROBE_IDENTITY", message: "the same completed array did not keep its identity" }
+            throw { code: "PROBE_IDENTITY", message: "the same completed array did not keep its identity" };
           }
-          xs[0] = 8
-          let v: int = ys[0]
+          xs[0] = 8;
+          let v: int = ys[0];
           if (v !== 8) {
-            throw { code: "PROBE_ALIAS", message: "the alias-observed write was lost" }
+            throw { code: "PROBE_ALIAS", message: "the alias-observed write was lost" };
           }
-          return v
+          return v;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -3360,43 +3360,43 @@ public class CanonicalProjectionParityTest {
 
     /** The discarded-await out-of-range int-array probe. */
     private static final String ARRAY_COMPLETION_DROP_INT_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_drop_int_array(): null {
-          await host.fetchInts()
-          return null
+          await host.fetchInts();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The discarded-await out-of-range nullable-element array probe. */
     private static final String ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_drop_nullable_elements(): null {
-          await host.fetchNullableElements()
-          return null
+          await host.fetchNullableElements();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The discarded-await out-of-range nested-int-array probe. */
     private static final String ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_drop_nested_int_array(): null {
-          await host.fetchNestedInts()
-          return null
+          await host.fetchNestedInts();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -3406,15 +3406,15 @@ public class CanonicalProjectionParityTest {
      * before the later out-of-range raw carrier is inspected.
      */
     private static final String ARRAY_COMPLETION_DROP_ORDER_DRIVER = """
-        import * as host from "host/async_arrays"
+        import * as host from "host/async_arrays";
 
         export async function test_drop_ordered_strings(): null {
-          await host.fetchStrings()
-          return null
+          await host.fetchStrings();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -4208,8 +4208,8 @@ public class CanonicalProjectionParityTest {
     private static final List<NullAdmission> NULL_ADMISSIONS = List.of(
         new NullAdmission(3, "test_take_null_literal", false, "", "host.takeNull(null)", "sentinel", "the null literal crossed the null parameter as a non-sentinel"),
         new NullAdmission(11, "test_take_nullable_int_literal", false, "", "host.takeNullableInt(null)", "sentinel", "the null literal crossed the nullable primitive parameter as a non-sentinel"),
-        new NullAdmission(19, "test_take_null_from_host", false, "let value: null = host.returnNull()\n", "host.takeNull(value)", "sentinel", "the admitted host null crossed the null parameter as a non-sentinel"),
-        new NullAdmission(28, "test_take_nullable_int_from_host", false, "let value: int | null = host.returnNullableInt()\n", "host.takeNullableInt(value)", "sentinel", "the admitted host null crossed the nullable primitive parameter as a non-sentinel"),
+        new NullAdmission(19, "test_take_null_from_host", false, "let value: null = host.returnNull();\n", "host.takeNull(value)", "sentinel", "the admitted host null crossed the null parameter as a non-sentinel"),
+        new NullAdmission(28, "test_take_nullable_int_from_host", false, "let value: int | null = host.returnNullableInt();\n", "host.takeNullableInt(value)", "sentinel", "the admitted host null crossed the nullable primitive parameter as a non-sentinel"),
         new NullAdmission(42, "test_async_take_null", true, "", "await host.asyncTakeNull(null)", "sentinel", "the async null crossing delivered a non-sentinel"),
         new NullAdmission(50, "test_async_take_nullable_int", true, "", "await host.asyncTakeNullableInt(null)", "sentinel", "the async nullable crossing delivered a non-sentinel"),
         new NullAdmission(58, "test_async_take_null_then_int", true, "", "await host.asyncTakeNullThenInt(null, 7)", "sentinel+7", "the async null crossing shifted the arguments before a non-null parameter"),
@@ -4220,8 +4220,8 @@ public class CanonicalProjectionParityTest {
         new NullAdmission(114, "test_dynamic_async_take_pair", true, "", "await applyAsyncPair(host.asyncTakePair)", "sentinel+7", "the dynamic async nullable crossing shifted the null argument's position"),
         new NullAdmission(130, "test_dynamic_take_null", false, "", "applyNull(host.takeNull)", "sentinel", "the dynamic null crossing delivered a non-sentinel"),
         new NullAdmission(138, "test_dynamic_take_nullable_int", false, "", "applyNullableInt(host.takeNullableInt)", "sentinel", "the dynamic nullable crossing delivered a non-sentinel"),
-        new NullAdmission(268, "test_async_take_null_from_host", true, "let value: null = host.returnNull()\n", "await host.asyncTakeNull(value)", "sentinel", "the admitted host null crossed the async null host start as a non-sentinel"),
-        new NullAdmission(277, "test_dynamic_async_take_null_from_host", true, "let value: null = host.returnNull()\n", "await applyAsyncNullValue(host.asyncTakeNull, value)", "sentinel", "the dynamic async admission delivered a non-sentinel for the admitted host null")
+        new NullAdmission(268, "test_async_take_null_from_host", true, "let value: null = host.returnNull();\n", "await host.asyncTakeNull(value)", "sentinel", "the admitted host null crossed the async null host start as a non-sentinel"),
+        new NullAdmission(277, "test_dynamic_async_take_null_from_host", true, "let value: null = host.returnNull();\n", "await applyAsyncNullValue(host.asyncTakeNull, value)", "sentinel", "the dynamic async admission delivered a non-sentinel for the admitted host null")
     );
 
     private static final String NULL_CROSSING_DRIVER = nullCrossingDriver();
@@ -4232,16 +4232,16 @@ public class CanonicalProjectionParityTest {
 
     private static String nullCrossingDriver() {
         java.util.TreeMap<Integer, String> blocks = new java.util.TreeMap<>();
-        blocks.put(1, "import * as host from \"host/null_crossing\"\n");
+        blocks.put(1, "import * as host from \"host/null_crossing\";\n");
         for (NullAdmission row : NULL_ADMISSIONS) {
-            String body = row.prelude() + "let seen: string = " + row.expression() + "\n"
+            String body = row.prelude() + "let seen: string = " + row.expression() + ";\n"
                 + "if (seen !== \"" + row.seen() + "\") {\n"
-                + "  throw { code: \"PROBE_NULL_CROSSING\", message: \"" + row.message() + "\" }\n"
-                + "}\nreturn null\n";
+                + "  throw { code: \"PROBE_NULL_CROSSING\", message: \"" + row.message() + "\" };\n"
+                + "}\nreturn null;\n";
             blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null", body));
         }
         blocks.put(37, nullFunction("export ", false, "test_take_null_bad_return", "", "null",
-            "host.takeNullBadReturn(null)\nreturn null\n"));
+            "host.takeNullBadReturn(null);\nreturn null;\n"));
         List<NullHelper> helpers = List.of(
             new NullHelper(74, true, "applyAsyncNull", "value: null", "null"),
             new NullHelper(78, true, "applyAsyncNullableInt", "value: int | null", "null"),
@@ -4263,10 +4263,10 @@ public class CanonicalProjectionParityTest {
             String parameters = "f: " + (row.async() ? "async " : "") + "(" + row.parameters() + ") => string"
                 + (expression.startsWith("bag.") ? ", bag: table" : expression.equals("value") ? ", value: null" : "");
             blocks.put(row.line(), nullFunction("", row.async(), row.name(), parameters, "string",
-                "return " + (row.async() ? "await " : "") + "f(" + expression + ")\n"));
+                "return " + (row.async() ? "await " : "") + "f(" + expression + ");\n"));
         }
         blocks.put(146, nullFunction("", false, "bagWithNull", "", "table",
-            "let bag: table = {};\nbag.value = null\nreturn bag\n"));
+            "let bag: table = {};\nbag.value = null;\nreturn bag;\n"));
         List<NullRejectSource> rejections = List.of(
             new NullRejectSource(152, false, "test_reject_table_dynamic_null", "host.takeTable(bagWithNull().value)"),
             new NullRejectSource(157, false, "test_reject_array_dynamic_null", "host.takeArray(bagWithNull().value)"),
@@ -4286,11 +4286,11 @@ public class CanonicalProjectionParityTest {
             new NullRejectSource(259, true, "test_dynamic_async_reject_array_missing_field", "await applyAsyncArrayMissing(host.asyncTakeArray, bagWithNull())"));
         for (NullRejectSource row : rejections) {
             blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null",
-                row.expression() + "\nreturn null\n"));
+                row.expression() + ";\nreturn null;\n"));
         }
-        blocks.put(286, nullFunction("export ", false, "main", "", "null", "return null\n"));
+        blocks.put(286, nullFunction("export ", false, "main", "", "null", "return null;\n"));
         blocks.put(319, nullFunction("export ", false, "test_take_nullable_array_bad_return", "", "null",
-            "host.takeNullableArrayBadReturn([null, 7])\nreturn null\n"));
+            "host.takeNullableArrayBadReturn([null, 7]);\nreturn null;\n"));
         blocks.put(324, nullArrayDriver());
         StringBuilder source = new StringBuilder();
         int line = 1;
@@ -4303,9 +4303,9 @@ public class CanonicalProjectionParityTest {
     }
 
     private static String nullArrayDriver() {
-        String array = "let xs: (int | null)[] = [null, 7]\n";
-        String nested = "let inner: (int | null)[] = [null, 7]\n"
-            + "let outer: (int | null)[][] = [inner, inner]\n";
+        String array = "let xs: (int | null)[] = [null, 7];\n";
+        String nested = "let inner: (int | null)[] = [null, 7];\n"
+            + "let outer: (int | null)[][] = [inner, inner];\n";
         StringBuilder source = new StringBuilder();
         for (boolean async : List.of(false, true)) {
             String await = async ? "await " : "";
@@ -4314,69 +4314,69 @@ public class CanonicalProjectionParityTest {
             String shared = async ? "asyncTakeSharedArray" : "takeSharedArray";
             String roundtrip = async ? "asyncRoundtripArray" : "roundtripArray";
             String write = async ? "asyncWriteArray" : "writeArray";
-            String body = array + "let seen: string = " + await + "host." + take + "(xs)\n"
+            String body = array + "let seen: string = " + await + "host." + take + "(xs);\n"
                 + nullArrayCheck("seen !== \"sentinel+7\"", "null sentinel at host parameter");
             if (!async) {
                 body += nullArrayCheck("xs.length !== 2", "array length after crossing")
-                    + "let first: int | null = xs[0]\n"
+                    + "let first: int | null = xs[0];\n"
                     + nullArrayCheck("first !== null", "null element after crossing")
-                    + "let second: int | null = xs[1]\n"
+                    + "let second: int | null = xs[1];\n"
                     + nullArrayIntCheck("second", 7);
             }
             source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
-                + "take_nullable_array", "", "null", body + "return null\n"));
+                + "take_nullable_array", "", "null", body + "return null;\n"));
             source.append(nullFunction("export ", async, async ? "test_async_shared_nullable_array"
                 : "test_shared_nullable_array_argument", "", "null",
-                array + "let seen: string = " + await + "host." + shared + "(xs, xs)\n"
+                array + "let seen: string = " + await + "host." + shared + "(xs, xs);\n"
                     + nullArrayCheck("seen !== \"same\"", prefix + " shared argument identity")
                     + nested + "let seenNested: string = " + await + "host." + shared
-                    + "(outer[0], outer[1])\n"
+                    + "(outer[0], outer[1]);\n"
                     + nullArrayCheck("seenNested !== \"same\"", prefix + " nested argument identity")
-                    + "return null\n"));
+                    + "return null;\n"));
             source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
                 + "roundtrip_nullable_array", "", "null",
-                array + "let back: (int | null)[] = " + await + "host." + roundtrip + "(xs)\n"
-                    + nullArrayCheck("back !== xs", prefix + " roundtrip identity") + "return null\n"));
+                array + "let back: (int | null)[] = " + await + "host." + roundtrip + "(xs);\n"
+                    + nullArrayCheck("back !== xs", prefix + " roundtrip identity") + "return null;\n"));
             source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
                 + "write_nullable_array", "", "null",
-                array + "let written: string = " + await + "host." + write + "(xs)\n"
+                array + "let written: string = " + await + "host." + write + "(xs);\n"
                     + nullArrayCheck("written !== \"written\"", prefix + " host write report")
-                    + "let second: int | null = xs[1]\n" + nullArrayIntCheck("second", 8)
-                    + "let first: int | null = xs[0]\n"
+                    + "let second: int | null = xs[1];\n" + nullArrayIntCheck("second", 8)
+                    + "let first: int | null = xs[0];\n"
                     + nullArrayCheck("first !== null", prefix + " host write preserves null")
-                    + "return null\n"));
+                    + "return null;\n"));
         }
         source.append(nullFunction("export ", false, "test_take_nested_nullable_array", "", "null",
-            "let xs: (int | null)[][] = [[null, 7], [8]]\n"
-                + "let seen: string = host.takeNestedNullableArray(xs)\n"
+            "let xs: (int | null)[][] = [[null, 7], [8]];\n"
+                + "let seen: string = host.takeNestedNullableArray(xs);\n"
                 + nullArrayCheck("seen !== \"nested\"", "nested null sentinel at host parameter")
-                + "return null\n"));
+                + "return null;\n"));
         source.append(nullFunction("export ", false, "test_stash_nullable_array", "", "null",
-            array + "let stashed: string = host.stashArray(xs)\n"
+            array + "let stashed: string = host.stashArray(xs);\n"
                 + nullArrayCheck("stashed !== \"stashed\"", "host stash report")
-                + "let same: string = host.sameAsStash(xs)\n"
-                + nullArrayCheck("same !== \"same\"", "identity across host calls") + "return null\n"));
+                + "let same: string = host.sameAsStash(xs);\n"
+                + nullArrayCheck("same !== \"same\"", "identity across host calls") + "return null;\n"));
         source.append(nullFunction("export ", false, "test_nested_write_nullable_array", "", "null",
-            nested + "let written: string = host.writeNestedArray(outer)\n"
+            nested + "let written: string = host.writeNestedArray(outer);\n"
                 + nullArrayCheck("written !== \"written\"", "nested host write report")
-                + "let viaFirst: int | null = outer[0][1]\n" + nullArrayIntCheck("viaFirst", 8)
-                + "let viaAlias: int | null = outer[1][1]\n" + nullArrayIntCheck("viaAlias", 8)
-                + "let firstElement: int | null = outer[0][0]\n"
+                + "let viaFirst: int | null = outer[0][1];\n" + nullArrayIntCheck("viaFirst", 8)
+                + "let viaAlias: int | null = outer[1][1];\n" + nullArrayIntCheck("viaAlias", 8)
+                + "let firstElement: int | null = outer[0][0];\n"
                 + nullArrayCheck("firstElement !== null", "nested host write preserves null")
-                + "return null\n"));
+                + "return null;\n"));
         return source.toString();
     }
 
     private static String nullArrayCheck(String condition, String message) {
         return "if (" + condition + ") {\n"
-            + "  throw { code: \"PROBE_NULL_ARRAY\", message: \"" + message + "\" }\n}\n";
+            + "  throw { code: \"PROBE_NULL_ARRAY\", message: \"" + message + "\" };\n}\n";
     }
 
     private static String nullArrayIntCheck(String name, int expected) {
         return "if (" + name + " !== null) {\n"
             + nullArrayCheck(name + " !== " + expected, name + " must equal " + expected).indent(2)
             + "} else {\n  throw { code: \"PROBE_NULL_ARRAY\", message: \"" + name
-            + " must not be null\" }\n}\n";
+            + " must not be null\" };\n}\n";
     }
 
     private static String nullFunction(String prefix, boolean async, String name,
@@ -5930,12 +5930,12 @@ public class CanonicalProjectionParityTest {
             + "closed --");
         String source = """
             function needInt(x: int): int {
-              return x
+              return x;
             }
 
             export function main(): null {
-              let r: int = needInt(1)
-              return null
+              let r: int = needInt(1);
+              return null;
             }
             """;
         SemanticLowerer.ProjectLoweringResult control = lowerDoctored(source,
@@ -6385,91 +6385,91 @@ public class CanonicalProjectionParityTest {
      * origin (line 4, column 19) the failure tuples are pinned to.
      */
     private static final String HOST_CARRIER_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let s: string = host.%s()
-          return null
+          let s: string = host.%s();
+          return null;
         }
         """;
 
     /** The scalar valid control: the entry consumes the admitted carrier. */
     private static final String HOST_CARRIER_VALID_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let s: string = host.validString()
+          let s: string = host.validString();
           if (s !== "ok") {
-            throw { code: "PROBE_STRING_CARRIER", message: "the valid host string carrier did not decode to 'ok'" }
+            throw { code: "PROBE_STRING_CARRIER", message: "the valid host string carrier did not decode to 'ok'" };
           }
-          return null
+          return null;
         }
         """;
 
     /** The declared-array control: DEAL must read the decoded element result. */
     private static final String HOST_CARRIER_ARRAY_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[] = host.rawStringArray()
-          let s: string = xs[0]
+          let xs: string[] = host.rawStringArray();
+          let s: string = xs[0];
           if (s !== "ok") {
-            throw { code: "PROBE_STRING_CARRIER", message: "the raw host string element did not decode to 'ok'" }
+            throw { code: "PROBE_STRING_CARRIER", message: "the raw host string element did not decode to 'ok'" };
           }
-          return null
+          return null;
         }
         """;
 
     /** The nested array position control. */
     private static final String HOST_CARRIER_NESTED_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[][] = host.rawNestedStringArray()
-          let s: string = xs[0][0]
+          let xs: string[][] = host.rawNestedStringArray();
+          let s: string = xs[0][0];
           if (s !== "ok") {
-            throw { code: "PROBE_STRING_CARRIER", message: "the nested raw host string element did not decode to 'ok'" }
+            throw { code: "PROBE_STRING_CARRIER", message: "the nested raw host string element did not decode to 'ok'" };
           }
-          return null
+          return null;
         }
         """;
 
     /** The nullable element position control. */
     private static final String HOST_CARRIER_NULLABLE_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: (string | null)[] = host.rawNullableStringArray()
-          let s: string | null = xs[0]
+          let xs: (string | null)[] = host.rawNullableStringArray();
+          let s: string | null = xs[0];
           if (s !== null) {
             if (s !== "ok") {
-              throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element did not decode to 'ok'" }
+              throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element did not decode to 'ok'" };
             }
-            return null
+            return null;
           }
-          throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element decoded to null" }
+          throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element decoded to null" };
         }
         """;
 
     /** The nullable nested-array element control (ISSUE-0760 cycle 2). */
     private static final String HOST_CARRIER_NULLABLE_ARRAY_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: (string[] | null)[] = host.rawNullableArrayArray()
-          let first: string[] | null = xs[0]
+          let xs: (string[] | null)[] = host.rawNullableArrayArray();
+          let first: string[] | null = xs[0];
           if (first !== null) {
-            throw { code: "PROBE_NULLABLE_ARRAY", message: "the null nested array element decoded to a non-null value" }
+            throw { code: "PROBE_NULLABLE_ARRAY", message: "the null nested array element decoded to a non-null value" };
           }
-          let second: string[] | null = xs[1]
+          let second: string[] | null = xs[1];
           if (second !== null) {
-            let s: string = second[0]
+            let s: string = second[0];
             if (s !== "ok") {
-              throw { code: "PROBE_NULLABLE_ARRAY", message: "the nested raw host string element did not decode to 'ok'" }
+              throw { code: "PROBE_NULLABLE_ARRAY", message: "the nested raw host string element did not decode to 'ok'" };
             }
-            return null
+            return null;
           }
-          throw { code: "PROBE_NULLABLE_ARRAY", message: "the non-null nested array element decoded to null" }
+          throw { code: "PROBE_NULLABLE_ARRAY", message: "the non-null nested array element decoded to null" };
         }
         """;
 
@@ -6482,12 +6482,12 @@ public class CanonicalProjectionParityTest {
      * retained slots and the array alias after the rejection.
      */
     private static final String HOST_CARRIER_NESTED_TAIL_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[][] = host.badNestedTail()
-          let s: string = xs[0][0]
-          return null
+          let xs: string[][] = host.badNestedTail();
+          let s: string = xs[0][0];
+          return null;
         }
         """;
 
@@ -6504,19 +6504,19 @@ public class CanonicalProjectionParityTest {
      * the identity comparison or the shared-mutation read.
      */
     private static final String HOST_CARRIER_SHARED_ARRAY_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[][] = host.sharedNestedStringArray()
+          let xs: string[][] = host.sharedNestedStringArray();
           if (xs[0] !== xs[1]) {
-            throw { code: "PROBE_ALIAS", message: "the same host inner array became two DEAL arrays" }
+            throw { code: "PROBE_ALIAS", message: "the same host inner array became two DEAL arrays" };
           }
-          xs[0][0] = "changed"
-          let s: string = xs[1][0]
+          xs[0][0] = "changed";
+          let s: string = xs[1][0];
           if (s !== "changed") {
-            throw { code: "PROBE_ALIAS", message: "the shared host inner array did not observe the mutation through both aliases" }
+            throw { code: "PROBE_ALIAS", message: "the shared host inner array did not observe the mutation through both aliases" };
           }
-          return null
+          return null;
         }
         """;
 
@@ -6548,63 +6548,63 @@ public class CanonicalProjectionParityTest {
      * the failure tuples are pinned to.
      */
     private static final String HOST_NATIVE_BAD_ARRAY_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[] = host.nativeBadStringArray()
-          return null
+          let xs: string[] = host.nativeBadStringArray();
+          return null;
         }
         """;
 
     private static final String HOST_NATIVE_BAD_NESTED_TAIL_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[][] = host.nativeBadNestedTail()
-          return null
+          let xs: string[][] = host.nativeBadNestedTail();
+          return null;
         }
         """;
 
     private static final String HOST_NATIVE_ARRAY_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[] = host.nativeStringArray()
-          let s: string = xs[0]
+          let xs: string[] = host.nativeStringArray();
+          let s: string = xs[0];
           if (s !== "ok") {
-            throw { code: "PROBE_NATIVE_CARRIER", message: "the declared host array carrier did not land 'ok'" }
+            throw { code: "PROBE_NATIVE_CARRIER", message: "the declared host array carrier did not land 'ok'" };
           }
-          return null
+          return null;
         }
         """;
 
     private static final String HOST_NATIVE_NESTED_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[][] = host.nativeNestedStringArray()
-          let s: string = xs[0][0]
+          let xs: string[][] = host.nativeNestedStringArray();
+          let s: string = xs[0][0];
           if (s !== "ok") {
-            throw { code: "PROBE_NATIVE_CARRIER", message: "the nested declared host array carrier did not land 'ok'" }
+            throw { code: "PROBE_NATIVE_CARRIER", message: "the nested declared host array carrier did not land 'ok'" };
           }
-          return null
+          return null;
         }
         """;
 
     private static final String HOST_NATIVE_SHARED_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          let xs: string[][] = host.nativeSharedNestedStringArray()
+          let xs: string[][] = host.nativeSharedNestedStringArray();
           if (xs[0] !== xs[1]) {
-            throw { code: "PROBE_NATIVE_ALIAS", message: "the same native inner carrier became two DEAL arrays" }
+            throw { code: "PROBE_NATIVE_ALIAS", message: "the same native inner carrier became two DEAL arrays" };
           }
-          xs[0][0] = "changed"
-          let s: string = xs[1][0]
+          xs[0][0] = "changed";
+          let s: string = xs[1][0];
           if (s !== "changed") {
-            throw { code: "PROBE_NATIVE_ALIAS", message: "the shared native inner carrier did not observe the mutation through both aliases" }
+            throw { code: "PROBE_NATIVE_ALIAS", message: "the shared native inner carrier did not observe the mutation through both aliases" };
           }
-          return null
+          return null;
         }
         """;
 
@@ -6623,11 +6623,11 @@ public class CanonicalProjectionParityTest {
      * in-progress conversion) would complete the drive.
      */
     private static final String HOST_NATIVE_DIFFERING_DEPTH_DRIVER = """
-        import * as host from "host/bad_string"
+        import * as host from "host/bad_string";
 
         export function main(): null {
-          host.nativeDifferingDepthStringArray()
-          return null
+          host.nativeDifferingDepthStringArray();
+          return null;
         }
         """;
 
@@ -6829,14 +6829,14 @@ public class CanonicalProjectionParityTest {
      */
     private static void driveHostCarrierSuccessBatch(Map<String, String> sources)
             throws Exception {
-        StringBuilder source = new StringBuilder("import * as host from \"host/bad_string\"\n");
+        StringBuilder source = new StringBuilder("import * as host from \"host/bad_string\";\n");
         List<String> exports = sources.keySet().stream().sorted().toList();
         for (String export : exports) {
             String fixture = sources.get(export);
             source.append(fixture.substring(fixture.indexOf("export function main"))
                 .replace("export function main", "export function " + export));
         }
-        source.append("export function main(): null { return null }\n");
+        source.append("export function main(): null { return null; }\n");
         Compiled compiled = compile(hostCarrierCase(), source.toString());
         try {
             String entry = compiled.checkedProject().entryModule().path();
@@ -8477,7 +8477,7 @@ public class CanonicalProjectionParityTest {
      * contextual-read seam.
      */
     private static final String NAMESPACE_DIRECT_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
           let holder: table = { ns: lib };
@@ -8491,7 +8491,7 @@ public class CanonicalProjectionParityTest {
      * {@code int[][]} binding (the nested descriptor's outer array cell).
      */
     private static final String NAMESPACE_NESTED_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
           let holder: table = { ns: lib };
@@ -8506,7 +8506,7 @@ public class CanonicalProjectionParityTest {
      * read at the declared array boundary.
      */
     private static final String NAMESPACE_WRITTEN_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
           let holder: table = { ns: [1] };
@@ -8523,7 +8523,7 @@ public class CanonicalProjectionParityTest {
      * spelling of every table-carried value.
      */
     private static final String NAMESPACE_ARRAY_CONTROL_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
           let payload: int[] = [1];

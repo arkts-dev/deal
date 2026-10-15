@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: stdlib, table, runtime-errors
 
-import * as tables from "std/table"
+import * as tables from "std/table";
 
 export function test_table_keys_dynamic_nontable(): string[] {
   let t: table = { value: 1 };

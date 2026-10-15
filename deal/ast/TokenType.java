@@ -48,7 +48,6 @@ public enum TokenType {
     STAR,
     SLASH,
     PERCENT,     // %
-    STAR_STAR,
 
     EQ_STRICT,
     NEQ_STRICT,  // !==

@@ -395,7 +395,7 @@ public class JsonableHelperProductionDriveTest {
     private static List<String> relativeImportPaths(String source) {
         List<String> paths = new ArrayList<>();
         Matcher matcher = Pattern
-            .compile("^import \\* as \\w+ from \"\\./([^\"]+)\"$", Pattern.MULTILINE)
+            .compile("^import \\* as \\w+ from \"\\./([^\"]+)\";$", Pattern.MULTILINE)
             .matcher(source);
         while (matcher.find()) {
             paths.add(matcher.group(1));
@@ -1126,7 +1126,7 @@ public class JsonableHelperProductionDriveTest {
             project.entryFile().getFileName().toString());
         StringBuilder source = new StringBuilder();
         source.append("import * as fx from \"./").append(fixtureStem)
-            .append("\"\n\n");
+            .append("\";\n\n");
         source.append("export function main(): null {\n");
         for (Export export : exports) {
             if ("main".equals(export.name())) {
@@ -1134,7 +1134,7 @@ public class JsonableHelperProductionDriveTest {
             }
             source.append("  fx.").append(export.name()).append("();\n");
         }
-        return source.append("  return null\n}\n").toString();
+        return source.append("  return null;\n}\n").toString();
     }
 
     /**
@@ -1546,7 +1546,7 @@ public class JsonableHelperProductionDriveTest {
                 "export class Plain {\n  name: string = \"\";\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(src.resolve("app.deal"),
-                "import * as Lib from \"./plain_lib\"\n\n"
+                "import * as Lib from \"./plain_lib\";\n\n"
                     + "export function test_missing_helper(): null {\n"
                     + "  let s: string = Lib.Plain$toJson({ name: \"x\" });\n"
                     + "  return null;\n}\n\n"
@@ -1829,7 +1829,7 @@ public class JsonableHelperProductionDriveTest {
                         "export function main(): null {\n  return null;\n}\n",
                         StandardCharsets.UTF_8);
                     Files.writeString(src.resolve("app.deal"),
-                        "import * as Lib from \"./lib\"\n\n"
+                        "import * as Lib from \"./lib\";\n\n"
                             + "export function test_cross_module_main(): null {\n"
                             + "  Lib.main();\n"
                             + "  return null;\n}\n\n"
@@ -3476,7 +3476,7 @@ public class JsonableHelperProductionDriveTest {
         testHelperFunctionBindingInvocation();
         testTableClassInstanceRejection();
         driveExactHelperProgram("cross-owner-json-defaults", """
-            import * as Owner from "./owner"
+            import * as Owner from "./owner";
             function nameDefault(): string { return "anon"; }
             function ageDefault(): int { return 0; }
             function homeDefault(): Owner.Address { return {city: "seed"}; }

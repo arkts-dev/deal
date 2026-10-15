@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: stdlib, console
 
-import * as console from "std/console"
+import * as console from "std/console";
 
 export function test_console_log(): null {
   let result: null = console.log("hello");

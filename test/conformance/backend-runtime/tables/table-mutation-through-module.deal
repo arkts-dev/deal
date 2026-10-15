@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: tables, modules, mutation
 
-import * as Lib from "./table_module_lib"
+import * as Lib from "./table_module_lib";
 
 export function test_table_mutation_through_module(): int {
   let t: table = {};

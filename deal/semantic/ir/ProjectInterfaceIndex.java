@@ -1,7 +1,9 @@
 package deal.semantic.ir;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -40,16 +42,26 @@ public record ProjectInterfaceIndex(String formatVersion, Map<ModuleId, External
     /**
      * The single canonical JSON mapping of the index (dependency-ordered
      * module list; sorted object keys; closed enums as names) — the only
-     * shape {@link #interfaceIndexDigest()} hashes.
+     * shape {@link #interfaceIndexDigest()} hashes. The module map key is
+     * projected away by the value-only module list, so a key that
+     * disagrees with the entry's own module identity is a producer defect
+     * and fails encoding instead of being hidden by the projection.
      *
      */
     public CanonicalJson.Value toCanonicalJson() {
+        List<CanonicalJson.Value> entries = new ArrayList<>();
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry : modules.entrySet()) {
+            if (!entry.getKey().equals(entry.getValue().moduleId())) {
+                throw new IllegalArgumentException(
+                    "the interface index key " + entry.getKey()
+                        + " does not match the entry's moduleId "
+                        + entry.getValue().moduleId() + " (a producer defect)");
+            }
+            entries.add(entry.getValue().toCanonicalJson());
+        }
         return CanonicalJson.obj(
             CanonicalJson.e("formatVersion", CanonicalJson.str(formatVersion)),
-            CanonicalJson.e("modules", CanonicalJson.arr(
-                modules.values().stream()
-                    .map(ExternalModuleInterface::toCanonicalJson)
-                    .toList())));
+            CanonicalJson.e("modules", CanonicalJson.arr(entries)));
     }
 
     /**

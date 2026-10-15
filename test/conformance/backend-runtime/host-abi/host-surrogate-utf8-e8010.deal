@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, string, unicode, runtime-errors
 
-import * as host from "host/bad_string"
+import * as host from "host/bad_string";
 
 export function test_host_surrogate_utf8(): string {
   // The raw host returns the CESU-style encoding of U+D800 — a surrogate

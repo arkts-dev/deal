@@ -108,13 +108,23 @@ public class JsBackendTest {
             testJsonableRoundTripNode();
             testOrchestratorJsonableCrossModule();
             PreparedJs nestedExport = prepareJsUnshaped("""
+                export class Outer { x: int = 1; }
+                export function test(): int { return 1; }
+                """, "moduleclass-export");
+            PreparedJs nestedShadow = prepareJs("""
+                class Outer { v: int = 1; }
+                class Alternate { w: string = "s"; }
                 export function test(): int {
-                  export class Outer { x: int = 1; }
+                  let a: Outer = {};
+                  {
+                    a = { v: 9 };
+                    let b: Alternate = {};
+                    if (b.w !== "s") { return 0; }
+                  }
+                  if (a.v !== 9) { return 0; }
                   return 1;
                 }
-                """, "nestedclass-export");
-            PreparedJs nestedShadow = prepareJs(nestedClassShadowSubject(),
-                "nestedclass-shadow-base");
+                """, "moduleclass-distinct-base");
             testNestedClassEmissionPins(nestedExport, nestedShadow);
             testNestedClassNodeSemantics(nestedExport, nestedShadow);
             testEntryShimAndE6004();
@@ -1405,7 +1415,7 @@ public class JsBackendTest {
         System.out.println("-- Module shape: root module --");
 
         JsBackend.JsCodegenResult res = generate("""
-            import * as console from "std/console"
+            import * as console from "std/console";
             function helper(x: int): int { return x; }
             export function test(): int { return helper(1); }
             """, "shape-root", "main", Map.of(), Map.of(), false);
@@ -1456,7 +1466,7 @@ public class JsBackendTest {
         System.out.println("-- Module shape: nested relative requires --");
 
         JsBackend.JsCodegenResult nested = generate("""
-            import * as strings from "std/string"
+            import * as strings from "std/string";
             export function test(): int { return strings.length("x"); }
             """, "shape-nested", "app.main", Map.of(), Map.of(), false);
         check(nested != null && !nested.hasErrors(), "nested codegen clean");
@@ -1476,8 +1486,8 @@ public class JsBackendTest {
 
         // Project imports: sibling and nested-target relative specifiers.
         JsBackend.JsCodegenResult proj = generate("""
-            import * as a from "./sub/util"
-            import * as b from "../lib"
+            import * as a from "./sub/util";
+            import * as b from "../lib";
             export function test(): int { return 1; }
             """, "shape-proj", "app.main",
             Map.of("./sub/util", "app.sub.util", "../lib", "lib"),
@@ -1801,7 +1811,7 @@ public class JsBackendTest {
             }
             """);
         writeFile("xjson_proj/src/lib_b.deal", """
-            import * as A from "./lib_a"
+            import * as A from "./lib_a";
 
             // @jsonable
             export class Wrap {
@@ -1813,8 +1823,8 @@ public class JsBackendTest {
             }
             """);
         writeFile("xjson_proj/src/xjson_main.deal", """
-            import * as B from "./lib_b"
-            import * as console from "std/console"
+            import * as B from "./lib_b";
+            import * as console from "std/console";
             export function main(): null {
               let w: B.Wrap = B.make(7);
               let json: string = B.Wrap$toJson(w);
@@ -1895,22 +1905,33 @@ public class JsBackendTest {
             """;
     }
 
+    private static void assertLocalClassRejected(String source, String tag) {
+        Frontend f = compileFrontend(source, tag + ".deal");
+        String expected = source.contains("export class") ? "E1050" : "E1057";
+        check(f.errors().stream().anyMatch(d -> d.code().equals(expected)),
+            tag + ": v1.3 rejects local class/export placement: " + f.errors());
+        check(f.errors().stream().noneMatch(d -> d.code().equals("E3019")),
+            tag + ": placement rejection precedes nominal typing");
+    }
+
     private static void testNestedClassEmissionPins(PreparedJs nestedExport,
                                                    PreparedJs nestedShadow) {
-        System.out.println("-- Nested class declarations: scope-local artifacts (ISSUE-0318) --");
+        System.out.println("-- Module class artifacts and removed local-class placement --");
 
-        // The former D6 rejection case now generates clean: a block-level
-        // class emits the scope-local predeclare/assign pair inside the
-        // enclosing block, the defaults thunk closes over the declaring
-        // scope, and the identity is the canonical module-qualified text
-        // (js-v12-completion-architecture D4).
-        JsBackend.JsCodegenResult nested = generate("""
+        // Preserve removed local placement as a frontend negative; the legal
+        // module equivalent retains default-plan, factory and nominal META pins.
+        assertLocalClassRejected("""
             export function test(): int {
               let seed: int = 40;
               class Inner { v: int = seed + 2; }
               return 1;
             }
             """, "nestedclass");
+        JsBackend.JsCodegenResult nested = generate("""
+            class Seed { value: int = 40; }
+            class Inner { v: int = function(): int { let seed: Seed = {}; return seed.value + 2; }(); }
+            export function test(): int { return 1; }
+            """, "moduleclass");
         check(nested != null && !nested.hasErrors(),
             "nested class declaration generates with no diagnostics: "
                 + (nested == null ? "<null>" : nested.diagnostics()));
@@ -1920,15 +1941,12 @@ public class JsBackendTest {
         int wrapper = js.indexOf("test$f(");
         int predeclare = js.indexOf("let Inner$new; let Inner$meta;");
         int assign = js.indexOf("Inner$new = (provided, $file, $line, $column)");
-        check(wrapper >= 0 && predeclare > wrapper && assign > predeclare,
-            "the scope-local predeclare pair sits at the top of the "
-                + "enclosing block before the declaration-site assignment");
-        check(!js.contains("let Inner$new; let Inner$meta;\nconst $rt"),
-            "the nested class artifacts never predeclare in the module header");
+        check(wrapper >= 0 && predeclare >= 0 && assign > predeclare,
+            "the module class predeclares before its factory assignment");
         check(js.contains("let Inner$new; let Inner$meta;"),
             "the scope-local predeclare pair binds the artifact names");
         check(js.contains("Inner$plan = [{ name: \"v\", descriptor: \"int\", "
-                + "optional: false, evaluator: () => $rt.intAdd(seed, 2, "),
+                + "optional: false, evaluator: () => "),
             "the declaration-site plan list carries the canonical identity "
                 + "and an evaluator closing over seed");
         check(js.contains("Inner$new = (provided, $file, $line, $column) => "
@@ -1940,11 +1958,9 @@ public class JsBackendTest {
                 + "$classname: \"@Main/Inner\" };"),
             "the inline META pair carries the canonical identity text");
 
-        // A scope-local default function is captured by the thunk
-        // (the required-present field carries the evaluator; an optional
-        // field's declared default is checker-validated metadata that
-        // never evaluates — D1).
-        JsBackend.JsCodegenResult func = generate("""
+        // A legal module default invokes an ordinary function wrapper.
+        // Its removed local-class counterpart remains a separate negative.
+        assertLocalClassRejected("""
             export function test(): int {
               let seed: int = 40;
               function next(): int { return seed + 2; }
@@ -1952,6 +1968,11 @@ public class JsBackendTest {
               return 1;
             }
             """, "nestedclass-func");
+        JsBackend.JsCodegenResult func = generate("""
+            function next(): int { let seed: int = 40; return seed + 2; }
+            class Inner { v: int = next(); }
+            export function test(): int { return 1; }
+            """, "moduleclass-func");
         check(func != null && !func.hasErrors(),
             "nested class with a scope-local default function generates: "
                 + (func == null ? "<null>" : func.diagnostics()));
@@ -1962,10 +1983,8 @@ public class JsBackendTest {
                     + "(call through its wrapper)");
         }
 
-        // An exported nested class writes its two export assignments
-        // inline at the declaration site (the scope-local artifacts are
-        // not visible at the module-end section) through the ordinary
-        // raw-key own-property-safe path.
+        // A module class exports META and hidden construction under the
+        // ordinary raw-key own-property-safe path.
         JsBackend.JsCodegenResult exported = nestedExport.emission();
         check(exported != null && !exported.hasErrors(),
             "exported nested class generates with no diagnostics: "
@@ -1982,8 +2001,8 @@ public class JsBackendTest {
             check(block >= 0 && metaExport > block && newExport > metaExport,
                 "the exported nested class assigns its inline exports at "
                     + "the declaration site inside the block");
-            check(metaExport > 0 && metaExport < testExport,
-                "the inline META export precedes the module-end section");
+            check(metaExport > 0 && testExport > 0,
+                "the module class META and test function are both exported");
             check(xjs.contains("$rt.setProp($exports, \"Outer\", Outer$meta);")
                     && xjs.contains(
                         "$rt.setProp($exports, \"Outer$new\", Outer$new);"),
@@ -1991,73 +2010,52 @@ public class JsBackendTest {
                     + "C$new under the ordinary raw keys");
         }
 
-        // A nested exported class carrying the @jsonable directive is
-        // never jsonable (module-level-export-class-only, checker-owned):
-        // the backend applies no @jsonable generation at a nested site —
-        // no C$fromJson/C$toJson/C$fields artifacts and no jsonable
-        // exports (js-v12-completion-architecture D4).
-        JsBackend.JsCodegenResult jsonableNested = generateUnshaped("""
+        // Neither export nor @jsonable permits a local class in v1.3.
+        assertLocalClassRejected("""
             export function test(): int {
               // @jsonable
               export class Outer { x: int = 1; }
               return 1;
             }
             """, "nestedclass-jsonable");
-        check(jsonableNested != null && !jsonableNested.hasErrors(),
-            "a nested @jsonable export class generates with no diagnostics: "
-                + (jsonableNested == null ? "<null>" : jsonableNested.diagnostics()));
-        if (jsonableNested != null && !jsonableNested.hasErrors()) {
-            String jjs = jsonableNested.source();
-            check(!jjs.contains("Outer$fromJson")
-                    && !jjs.contains("Outer$toJson")
-                    && !jjs.contains("Outer$fields"),
-                "the backend applies no @jsonable generation to a nested "
-                    + "class (no C$fromJson/C$toJson/C$fields text)");
-            check(!jjs.contains("$rt.setProp($exports, \"Outer$fromJson\""),
-                "no jsonable wrapper export assignment references a nested "
-                    + "site's scope-local bindings");
-        }
+        assertLocalClassRejected("""
+            export function test(): int {
+              export class Outer { x: int = 1; }
+              return 1;
+            }
+            """, "nestedclass-export");
+        assertLocalClassRejected(nestedClassShadowSubject(), "nestedclass-shadow-base");
 
-        // ISSUE-0717 review 0007: a nested class shadowing a module-level
-        // class of the same name takes a renamed artifact base
-        // ({@code Outer$1}), so the shadowed declaration's factory stays
-        // referenceable: a target-context literal the checker laid out by
-        // the module-level declaration constructs through the plain
-        // {@code Outer$new}, while the shadowing declaration's own
-        // construction names {@code Outer$1$new}.
+        // Distinct legal module classes retain separate factory/layout identity;
+        // a target-context assignment constructs through its annotated class.
         JsBackend.JsCodegenResult shadowBase = nestedShadow.emission();
         check(shadowBase != null && !shadowBase.hasErrors(),
             "a shadowing nested class generates with no diagnostics: "
                 + (shadowBase == null ? "<null>" : shadowBase.diagnostics()));
         if (shadowBase != null && !shadowBase.hasErrors()) {
             String sjs = shadowBase.source();
-            check(sjs.contains("let Outer$1$new; let Outer$1$meta;"),
-                "the shadowing declaration's artifacts are renamed to an "
-                    + "unambiguous base");
+            check(sjs.contains("let Alternate$new; let Alternate$meta;"),
+                "the second module class has its own unambiguous artifacts");
             check(sjs.contains("Outer$new({ [\"v\"]: 9 }"),
                 "the target-context literal constructs through the shadowed "
                     + "declaration's factory");
-            check(sjs.contains("Outer$1$new({ },"),
-                "the shadowing declaration's own construction names the "
-                    + "renamed factory");
-            check(!sjs.contains("Outer$1$new({ [\"v\"]: 9 }"),
-                "the target-context construction never names the "
-                    + "shadowing declaration's factory");
+            check(sjs.contains("Alternate$new({ },"),
+                "the second module class constructs through its own factory");
+            check(!sjs.contains("Alternate$new({ [\"v\"]: 9 }"),
+                "the outer-typed assignment never names the other factory");
         }
     }
 
     private static void testNestedClassNodeSemantics(PreparedJs nestedExport,
                                                     PreparedJs nestedShadow)
             throws Exception {
-        System.out.println("-- Node: nested-class defaults scope and per-construction evaluation --");
+        System.out.println("-- Node: module defaults, ordinary captures and per-construction evaluation --");
         if (!nodeAvailable) { skipNode("nested-class defaults scope"); return; }
 
-        // A block-level class whose required default calls a
-        // scope-local function: two constructions observe independent
-        // evaluations of the capturing default (40 + 2 then 100 + 2).
-        // (An optional field's declared default never evaluates — D1 —
-        // so the required-present form pins the capture.)
-        NodeResult run = runDealNode("""
+        // Keep the original local-class subject as a negative. The legal
+        // module default creates a fresh ordinary captured binding each time:
+        // one instance advances 42 -> 102 while the other still starts at 42.
+        assertLocalClassRejected("""
             export function test(): int {
               let seed: int = 40;
               function next(): int { return seed + 2; }
@@ -2072,14 +2070,28 @@ public class JsBackendTest {
               return 1;
             }
             """, "nestedclass-node");
+        NodeResult run = runDealNode("""
+            class Inner {
+              next: () => int = function(): () => int {
+                let seed: int = 40;
+                return function(): int { let value: int = seed + 2; seed = 100; return value; };
+              }();
+            }
+            export function test(): int {
+              let a: Inner = { };
+              let b: Inner = { };
+              if (a.next() !== 42) { return 0; }
+              if (a.next() !== 102) { return 0; }
+              if (b.next() !== 42) { return 0; }
+              return 1;
+            }
+            """, "moduleclass-node");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "per-construction defaults evaluate in the declaring scope "
-                + "(42 then 102): " + run.output() + " (exit "
+            "per-construction ordinary captures stay fresh (42, 102; other instance 42): " + run.output() + " (exit "
                 + run.exitCode() + ")");
 
-        // The exported nested class's module exports carry the scope-local
-        // C$meta and the hidden <C>$new keys, and the META carries the
-        // canonical identity text (js-v12-completion-architecture D3/D4).
+        // Exported module classes retain public META and hidden construction
+        // keys, with canonical module-qualified identity.
         Frontend f = nestedExport.frontend();
         check(f.errors().isEmpty(),
             "exported nested class frontend clean: " + f.errors());
@@ -2110,12 +2122,9 @@ public class JsBackendTest {
                 + "C$new with the canonical identity: " + probe.output()
                 + " (exit " + probe.exitCode() + ")");
 
-        // Per-scope shadowing: a function-local class shadowing a
-        // module-level class of the same name stays legal strict-mode JS
-        // (the nested predeclared pair shadows the module-level pair in
-        // its own block scope — never a same-scope duplicate binding),
-        // and construction inside the function uses the nested class.
-        NodeResult shadow = runDealNode("""
+        // Removed local shadowing rejects; distinct module classes remain legal
+        // when constructed inside ordinary function/block scopes.
+        assertLocalClassRejected("""
             class Shadowed { v: int = 1; }
             export function test(): int {
               class Shadowed { w: int = 2; }
@@ -2124,17 +2133,21 @@ public class JsBackendTest {
               return 1;
             }
             """, "nestedclass-shadow");
+        NodeResult shadow = runDealNode("""
+            class Shadowed { v: int = 1; }
+            class Alternate { w: int = 2; }
+            export function test(): int {
+              let s: Alternate = { };
+              if (s.w !== 2) { return 0; }
+              return 1;
+            }
+            """, "moduleclass-distinct");
         check(shadow.exitCode() == 0 && shadow.output().equals("1"),
-            "a function-local class shadows the module-level class of "
-                + "the same name (nested construction): " + shadow.output()
+            "a distinct module class constructs inside a function: " + shadow.output()
                 + " (exit " + shadow.exitCode() + ")");
 
-        // The shadowing declaration's renamed base keeps the outer
-        // declaration's factory referenceable inside the shadowing scope:
-        // the reviewed target-context construction (the assignment
-        // target's exact declaration is the module-level class) runs
-        // through the outer closure, and the shadowing class's own
-        // construction keeps its own layout.
+        // Target-context construction and the other module class retain
+        // independent layouts through the same block.
         NodeResult shadowConstruct = runDealArtifact(nestedShadow);
         check(shadowConstruct.exitCode() == 0
                 && shadowConstruct.output().equals("1"),
@@ -2247,7 +2260,7 @@ public class JsBackendTest {
         modules.put("./proto_lib", Map.of("__proto__",
             Types.func(List.of(), Type.Int.INSTANCE)));
         Frontend f = compileFrontend("""
-            import * as pl from "./proto_lib"
+            import * as pl from "./proto_lib";
             export function test(): int { return pl.__proto__(); }
             """, "jstest-protoimport.deal",
             new FixedModuleResolver(modules));
@@ -2449,7 +2462,7 @@ public class JsBackendTest {
             + "ISSUE-0169 skeleton)";
 
         JsBackend.JsCodegenResult extern = generateWithExternC("""
-            import * as ffi from "myffi"
+            import * as ffi from "myffi";
             export function test(): int { return 1; }
             """, "rej-extern", "Main", Map.of(),
             Map.of("myffi", new HostModuleDeclarations(Map.of(), Map.of())),
@@ -2495,7 +2508,7 @@ public class JsBackendTest {
         // the project-import relative rule, the declared map rendered
         // per export, and the member call through the wrapper $f.
         Frontend fnFrontend = compileFrontend("""
-            import * as h from "./hostmod"
+            import * as h from "./hostmod";
             export function test(): int { return h.hostFn(1); }
             """, "jstest-host-abi-fn.deal",
             new FixedModuleResolver(Map.of("./hostmod",
@@ -2534,7 +2547,7 @@ public class JsBackendTest {
         // same project-import relative rule, applied to the raw
         // specifier verbatim.
         Frontend nestedFrontend = compileFrontend("""
-            import * as h from "host/mod"
+            import * as h from "host/mod";
             export function test(): int { return h.hostFn(1); }
             """, "jstest-host-abi-nested.deal",
             new FixedModuleResolver(Map.of("host/mod",
@@ -2568,7 +2581,7 @@ public class JsBackendTest {
         // read-site check — and the runtime boundary wrapper raises the
         // pinned E8010 parameter mismatch under node.
         Frontend deferFrontend = compileFrontend("""
-            import * as h from "./hostmod"
+            import * as h from "./hostmod";
             export function test(): int {
               let holder: table = { item: "x" };
               return h.hostFn(holder.item);
@@ -2698,7 +2711,7 @@ public class JsBackendTest {
             ModuleIdentityResolver.buildIndex(byPath);
 
         Frontend cf = compileFrontend("""
-            import * as cfg from "./hostmod"
+            import * as cfg from "./hostmod";
             export function test(): null { return null; }
             """, "jstest-host-abi-class.deal",
             new FixedModuleResolver(Map.of("./hostmod", declExports)));
@@ -2767,7 +2780,7 @@ public class JsBackendTest {
             export function describe(s: ServerConfig): string;
             """);
         writeFile("hostjs_proj/src/hostjs_main.deal", """
-            import * as cfg from "host/cfg"
+            import * as cfg from "host/cfg";
             export function main(): null {
               let s: cfg.ServerConfig = {
                 port: 9090,
@@ -2930,12 +2943,16 @@ public class JsBackendTest {
         System.out.println("-- Node: int arithmetic edge codes --");
         if (!nodeAvailable) { skipNode("int arithmetic edge codes"); return; }
 
+        Frontend removedPower = compileFrontend(
+            "export function test(): int { return 2 ** 10000; }", "int-pow-overflow.deal");
+        check(removedPower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
+            "removed power syntax rejects before emission");
         NodeResult pow = runDealNode(
-            "export function test(): int { return 2 ** 10000; }",
-            "int-pow-overflow");
+            "export function test(): int { return int(1.0 / 0.0); }",
+            "int-infinity");
         check(pow.exitCode() == 1 && pow.output().contains("DEAL_ERROR_CODE: E8001")
                 && pow.output().contains("expected int, got infinity"),
-            "2 ** 10000 → E8001 'expected int, got infinity' (checkInt order "
+            "int(infinity) → E8001 'expected int, got infinity' (checkInt order "
                 + "before the finite-range arm), exit 1: " + pow.output());
 
         NodeResult range = runDealNode(
@@ -2954,12 +2971,10 @@ public class JsBackendTest {
                 && divz.output().contains("integer division by zero"),
             "int division by zero → E8005, exit 1: " + divz.output());
 
-        NodeResult negexp = runDealNode(
-            "export function test(): int { return 2 ** -1; }",
-            "int-neg-exp");
-        check(negexp.exitCode() == 1 && negexp.output().contains("DEAL_ERROR_CODE: E8006")
-                && negexp.output().contains("integer exponent must be non-negative"),
-            "negative exponent → E8006, exit 1: " + negexp.output());
+        Frontend negativePower = compileFrontend(
+            "export function test(): int { return 2 ** -1; }", "int-neg-exp.deal");
+        check(negativePower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
+            "removed negative power syntax rejects before emission");
 
         NodeResult boundary = runDealNode(
             "export function test(): int { return 9007199254740991; }",
@@ -3109,8 +3124,8 @@ public class JsBackendTest {
             {"neg-over", "return -(-2147483648);", "E8004"},
             {"div-zero", "return 5 / 0;", "E8005", "integer division by zero"},
             {"mod-zero", "return 5 % 0;", "E8005"},
-            {"neg-exp", "return 2 ** -1;", "E8006"},
-            {"pow-over", "return 2 ** 10000;", "E8001", "expected int, got infinity"},
+            {"neg-exp", "return 2 ** -1;", "E1037"},
+            {"pow-over", "return 2 ** 10000;", "E1037"},
             {"trunc-signs", "let a: int = -7 / 3; let b: int = 7 / -3; let c: int = -7 % 3; "
                 + "if (a === -2 && b === -2 && c === -1) { return 1; } return 0;", "1"},
             {"conv-range", "return int(2147483648.0);", "E8004", "int out of safe range"},
@@ -3118,6 +3133,13 @@ public class JsBackendTest {
             {"conv-inf", "return int(1.0 / 0.0);", "E8001", "expected int, got infinity"}
         };
         for (String[] row : rows) {
+            if (row[2].equals("E1037")) {
+                Frontend rejected = compileFrontend("export function test(): int { " + row[1] + " }",
+                    "int32-" + row[0] + ".deal");
+                check(rejected.errors().stream().anyMatch(d -> d.code().equals("E1037")),
+                    row[0] + ": removed power syntax rejects before emission");
+                continue;
+            }
             NodeResult result = runDealNodeProfile("export function test(): int { " + row[1] + " }",
                 "int32-" + row[0], SemanticProfile.DEAL_V1_2_INT32);
             boolean failure = row[2].startsWith("E");
@@ -3508,7 +3530,7 @@ public class JsBackendTest {
         // JSON rejection: a bytes value reaching std/json.stringify via
         // a table raises the pinned unsupported-type E8001.
         NodeResult jsonReject = runDealNode("""
-            import * as json from "std/json"
+            import * as json from "std/json";
             export function test(): string {
               let t: table = { b: bytes(2) };
               return json.stringify(t);
@@ -3540,7 +3562,7 @@ public class JsBackendTest {
         // the artifact omits the intrinsic header seed (the class binds
         // only bytes$new/bytes$meta).
         PreparedJs clsPrepared = prepareJs("""
-            class bytes { x: int }
+            class bytes { x: int; }
             export function test(): int {
               let b: bytes = { x: 2 };
               return b.x;
@@ -3604,12 +3626,9 @@ public class JsBackendTest {
             "module-level user function named bytes runs under node "
                 + "(bytes(3) === 4): " + fnRun.output());
 
-        // (c) The review's finding (b) repro end-to-end: a NESTED user
-        // class named bytes. The annotation resolves to the nested
-        // ClassSymbol (no E3001), the canonical scope-local
-        // bytes$new/bytes$meta pair constructs it with its defaults,
-        // and the artifact runs under node.
-        NodeResult nestedRun = runDealNode("""
+        // (c) Preserve the local bytes-class placement negative, then execute
+        // the legal module-level user class from a nested block.
+        assertLocalClassRejected("""
             export function test(): int {
               let out: int = 0;
               {
@@ -3620,8 +3639,19 @@ public class JsBackendTest {
               return out;
             }
             """, "bytes-user-class-nested-run");
+        NodeResult nestedRun = runDealNode("""
+            class bytes { x: int = 0; }
+            export function test(): int {
+              let out: int = 0;
+              {
+                let b: bytes = { x: 2 };
+                out = b.x;
+              }
+              return out;
+            }
+            """, "bytes-user-class-block-use");
         check(nestedRun.exitCode() == 0 && nestedRun.output().equals("2"),
-            "nested user class named bytes runs under node (b.x === 2): "
+            "module user class named bytes runs from a nested block (b.x === 2): "
                 + nestedRun.output());
     }
 
@@ -3918,7 +3948,7 @@ public class JsBackendTest {
             }
             """);
         writeFile("bytesx_proj/src/bytes_closure_main.deal", """
-            import * as lib from "./bytes_closure_lib"
+            import * as lib from "./bytes_closure_lib";
             export function main(): null { return null; }
             export function syncBridge(): int {
               let b: bytes = bytes(2);
@@ -4162,29 +4192,15 @@ public class JsBackendTest {
     }
 
     private static void testNumModFloored() throws Exception {
-        System.out.println("-- Node: floored number % number --");
-        if (!nodeAvailable) { skipNode("floored number %"); return; }
-
-        NodeResult a = runDealNode(
-            "export function test(): number { return -5.0 % 2.0; }",
-            "nummod-a");
-        check(a.exitCode() == 0 && a.output().equals("1"),
-            "-5.0 % 2.0 === 1 (floored): " + a.output());
-        NodeResult b = runDealNode(
-            "export function test(): number { return 5.0 % -2.0; }",
-            "nummod-b");
-        check(b.exitCode() == 0 && b.output().equals("-1"),
-            "5.0 % -2.0 === -1 (floored): " + b.output());
-        NodeResult c = runDealNode(
-            "export function test(): number { return -5.0 % -2.0; }",
-            "nummod-c");
-        check(c.exitCode() == 0 && c.output().equals("-1"),
-            "-5.0 % -2.0 === -1 (floored): " + c.output());
-        NodeResult d = runDealNode(
-            "export function test(): number { return 5.0 % 2.0; }",
-            "nummod-d");
-        check(d.exitCode() == 0 && d.output().equals("1"),
-            "5.0 % 2.0 === 1 (floored): " + d.output());
+        System.out.println("-- v1.3: remainder requires int operands --");
+        String[] subjects = { "-5.0 % 2.0", "5.0 % -2.0", "-5.0 % -2.0", "5.0 % 2.0" };
+        for (String subject : subjects) {
+            Frontend rejected = compileFrontend(
+                "export function test(): number { return " + subject + "; }", "nummod.deal");
+            check(rejected.errors().stream().anyMatch(d -> d.code().equals("E3007")
+                    && d.message().contains("requires int operands")),
+                subject + ": number remainder rejects before emission: " + rejected.errors());
+        }
     }
 
     private static void testScalarStringOps() throws Exception {
@@ -4192,7 +4208,7 @@ public class JsBackendTest {
         if (!nodeAvailable) { skipNode("scalar string ops"); return; }
 
         NodeResult run = runDealNode("""
-            import * as strings from "std/string"
+            import * as strings from "std/string";
             export function test(): int {
               let s: string = "𝒜B";
               let n: int = 0;
@@ -4826,8 +4842,8 @@ public class JsBackendTest {
         if (!nodeAvailable) { skipNode("std/json round-trips"); return; }
 
         NodeResult run = runDealNode("""
-            import * as json from "std/json"
-            import * as tables from "std/table"
+            import * as json from "std/json";
+            import * as tables from "std/table";
             class User {
               name: string = "";
               nick?: string | null;
@@ -4867,7 +4883,7 @@ public class JsBackendTest {
         if (!nodeAvailable) { skipNode("json stored function"); return; }
 
         NodeResult run = runDealNode("""
-            import * as json from "std/json"
+            import * as json from "std/json";
             export function test(): string {
               let t: table = { f: function(): int { return 1; } };
               return json.stringify(t);
@@ -4959,7 +4975,7 @@ public class JsBackendTest {
         if (!nodeAvailable) { skipNode("intrinsic function values"); return; }
 
         NodeResult run = runDealNode("""
-            import * as console from "std/console"
+            import * as console from "std/console";
             function applyInt(f: (x: number) => int, v: number): int { return f(v); }
             function applyNumber(f: (x: int) => number, v: int): number { return f(v); }
             export function test(): int {
@@ -5194,7 +5210,7 @@ public class JsBackendTest {
               "backend": "js"
             }""");
         writeFile("js_proj/src/orch_main.deal", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               console.log("js-orchestrator-main");
               return null;
@@ -5275,8 +5291,8 @@ public class JsBackendTest {
         writeFile("nest_proj/src/app/lib.deal",
             "export function tag(): string { return \"nested-module-ok\"; }");
         writeFile("nest_proj/src/app/main.deal", """
-            import * as lib from "./lib"
-            import * as console from "std/console"
+            import * as lib from "./lib";
+            import * as console from "std/console";
             export function main(): null {
               console.log(lib.tag());
               return null;
@@ -5346,11 +5362,11 @@ public class JsBackendTest {
             export function cFn(x: int): int;
             """);
         writeFile("rej_proj/src/lib.deal", """
-            import * as ffi from "ffi"
+            import * as ffi from "ffi";
             export function use(): int { return ffi.cFn(1); }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
-            import * as lib from "./lib"
+            import * as lib from "./lib";
             export function main(): null { return null; }
             export function run(): int { return 1; }
             """);

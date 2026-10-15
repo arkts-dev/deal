@@ -39,6 +39,9 @@ import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.ExportInterface;
+import deal.semantic.ir.ExternalModuleKind;
+import deal.semantic.ir.FieldInterface;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
@@ -56,10 +59,13 @@ import deal.semantic.ir.NamespaceRegistrations;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.RawUnit;
+import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticIrDumper;
+import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
@@ -139,6 +145,8 @@ public class ProjectLoweringTest {
     private static final String HOST_CFG_SPECIFIER = "host/cfg";
     private static final ClassId ENDPOINT = new ClassId("$external/host/cfg",
         "Endpoint");
+    private static final ClassId HOST_HIDDEN = new ClassId("$external/host/cfg",
+        "Hidden");
     private static final ClassId BUILTIN_ERROR = ClassId.ERROR;
 
     private static final String UTIL_SOURCE = """
@@ -172,8 +180,8 @@ public class ProjectLoweringTest {
 
     /** The main fixture: source calls, an adapter, cross-module calls, and a host import. */
     private static final String APP_SOURCE = """
-        import * as u from "util"
-        import * as cfg from "host/cfg"
+        import * as u from "util";
+        import * as cfg from "host/cfg";
 
         function inc(x: int): int {
           return x + 1;
@@ -195,8 +203,8 @@ public class ProjectLoweringTest {
 
     /** The host-declaration-class construction (the fail-closed acceptance). */
     private static final String HOST_CLASS_APP_SOURCE = """
-        import * as u from "util"
-        import * as cfg from "host/cfg"
+        import * as u from "util";
+        import * as cfg from "host/cfg";
 
         export function main(): null {
           let e: cfg.Endpoint = {path: "p"};
@@ -204,9 +212,43 @@ public class ProjectLoweringTest {
         }
         """;
 
+    /**
+     * The host declaration with a class-typed field: {@code Endpoint.peer}
+     * names the exported declaration class {@code Hidden} through its exact
+     * carried class identity, so the seed descriptor's external spelling is
+     * the only fact that distinguishes it from a same-rendering alternate.
+     */
+    private static final String HOST_CLASS_REFERENCE_DECLARATION = """
+        export class Hidden {
+          secret: string;
+        }
+
+        export class Endpoint {
+          path: string;
+          peer: Hidden;
+        }
+
+        export function version(): int;
+        """;
+
+    /**
+     * The class-reference construction: only {@code Hidden} is constructed, so
+     * the mutated {@code Endpoint.peer} seed reference has no referring
+     * {@code CLASS_NEW} and only the seed/interface coherence rule can reject
+     * it (the reviewer's exact reproducer).
+     */
+    private static final String HOST_CLASS_REFERENCE_APP_SOURCE = """
+        import * as cfg from "host/cfg";
+
+        export function main(): null {
+          let h: cfg.Hidden = {secret: "s"};
+          return null;
+        }
+        """;
+
     /** The builtin-Error construction (the production-outcome acceptance). */
     private static final String ERROR_APP_SOURCE = """
-        import * as cfg from "host/cfg"
+        import * as cfg from "host/cfg";
 
         export function main(): null {
           let e: Error = {code: "E1", message: "boom"};
@@ -239,7 +281,7 @@ public class ProjectLoweringTest {
         """;
 
     private static final String CLASS_APP_SOURCE = """
-        import * as u from "util"
+        import * as u from "util";
 
         export function main(): null {
           let p: u.Point = u.makePoint(4);
@@ -263,7 +305,7 @@ public class ProjectLoweringTest {
         """;
 
     private static final String IMPORTED_CLASS_APP_SOURCE = """
-        import * as u from "util"
+        import * as u from "util";
 
         export function main(): null {
           let p: u.Point = {x: 5};
@@ -344,7 +386,7 @@ public class ProjectLoweringTest {
 
     /** The extern-C declaration-class construction (the fail-closed acceptance). */
     private static final String EXTERN_C_CLASS_APP_SOURCE = """
-        import * as native from "native/math"
+        import * as native from "native/math";
 
         export function main(): null {
           let v: native.Vec2 = {x: 1.0, y: 2.0};
@@ -2370,6 +2412,929 @@ public class ProjectLoweringTest {
             "real transport exercises layouts, closure generations and import aliases");
     }
 
+
+    /**
+     * The complete project transport, the interface index and the class
+     * seeds (ISSUE-0818): the project text round-trips the exact project —
+     * the {@code deal.semantic-ir/2} envelope, the profile, the entry
+     * module, the complete {@code deal.semantic-interface/1} index, the
+     * class registration seeds and every dependency-ordered unit through
+     * the complete unit mapping — and a dumped manifest plus its ordered
+     * module documents reassembles to that same project. Missing, extra,
+     * duplicate, misordered and mismatched document sets reject before any
+     * project record exists, and so does a manifest whose class
+     * registration seeds contradict its own interface index (the two are
+     * two representations of one declaration surface, never independent
+     * class authorities).
+     */
+    private static void testCompleteProjectTransportAndDumpReassembly(LoweredProject baseline)
+            throws Exception {
+        System.out.println("-- the complete /2 project transport, the interface "
+            + "index and the seeds, and the checked dump reassembly --");
+        SemanticLowerer.ProjectLoweringResult result = baseline.result();
+        ExecutableLoweredProject lowered = result.project();
+        check(lowered != null,
+            "the project-transport fixture lowers: " + result.diagnostics());
+        if (lowered == null) {
+            return;
+        }
+        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+            baseline.project().index().interfaceIndexDigest(),
+            SemanticProfile.DEAL_V1_2_INT32, invocation().capabilityRegistryHash());
+
+        // ----- the project text: the complete framing and the unit mapping -----
+        String text = SemanticIrValidator.toProjectText(lowered);
+        check(text.contains("\"formatVersion\":\"deal.semantic-ir/2\""),
+            "the project text carries the deal.semantic-ir/2 envelope");
+        check(text.contains("\"entryModule\":\"app\""),
+            "the project entry module stays a plain string");
+        check(text.contains("\"interfaceIndex\":{\"formatVersion\":"
+                + "\"deal.semantic-interface/1\""),
+            "the project text carries the interface index under its unchanged format");
+        check(text.contains("\"classSeeds\":[{\"key\":"),
+            "the project text carries the class registration seeds");
+        ContractSnapshotCanonicalizer.ParsedProject parsed =
+            ContractSnapshotCanonicalizer.parseProject(
+                (CanonicalJson.Obj) CanonicalJson.parse(text));
+        checkEq("deal.semantic-ir/2", parsed.formatVersion(),
+            "the parsed project keeps the /2 envelope");
+        checkEq("DEAL_V1_2_INT32", parsed.semanticProfile(),
+            "the parsed project keeps the explicit semantic profile");
+        checkEq("app", parsed.entryModule(),
+            "the parsed project keeps the entry module");
+        checkEq(List.of("util", "app"), parsed.modulePaths(),
+            "the parsed project keeps the dependency-ordered module paths");
+        checkEq(lowered.interfaceIndex(), parsed.interfaceIndex(),
+            "the interface index inverse retains every module/interface/import/class/field "
+                + "fact");
+        checkEq(lowered.classSeeds(), parsed.classSeeds(),
+            "the class seeds inverse keeps the registration keys, layouts and owners");
+        checkEq(baseline.project().index().interfaceIndexDigest(),
+            parsed.interfaceIndex().interfaceIndexDigest(),
+            "the reparsed index keeps its digest");
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                : parsed.interfaceIndex().modules().entrySet()) {
+            checkEq(entry.getKey(), entry.getValue().moduleId(),
+                "the index inverse keeps the " + entry.getKey() + " entry identity");
+        }
+        ExternalModuleInterface appEntry = parsed.interfaceIndex().modules().get(APP);
+        check(appEntry != null, "the index inverse carries the entry module entry");
+        if (appEntry != null) {
+            checkEq(List.of("u", "cfg"),
+                appEntry.imports().stream().map(ResolvedImport::alias).toList(),
+                "the index inverse keeps the resolved import aliases in source order");
+            checkEq(List.of(ExternalModuleKind.IMPLEMENTATION, ExternalModuleKind.HOST),
+                appEntry.imports().stream().map(ResolvedImport::kind).toList(),
+                "the index inverse keeps the resolved import kinds");
+            checkEq(List.of("main"),
+                appEntry.exports().stream().map(ExportInterface::name).toList(),
+                "the index inverse keeps the export entries");
+        }
+        ExternalModuleInterface hostEntry = parsed.interfaceIndex().modules().get(HOST_CFG);
+        check(hostEntry != null && hostEntry.kind() == ExternalModuleKind.HOST,
+            "the index inverse keeps the host declaration entry");
+        ClassInterface endpoint = hostEntry == null || hostEntry.classes().isEmpty()
+            ? null : hostEntry.classes().get(0);
+        check(endpoint != null
+                && endpoint.classId().equals(new ClassId(HOST_CFG.path(), "Endpoint")),
+            "the index inverse keeps the declared class identity");
+        if (endpoint != null) {
+            checkEq(List.of("path", "port"),
+                endpoint.fields().stream().map(FieldInterface::name).toList(),
+                "the index inverse keeps the declared field order");
+            check(endpoint.fields().get(1).optional() && !endpoint.fields().get(1).nullable(),
+                "the index inverse keeps the declared optional/nullable field facts");
+        }
+        ClassRegistrationSeeds.ClassRegistration endpointSeed =
+            parsed.classSeeds().registrationFor(ENDPOINT);
+        check(endpointSeed != null && endpointSeed.owner() == DefaultOwner.HOST_DEFAULTS,
+            "the seeds inverse keeps the declared class registration and its owner");
+        ClassRegistrationSeeds.ClassRegistration errorSeed =
+            parsed.classSeeds().registrationFor(BUILTIN_ERROR);
+        check(errorSeed != null && errorSeed.owner() == DefaultOwner.BUILTIN_DEFAULTS
+                && errorSeed.layout().equals(ClassLayout.BUILTIN_ERROR),
+            "the seeds inverse keeps the compiler-owned builtin Error registration");
+        List<LoweredModuleUnit> units = List.copyOf(lowered.modules().values());
+        checkEq(units.size(), parsed.modules().size(),
+            "every project module is carried");
+        for (int i = 0; i < Math.min(units.size(), parsed.modules().size()); i++) {
+            checkEq(RawUnit.fromTyped(units.get(i)), parsed.modules().get(i),
+                "module " + units.get(i).moduleId()
+                    + " round-trips every complete unit fact");
+            checkEq(units.get(i).bodyTable(), parsed.modules().get(i).bodyTable(),
+                "module " + units.get(i).moduleId() + " keeps both membership directions");
+            checkEq(units.get(i).classFactories(), parsed.modules().get(i).classFactories(),
+                "module " + units.get(i).moduleId() + " keeps its factory registry");
+            checkEq(units.get(i).jsonDefaults(), parsed.modules().get(i).jsonDefaults(),
+                "module " + units.get(i).moduleId() + " keeps its JSON-default rows");
+            checkEq(units.get(i).classBindingFacts(),
+                parsed.modules().get(i).classBindingFacts(),
+                "module " + units.get(i).moduleId()
+                    + " keeps its parameter/import facts");
+        }
+        checkEq(text, CanonicalJson.serializeText(
+                ContractSnapshotCanonicalizer.toJson(parsed)),
+            "the reparsed project re-serializes byte-identically");
+        Optional<CompilerDiagnostic> readmitted =
+            SemanticIrValidator.validateText(text, facts);
+        check(readmitted.isEmpty(),
+            "the project text re-admits through the text surface: "
+                + readmitted.map(CompilerDiagnostic::message).orElse(""));
+
+        // ----- the dump manifest and the ordered module documents -----
+        SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
+        SemanticIrDumper.ProjectDump repeated = SemanticIrDumper.dumpProject(lowered);
+        check(java.util.Arrays.equals(dump.manifest(), repeated.manifest()),
+            "repeated project manifests are byte-identical");
+        checkEq(dump.modules().size(), repeated.modules().size(),
+            "both repeats carry every module document");
+        for (int i = 0; i < Math.min(dump.modules().size(), repeated.modules().size()); i++) {
+            check(java.util.Arrays.equals(dump.modules().get(i).bytes(),
+                    repeated.modules().get(i).bytes()),
+                "the repeated dump of module " + dump.modules().get(i).moduleId()
+                    + " is byte-identical");
+        }
+        String manifestText = dump.manifestText();
+        check(manifestText.contains("\"formatVersion\":\"deal.semantic-ir/2\"")
+                && manifestText.contains("\"entryModule\":\"app\"")
+                && manifestText.contains("\"semanticProfile\":\"DEAL_V1_2_INT32\""),
+            "the manifest carries the project's formatVersion, entryModule and profile");
+        check(manifestText.contains("\"interfaceIndex\":{\"formatVersion\":"
+                + "\"deal.semantic-interface/1\"")
+                && manifestText.contains("\"classSeeds\":[{\"key\":"),
+            "the manifest carries the complete interface index and the class seeds");
+        check(manifestText.contains("\"modules\":[\"util\",\"app\"]"),
+            "the manifest modules field stays the ordered module-path list");
+        CanonicalJson.Obj manifest = objOf(dump.manifest());
+        for (String unitFact : List.of("bodyTable", "classLayouts", "functions", "ops",
+                "classFactories", "jsonDefaults", "classBindingFacts", "moduleInit",
+                "exportPlan", "functionBindings")) {
+            check(at(manifest, unitFact) == null,
+                "the manifest carries no unit fact (" + unitFact + ")");
+        }
+        ContractSnapshotCanonicalizer.ParsedProject reassembled =
+            SemanticIrDumper.reassembleProject(dump);
+        checkEq(parsed, reassembled,
+            "the manifest plus the ordered module documents reassemble to the exact "
+                + "project (modules and order, entry, profile, index, seeds and units)");
+        checkEq(lowered.semanticProfile().name(), reassembled.semanticProfile(),
+            "the reassembled project carries the typed project's profile");
+        checkEq(lowered.entryModule().path(), reassembled.entryModule(),
+            "the reassembled project carries the typed project's entry module");
+        checkEq(lowered.interfaceIndex(), reassembled.interfaceIndex(),
+            "the reassembled interface index is the typed project's index");
+        checkEq(lowered.classSeeds(), reassembled.classSeeds(),
+            "the reassembled class seeds are the typed project's seeds");
+        checkEq(List.of("util", "app"), reassembled.modulePaths(),
+            "the reassembled module order is the dependency order");
+        List<byte[]> documents = documentsOf(dump);
+        for (int i = 0; i < Math.min(units.size(), reassembled.modules().size()); i++) {
+            checkEq(RawUnit.fromTyped(units.get(i)), reassembled.modules().get(i),
+                "module " + units.get(i).moduleId()
+                    + " reassembles every complete unit fact");
+            checkEq(units.get(i).bodyTable(), reassembled.modules().get(i).bodyTable(),
+                "module " + units.get(i).moduleId()
+                    + " reassembles both membership directions");
+            checkEq(units.get(i).classFactories(),
+                reassembled.modules().get(i).classFactories(),
+                "module " + units.get(i).moduleId() + " reassembles its factory registry");
+            checkEq(units.get(i).jsonDefaults(),
+                reassembled.modules().get(i).jsonDefaults(),
+                "module " + units.get(i).moduleId()
+                    + " reassembles its JSON-default rows");
+            checkEq(units.get(i).classBindingFacts(),
+                reassembled.modules().get(i).classBindingFacts(),
+                "module " + units.get(i).moduleId()
+                    + " reassembles its parameter/import facts");
+        }
+
+        // The written dump (existing file naming and LF framing) reassembles too.
+        Path dumpRoot = Files.createTempDirectory("semantic-project-dump");
+        try {
+            SemanticIrDumper.dumpProjectTo(dumpRoot, lowered);
+            byte[] manifestFile = Files.readAllBytes(
+                dumpRoot.resolve(SemanticIrDumper.MANIFEST_FILE_NAME));
+            check(java.util.Arrays.equals(withLf(dump.manifest()), manifestFile),
+                "the written manifest is the canonical document plus exactly one LF");
+            List<byte[]> fileDocuments = new ArrayList<>();
+            for (ModuleId module : lowered.modules().keySet()) {
+                fileDocuments.add(Files.readAllBytes(dumpRoot
+                    .resolve(SemanticIrDumper.MODULES_DIR_NAME)
+                    .resolve(SemanticIrDumper.moduleFileName(module))));
+            }
+            checkEq(parsed, SemanticIrDumper.reassembleProject(manifestFile, fileDocuments),
+                "the written dump reassembles to the exact project");
+        } finally {
+            deleteRecursively(dumpRoot);
+        }
+
+        // ----- the rejected document sets start no admission -----
+        List<byte[]> missing = new ArrayList<>(documents);
+        missing.remove(0);
+        expectReassemblyFailure(dump.manifest(), missing,
+            "a missing module document rejects");
+        List<byte[]> extra = new ArrayList<>(documents);
+        extra.add(documents.get(0));
+        expectReassemblyFailure(dump.manifest(), extra,
+            "an extra module document rejects");
+        List<byte[]> duplicated = new ArrayList<>();
+        duplicated.add(documents.get(0));
+        duplicated.add(documents.get(0));
+        expectReassemblyFailure(dump.manifest(), duplicated,
+            "a duplicated module document rejects");
+        List<byte[]> misordered = new ArrayList<>(documents);
+        java.util.Collections.reverse(misordered);
+        expectReassemblyFailure(dump.manifest(), misordered,
+            "misordered module documents reject");
+        List<byte[]> foreign = new ArrayList<>(documents);
+        foreign.set(foreign.size() - 1, withModulePath(
+            documents.get(foreign.size() - 1), "foreign"));
+        expectReassemblyFailure(dump.manifest(), foreign,
+            "a document carrying a foreign module identity rejects");
+        expectReassemblyFailure(manifestWithModulePaths(dump.manifest(), "util", "utilx"),
+            documents, "a manifest module path that no document carries rejects");
+        expectReassemblyFailure(manifestWithModulePaths(dump.manifest(), "util", "util"),
+            documents, "a duplicate manifest module path rejects");
+        expectReassemblyFailure(manifestWithModulePaths(dump.manifest(), "util"),
+            documents, "a manifest module list shorter than the documents rejects");
+        expectReassemblyFailure(manifestWithoutModule(dump.manifest(), "app"), documents,
+            "a manifest without its entry module rejects");
+        expectReassemblyFailure(manifestWithDuplicatedIndexModule(dump.manifest()), documents,
+            "a duplicate interface index module identity rejects");
+        expectReassemblyFailure(manifestWithDuplicatedSeed(dump.manifest()), documents,
+            "a duplicate class-seed registration key rejects");
+        expectReassemblyFailure(manifestWithMutatedIndexModule(dump.manifest()), documents,
+            "a manifest index that no longer agrees with the documents rejects");
+        expectReassemblyFailure(manifestWithSeedOwner(dump.manifest(), "Endpoint", "LOCAL"),
+            documents,
+            "a manifest seed whose owner disagrees with its field owners rejects");
+        expectReassemblyFailure(manifestWithSeedOwner(dump.manifest(), "Endpoint",
+            "NOT_AN_OWNER"), documents,
+            "a manifest seed carrying an unknown owner rejects");
+        expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
+            "Endpoint", "path", "int"), documents,
+            "a manifest seed whose field descriptor contradicts the interface's "
+                + "declared type rejects");
+        expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
+            "Endpoint", "path", "?int"), documents,
+            "a manifest seed whose nullable field descriptor contradicts the "
+                + "interface's declared type rejects");
+        expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
+            "Endpoint", "port", "string"), documents,
+            "a manifest seed field descriptor mutation on a non-defaulted field "
+                + "rejects");
+        for (String truncated : List.of("(", "(int")) {
+            expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
+                "Endpoint", "path", truncated), documents,
+                "a truncated seed descriptor \"" + truncated + "\" rejects as a "
+                    + "transport decode failure, never an unchecked parser failure");
+        }
+        expectReassemblyFailure(manifestWithSeedKey(dump.manifest(), "Endpoint",
+            "EndpointElsewhere"), documents,
+            "a manifest seed whose registration key disagrees with its contained "
+                + "layout identity rejects");
+        expectReassemblyFailure(manifestWithoutSeed(dump.manifest(), "Endpoint"),
+            documents,
+            "a manifest that drops an exported declaration class's seed rejects");
+        expectReassemblyFailure(withNewEntry(dump.manifest(), "bodyTable",
+            CanonicalJson.obj()), documents,
+            "a manifest that gains a unit fact rejects");
+        expectReassemblyFailure(dump.manifest(), List.of(),
+            "an empty document list rejects");
+    }
+
+    /**
+     * The project-level seed/module join and the common admission of the
+     * transported class facts (ISSUE-0818 review): the class registration
+     * seeds and the module documents are records of one declaration/
+     * construction surface, so a manifest whose registration owner is
+     * internally consistent (the owner member and every field owner agree)
+     * yet contradicts the referring {@code CLASS_NEW}'s default owner is
+     * rejected at checked reassembly; the same disagreement and the seed
+     * field-descriptor disagreement reject on both project admission
+     * surfaces; a mutated carried interface index rejects through the
+     * carried index digest. Each rejected case yields no project record
+     * and, on admission, exactly the first responsible E6005.
+     */
+    private static void testProjectSeedModuleJoinAndAdmission() throws Exception {
+        System.out.println("-- the project seed/module join: the checked reassembly "
+            + "and the typed/text admission of the carried class facts --");
+        RealProject project = compileProject(HOST_CLASS_APP_SOURCE, Map.of(), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the host-class transport project lowers: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_2_INT32,
+                    invocation().capabilityRegistryHash());
+
+            // The unmutated project admits on both surfaces.
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the host-class project passes the typed project surface");
+            String text = SemanticIrValidator.toProjectText(lowered);
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                "the host-class project passes the text project surface");
+
+            // (1) Checked reassembly: the internally consistent seed-owner
+            // mutation (the registration owner and every field owner) passes
+            // the index/seed rule, yet the module document's referring
+            // CLASS_NEW still carries HOST_DEFAULTS, so the join rejects.
+            SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
+            List<byte[]> documents = documentsOf(dump);
+            check(ClassConstructionValidator.checkProjectSeedCoherence(
+                    lowered.interfaceIndex(), lowered.classSeeds()).isEmpty(),
+                "the unmutated index and seeds cohere under the index/seed rule");
+            expectReassemblyFailure(manifestWithSeedOwnerAndFieldOwners(dump.manifest(),
+                "Endpoint", "FFI_PLAN"), documents,
+                "a manifest whose seed registration owner and field owners are both "
+                    + "mutated to another declaration owner rejects against the "
+                    + "module document's referring CLASS_NEW");
+
+            // (2) Text admission: the same internally consistent mutation and
+            // the seed field-descriptor mutation are rejected by the class
+            // validation owner's rule, never silently admitted.
+            expectProjectAdmissionFailure(SemanticIrValidator.validateText(
+                    asText(manifestWithSeedOwnerAndFieldOwners(
+                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "FFI_PLAN")),
+                    facts),
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "defaultOwner",
+                "the text project surface rejects the seed owner that contradicts "
+                    + "the module's referring CLASS_NEW");
+            expectProjectAdmissionFailure(SemanticIrValidator.validateText(
+                    asText(manifestWithSeedFieldDescriptor(
+                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "path", "int")),
+                    facts),
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "path",
+                "the text project surface rejects the manifest seed descriptor that "
+                    + "contradicts the interface's declared field type");
+
+            // (3) Typed admission: a mutated seed set for the same project
+            // (the registration owner and every field owner) is rejected by
+            // the same rule over the module's referring class fact.
+            ExecutableLoweredProject ownerMutated = new ExecutableLoweredProject(
+                lowered.semanticProfile(), lowered.interfaceIndex(), lowered.modules(),
+                lowered.entryModule(),
+                withSeedOwner(lowered.classSeeds(), ENDPOINT, DefaultOwner.FFI_PLAN));
+            expectProjectAdmissionFailure(SemanticIrValidator.validate(ownerMutated, facts),
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "defaultOwner",
+                "the typed project surface rejects the seed owner that contradicts "
+                    + "the module's referring CLASS_NEW");
+
+            // (4) The carried interface index is consumed on both surfaces:
+            // a mutation changes its digest, so the carried digest no longer
+            // equals the invocation's supplied digest.
+            ProjectInterfaceIndex renamedIndex = withRenamedIndexModule(
+                lowered.interfaceIndex(), lowered.interfaceIndex().modules().keySet()
+                    .iterator().next(), "renamed.module");
+            check(!renamedIndex.interfaceIndexDigest()
+                    .equals(lowered.interfaceIndex().interfaceIndexDigest()),
+                "the renamed index carries another digest");
+            expectProjectAdmissionFailure(SemanticIrValidator.validateText(
+                    asText(manifestWithMutatedIndexModule(
+                        text.getBytes(StandardCharsets.UTF_8))),
+                    facts),
+                SemanticIrValidator.R_PROFILE, "interface index digest",
+                "the text project surface rejects a mutated carried interface index");
+            expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                    new ExecutableLoweredProject(lowered.semanticProfile(), renamedIndex,
+                        lowered.modules(), lowered.entryModule(), lowered.classSeeds()),
+                    facts),
+                SemanticIrValidator.R_PROFILE, "interface index digest",
+                "the typed project surface rejects a mutated carried interface index");
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * The project seed nominal class reference (ISSUE-0818 review): a seed
+     * field descriptor names a declaration class through its exact carried
+     * class identity. Moving only the external spelling of the reference
+     * (the dotted rendering stays identical) must not admit an unregistered
+     * class: the class validation owner resolves the reference through the
+     * carried registration at checked reassembly and on both project
+     * admission surfaces. A malformed seed descriptor text is a transport
+     * decode failure there as well, never an unchecked parser crash.
+     */
+    private static void testProjectSeedNominalClassReference() throws Exception {
+        System.out.println("-- the project seed nominal class reference: the exact "
+            + "carried identity, never the dotted rendering --");
+        RealProject project = compileProject(HOST_CLASS_REFERENCE_APP_SOURCE,
+            Map.of("src/cfg.d.deal", HOST_CLASS_REFERENCE_DECLARATION), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the class-reference transport project lowers: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_2_INT32,
+                    invocation().capabilityRegistryHash());
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the class-reference project passes the typed project surface");
+            String text = SemanticIrValidator.toProjectText(lowered);
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                "the class-reference project passes the text project surface");
+            check(lowered.classSeeds().registrationFor(HOST_HIDDEN) != null,
+                "the declaration class Hidden carries its registration seed");
+            ClassRegistrationSeeds.ClassRegistration endpoint =
+                lowered.classSeeds().registrationFor(ENDPOINT);
+            check(endpoint != null && endpoint.layout().fields().stream()
+                    .anyMatch(field -> new RuntimeDescriptor.Class(HOST_HIDDEN)
+                        .equals(field.descriptor())),
+                "the Endpoint registration carries the class-typed peer descriptor "
+                    + "'" + HOST_HIDDEN.text() + "'");
+
+            SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
+            List<byte[]> documents = documentsOf(dump);
+            checkEq(ContractSnapshotCanonicalizer.parseProject(
+                    objOf(text.getBytes(StandardCharsets.UTF_8))),
+                SemanticIrDumper.reassembleProject(dump.manifest(), documents),
+                "the class-reference manifest and its documents reassemble to the "
+                    + "exact project");
+
+            // The alternate external spelling renders the interface's declared
+            // dotted text but names no carried registration: identity is the
+            // exact carried registration, never the rendering.
+            String alternate = "$external/host.cfg/Hidden";
+            expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
+                "Endpoint", "peer", "@" + alternate), documents,
+                "a manifest seed field reference to an unregistered external "
+                    + "spelling of the declared class rejects");
+            expectProjectAdmissionFailure(SemanticIrValidator.validateText(
+                    asText(manifestWithSeedFieldDescriptor(
+                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "peer",
+                        "@" + alternate)),
+                    facts),
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "peer",
+                "the text project surface rejects the unregistered external spelling "
+                    + "of the declared class reference");
+            expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                    new ExecutableLoweredProject(lowered.semanticProfile(),
+                        lowered.interfaceIndex(), lowered.modules(),
+                        lowered.entryModule(), withSeedFieldDescriptor(
+                            lowered.classSeeds(), ENDPOINT, "peer",
+                            new RuntimeDescriptor.Class(new ClassId(alternate,
+                                "Hidden")))),
+                    facts),
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "peer",
+                "the typed project surface rejects the unregistered external spelling "
+                    + "of the declared class reference");
+
+            // A truncated function descriptor is a transport decode failure on
+            // the reassembly and text admission surfaces alike.
+            for (String truncated : List.of("(", "(int")) {
+                expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
+                    "Endpoint", "peer", truncated), documents,
+                    "a truncated seed descriptor \"" + truncated + "\" rejects at "
+                        + "reassembly as a transport decode failure");
+                try {
+                    SemanticIrValidator.validateText(asText(manifestWithSeedFieldDescriptor(
+                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "peer",
+                        truncated)), facts);
+                    fail("a truncated seed descriptor \"" + truncated + "\" is a "
+                        + "decode failure on the validation surface, never an "
+                        + "unchecked parser failure");
+                } catch (SemanticIrTextDecodeException expected) {
+                    passed++;
+                }
+            }
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /** Imported implementation classes require interfaces, not declaration seeds. */
+    private static void testSeedImplementationReferenceAndPrivateFieldRead() throws Exception {
+        RealProject imported = compileProject("""
+            import * as cfg from "host/cfg";
+            export function main(): null { return null; }
+            """, Map.of("src/util.deal", "export class Point { x: int = 0; }",
+                "src/cfg.d.deal", """
+                    import * as u from "util";
+                    export class Endpoint { point: u.Point; }
+                    """), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(imported, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "an imported implementation-class declaration field lowers: " + result.diagnostics());
+            if (result.project() != null) {
+                ExecutableLoweredProject project = result.project();
+                check(project.classSeeds().registrationFor(POINT) == null,
+                    "implementation Point does not acquire a declaration seed");
+                SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+                    imported.index().interfaceIndexDigest(), project.semanticProfile(),
+                    invocation().capabilityRegistryHash());
+                check(SemanticIrValidator.validate(project, facts).isEmpty(),
+                    "imported implementation-class field admits as typed project");
+                check(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(project),
+                    facts).isEmpty(), "imported implementation-class field admits as text");
+                SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(project);
+                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
+                        SemanticIrValidator.toProjectText(project).getBytes(StandardCharsets.UTF_8))),
+                    SemanticIrDumper.reassembleProject(dump.manifest(), documentsOf(dump)),
+                    "imported implementation-class declaration field reassembles exactly");
+            }
+        } finally { deleteRecursively(imported.root()); }
+
+        for (boolean optional : List.of(false, true)) {
+            RealProject hidden = compileProject("""
+                import * as cfg from "host/cfg";
+                export function main(): null {
+                  let h = cfg.get();
+                """ + (optional ? "let s: string | null = h.secret;" : "let s: string = h.secret;")
+                    + " return null; }", Map.of("src/cfg.d.deal",
+                        "class Hidden { secret" + (optional ? "?" : "")
+                            + ": string; } export function get(): Hidden;"), Map.of());
+            try {
+                SemanticLowerer.ProjectLoweringResult result = lower(hidden, invocation());
+                check(!result.hasErrors() && result.project() != null,
+                    "private declaration field-read fixture lowers: " + result.diagnostics());
+                if (result.project() == null) { continue; }
+                ExecutableLoweredProject project = result.project();
+                SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+                    hidden.index().interfaceIndexDigest(), project.semanticProfile(),
+                    invocation().capabilityRegistryHash());
+                check(SemanticIrValidator.validate(project, facts).isEmpty(),
+                    "unchanged private declaration read admits, optional=" + optional);
+                String text = SemanticIrValidator.toProjectText(project);
+                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                    "unchanged private declaration read text admits, optional=" + optional);
+                SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(project);
+                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
+                        text.getBytes(StandardCharsets.UTF_8))),
+                    SemanticIrDumper.reassembleProject(dump.manifest(), documentsOf(dump)),
+                    "unchanged private declaration read reassembles");
+                expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
+                    "Hidden", "secret", "int"), documentsOf(dump),
+                    "private seed/read disagreement rejects without CLASS_NEW");
+                expectProjectAdmissionFailure(SemanticIrValidator.validateText(asText(
+                    manifestWithSeedFieldDescriptor(text.getBytes(StandardCharsets.UTF_8),
+                        "Hidden", "secret", "int")), facts),
+                    ClassConstructionValidator.CONSTRUCTION_COHERENCE, "secret",
+                    "text admission rejects private seed/read disagreement");
+                expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                    new ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
+                        project.modules(), project.entryModule(), withSeedFieldDescriptor(
+                            project.classSeeds(), HOST_HIDDEN, "secret", RuntimeDescriptor.Int.INSTANCE)), facts),
+                    ClassConstructionValidator.CONSTRUCTION_COHERENCE, "secret",
+                    "typed admission rejects private seed/read disagreement");
+            } finally { deleteRecursively(hidden.root()); }
+        }
+    }
+
+    /**
+     * The class registration seeds with one field's descriptor replaced: the
+     * mutated registration stays representable (one owner per class), so the
+     * descriptor's exact declared-type rendering is the only disagreement.
+     */
+    private static ClassRegistrationSeeds withSeedFieldDescriptor(
+            ClassRegistrationSeeds seeds, ClassId classId, String fieldName,
+            RuntimeDescriptor descriptor) {
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+            new LinkedHashMap<>(seeds.registrations());
+        ClassRegistrationSeeds.ClassRegistration registration =
+            registrations.get(classId);
+        List<ClassLayout.FieldLayout> fields = new ArrayList<>();
+        for (ClassLayout.FieldLayout field : registration.layout().fields()) {
+            fields.add(field.name().equals(fieldName)
+                ? new ClassLayout.FieldLayout(field.name(), descriptor, field.required(),
+                    field.defaultOwner())
+                : field);
+        }
+        registrations.put(classId, new ClassRegistrationSeeds.ClassRegistration(
+            new ClassLayout(registration.layout().classId(), fields),
+            registration.owner()));
+        return new ClassRegistrationSeeds(registrations);
+    }
+
+    /** The canonical document's UTF-8 text (the admission surfaces consume text). */
+    private static String asText(byte[] canonicalJson) {
+        return new String(canonicalJson, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Asserts that one project admission rejects with exactly the expected
+     * first E6005 rule and detail: a rejected project exposes no project
+     * record and starts no admission of a companion.
+     */
+    private static void expectProjectAdmissionFailure(
+            Optional<CompilerDiagnostic> failure, String rule, String contains,
+            String message) {
+        check(failure.isPresent(), message + " (the admission returned a project)");
+        if (failure.isEmpty()) {
+            return;
+        }
+        CompilerDiagnostic diagnostic = failure.get();
+        check("E6005".equals(diagnostic.code())
+                && diagnostic.message().contains(rule)
+                && diagnostic.message().contains(contains),
+            message + ": expected E6005 " + rule + " naming \"" + contains
+                + "\"; got " + diagnostic.message());
+    }
+
+    /**
+     * The class registration seeds with one registration's owner member and
+     * every field owner replaced: a registration fact stays one owner per
+     * class, so the mutation is internally consistent and reaches the
+     * seed/module join.
+     */
+    private static ClassRegistrationSeeds withSeedOwner(ClassRegistrationSeeds seeds,
+            ClassId classId, DefaultOwner owner) {
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+            new LinkedHashMap<>(seeds.registrations());
+        ClassRegistrationSeeds.ClassRegistration registration =
+            registrations.get(classId);
+        List<ClassLayout.FieldLayout> fields = new ArrayList<>();
+        for (ClassLayout.FieldLayout field : registration.layout().fields()) {
+            fields.add(new ClassLayout.FieldLayout(field.name(), field.descriptor(),
+                field.required(), owner));
+        }
+        registrations.put(classId, new ClassRegistrationSeeds.ClassRegistration(
+            new ClassLayout(registration.layout().classId(), fields), owner));
+        return new ClassRegistrationSeeds(registrations);
+    }
+
+    /** The interface index with one module entry's identity renamed. */
+    private static ProjectInterfaceIndex withRenamedIndexModule(
+            ProjectInterfaceIndex index, ModuleId moduleId, String newPath) {
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                : index.modules().entrySet()) {
+            if (entry.getKey().equals(moduleId)) {
+                ExternalModuleInterface original = entry.getValue();
+                ModuleId renamed = new ModuleId(newPath);
+                modules.put(renamed, new ExternalModuleInterface(renamed,
+                    original.kind(), original.imports(), original.exports(),
+                    original.classes(), original.initialization()));
+            } else {
+                modules.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+    }
+
+    // ---- manifest/document mutation helpers (checked reassembly negatives) ----
+
+    private static CanonicalJson.Obj objOf(byte[] canonicalJson) {
+        return (CanonicalJson.Obj) CanonicalJson.parse(canonicalJson);
+    }
+
+    private static CanonicalJson.Value at(CanonicalJson.Obj obj, String key) {
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                return entry.value();
+            }
+        }
+        return null;
+    }
+
+    private static CanonicalJson.Obj withEntry(CanonicalJson.Obj obj, String key,
+            CanonicalJson.Value value) {
+        List<CanonicalJson.Entry> entries = new ArrayList<>();
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            entries.add(entry.key().equals(key) ? CanonicalJson.e(key, value) : entry);
+        }
+        return CanonicalJson.obj(entries);
+    }
+
+    /** The ordered module documents of a dump, as the reassembly consumes them. */
+    private static List<byte[]> documentsOf(SemanticIrDumper.ProjectDump dump) {
+        List<byte[]> documents = new ArrayList<>();
+        for (SemanticIrDumper.ModuleDump module : dump.modules()) {
+            documents.add(module.bytes());
+        }
+        return documents;
+    }
+
+    /** One module document whose carried module identity is renamed. */
+    private static byte[] withModulePath(byte[] document, String modulePath) {
+        return CanonicalJson.serializeBytes(withEntry(objOf(document), "moduleId",
+            CanonicalJson.str(modulePath)));
+    }
+
+    /** The manifest with its ordered module-path list replaced. */
+    private static byte[] manifestWithModulePaths(byte[] manifest, String... paths) {
+        CanonicalJson.Obj root = objOf(manifest);
+        List<CanonicalJson.Value> items = new ArrayList<>();
+        for (String path : paths) {
+            items.add(CanonicalJson.str(path));
+        }
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "modules", CanonicalJson.arr(items)));
+    }
+
+    /** The manifest with the first index module entry repeated (a duplicate identity). */
+    private static byte[] manifestWithDuplicatedIndexModule(byte[] manifest) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Obj index = (CanonicalJson.Obj) at(root, "interfaceIndex");
+        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(index, "modules");
+        List<CanonicalJson.Value> entries = new ArrayList<>(modules.items());
+        entries.add(entries.get(0));
+        return CanonicalJson.serializeBytes(withEntry(root, "interfaceIndex",
+            withEntry(index, "modules", CanonicalJson.arr(entries))));
+    }
+
+    /** The manifest with its first class-seed row repeated (a duplicate registration key). */
+    private static byte[] manifestWithDuplicatedSeed(byte[] manifest) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
+        List<CanonicalJson.Value> rows = new ArrayList<>(seeds.items());
+        rows.add(rows.get(0));
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+    }
+
+    /** The manifest with one module path removed from its ordered list. */
+    private static byte[] manifestWithoutModule(byte[] manifest, String modulePath) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(root, "modules");
+        List<CanonicalJson.Value> items = new ArrayList<>();
+        for (CanonicalJson.Value item : modules.items()) {
+            if (!((CanonicalJson.Str) item).value().equals(modulePath)) {
+                items.add(item);
+            }
+        }
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "modules", CanonicalJson.arr(items)));
+    }
+
+    /** The manifest with the first index entry's module identity renamed. */
+    private static byte[] manifestWithMutatedIndexModule(byte[] manifest) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Obj index = (CanonicalJson.Obj) at(root, "interfaceIndex");
+        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(index, "modules");
+        List<CanonicalJson.Value> entries = new ArrayList<>(modules.items());
+        CanonicalJson.Obj first = (CanonicalJson.Obj) entries.get(0);
+        CanonicalJson.Obj moduleId = (CanonicalJson.Obj) at(first, "moduleId");
+        entries.set(0, withEntry(first, "moduleId", withEntry(moduleId, "path",
+            CanonicalJson.str(((CanonicalJson.Str) at(moduleId, "path")).value() + "x"))));
+        return CanonicalJson.serializeBytes(withEntry(root, "interfaceIndex",
+            withEntry(index, "modules", CanonicalJson.arr(entries))));
+    }
+
+    /** The manifest with the named class seed's owner member replaced. */
+    private static byte[] manifestWithSeedOwner(byte[] manifest, String className,
+            String owner) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (CanonicalJson.Value item : seeds.items()) {
+            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
+            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
+            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
+                row = withEntry(row, "owner", CanonicalJson.str(owner));
+            }
+            rows.add(row);
+        }
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+    }
+
+    /**
+     * The manifest/project with the named class seed's registration owner
+     * member and every field owner replaced: the mutated registration stays
+     * one owner per class (a representable registration), so the seed/index
+     * rule cannot see the disagreement and only the module join can.
+     */
+    private static byte[] manifestWithSeedOwnerAndFieldOwners(byte[] manifest,
+            String className, String owner) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (CanonicalJson.Value item : seeds.items()) {
+            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
+            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
+            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
+                row = withEntry(row, "owner", CanonicalJson.str(owner));
+                CanonicalJson.Obj layout = (CanonicalJson.Obj) at(row, "layout");
+                CanonicalJson.Arr fields = (CanonicalJson.Arr) at(layout, "fields");
+                List<CanonicalJson.Value> updated = new ArrayList<>();
+                for (CanonicalJson.Value fieldItem : fields.items()) {
+                    updated.add(withEntry((CanonicalJson.Obj) fieldItem, "defaultOwner",
+                        CanonicalJson.str(owner)));
+                }
+                row = withEntry(row, "layout", withEntry(layout, "fields",
+                    CanonicalJson.arr(updated)));
+            }
+            rows.add(row);
+        }
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+    }
+
+    /** The manifest with one seed field's canonical descriptor text replaced. */
+    private static byte[] manifestWithSeedFieldDescriptor(byte[] manifest,
+            String className, String fieldName, String descriptor) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (CanonicalJson.Value item : seeds.items()) {
+            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
+            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
+            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
+                CanonicalJson.Obj layout = (CanonicalJson.Obj) at(row, "layout");
+                CanonicalJson.Arr fields = (CanonicalJson.Arr) at(layout, "fields");
+                List<CanonicalJson.Value> updated = new ArrayList<>();
+                for (CanonicalJson.Value fieldItem : fields.items()) {
+                    CanonicalJson.Obj field = (CanonicalJson.Obj) fieldItem;
+                    if (fieldName.equals(
+                            ((CanonicalJson.Str) at(field, "name")).value())) {
+                        field = withEntry(field, "descriptor",
+                            CanonicalJson.str(descriptor));
+                    }
+                    updated.add(field);
+                }
+                row = withEntry(row, "layout", withEntry(layout, "fields",
+                    CanonicalJson.arr(updated)));
+            }
+            rows.add(row);
+        }
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+    }
+
+    /** The manifest with one seed's registration key renamed. */
+    private static byte[] manifestWithSeedKey(byte[] manifest, String className,
+            String newName) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (CanonicalJson.Value item : seeds.items()) {
+            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
+            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
+            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
+                row = withEntry(row, "key",
+                    withEntry(key, "name", CanonicalJson.str(newName)));
+            }
+            rows.add(row);
+        }
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+    }
+
+    /** The manifest with the named class's registration removed. */
+    private static byte[] manifestWithoutSeed(byte[] manifest, String className) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (CanonicalJson.Value item : seeds.items()) {
+            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
+            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
+            if (!className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
+                rows.add(row);
+            }
+        }
+        return CanonicalJson.serializeBytes(
+            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+    }
+
+    /** The canonical document with one unknown framing member added. */
+    private static byte[] withNewEntry(byte[] canonicalJson, String key,
+            CanonicalJson.Value value) {
+        CanonicalJson.Obj obj = objOf(canonicalJson);
+        List<CanonicalJson.Entry> entries = new ArrayList<>(obj.entries());
+        entries.add(CanonicalJson.e(key, value));
+        return CanonicalJson.serializeBytes(CanonicalJson.obj(entries));
+    }
+
+    /** The canonical document terminated by exactly one LF (the file framing). */
+    private static byte[] withLf(byte[] bytes) {
+        byte[] result = new byte[bytes.length + 1];
+        System.arraycopy(bytes, 0, result, 0, bytes.length);
+        result[bytes.length] = '\n';
+        return result;
+    }
+
+    /**
+     * Asserts that the reassembly rejects a manifest/document pair as a
+     * transport decode failure: the framing precedes admission, so a
+     * rejected document set yields no project record and starts no
+     * admission.
+     */
+    private static void expectReassemblyFailure(byte[] manifest, List<byte[]> documents,
+            String message) {
+        try {
+            SemanticIrDumper.reassembleProject(manifest, documents);
+            fail(message + " (the reassembly returned a project)");
+        } catch (SemanticIrTextDecodeException expected) {
+            passed++;
+        } catch (RuntimeException other) {
+            fail(message + " (expected SemanticIrTextDecodeException, got "
+                + other.getClass().getSimpleName() + ": " + other.getMessage() + ")");
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Project Lowering Entry Tests (ISSUE-0634) ===\n");
         RealProject project = null;
@@ -2383,6 +3348,7 @@ public class ProjectLoweringTest {
             testUnitProjectCompanionOwnership();
             testNamespaceRegistrationFailureOrigins(baseline);
             testComposedChainOverUnifiedUnits(baseline);
+            testCompleteProjectTransportAndDumpReassembly(baseline);
             testInProjectClassArm();
             importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,
                 Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());
@@ -2393,6 +3359,9 @@ public class ProjectLoweringTest {
             testDeclarationClassConstruction();
             testBuiltinErrorConstruction();
             testExternCDeclarationClassConstruction();
+            testProjectSeedModuleJoinAndAdmission();
+            testProjectSeedNominalClassReference();
+            testSeedImplementationReferenceAndPrivateFieldRead();
             testCorruptedUnitSeed(baseline);
             testMissingModuleSeed(baseline);
             testNonV12InvocationSeed(baseline);

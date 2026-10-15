@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, async-await
 
-import * as host from "host/async_ok"
+import * as host from "host/async_ok";
 
 export async function test_host_async_ok(): string {
   let fetched: string = await host.fetchValue();

@@ -8,6 +8,7 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.CompilerDirective;
 import deal.lexer.DirectiveName;
+import deal.lexer.TemplateScanner;
 import deal.lexer.Token;
 import deal.semantic.ir.SemanticProfile;
 import deal.source.ScalarSourceCursor;
@@ -45,7 +46,6 @@ public final class Parser {
     private static final int PREC_RELATIONAL    = 4;
     private static final int PREC_ADDITIVE      = 5;
     private static final int PREC_MULTIPLICATIVE = 6;
-    private static final int PREC_EXPONENT      = 7;
 
     // -----------------------------------------------------------------------
     // Token stream
@@ -288,11 +288,11 @@ public final class Parser {
             return new ExportDeclaration(exp.span(), newCd);
         }
         // Export-wrapped function or a non-exported class/function/async
-        // function: jsonable → E1043 warning with no metadata applied;
+        // function: jsonable → E1043 error with no metadata applied;
         // C markers deferred to the finalize sweep (never recorded).
         for (CompilerDirective e : anchored) {
             if (e.name() == DirectiveName.JSONABLE) {
-                warnJsonable(e);
+                errorJsonable(e);
                 claimedEvents.add(e);
             } else if (e.name() == DirectiveName.C_STRUCT
                     || e.name() == DirectiveName.C_POINTER) {
@@ -306,7 +306,7 @@ public final class Parser {
 
     /**
      * Finalize step 2 (D4): sweep all unclaimed anchored events and
-     * unanchored events in event order — jsonable → E1043 warning;
+     * unanchored events in event order — jsonable → E1043 error;
      * C marker → E7002 under effective extern-C (at the declaration node
      * span when one exists, else the directive range), otherwise E1046
      * at the directive range.
@@ -322,7 +322,7 @@ public final class Parser {
                 node = statementByStartIndex.get(e.declarationAnchorTokenIndex());
             }
             if (e.name() == DirectiveName.JSONABLE) {
-                warnJsonable(e);
+                errorJsonable(e);
             } else if (e.name() == DirectiveName.C_STRUCT
                     || e.name() == DirectiveName.C_POINTER) {
                 cMarkerPlacementError(e, node, externCEffective);
@@ -386,13 +386,13 @@ public final class Parser {
     }
 
     /**
-     * The E1043 warning-and-ignore (D4): warning severity, the pinned
-     * message, no metadata, compilation continues; anchored at the
-     * complete directive comment range (parent D6).
+     * The E1043 incompatible-attachment rejection (D4): error severity,
+     * the pinned message, no metadata, compilation continues; anchored at
+     * the complete directive comment range (parent D6).
      */
-    private void warnJsonable(CompilerDirective e) {
-        diagnostics.add(CompilerDiagnostic.warning(DiagnosticCode.E1043,
-            "@jsonable directive is only valid on 'export class', ignoring",
+    private void errorJsonable(CompilerDirective e) {
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1043,
+            "@jsonable directive is only valid on 'export class'",
             e.sourceRange()));
     }
 
@@ -540,12 +540,15 @@ public final class Parser {
 
         boolean nullable = type instanceof NullableType;
 
+        int diagCountBefore = diagnostics.size();
         Optional<ExpressionNode> defaultExpr = Optional.empty();
         if (match(TokenType.EQ_SIGN)) {
             ExpressionNode expr = parseExpression();
             if (expr != null) defaultExpr = Optional.of(expr);
         }
         optionalSemicolon();
+        // v1.3 ClassField requires its ';' (Syntactic grammar).
+        checkTerminator(diagCountBefore);
 
         Span sp = spanBetween(nameToken, previousOrCurrent());
         return new ClassField(sp, nameToken.lexeme(), optional, nullable, type, defaultExpr);
@@ -1078,41 +1081,39 @@ public final class Parser {
             return new NamedType(spanOf(t), "null");
         }
 
-        // Builtin type names (identifiers): boolean, int, number, string, table, coroutine, Error
-        // Also the start of qualified types like ModuleAlias.ClassName
+        // Builtin type names (identifiers): boolean, int, number, string, table, bytes, Error
+        // Also a single-qualifier type like ModuleAlias.ClassName
         if (tt == TokenType.IDENTIFIER) {
             Token first = advance();
 
-            // Check for qualified type: A.B or A.B.C etc.
+            // Qualified type: exactly one '.' level (v1.3 Type grammar:
+            // PrimaryType ::= Identifier | Identifier '.' Identifier).
             if (peek().type() == TokenType.DOT) {
-                java.util.List<Token> nameTokens = new java.util.ArrayList<>();
-                nameTokens.add(first);
-
-                while (peek().type() == TokenType.DOT) {
-                    advance(); // DOT
-                    if (peek().type() != TokenType.IDENTIFIER) {
-                        error(DiagnosticCode.E1032, "Expected type name after '.'", peek());
-                        break;
-                    }
-                    Token nameToken = advance();
-                    nameTokens.add(nameToken);
+                Token dot = advance();
+                Token nameToken = expect(TokenType.IDENTIFIER,
+                    DiagnosticCode.E1032, "Expected type name after '.'");
+                if (nameToken == null) {
+                    return new NamedType(spanOf(first), first.lexeme());
                 }
-
-                // Build module-qualified type: last token is the type name,
-                // all preceding tokens joined by dots form the module path.
-                // For A.B: moduleName = "A", typeName = "B"
-                // For A.B.C: moduleName = "A.B", typeName = "C"
-                if (nameTokens.size() >= 2) {
-                    StringBuilder modulePart = new StringBuilder(nameTokens.get(0).lexeme());
-                    for (int i = 1; i < nameTokens.size() - 1; i++) {
-                        modulePart.append('.').append(nameTokens.get(i).lexeme());
+                // Overqualification (A.B.C) is outside the v1.3 type
+                // grammar: reject at the second '.' and consume the
+                // remaining qualifier segments for recovery.
+                if (peek().type() == TokenType.DOT) {
+                    error(DiagnosticCode.E1058,
+                        "Type names admit at most one module or class qualifier"
+                            + " component",
+                        peek());
+                    while (peek().type() == TokenType.DOT) {
+                        advance();
+                        if (peek().type() == TokenType.IDENTIFIER) {
+                            advance();
+                        } else {
+                            break;
+                        }
                     }
-                    String typePart = nameTokens.get(nameTokens.size() - 1).lexeme();
-                    Span qspan = spanBetween(nameTokens.get(0),
-                            nameTokens.get(nameTokens.size() - 1));
-                    return new QualifiedType(qspan, modulePart.toString(), typePart);
                 }
-                // Fallback: single identifier with trailing dots (should not happen)
+                Span qspan = spanBetween(first, nameToken);
+                return new QualifiedType(qspan, first.lexeme(), nameToken.lexeme());
             }
 
             return new NamedType(spanOf(first), first.lexeme());
@@ -1246,7 +1247,7 @@ public final class Parser {
             if (prec < minPrec) break;
 
             advance();
-            int nextMinPrec = isRightAssocBinary(prec) ? prec : prec + 1;
+            int nextMinPrec = prec + 1;
             ExpressionNode right = parseBinary(nextMinPrec);
             if (right == null) return left;
 
@@ -1481,355 +1482,123 @@ public final class Parser {
         String raw = token.lexeme();
         List<ExpressionNode> parts = splitTemplateLiteral(raw, token.line(),
             token.column(), token.startScalarOffset(), templatePrecedingCount);
-        return new TemplateLiteralExpr(spanOf(token), parts);
+        return new TemplateLiteralExpr(templateLiteralSpan(token, raw), parts);
+    }
+
+    /**
+     * The span of the complete template literal: from the opening backtick
+     * through the closing backtick when the token consumed one, else through
+     * the last raw content scalar. Line and column follow the source
+     * cursor's CRLF rule, because an interpolation admits whitespace line
+     * terminators even though TemplateText does not.
+     */
+    private Span templateLiteralSpan(Token token, String raw) {
+        int contentScalars = ScalarSourceCursor.scalarCount(raw);
+        boolean terminated = token.scalarLength() == contentScalars + 2;
+        if (terminated) {
+            int[] closingBacktick = TemplateScalarMap.positionAt(raw,
+                token.line(), token.column(), contentScalars);
+            return new Span(file, token.line(), token.column(),
+                closingBacktick[0], closingBacktick[1],
+                token.startScalarOffset(), token.endScalarOffset());
+        }
+        if (raw.isEmpty()) {
+            return new Span(file, token.line(), token.column(),
+                token.line(), token.column(), token.startScalarOffset(),
+                token.startScalarOffset());
+        }
+        int[] lastContent = TemplateScalarMap.positionAt(raw, token.line(),
+            token.column(), contentScalars - 1);
+        int endOffset = token.hasScalarOffsets()
+            ? token.startScalarOffset() + 1 + contentScalars
+            : Token.UNKNOWN_OFFSET;
+        return new Span(file, token.line(), token.column(),
+            lastContent[0], lastContent[1], token.startScalarOffset(),
+            endOffset);
     }
 
     /**
      * Splits raw template literal content into alternating string-literal
-     * and expression parts.  Even-indexed parts are LiteralExpr(StringLiteral);
+     * and expression parts. Even-indexed parts are LiteralExpr(StringLiteral);
      * odd-indexed parts are interpolated expressions.
      *
-     * <p>Implements escape processing (D11), brace-depth scan (D14),
-     * sub-lexer re-entry, and the D5 template scalar-map rebasing.</p>
+     * <p>{@link TemplateScanner} owns the TemplateText/interpolation split
+     * (v1.3 lexical grammar): TemplateText is verbatim (no escape
+     * processing; a backslash and a bare {@code '}'} are ordinary text),
+     * while an interpolation admits expression, comment, quoted-string and
+     * nested template-literal rules. Each interpolation is sub-lexed
+     * verbatim through {@link TemplateScalarMap}, which rebases every
+     * sub-lexed coordinate and merged directive event back onto the
+     * original source (D10/D11).</p>
      */
     private List<ExpressionNode> splitTemplateLiteral(String raw, int baseLine, int baseCol,
                                                       int templateTokenStartScalarOffset,
                                                       int templatePrecedingCount) {
         List<ExpressionNode> parts = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int pos = 0;
-        // Track where the current string accumulation started in the raw content.
-        // The raw content begins at source column baseCol + 1 (after the opening backtick).
-        int stringStart = 0;
+        TemplateScanner.Scan scan = TemplateScanner.scan(raw, 0);
 
-        while (pos < raw.length()) {
-            char c = raw.charAt(pos);
-
-            // 1. Backslash escape
-            if (c == '\\') {
-                pos++; // skip backslash
-                if (pos >= raw.length()) break;
-                char esc = raw.charAt(pos);
-                switch (esc) {
-                    case 'n'  -> current.append('\n');
-                    case 't'  -> current.append('\t');
-                    case '\\' -> current.append('\\');
-                    case '"'  -> current.append('"');
-                    case '\'' -> current.append('\'');
-                    case '`'  -> current.append('`');
-                    case '$'  -> current.append('$');
-                    case '\r', '\n' -> { /* handled by lexer — should not occur here */ }
-                    default -> {
-                        // D5: the E1042 pseudo-token is raw-positioned —
-                        // column and scalar offset derive from the raw scalar
-                        // count of the prefix; the scalar length is the raw
-                        // run it marks (the escape character, one scalar).
-                        error(DiagnosticCode.E1042,
-                            "Invalid escape sequence in template literal: '\\" + esc + "'",
-                            rawPositionedToken(raw, baseLine, baseCol,
-                                templateTokenStartScalarOffset, pos, 1));
-                    }
-                }
-                pos++;
+        int textStart = 0;
+        for (TemplateScanner.Segment seg : scan.segments()) {
+            if (!seg.interpolation()) {
+                // Text runs are emitted from the gaps around interpolations.
                 continue;
             }
-
-            // 2. Interpolation start: ${
-            if (c == '$' && pos + 1 < raw.length() && raw.charAt(pos + 1) == '{') {
-                // Flush accumulated string part
-                flushStringPart(parts, current.toString(), baseLine, baseCol + 1 + stringStart);
-                current.setLength(0);
-
-                pos += 2; // skip '$' and '{'
-                int exprStart = pos;
-
-                // D14: Find matching '}' using string/template/escape-aware scan
-                int exprEnd = findMatchingBrace(raw, pos, baseLine, baseCol,
-                    templateTokenStartScalarOffset);
-                if (exprEnd < 0) {
-                    // Unterminated — error already emitted by findMatchingBrace
-                    // Use rest of raw as expression for recovery
-                    exprEnd = raw.length();
-                }
-
-                // D5: decode the expression and build the scalar map in one
-                // pass (an escape's decoded scalar maps to the escape's first
-                // raw scalar).
-                DecodedTemplateExpr decoded = unescapeTemplateExpression(raw, exprStart, exprEnd);
-                TemplateScalarMap map = new TemplateScalarMap(baseLine, baseCol,
-                    templateTokenStartScalarOffset,
-                    ScalarSourceCursor.scalarCount(raw, 0, exprStart),
-                    ScalarSourceCursor.scalarCount(raw, 0, exprEnd),
-                    decoded.rawStarts(), decoded.rawEnds());
-
-                // The rebased sub-parser EOF token sits at the raw position of
-                // the first scalar after the expression: the closing '}' when
-                // the interpolation is terminated, else the end of the raw
-                // template content (the same recovery position
-                // findMatchingBrace already selects).
-                ExpressionNode expr = parseEmbeddedExpression(decoded.source(), map,
-                    ScalarSourceCursor.scalarCount(raw, 0, exprEnd),
-                    templatePrecedingCount);
-                parts.add(expr);
-
-                pos = exprEnd;
-                if (pos < raw.length() && raw.charAt(pos) == '}') {
-                    pos++; // skip '}'
-                }
-                // Next string part starts after the closing brace
-                stringStart = pos;
-                continue;
-            }
-
-            // 3. Unescaped '}' without matching '${'
-            if (c == '}') {
+            int exprUtf16Start = Math.min(raw.length(), seg.start() + 2);
+            int exprUtf16End = Math.min(raw.length(), seg.end());
+            parts.add(textPart(raw, baseLine, baseCol,
+                templateTokenStartScalarOffset, textStart, seg.start()));
+            int exprStartRaw = ScalarSourceCursor.scalarCount(raw, 0,
+                exprUtf16Start);
+            int exprEndRaw = ScalarSourceCursor.scalarCount(raw, 0,
+                exprUtf16End);
+            if (seg.unterminated()) {
                 error(DiagnosticCode.E1042,
-                    "Unexpected '}' in template literal",
+                    "Unterminated '${' in template literal",
                     rawPositionedToken(raw, baseLine, baseCol,
-                        templateTokenStartScalarOffset, pos, 1));
-                pos++;
-                continue;
+                        templateTokenStartScalarOffset, exprUtf16Start, 2));
             }
-
-            // 4. Bare character
-            current.append(c);
-            pos++;
+            TemplateScalarMap map = new TemplateScalarMap(raw, baseLine, baseCol,
+                templateTokenStartScalarOffset, exprStartRaw, exprEndRaw);
+            parts.add(parseEmbeddedExpression(
+                raw.substring(exprUtf16Start, exprUtf16End), map, exprEndRaw,
+                templatePrecedingCount));
+            textStart = Math.min(raw.length(), seg.end() + 1);
         }
-
-        // Flush remaining accumulator
-        flushStringPart(parts, current.toString(), baseLine, baseCol + 1 + stringStart);
-
+        parts.add(textPart(raw, baseLine, baseCol, templateTokenStartScalarOffset,
+            textStart, raw.length()));
         return parts;
     }
 
     /**
-     * D14: Escape-aware, string-literal-aware, nested-template-literal-aware
-     * brace-depth scan. Returns the index of the matching '}' or -1 if unterminated.
+     * One verbatim TemplateText part: the raw slice with no escape
+     * processing, positioned by its exact raw scalar range.
      */
-    private int findMatchingBrace(String raw, int startPos, int baseLine, int baseCol,
-                                  int templateTokenStartScalarOffset) {
-        int depth = 1;
-        int scanPos = startPos;
-
-        while (scanPos < raw.length() && depth > 0) {
-            char c = raw.charAt(scanPos);
-
-            // Top-level backslash: skip escape sequence entirely
-            if (c == '\\') {
-                scanPos += 2;
-                continue;
-            }
-
-            // String literal: skip to matching closing quote
-            if (c == '"' || c == '\'') {
-                char quote = c;
-                scanPos++;
-                while (scanPos < raw.length()) {
-                    char sc = raw.charAt(scanPos);
-                    if (sc == '\\') {
-                        scanPos += 2; // skip escape sequence
-                    } else if (sc == quote) {
-                        scanPos++;
-                        break; // closing quote found
-                    } else {
-                        scanPos++;
-                    }
-                }
-                continue;
-            }
-
-            // Nested template literal: skip to matching backtick
-            if (c == '`') {
-                scanPos++;
-                while (scanPos < raw.length()) {
-                    char tc = raw.charAt(scanPos);
-                    if (tc == '\\') {
-                        scanPos += 2; // skip escape sequence
-                    } else if (tc == '`') {
-                        scanPos++;
-                        break; // closing backtick found
-                    } else {
-                        scanPos++;
-                    }
-                }
-                continue;
-            }
-
-            if (c == '{') {
-                depth++;
-            } else if (c == '}') {
-                depth--;
-                if (depth == 0) {
-                    return scanPos; // matching '}' found
-                }
-            }
-            scanPos++;
+    private LiteralExpr textPart(String raw, int baseLine, int baseCol,
+                                 int templateTokenStartScalarOffset,
+                                 int utf16Start, int utf16End) {
+        String value = raw.substring(utf16Start, utf16End);
+        int startRaw = ScalarSourceCursor.scalarCount(raw, 0, utf16Start);
+        int endRaw = ScalarSourceCursor.scalarCount(raw, 0, utf16End);
+        int[] startPosition = TemplateScalarMap.positionAt(raw, baseLine, baseCol,
+            startRaw);
+        int startOffset = templateTokenStartScalarOffset >= 0
+            ? templateTokenStartScalarOffset + 1 + startRaw
+            : Token.UNKNOWN_OFFSET;
+        int endLine = startPosition[0];
+        int endColumn = startPosition[1];
+        int endOffset = startOffset;
+        if (utf16End > utf16Start) {
+            int[] endPosition = TemplateScalarMap.positionAt(raw, baseLine,
+                baseCol, endRaw - 1);
+            endLine = endPosition[0];
+            endColumn = endPosition[1];
+            endOffset = templateTokenStartScalarOffset >= 0
+                ? templateTokenStartScalarOffset + 1 + endRaw
+                : Token.UNKNOWN_OFFSET;
         }
-
-        // Unterminated — the E1042 pseudo-token is raw-positioned (D5): it
-        // marks the two raw scalars at startPos (the expression start, the
-        // historical recovery anchor) with exact scalar offsets.
-        error(DiagnosticCode.E1042,
-            "Unterminated '${' in template literal",
-            rawPositionedToken(raw, baseLine, baseCol,
-                templateTokenStartScalarOffset, startPos, 2));
-        return -1;
-    }
-
-    /**
-     * Unescapes template-literal escape sequences in the expression substring
-     * before passing it to the sub-lexer, and produces the per-decoded-scalar
-     * raw mapping alongside (D5).  This converts {@code \\`} to {@code `},
-     * {@code \\$} to {@code $}, {@code \\\\} to {@code \\}, etc., respecting string
-     * literal and nested template literal boundaries so that escapes inside strings
-     * are preserved verbatim.
-     *
-     * <p>The raw mapping is indexed by decoded Unicode scalar: entry {@code i}
-     * covers the {@code i}-th decoded scalar of the returned source and names
-     * the raw scalar range {@code [rawStarts[i], rawEnds[i])} (indices into the
-     * template's raw content) that produced it. A recognized escape's single
-     * decoded scalar maps to its first raw scalar (the backslash), so the raw
-     * run is two scalars; every verbatim copy maps one-to-one.</p>
-     */
-    private DecodedTemplateExpr unescapeTemplateExpression(String raw, int exprStart, int exprEnd) {
-        String expr = raw.substring(exprStart, exprEnd);
-        DecodedRuns runs = new DecodedRuns(new StringBuilder(expr.length()),
-            new ArrayList<>(), new ArrayList<>());
-        // Raw scalar index (into the full raw content) of the current position.
-        runs.rawIndex = ScalarSourceCursor.scalarCount(raw, 0, exprStart);
-        int pos = 0;
-        while (pos < expr.length()) {
-            char c = expr.charAt(pos);
-
-            // Top-level escape sequence: unescape it (one decoded scalar from
-            // two raw scalars, mapped to the escape's first raw scalar).
-            if (c == '\\' && pos + 1 < expr.length()) {
-                char next = expr.charAt(pos + 1);
-                switch (next) {
-                    case 'n'  -> runs.append('\n', runs.rawIndex, runs.rawIndex + 2);
-                    case 't'  -> runs.append('\t', runs.rawIndex, runs.rawIndex + 2);
-                    case '\\' -> runs.append('\\', runs.rawIndex, runs.rawIndex + 2);
-                    case '"'  -> runs.append('"', runs.rawIndex, runs.rawIndex + 2);
-                    case '\'' -> runs.append('\'', runs.rawIndex, runs.rawIndex + 2);
-                    case '`'  -> runs.append('`', runs.rawIndex, runs.rawIndex + 2);
-                    case '$'  -> runs.append('$', runs.rawIndex, runs.rawIndex + 2);
-                    default -> {
-                        // Unknown escape: backslash and character are kept
-                        // verbatim, one decoded scalar each. A surrogate pair
-                        // after the backslash stays one decoded scalar mapped
-                        // to its one raw scalar.
-                        pos = appendEscapeRun(expr, pos, runs);
-                        continue;
-                    }
-                }
-                runs.rawIndex += 2;
-                pos += 2;
-                continue;
-            }
-
-            // String literal: copy verbatim to preserve internal escapes
-            if (c == '"' || c == '\'') {
-                runs.append(c, runs.rawIndex, runs.rawIndex + 1);
-                runs.rawIndex++;
-                pos = copyVerbatimLiteral(expr, pos + 1, c, runs);
-                continue;
-            }
-
-            // Nested template literal: copy verbatim (sub-lexer will handle it)
-            if (c == '`') {
-                runs.append(c, runs.rawIndex, runs.rawIndex + 1);
-                runs.rawIndex++;
-                pos = copyVerbatimLiteral(expr, pos + 1, '`', runs);
-                continue;
-            }
-
-            // Regular character: one decoded scalar, one-to-one raw mapping.
-            int cp = expr.codePointAt(pos);
-            runs.append(cp, runs.rawIndex, runs.rawIndex + 1);
-            runs.rawIndex++;
-            pos += Character.charCount(cp);
-        }
-        return new DecodedTemplateExpr(runs.sb.toString(), runs.rawStarts, runs.rawEnds);
-    }
-
-    /**
-     * Copies one embedded literal run verbatim from {@code expr} at
-     * {@code pos} (past the opening delimiter) through its matching
-     * {@code quote}, recording the raw mapping. Returns the position past
-     * the closing delimiter (or the input end when unterminated — the
-     * sub-lexer reports the unterminated literal).
-     */
-    private static int copyVerbatimLiteral(String expr, int pos, char quote,
-                                           DecodedRuns runs) {
-        while (pos < expr.length()) {
-            char c = expr.charAt(pos);
-            if (c == '\\' && pos + 1 < expr.length()) {
-                pos = appendEscapeRun(expr, pos, runs);
-            } else if (c == quote) {
-                runs.append(c, runs.rawIndex, runs.rawIndex + 1);
-                runs.rawIndex++;
-                pos++;
-                break;
-            } else {
-                int cp = expr.codePointAt(pos);
-                runs.append(cp, runs.rawIndex, runs.rawIndex + 1);
-                runs.rawIndex++;
-                pos += Character.charCount(cp);
-            }
-        }
-        return pos;
-    }
-
-    /**
-     * Appends one backslash escape's run — the backslash and the escaped
-     * scalar (or the surrogate pair after it) as two raw scalars — and
-     * returns the position past the run.
-     */
-    private static int appendEscapeRun(String expr, int pos, DecodedRuns runs) {
-        runs.append(expr.charAt(pos), runs.rawIndex, runs.rawIndex + 1);
-        char esc = expr.charAt(pos + 1);
-        if (Character.isHighSurrogate(esc) && pos + 2 < expr.length()
-                && Character.isLowSurrogate(expr.charAt(pos + 2))) {
-            runs.append(Character.toCodePoint(esc, expr.charAt(pos + 2)),
-                runs.rawIndex + 1, runs.rawIndex + 2);
-            pos += 3;
-        } else {
-            runs.append(esc, runs.rawIndex + 1, runs.rawIndex + 2);
-            pos += 2;
-        }
-        runs.rawIndex += 2;
-        return pos;
-    }
-
-    /** The decoded output and its per-scalar raw mapping. */
-    private static final class DecodedRuns {
-
-        final StringBuilder sb;
-        final List<Integer> rawStarts;
-        final List<Integer> rawEnds;
-        int rawIndex;
-
-        DecodedRuns(StringBuilder sb, List<Integer> rawStarts, List<Integer> rawEnds) {
-            this.sb = sb;
-            this.rawStarts = rawStarts;
-            this.rawEnds = rawEnds;
-        }
-
-        /** Appends one decoded scalar and records its raw scalar run. */
-        void append(int codePoint, int rawStart, int rawEnd) {
-            sb.appendCodePoint(codePoint);
-            rawStarts.add(rawStart);
-            rawEnds.add(rawEnd);
-        }
-    }
-
-    /**
-     * Creates a LiteralExpr from an accumulated string part and adds it to the list.
-     */
-    private void flushStringPart(List<ExpressionNode> parts, String value,
-                                  int line, int col) {
-        Span sp = new Span(file, line, col, line, col + Math.max(0, value.length() - 1));
-        parts.add(new LiteralExpr(sp, new LiteralValue.StringLiteral(value)));
+        Span sp = new Span(file, startPosition[0], startPosition[1],
+            endLine, endColumn, startOffset, endOffset);
+        return new LiteralExpr(sp, new LiteralValue.StringLiteral(value));
     }
 
     /**
@@ -1868,8 +1637,6 @@ public final class Parser {
     private ExpressionNode parseEmbeddedExpression(String source, TemplateScalarMap map,
                                                    int eofRawScalarIndex,
                                                    int templatePrecedingCount) {
-        int baseLine = map.sourceLine();
-
         // 1. Sub-lex the expression substring
         deal.lexer.Lexer subLexer = new deal.lexer.Lexer(source, file);
         deal.lexer.LexResult subResult = subLexer.tokenize();
@@ -1940,9 +1707,10 @@ public final class Parser {
         List<Token> adjusted = new ArrayList<>();
         for (Token t : subResult.tokens()) {
             if (t.type() == TokenType.EOF) break;
-            adjusted.add(rebaseSubToken(t, map, baseLine));
+            adjusted.add(rebaseSubToken(t, map));
         }
-        adjusted.add(new Token(TokenType.EOF, "", baseLine,
+        adjusted.add(new Token(TokenType.EOF, "",
+            map.sourceLineAtRawScalar(eofRawScalarIndex),
             map.sourceColumnAtRawScalar(eofRawScalarIndex), 0,
             map.sourceOffsetAtRawScalar(eofRawScalarIndex), 0));
 
@@ -1961,7 +1729,8 @@ public final class Parser {
             int rawScalarIndex = map.expressionStartRawScalarIndex();
             error(DiagnosticCode.E1042,
                 "Empty expression in template literal",
-                new Token(TokenType.IDENTIFIER, "", baseLine,
+                new Token(TokenType.IDENTIFIER, "",
+                    map.sourceLineAtRawScalar(rawScalarIndex),
                     map.sourceColumnAtRawScalar(rawScalarIndex), 0,
                     map.sourceOffsetAtRawScalar(rawScalarIndex), 0));
             return placeholderLiteral(map);
@@ -1989,6 +1758,17 @@ public final class Parser {
         // template-embedded per-event diagnostics surface here too (the
         // nested merge points ran inside the sub-parser).
         diagnostics.addAll(subParser.diagnostics);
+
+        // 7. v1.3: an interpolation contains exactly one complete
+        //    expression (docs/spec-v1.3.md lexical grammar). A leftover
+        //    token after the parsed expression is E1042 at that token's
+        //    rebased position.
+        if (expr != null && subParser.peek().type() != TokenType.EOF) {
+            error(DiagnosticCode.E1042,
+                "Template literal interpolation must contain exactly one"
+                    + " complete expression",
+                subParser.peek());
+        }
 
         // 8. Nested-template events bubble up through the same append rule
         // (D10.4): they were validated at their nested merge points, so no
@@ -2034,9 +1814,10 @@ public final class Parser {
             : rawStart;
         int startOffset = map.sourceOffsetAtRawScalar(rawStart);
         int endOffset = map.sourceOffsetAtRawScalar(rawEnd);
-        return new DiagnosticRange(file, map.sourceLine(),
+        return new DiagnosticRange(file, map.sourceLineAtRawScalar(rawStart),
             map.sourceColumnAtRawScalar(rawStart),
-            map.sourceLine(), map.sourceColumnAtRawScalar(rawEnd),
+            map.sourceLineAtRawScalar(rawEnd),
+            map.sourceColumnAtRawScalar(rawEnd),
             startOffset, endOffset, endOffset - startOffset, RangeOrigin.SOURCE);
     }
 
@@ -2047,9 +1828,10 @@ public final class Parser {
      * A token without offset information (defensive/test-only) keeps the
      * line/column rebase and carries UNKNOWN offsets.
      */
-    private Token rebaseSubToken(Token t, TemplateScalarMap map, int baseLine) {
+    private Token rebaseSubToken(Token t, TemplateScalarMap map) {
         if (!t.hasScalarOffsets()) {
-            return new Token(t.type(), t.lexeme(), baseLine,
+            return new Token(t.type(), t.lexeme(),
+                map.sourceLineAtRawScalar(map.expressionStartRawScalarIndex()),
                 map.sourceColumnAtRawScalar(map.expressionStartRawScalarIndex())
                     + t.column() - 1,
                 t.length());
@@ -2060,7 +1842,8 @@ public final class Parser {
         int rawEnd = decodedEnd > decodedStart
             ? map.decodedToRawEnd(decodedEnd - 1)
             : rawStart;
-        return new Token(t.type(), t.lexeme(), baseLine,
+        return new Token(t.type(), t.lexeme(),
+            map.sourceLineAtRawScalar(rawStart),
             map.sourceColumnAtRawScalar(rawStart), t.length(),
             map.sourceOffsetAtRawScalar(rawStart),
             Math.max(0, rawEnd - rawStart));
@@ -2073,17 +1856,12 @@ public final class Parser {
      */
     private LiteralExpr placeholderLiteral(TemplateScalarMap map) {
         int rawScalarIndex = map.expressionStartRawScalarIndex();
-        int line = map.sourceLine();
+        int line = map.sourceLineAtRawScalar(rawScalarIndex);
         int column = map.sourceColumnAtRawScalar(rawScalarIndex);
         int offset = map.sourceOffsetAtRawScalar(rawScalarIndex);
         return new LiteralExpr(
             new Span(file, line, column, line, column, offset, offset),
             new LiteralValue.StringLiteral(""));
-    }
-
-    /** Decoded template expression source plus its per-scalar raw mapping. */
-    private record DecodedTemplateExpr(String source, List<Integer> rawStarts,
-                                       List<Integer> rawEnds) {
     }
 
     private ExpressionNode parseFunctionExpression() {
@@ -2269,6 +2047,27 @@ public final class Parser {
     }
 
     /**
+     * The v1.3 statement-terminator requirement: every production whose
+     * grammar carries a {@code ';'} must consume it. Reports E1053 at the
+     * next token when the statement ended without one; suppressed when the
+     * statement already reported a diagnostic so recovery does not cascade.
+     */
+    private void checkTerminator(int diagCountBefore) {
+        if (diagnostics.size() > diagCountBefore) return;
+        if (pos > 0 && tokens.get(pos - 1).type() == TokenType.SEMICOLON) return;
+        error(DiagnosticCode.E1053, missingTerminatorMessage(), peek());
+    }
+
+    /** The E1053 message for the current (missing-terminator) position. */
+    private String missingTerminatorMessage() {
+        Token next = peek();
+        if (next.type() == TokenType.EOF) {
+            return "Missing ';' at end of input";
+        }
+        return "Missing ';' before '" + next.lexeme() + "'";
+    }
+
+    /**
      * Statement kinds whose grammar carries an optional trailing
      * {@code ;} — the only statements the v1.2 semicolon-boundary
      * whitelist governs. Block-bodied statements (blocks, if/while/for,
@@ -2290,49 +2089,16 @@ public final class Parser {
     }
 
     /**
-     * The normative semicolon-boundary whitelist: a statement may end
-     * without {@code ;} only when the next token is one of these.
-     */
-    private static boolean isSemicolonWhitelistFollower(TokenType type) {
-        return switch (type) {
-            case EOF, RBRACE, SEMICOLON, LET, CLASS, FUNCTION, RETURN, IF,
-                 WHILE, FOR, BREAK, CONTINUE, IMPORT, EXPORT, DELETE -> true;
-            default -> false;
-        };
-    }
-
-    /**
-     * Whether a token can begin a statement (the explicit statement
-     * keywords plus the expression-statement starters). The semicolon
-     * boundary rule only speaks about a real next statement: a token
-     * that cannot start one is a recovery artifact (e.g. the {@code :}
-     * after a malformed statement), so the missing-terminator diagnostic
-     * is suppressed there and the recovery diagnostics stand alone.
-     */
-    private static boolean canStartStatement(TokenType type) {
-        return switch (type) {
-            case LBRACE, CLASS, FUNCTION, ASYNC, LET, RETURN, IF, WHILE, FOR,
-                 BREAK, CONTINUE, IMPORT, EXPORT, DELETE, TRY, THROW,
-                 IDENTIFIER, INT_LITERAL, NUMBER_LITERAL, STRING_LITERAL,
-                 TEMPLATE_LITERAL, TRUE, FALSE, NULL, BANG, MINUS, PLUS,
-                 LPAREN, LBRACKET, AWAIT, HAS -> true;
-            default -> false;
-        };
-    }
-
-    /**
-     * Enforces the v1.2 semicolon-boundary whitelist for the statement
-     * that just ended. Suppressed when the statement itself already
+     * Enforces the v1.3 statement terminator for the statement that just
+     * ended (Syntactic grammar: every production carrying {@code ';'}
+     * consumes one). Block-ending productions (blocks, if/while/for/try,
+     * function and class declarations) end at {@code '}'} and carry no
+     * added requirement. Suppressed when the statement itself already
      * reported a diagnostic, so recovery does not cascade.
      */
     private void checkStatementTerminator(StatementNode stmt, int diagCountBefore) {
         if (!requiresTerminator(stmt)) return;
-        if (diagnostics.size() > diagCountBefore) return;
-        if (pos > 0 && tokens.get(pos - 1).type() == TokenType.SEMICOLON) return;
-        if (isSemicolonWhitelistFollower(peek().type())) return;
-        if (!canStartStatement(peek().type())) return;
-        error(DiagnosticCode.E1053,
-            "Missing ';' before '" + peek().lexeme() + "'", peek());
+        checkTerminator(diagCountBefore);
     }
 
     // =======================================================================
@@ -2512,13 +2278,8 @@ public final class Parser {
             case LT, LTE, GT, GTE -> PREC_RELATIONAL;
             case PLUS, MINUS -> PREC_ADDITIVE;
             case STAR, SLASH, PERCENT -> PREC_MULTIPLICATIVE;
-            case STAR_STAR  -> PREC_EXPONENT;
             default         -> PREC_NONE;
         };
-    }
-
-    private boolean isRightAssocBinary(int prec) {
-        return prec == PREC_EXPONENT;
     }
 
     private BinaryOp tokenToBinaryOp(TokenType type) {
@@ -2528,7 +2289,6 @@ public final class Parser {
             case STAR        -> BinaryOp.MUL;
             case SLASH       -> BinaryOp.DIV;
             case PERCENT     -> BinaryOp.MOD;
-            case STAR_STAR   -> BinaryOp.POW;
             case EQ_STRICT   -> BinaryOp.EQ;
             case NEQ_STRICT  -> BinaryOp.NEQ;
             case LT          -> BinaryOp.LT;

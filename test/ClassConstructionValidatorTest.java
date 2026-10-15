@@ -10,13 +10,16 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.Lexer;
 import deal.parser.Parser;
+import deal.semantic.CanonicalTypeText;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
 import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.ClassConstructionValidator;
+import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.DescriptorService;
 import deal.semantic.LoweringSupport;
 import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
@@ -33,12 +36,18 @@ import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClosedSelector;
+import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ExportInterface;
 import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FieldInterface;
+import deal.semantic.ir.InitializationMode;
 import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -48,7 +57,12 @@ import deal.semantic.ir.ModuleInitPlan;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.OpResultType;
 import deal.semantic.ir.OperationContractSnapshot;
+import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.RawOp;
+import deal.semantic.ir.RawOrigin;
+import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticIdAllocator;
@@ -63,6 +77,8 @@ import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
+import deal.types.Type;
+import deal.types.Types;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -352,12 +368,12 @@ public class ClassConstructionValidatorTest {
             export class Inner { n: int = 7; }
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
-            let p: Point = {x: 1}
+            let p: Point = {x: 1};
             let q: Point = {};
             p.x = 9;
-            p.note = "a"
-            delete p.note
-            let hasNote: boolean = has(p.note)
+            p.note = "a";
+            delete p.note;
+            let hasNote: boolean = has(p.note);
             """;
         LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
@@ -627,10 +643,10 @@ public class ClassConstructionValidatorTest {
               x: int;
               y?: int = 0;
             }
-            let p: Point = {x: 1}
+            let p: Point = {x: 1};
             let v: int | null = p.y;
-            p.x = 9
-            delete p.y
+            p.x = 9;
+            delete p.y;
             """;
         LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
@@ -860,7 +876,7 @@ public class ClassConstructionValidatorTest {
             + "own range survives, not the enclosing CLASS_DEFAULT's --");
 
         final String source = """
-            let base: int = 5
+            let base: int = 5;
             let f: () => null = function(): null { };
             export class Point {
               x: int = base + 1;
@@ -893,10 +909,10 @@ public class ClassConstructionValidatorTest {
                 && SOURCE_ID.equals(defaultRange.file())
                 && defaultRange.startLine() == 4 && defaultRange.startColumn() == 12
                 && defaultRange.endLine() == 4 && defaultRange.endColumn() == 20
-                && defaultRange.startScalarOffset() == 92
-                && defaultRange.endScalarOffset() == 100,
+                && defaultRange.startScalarOffset() == 93
+                && defaultRange.endScalarOffset() == 101,
             "the enclosing CLASS_DEFAULT's own range is the default expression "
-                + "4:12-4:20 [92,100); got " + defaultRange);
+                + "4:12-4:20 [93,101); got " + defaultRange);
 
         Optional<CompilerDiagnostic> baseline = ClassConstructionValidator.validate(unit,
             table, result.registry(), result.jsonDefaults(), own, Map.of());
@@ -922,8 +938,8 @@ public class ClassConstructionValidatorTest {
 
         // (a) BINDING_LOAD: the reviewer's probe — a nonexistent binding
         // identity makes the reference inadmissible; the load's own range
-        // (4:12-4:16 [92,96)) must be the diagnostic's, not the enclosing
-        // default expression's (4:12-4:20 [92,100)).
+        // (4:12-4:16 [93,97)) must be the diagnostic's, not the enclosing
+        // default expression's (4:12-4:20 [93,101)).
         BindingId missingBinding = new BindingId(999_999);
         KindPayload.BindingLoadPayload loadPayload =
             (KindPayload.BindingLoadPayload) loadOp.payload();
@@ -933,7 +949,7 @@ public class ClassConstructionValidatorTest {
             unitWithOp(unit, loadOp.opId(), tamperedLoad), table, result.registry(),
             result.jsonDefaults(), own, Map.of());
         expectE6005Range(loadFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-            SOURCE_ID, 4, 12, 4, 16, 92, 96);
+            SOURCE_ID, 4, 12, 4, 16, 93, 97);
         if (loadFailure.isPresent()) {
             check(loadFailure.get().range().equals(loadRange),
                 "the BINDING_LOAD failure carries the referencing op's own converted "
@@ -950,7 +966,7 @@ public class ClassConstructionValidatorTest {
 
         // (b) CLOSURE_NEW: the real module-level closure moved into the
         // default closure with one foreign capture — the range is the
-        // closure expression's own span (2:21-2:42 [38,59)), not the
+        // closure expression's own span (2:21-2:42 [39,60)), not the
         // default's.
         SemanticOp closureOp = firstOfKind(unit, SemanticOpKind.CLOSURE_NEW);
         check(closureOp != null, "the slice produces one CLOSURE_NEW op");
@@ -970,7 +986,7 @@ public class ClassConstructionValidatorTest {
                     result.registry(), result.jsonDefaults(), own, Map.of());
             expectE6005Range(closureFailure,
                 ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-                SOURCE_ID, 2, 21, 2, 42, 38, 59);
+                SOURCE_ID, 2, 21, 2, 42, 39, 60);
             if (closureFailure.isPresent()) {
                 check(closureFailure.get().range()
                         .equals(closureOp.origin().span().range()),
@@ -1042,7 +1058,7 @@ public class ClassConstructionValidatorTest {
                 result.registry(), result.jsonDefaults(), own, Map.of());
         expectE6005Range(originlessFailure,
             ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-            SOURCE_ID, 4, 12, 4, 16, 92, 96);
+            SOURCE_ID, 4, 12, 4, 16, 93, 97);
         if (originlessFailure.isPresent()) {
             check(!originlessFailure.get().range().isCanonicalSynthetic(),
                 "the originless-default failure does not fall back to the canonical "
@@ -1276,9 +1292,9 @@ public class ClassConstructionValidatorTest {
               note?: string;
             }
             let p: Point = {x: 1};
-            p.x = 9
-            let v: string | null = p.note
-            let hasNote: boolean = has(p.note)
+            p.x = 9;
+            let v: string | null = p.note;
+            let hasNote: boolean = has(p.note);
             """;
         LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
@@ -1479,6 +1495,621 @@ public class ClassConstructionValidatorTest {
     }
 
     // =========================================================================
+    // 9. Project seed/interface coherence (ISSUE-0818)
+    // =========================================================================
+
+    private static final ModuleId HOST_FACADE = new ModuleId("host.facade");
+    private static final String HOST_FACADE_SPECIFIER = "host/facade";
+    private static final String EXTERNAL_PREFIX = "$external/";
+    private static final ClassId FACADE_ENDPOINT =
+        new ClassId(EXTERNAL_PREFIX + HOST_FACADE_SPECIFIER, "Endpoint");
+    private static final ClassId FACADE_OTHER =
+        new ClassId(EXTERNAL_PREFIX + HOST_FACADE_SPECIFIER, "Other");
+    private static final ClassId FACADE_ENDPOINT_DECLARED =
+        new ClassId(HOST_FACADE.path(), "Endpoint");
+    private static final ClassId FACADE_OTHER_DECLARED =
+        new ClassId(HOST_FACADE.path(), "Other");
+    private static final ModuleId NATIVE_MATH = new ModuleId("native.math");
+    private static final ClassId VEC2 =
+        new ClassId(EXTERNAL_PREFIX + "native/math", "Vec2");
+
+    /**
+     * The transported declaration facts of a host declaration module: two
+     * exported classes with every declared-type form (scalars, optional,
+     * nullable, array, function, same-module class, Error) and one extern-C
+     * style declaration module, plus an implementation module class the
+     * seeds never cover.
+     */
+    private static ProjectInterfaceIndex facadeInterfaceIndex() {
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
+        modules.put(HOST_FACADE, new ExternalModuleInterface(HOST_FACADE,
+            ExternalModuleKind.HOST,
+            List.of(new ResolvedImport("facade", HOST_FACADE_SPECIFIER, HOST_FACADE,
+                ExternalModuleKind.HOST)),
+            List.of(new ExportInterface("Endpoint", "@host.facade/Endpoint")),
+            List.of(
+                new ClassInterface(FACADE_ENDPOINT_DECLARED,
+                    List.of(new FieldInterface("path", "string", false, false, false),
+                        new FieldInterface("port", "int", true, false, false),
+                        new FieldInterface("note", "string | null", true, true, false),
+                        new FieldInterface("tags", "string[]", true, false, false),
+                        new FieldInterface("cb", "((int) => string) | null", true, true,
+                            false),
+                        new FieldInterface("peer", "@host.facade/Other", false, false,
+                            false),
+                        new FieldInterface("others", "(@host.facade/Other | null)[]", true,
+                            false, false),
+                        new FieldInterface("failure", "@/Error", false, false, false)),
+                    new ClassFactoryId(3)),
+                new ClassInterface(FACADE_OTHER_DECLARED,
+                    List.of(new FieldInterface("count", "int", false, false, true)),
+                    new ClassFactoryId(4))),
+            InitializationMode.ONCE_AFTER_DEPENDENCIES));
+        modules.put(NATIVE_MATH, new ExternalModuleInterface(NATIVE_MATH,
+            ExternalModuleKind.HOST, List.of(), List.of(),
+            List.of(new ClassInterface(new ClassId(NATIVE_MATH.path(), "Vec2"),
+                List.of(new FieldInterface("x", "number", false, false, true)),
+                new ClassFactoryId(5))),
+            InitializationMode.ONCE_AFTER_DEPENDENCIES));
+        modules.put(MODULE, new ExternalModuleInterface(MODULE,
+            ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
+            List.of(new ClassInterface(new ClassId("src", "Point"),
+                List.of(new FieldInterface("x", "int", false, false, true)),
+                new ClassFactoryId(6))),
+            InitializationMode.ONCE_AFTER_DEPENDENCIES));
+        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+    }
+
+    private static ClassLayout.FieldLayout seedField(String name,
+            RuntimeDescriptor descriptor, boolean required) {
+        return seedField(name, descriptor, required, DefaultOwner.HOST_DEFAULTS);
+    }
+
+    private static ClassLayout.FieldLayout seedField(String name,
+            RuntimeDescriptor descriptor, boolean required, DefaultOwner owner) {
+        return new ClassLayout.FieldLayout(name, descriptor, required, owner);
+    }
+
+    /** The coherent registration set of {@link #facadeInterfaceIndex()}. */
+    private static ClassRegistrationSeeds facadeSeeds() {
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+            new LinkedHashMap<>();
+        registrations.put(ClassId.ERROR,
+            ClassRegistrationSeeds.builtinErrorRegistration());
+        registrations.put(FACADE_ENDPOINT,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT, List.of(
+                    seedField("path", RuntimeDescriptor.String.INSTANCE, true),
+                    seedField("port", RuntimeDescriptor.Int.INSTANCE, false),
+                    seedField("note", new RuntimeDescriptor.Nullable(
+                        RuntimeDescriptor.String.INSTANCE), false),
+                    seedField("tags", new RuntimeDescriptor.Array(
+                        RuntimeDescriptor.String.INSTANCE), false),
+                    seedField("cb", new RuntimeDescriptor.Nullable(
+                        new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE),
+                            RuntimeDescriptor.String.INSTANCE)), false),
+                    seedField("peer", new RuntimeDescriptor.Class(FACADE_OTHER), true),
+                    seedField("others", new RuntimeDescriptor.Array(
+                        new RuntimeDescriptor.Nullable(
+                            new RuntimeDescriptor.Class(FACADE_OTHER))), false),
+                    seedField("failure", new RuntimeDescriptor.Class(ClassId.ERROR), true))),
+                DefaultOwner.HOST_DEFAULTS));
+        registrations.put(FACADE_OTHER,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_OTHER,
+                    List.of(seedField("count", RuntimeDescriptor.Int.INSTANCE, true))),
+                DefaultOwner.HOST_DEFAULTS));
+        registrations.put(VEC2,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(VEC2,
+                    List.of(seedField("x", RuntimeDescriptor.Number.INSTANCE, true,
+                        DefaultOwner.FFI_PLAN))),
+                DefaultOwner.FFI_PLAN));
+        return new ClassRegistrationSeeds(registrations);
+    }
+
+    /** One seed-field descriptor replacement in a registration. */
+    private static ClassRegistrationSeeds withEndpointField(String name,
+            RuntimeDescriptor descriptor, boolean required) {
+        ClassRegistrationSeeds base = facadeSeeds();
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+            new LinkedHashMap<>(base.registrations());
+        ClassRegistrationSeeds.ClassRegistration endpoint =
+            registrations.get(FACADE_ENDPOINT);
+        List<ClassLayout.FieldLayout> fields = new ArrayList<>();
+        for (ClassLayout.FieldLayout field : endpoint.layout().fields()) {
+            fields.add(field.name().equals(name) ? seedField(name, descriptor, required)
+                : field);
+        }
+        registrations.put(FACADE_ENDPOINT,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT, fields), endpoint.owner()));
+        return new ClassRegistrationSeeds(registrations);
+    }
+
+    private static String seedCoherenceFailure(ProjectInterfaceIndex index,
+            ClassRegistrationSeeds seeds) {
+        Optional<String> failure =
+            ClassConstructionValidator.checkProjectSeedCoherence(index, seeds);
+        check(failure.isPresent(), "the seed/interface contradiction is reported");
+        return failure.orElse("");
+    }
+
+    /**
+     * The project-level seed/interface coherence rule (ISSUE-0818): the
+     * transported class registration seeds must repeat the supplied
+     * interface index exactly — identity, declaration owner, field names and
+     * order, required presence, and each field descriptor's declared type
+     * (the scalar, nullable, array, function, same-module class and builtin
+     * Error forms included) — and nothing is repaired or merged.
+     */
+    private static void testProjectSeedCoherence() {
+        System.out.println("-- project seed/interface coherence (ISSUE-0818) --");
+        ProjectInterfaceIndex index = facadeInterfaceIndex();
+        ClassRegistrationSeeds seeds = facadeSeeds();
+        Optional<String> coherent =
+            ClassConstructionValidator.checkProjectSeedCoherence(index, seeds);
+        check(coherent.isEmpty(),
+            "the coherent declaration seeds and index pass the project seed coherence "
+                + "rule: " + coherent);
+
+        // The non-exported declaration class tolerance: the index declares
+        // exported classes only, so a registration the index declares at no
+        // entry is not itself a contradiction (the rule never invents one).
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> withHidden =
+            new LinkedHashMap<>(seeds.registrations());
+        withHidden.put(new ClassId(EXTERNAL_PREFIX + HOST_FACADE_SPECIFIER, "Hidden"),
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(new ClassId(EXTERNAL_PREFIX + HOST_FACADE_SPECIFIER,
+                    "Hidden"),
+                    List.of(seedField("hidden", RuntimeDescriptor.Int.INSTANCE, true))),
+                DefaultOwner.HOST_DEFAULTS));
+        check(ClassConstructionValidator.checkProjectSeedCoherence(index,
+                new ClassRegistrationSeeds(withHidden)).isEmpty(),
+            "a declaration module class the index does not declare (a non-exported "
+                + "class) is not reported as a contradiction");
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> withEmptyModulePath =
+            new LinkedHashMap<>(seeds.registrations());
+        ClassId emptyModulePath = new ClassId(EXTERNAL_PREFIX, "Stray");
+        withEmptyModulePath.put(emptyModulePath,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(emptyModulePath,
+                    List.of(seedField("stray", RuntimeDescriptor.Int.INSTANCE, true))),
+                DefaultOwner.HOST_DEFAULTS));
+        check(ClassConstructionValidator.checkProjectSeedCoherence(index,
+                new ClassRegistrationSeeds(withEmptyModulePath)).isEmpty(),
+            "a registration key with an empty externals suffix is unresolvable, not a "
+                + "crash");
+
+        // Every declared-type form: a mutated descriptor contradicts the
+        // interface's declared type.
+        check(seedCoherenceFailure(index, withEndpointField("path",
+                RuntimeDescriptor.Int.INSTANCE, true)).contains("path"),
+            "a scalar seed field descriptor of another type rejects");
+        check(seedCoherenceFailure(index, withEndpointField("note",
+                RuntimeDescriptor.String.INSTANCE, false)).contains("note"),
+            "a nullable seed field descriptor without its nullable form rejects");
+        check(seedCoherenceFailure(index, withEndpointField("tags",
+                new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE), false))
+                .contains("tags"),
+            "an array seed field descriptor of another element type rejects");
+        check(seedCoherenceFailure(index, withEndpointField("cb",
+                new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE),
+                    RuntimeDescriptor.String.INSTANCE), false)).contains("cb"),
+            "a function seed field descriptor without its nullable form rejects");
+        check(seedCoherenceFailure(index, withEndpointField("peer",
+                new RuntimeDescriptor.Class(
+                    new ClassId(EXTERNAL_PREFIX + "host/other", "Other")), true))
+                .contains("peer"),
+            "a class seed field descriptor of another class identity rejects");
+        // The exact nominal identity, never the dotted rendering: a class
+        // reference that names an unregistered external spelling of a
+        // declared class is a contradiction even though its dotted text is
+        // the one the interface declares.
+        String alternateSpelling = seedCoherenceFailure(index, withEndpointField("peer",
+            new RuntimeDescriptor.Class(
+                new ClassId(EXTERNAL_PREFIX + "host.facade", "Other")), true));
+        check(alternateSpelling.contains("peer")
+                && alternateSpelling.contains("unresolvable"),
+            "a class seed field descriptor naming an unregistered external spelling "
+                + "of the declared class rejects (identity by exact carried "
+                + "registration, never by the dotted rendering): " + alternateSpelling);
+
+        // The registered non-exported declaration class: the index declares
+        // no class entry for it, so the reference resolves through its exact
+        // carried registration and the declaration module's own entry.
+        ClassId hidden = new ClassId(EXTERNAL_PREFIX + HOST_FACADE_SPECIFIER,
+            "Hidden");
+        Map<ModuleId, ExternalModuleInterface> hiddenModules =
+            new LinkedHashMap<>(index.modules());
+        ExternalModuleInterface facade = hiddenModules.get(HOST_FACADE);
+        List<ClassInterface> hiddenClasses = new ArrayList<>();
+        for (ClassInterface entry : facade.classes()) {
+            if (!entry.classId().equals(FACADE_ENDPOINT_DECLARED)) {
+                hiddenClasses.add(entry);
+                continue;
+            }
+            List<FieldInterface> fields = new ArrayList<>(entry.fields());
+            fields.add(new FieldInterface("hidden", "@host.facade/Hidden", false, false,
+                false));
+            hiddenClasses.add(new ClassInterface(entry.classId(), fields,
+                entry.constructionEntry()));
+        }
+        hiddenModules.put(HOST_FACADE, new ExternalModuleInterface(HOST_FACADE,
+            facade.kind(), facade.imports(), facade.exports(), hiddenClasses,
+            facade.initialization()));
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> hiddenRegistrations =
+            new LinkedHashMap<>(seeds.registrations());
+        ClassRegistrationSeeds.ClassRegistration endpoint =
+            hiddenRegistrations.get(FACADE_ENDPOINT);
+        List<ClassLayout.FieldLayout> hiddenEndpointFields =
+            new ArrayList<>(endpoint.layout().fields());
+        hiddenEndpointFields.add(seedField("hidden",
+            new RuntimeDescriptor.Class(hidden), true));
+        hiddenRegistrations.put(FACADE_ENDPOINT,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT, hiddenEndpointFields),
+                endpoint.owner()));
+        hiddenRegistrations.put(hidden,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(hidden, List.of(
+                    seedField("value", RuntimeDescriptor.String.INSTANCE, true))),
+                DefaultOwner.HOST_DEFAULTS));
+        Optional<String> nonExported = ClassConstructionValidator
+            .checkProjectSeedCoherence(new ProjectInterfaceIndex(
+                    ProjectInterfaceIndex.FORMAT_VERSION, hiddenModules),
+                new ClassRegistrationSeeds(hiddenRegistrations));
+        check(nonExported.isEmpty(),
+            "a seed field referencing a non-exported declaration class resolves "
+                + "through its exact carried registration: " + nonExported);
+        List<ClassLayout.FieldLayout> mutatedHiddenFields =
+            new ArrayList<>(hiddenEndpointFields);
+        mutatedHiddenFields.set(mutatedHiddenFields.size() - 1, seedField("hidden",
+            new RuntimeDescriptor.Class(new ClassId(EXTERNAL_PREFIX + "host.facade",
+                "Hidden")), true));
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> mutatedHiddenRegistrations =
+            new LinkedHashMap<>(hiddenRegistrations);
+        mutatedHiddenRegistrations.put(FACADE_ENDPOINT,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT, mutatedHiddenFields),
+                endpoint.owner()));
+        Optional<String> mutatedNonExported = ClassConstructionValidator
+            .checkProjectSeedCoherence(new ProjectInterfaceIndex(
+                    ProjectInterfaceIndex.FORMAT_VERSION, hiddenModules),
+                new ClassRegistrationSeeds(mutatedHiddenRegistrations));
+        check(mutatedNonExported.isPresent()
+                && mutatedNonExported.get().contains("hidden")
+                && mutatedNonExported.get().contains("unresolvable"),
+            "the unregistered alternate spelling of a non-exported declaration "
+                + "class reference rejects: " + mutatedNonExported);
+        check(seedCoherenceFailure(index, withEndpointField("failure",
+                new RuntimeDescriptor.Class(FACADE_OTHER), true)).contains("failure"),
+            "a seed field descriptor of another class than the declared Error "
+                + "rejects");
+        check(seedCoherenceFailure(index, withEndpointField("others",
+                new RuntimeDescriptor.Array(
+                    new RuntimeDescriptor.Class(FACADE_OTHER)), false)).contains("others"),
+            "an array-of-nullable class seed field descriptor without its nullable "
+                + "element form rejects");
+        check(seedCoherenceFailure(index, withEndpointField("path",
+                RuntimeDescriptor.String.INSTANCE, false)).contains("required"),
+            "a seed field whose required marker contradicts the declared optional "
+                + "fact rejects");
+
+        // Field names, order, count and the registration identity/owner.
+        ClassRegistrationSeeds renamed = facadeSeeds();
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> renamedRows =
+            new LinkedHashMap<>();
+        for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
+                : renamed.registrations().entrySet()) {
+            if (!entry.getKey().equals(FACADE_ENDPOINT)) {
+                renamedRows.put(entry.getKey(), entry.getValue());
+                continue;
+            }
+            List<ClassLayout.FieldLayout> fields = new ArrayList<>();
+            for (ClassLayout.FieldLayout field : entry.getValue().layout().fields()) {
+                fields.add(field.name().equals("path")
+                    ? seedField("route", field.descriptor(), field.required())
+                    : field);
+            }
+            renamedRows.put(entry.getKey(),
+                new ClassRegistrationSeeds.ClassRegistration(
+                    new ClassLayout(FACADE_ENDPOINT, fields), entry.getValue().owner()));
+        }
+        check(seedCoherenceFailure(index, new ClassRegistrationSeeds(renamedRows))
+                .contains("route"),
+            "a seed field name the interface class does not declare rejects");
+
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> detachedKey =
+            new LinkedHashMap<>(seeds.registrations());
+        detachedKey.remove(FACADE_ENDPOINT);
+        detachedKey.put(FACADE_ENDPOINT_DECLARED,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT, List.of(
+                    seedField("path", RuntimeDescriptor.String.INSTANCE, true))),
+                DefaultOwner.HOST_DEFAULTS));
+        check(seedCoherenceFailure(index, new ClassRegistrationSeeds(detachedKey))
+                .contains("class identity"),
+            "a seed whose registration key disagrees with its contained layout "
+                + "identity rejects");
+
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> missing =
+            new LinkedHashMap<>(seeds.registrations());
+        missing.remove(FACADE_OTHER);
+        check(seedCoherenceFailure(index, new ClassRegistrationSeeds(missing))
+                .contains("no class registration seed"),
+            "an exported declaration class without a registration rejects");
+
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> duplicated =
+            new LinkedHashMap<>(seeds.registrations());
+        ClassRegistrationSeeds.ClassRegistration endpointRegistration =
+            seeds.registrationFor(FACADE_ENDPOINT);
+        duplicated.put(FACADE_ENDPOINT_DECLARED,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT_DECLARED,
+                    endpointRegistration.layout().fields()),
+                endpointRegistration.owner()));
+        check(seedCoherenceFailure(index, new ClassRegistrationSeeds(duplicated))
+                .contains("exactly one registration"),
+            "two registrations of one declared class reject");
+
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> localOwner =
+            new LinkedHashMap<>(seeds.registrations());
+        localOwner.remove(FACADE_ENDPOINT);
+        localOwner.put(FACADE_ENDPOINT,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT, List.of(
+                    new ClassLayout.FieldLayout("path",
+                        RuntimeDescriptor.String.INSTANCE, true, DefaultOwner.LOCAL))),
+                DefaultOwner.LOCAL));
+        check(seedCoherenceFailure(index, new ClassRegistrationSeeds(localOwner))
+                .contains("owner"),
+            "a declaration registration under the LOCAL owner rejects");
+
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> implementationSeed =
+            new LinkedHashMap<>(seeds.registrations());
+        implementationSeed.put(new ClassId("src", "Point"),
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(new ClassId("src", "Point"), List.of(
+                    seedField("x", RuntimeDescriptor.Int.INSTANCE, true))),
+                DefaultOwner.HOST_DEFAULTS));
+        check(seedCoherenceFailure(index, new ClassRegistrationSeeds(implementationSeed))
+                .contains("IMPLEMENTATION"),
+            "a registration naming an implementation module class rejects");
+
+        // The compiler-owned builtin Error registration: its exact owner and
+        // exact layout, and its absent form (a legal empty class fact).
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> withoutError =
+            new LinkedHashMap<>(seeds.registrations());
+        withoutError.remove(ClassId.ERROR);
+        check(ClassConstructionValidator.checkProjectSeedCoherence(index,
+                new ClassRegistrationSeeds(withoutError)).isEmpty(),
+            "a seed set without the builtin Error registration stays a legal empty "
+                + "class fact (the /2 seed collection carries its empty form)");
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> wrongError =
+            new LinkedHashMap<>(seeds.registrations());
+        wrongError.put(ClassId.ERROR,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(ClassId.ERROR, List.of(
+                    new ClassLayout.FieldLayout("code",
+                        RuntimeDescriptor.String.INSTANCE, true,
+                        DefaultOwner.HOST_DEFAULTS))),
+                DefaultOwner.HOST_DEFAULTS));
+        check(seedCoherenceFailure(index, new ClassRegistrationSeeds(wrongError))
+                .contains("builtin"),
+            "a builtin Error registration under another owner rejects");
+
+        expectNpe(() -> ClassConstructionValidator.checkProjectSeedCoherence(null, seeds),
+            "a null interface index");
+        expectNpe(() -> ClassConstructionValidator.checkProjectSeedCoherence(index, null),
+            "a null seed set");
+    }
+
+    /**
+     * The project seed/module join (ISSUE-0818 review): a carried
+     * construction of a declaration class must refer to exactly one carried
+     * registration — the same class identity, the same declaration owner
+     * and the same contained layout — and the join never repairs either
+     * record. The rule reads the raw facts both project admission surfaces
+     * share, so a seed set that is internally coherent with the interface
+     * index is still rejected when a module's referring {@code CLASS_NEW}
+     * disagrees.
+     */
+    private static void testProjectSeedModuleCoherence() {
+        System.out.println("-- project seed/module join (ISSUE-0818 review) --");
+        ClassRegistrationSeeds seeds = facadeSeeds();
+        ClassRegistrationSeeds.ClassRegistration endpoint =
+            seeds.registrationFor(FACADE_ENDPOINT);
+        ClassRegistrationSeeds.ClassRegistration vec2 = seeds.registrationFor(VEC2);
+
+        // Positive: the referring CLASS_NEW repeats its registration exactly,
+        // under either declaration owner, and an unrelated unit is unaffected.
+        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                    endpoint.layout()))).isEmpty(),
+            "a CLASS_NEW repeating its HOST_DEFAULTS registration passes the join");
+        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
+                List.of(unitWithClassNew(VEC2, DefaultOwner.FFI_PLAN, vec2.layout())))
+                .isEmpty(),
+            "a CLASS_NEW repeating its FFI_PLAN registration passes the join");
+        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
+                List.of(unitWithOps(List.of()))).isEmpty(),
+            "a unit without declaration-class constructions passes the join");
+        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                    endpoint.layout()), unitWithClassNew(FACADE_OTHER,
+                    DefaultOwner.HOST_DEFAULTS,
+                    seeds.registrationFor(FACADE_OTHER).layout()))).isEmpty(),
+            "two declaration-class constructions in supplied unit order pass the join");
+
+        // Negative: the internally consistent owner mutation (a declaration
+        // owner the index/seed rule accepts) contradicts the referring
+        // operation, and so do a missing registration and a foreign layout.
+        Optional<ClassConstructionValidator.SeedModuleViolation> owner =
+            ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.FFI_PLAN,
+                    endpoint.layout())));
+        check(owner.isPresent() && owner.get().detail().contains("defaultOwner")
+                && owner.get().detail().contains("HOST_DEFAULTS")
+                && owner.get().detail().contains("FFI_PLAN"),
+            "a CLASS_NEW whose default owner disagrees with its seed rejects: " + owner);
+        check(owner.isPresent() && owner.get().reason().contains(MODULE.path())
+                && owner.get().detail().contains("CLASS_NEW")
+                && owner.get().referringUnit().modulePath().equals(MODULE.path())
+                && owner.get().referringOp().opId().equals(new OpId(MODULE, 1L)),
+            "the violation names the referring module and operation: "
+                + owner.map(ClassConstructionValidator.SeedModuleViolation::reason)
+                    .orElse(""));
+
+        Optional<ClassConstructionValidator.SeedModuleViolation> missing =
+            ClassConstructionValidator.checkProjectSeedModuleCoherence(
+                new ClassRegistrationSeeds(Map.of()),
+                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                    endpoint.layout())));
+        check(missing.isPresent()
+                && missing.get().detail().contains("no class registration seed"),
+            "a CLASS_NEW of an unregistered declaration class rejects: " + missing);
+
+        ClassLayout foreign = new ClassLayout(FACADE_ENDPOINT,
+            List.of(seedField("path", RuntimeDescriptor.Int.INSTANCE, true)));
+        Optional<ClassConstructionValidator.SeedModuleViolation> layout =
+            ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                    foreign)));
+        check(layout.isPresent() && layout.get().detail().contains("layout"),
+            "a CLASS_NEW whose layout differs from its registration rejects: " + layout);
+
+        // A construction shape outside the carried payload record is left to
+        // the closed rule engine that owns it, not reported by the join.
+        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
+                List.of(unitWithOps(List.of(rawClassNew("NOT_AN_OWNER",
+                    FACADE_ENDPOINT, endpoint.layout()))))).isEmpty(),
+            "a CLASS_NEW outside the declaration owners is not the join's subject");
+
+        expectNpe(() -> ClassConstructionValidator.checkProjectSeedModuleCoherence(
+                null, List.of()), "a null seed set");
+        expectNpe(() -> ClassConstructionValidator.checkProjectSeedModuleCoherence(
+                seeds, null), "a null unit list");
+    }
+
+    /** One raw unit carrying exactly the given raw operations. */
+    private static RawUnit unitWithOps(List<RawOp> ops) {
+        return new RawUnit(MODULE.path(), SemanticProfile.DEAL_V1_2_INT32.name(),
+            "interface-digest-1", LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+                REGISTRY_HASH),
+            List.of(), List.of(), List.of(), List.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), List.of(), List.of(), ops,
+            new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
+    }
+
+    /** One raw unit carrying a single CLASS_NEW of the given class. */
+    private static RawUnit unitWithClassNew(ClassId classId, DefaultOwner owner,
+            ClassLayout layout) {
+        return unitWithOps(List.of(rawClassNew(owner.name(), classId, layout)));
+    }
+
+    /** One raw CLASS_NEW operation payload naming the class, owner and layout. */
+    private static RawOp rawClassNew(String owner, ClassId classId, ClassLayout layout) {
+        CanonicalJson.Obj payload = CanonicalJson.obj(
+            CanonicalJson.e("classId",
+                ContractSnapshotCanonicalizer.semanticIdJson(classId)),
+            CanonicalJson.e("defaultOwner", CanonicalJson.str(owner)),
+            CanonicalJson.e("layout", ContractSnapshotCanonicalizer.layoutJson(layout)));
+        return new RawOp(new OpId(MODULE, 1L), SemanticOpKind.CLASS_NEW.name(),
+            FailurePolicyId.NO_DEAL_FAILURE.name(), null, null, null, null,
+            List.of(), List.of(), payload, null, "digest", CanonicalJson.obj(),
+            new RawOrigin(SOURCE_ID, SOURCE_ID, 1, 1, 1, 1, 0, 0,
+                SourceOriginKind.SYNTHETIC.name(), 0));
+    }
+
+    /**
+     * The declared-type rendering of the transported descriptors against the
+     * real producers (ISSUE-0818): for every structural type form the
+     * interface's {@code declaredType} ({@link CanonicalTypeText#render(Type)})
+     * and the seed field's descriptor
+     * ({@link DescriptorService#describe(Type)}) are two renderings of the
+     * same declared type, so the coherence rule accepts the producer's pair
+     * and rejects each other form's descriptor.
+     */
+    private static void testSeedDeclaredTypeRenderingAgainstProducers() {
+        System.out.println("-- seed declared-type rendering against the producers "
+            + "(ISSUE-0818) --");
+        List<Type> forms = List.of(
+            Type.Int.INSTANCE,
+            Type.Boolean.INSTANCE,
+            Type.Number.INSTANCE,
+            Type.String.INSTANCE,
+            Type.Bytes.INSTANCE,
+            Type.Table.INSTANCE,
+            Type.Null.INSTANCE,
+            Types.nullable(Type.String.INSTANCE),
+            Types.array(Type.Int.INSTANCE),
+            Types.array(Types.nullable(Type.Int.INSTANCE)),
+            Types.nullable(Types.array(Type.String.INSTANCE)),
+            Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE),
+            Types.func(List.of(Types.func(List.of(Type.Int.INSTANCE),
+                Type.String.INSTANCE), Type.Int.INSTANCE), Type.String.INSTANCE),
+            Types.func(List.of(Types.nullable(Type.Int.INSTANCE)),
+                Type.String.INSTANCE),
+            Types.func(List.of(Type.Int.INSTANCE), Types.array(Type.Bytes.INSTANCE),
+                true),
+            Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE)),
+            Types.nullable(Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE)),
+            Types.array(Types.array(Type.Int.INSTANCE)));
+        ModuleId formsModule = new ModuleId("forms.host");
+        ClassId formsClass = new ClassId(EXTERNAL_PREFIX + "forms/host", "Forms");
+        List<FieldInterface> declaredFields = new ArrayList<>();
+        List<ClassLayout.FieldLayout> seedFields = new ArrayList<>();
+        for (int i = 0; i < forms.size(); i++) {
+            declaredFields.add(new FieldInterface("f" + i,
+                CanonicalTypeText.render(forms.get(i)), false, false, false));
+            seedFields.add(new ClassLayout.FieldLayout("f" + i,
+                DescriptorService.describe(forms.get(i)), true, DefaultOwner.HOST_DEFAULTS));
+        }
+        ProjectInterfaceIndex index = new ProjectInterfaceIndex(
+            ProjectInterfaceIndex.FORMAT_VERSION,
+            Map.of(formsModule, new ExternalModuleInterface(formsModule,
+                ExternalModuleKind.HOST, List.of(), List.of(),
+                List.of(new ClassInterface(new ClassId(formsModule.path(), "Forms"),
+                    declaredFields, new ClassFactoryId(9))),
+                InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+            new LinkedHashMap<>();
+        registrations.put(ClassId.ERROR,
+            ClassRegistrationSeeds.builtinErrorRegistration());
+        registrations.put(formsClass,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(formsClass, seedFields), DefaultOwner.HOST_DEFAULTS));
+        Optional<String> coherent = ClassConstructionValidator
+            .checkProjectSeedCoherence(index, new ClassRegistrationSeeds(registrations));
+        check(coherent.isEmpty(),
+            "the producer's declared-type and descriptor renderings agree for every "
+                + "structural form: " + coherent);
+        for (int i = 0; i < forms.size(); i++) {
+            int other = (i + 1) % forms.size();
+            if (CanonicalTypeText.render(forms.get(other))
+                    .equals(CanonicalTypeText.render(forms.get(i)))) {
+                continue;
+            }
+            List<ClassLayout.FieldLayout> mutated = new ArrayList<>(seedFields);
+            mutated.set(i, new ClassLayout.FieldLayout("f" + i,
+                DescriptorService.describe(forms.get(other)), true,
+                DefaultOwner.HOST_DEFAULTS));
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> mutatedRegistrations =
+                new LinkedHashMap<>(registrations);
+            mutatedRegistrations.put(formsClass,
+                new ClassRegistrationSeeds.ClassRegistration(
+                    new ClassLayout(formsClass, mutated), DefaultOwner.HOST_DEFAULTS));
+            Optional<String> failure = ClassConstructionValidator.checkProjectSeedCoherence(
+                index, new ClassRegistrationSeeds(mutatedRegistrations));
+            check(failure.isPresent() && failure.get().contains("f" + i + "'"),
+                "the mutated descriptor of form " + i + " rejects: " + failure);
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1502,6 +2133,9 @@ public class ClassConstructionValidatorTest {
         testJsonNegatives();
         testDetailsDumpDeterminism();
         testFailureRangeOrigins(shared);
+        testProjectSeedCoherence();
+        testProjectSeedModuleCoherence();
+        testSeedDeclaredTypeRenderingAgainstProducers();
         System.out.println();
         if (failed == 0) {
             System.out.println("ClassConstructionValidatorTest: " + passed + " passed, "

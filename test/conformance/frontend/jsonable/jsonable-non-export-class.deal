@@ -1,7 +1,7 @@
 // @spec: Classes — @jsonable directive placement
-// @description: @jsonable attached to any declaration other than export class emits a warning and is ignored (v1.2 JSON serialization); the conformance runner cannot assert warnings, so this test verifies that no compilation error occurs.
-// @expected: compile-ok
-// @features: jsonable, warning
+// @description: @jsonable attached to a non-export class is an incompatible attachment and a compile-time error (E1043) with no metadata and no generated helpers (v1.3 declaration directive attachment)
+// @expected: compile-error E1043
+// @features: jsonable, directives, diagnostics
 
 // @jsonable
 class C {

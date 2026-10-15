@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, bytes
 
-import * as host from "host/bytes_roundtrip"
+import * as host from "host/bytes_roundtrip";
 
 export function test_host_bytes_roundtrip(): string {
   let b: bytes = bytes(3);

@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, runtime-errors
 
-import * as host from "host/nullable_return"
+import * as host from "host/nullable_return";
 
 export function test_host_nullable_return_bad(): string | null {
   return host.find("__BAD__");

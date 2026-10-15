@@ -750,112 +750,75 @@ public final class Lexer {
     // =========================================================================
 
     /**
-     * Reads a backtick-delimited template literal.
+     * Reads a backtick-delimited template literal (v1.3 template lexical
+     * states).
      *
      * <p>The lexeme is the raw content between the backticks (backticks not
-     * included).  Line terminators inside the literal produce E1003 per the
-     * normative grammar (template literals are single-line).</p>
+     * included). {@link TemplateScanner} owns the structure: TemplateText
+     * runs end at a line terminator, a backtick, or the {@code ${} opener;
+     * a backslash is ordinary TemplateText (no escape processing); inside
+     * an interpolation the normal expression rules apply, so whitespace
+     * line terminators, comments, quoted strings, balanced braces and
+     * nested template literals are all part of the one template token.</p>
      *
-     * <p>Newline handling order (D18, D19):
-     * <ol>
-     *   <li>Check for bare newline BEFORE checking for {@code \\}.</li>
-     *   <li>Within the {@code \\} handler, peek at the next character:
-     *       if it is a line terminator, treat it as the terminating newline
-     *       rather than as an escaped character.</li>
-     *   <li>After calling {@code newline()} for {@code \r}, conditionally
-     *       consume a following {@code \n} with {@link #skipCrlfLf()}
-     *       (no second line break), matching the existing
-     *       {@code readString()} and {@code skipWhitespaceAndComments()}
-     *       pattern.</li>
-     * </ol>
+     * <p>Failure handling keeps the single-line TemplateText contract: a
+     * line terminator in TemplateText, or the end of the input inside an
+     * unterminated template or interpolation, produces the existing E1003
+     * at the token-start range and a recovery token whose lexeme is the raw
+     * content scanned so far. After a TemplateText line terminator the
+     * terminator is consumed (CRLF as one line break, two scalars) so the
+     * remaining source keeps lexing.</p>
      */
     private Token readTemplateLiteral() {
         bump(); // opening backtick
-
-        // Record start of raw content (after the opening backtick)
         int contentStart = pos;
 
-        while (pos < source.length()) {
-            char c = source.charAt(pos);
+        TemplateScanner.Scan scan = TemplateScanner.scan(source, contentStart);
 
-            // Step 1: Newline check first (bare newline — E1003)
-            if (c == '\n') {
-                error(DiagnosticCode.E1003,
-                    "Unterminated template literal: missing closing backtick",
-                    tokenStartRange());
-                String lexeme = source.substring(contentStart, pos);
-                newline();
+        switch (scan.status()) {
+            case TERMINATED -> {
+                int endIndex = scan.endIndex();
+                String lexeme = source.substring(contentStart, endIndex - 1);
+                advanceTo(endIndex);
                 return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
             }
-            if (c == '\r') {
+            case TEXT_LINE_TERMINATOR -> {
+                int stop = scan.endIndex();
                 error(DiagnosticCode.E1003,
                     "Unterminated template literal: missing closing backtick",
                     tokenStartRange());
-                String lexeme = source.substring(contentStart, pos);
+                String lexeme = source.substring(contentStart, stop);
+                advanceTo(stop);
+                boolean carriageReturn = source.charAt(pos) == '\r';
                 newline();
-                // D19: conditionally consume LF after CR
-                if (pos < source.length() && source.charAt(pos) == '\n') {
+                if (carriageReturn && pos < source.length()
+                        && source.charAt(pos) == '\n') {
                     skipCrlfLf();
                 }
                 return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
             }
-
-            // Step 2: Backslash escape
-            if (c == '\\') {
-                bump(); // consume backslash
-                if (pos >= source.length()) {
-                    // EOF after backslash
-                    error(DiagnosticCode.E1003,
-                        "Unterminated template literal: escape at end of file",
-                        tokenStartRange());
-                    String lexeme = source.substring(contentStart, pos);
-                    return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
-                }
-                char next = source.charAt(pos);
-                // D18: backslash + newline → not an escape; terminate with E1003
-                if (next == '\n') {
-                    error(DiagnosticCode.E1003,
-                        "Unterminated template literal: missing closing backtick",
-                        tokenStartRange());
-                    String lexeme = source.substring(contentStart, pos - 1);
-                    newline();
-                    return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
-                }
-                if (next == '\r') {
-                    error(DiagnosticCode.E1003,
-                        "Unterminated template literal: missing closing backtick",
-                        tokenStartRange());
-                    String lexeme = source.substring(contentStart, pos - 1);
-                    newline();
-                    // D19: conditionally consume LF after CR
-                    if (pos < source.length() && source.charAt(pos) == '\n') {
-                        skipCrlfLf();
-                    }
-                    return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
-                }
-                // Valid escape: consume the escaped character (backtick after
-                // backslash does not close the template)
-                bump();
-                continue;
-            }
-
-            // Step 3: Closing backtick
-            if (c == '`') {
-                bump(); // consume closing backtick
-                String lexeme = source.substring(contentStart, pos - 1);
+            case EOF, UNTERMINATED_INTERPOLATION -> {
+                int stop = scan.endIndex();
+                error(DiagnosticCode.E1003,
+                    "Unterminated template literal: missing closing backtick",
+                    tokenStartRange());
+                String lexeme = source.substring(contentStart, stop);
+                advanceTo(stop);
                 return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
             }
+            default -> throw new IllegalStateException(
+                "Unhandled template scan status: " + scan.status());
+        }
+    }
 
-            // Step 4: Other characters
+    /**
+     * Advances the cursor to the given UTF-16 index, one decoded scalar at
+     * a time, keeping {@code pos} in lockstep with the cursor.
+     */
+    private void advanceTo(int utf16Index) {
+        while (pos < utf16Index && pos < source.length()) {
             bump();
         }
-
-        // Reached EOF without closing backtick
-        error(DiagnosticCode.E1003,
-            "Unterminated template literal: missing closing backtick",
-            tokenStartRange());
-        String lexeme = source.substring(contentStart, pos);
-        return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
     }
 
     // =========================================================================
@@ -953,14 +916,7 @@ public final class Lexer {
                 bump();
                 yield makeToken(TokenType.PIPE, "|");
             }
-            case '*' -> {
-                if (pos + 1 < source.length() && source.charAt(pos + 1) == '*') {
-                    bump(); bump();
-                    yield makeToken(TokenType.STAR_STAR, "**");
-                }
-                bump();
-                yield makeToken(TokenType.STAR, "*");
-            }
+            case '*' -> { bump(); yield makeToken(TokenType.STAR, "*"); }
             case '.' -> {
                 if (pos + 2 < source.length()
                         && source.charAt(pos + 1) == '.'

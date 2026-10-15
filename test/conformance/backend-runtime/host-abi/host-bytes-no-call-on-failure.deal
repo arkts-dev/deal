@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, bytes, runtime-errors
 
-import * as host from "host/bytes_roundtrip"
+import * as host from "host/bytes_roundtrip";
 
 export function test_host_bytes_no_call_on_failure(): string {
   let before: int = host.callCount();

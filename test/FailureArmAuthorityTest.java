@@ -784,30 +784,30 @@ public class FailureArmAuthorityTest {
      * compares it with the origin each consumer attaches.
      */
     private static final String COMPLETION_ENTRY_SOURCE = """
-        import * as host from "host/async_fn"
+        import * as host from "host/async_fn";
 
         export async function test_direct(): (x: int) => int {
-          let f: (x: int) => int = await host.fetchDirect()
-          return f
+          let f: (x: int) => int = await host.fetchDirect();
+          return f;
         }
 
         export async function test_nullable(): ((x: int) => int) | null {
-          let f: ((x: int) => int) | null = await host.fetchNullable()
-          return f
+          let f: ((x: int) => int) | null = await host.fetchNullable();
+          return f;
         }
 
         export async function test_direct_match(): (x: int) => int {
-          let f: (x: int) => int = await host.fetchDirectMatch()
-          return f
+          let f: (x: int) => int = await host.fetchDirectMatch();
+          return f;
         }
 
         export async function test_nullable_match(): ((x: int) => int) | null {
-          let f: ((x: int) => int) | null = await host.fetchNullableMatch()
-          return f
+          let f: ((x: int) => int) | null = await host.fetchNullableMatch();
+          return f;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -918,49 +918,49 @@ public class FailureArmAuthorityTest {
      * language null with an in-language identity check.
      */
     private static final String NULL_COMPLETION_ENTRY_SOURCE = """
-        import * as host from "host/async_fn"
+        import * as host from "host/async_fn";
 
         export async function test_null(): null {
-          let v: null = await host.fetchNull()
+          let v: null = await host.fetchNull();
           if (v !== null) {
-            throw { code: "TEST_FAIL", message: "null completion value mismatch" }
+            throw { code: "TEST_FAIL", message: "null completion value mismatch" };
           }
-          return null
+          return null;
         }
 
         export async function test_nullable(): int | null {
-          let v: int | null = await host.fetchNullable()
+          let v: int | null = await host.fetchNullable();
           if (v !== null) {
-            throw { code: "TEST_FAIL", message: "nullable completion value mismatch" }
+            throw { code: "TEST_FAIL", message: "nullable completion value mismatch" };
           }
-          return null
+          return null;
         }
 
         export async function test_wrong(): int {
-          let v: int = await host.fetchWrong()
-          return v
+          let v: int = await host.fetchWrong();
+          return v;
         }
 
         export async function test_wrong_null(): int {
-          let v: int = await host.fetchWrongNull()
-          return v
+          let v: int = await host.fetchWrongNull();
+          return v;
         }
 
         export async function test_nullable_string(): null {
-          let v: string | null = await host.fetchNullableString()
+          let v: string | null = await host.fetchNullableString();
           if (v !== null) {
-            throw { code: "TEST_FAIL", message: "nullable string completion value mismatch" }
+            throw { code: "TEST_FAIL", message: "nullable string completion value mismatch" };
           }
-          return null
+          return null;
         }
 
         export async function test_wrong_null_string(): null {
-          let v: string = await host.fetchWrongNullString()
-          return null
+          let v: string = await host.fetchWrongNullString();
+          return null;
         }
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, cross-module, import
 
-import * as Lib from "./jsonable_lib"
+import * as Lib from "./jsonable_lib";
 
 export function test_cross_module(): null {
   let w: Lib.Widget | null = Lib.Widget$fromJson("{\"label\":\"test\",\"count\":5}");

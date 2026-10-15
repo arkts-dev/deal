@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: closures, modules, imports
 
-import * as Lib from "./closure_import_lib"
+import * as Lib from "./closure_import_lib";
 
 export function test_closure_import_capture(): int {
   let base: int = 5;

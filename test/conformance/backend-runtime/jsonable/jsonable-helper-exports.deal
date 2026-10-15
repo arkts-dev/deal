@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, modules, lua-abi
 
-import * as Lib from "./jsonable_complex_lib"
+import * as Lib from "./jsonable_complex_lib";
 
 export function test_jsonable_helper_exports(): null {
   let u: Lib.User | null = Lib.User$fromJson("{\"name\":\"Grace\",\"addresses\":[],\"meta\":{}}");

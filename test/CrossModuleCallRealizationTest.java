@@ -232,7 +232,7 @@ public class CrossModuleCallRealizationTest {
         """;
 
     private static final String PROBE_APP = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         function twice(x: int): int {
           return x * 2;
@@ -289,7 +289,7 @@ public class CrossModuleCallRealizationTest {
             }
             """);
         writeFileIn(root, "src/app.deal", """
-            import * as lib from "./lib"
+            import * as lib from "./lib";
 
             export function main(): null {
               let r: int = lib.boom(1);

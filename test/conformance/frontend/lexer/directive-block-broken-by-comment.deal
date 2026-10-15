@@ -1,7 +1,7 @@
 // @spec: Lexical elements — Comment semantics
-// @description: A non-directive comment terminates a declaration directive block
-// @expected: compile-ok
-// @features: lexer, directives, attachment, jsonable, v1.2
+// @description: A non-directive comment terminates a declaration directive block, so the @jsonable event is unanchored and rejected with E1043 (v1.3 declaration directive attachment)
+// @expected: compile-error E1043
+// @features: lexer, directives, attachment, jsonable
 
 // @jsonable
 // ordinary documentation

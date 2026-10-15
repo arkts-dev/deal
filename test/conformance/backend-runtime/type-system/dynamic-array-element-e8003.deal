@@ -3,7 +3,7 @@
 // @expected: runtime-error E8003
 // @features: type-system, arrays, runtime-errors
 
-import * as json from "std/json"
+import * as json from "std/json";
 
 export function test_dynamic_array_element_runtime_error(): int {
   let t: table = json.parse("{\"values\":[1,\"bad\"]}");

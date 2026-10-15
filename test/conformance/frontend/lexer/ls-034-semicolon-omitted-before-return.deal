@@ -1,7 +1,7 @@
 // @spec: Lexical elements
-// @description: A variable declaration may omit its semicolon before return
-// @expected: compile-ok
-// @features: parser, semicolon, variable-declaration, return, v1.2
+// @description: A variable declaration must end with its semicolon; omitting it before return is E1053 (v1.3 Semicolon rules)
+// @expected: compile-error E1053
+// @features: parser, semicolon, variable-declaration, return
 
 export function main(): null {
   let value: int = 1

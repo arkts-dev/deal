@@ -6,7 +6,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, arrays, runtime-errors
 
-import * as host from "host/rest_join"
+import * as host from "host/rest_join";
 
 export function test_host_rest_bad(): string {
   let holder: table = { item: 5 };

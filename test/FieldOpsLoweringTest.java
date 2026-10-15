@@ -235,8 +235,8 @@ public class FieldOpsLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class Point { x: int; tag?: string; }
-            let p: Point = {x: 1}
-            let a: int = p.x
+            let p: Point = {x: 1};
+            let a: int = p.x;
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -337,8 +337,8 @@ public class FieldOpsLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class Point { x: int; tag?: string; }
-            let p: Point = {x: 1}
-            let t: string | null = p.tag
+            let p: Point = {x: 1};
+            let t: string | null = p.tag;
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -402,7 +402,7 @@ public class FieldOpsLoweringTest {
             "Child", IdentityTestFixtures.classType("Child", lib)));
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            import * as Lib from "./jsonable_batch2_lib"
+            import * as Lib from "./jsonable_batch2_lib";
             class Point { x: int; }
             class Holder { parts: Lib.Parent[] = []; }
             let h: Holder = {};
@@ -709,13 +709,13 @@ public class FieldOpsLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             export class Point { x: int = 40 + 2; tag?: string; }
-            let p: Point = {tag: "t"}
-            let xv: int = p.x
-            let hasTag: boolean = has(p.tag)
-            delete p.tag
+            let p: Point = {tag: "t"};
+            let xv: int = p.x;
+            let hasTag: boolean = has(p.tag);
+            delete p.tag;
             let hasTag2: boolean = has(p.tag);
-            p.x = 99
-            let xv2: int = p.x
+            p.x = 99;
+            let xv2: int = p.x;
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -1007,12 +1007,12 @@ public class FieldOpsLoweringTest {
         String source = """
             export class Line { a: int = 1; b?: string; }
             class Point { x: int = 2; y?: int = 0; }
-            let p: Point = {x: 1}
+            let p: Point = {x: 1};
             let xv: int = p.x;
-            p.y = 3
-            let b: boolean = has(p.y)
-            delete p.y
-            let l: Line = {}
+            p.y = 3;
+            let b: boolean = has(p.y);
+            delete p.y;
+            let l: Line = {};
             """;
         SemanticLowerer.ClassDeclarationCoreResult first = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult second = lowerModule(source);
@@ -1146,7 +1146,7 @@ public class FieldOpsLoweringTest {
             p.x = 9;
             p.y = 3;
             delete p.y;
-            let b: boolean = has(p.y)
+            let b: boolean = has(p.y);
             """);
         testFieldWriteArm(fieldMutations);
         testFieldDeleteArm(fieldMutations);

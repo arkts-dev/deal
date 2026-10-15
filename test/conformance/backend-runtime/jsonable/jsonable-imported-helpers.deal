@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, modules, helpers, cross-module, v1.2
 
-import * as models from "./jsonable_helper_lib"
+import * as models from "./jsonable_helper_lib";
 
 export function test_imported_helpers(): null {
   let a: models.Model = {};

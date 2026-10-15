@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, bytes, nullable
 
-import * as host from "host/bytes_roundtrip"
+import * as host from "host/bytes_roundtrip";
 
 export function test_host_bytes_nullable_roundtrip(): string {
   let none: bytes | null = host.nullableBytes(null);

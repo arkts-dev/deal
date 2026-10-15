@@ -3,6 +3,6 @@
 // @expected: compile-error E2008
 // @features: diagnostics, imports, lua-abi
 
-import * as bad$alias from "./alias_lib"
+import * as bad$alias from "./alias_lib";
 
 export function main(): null { return null; }

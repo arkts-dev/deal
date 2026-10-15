@@ -121,7 +121,7 @@ public class HostModuleLoadEmissionTest {
         // expected: runtime-error E8011
         // features: modules, host-abi, runtime-errors
 
-        import * as host from "host/missing_export"
+        import * as host from "host/missing_export";
 
         export function test_host_missing_export(): string {
           return "unreachable";
@@ -134,8 +134,8 @@ public class HostModuleLoadEmissionTest {
 
     /** The ABI-importing application (no host call: the call arms are a later slice). */
     private static final String ABI_APP_SOURCE = """
-        import * as probe from "host/abi_probe"
-        import * as cfg from "host/cfg"
+        import * as probe from "host/abi_probe";
+        import * as cfg from "host/cfg";
 
         export function main(): null {
           return null;
@@ -154,7 +154,7 @@ public class HostModuleLoadEmissionTest {
 
     /** The declared-array-importing application (the wrappers are driven directly). */
     private static final String ARRAY_APP_SOURCE = """
-        import * as arr from "host/array_probe"
+        import * as arr from "host/array_probe";
 
         export function main(): null {
           return null;
@@ -176,9 +176,9 @@ public class HostModuleLoadEmissionTest {
 
     /** The two-alias import of one host module (one load, one surface value). */
     private static final String TWO_ALIAS_APP_SOURCE = """
-        import * as first from "host/abi_probe"
-        import * as second from "host/abi_probe"
-        import * as cfg from "host/cfg"
+        import * as first from "host/abi_probe";
+        import * as second from "host/abi_probe";
+        import * as cfg from "host/cfg";
 
         export function main(): null {
           return null;
@@ -673,7 +673,7 @@ public class HostModuleLoadEmissionTest {
         Map<String, String> sources = new LinkedHashMap<>();
         sources.put("src/cfg.d.deal", CFG_DECLARATION_SOURCE);
         sources.put("src/app.deal", """
-            import * as cfg from "host/cfg"
+            import * as cfg from "host/cfg";
 
             export function main(): null {
               return null;

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi
 
-import * as host from "host/prewrapped_ok"
+import * as host from "host/prewrapped_ok";
 
 export function test_host_prewrapped_ok(): null {
   let greeting: string = host.greet("world");

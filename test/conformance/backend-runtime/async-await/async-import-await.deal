@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async, await, modules
 
-import * as Lib from "./async_module_lib"
+import * as Lib from "./async_module_lib";
 
 export async function test_async_import_await(): int {
   let result: int = await Lib.plusOne(4);

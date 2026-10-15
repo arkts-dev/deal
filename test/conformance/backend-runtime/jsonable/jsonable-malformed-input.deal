@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, runtime-errors, json
 
-import * as Lib from "./jsonable_complex_lib"
+import * as Lib from "./jsonable_complex_lib";
 
 export function test_jsonable_malformed_input(): null {
   let u: Lib.User | null = Lib.User$fromJson("{bad json");

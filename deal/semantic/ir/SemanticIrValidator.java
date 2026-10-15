@@ -1,6 +1,8 @@
 package deal.semantic.ir;
 
 import deal.diagnostics.CompilerDiagnostic;
+import deal.semantic.ClassConstructionValidator;
+import deal.semantic.ClassRegistrationSeeds;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -175,7 +177,8 @@ public final class SemanticIrValidator {
                 return dynamicForms;
             }
         }
-        return Optional.empty();
+        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
+            List.copyOf(closure.values()), project.entryModule().path(), facts);
     }
 
     /**
@@ -248,6 +251,67 @@ public final class SemanticIrValidator {
             if (failure.isPresent()) {
                 return failure;
             }
+        }
+        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
+            project.modules(), project.entryModule(), facts);
+    }
+
+    /**
+     * The project-level coherence of the carried class facts both project
+     * surfaces share (the complete-project admission contract): the carried
+     * interface index is the index the invocation compared against — its
+     * digest must equal the supplied {@link ComparisonFacts#interfaceIndexDigest()}
+     * (every unit's {@code interfaceHash} already agrees with the supplied
+     * digest through R-PROFILE) — and the carried class registration seeds
+     * must agree with both that index and the modules' referring class
+     * facts. The checks consume the transported records: nothing is
+     * repaired, no class authority is derived from another one, and the
+     * failure is one E6005 in the responsible class-validation rule family
+     * with the referring operation's retained origin where the violation
+     * names one.
+     */
+    private static Optional<CompilerDiagnostic> checkProjectClassFacts(
+            ProjectInterfaceIndex interfaceIndex, ClassRegistrationSeeds classSeeds,
+            List<RawUnit> units, String entryModule, ComparisonFacts facts) {
+        RawUnit subject = null;
+        for (RawUnit unit : units) {
+            if (unit.modulePath().equals(entryModule)) {
+                subject = unit;
+                break;
+            }
+        }
+        if (subject == null && !units.isEmpty()) {
+            subject = units.get(0);
+        }
+        if (subject == null) {
+            return Optional.empty();
+        }
+        String carriedDigest = interfaceIndex.interfaceIndexDigest();
+        if (!facts.interfaceIndexDigest().equals(carriedDigest)) {
+            return fail(subject, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,
+                origin(R_PROFILE, "the carried interface index digest \"" + carriedDigest
+                    + "\" differs from the supplied interface index digest \""
+                    + facts.interfaceIndexDigest() + "\""));
+        }
+        Optional<String> incoherent =
+            ClassConstructionValidator.checkProjectSeedCoherence(interfaceIndex, classSeeds);
+        if (incoherent.isPresent()) {
+            return fail(subject, facts, ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                SemanticCapability.CLASSES,
+                origin(ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                    "the carried class registration seeds contradict the carried"
+                        + " interface index: " + incoherent.get()));
+        }
+        Optional<ClassConstructionValidator.SeedModuleViolation> joined =
+            ClassConstructionValidator.checkProjectSeedModuleCoherence(classSeeds, units);
+        if (joined.isPresent()) {
+            ClassConstructionValidator.SeedModuleViolation violation = joined.get();
+            return fail(violation.referringOp(), violation.referringUnit(), facts,
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                SemanticCapability.CLASSES,
+                origin(ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                    "the carried class registration seeds contradict the carried"
+                        + " module class facts: " + violation.detail()));
         }
         return Optional.empty();
     }

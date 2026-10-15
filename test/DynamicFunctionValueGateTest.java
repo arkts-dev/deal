@@ -274,20 +274,20 @@ public class DynamicFunctionValueGateTest {
      */
     private static final String DYNAMIC_CALLEE_SOURCE = """
         function apply(f: (x: int) => int, x: int): int {
-          return f(x)
+          return f(x);
         }
 
         async function applyAsync(f: async () => int): int {
-          return await f()
+          return await f();
         }
 
         function double(x: int): int {
-          return x * 2
+          return x * 2;
         }
 
         export function main(): null {
-          let r: int = apply(double, 21)
-          return null
+          let r: int = apply(double, 21);
+          return null;
         }
         """;
 
@@ -304,7 +304,7 @@ public class DynamicFunctionValueGateTest {
         let r: int = x;
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 

@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: stdlib, string, runtime-errors
 
-import * as str from "std/string"
+import * as str from "std/string";
 
 export function test_string_length_dynamic_nonstring(): int {
   let t: table = { value: 123 };

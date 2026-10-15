@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: classes, defaults, functions, modules, host-abi
 
-import * as probe from "host/planprobe"
+import * as probe from "host/planprobe";
 
 class Probe {
   value: int = probe.nextValue();

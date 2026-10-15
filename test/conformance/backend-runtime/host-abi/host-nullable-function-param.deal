@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, functions, nullable
 
-import * as host from "host/nullable_fn"
+import * as host from "host/nullable_fn";
 
 function add1(x: int): int {
   return x + 1;

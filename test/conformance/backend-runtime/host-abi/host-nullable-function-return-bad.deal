@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, functions, runtime-errors
 
-import * as host from "host/nullable_fn_return"
+import * as host from "host/nullable_fn_return";
 
 export function test_host_nullable_function_return_bad(): null {
   let cb: ((x: int) => int) | null = host.getCallback("bad");

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, classes
 
-import * as host from "host/presence"
+import * as host from "host/presence";
 
 export function test_export_presence(): string {
   let pong: string = host.ping();

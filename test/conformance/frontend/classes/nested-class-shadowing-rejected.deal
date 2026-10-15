@@ -1,7 +1,7 @@
 // @spec: Classes — Class identity
-// @description: A value of a nested class declaration cannot be assigned to a binding of the enclosing same-named class declaration (v1.2 defect snippet 47)
-// @expected: compile-error E3019
-// @features: classes, identity, diagnostics, v1.2
+// @description: A nested class declaration is rejected before class-identity assignment checking (v1.3 module-level class rule); retain the original shadowing and assignment subject.
+// @expected: compile-error E1057
+// @features: classes, identity, diagnostics, v1.3
 
 class A { n: int = 0; }
 

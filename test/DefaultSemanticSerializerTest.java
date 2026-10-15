@@ -284,14 +284,15 @@ public class DefaultSemanticSerializerTest {
         "FUNCTION_EXPRESSION", "HAS", "IDENTIFIER", "INDEX", "LITERAL",
         "MEMBER_ACCESS", "OBJECT_LITERAL", "TEMPLATE_LITERAL", "UNARY");
 
-    private static final List<String> FIFTEEN_STATEMENT_KINDS = List.of(
-        "BLOCK", "BREAK", "CLASS_DECLARATION", "CONTINUE", "DELETE",
+    private static final List<String> FOURTEEN_STATEMENT_KINDS = List.of(
+        "BLOCK", "BREAK", "CONTINUE", "DELETE",
         "EXPRESSION_STATEMENT", "FOR", "FOR_OF", "FUNCTION_DECLARATION",
         "IF", "RETURN", "THROW", "TRY", "VARIABLE_DECLARATION", "WHILE");
 
     public static void main(String[] args) throws Exception {
         testFourteenExpressionKinds();
         testStatementGrammarTotality();
+        testOriginalLocalPlacementControls();
         testCanonicalSensitivity();
         testPlanProjectionsAndDigestDerivation();
         testPlanEntryOrderSensitivity();
@@ -441,13 +442,12 @@ public class DefaultSemanticSerializerTest {
     // Totality: the fifteen statement kinds through the statement grammar
     // =========================================================================
 
-    private static void testStatementGrammarTotality() throws Exception {
-        System.out.println("-- Statement grammar totality and roles"
-            + " (real orchestrator path) --");
+    private static void testOriginalLocalPlacementControls() throws Exception {
+        {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
+                import * as L from "./lib";
 
                 class AllStatements {
                   f: int = L.allStatements(1, [2]);
@@ -500,6 +500,188 @@ public class DefaultSemanticSerializerTest {
                 }
                 """), "src/main.deal");
         try {
+            check(!compile.success, "original local-class subject rejects at admission");
+            check(compile.diagnostics.stream().anyMatch(d -> "E1057".equals(d.code())),
+                "local-class subject retains placement rejection: " + compile.diagnostics);
+            check(!compile.planFactsAvailable(), "rejected syntax publishes no default facts");
+        } finally { deleteRecursively(compile.root); }
+        }
+        {
+        Compile compile = new Compile(Map.of(
+            "deal.json", MANIFEST,
+            "src/main.deal", """
+                function make(): null {
+                  class LocalClass {
+                    n: int = 1;
+                  }
+                  class Box {
+                    f: (v: LocalClass) => LocalClass = function(v: LocalClass): LocalClass {
+                      class FeLocal {
+                        m: int = 2;
+                      }
+                      let x: LocalClass = v;
+                      function innerCopy(w: LocalClass): LocalClass {
+                        return v;
+                      }
+                      return v;
+                    };
+                  }
+                  return null;
+                }
+
+                export function main(): null {
+                  return null;
+                }
+                """), "src/main.deal");
+        try {
+            check(!compile.success, "original local-class subject rejects at admission");
+            check(compile.diagnostics.stream().anyMatch(d -> "E1057".equals(d.code())),
+                "local-class subject retains placement rejection: " + compile.diagnostics);
+            check(!compile.planFactsAvailable(), "rejected syntax publishes no default facts");
+        } finally { deleteRecursively(compile.root); }
+        }
+        {
+        Compile compile = new Compile(Map.of(
+            "deal.json", MANIFEST,
+            "src/main.deal", """
+                import * as L from "./lib";
+
+                class Same {
+                  n: int = 1;
+                }
+
+                class Box {
+                  f: int = (function(): int {
+                    class Same {
+                      m: int = 7;
+                    }
+                    return 3;
+                  })();
+                  g: L.Widget = {};
+                }
+
+                export function main(): null {
+                  return null;
+                }
+                """,
+            "src/lib.deal", """
+                function make(): null {
+                  class Widget {
+                    inner: int = 9;
+                  }
+                  return null;
+                }
+
+                export class Widget {
+                  tag: int = 3;
+                }
+                """), "src/main.deal");
+        try {
+            check(!compile.success, "original local-class subject rejects at admission");
+            check(compile.diagnostics.stream().anyMatch(d -> "E1057".equals(d.code())),
+                "local-class subject retains placement rejection: " + compile.diagnostics);
+            check(!compile.planFactsAvailable(), "rejected syntax publishes no default facts");
+        } finally { deleteRecursively(compile.root); }
+        }
+        {
+        String mainSource = """
+            function makeA(): null {
+              class LocalA {
+                x: int = 1;
+              }
+              class Same {
+                f: int = (function(v: LocalA): int {
+                  return v.x;
+                })({});
+              }
+              return null;
+            }
+
+            function makeB(): null {
+              class LocalB {
+                y: int = 5;
+              }
+              class Same {
+                g: int = (function(w: LocalB): int {
+                  return w.y + 1;
+                })({});
+              }
+              return null;
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """;
+        Compile compile = new Compile(Map.of(
+            "deal.json", MANIFEST, "src/main.deal", mainSource),
+            "src/main.deal");
+        try {
+            check(!compile.success, "same-named local classes reject before planning");
+            check(compile.diagnostics.stream().filter(d -> "E1057".equals(d.code())).count() == 4,
+                "all four original local declarations retain their rejection subjects");
+            check(!compile.planFactsAvailable(), "local classes publish no default facts");
+        } finally { deleteRecursively(compile.root); }
+        }
+    }
+
+    private static void testStatementGrammarTotality() throws Exception {
+        System.out.println("-- Statement grammar totality and roles"
+            + " (real orchestrator path) --");
+        Compile compile = new Compile(Map.of(
+            "deal.json", MANIFEST,
+            "src/main.deal", """
+                import * as L from "./lib";
+
+                class AllStatements {
+                  f: int = L.allStatements(1, [2]);
+                }
+
+                export function main(): null {
+                  return null;
+                }
+                """,
+            "src/lib.deal", """
+                class LocalBox { n: int = 1; }
+                export function allStatements(n: int, arr: int[]): int {
+                  let total: int = 0;
+                  total = total + 1;
+                  if (n > 0) {
+                    total = total + 1;
+                  } else {
+                    total = total - 1;
+                  }
+                  let i = 0;
+                  while (i < 2) {
+                    i = i + 1;
+                    if (i === 1) { continue; }
+                    break;
+                  }
+                  for (let j: int = 0; j < 2; j = j + 1) {
+                    total = total + j;
+                  }
+                  for (let s: int of arr) {
+                    total = total + s;
+                  }
+                  let t: table = { k: 1 };
+                  delete t.k;
+                  try {
+                    if (total < 0) { throw { message: "bad" }; }
+                  } catch (e) {
+                    total = 0;
+                  }
+                  function innerFn(v: int): int {
+                    return v + 1;
+                  }
+                  total = total + innerFn(1);
+                  return total;
+                }
+
+                export function main(): null {
+                  return null;
+                }
+                """), "src/main.deal");
+        try {
             check(compile.success,
                 "the statement-grammar fixture compiles: "
                     + compile.diagnostics);
@@ -511,7 +693,7 @@ public class DefaultSemanticSerializerTest {
             }
             String content = compile.providerContentOf("lib.deal",
                 "allStatements");
-            for (String kind : FIFTEEN_STATEMENT_KINDS) {
+            for (String kind : FOURTEEN_STATEMENT_KINDS) {
                 check(content.contains("\"kind\":\"" + kind + "\""),
                     "the canonical statement grammar covers statement"
                         + " kind " + kind);
@@ -529,10 +711,10 @@ public class DefaultSemanticSerializerTest {
                     + "{\"body\""),
                 "the nested function declaration inlines its full"
                     + " CanonicalFunctionSemantics");
-            check(content.contains("\"nested\":{\"planContent\":"
-                    + "\"{\\\"classIdentity\\\":\\\"@src/LocalBox\\\""),
-                "the nested class declaration inlines its full"
-                    + " canonical default-plan content");
+            check(compile.serializedOf("lib.deal", "LocalBox") != null,
+                "module-level LocalBox keeps its own canonical default plan");
+            check(!content.contains("\"kind\":\"CLASS_DECLARATION\""),
+                "the legal statement body has no local-class semantics");
             check(compile.providerDigestOf("lib.deal", "allStatements")
                     != null,
                 "the statement-provider digest was demanded");
@@ -693,7 +875,7 @@ public class DefaultSemanticSerializerTest {
             Map<String, String> identityFiles = new LinkedHashMap<>();
             identityFiles.put("deal.json", MANIFEST);
             identityFiles.put("src/main.deal", """
-                import * as L from "./lib"
+                import * as L from "./lib";
 
                 class Sens {
                   a: int = 1 + 2;
@@ -986,10 +1168,9 @@ public class DefaultSemanticSerializerTest {
     }
 
     // =========================================================================
-    // Default-nested function-expression bodies resolve type
-    // annotations at the body/declaration scope — never the module
-    // root scope (checker-accepted programs with body-local class
-    // annotations must not be E6005-rejected, D6/D9 losslessness)
+    // Default-nested ordinary functions retain body scopes and module-class
+    // annotations. Removed local-class declarations are covered separately
+    // by testOriginalLocalPlacementControls.
     // =========================================================================
 
     private static void testDefaultNestedScopeResolution()
@@ -999,15 +1180,13 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                function make(): null {
-                  class LocalClass {
+                class FeLocal { m: int = 2; }
+                class LocalClass {
                     n: int = 1;
                   }
                   class Box {
                     f: (v: LocalClass) => LocalClass = function(v: LocalClass): LocalClass {
-                      class FeLocal {
-                        m: int = 2;
-                      }
+                      let item: FeLocal = {};
                       let x: LocalClass = v;
                       function innerCopy(w: LocalClass): LocalClass {
                         return v;
@@ -1015,9 +1194,6 @@ public class DefaultSemanticSerializerTest {
                       return v;
                     };
                   }
-                  return null;
-                }
-
                 export function main(): null {
                   return null;
                 }
@@ -1059,24 +1235,17 @@ public class DefaultSemanticSerializerTest {
                     + "\"(@src/LocalClass)->@src/LocalClass\""),
                 "the function-expression result descriptor carries the"
                     + " local class descriptor");
-            check(content.contains(
-                    "\"nested\":{\"planContent\":"
-                        + "\"{\\\"classIdentity\\\":"
-                        + "\\\"@src/FeLocal\\\""),
-                "the function-expression-body class declaration"
-                    + " inlines its full canonical plan content");
+            check(compile.serializedOf("main.deal", "FeLocal") != null,
+                "class-valued local binding refers to a module-level class plan");
+
         } finally {
             deleteRecursively(compile.root);
         }
     }
 
     // =========================================================================
-    // Same-named classes in distinct scopes: class plans, the digest
-    // memo, and the declaration-scope lookup are keyed by the exact
-    // declaration (name plus complete scalar range), never by declared
-    // name alone — the second same-named class serializes its own
-    // content/digest and resolves its defaults in its own declaration
-    // scope (D6/D8 identity, provider versioning, fail-closed totality)
+    // Same-named module-level classes in distinct modules retain independent
+    // content, annotations, provider digests and selective invalidation.
     // =========================================================================
 
     private static void testSameNamedClassesDistinctScopes()
@@ -1084,37 +1253,23 @@ public class DefaultSemanticSerializerTest {
         System.out.println("-- Same-named classes in distinct scopes:"
             + " declaration-keyed plans, scopes, and digests --");
         String mainSource = """
-            function makeA(): null {
-              class LocalA {
-                x: int = 1;
-              }
-              class Same {
-                f: int = (function(v: LocalA): int {
-                  return v.x;
-                })({});
-              }
-              return null;
+            class LocalA { x: int = 1; }
+            class Same {
+              f: int = (function(v: LocalA): int { return v.x; })({});
             }
-
-            function makeB(): null {
-              class LocalB {
-                y: int = 5;
-              }
-              class Same {
-                g: int = (function(w: LocalB): int {
-                  return w.y + 1;
-                })({});
-              }
-              return null;
+            export function main(): null { return null; }
+            """;
+        String otherSource = """
+            class LocalB { y: int = 5; }
+            class Same {
+              g: int = (function(w: LocalB): int { return w.y + 1; })({});
             }
-
-            export function main(): null {
-              return null;
-            }
+            export function main(): null { return null; }
             """;
         Compile first = new Compile(Map.of(
-            "deal.json", MANIFEST, "src/main.deal", mainSource),
-            "src/main.deal");
+            "deal.json", MANIFEST,
+            "src/main.deal", "import * as other from \"./other\";\n" + mainSource,
+            "src/other.deal", otherSource), "src/main.deal");
         try {
             check(first.planFactsAvailable(),
                 "the same-named fixture reaches the default-plan phases "
@@ -1125,7 +1280,8 @@ public class DefaultSemanticSerializerTest {
                 "the serializer accepts the same-named classes: "
                     + result.diagnostics());
             List<DefaultSemanticSerializer.SerializedDefaultClass> plans =
-                modulePlansOf(result, "main.deal");
+                new ArrayList<>(modulePlansOf(result, "main.deal"));
+            plans.addAll(modulePlansOf(result, "other.deal"));
             check(plans.size() == 4,
                 "the module serializes all four plans (LocalA, Same,"
                     + " LocalB, Same): got " + plans.size());
@@ -1195,17 +1351,20 @@ public class DefaultSemanticSerializerTest {
             // Provider versioning: changing a literal inside the
             // second same-named class's default changes exactly that
             // class's planDigest; the first class stays stable.
-            String mutated = mainSource.replace("return w.y + 1;",
+            String mutated = otherSource.replace("return w.y + 1;",
                 "return w.y + 2;");
             Compile second = first.recompile(Map.of(
-                "deal.json", MANIFEST, "src/main.deal", mutated));
+                "deal.json", MANIFEST,
+                "src/main.deal", "import * as other from \"./other\";\n" + mainSource,
+                "src/other.deal", mutated));
             check(second.planFactsAvailable(),
                 "the mutated variant reaches the default-plan phases "
                     + "(the one production arm fails closed after them): "
                     + second.diagnostics);
             List<DefaultSemanticSerializer.SerializedDefaultClass>
-                mutatedPlans = modulePlansOf(second.serializationSnapshot(),
-                    "main.deal");
+                mutatedPlans = new ArrayList<>(modulePlansOf(second.serializationSnapshot(),
+                    "main.deal"));
+            mutatedPlans.addAll(modulePlansOf(second.serializationSnapshot(), "other.deal"));
             check(mutatedPlans.size() == 4,
                 "the mutated variant serializes all four plans: got "
                     + mutatedPlans.size());
@@ -1250,10 +1409,9 @@ public class DefaultSemanticSerializerTest {
     }
 
     // =========================================================================
-    // Same-named nested and imported class plans: inline nesting and
-    // digest demand resolve by the exact declaration (name plus
-    // complete scalar range) — never the first same-named plan in
-    // module order
+    // Module-level private/imported class plans retain separate fields and
+    // provider digests. Ordinary nested functions reference module classes;
+    // the original local declarations remain separate placement negatives.
     // =========================================================================
 
     private static void testSameNamedNestedAndImportedPlans()
@@ -1264,18 +1422,17 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
+                import * as L from "./lib";
 
                 class Same {
                   n: int = 1;
                 }
 
+                class OtherSame { m: int = 7; }
                 class Box {
                   f: int = (function(): int {
-                    class Same {
-                      m: int = 7;
-                    }
-                    return 3;
+                    let value: OtherSame = {};
+                    return value.m;
                   })();
                   g: L.Widget = {};
                 }
@@ -1285,12 +1442,7 @@ public class DefaultSemanticSerializerTest {
                 }
                 """,
             "src/lib.deal", """
-                function make(): null {
-                  class Widget {
-                    inner: int = 9;
-                  }
-                  return null;
-                }
+                class PrivateWidget { inner: int = 9; }
 
                 export class Widget {
                   tag: int = 3;
@@ -1345,14 +1497,10 @@ public class DefaultSemanticSerializerTest {
             }
             String fContent = box.completedPlan().orderedFields().get(0)
                 .defaultExpression().canonicalSemanticContent();
-            check(fContent.contains("\\\"name\\\":\\\"m\\\"")
-                    && fContent.contains("\\\"literalValue\\\":7"),
-                "the function-expression body's nested Same inlines"
-                    + " its own plan (field m), never the top-level"
-                    + " Same's (field n)");
-            check(!fContent.contains("\\\"name\\\":\\\"n\\\""),
-                "the top-level Same plan is never inlined for the"
-                    + " nested declaration");
+            check(fContent.contains("@src/OtherSame"),
+                "the nested ordinary function retains its module class annotation");
+            check(!fContent.contains("\"kind\":\"CLASS_DECLARATION\""),
+                "the nested ordinary function does not carry a local declaration");
             check(nestedSame.canonicalPlanContent().contains(
                     "\"name\":\"m\"")
                     && nestedSame.canonicalPlanContent()
@@ -1450,7 +1598,7 @@ public class DefaultSemanticSerializerTest {
         Map<String, String> files = Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
+                import * as L from "./lib";
 
                 class Consumer {
                   n: int = L.pick();
@@ -1554,8 +1702,8 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
-                import * as S from "../shared"
+                import * as L from "./lib";
+                import * as S from "../shared";
 
                 class Outer {
                   a: int = localHelper();
@@ -1732,7 +1880,7 @@ public class DefaultSemanticSerializerTest {
     // =========================================================================
 
     private static final String FUNCTION_BASE_MAIN = """
-        import * as L from "./lib"
+        import * as L from "./lib";
 
         class Consumer {
           n: int = L.outer(1);
@@ -1744,7 +1892,7 @@ public class DefaultSemanticSerializerTest {
         """;
 
     private static final String FUNCTION_BASE_LIB = """
-        import * as S from "./other"
+        import * as S from "./other";
 
         export function inner1(v: int): int {
           return v + 1;
@@ -1944,7 +2092,7 @@ public class DefaultSemanticSerializerTest {
                 }
                 """,
             "src/main.deal", """
-                import * as cfg from "host/cfg"
+                import * as cfg from "host/cfg";
 
                 class UsesHost {
                   d: string = cfg.describe({});
@@ -2028,7 +2176,7 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
+                import * as L from "./lib";
 
                 class Consumer {
                   w: L.Widget | null = L.Widget$fromJson("{}");
@@ -2170,7 +2318,7 @@ public class DefaultSemanticSerializerTest {
                 }
                 """,
             "src/main.deal", """
-                import * as M from "native/math"
+                import * as M from "native/math";
 
                 class Uses {
                   v: M.Vec2 = {};
@@ -2246,7 +2394,7 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as S from "../shared"
+                import * as S from "../shared";
 
                 class Rooted {
                   g: int = S.scale(2);
@@ -2538,7 +2686,7 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
+                import * as L from "./lib";
 
                 class Outer {
                   b: L.Rec = {};

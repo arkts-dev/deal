@@ -3,7 +3,7 @@
 // @expected: runtime-error E8007
 // @features: modules, host-abi, classes
 
-import * as presence from "host/presence"
+import * as presence from "host/presence";
 
 export function test_host_class_extra_field(): null {
   let c: presence.Config = {

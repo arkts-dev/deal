@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: source-location, classes, runtime-errors
 
-import * as json from "std/json"
+import * as json from "std/json";
 
 class Box { value: int = 0; }
 function needBox(b: Box): int { return b.value; }

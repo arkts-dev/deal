@@ -1,10 +1,26 @@
 package deal.parser;
 
-import java.util.List;
+import deal.source.ScalarSourceCursor;
 
+/**
+ * The scalar rebasing map of one template interpolation.
+ *
+ * <p>An interpolation expression is sub-lexed verbatim from the template's
+ * raw content (v1.3 already forbids escape processing in TemplateText and
+ * admits the normal quoted-string rules inside the interpolation), so the
+ * sub-lexed decoded scalar {@code d} is exactly raw scalar
+ * {@code expressionStartRawScalarIndex + d}. The map owns that identity
+ * relation plus the source position of every raw scalar — line and column
+ * are computed with the same CRLF rule as {@link ScalarSourceCursor}, so an
+ * interpolation containing whitespace line terminators still rebases every
+ * sub-lexed range to its exact original source position.</p>
+ *
+ * <p>All lookups clamp instead of throwing: negative and past-end indices
+ * resolve to the expression start and the expression end respectively.</p>
+ */
 final class TemplateScalarMap {
 
-    /** 1-based source line of the template literal (all positions). */
+    /** 1-based source line of the template literal's opening backtick. */
     private final int baseLine;
 
     /** 1-based source column of the opening backtick. */
@@ -20,59 +36,49 @@ final class TemplateScalarMap {
     /** Raw scalar index of the expression's first raw scalar. */
     private final int expressionStartRawScalarIndex;
 
-    /**
-     * Per decoded scalar {@code d}: raw scalar index of the first raw
-     * scalar that produced decoded scalar {@code d}. The last entry
-     * ({@code d == decodedScalarCount}) is the expression-end raw scalar
-     * index (past-end lookups clamp to it).
-     */
-    private final int[] rawStart;
+    /** Raw scalar index just past the expression's last raw scalar. */
+    private final int expressionEndRawScalarIndex;
+
+    /** Per raw scalar index (0..rawScalarCount): 1-based source line. */
+    private final int[] rawLine;
+
+    /** Per raw scalar index (0..rawScalarCount): 1-based source column. */
+    private final int[] rawColumn;
 
     /**
-     * Per decoded scalar {@code d}: raw scalar index just after the raw
-     * run that produced decoded scalar {@code d}.
+     * Builds the map for one interpolation of {@code raw}: the raw content
+     * between the template's backticks.
      */
-    private final int[] rawEnd;
-
-    /** Number of decoded Unicode scalars in the sub-lexed expression. */
-    private final int decodedScalarCount;
-
-    TemplateScalarMap(int baseLine, int baseCol, int templateTokenStartScalarOffset,
-                      int expressionStartRawScalarIndex, int expressionEndRawScalarIndex,
-                      List<Integer> rawStarts, List<Integer> rawEnds) {
+    TemplateScalarMap(String raw, int baseLine, int baseCol,
+                      int templateTokenStartScalarOffset,
+                      int expressionStartRawScalarIndex,
+                      int expressionEndRawScalarIndex) {
         this.baseLine = baseLine;
         this.baseCol = baseCol;
         this.templateTokenStartScalarOffset = templateTokenStartScalarOffset;
         this.expressionStartRawScalarIndex = expressionStartRawScalarIndex;
-        this.decodedScalarCount = rawEnds.size();
-        this.rawStart = new int[decodedScalarCount + 1];
-        for (int i = 0; i < decodedScalarCount; i++) {
-            rawStart[i] = rawStarts.get(i);
-        }
-        rawStart[decodedScalarCount] = expressionEndRawScalarIndex;
-        this.rawEnd = new int[decodedScalarCount];
-        for (int i = 0; i < decodedScalarCount; i++) {
-            rawEnd[i] = rawEnds.get(i);
+        this.expressionEndRawScalarIndex = Math.max(
+            expressionStartRawScalarIndex, expressionEndRawScalarIndex);
+
+        String content = raw == null ? "" : raw;
+        int total = ScalarSourceCursor.scalarCount(content);
+        this.rawLine = new int[total + 1];
+        this.rawColumn = new int[total + 1];
+        ScalarSourceCursor cursor = new ScalarSourceCursor(content);
+        for (int i = 0; i <= total; i++) {
+            rawLine[i] = baseLine + cursor.line() - 1;
+            rawColumn[i] = cursor.line() == 1
+                ? baseCol + cursor.column()
+                : cursor.column();
+            if (i < total) {
+                cursor.advance();
+            }
         }
     }
 
-    /** The template's 1-based source line. */
+    /** The template's 1-based source line (its opening backtick). */
     int sourceLine() {
         return baseLine;
-    }
-
-    /** The 1-based source column of the opening backtick. */
-    int templateBaseColumn() {
-        return baseCol;
-    }
-
-    /**
-     * The source scalar offset of the opening backtick, or
-     * {@link deal.lexer.Token#UNKNOWN_OFFSET} when the template token
-     * carries no offset information.
-     */
-    int templateTokenStartScalarOffset() {
-        return templateTokenStartScalarOffset;
     }
 
     /** True iff the template token carries computed scalar offsets. */
@@ -87,61 +93,77 @@ final class TemplateScalarMap {
 
     /** Number of decoded Unicode scalars in the sub-lexed expression. */
     int decodedScalarCount() {
-        return decodedScalarCount;
+        return expressionEndRawScalarIndex - expressionStartRawScalarIndex;
     }
 
     /**
-     * Maps a decoded scalar index to the raw scalar index of its first raw
-     * scalar. Negative indices clamp to the expression start; indices past
-     * the decoded count clamp to the expression end. Never throws.
+     * Maps a decoded scalar index to its raw scalar index. Negative indices
+     * clamp to the expression start; indices past the decoded count clamp
+     * to the expression end.
      */
     int decodedToRawStart(int decodedIndex) {
-        if (decodedIndex <= 0) {
-            return rawStart[0];
-        }
-        if (decodedIndex >= rawStart.length) {
-            return rawStart[rawStart.length - 1];
-        }
-        return rawStart[decodedIndex];
+        int d = Math.max(0, Math.min(decodedIndex, decodedScalarCount()));
+        return expressionStartRawScalarIndex + d;
     }
 
     /**
-     * Maps a decoded scalar index to the raw scalar index just after the
-     * raw run that produced it. Negative indices clamp to the expression
-     * start; indices past the decoded count clamp to the expression end.
-     * Never throws.
+     * Maps a decoded scalar index to the raw scalar index just after it.
+     * Negative indices clamp to the expression start; indices at or past
+     * the decoded count clamp to the expression end.
      */
     int decodedToRawEnd(int decodedIndex) {
-        if (decodedIndex < 0) {
-            return rawStart[0];
-        }
-        if (decodedIndex >= decodedScalarCount) {
-            return rawStart[decodedScalarCount];
-        }
-        return rawEnd[decodedIndex];
+        int d = Math.max(0, Math.min(decodedIndex,
+            Math.max(0, decodedScalarCount() - 1)));
+        return expressionStartRawScalarIndex + d + 1;
     }
 
     /**
-     * Maps a raw scalar index (into the template's raw content) to the
-     * original source scalar offset of that raw scalar:
-     * {@code templateTokenStartScalarOffset + 1 + rawScalarIndex}. When
-     * the template token carries no offset information the result is
+     * Maps a raw scalar index to the original source scalar offset of that
+     * raw scalar: {@code templateTokenStartScalarOffset + 1 + rawIndex}.
+     * When the template token carries no offset information the result is
      * {@link deal.lexer.Token#UNKNOWN_OFFSET}.
      */
     int sourceOffsetAtRawScalar(int rawScalarIndex) {
         if (!hasTemplateScalarOffsets()) {
             return deal.lexer.Token.UNKNOWN_OFFSET;
         }
-        return templateTokenStartScalarOffset + 1 + rawScalarIndex;
+        return templateTokenStartScalarOffset + 1 + clampRaw(rawScalarIndex);
+    }
+
+    /** The 1-based source line of one raw scalar index. */
+    int sourceLineAtRawScalar(int rawScalarIndex) {
+        return rawLine[clampRaw(rawScalarIndex)];
+    }
+
+    /** The 1-based source column of one raw scalar index. */
+    int sourceColumnAtRawScalar(int rawScalarIndex) {
+        return rawColumn[clampRaw(rawScalarIndex)];
+    }
+
+    /** Clamps a raw scalar index into the table's range. */
+    private int clampRaw(int rawScalarIndex) {
+        return Math.max(0, Math.min(rawScalarIndex, rawLine.length - 1));
     }
 
     /**
-     * Maps a raw scalar index (into the template's raw content) to the
-     * original source column of that raw scalar:
-     * {@code baseCol + 1 + rawScalarIndex}. Template literals are
-     * single-line, so the line is {@link #sourceLine()} everywhere.
+     * The source position {@code {line, column}} of one raw scalar index
+     * inside {@code raw}, whose first scalar sits at
+     * {@code (baseLine, baseCol + 1)}. Never throws; the index clamps into
+     * {@code [0, scalarCount(raw)]}.
      */
-    int sourceColumnAtRawScalar(int rawScalarIndex) {
-        return baseCol + 1 + rawScalarIndex;
+    static int[] positionAt(String raw, int baseLine, int baseCol,
+                            int rawScalarIndex) {
+        String content = raw == null ? "" : raw;
+        int total = ScalarSourceCursor.scalarCount(content);
+        int index = Math.max(0, Math.min(rawScalarIndex, total));
+        ScalarSourceCursor cursor = new ScalarSourceCursor(content);
+        for (int i = 0; i < index; i++) {
+            cursor.advance();
+        }
+        int line = baseLine + cursor.line() - 1;
+        int column = cursor.line() == 1
+            ? baseCol + cursor.column()
+            : cursor.column();
+        return new int[]{line, column};
     }
 }

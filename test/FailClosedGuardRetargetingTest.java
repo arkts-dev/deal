@@ -91,11 +91,11 @@ public class FailClosedGuardRetargetingTest {
         """;
 
     private static final String CROSS_MODULE_CALL_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
-          let x: int = lib.add(1, 2)
-          return null
+          let x: int = lib.add(1, 2);
+          return null;
         }
         """;
 
@@ -114,11 +114,11 @@ public class FailClosedGuardRetargetingTest {
      * declaration-typed).
      */
     private static final String IMPORTED_LITERAL_SOURCE = """
-        import * as u from "util"
+        import * as u from "util";
 
         export function main(): null {
-          let p: u.Point = {x: 5}
-          return null
+          let p: u.Point = {x: 5};
+          return null;
         }
         """;
 
@@ -128,7 +128,7 @@ public class FailClosedGuardRetargetingTest {
      * baseline).
      */
     private static final String EXTERN_C_DECLARATION = """
-        import * as h from "host/helper"
+        import * as h from "host/helper";
 
         // @extern-c
 
@@ -147,11 +147,11 @@ public class FailClosedGuardRetargetingTest {
 
     /** The extern-C consumer: the declaration import is never called. */
     private static final String EXTERN_C_APP_SOURCE = """
-        import * as h from "host/helper"
-        import * as native from "native/probe"
+        import * as h from "host/helper";
+        import * as native from "native/probe";
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -561,7 +561,7 @@ public class FailClosedGuardRetargetingTest {
      * captured counter proves the local body executed once per call).
      */
     private static final String RESIDUAL_PROBE = """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         export function main(): null {
           let calls: int = 0;
@@ -583,7 +583,7 @@ public class FailClosedGuardRetargetingTest {
         """;
 
     private static final String CAPTURE_PROBE = """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         export function main(): null {
           let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
@@ -601,7 +601,7 @@ public class FailClosedGuardRetargetingTest {
         """;
 
     private static final String TRANSFER_PROBE = """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         export function main(): null {
           let vals: int[] = [1, 2, 3, 4, 5];
@@ -641,7 +641,7 @@ public class FailClosedGuardRetargetingTest {
             + "real toolchains with their oracle-agreed transcripts and no "
             + "guard outcome --");
         probe("bytes value semantics", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let b: bytes = bytes(4);
               b[0] = 7;
@@ -653,7 +653,7 @@ public class FailClosedGuardRetargetingTest {
             }
             """, "PROBE|BYTES|ok");
         probe("same-module @jsonable public CLI", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             // @jsonable
             export class Person { name: string = ""; score: int = 0; }
             export function main(): null {
@@ -674,8 +674,8 @@ public class FailClosedGuardRetargetingTest {
                 export class Widget { label: string = ""; count: int = 0; }
                 """,
             "src/main.deal", """
-                import * as console from "std/console"
-                import * as Lib from "./lib"
+                import * as console from "std/console";
+                import * as Lib from "./lib";
                 export function main(): null {
                   let w: Lib.Widget = { label: "a", count: 1 };
                   let s: string = Lib.Widget$toJson(w);

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: classes, defaults, modules
 
-import * as P from "./plan_provider_lib"
+import * as P from "./plan_provider_lib";
 
 export function test_plan_imported_provider_scope(): null {
   let a: P.Provider = {};

@@ -126,9 +126,11 @@ public sealed interface RuntimeDescriptor extends OpResultType
     private static RuntimeDescriptor parseFunc(java.lang.String text, int[] pos, boolean isAsync) {
         expect(text, pos, '(');
         List<RuntimeDescriptor> params = new ArrayList<>();
+        requireMore(text, pos);
         if (text.charAt(pos[0]) != ')') {
             while (true) {
                 params.add(parseAt(text, pos, false));
+                requireMore(text, pos);
                 if (text.charAt(pos[0]) == ',') {
                     pos[0]++;
                     continue;
@@ -141,6 +143,19 @@ public sealed interface RuntimeDescriptor extends OpResultType
         expect(text, pos, '>');
         RuntimeDescriptor returnType = parseAt(text, pos, false);
         return new Func(params, returnType, isAsync);
+    }
+
+    /**
+     * Fails a truncated descriptor text as the documented decode
+     * exception, never as an unchecked index error: the parameter-list
+     * states of the grammar inspect the next character, so the shared
+     * descriptor owner normalizes its end position here.
+     */
+    private static void requireMore(java.lang.String text, int[] pos) {
+        if (pos[0] >= text.length()) {
+            throw new SemanticIrTextDecodeException(
+                "not a canonical descriptor text (unexpected end): \"" + text + "\"");
+        }
     }
 
     private static void expect(java.lang.String text, int[] pos, char expected) {

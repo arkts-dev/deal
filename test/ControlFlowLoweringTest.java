@@ -944,7 +944,7 @@ public class ControlFlowLoweringTest {
     static void testTryCatchThrowArm() {
         System.out.println("-- TRY_CATCH/THROW: blocks, catchBinding, THROW_TRANSFER --");
 
-        CheckedSlice slice = checkSlice("try {} catch (e) { throw e }");
+        CheckedSlice slice = checkSlice("try {} catch (e) { throw e; }");
         if (slice == null) {
             return;
         }
@@ -1735,7 +1735,7 @@ public class ControlFlowLoweringTest {
             while (false) { break; }
             for (;;) { continue; }
             for (let x: int of [1]) {}
-            try {} catch (e) { throw e }
+            try {} catch (e) { throw e; }
             "probe";
             """);
         if (slice == null) {
@@ -1803,7 +1803,7 @@ public class ControlFlowLoweringTest {
               if (({f: true}).f) { "a"; }
               for (;;) { break; }
             }
-            try {} catch (e) { throw e }
+            try {} catch (e) { throw e; }
             for (let x: int of [1, 2]) { continue; }
             """);
         if (slice == null) {

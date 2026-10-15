@@ -1,7 +1,7 @@
-// @spec: Runtime execution model
-// @description: Corner-case subject power-associativity-unary — Right-associative power; DEAL unary binds tighter than power (not JS exponent grammar). (basis: ExponentiationExpression / UnaryExpression grammar; Operator precedence table)
-// @expected: runtime-ok
-// @features: v1.2, runtime, corner-case
+// @spec: Lexical elements — Operators
+// @description: The v1.3 operator set has no exponentiation: each '**' lexes as two '*' operators and the second one has no operand, so the removed-operator subject is rejected at admission (E1037). The v1.2 power-associativity/unary-grouping subject is retained as a rejection control.
+// @expected: compile-error E1037
+// @features: parser, operators, diagnostics, v1.2
 
 import * as c from "std/console";
 export function main(): null {

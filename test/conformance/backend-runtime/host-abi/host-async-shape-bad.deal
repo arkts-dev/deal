@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, async-await, runtime-errors
 
-import * as host from "host/async_shape_bad"
+import * as host from "host/async_shape_bad";
 
 export async function test_host_async_shape_bad(): string {
   let fetched: string = await host.fetchValue();

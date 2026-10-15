@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, arrays, diagnostics
 
-import * as Lib from "./jsonable_batch2_lib"
+import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_nested_array_malformed_element(): null {
   let p: Lib.Parent | null = Lib.Parent$fromJson("{\"children\":[1]}");

@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, functions, runtime-errors
 
-import * as host from "host/nullable_fn"
+import * as host from "host/nullable_fn";
 
 function badFn(s: string): int {
   return 1;

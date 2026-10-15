@@ -376,49 +376,49 @@ public class StdlibCallLoweringTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console"
-                    import * as str from "std/string"
-                    import * as tbl from "std/table"
-                    import * as json from "std/json"
-                    import * as math from "std/math"
-                    import * as time from "std/time"
+                    import * as console from "std/console";
+                    import * as str from "std/string";
+                    import * as tbl from "std/table";
+                    import * as json from "std/json";
+                    import * as math from "std/math";
+                    import * as time from "std/time";
 
                     function run(): null {
                       console.log("log");
-                      console.error("error")
-                      let n1: int = str.length("abc")
-                      let s2: string = str.substring("abc", 1, 2)
-                      let b3: boolean = str.contains("abc", "b")
-                      let b4: boolean = str.startsWith("abc", "a")
-                      let b5: boolean = str.endsWith("abc", "c")
-                      let s6: string = str.replace("aba", "a", "z")
-                      let xs7: string[] = str.split("a,b", ",")
-                      let s8: string = str.trim(" x ")
-                      let t: table = {k: 1}
-                      let ks9: string[] = tbl.keys(t)
-                      let jt10: table = json.parse("{\\"a\\": 1}")
-                      let js11: string = json.stringify(t)
-                      let f12: number = math.floor(1.5)
-                      let f13: number = math.ceil(1.5)
-                      let f14: number = math.sqrt(4.0)
-                      let i15: int = math.absInt(-3)
-                      let f16: number = math.absNumber(-1.5)
-                      let i17: int = math.minInt(2, 3)
-                      let i18: int = math.maxInt(2, 3)
-                      let now: int = time.nowMillis()
-                      return null
+                      console.error("error");
+                      let n1: int = str.length("abc");
+                      let s2: string = str.substring("abc", 1, 2);
+                      let b3: boolean = str.contains("abc", "b");
+                      let b4: boolean = str.startsWith("abc", "a");
+                      let b5: boolean = str.endsWith("abc", "c");
+                      let s6: string = str.replace("aba", "a", "z");
+                      let xs7: string[] = str.split("a,b", ",");
+                      let s8: string = str.trim(" x ");
+                      let t: table = {k: 1};
+                      let ks9: string[] = tbl.keys(t);
+                      let jt10: table = json.parse("{\\"a\\": 1}");
+                      let js11: string = json.stringify(t);
+                      let f12: number = math.floor(1.5);
+                      let f13: number = math.ceil(1.5);
+                      let f14: number = math.sqrt(4.0);
+                      let i15: int = math.absInt(-3);
+                      let f16: number = math.absNumber(-1.5);
+                      let i17: int = math.minInt(2, 3);
+                      let i18: int = math.maxInt(2, 3);
+                      let now: int = time.nowMillis();
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -614,28 +614,28 @@ public class StdlibCallLoweringTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console"
-                    import * as str from "std/string"
+                    import * as console from "std/console";
+                    import * as str from "std/string";
 
                     function markS(v: string): string { console.log("s"); return v; }
                     function markB(v: int): int { console.log("b"); return v; }
                     function markC(v: int): int { console.log("c"); return v; }
 
                     function run(): null {
-                      let s: string = str.substring(markS("ab"), markB(0), markC(1))
-                      return null
+                      let s: string = str.substring(markS("ab"), markB(0), markC(1));
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -744,28 +744,28 @@ public class StdlibCallLoweringTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "util.deal", """
                     export function length(s: string): int {
-                      return 0
+                      return 0;
                     }
                     """,
                 "lib.deal", """
-                    import * as s from "./util"
+                    import * as s from "./util";
 
                     function run(): null {
-                      s.length("x")
-                      return null
+                      s.length("x");
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -812,24 +812,24 @@ public class StdlibCallLoweringTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console"
+                    import * as console from "std/console";
 
                     function run(): null {
                       let g: (x: string) => null = console.log;
-                      g("x")
-                      return null
+                      g("x");
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -984,23 +984,23 @@ public class StdlibCallLoweringTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "lib.deal", """
-                    import * as str from "std/string"
+                    import * as str from "std/string";
 
                     function run(): null {
-                      let n: int = str.length("abc")
-                      return null
+                      let n: int = str.length("abc");
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -1130,29 +1130,29 @@ public class StdlibCallLoweringTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console"
-                    import * as json from "std/json"
-                    import * as math from "std/math"
+                    import * as console from "std/console";
+                    import * as json from "std/json";
+                    import * as math from "std/math";
 
                     function run(): null {
-                      console.log("hi")
-                      let t: table = json.parse("{\\"k\\": 1}")
-                      let s: string = json.stringify(t)
-                      let f: number = math.floor(1.5)
-                      let i: int = math.absInt(-3)
-                      return null
+                      console.log("hi");
+                      let t: table = json.parse("{\\"k\\": 1}");
+                      let s: string = json.stringify(t);
+                      let f: number = math.floor(1.5);
+                      let i: int = math.absInt(-3);
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -1239,23 +1239,23 @@ public class StdlibCallLoweringTest {
         try {
             CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
                 "main.deal", """
-                    import * as lib from "./lib"
+                    import * as lib from "./lib";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """,
                 "lib.deal", """
-                    import * as t from "std/time"
+                    import * as t from "std/time";
 
                     function run(): null {
-                      let n: int = t.nowMillis()
-                      return null
+                      let n: int = t.nowMillis();
+                      return null;
                     }
 
                     function main(): null {
-                      run()
-                      return null
+                      run();
+                      return null;
                     }
                     """), "main.deal");
             if (checked == null) {

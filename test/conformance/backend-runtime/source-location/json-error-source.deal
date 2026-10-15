@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: source-location, jsonable, runtime-errors
 
-import * as json from "std/json"
+import * as json from "std/json";
 
 export function test_source_location_json_error(): string {
   let t: table = { bad: function(): int { return 1; } };

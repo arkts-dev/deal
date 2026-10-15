@@ -3,7 +3,7 @@
 // @expected: runtime-error MODULE_EXPLICIT_FAIL
 // @features: modules, error-handling, runtime-errors
 
-import * as Lib from "./explicit_fail_lib"
+import * as Lib from "./explicit_fail_lib";
 
 export function test_imported_function_explicit_error(): null {
   Lib.fail();

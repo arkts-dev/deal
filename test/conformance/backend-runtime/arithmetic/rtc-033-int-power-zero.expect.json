@@ -1,16 +1,10 @@
 {
   "version": 1,
-  "backends": [
-    "luajit",
-    "jvm",
-    "js"
-  ],
-  "expected": {
-    "mode": "runtime-ok",
-    "transcript": {
-      "stdout": "",
-      "stderr": ""
-    },
-    "exitCode": 0
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E1037",
+    "line": 7,
+    "column": 23,
+    "message": "Expected expression"
   }
 }

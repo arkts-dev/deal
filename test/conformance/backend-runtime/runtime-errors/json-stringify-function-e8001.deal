@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: stdlib, json, runtime-errors
 
-import * as json from "std/json"
+import * as json from "std/json";
 
 export function test_json_stringify_function_error(): string {
   let t: table = { f: function(): int { return 1; } };

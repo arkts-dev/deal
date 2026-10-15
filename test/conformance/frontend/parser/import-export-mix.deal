@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: parser, modules, exports
 
-import * as Lib from "./parser_import_lib"
+import * as Lib from "./parser_import_lib";
 
 export class ParserShape {
   value: int = 0;

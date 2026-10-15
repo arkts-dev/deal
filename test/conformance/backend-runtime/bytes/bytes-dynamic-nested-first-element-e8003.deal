@@ -3,7 +3,7 @@
 // @expected: runtime-error E8003
 // @features: descriptors, bytes, dynamic-boundaries
 
-import * as json from "std/json"
+import * as json from "std/json";
 
 export function test_bytes_dynamic_nested_first_element(): int {
   let t: table = json.parse("{\"values\":[[\"x\"],[\"y\"]]}");

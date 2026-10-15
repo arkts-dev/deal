@@ -159,6 +159,21 @@ public enum DiagnosticCode {
      */
     E1056(Phase.FRONTEND, "Chained comparison is not allowed"),
 
+    /**
+     * Local class declaration: the v1.3 grammar makes {@code class}
+     * module-level only ({@code docs/spec-v1.3.md} Classes — "Local class
+     * declarations are compile-time errors"), at any nesting depth and in
+     * unreachable bodies included.
+     */
+    E1057(Phase.FRONTEND, "Local class declarations are not allowed"),
+
+    /**
+     * Overqualified type name: the v1.3 Type grammar admits a bare class
+     * name or exactly one {@code Identifier '.' Identifier} qualifier
+     * ({@code PrimaryType}); {@code A.B.C} is outside the grammar.
+     */
+    E1058(Phase.FRONTEND, "Type name admits at most one qualifier"),
+
     // =========================================================================
     // E2xxx — name resolution, module resolution, and project configuration (FRONTEND)
     // =========================================================================

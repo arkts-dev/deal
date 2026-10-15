@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: bytes, classes, defaults, arrays, functions, async-await, host-abi, json
 
-import * as host from "host/bytes_roundtrip"
-import * as json from "std/json"
+import * as host from "host/bytes_roundtrip";
+import * as json from "std/json";
 
 function identity(b: bytes): bytes { return b; }
 

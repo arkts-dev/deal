@@ -577,7 +577,7 @@ public class FfiDeclarationValidatorTest {
             "prov.tools", Map.of("make", new Type.Func(
                 List.of(Type.Int.INSTANCE), Type.Int.INSTANCE, false))));
         ValidatorHarness providerCall = new ValidatorHarness("""
-            import * as prov from "prov/tools"
+            import * as prov from "prov/tools";
 
             // @extern-c
 
@@ -677,8 +677,8 @@ public class FfiDeclarationValidatorTest {
             "prov.early", Map.of("seed", new Type.Func(
                 List.of(), Type.Int.INSTANCE, false))));
         ValidatorHarness h = new ValidatorHarness("""
-            import * as late from "prov/late"
-            import * as early from "prov/early"
+            import * as late from "prov/late";
+            import * as early from "prov/early";
 
             // @extern-c
 
@@ -728,8 +728,8 @@ public class FfiDeclarationValidatorTest {
             "prov.early", Map.of("seed", new Type.Func(
                 List.of(), Type.Int.INSTANCE, false))));
         ValidatorHarness h2 = new ValidatorHarness("""
-            import * as late from "prov/late"
-            import * as early from "prov/early"
+            import * as late from "prov/late";
+            import * as early from "prov/early";
 
             // @extern-c
 
@@ -1000,7 +1000,7 @@ public class FfiDeclarationValidatorTest {
                 export function add(a: int, b: int): int;
                 """);
             writeFileIn(proj, "src/app.deal", """
-                import * as math from "native/math"
+                import * as math from "native/math";
                 export function main(): null { return null; }
                 """);
             Path entry = proj.resolve("src/app.deal").toAbsolutePath();
@@ -1068,7 +1068,7 @@ public class FfiDeclarationValidatorTest {
                 export function open(): Handle;
                 """);
             writeFileIn(proj, "src/app.deal", """
-                import * as math from "native/math"
+                import * as math from "native/math";
                 export function main(): null { return null; }
                 """);
             Path entry = proj.resolve("src/app.deal").toAbsolutePath();
@@ -1127,7 +1127,7 @@ public class FfiDeclarationValidatorTest {
                 export async function bad(): int;
                 """);
             writeFileIn(proj, "src/app.deal", """
-                import * as math from "native/math"
+                import * as math from "native/math";
                 export function main(): null { return null; }
                 """);
             Path entry = proj.resolve("src/app.deal").toAbsolutePath();
@@ -1173,7 +1173,7 @@ public class FfiDeclarationValidatorTest {
                 export function midpoint(): Vec2;
                 """);
             writeFileIn(proj, "src/app.deal", """
-                import * as math from "native/math"
+                import * as math from "native/math";
                 export function main(): null { return null; }
                 """);
             Path entry = proj.resolve("src/app.deal").toAbsolutePath();
@@ -1222,8 +1222,8 @@ public class FfiDeclarationValidatorTest {
             // early: the dependency (check) order is early(0), late(1),
             // and the imported references must follow it.
             writeFileIn(proj, "src/math.d.deal", """
-                import * as late from "./prov/late"
-                import * as early from "./prov/early"
+                import * as late from "./prov/late";
+                import * as early from "./prov/early";
 
                 // @extern-c
 
@@ -1237,11 +1237,11 @@ public class FfiDeclarationValidatorTest {
                 export function seed(): int { return 1; }
                 """);
             writeFileIn(proj, "src/prov/late.deal", """
-                import * as early from "./early"
+                import * as early from "./early";
                 export function seed(): int { return early.seed() + 1; }
                 """);
             writeFileIn(proj, "src/app.deal", """
-                import * as math from "native/math"
+                import * as math from "native/math";
                 export function main(): null { return null; }
                 """);
             Path entry = proj.resolve("src/app.deal").toAbsolutePath();

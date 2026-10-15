@@ -267,7 +267,6 @@ public class LexerTest {
             new OpTest("*",   TokenType.STAR,       "*"),
             new OpTest("/",   TokenType.SLASH,      "/"),
             new OpTest("%",   TokenType.PERCENT,    "%"),
-            new OpTest("**",  TokenType.STAR_STAR,  "**"),
             new OpTest("===", TokenType.EQ_STRICT,  "==="),
             new OpTest("!==", TokenType.NEQ_STRICT, "!=="),
             new OpTest("==",  TokenType.EQ,         "=="),
@@ -486,27 +485,60 @@ public class LexerTest {
         assertNoDiagnostics(r.diagnostics(), "template leading interpolation");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "${greeting} world", 1, 1);
 
-        // Escaped backtick does not close template
+        // v1.3: TemplateText has no escape mechanism — a backslash is
+        // ordinary text and does not shield a following backtick.
         r = tokenize("`a\\`b`");
-        assertNoDiagnostics(r.diagnostics(), "escaped backtick");
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\`b", 1, 1);
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\", 1, 1);
+        assertToken(r.tokens().get(1), TokenType.IDENTIFIER, "b", 1, 5);
+        assertDiagnosticCode(r.diagnostics(), "E1003",
+            "the backtick after b opens an unterminated template");
 
-        // Escaped dollar sign
+        // A raw backslash is TemplateText content.
         r = tokenize("`a\\$b`");
-        assertNoDiagnostics(r.diagnostics(), "escaped dollar");
+        assertNoDiagnostics(r.diagnostics(), "raw backslash and dollar text");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\$b", 1, 1);
 
-        // Escaped backslash
-        r = tokenize("`a\\\\b`");
-        assertNoDiagnostics(r.diagnostics(), "escaped backslash");
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\\\b", 1, 1);
+        // A bare '}' is ordinary TemplateText (only a line terminator, a
+        // backtick, or '${' ends a text run).
+        r = tokenize("`a}b`");
+        assertNoDiagnostics(r.diagnostics(), "bare } in TemplateText");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a}b", 1, 1);
 
-        // Multiple escapes
-        r = tokenize("`\\`\\\\\\$`");
-        assertNoDiagnostics(r.diagnostics(), "multiple escapes");
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "\\`\\\\\\$", 1, 1);
+        // A '${' opener inside text starts an interpolation; the closing '}'
+        // resumes the text run.
+        r = tokenize("`a${x}b}c`");
+        assertNoDiagnostics(r.diagnostics(), "interpolation then text");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a${x}b}c", 1, 1);
 
-        // Template literal with newlines in source (for interpolation with braces)
+        // Line terminators inside an interpolation are expression whitespace
+        // and never end the token.
+        r = tokenize("`a${\n  name\n}b`");
+        assertNoDiagnostics(r.diagnostics(),
+            "line terminators inside an interpolation");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
+            "a${\n  name\n}b", 1, 1);
+
+        // A nested template literal inside an interpolation keeps the outer
+        // token intact (raw backticks, no escaping).
+        r = tokenize("`[${ `inner` }]`");
+        assertNoDiagnostics(r.diagnostics(), "nested template with raw backticks");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
+            "[${ `inner` }]", 1, 1);
+
+        // Comments inside an interpolation belong to the expression text;
+        // their braces and line terminators do not end the token.
+        r = tokenize("`${ /* } */ name // }\n}`");
+        assertNoDiagnostics(r.diagnostics(), "comments inside interpolation");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
+            "${ /* } */ name // }\n}", 1, 1);
+
+        // Quoted strings inside an interpolation shield their braces.
+        r = tokenize("`${ \"}\" }`");
+        assertNoDiagnostics(r.diagnostics(), "quoted brace inside interpolation");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
+            "${ \"}\" }", 1, 1);
+
+        // Template literal with nested braces in the expression.
         r = tokenize("`${ {x:1} }`");
         assertNoDiagnostics(r.diagnostics(), "template with nested braces");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "${ {x:1} }", 1, 1);
@@ -522,7 +554,7 @@ public class LexerTest {
             "unterminated template lexeme is content before EOF");
 
         // =====================================================================
-        // Newline inside template literal → E1003
+        // Newline inside TemplateText → E1003
         // =====================================================================
         r = tokenize("`hello\nworld`");
         assertDiagnosticCode(r.diagnostics(), "E1003", "newline in template");
@@ -565,40 +597,34 @@ public class LexerTest {
             "world token on line 2 after CRLF (got " + worldToken.line() + ")");
 
         // =====================================================================
-        // Backslash followed by newline (\n) → E1003 (not consumed as escape)
+        // Backslash is ordinary TemplateText: a backslash before a line
+        // terminator stays in the lexeme and the terminator still ends the
+        // text run with E1003.
         // =====================================================================
         r = tokenize("`hello\\\nworld`");
         assertDiagnosticCode(r.diagnostics(), "E1003",
-            "backslash+newline in template");
+            "backslash before newline in template");
         check(r.tokens().get(0).type() == TokenType.TEMPLATE_LITERAL,
-            "template with \\\\n produces TEMPLATE_LITERAL");
-        // Lexeme should be content before the backslash
-        check(r.tokens().get(0).lexeme().equals("hello"),
-            "template lexeme is content before \\\\n (got '" + r.tokens().get(0).lexeme() + "')");
-        // Verify 'world' appears after
+            "template with backslash+LF produces TEMPLATE_LITERAL");
+        check(r.tokens().get(0).lexeme().equals("hello\\"),
+            "template lexeme keeps the raw backslash (got '"
+                + r.tokens().get(0).lexeme() + "')");
         boolean hasWorldAfterBackslashN = r.tokens().stream()
             .anyMatch(t -> t.type() == TokenType.IDENTIFIER && t.lexeme().equals("world"));
         check(hasWorldAfterBackslashN,
             "'world' found after template with backslash+newline");
 
-        // =====================================================================
-        // Backslash followed by \r → E1003 (not consumed as escape)
-        // =====================================================================
         r = tokenize("`hello\\\rworld`");
         assertDiagnosticCode(r.diagnostics(), "E1003",
             "backslash+CR in template");
-        check(r.tokens().get(0).lexeme().equals("hello"),
-            "template lexeme is content before \\\\r");
+        check(r.tokens().get(0).lexeme().equals("hello\\"),
+            "template lexeme keeps the raw backslash before CR");
 
-        // =====================================================================
-        // Backslash followed by \r\n (Windows) → E1003, line correct
-        // =====================================================================
         r = tokenize("`hello\\\r\nworld`");
         assertDiagnosticCode(r.diagnostics(), "E1003",
             "backslash+CRLF in template");
-        check(r.tokens().get(0).lexeme().equals("hello"),
-            "template lexeme is content before \\\\r\\n");
-        // Verify 'world' is on line 2
+        check(r.tokens().get(0).lexeme().equals("hello\\"),
+            "template lexeme keeps the raw backslash before CRLF");
         Token wToken = null;
         for (Token t : r.tokens()) {
             if (t.type() == TokenType.IDENTIFIER && t.lexeme().equals("world")) {
@@ -630,27 +656,16 @@ public class LexerTest {
         check(letToken.column() == 1,
             "LET column is 1 after CRLF template (got " + letToken.column() + ")");
 
-        // =====================================================================
-        // Backslash followed by literal newline in source: verify E1003 and
-        // that the backslash was NOT consumed as an escape (bump not called
-        // for the newline char)
-        // =====================================================================
-        // This is the key regression for D18 — we must emit E1003 when seeing
-        // backslash followed by newline, NOT consume the newline as an escaped char
-        r = tokenize("`a\\\nb`");
-        assertDiagnosticCode(r.diagnostics(), "E1003",
-            "backslash+LF not consumed as escape");
-        // The lexeme should be "a" (content before the backslash)
-        check(r.tokens().get(0).lexeme().equals("a"),
-            "lexeme is 'a' before backslash+LF (got '" + r.tokens().get(0).lexeme() + "')");
-
-        // =====================================================================
-        // Template with backslash before non-newline: the backslash is consumed
-        // as an escape and the next character is consumed normally
-        // =====================================================================
-        r = tokenize("`a\\nb`");
-        assertNoDiagnostics(r.diagnostics(), "backslash-n escape in template");
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\nb", 1, 1);
+        // Two LF scalars are two line breaks, not a CRLF pair.
+        r = tokenize("`hello\n\nworld");
+        assertDiagnosticCode(r.diagnostics(), "E1003", "two LF after TemplateText");
+        Token afterTwoLf = r.tokens().stream()
+            .filter(t -> t.type() == TokenType.IDENTIFIER
+                && t.lexeme().equals("world"))
+            .findFirst().orElse(null);
+        check(afterTwoLf != null && afterTwoLf.line() == 3
+                && afterTwoLf.column() == 1,
+            "world follows two LF on line 3, column 1");
 
         // =====================================================================
         // Template literal followed by another token on next line
@@ -670,6 +685,8 @@ public class LexerTest {
             "template with backslash at EOF");
         check(r.tokens().get(0).type() == TokenType.TEMPLATE_LITERAL,
             "template with backslash-EOF produces TEMPLATE_LITERAL");
+        check(r.tokens().get(0).lexeme().equals("hello\\"),
+            "template lexeme keeps the raw backslash at EOF");
     }
 
     // =========================================================================

@@ -1,7 +1,7 @@
 // IR golden fixture: modules
 // Tests module-level structure with imports and exports.
 
-import * as Lib from "./lib/modules-helper"
+import * as Lib from "./lib/modules-helper";
 
 function compute(x: int): int {
     return x + 1;

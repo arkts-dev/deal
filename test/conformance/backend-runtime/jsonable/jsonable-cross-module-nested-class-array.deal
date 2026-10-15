@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, arrays, nested, modules
 
-import * as Lib from "./jsonable_batch2_lib"
+import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_cross_module_nested_class_array(): null {
   let p: Lib.Parent = Lib.makeParent(3, 4);

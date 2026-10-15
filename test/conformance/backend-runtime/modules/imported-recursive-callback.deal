@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, recursion, callbacks
 
-import * as Lib from "./module_extra_lib"
+import * as Lib from "./module_extra_lib";
 
 function call(f: (n: int) => int, n: int): int { return f(n); }
 

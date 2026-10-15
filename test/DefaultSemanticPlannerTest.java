@@ -188,8 +188,8 @@ public class DefaultSemanticPlannerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
-                import * as S from "../shared"
+                import * as L from "./lib";
+                import * as S from "../shared";
 
                 class Outer {
                   a: int = localHelper();
@@ -469,7 +469,7 @@ public class DefaultSemanticPlannerTest {
                 }
                 """,
             "src/main.deal", """
-                import * as M from "native/math"
+                import * as M from "native/math";
 
                 export function main(): null {
                   return null;
@@ -533,7 +533,7 @@ public class DefaultSemanticPlannerTest {
                 }
                 """,
             "src/main.deal", """
-                import * as cfg from "host/cfg"
+                import * as cfg from "host/cfg";
 
                 export function main(): null {
                   return null;
@@ -593,23 +593,20 @@ public class DefaultSemanticPlannerTest {
         try {
             check(!compile.success, "the evaluator-scope await fails the"
                 + " compile");
-            CompilerDiagnostic e3020 = compile.errorOf("E3020");
-            check(e3020 != null,
-                "E3020 fired, got " + compile.diagnostics);
-            if (e3020 != null) {
-                check(e3020.range().startLine() == 3
-                        && e3020.range().startColumn() == 14,
-                    "E3020 anchors the await range (line 3 column 14),"
-                        + " got " + e3020.range().startLine() + ":"
-                        + e3020.range().startColumn());
-                check(e3020.message().contains("'await' in class default"),
-                    "E3020 carries the canonical message, got "
-                        + e3020.message());
+            CompilerDiagnostic placement = compile.errorOf("E1057");
+            check(placement != null,
+                "local-class placement rejects before default planning: " + compile.diagnostics);
+            if (placement != null) {
+                check(placement.range().startLine() == 2
+                        && placement.range().startColumn() == 3,
+                    "placement failure anchors the local class declaration");
+                check(placement.message().equals("Local class declaration 'Inner' is not allowed; classes are module-level"),
+                    "placement carries the existing exact diagnostic");
             }
+            check(compile.errorOf("E3020") == null,
+                "rejected local syntax never reaches evaluator planning");
             check(compile.errorOf("E3012") == null,
-                "the checker's E3012 does not fire inside the async"
-                    + " function body (the planner gate is the pinned"
-                    + " rejection)");
+                "the async context does not replace the placement rejection");
             check(compile.orchestrator.plannedDefaultClasses().isEmpty(),
                 "failure publishes no plan");
         } finally {
@@ -716,7 +713,7 @@ public class DefaultSemanticPlannerTest {
                 }
                 """,
             "src/main.deal", """
-                import * as M from "native/math"
+                import * as M from "native/math";
 
                 export function main(): null {
                   return null;
@@ -767,7 +764,7 @@ public class DefaultSemanticPlannerTest {
         Map<String, String> files = Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                import * as L from "./lib"
+                import * as L from "./lib";
 
                 class Outer {
                   b: L.Rec = {};

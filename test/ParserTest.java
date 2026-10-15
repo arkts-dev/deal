@@ -155,7 +155,7 @@ public class ParserTest {
         testAssignmentExpression();
 
         // v1.2 grammar boundaries (ISSUE-0717 defect snippets 48, 59, 60)
-        testSemicolonWhitelist();
+        testSemicolonStrictness();
         testTrailingParameterComma();
         testComparisonChaining();
 
@@ -165,12 +165,13 @@ public class ParserTest {
         testTemplateLiteralLeadingExpr();
         testForOfStatement();
         testForOfMissingIterable();
-        testTemplateInvalidEscape();
+        testTemplateRawBackslashText();
         testTemplateUnterminatedInterpolation();
         testTemplateNestedBraces();
         testTemplateStringLiteralWithRBrace();
         testTemplateNestedTemplateLiteral();
-        testTemplateEscapedBacktick();
+        testTemplateNestedTemplateWithInterpolation();
+        testTemplateRawBackslashBeforeBacktick();
         testTemplateMalformedExpression();
         testTemplateInterpolationRangeAnchors();
 
@@ -179,7 +180,7 @@ public class ParserTest {
         testPrecedenceSubAssoc();
         testPrecedenceAndOr();
         testPrecedenceComparison();
-        testPrecedenceExponentiation();
+        testExponentiationRejected();
 
         // Complex
         testNestedIf();
@@ -525,7 +526,7 @@ public class ParserTest {
             check(vd.initializer() instanceof LiteralExpr, "init is literal");
         }
 
-        r = parse("let y = 100");
+        r = parse("let y = 100;");
         assertNoParseErrors(r, "let without type");
         vd = assertInstance(r.program().statements().get(0),
                 VariableDeclaration.class, "let no type");
@@ -1106,7 +1107,6 @@ public class ParserTest {
             {"1 * 2", "MUL"},
             {"1 / 2", "DIV"},
             {"1 % 2", "MOD"},
-            {"1 ** 2", "POW"},
             {"1 === 2", "EQ"},
             {"1 !== 2", "NEQ"},
             {"1 < 2", "LT"},
@@ -1168,27 +1168,33 @@ public class ParserTest {
     }
 
     /**
-     * The semicolon-boundary whitelist (spec §Syntactic grammar): a
-     * statement may omit its {@code ;} only before a whitelisted follower
-     * token (ISSUE-0717 defect snippet 48).
+     * v1.3 Semicolon rules (docs/spec-v1.3.md Syntactic grammar): every
+     * production carrying {@code ';'} consumes one — imports, class fields,
+     * variable/expression/return/break/continue/delete/throw statements and
+     * the C-style for separators. Block-ending productions (blocks,
+     * if/while/for/try, class and function declarations) end at {@code '}'}
+     * and carry no added requirement.
      */
-    static void testSemicolonWhitelist() {
-        System.out.println("-- Semicolon boundary whitelist --");
+    static void testSemicolonStrictness() {
+        System.out.println("-- Semicolon rules (v1.3) --");
 
-        ParseResult ok = parse("export function main(): null {\n"
-            + "  let n: int = 1\n"
-            + "  return null\n"
-            + "}\n");
-        assertNoParseErrors(ok, "let before return and return before }");
-
-        ParseResult beforeExpression = parse("export function main(): null {\n"
+        // Let before a following statement.
+        ParseResult beforeStatement = parse("export function main(): null {\n"
             + "  let n: int = 1\n"
             + "  one(n);\n"
             + "  return null;\n"
             + "}\n");
-        assertParseError(beforeExpression, "E1053",
+        assertParseError(beforeStatement, "E1053",
             "let before an expression statement");
 
+        // Let before return (the old whitelist admitted this).
+        ParseResult beforeReturn = parse("export function main(): null {\n"
+            + "  let n: int = 1\n"
+            + "  return null;\n"
+            + "}\n");
+        assertParseError(beforeReturn, "E1053", "let before return");
+
+        // Let before a try statement.
         ParseResult beforeTry = parse("export function main(): null {\n"
             + "  let n: int = 1\n"
             + "  try {} catch (e) {}\n"
@@ -1196,10 +1202,7 @@ public class ParserTest {
             + "}\n");
         assertParseError(beforeTry, "E1053", "let before try");
 
-        // ISSUE-0717 review: `async` is a keyword and is not on the
-        // spec's whitelist (§Semicolon rules), so an async function
-        // declaration never follows a terminator-requiring statement
-        // without the `;`; the explicit-semicolon form parses.
+        // Let before an async function declaration.
         ParseResult beforeAsync = parse("export function main(): null {\n"
             + "  let n: int = 1\n"
             + "  async function f(): null { return null; }\n"
@@ -1207,13 +1210,45 @@ public class ParserTest {
             + "}\n");
         assertParseError(beforeAsync, "E1053", "let before async function");
 
-        ParseResult beforeAsyncSemicolon = parse("export function main(): null {\n"
+        // Return and break/continue before the closing '}'.
+        assertParseError(parse("function f(): int { return 1 }"), "E1053",
+            "return before '}'");
+        assertParseError(parse("function f(): null { while (true) { break } return null; }"),
+            "E1053", "break before '}'");
+        assertParseError(parse("function f(): null { while (true) { continue } return null; }"),
+            "E1053", "continue before '}'");
+
+        // Missing terminator at end of input.
+        assertParseError(parse("let x: int = 1"), "E1053",
+            "let at end of input");
+
+        // Class field and import terminators.
+        assertParseError(parse("class C { x: int = 0 }"), "E1053",
+            "class field before '}'");
+        assertParseError(parse("import * as m from \"m\"\nexport class C { x: int = 0; }"),
+            "E1053", "import before the next declaration");
+
+        // Delete, throw and expression statements.
+        assertParseError(parse("function f(t: table): null { delete t.x return null; }"),
+            "E1053", "delete before return");
+        assertParseError(parse("function f(): null { throw { code: \"x\", message: \"y\" } return null; }"),
+            "E1053", "throw before return");
+        assertParseError(parse("function f(): null { f() return null; }"),
+            "E1053", "expression statement before return");
+
+        // Explicit terminators compile clean, and block-ending forms need
+        // no added ';'.
+        ParseResult ok = parse("export function main(): null {\n"
             + "  let n: int = 1;\n"
-            + "  async function f(): null { return null; }\n"
+            + "  if (n === 1) { n = 2; } else { n = 3; }\n"
+            + "  while (n < 10) { n = n + 1; }\n"
+            + "  for (let i: int = 0; i < 1; i = i + 1) { n = n + 1; }\n"
+            + "  try { n = 4; } catch (e) { n = 5; }\n"
             + "  return null;\n"
-            + "}\n");
-        assertNoParseErrors(beforeAsyncSemicolon,
-            "let with an explicit semicolon before async function");
+            + "}\n"
+            + "class C { x: int = 0; }\n"
+            + "function g(): null { return null; }\n");
+        assertNoParseErrors(ok, "explicit terminators and block endings");
     }
 
     /**
@@ -1458,17 +1493,23 @@ public class ParserTest {
         check(bin.right() instanceof BinaryExpr, "right is nested LT");
     }
 
-    static void testPrecedenceExponentiation() {
-        System.out.println("-- Precedence: exponentiation --");
+    static void testExponentiationRejected() {
+        System.out.println("-- Exponentiation rejection (v1.3) --");
 
-        // ** is right-associative: 2 ** 3 ** 2 → 2 ** (3 ** 2)
-        ParseResult r = parse("let a: int = 2 ** 3 ** 2;");
-        assertNoParseErrors(r, "exp right assoc");
+        // '**' is not in the v1.3 operator set, so it lexes as two '*'
+        // tokens and the second one has no operand (E1037). No POW node
+        // can enter the AST.
+        ParseResult r = parse("let a: int = 2 ** 3;");
+        assertParseError(r, "E1037", "exponentiation is not admitted");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
-        BinaryExpr bin = (BinaryExpr) vd.initializer();
-        check(bin.op() == BinaryOp.POW, "top is POW");
-        check(bin.left() instanceof LiteralExpr, "left is literal 2");
-        check(bin.right() instanceof BinaryExpr, "right is nested POW");
+        check(!(vd.initializer() instanceof BinaryExpr bin)
+                || bin.op() != BinaryOp.POW,
+            "no POW node is produced for '**'");
+
+        // The removed operator is rejected regardless of the int32 profile.
+        LexResult lex = new Lexer("let a: int = 2 ** 3;", "test.deal").tokenize();
+        check(lex.tokens().stream().filter(t -> t.type() == TokenType.STAR).count() == 2,
+            "'**' lexes as two STAR tokens");
     }
 
     // =========================================================================
@@ -1799,11 +1840,24 @@ public class ParserTest {
         System.out.println("    (D20: for-of with missing iterable handled gracefully)");
     }
 
-    static void testTemplateInvalidEscape() {
-        System.out.println("-- Template Literal: invalid escape --");
+    static void testTemplateRawBackslashText() {
+        System.out.println("-- Template Literal: raw backslash text (v1.3) --");
 
+        // v1.3 TemplateText has no escape mechanism: the backslash and the
+        // character after it are ordinary text.
         ParseResult r = parse("let x = `hello \\q world`;");
-        assertParseError(r, "E1042", "invalid escape -> E1042");
+        assertNoParseErrors(r, "raw backslash is ordinary TemplateText");
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
+            TemplateLiteralExpr.class, "raw backslash template");
+        if (tl != null) {
+            check(tl.parts().size() == 1, "one text part, got " + tl.parts().size());
+            if (tl.parts().get(0) instanceof LiteralExpr part
+                    && part.value() instanceof LiteralValue.StringLiteral sl) {
+                check(sl.value().equals("hello \\q world"),
+                    "verbatim text, got '" + sl.value() + "'");
+            }
+        }
     }
 
     static void testTemplateUnterminatedInterpolation() {
@@ -1845,29 +1899,53 @@ public class ParserTest {
     static void testTemplateNestedTemplateLiteral() {
         System.out.println("-- Template Literal: nested template in interpolation --");
 
-        // The nested template literal inside ${} must not confuse the parser.
-        // Escaped backticks inside the expression — the backslash prevents
-        // the lexer from treating them as template delimiters. The parser's
-        // splitTemplateLiteral processes \` as an escaped backtick character.
-        ParseResult r = parse("let x = `${ \\`nested\\` }`;");
-        check(r.program() != null, "nested template parses without crash");
+        // A nested template literal inside ${} is written with raw backticks:
+        // the lexer's interpolation state keeps them from closing the outer
+        // template, and the sub-lexer parses the nested literal itself.
+        ParseResult r = parse("let x = `${ `nested` }`;");
+        assertNoParseErrors(r, "nested template parses clean");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         TemplateLiteralExpr tl = (TemplateLiteralExpr) vd.initializer();
-        if (tl != null && tl.parts().size() >= 2) {
+        if (tl != null && tl.parts().size() == 3) {
             ExpressionNode expr = tl.parts().get(1);
-            // The expression contains escaped backticks, which are string content,
-            // so the expression should be a BinaryExpr or similar (depending on
-            // what the expression parses as). The key invariant: no crash.
-            check(expr != null, "expr part is not null");
+            check(expr instanceof TemplateLiteralExpr,
+                "expr part is the nested TemplateLiteralExpr, got "
+                    + (expr == null ? "null" : expr.getClass().getSimpleName()));
+        } else {
+            fail("nested template: expected a 3-part template literal");
         }
     }
 
-    static void testTemplateEscapedBacktick() {
-        System.out.println("-- Template Literal: escaped backtick in interpolation --");
+    static void testTemplateNestedTemplateWithInterpolation() {
+        System.out.println("-- Template Literal: nested template with its own"
+            + " interpolation --");
 
-        // \` must not be mistaken for a nested template start.
-        ParseResult r = parse("let x = `${ \\`escaped\\` }`;");
-        check(r.program() != null, "escaped backtick parses without crash");
+        ParseResult r = parse("let x = `${ `a${b}c` }`;");
+        assertNoParseErrors(r, "nested template with interpolation parses clean");
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = (TemplateLiteralExpr) vd.initializer();
+        if (tl != null && tl.parts().size() == 3
+                && tl.parts().get(1) instanceof TemplateLiteralExpr nested) {
+            check(nested.parts().size() == 3,
+                "nested template has 3 parts, got " + nested.parts().size());
+        } else {
+            fail("nested template with interpolation: unexpected shape");
+        }
+    }
+
+    static void testTemplateRawBackslashBeforeBacktick() {
+        System.out.println("-- Template Literal: raw backslash does not shield"
+            + " a backtick --");
+
+        // A backslash is ordinary TemplateText, so the backtick after it
+        // closes the template and the remaining backtick opens a new
+        // (unterminated) literal.
+        LexResult lex = new Lexer("let x = `a\\`b`;", "test.deal").tokenize();
+        boolean e1003 = lex.diagnostics().stream()
+            .anyMatch(d -> d.code().equals("E1003"));
+        check(e1003, "the unterminated trailing literal reports E1003");
+        ParseResult r = parse("let x = `a\\`b`;");
+        check(r.program() != null, "raw backslash before backtick parses");
     }
 
     static void testTemplateMalformedExpression() {
@@ -1928,13 +2006,14 @@ public class ParserTest {
             checkCursorAt(src2, 17, 1, 18, "T2");
         }
 
-        // 3. A sub-lexer error after a recognized escape rebases through the
-        //    scalar map: the decoded '@' maps to the raw '@' position, not the
-        //    decoded-coordinate position.
-        String src3 = "let x = `${\\$x + @}`;";
+        // 3. A sub-lexer error after a supplementary scalar inside the
+        //    interpolation rebases verbatim through the scalar map: the
+        //    decoded '@' maps to the raw '@' position, not a
+        //    UTF-16-coordinate position.
+        String src3 = "let x = `${\"\uD83D\uDE00\" + @}`;";
         ParseResult r3 = parse(src3);
         CompilerDiagnostic e1001 = findDiag(r3.diagnostics(), "E1001");
-        check(e1001 != null, "T3: E1001 present for `${\\$x + @}`");
+        check(e1001 != null, "T3: E1001 present for the interpolation error");
         if (e1001 != null) {
             checkRange(e1001.range(), "test.deal", 1, 18, 1, 19, 17, 18, 1,
                 RangeOrigin.SOURCE, "T3: E1001 rebased to the raw '@' position");
@@ -1970,24 +2049,30 @@ public class ParserTest {
             checkCursorAt(src5, 17, 1, 18, "T5");
         }
 
-        // 6. E1042 pseudo-tokens are raw-positioned and scalar-exact.
-        String src6 = "let x = `hi\uD83D\uDE00\\q`;";
+        // 6. E1042 pseudo-tokens are raw-positioned and scalar-exact after
+        //    astral TemplateText.
+        String src6 = "let x = `hi\uD83D\uDE00${foo`;";
         ParseResult r6 = parse(src6);
         CompilerDiagnostic e1042b = findDiag(r6.diagnostics(), "E1042");
-        check(e1042b != null, "T6: E1042 present for invalid escape after astral");
+        check(e1042b != null,
+            "T6: E1042 present for the unterminated interpolation after astral");
         if (e1042b != null) {
-            checkRange(e1042b.range(), "test.deal", 1, 14, 1, 15, 13, 14, 1,
-                RangeOrigin.SOURCE, "T6: invalid-escape pseudo-token raw-positioned");
-            checkCursorAt(src6, 13, 1, 14, "T6");
+            checkRange(e1042b.range(), "test.deal", 1, 15, 1, 17, 14, 16, 2,
+                RangeOrigin.SOURCE,
+                "T6: unterminated-interpolation pseudo-token raw-positioned");
+            checkCursorAt(src6, 14, 1, 15, "T6");
         }
 
-        String src7 = "let x = `hi}there`;";
+        // 7. The one-complete-expression rule: a leftover token is E1042 at
+        //    its own rebased token position.
+        String src7 = "let x = `a${b c}`;";
         ParseResult r7 = parse(src7);
         CompilerDiagnostic e1042c = findDiag(r7.diagnostics(), "E1042");
-        check(e1042c != null, "T7: E1042 present for unexpected '}'");
+        check(e1042c != null, "T7: E1042 present for the trailing token");
         if (e1042c != null) {
-            checkRange(e1042c.range(), "test.deal", 1, 12, 1, 13, 11, 12, 1,
-                RangeOrigin.SOURCE, "T7: unexpected-'}' pseudo-token raw-positioned");
+            checkRange(e1042c.range(), "test.deal", 1, 15, 1, 16, 14, 15, 1,
+                RangeOrigin.SOURCE, "T7: trailing-token anchor");
+            checkCursorAt(src7, 14, 1, 15, "T7");
         }
 
         // 7. Empty expression: E1042 and the D16 placeholder carry zero
@@ -2215,15 +2300,16 @@ public class ParserTest {
         assertNoParseErrors(r1, "with semicolon");
         assertStmtCount(r1.program(), 1, "with semicolon");
 
-        // Without semicolon (statement followed by })
+        // v1.3 requires the terminator: a statement followed by '}' is
+        // E1053 (the statement still parses for recovery).
         ParseResult r2 = parse("{ let x: int = 1 }");
-        assertNoParseErrors(r2, "without semicolon before }");
+        assertParseError(r2, "E1053", "without semicolon before }");
         Block b = (Block) r2.program().statements().get(0);
         check(b.statements().size() == 1, "1 stmt in block without semicolon");
 
-        // Without semicolon (statement followed by EOF)
+        // Missing terminator at end of input is E1053 too.
         ParseResult r3 = parse("let x: int = 1");
-        assertNoParseErrors(r3, "without semicolon at EOF");
+        assertParseError(r3, "E1053", "without semicolon at EOF");
         assertStmtCount(r3.program(), 1, "1 stmt without semicolon at EOF");
     }
 
@@ -2244,7 +2330,7 @@ public class ParserTest {
     }
 
     static void testJsonableExportFunction() {
-        System.out.println("-- @jsonable export function -> warning --");
+        System.out.println("-- @jsonable export function -> E1043 error --");
 
         ParseResult r = parse("// @jsonable\nexport function f(): int { return 0; }");
         assertParseError(r, "E1043", "@jsonable export function");
@@ -2253,10 +2339,10 @@ public class ParserTest {
         CompilerDiagnostic warnDiag = diags.stream()
                 .filter(d -> d.code().equals("E1043"))
                 .findFirst().orElse(null);
-        check(warnDiag != null, "warning diagnostic present for export function");
+        check(warnDiag != null, "E1043 diagnostic present for export function");
         if (warnDiag != null) {
-            check(warnDiag.severity().equals("warning"),
-                "severity is warning, got: " + warnDiag.severity());
+            check(warnDiag.severity().equals("error"),
+                "severity is error, got: " + warnDiag.severity());
             check(warnDiag.message().contains("export class"),
                 "message mentions export class: " + warnDiag.message());
 
@@ -2282,7 +2368,7 @@ public class ParserTest {
     }
 
     static void testJsonableStandaloneClass() {
-        System.out.println("-- @jsonable standalone class -> warning, isJsonable=false --");
+        System.out.println("-- @jsonable standalone class -> E1043 error, isJsonable=false --");
 
         ParseResult r = parse("// @jsonable\nclass C { x: int; }");
         assertParseError(r, "E1043", "@jsonable standalone class");
@@ -2291,20 +2377,21 @@ public class ParserTest {
         CompilerDiagnostic warnDiag = diags.stream()
                 .filter(d -> d.code().equals("E1043"))
                 .findFirst().orElse(null);
-        check(warnDiag != null, "warning diagnostic present for standalone class");
+        check(warnDiag != null, "E1043 diagnostic present for standalone class");
         if (warnDiag != null) {
-            check(warnDiag.severity().equals("warning"),
-                "severity is warning, got: " + warnDiag.severity());
+            check(warnDiag.severity().equals("error"),
+                "severity is error, got: " + warnDiag.severity());
         }
 
-        // isJsonable should be false since directive was ignored
+        // isJsonable should be false: an incompatible attachment applies no
+        // metadata.
         ProgramNode prog = r.program();
         assertStmtCount(prog, 1, "standalone class");
         ClassDeclaration cd = assertInstance(prog.statements().get(0),
                 ClassDeclaration.class, "standalone class node");
         check(!cd.isJsonable(),
             "ClassDeclaration.isJsonable should be false - directive ignored");
-        assertJsonableWarningSeverity(r);
+        assertJsonableErrorSeverity(r);
         assertStmtCount(prog, 1, "one statement");
         ClassDeclaration invalid = assertInstance(prog.statements().get(0),
                 ClassDeclaration.class, "class node");
@@ -2313,7 +2400,7 @@ public class ParserTest {
     }
 
     static void testJsonableStandaloneFunction() {
-        System.out.println("-- @jsonable standalone function -> warning --");
+        System.out.println("-- @jsonable standalone function -> E1043 error --");
 
         ParseResult r = parse("// @jsonable\nfunction f(): int { return 0; }");
         assertParseError(r, "E1043", "@jsonable standalone function");
@@ -2322,10 +2409,10 @@ public class ParserTest {
         CompilerDiagnostic warnDiag = diags.stream()
                 .filter(d -> d.code().equals("E1043"))
                 .findFirst().orElse(null);
-        check(warnDiag != null, "warning diagnostic present for standalone function");
+        check(warnDiag != null, "E1043 diagnostic present for standalone function");
         if (warnDiag != null) {
-            check(warnDiag.severity().equals("warning"),
-                "severity is warning, got: " + warnDiag.severity());
+            check(warnDiag.severity().equals("error"),
+                "severity is error, got: " + warnDiag.severity());
         }
     }
 
@@ -2341,17 +2428,15 @@ public class ParserTest {
             "ClassDeclaration.isJsonable should be false without directive");
     }
 
-    private static void assertJsonableWarningSeverity(ParseResult r) {
+    private static void assertJsonableErrorSeverity(ParseResult r) {
         for (CompilerDiagnostic d : r.diagnostics()) {
             if (d.code().equals("E1043")) {
-                check(d.severity().equals("warning"),
-                    "severity should be 'warning', got: '" + d.severity() + "'");
-                check(!d.severity().equals("error"),
-                    "severity should NOT be 'error'");
+                check(d.severity().equals("error"),
+                    "severity should be 'error', got: '" + d.severity() + "'");
             }
         }
-        check(!r.hasErrors(),
-            "warnings should not cause hasErrors() to return true");
+        check(r.hasErrors(),
+            "an incompatible directive attachment is a compile error");
     }
 
     // =========================================================================
@@ -2533,28 +2618,23 @@ public class ParserTest {
         System.out.println("-- @jsonable end-to-end lex + parse --");
 
         // Verify that lexing + parsing @jsonable + let produces the
-        // correct warning through the event pipeline.
+        // incompatible-attachment E1043 error through the event pipeline.
         LexResult lex = new Lexer("// @jsonable\nlet x: int = 1;", "test.deal").tokenize();
         Parser parser = new Parser(lex.tokens(), "test.deal",
             lex.directiveEvents());
         ParseResult r = parser.parse();
         assertParseError(r, "E1043", "@jsonable let");
         CompilerDiagnostic warnDiag = diagOf(r, "E1043");
-        check(warnDiag != null, "warning diagnostic present for let");
+        check(warnDiag != null, "E1043 diagnostic present for let");
         if (warnDiag != null) {
-            check(warnDiag.severity().equals("warning"),
-                "severity is warning, got: " + warnDiag.severity());
+            check(warnDiag.severity().equals("error"),
+                "severity is error, got: " + warnDiag.severity());
         }
 
         List<CompilerDiagnostic> diags = r.diagnostics();
-        boolean foundWarn = diags.stream().anyMatch(
-                d -> d.code().equals("E1043") && d.severity().equals("warning"));
-        check(foundWarn, "end-to-end: warning with code E1043 and severity 'warning'");
-
-        // Verify no error-level diagnostics
-        boolean hasErrors = diags.stream().anyMatch(
-                d -> d.severity().equals("error"));
-        check(!hasErrors, "end-to-end: no errors, only warnings");
+        boolean foundError = diags.stream().anyMatch(
+                d -> d.code().equals("E1043") && d.severity().equals("error"));
+        check(foundError, "end-to-end: E1043 with error severity");
 
         // Verify the event anchored at the LET token (index 0) with no
         // token-carried directives.
@@ -2615,7 +2695,7 @@ public class ParserTest {
 
         // @extern-c before declarations but with a later import: E1046.
         r = parseFile(
-            "// @extern-c\nimport * as m from \"./m\"\nexport class A { x: int = 0; }",
+            "// @extern-c\nimport * as m from \"./m\";\nexport class A { x: int = 0; }",
             "mod.d.deal");
         assertParseError(r, "E1046",
             "@extern-c followed by an import rejected");
@@ -2624,15 +2704,15 @@ public class ParserTest {
 
         // Valid placement: imports first, then @extern-c, then classes.
         r = parseFile(
-            "import * as m from \"./m\"\n// @extern-c\n// @c-struct\nexport class A { x: int = 0; }",
+            "import * as m from \"./m\";\n// @extern-c\n// @c-struct\nexport class A { x: int = 0; }",
             "mod.d.deal");
         assertNoParseErrors(r, "@extern-c after imports accepted");
         check(r.program().fileDirectives().externC(),
             "effective extern-C in the valid placement fixture");
         check(r.program().fileDirectives().externCRange() != null
                 && r.program().fileDirectives().externCRange()
-                    .startScalarOffset() == 25,
-            "externCRange = the first event's complete comment range (25)");
+                    .startScalarOffset() == 26,
+            "externCRange = the first event's complete comment range (26)");
     }
 
     static void testCMarkerOutsideExternC() {
@@ -2739,16 +2819,16 @@ public class ParserTest {
             "three statements (class + two explicit JSON functions), got "
                 + r.program().statements().size());
 
-        // Attachment to a non-class declaration warns E1043 with no
+        // Attachment to a non-class declaration is E1043 with no
         // metadata.
         r = parseFile("// @jsonable\nexport function f(): int { return 0; }",
             "lib.d.deal");
         assertParseError(r, "E1043",
-            "declaration-file @jsonable on a function warns E1043");
+            "declaration-file @jsonable on a function errors E1043");
         CompilerDiagnostic w = diagOf(r, "E1043");
         if (w != null) {
-            check(w.severity().equals("warning"),
-                "E1043 stays a warning, got " + w.severity());
+            check(w.severity().equals("error"),
+                "E1043 is an error, got " + w.severity());
         }
 
         // The E1045 argument rule still fires in .d.deal files.

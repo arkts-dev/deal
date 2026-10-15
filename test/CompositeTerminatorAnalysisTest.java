@@ -157,7 +157,7 @@ public class CompositeTerminatorAnalysisTest {
           "nullBodyTailMarker";
           let tailMarker: int = 715;
           if (tailMarker === 715) {
-            throw { code: "TAIL_EXECUTED", message: "TAIL715" }
+            throw { code: "TAIL_EXECUTED", message: "TAIL715" };
           }
         }
 
@@ -600,7 +600,7 @@ public class CompositeTerminatorAnalysisTest {
                 return null;""", true),
             new PartialShape("if without else then throw", """
                 if (c) { break; }
-                throw { code: "PARTIAL", message: "partial" }""", true),
+                throw { code: "PARTIAL", message: "partial" };""", true),
             new PartialShape("if/else with one open branch then return", """
                 if (c) { break; } else { }
                 return null;""", true),
@@ -621,10 +621,10 @@ public class CompositeTerminatorAnalysisTest {
                 return null;""", false),
             new PartialShape("if without else with continue then throw", """
                 if (c) { continue; }
-                throw { code: "PARTIAL", message: "partial" }""", false),
+                throw { code: "PARTIAL", message: "partial" };""", false),
             new PartialShape("try/catch with continue then throw", """
                 try { if (c) { continue; } } catch (e) { }
-                throw { code: "PARTIAL", message: "partial" }""", false));
+                throw { code: "PARTIAL", message: "partial" };""", false));
         List<String> names = new ArrayList<>();
         StringBuilder source = new StringBuilder();
         int fallOffProbes = 0;
@@ -1418,7 +1418,7 @@ public class CompositeTerminatorAnalysisTest {
                         + (i < 3 ? "i = i + 1; " : "")
                         + "continue; }\nif (c) { break; }\nreturn null;";
                     case "Throw" -> "try {\nif (c) { break; }\nthrow { code: \""
-                        + codes[i] + "\", message: \"partial\" }\n} catch (e) { return null; }";
+                        + codes[i] + "\", message: \"partial\" };\n} catch (e) { return null; }";
                     default -> "if (c) { break; }\nreturn null;";
                 };
                 source.append("export function ").append(name).append("(c: boolean): null {\n")
@@ -1541,7 +1541,7 @@ public class CompositeTerminatorAnalysisTest {
                 "the all-throw omitted-test for-let", true, """
                 export function main(): null {
                   for (let i: int = 0; ; i = i + 1) {
-                    throw { code: "THROW_ONLY", message: "throw only" }
+                    throw { code: "THROW_ONLY", message: "throw only" };
                   }
                 }
                 """),
@@ -1549,7 +1549,7 @@ public class CompositeTerminatorAnalysisTest {
                 "the all-throw explicit-true for-let", false, """
                 export function main(): null {
                   for (let i: int = 0; true; i = i + 1) {
-                    throw { code: "THROW_ONLY", message: "throw only" }
+                    throw { code: "THROW_ONLY", message: "throw only" };
                   }
                 }
                 """));
@@ -1685,12 +1685,12 @@ public class CompositeTerminatorAnalysisTest {
             lowered = lowerCompiledProject(prepared, productionInvocation());
         } else {
             writeFileIn(root, "src/app.deal",
-                "import * as fx from \"./" + fixture.relativePath() + "\"\n\n"
+                "import * as fx from \"./" + fixture.relativePath() + "\";\n\n"
                     + "export function main(): null {\n"
                     + "  if (fx." + fixture.probe() + "() !== " + fixture.pinnedValue() + ") {\n"
                     + "    throw { code: \"TEST_FAIL\", message: \""
-                    + fixture.relativePath() + " pinned probe value\" }\n"
-                    + "  }\n  return null\n}\n");
+                    + fixture.relativePath() + " pinned probe value\" };\n"
+                    + "  }\n  return null;\n}\n");
             lowered = lowerProjectRoot(root, "src/app.deal");
         }
         if (lowered == null) {

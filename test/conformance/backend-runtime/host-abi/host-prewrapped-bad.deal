@@ -3,7 +3,7 @@
 // @expected: runtime-error E8010
 // @features: modules, host-abi, runtime-errors
 
-import * as host from "host/prewrapped_bad"
+import * as host from "host/prewrapped_bad";
 
 export function test_host_prewrapped_bad(): null {
   host.ping();

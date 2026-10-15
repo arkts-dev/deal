@@ -1,5 +1,7 @@
 package deal.semantic.ir;
 
+import deal.semantic.ClassRegistrationSeeds;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -957,19 +959,68 @@ public final class ContractSnapshotCanonicalizer {
     // Unit/project validation text protocol (T6's validator text surface)
     // =========================================================================
 
+    /** The pinned project field set ({@code deal.semantic-ir/2} project text and dump manifest). */
+    public static final List<String> PROJECT_FIELDS = List.of("formatVersion",
+        "semanticProfile", "entryModule", "interfaceIndex", "classSeeds", "modules");
+
     /**
-     * The parsed project text of the validator's text surface:
-     * {@code {semanticProfile, entryModule, modules}} — the project-level
-     * positions carried as raw strings.
+     * The parsed project header of {@code deal.semantic-ir/2}: the
+     * project framing both project surfaces share. The project text
+     * embeds the complete unit documents in {@code modules}; the dumped
+     * manifest carries the ordered module-path list there instead. The
+     * profile and the entry module stay raw strings (their closed
+     * checks are the validator's rules), while the interface index and
+     * the class registration seeds decode to their typed records through
+     * the complete inverse mapping — every field is retained, no
+     * parser-selected fallback is applied, and an unrepresentable
+     * shape fails closed as a transport decode failure.
      *
      */
-    public record ParsedProject(String semanticProfile, String entryModule,
+    public record ParsedProjectHeader(String formatVersion, String semanticProfile,
+                                      String entryModule,
+                                      ProjectInterfaceIndex interfaceIndex,
+                                      ClassRegistrationSeeds classSeeds) {
+
+        public ParsedProjectHeader {
+            Objects.requireNonNull(formatVersion, "formatVersion must not be null");
+            Objects.requireNonNull(semanticProfile, "semanticProfile must not be null");
+            Objects.requireNonNull(entryModule, "entryModule must not be null");
+            Objects.requireNonNull(interfaceIndex, "interfaceIndex must not be null");
+            Objects.requireNonNull(classSeeds, "classSeeds must not be null");
+        }
+    }
+
+    /**
+     * The parsed project of the validator's text surface and the dumper's
+     * reassembly: the project header plus the dependency-ordered raw
+     * units. The raw units are the complete {@code /2} unit records, so
+     * every transported unit fact — both membership directions, the
+     * functions and their captures, the complete bindings, the plans and
+     * the unit companions — is retained exactly.
+     *
+     */
+    public record ParsedProject(String formatVersion, String semanticProfile,
+                                String entryModule,
+                                ProjectInterfaceIndex interfaceIndex,
+                                ClassRegistrationSeeds classSeeds,
                                 List<RawUnit> modules) {
 
         public ParsedProject {
+            Objects.requireNonNull(formatVersion, "formatVersion must not be null");
             Objects.requireNonNull(semanticProfile, "semanticProfile must not be null");
             Objects.requireNonNull(entryModule, "entryModule must not be null");
+            Objects.requireNonNull(interfaceIndex, "interfaceIndex must not be null");
+            Objects.requireNonNull(classSeeds, "classSeeds must not be null");
             modules = List.copyOf(Objects.requireNonNull(modules, "modules must not be null"));
+        }
+
+        /** The carried module paths in supplied (dependency) order. */
+        public List<String> modulePaths() {
+            List<String> paths = new ArrayList<>();
+            for (RawUnit unit : modules) {
+                paths.add(unit.modulePath());
+            }
+            return List.copyOf(paths);
         }
     }
 
@@ -1333,36 +1384,267 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     /**
-     * Decodes a project text object ({@code {semanticProfile, entryModule,
-     * modules}}) into its raw records with the entry-module framing check.
+     * Decodes the project framing both project surfaces share: an exact
+     * {@link #PROJECT_FIELDS} key set, the {@code deal.semantic-ir/2}
+     * envelope check (a {@code /1} project never decodes), the raw
+     * project profile and entry module, and the typed interface index and
+     * class registration seeds. The {@code modules} value type is the
+     * caller's (embedded unit documents for the project text, the ordered
+     * module-path list for the dump manifest), so this entry only pins
+     * the framing every project carries.
+     *
+     */
+    public static ParsedProjectHeader parseProjectHeader(CanonicalJson.Obj obj) {
+        checkKeys(obj, PROJECT_FIELDS.toArray(String[]::new));
+        String formatVersion = requireString(obj, "formatVersion");
+        if (!LoweredModuleUnit.FORMAT_VERSION.equals(formatVersion)) {
+            throw new SemanticIrTextDecodeException(
+                "project formatVersion mismatch: expected \""
+                    + LoweredModuleUnit.FORMAT_VERSION + "\", got \""
+                    + formatVersion + "\"");
+        }
+        String semanticProfile = requireString(obj, "semanticProfile");
+        String entryModule = requireString(obj, "entryModule");
+        try {
+            new ModuleId(entryModule);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "invalid entryModule \"" + entryModule + "\"");
+        }
+        ProjectInterfaceIndex interfaceIndex =
+            parseInterfaceIndex(requireObject(obj, "interfaceIndex"));
+        ClassRegistrationSeeds classSeeds =
+            parseClassSeeds(requireArray(obj, "classSeeds"));
+        return new ParsedProjectHeader(formatVersion, semanticProfile, entryModule,
+            interfaceIndex, classSeeds);
+    }
+
+    /**
+     * Decodes a project text object ({@code {formatVersion,
+     * semanticProfile, entryModule, interfaceIndex, classSeeds, modules}})
+     * into its raw records: the dependency-ordered embedded unit documents
+     * decode through {@link #parseUnit(CanonicalJson.Obj)} and the
+     * entry-module framing check runs over the decoded module identities.
+     * A repeated module identity is a duplicate entry identity and rejects
+     * before any module map could overwrite one module with another.
      *
      */
     public static ParsedProject parseProject(CanonicalJson.Obj obj) {
-        checkKeys(obj, "semanticProfile", "entryModule", "modules");
-        String projectProfile = requireString(obj, "semanticProfile");
-        String entryModule = requireString(obj, "entryModule");
+        ParsedProjectHeader header = parseProjectHeader(obj);
         CanonicalJson.Arr modulesArr = requireArray(obj, "modules");
         List<RawUnit> modules = new ArrayList<>();
+        Set<String> modulePaths = new LinkedHashSet<>();
         for (int i = 0; i < modulesArr.items().size(); i++) {
             CanonicalJson.Value item = modulesArr.items().get(i);
             if (!(item instanceof CanonicalJson.Obj unitObj)) {
                 throw new SemanticIrTextDecodeException(
                     "modules[" + i + "] must be a unit object, got " + jsonKindName(item));
             }
-            modules.add(parseUnit(unitObj));
+            RawUnit unit = parseUnit(unitObj);
+            if (!modulePaths.add(unit.modulePath())) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate project module \"" + unit.modulePath()
+                        + "\" (modules[" + i + "])");
+            }
+            modules.add(unit);
         }
-        boolean hasEntry = false;
-        for (RawUnit unit : modules) {
-            if (entryModule.equals(unit.modulePath())) {
-                hasEntry = true;
-                break;
+        if (!modulePaths.contains(header.entryModule())) {
+            throw new SemanticIrTextDecodeException(
+                "entryModule \"" + header.entryModule()
+                    + "\" must be present in the project modules");
+        }
+        return new ParsedProject(header.formatVersion(), header.semanticProfile(),
+            header.entryModule(), header.interfaceIndex(), header.classSeeds(), modules);
+    }
+
+    /**
+     * Decodes the complete {@code deal.semantic-interface/1} index.
+     * Every carried field of every entry is retained (the module identity,
+     * the closed kind, the resolved imports, the exports, the classes with
+     * their ordered fields and construction entries, and the
+     * initialization mode); the module map is keyed by the entry's own
+     * module identity, a repeated identity is a duplicate entry identity
+     * and rejects before the map is built, and the supplied order is
+     * preserved. The format version is not bumped: the carried version
+     * must be exactly {@link ProjectInterfaceIndex#FORMAT_VERSION}.
+     *
+     */
+    public static ProjectInterfaceIndex parseInterfaceIndex(CanonicalJson.Obj obj) {
+        checkKeys(obj, "formatVersion", "modules");
+        String formatVersion = requireString(obj, "formatVersion");
+        if (!ProjectInterfaceIndex.FORMAT_VERSION.equals(formatVersion)) {
+            throw new SemanticIrTextDecodeException(
+                "interface formatVersion mismatch: expected \""
+                    + ProjectInterfaceIndex.FORMAT_VERSION + "\", got \""
+                    + formatVersion + "\"");
+        }
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
+        CanonicalJson.Arr rows = requireArray(obj, "modules");
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "interfaceIndex.modules[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+            ExternalModuleInterface entry = parseExternalModuleInterface(row, where);
+            if (modules.putIfAbsent(entry.moduleId(), entry) != null) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate interfaceIndex module " + entry.moduleId()
+                        + " (" + where + ")");
             }
         }
-        if (!hasEntry) {
-            throw new SemanticIrTextDecodeException(
-                "entryModule \"" + entryModule + "\" must be present in the project modules");
+        return new ProjectInterfaceIndex(formatVersion, modules);
+    }
+
+    /** Decodes one complete {@code deal.semantic-interface/1} module entry. */
+    private static ExternalModuleInterface parseExternalModuleInterface(CanonicalJson.Obj row,
+                                                                       String where) {
+        checkKeys(row, "moduleId", "kind", "imports", "exports", "classes",
+            "initialization");
+        ModuleId moduleId = parseModuleId(requireObject(row, "moduleId"));
+        ExternalModuleKind kind = parseExternalModuleKind(requireString(row, "kind"),
+            where + ".kind");
+        List<ResolvedImport> imports = new ArrayList<>();
+        CanonicalJson.Arr importRows = requireArray(row, "imports");
+        for (int i = 0; i < importRows.items().size(); i++) {
+            String importWhere = where + ".imports[" + i + "]";
+            CanonicalJson.Obj importRow = requireObjectValue(importRows.items().get(i),
+                importWhere);
+            checkKeys(importRow, "alias", "modulePath", "resolvedModuleId", "kind");
+            imports.add(new ResolvedImport(requireString(importRow, "alias"),
+                requireString(importRow, "modulePath"),
+                parseModuleId(requireObject(importRow, "resolvedModuleId")),
+                parseExternalModuleKind(requireString(importRow, "kind"),
+                    importWhere + ".kind")));
         }
-        return new ParsedProject(projectProfile, entryModule, modules);
+        List<ExportInterface> exports = new ArrayList<>();
+        CanonicalJson.Arr exportRows = requireArray(row, "exports");
+        for (int i = 0; i < exportRows.items().size(); i++) {
+            String exportWhere = where + ".exports[" + i + "]";
+            CanonicalJson.Obj exportRow = requireObjectValue(exportRows.items().get(i),
+                exportWhere);
+            checkKeys(exportRow, "name", "declaredType");
+            exports.add(new ExportInterface(requireString(exportRow, "name"),
+                requireString(exportRow, "declaredType")));
+        }
+        List<ClassInterface> classes = new ArrayList<>();
+        CanonicalJson.Arr classRows = requireArray(row, "classes");
+        for (int i = 0; i < classRows.items().size(); i++) {
+            String classWhere = where + ".classes[" + i + "]";
+            CanonicalJson.Obj classRow = requireObjectValue(classRows.items().get(i),
+                classWhere);
+            checkKeys(classRow, "classId", "fields", "constructionEntry");
+            List<FieldInterface> fields = new ArrayList<>();
+            CanonicalJson.Arr fieldRows = requireArray(classRow, "fields");
+            for (int j = 0; j < fieldRows.items().size(); j++) {
+                String fieldWhere = classWhere + ".fields[" + j + "]";
+                CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j),
+                    fieldWhere);
+                checkKeys(field, "name", "declaredType", "optional", "nullable",
+                    "hasDefault");
+                fields.add(new FieldInterface(requireString(field, "name"),
+                    requireString(field, "declaredType"), requireBool(field, "optional"),
+                    requireBool(field, "nullable"), requireBool(field, "hasDefault")));
+            }
+            classes.add(new ClassInterface(parseClassId(requireObject(classRow, "classId")),
+                fields, parseClassFactoryId(requireObject(classRow, "constructionEntry"))));
+        }
+        InitializationMode initialization = parseInitializationMode(
+            requireString(row, "initialization"), where + ".initialization");
+        return new ExternalModuleInterface(moduleId, kind, imports, exports, classes,
+            initialization);
+    }
+
+    /** One closed index kind name, or the documented transport decode failure. */
+    private static ExternalModuleKind parseExternalModuleKind(String raw, String what) {
+        try {
+            return ExternalModuleKind.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "unknown " + what + " \"" + raw + "\"");
+        }
+    }
+
+    /** The one closed initialization mode, or the documented decode failure. */
+    private static InitializationMode parseInitializationMode(String raw, String what) {
+        try {
+            return InitializationMode.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "unknown " + what + " \"" + raw + "\"");
+        }
+    }
+
+    /** One closed default-owner name, or the documented transport decode failure. */
+    private static DefaultOwner parseDefaultOwner(String raw, String what) {
+        try {
+            return DefaultOwner.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "unknown " + what + " \"" + raw + "\"");
+        }
+    }
+
+    /** One canonical descriptor text, or the documented transport decode failure. */
+    private static RuntimeDescriptor parseFieldDescriptor(String text, String what) {
+        try {
+            return RuntimeDescriptor.parseCanonicalText(text);
+        } catch (SemanticIrTextDecodeException e) {
+            throw new SemanticIrTextDecodeException(
+                "the " + what + " is not a canonical descriptor text: "
+                    + e.getMessage());
+        }
+    }
+
+    /**
+     * Decodes the class registration seeds: one row per registration with
+     * the registration key, the contained layout (identity and ordered
+     * field rows) and the existing owner record kept as separate facts.
+     * A repeated registration key is a duplicate entry identity and
+     * rejects before the registration map is built; an owner member that
+     * disagrees with a field's default owner is not representable as a
+     * {@link ClassRegistrationSeeds.ClassRegistration} and fails closed
+     * here rather than leaking a producer exception.
+     *
+     */
+    public static ClassRegistrationSeeds parseClassSeeds(CanonicalJson.Arr rows) {
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+            new LinkedHashMap<>();
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "classSeeds[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+            checkKeys(row, "key", "layout", "owner");
+            ClassId key = parseClassId(requireObject(row, "key"));
+            if (registrations.containsKey(key)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate classSeeds registration key " + key + " (" + where + ")");
+            }
+            CanonicalJson.Obj layout = requireObject(row, "layout");
+            checkKeys(layout, "classId", "fields");
+            ClassId classId = parseClassId(requireObject(layout, "classId"));
+            List<ClassLayout.FieldLayout> fields = new ArrayList<>();
+            CanonicalJson.Arr fieldRows = requireArray(layout, "fields");
+            for (int j = 0; j < fieldRows.items().size(); j++) {
+                String fieldWhere = where + ".layout.fields[" + j + "]";
+                CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j),
+                    fieldWhere);
+                checkKeys(field, "defaultOwner", "descriptor", "name", "required");
+                fields.add(new ClassLayout.FieldLayout(requireString(field, "name"),
+                    parseFieldDescriptor(requireString(field, "descriptor"),
+                        fieldWhere + ".descriptor"),
+                    requireBool(field, "required"),
+                    parseDefaultOwner(requireString(field, "defaultOwner"),
+                        fieldWhere + ".defaultOwner")));
+            }
+            DefaultOwner owner = parseDefaultOwner(requireString(row, "owner"),
+                where + ".owner");
+            try {
+                registrations.put(key, new ClassRegistrationSeeds.ClassRegistration(
+                    new ClassLayout(classId, fields), owner));
+            } catch (IllegalArgumentException e) {
+                throw new SemanticIrTextDecodeException(
+                    "invalid classSeeds registration " + key + " (" + where + "): "
+                        + e.getMessage());
+            }
+        }
+        return new ClassRegistrationSeeds(registrations);
     }
 
     /**
@@ -1576,16 +1858,88 @@ public final class ContractSnapshotCanonicalizer {
         return CanonicalJson.arr(items);
     }
 
-    /** Maps an executable project onto the project text protocol value model. */
+    /**
+     * Renders the class registration seeds: one row per registration with
+     * the registration key, the contained layout (identity and ordered
+     * field rows) and the owner member as separate facts, in registration
+     * order. The seeds stay separate from every unit's own
+     * {@code classLayouts} — this mapping never merges a seed layout into a
+     * unit's local layouts.
+     *
+     */
+    public static CanonicalJson.Value classSeedsJson(ClassRegistrationSeeds seeds) {
+        Objects.requireNonNull(seeds, "seeds must not be null");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
+                : seeds.registrations().entrySet()) {
+            ClassRegistrationSeeds.ClassRegistration registration = entry.getValue();
+            rows.add(CanonicalJson.obj(
+                CanonicalJson.e("key", semanticIdJson(entry.getKey())),
+                CanonicalJson.e("layout", layoutJson(registration.layout())),
+                CanonicalJson.e("owner", CanonicalJson.str(registration.owner().name()))));
+        }
+        return CanonicalJson.arr(rows);
+    }
+
+    /**
+     * Maps an executable project onto the complete project text protocol
+     * value model: the {@code deal.semantic-ir/2} envelope, the raw
+     * profile and entry module, the complete interface index, the class
+     * registration seeds and the dependency-ordered modules, each through
+     * the complete unit mapping. A modules map key that disagrees with the
+     * unit's own module identity is a producer defect (the map key is
+     * projected away by the value-only module list, so the disagreement
+     * must fail encoding instead of being hidden).
+     *
+     */
     public static CanonicalJson.Value toJson(ExecutableLoweredProject project) {
+        Objects.requireNonNull(project, "project must not be null");
         List<CanonicalJson.Value> modules = new ArrayList<>();
-        for (LoweredModuleUnit unit : project.modules().values()) {
-            modules.add(toJson(RawUnit.fromTyped(unit)));
+        for (Map.Entry<ModuleId, LoweredModuleUnit> entry : project.modules().entrySet()) {
+            if (!entry.getKey().equals(entry.getValue().moduleId())) {
+                throw new IllegalArgumentException(
+                    "the project modules map key " + entry.getKey()
+                        + " does not match the unit's moduleId "
+                        + entry.getValue().moduleId() + " (a producer defect)");
+            }
+            modules.add(toJson(RawUnit.fromTyped(entry.getValue())));
         }
         return CanonicalJson.obj(
+            CanonicalJson.e("formatVersion", CanonicalJson.str(LoweredModuleUnit.FORMAT_VERSION)),
             CanonicalJson.e("semanticProfile",
                 CanonicalJson.str(project.semanticProfile().name())),
             CanonicalJson.e("entryModule", CanonicalJson.str(project.entryModule().path())),
+            CanonicalJson.e("interfaceIndex", project.interfaceIndex().toCanonicalJson()),
+            CanonicalJson.e("classSeeds", classSeedsJson(project.classSeeds())),
+            CanonicalJson.e("modules", CanonicalJson.arr(modules)));
+    }
+
+    /**
+     * Maps a parsed project back onto the project text protocol value
+     * model (the inverse of {@link #parseProject(CanonicalJson.Obj)}):
+     * decoding a project text and re-emitting it yields the same canonical
+     * bytes whenever the content is unchanged.
+     *
+     */
+    public static CanonicalJson.Value toJson(ParsedProject project) {
+        Objects.requireNonNull(project, "project must not be null");
+        if (!LoweredModuleUnit.FORMAT_VERSION.equals(project.formatVersion())) {
+            throw new IllegalArgumentException(
+                "project formatVersion must be \""
+                    + LoweredModuleUnit.FORMAT_VERSION + "\", got \""
+                    + project.formatVersion() + "\"");
+        }
+        List<CanonicalJson.Value> modules = new ArrayList<>();
+        for (RawUnit unit : project.modules()) {
+            modules.add(toJson(unit));
+        }
+        return CanonicalJson.obj(
+            CanonicalJson.e("formatVersion", CanonicalJson.str(project.formatVersion())),
+            CanonicalJson.e("semanticProfile",
+                CanonicalJson.str(project.semanticProfile())),
+            CanonicalJson.e("entryModule", CanonicalJson.str(project.entryModule())),
+            CanonicalJson.e("interfaceIndex", project.interfaceIndex().toCanonicalJson()),
+            CanonicalJson.e("classSeeds", classSeedsJson(project.classSeeds())),
             CanonicalJson.e("modules", CanonicalJson.arr(modules)));
     }
 

@@ -5,7 +5,7 @@
 
 import * as c from "std/console";
 export function main(): null {
- let x:string="β"; let text:string=`<${x}> $x %s \\ " ' ]=]`;
+ let x:string="β"; let text:string=`<${x}> $x %s \ " ' ]=]`;
  if(text!=="<β> $x %s \\ \" ' ]=]") {throw {message:"template escape or host interpolation"};}
  c.log("template-backend-metacharacters"); return null;
 }

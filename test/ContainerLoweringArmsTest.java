@@ -395,12 +395,12 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice slice = checkSlice("""
             function f(): null {
-              let n = null
-              let b = true
-              let i = 42
-              let d = 4.5
-              let s = "abc"
-              return
+              let n = null;
+              let b = true;
+              let i = 42;
+              let d = 4.5;
+              let s = "abc";
+              return;
             }
             """);
         if (slice == null) {
@@ -551,8 +551,8 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice slice = checkSlice("""
             function f(): null {
-              let n = 2147483648
-              return null
+              let n = 2147483648;
+              return null;
             }
             """);
         if (slice != null) {
@@ -581,8 +581,8 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice negated = checkSlice("""
             function f(): null {
-              let n = -2147483648
-              return null
+              let n = -2147483648;
+              return null;
             }
             """);
         if (negated != null) {
@@ -744,7 +744,7 @@ public class ContainerLoweringArmsTest {
                 for (let i: string of b) {
                   for (let c: string of i) {
                     for (let v: string of c) {
-                      let xs: string[] = [a, b, i, c, v]
+                      let xs: string[] = [a, b, i, c, v];
                     }
                   }
                 }
@@ -836,8 +836,8 @@ public class ContainerLoweringArmsTest {
         // (b) The empty literal: zero values and zero children.
         CheckedSlice emptySlice = checkSlice("""
             function f(): null {
-              let e: int[] = []
-              return null
+              let e: int[] = [];
+              return null;
             }
             """);
         if (emptySlice != null) {
@@ -862,8 +862,8 @@ public class ContainerLoweringArmsTest {
         // (c) The nested literal: inner ARRAY_NEWs are element prior steps.
         CheckedSlice nestedSlice = checkSlice("""
             function f(): null {
-              let n = [[1], [2]]
-              return null
+              let n = [[1], [2]];
+              return null;
             }
             """);
         if (nestedSlice != null) {
@@ -911,8 +911,8 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice slice = checkSlice("""
             function f(): null {
-              let t = {x: 1, y: "k", x: 2}
-              return null
+              let t = {x: 1, y: "k", x: 2};
+              return null;
             }
             """);
         if (slice == null) {
@@ -980,8 +980,8 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice slice = checkSlice("""
             function f(a: string, b: string): null {
-              let s = a + b
-              return null
+              let s = a + b;
+              return null;
             }
             """);
         if (slice == null) {
@@ -1041,8 +1041,8 @@ public class ContainerLoweringArmsTest {
         // is the empty literal string — never folded away).
         CheckedSlice multi = checkSlice("""
             function f(a: string, b: string): null {
-              let s = `${a}mid${b}c`
-              return null
+              let s = `${a}mid${b}c`;
+              return null;
             }
             """);
         if (multi != null) {
@@ -1104,8 +1104,8 @@ public class ContainerLoweringArmsTest {
         // one fragment — no folding.
         CheckedSlice single = checkSlice("""
             function f(): null {
-              let s = `hello`
-              return null
+              let s = `hello`;
+              return null;
             }
             """);
         if (single != null) {
@@ -1144,8 +1144,8 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice slice = checkSlice("""
             function f(a: int[]): null {
-              let n: int = a.length
-              return null
+              let n: int = a.length;
+              return null;
             }
             """);
         if (slice == null) {
@@ -1483,8 +1483,8 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice indexRead = checkSlice("""
             function f(xs: int[]): null {
-              let n: int = xs[0]
-              return null
+              let n: int = xs[0];
+              return null;
             }
             """);
         if (indexRead != null) {
@@ -1525,8 +1525,8 @@ public class ContainerLoweringArmsTest {
         CheckedSlice classLiteral = checkSlice("""
             class Point { x: int; }
             function f(): null {
-              let p: Point = {x: 1}
-              return null
+              let p: Point = {x: 1};
+              return null;
             }
             """);
         if (classLiteral != null) {
@@ -1548,8 +1548,8 @@ public class ContainerLoweringArmsTest {
         CheckedSlice classAccess = checkSlice("""
             class Point { x: int; }
             function f(p: Point): null {
-              let n: int = p.x
-              return null
+              let n: int = p.x;
+              return null;
             }
             """);
         if (classAccess != null) {
@@ -1570,10 +1570,10 @@ public class ContainerLoweringArmsTest {
         {
             StubModuleResolver resolver = new StubModuleResolver();
             CheckedSlice moduleAccess = checkSlice("""
-                import * as console from "std/console"
+                import * as console from "std/console";
                 function f(): null {
-                  let g: (x: string) => null = console.log
-                  return null
+                  let g: (x: string) => null = console.log;
+                  return null;
                 }
                 """, resolver);
             if (moduleAccess != null) {
@@ -1629,10 +1629,10 @@ public class ContainerLoweringArmsTest {
             resolver.register("std/console",
                 Map.of("log", new Type.Func(List.of(), Type.Null.INSTANCE)));
             CheckedSlice moduleAccess = checkSlice("""
-                import * as console from "std/console"
+                import * as console from "std/console";
                 function f(): null {
-                  let g: () => null = console.log
-                  return null
+                  let g: () => null = console.log;
+                  return null;
                 }
                 """, resolver);
             if (moduleAccess != null) {
@@ -1709,9 +1709,9 @@ public class ContainerLoweringArmsTest {
         resolver.register("std/string",
             Map.of("unknown", new Type.Func(List.of(), Type.String.INSTANCE)));
         CheckedSlice moduleAccess = checkSlice("""
-            import * as str from "std/string"
+            import * as str from "std/string";
             function f(): () => string {
-              return str.unknown
+              return str.unknown;
             }
             """, resolver);
         if (moduleAccess == null) {
@@ -1766,8 +1766,8 @@ public class ContainerLoweringArmsTest {
                 && diagnostic.range().endColumn() == 21,
             "the E6005 range is the offending access's own positions: "
                 + diagnostic.range());
-        check(diagnostic.range().startScalarOffset() == 72
-                && diagnostic.range().endScalarOffset() == 83
+        check(diagnostic.range().startScalarOffset() == 73
+                && diagnostic.range().endScalarOffset() == 84
                 && diagnostic.range().scalarLength() == 11,
             "the E6005 range is the offending access's own half-open scalar range: "
                 + diagnostic.range());
@@ -2046,9 +2046,9 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice slice = checkSlice("""
             function f(a: int, b: int, c: int, v: int, i: int): null {
-              let xs: int[] = [a, b, i, c, v]
-              let t = {x: 1, y: "k", x: 2}
-              return null
+              let xs: int[] = [a, b, i, c, v];
+              let t = {x: 1, y: "k", x: 2};
+              return null;
             }
             """);
         if (slice == null) {
@@ -2344,15 +2344,15 @@ public class ContainerLoweringArmsTest {
         CheckedSlice tableReads = checkSlice("""
             function booleanMemberRead(t: table): null {
               if (t.k) {}
-              return null
+              return null;
             }
             function functionMemberRead(t: table): null {
-              let g: () => int = t.g
-              return null
+              let g: () => int = t.g;
+              return null;
             }
             function dynamicIndexRead(t: table, k: string): null {
-              let n: int = t[k]
-              return null
+              let n: int = t[k];
+              return null;
             }
             """);
         testMemberReadArm(tableReads);

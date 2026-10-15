@@ -6,7 +6,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, arrays
 
-import * as host from "host/rest_join"
+import * as host from "host/rest_join";
 
 export function test_host_rest_ok(): string {
   let parts: string[] = ["a", "b", "c"];

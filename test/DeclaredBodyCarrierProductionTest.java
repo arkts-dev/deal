@@ -124,7 +124,7 @@ public class DeclaredBodyCarrierProductionTest {
 
     private static final List<Case> CASES = List.of(
         body("acyclic-sibling", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let c: () => int = make(10);
               let v: int = c();
@@ -142,7 +142,7 @@ public class DeclaredBodyCarrierProductionTest {
             }
             """, List.of("declared-body-sibling-ok"), null, "null", 1, 0, false, false),
         body("two-escaped-instances", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let a: () => int = make(10);
               let b: () => int = make(20);
@@ -168,7 +168,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-instance-a-ok", "declared-body-instance-b-ok"),
             null, "null", 1, 0, false, false),
         body("acyclic-sibling-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let c: async () => int = make(10);
               let v: int = await c();
@@ -188,7 +188,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-sibling-async-ok"), "drive", "int:10",
             1, 0, false, false),
         body("two-escaped-instances-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async () => int = make(10);
               let b: async () => int = make(20);
@@ -215,7 +215,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-async-instance-a-ok",
                 "declared-body-async-instance-b-ok"), "drive", "int:30", 1, 0, false, false),
         body("forward-alias", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let v: int = g();
               if (v === 5) {
@@ -233,7 +233,7 @@ public class DeclaredBodyCarrierProductionTest {
             function helper(): int { return 5; }
             """, List.of("declared-body-forward-alias-ok"), null, "null", 0, 0, false, false),
         body("forward-alias-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let v: int = await g();
               if (v === 5) {
@@ -253,7 +253,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-async-ok"), "drive", "int:5",
             0, 0, false, false),
         body("forward-alias-exported", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let v: int = g();
               if (v === 5) {
@@ -271,7 +271,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-ok"), null, "null",
             0, 1, false, false),
         body("forward-alias-exported-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let v: int = await g();
               if (v === 5) {
@@ -291,7 +291,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-async-ok"), "drive", "int:5",
             0, 1, false, false),
         body("forward-alias-exported-reverse", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function f(n: int): int { return n; }
             export function main(): null {
               let v: int = g();
@@ -309,7 +309,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-reverse-ok"), null, "null",
             0, 1, false, false),
         body("forward-alias-exported-async-reverse", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function f(): int { return await helper(); }
             async function helper(): int { return 5; }
             async function g(): int {
@@ -329,7 +329,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-async-reverse-ok"),
             "drive", "int:5", 0, 1, false, false),
         body("exported-direct-await-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let v: int = await f();
               if (v === 5) {
@@ -344,7 +344,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-exported-direct-await-ok"), "drive", "int:5",
             0, 1, false, false),
         body("forward-alias-exported-async-recursive", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let alias: async (n: int) => int = f;
               let v: int = await alias(1);
@@ -367,7 +367,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-recursive-alias-ok"), "drive", "int:1",
             0, 2, true, false),
         body("exported-direct-await-async-recursive", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let v: int = await f(1);
               if (v === 1) {
@@ -389,7 +389,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-direct-recursive-ok"), "drive", "int:1",
             0, 2, true, false),
         body("exported-recursive-enclosing-state", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let v: int = await f(3);
               if (v === 12) {
@@ -409,7 +409,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-enclosing-state-ok"), "drive", "int:12",
             0, 2, true, false),
         body("forward-alias-exported-async-deep", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let alias: async (n: int) => int = f;
               let v: int = await alias(3);
@@ -432,7 +432,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-recursive-deep-ok"), "drive", "int:3",
             0, 2, true, false),
         body("module-group-forward-alias", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               if (f(1) === 42) {
                 console.log("declared-body-module-group-forward-alias-ok");
@@ -455,7 +455,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-module-group-forward-alias-ok"), null, "null",
             1, 0, true, false),
         body("module-group-forward-carrier-alias", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let drive: (n: int) => int = f;
               if (drive(1) === 42) {
@@ -479,7 +479,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-module-group-forward-carrier-alias-ok"),
             null, "null", 2, 0, true, false),
         body("module-group-reverse-alias", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               if (f(1) === 42) {
                 console.log("declared-body-module-group-reverse-alias-ok");
@@ -502,7 +502,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-module-group-reverse-alias-ok"), null, "null",
             1, 0, true, false),
         body("module-group-forward-alias-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let v: int = await f(1);
               if (v === 42) {
@@ -527,7 +527,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-module-group-forward-alias-async-ok"),
             "drive", "int:42", 1, 0, true, false),
         body("module-group-reverse-alias-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let v: int = await f(1);
               if (v === 42) {
@@ -552,7 +552,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-module-group-reverse-alias-async-ok"),
             "drive", "int:42", 1, 0, true, false),
         body("forward-alias-exported-adapter", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let alias: (n: int, extra: int) => int = f;
               if (alias(1, 7) === 10) {
@@ -566,7 +566,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-adapter-ok"),
             null, "null", 0, 0, false, true),
         body("forward-alias-exported-adapter-reverse", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function f(n: int): int { return n * 10; }
             export function main(): null {
               let alias: (n: int, extra: int) => int = f;
@@ -580,7 +580,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-adapter-reverse-ok"),
             null, "null", 0, 0, false, true),
         body("forward-alias-exported-adapter-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let alias: async (n: int, extra: int) => int = f;
               let v: int = await alias(1, 7);
@@ -596,7 +596,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-adapter-async-ok"),
             "drive", "int:10", 0, 1, false, true),
         body("forward-alias-exported-adapter-async-reverse", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function f(n: int): int { return n * 10; }
             export async function drive(): int {
               let alias: async (n: int, extra: int) => int = f;
@@ -612,8 +612,8 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-exported-adapter-async-reverse-ok"),
             "drive", "int:10", 0, 1, false, true),
         body("adapter-over-async-external", """
-            import * as console from "std/console"
-            import * as Lib from "./adapter_lib"
+            import * as console from "std/console";
+            import * as Lib from "./adapter_lib";
             export async function drive(): int {
               let src: async (x: int) => int = Lib.plus;
               let f: async (a: int, b: int) => int = src;
@@ -631,7 +631,7 @@ public class DeclaredBodyCarrierProductionTest {
                 export async function plus(x: int): int { return x + 1; }
                 """)),
         body("escaped-nested-source-adapter-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let c: async () => int = make(10);
               let v: int = await c();
@@ -654,7 +654,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-nested-source-adapter-ok"), "drive", "int:10",
             1, 0, false, false),
         body("two-escaped-nested-source-adapters-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async () => int = make(10);
               let b: async () => int = make(20);
@@ -685,7 +685,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "declared-body-nested-adapter-instance-b-ok"), "drive", "int:30",
             1, 0, false, false),
         group("called-explicit", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               function f(n: int): int {
                 if (n <= 0) { return 0; }
@@ -705,7 +705,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-called-explicit-ok"), true,
             List.of(true, true), false, false),
         group("called-implicit", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               function f(n: int): null {
                 if (n > 0) { g(n - 1); }
@@ -720,7 +720,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-called-implicit-ok"), true,
             List.of(true, true), true, false),
         group("called-value-reference", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               function f(n: int): int {
                 if (n <= 0) { return 0; }
@@ -740,7 +740,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-called-value-reference-ok"), false,
             List.of(true, true), false, false),
         group("called-alias", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               function f(n: int): int {
                 if (n <= 0) { return 0; }
@@ -760,7 +760,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-alias-ok"), true,
             List.of(true, true), false, true),
         group("called-alias-captured", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let base: int = 10;
               function f(n: int): int {
@@ -781,7 +781,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-alias-captured-ok"), true,
             List.of(true, true), false, true),
         group("called-alias-later", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               function g(n: int): int {
                 let fRef: (n: int) => int = f;
@@ -801,7 +801,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-alias-later-ok"), true,
             List.of(true, true), false, true),
         group("module-group-alias", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             function f(n: int): int {
               if (n <= 0) { return 0; }
               return n + g(n - 1);
@@ -854,7 +854,7 @@ public class DeclaredBodyCarrierProductionTest {
             }
             """, List.of(), false, List.of(false, false), true, false),
         group("captured-called", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let base: int = 10;
               function f(n: int): int {
@@ -872,7 +872,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-captured-ok"), true,
             List.of(true, true), false, false),
         group("nested-inside-function", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               function outer(): int {
                 function f(n: int): int {
@@ -892,7 +892,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("nested-group-inside-function-ok"), true,
             List.of(true, true), false, false),
         group("escaped-two-groups", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let a: (n: int) => int = make(10);
               let b: (n: int) => int = make(20);
@@ -919,7 +919,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("escaped-group-a-ok", "escaped-group-b-ok"), true,
             List.of(true, true), false, false),
         group("escaped-two-groups-recursion", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let a: (n: int) => int = make(10);
               let b: (n: int) => int = make(20);
@@ -948,7 +948,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("escaped-group-recursion-a-ok", "escaped-group-recursion-b-ok"),
             true, List.of(true, true), false, false, null, null, "null", true),
         group("escaped-two-groups-alias-recursion", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let a: (n: int) => int = make(10);
               let b: (n: int) => int = make(20);
@@ -980,7 +980,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "escaped-group-alias-recursion-b-ok"), true, List.of(true, true),
             false, true, null, null, "null", true),
         group("param-origin-contextual", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               function f(n: int): int {
                 let gRef: (n: int) => int = g;
@@ -997,7 +997,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of(), false, List.of(true, false), false, false,
             new FailurePin("E8001", "function f(n: "), null, "null", false),
         group("async-escaped-two-groups", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async (n: int) => int = make(10);
               let b: async (n: int) => int = make(20);
@@ -1044,7 +1044,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of(), true, List.of(true, true), false, false,
             new FailurePin("E8001", "async function g(n: "), "drive", "null", false),
         group("async-escaped-two-groups-alias", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async (n: int) => int = make(10);
               let b: async (n: int) => int = make(20);
@@ -1075,7 +1075,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("async-escaped-group-alias-a-ok", "async-escaped-group-alias-b-ok"),
             true, List.of(true, true), false, false, null, "drive", "int:30", false),
         group("async-escaped-two-groups-alias-later", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async (n: int) => int = make(10);
               let b: async (n: int) => int = make(20);
@@ -1107,7 +1107,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "async-escaped-group-alias-later-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "int:30", false),
         group("async-escaped-two-groups-param", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async (n: int) => int = make(10);
               let b: async (n: int) => int = make(20);
@@ -1138,7 +1138,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("async-escaped-group-param-a-ok", "async-escaped-group-param-b-ok"),
             true, List.of(true, true), false, false, null, "drive", "int:36", false),
         group("async-escaped-two-groups-alias-param", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async (n: int) => int = make(10);
               let b: async (n: int) => int = make(20);
@@ -1171,7 +1171,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "async-escaped-group-alias-param-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "int:36", false),
         group("async-escaped-two-groups-captured", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async (n: int) => int = make(10);
               let b: async (n: int) => int = make(20);
@@ -1205,7 +1205,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "async-escaped-group-captured-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "int:42", false),
         group("async-escaped-two-groups-alias-captured", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let a: async (n: int) => int = make(10);
               let b: async (n: int) => int = make(20);
@@ -1240,7 +1240,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "async-escaped-group-alias-captured-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "int:42", false),
         self("nested-sync", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function main(): null {
               let base: int = 5;
               function f(n: int): int {
@@ -1257,7 +1257,7 @@ public class DeclaredBodyCarrierProductionTest {
             }
             """, List.of("self-alias-nested-sync-ok"), null, "null", true),
         self("module-sync", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             function f(n: int): int {
               if (n <= 0) { return 5; }
               let again: (n: int) => int = f;
@@ -1273,7 +1273,7 @@ public class DeclaredBodyCarrierProductionTest {
             }
             """, List.of("self-alias-module-sync-ok"), null, "null", false),
         self("nested-async", """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export async function drive(): int {
               let base: int = 5;
               async function f(n: int): int {

@@ -7,4 +7,4 @@ export function probe(): int {
   return 1;
 }
 
-import * as other from "./parser_import_lib"
+import * as other from "./parser_import_lib";

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, functions
 
-import * as host from "host/boundary_apply"
+import * as host from "host/boundary_apply";
 
 function add100(x: int): int {
   return x + 100;

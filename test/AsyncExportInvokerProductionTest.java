@@ -594,7 +594,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** The delayed host completion: the export awaits the host's delayed int operation. */
     private static final String DELAYED_SOURCE = """
-        import * as probe from "host/probe"
+        import * as probe from "host/probe";
 
         export function main(): null {
           return null;
@@ -653,7 +653,7 @@ public class AsyncExportInvokerProductionTest {
      * completion check rejects it (E8001) inside the export.
      */
     private static final String MISMATCH_SOURCE = """
-        import * as probe from "host/probe"
+        import * as probe from "host/probe";
 
         export function main(): null {
           return null;
@@ -738,7 +738,7 @@ public class AsyncExportInvokerProductionTest {
      * 110 proves one host load and one main touch per invocation.
      */
     private static final String COUNTS_SOURCE = """
-        import * as probe from "host/probe"
+        import * as probe from "host/probe";
 
         export function main(): null {
           probe.touchMain();

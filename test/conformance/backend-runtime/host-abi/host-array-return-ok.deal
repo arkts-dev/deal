@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, arrays
 
-import * as host from "host/array_return"
+import * as host from "host/array_return";
 
 export function test_host_array_return_ok(): string {
   let parts: string[] = host.split("ignored");

@@ -26,10 +26,12 @@ import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExportPlan;
+import deal.semantic.ir.ExportInterface;
 import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FieldInterface;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
@@ -41,6 +43,7 @@ import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.IntrinsicKind;
@@ -57,6 +60,7 @@ import deal.semantic.ir.OpResultType;
 import deal.semantic.ir.OperationContractSnapshot;
 import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticCapability;
@@ -195,6 +199,28 @@ public class SemanticIrValidatorTest {
 
     private static LoweredModuleUnit unit(List<SemanticOp> ops) {
         return unit(Set.of(), Map.of(), Map.of(), ops);
+    }
+
+    /**
+     * The unit rebuilt with another carried interface hash: a synthetic
+     * project's units carry the digest of their own carried interface
+     * index (the project surface ties the two).
+     */
+    private static LoweredModuleUnit withInterfaceHash(LoweredModuleUnit unit,
+            String interfaceHash) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), interfaceHash, unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
+    }
+
+    /** The comparison facts of one carried project index (its own digest). */
+    private static SemanticIrValidator.ComparisonFacts projectFacts(
+            ProjectInterfaceIndex index) {
+        return new SemanticIrValidator.ComparisonFacts(index.interfaceIndexDigest(),
+            SemanticProfile.DEAL_V1_2_INT32, REGISTRY);
     }
 
     private static void assertPass(Optional<CompilerDiagnostic> diagnostic, String what) {
@@ -695,25 +721,26 @@ public class SemanticIrValidatorTest {
         // R-PROFILE: cross-unit profile mismatch through project-level
         // canonical-JSON injection.
         {
-            LoweredModuleUnit unitA = unit("mod.a", Set.of(), Map.of(), Map.of(),
-                List.of(constOp()));
-            LoweredModuleUnit unitB = unit("mod.b", Set.of(), Map.of(), Map.of(),
-                List.of(constOp()));
             ProjectInterfaceIndex index = new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION,
                 Map.of(MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
                         List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES),
                     MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
                         List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+            LoweredModuleUnit unitA = withInterfaceHash(unit("mod.a", Set.of(), Map.of(),
+                Map.of(), List.of(constOp())), index.interfaceIndexDigest());
+            LoweredModuleUnit unitB = withInterfaceHash(unit("mod.b", Set.of(), Map.of(),
+                Map.of(), List.of(constOp())), index.interfaceIndexDigest());
             ExecutableLoweredProject project = new ExecutableLoweredProject(
                 SemanticProfile.DEAL_V1_2_INT32, index,
                 new LinkedHashMap<>() {{
                     put(MOD, unitA);
                     put(MOD_B, unitB);
                 }}, MOD, ClassRegistrationSeeds.builtinErrorOnly());
-            assertPass(SemanticIrValidator.validate(project, FACTS), "project injection base");
+            assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
+                "project injection base");
             String text = substituteProjectUnitLeaf(SemanticIrValidator.toProjectText(project),
                 1, "semanticProfile", "DEAL_V1_2_INT32", "LEGACY_SAFE_INT");
-            assertE6005(SemanticIrValidator.validateText(text, FACTS),
+            assertE6005(SemanticIrValidator.validateText(text, projectFacts(index)),
                 "R-PROFILE", "LEGACY_SAFE_INT");
         }
 
@@ -1708,6 +1735,243 @@ public class SemanticIrValidatorTest {
             "R-ENUM", "futureCell", "AdaptSourceRef");
     }
 
+    /**
+     * The complete {@code deal.semantic-ir/2} project transport
+     * (ISSUE-0818): the project text carries the {@code
+     * deal.semantic-interface/1} index, the class registration seeds and
+     * the dependency-ordered units, and its inverse retains every field —
+     * the index digest stays stable, present-empty facts stay present and
+     * empty, and every framing violation rejects before any project
+     * record exists.
+     */
+    private static void testProjectTransportAndMandatoryEmpties() {
+        System.out.println("-- Complete project transport: the /2 project framing, the "
+            + "interface index inverse and the mandatory present-empty facts --");
+
+        ProjectInterfaceIndex index = new ProjectInterfaceIndex(
+            ProjectInterfaceIndex.FORMAT_VERSION, new LinkedHashMap<>() {{
+                put(MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
+                    List.of(new ResolvedImport("b", "mod/b", MOD_B,
+                            ExternalModuleKind.IMPLEMENTATION),
+                        new ResolvedImport("cfg", "host/cfg", new ModuleId("host.cfg"),
+                            ExternalModuleKind.HOST)),
+                    List.of(new ExportInterface("main", "() => null")),
+                    List.of(new ClassInterface(new ClassId("mod.a", "Point"),
+                        List.of(new FieldInterface("x", "int", false, false, true),
+                            new FieldInterface("label", "string", true, true, false)),
+                        new ClassFactoryId(7))),
+                    InitializationMode.ONCE_AFTER_DEPENDENCIES));
+                put(MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.HOST,
+                    List.of(), List.of(), List.of(),
+                    InitializationMode.ONCE_AFTER_DEPENDENCIES));
+            }});
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        modules.put(MOD, withInterfaceHash(unit(List.of(constOp())),
+            index.interfaceIndexDigest()));
+        modules.put(MOD_B, withInterfaceHash(
+            unit("mod.b", Set.of(), Map.of(), Map.of(), List.of(constOp())),
+            index.interfaceIndexDigest()));
+        ExecutableLoweredProject project = new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
+            ClassRegistrationSeeds.builtinErrorOnly());
+        assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
+            "the project transport fixture");
+
+        String text = SemanticIrValidator.toProjectText(project);
+        check(text.contains("\"formatVersion\":\"deal.semantic-ir/2\""),
+            "the project text carries the /2 envelope");
+        check(text.contains("\"entryModule\":\"mod.a\""),
+            "the project entry module is a plain string");
+        check(text.contains("\"interfaceIndex\":{\"formatVersion\":"
+                + "\"deal.semantic-interface/1\""),
+            "the project text carries the interface index under its unchanged format");
+        check(text.contains("\"classSeeds\":[{\"key\":{\"modulePath\":\"\",\"name\":\"Error\""),
+            "the project text carries the class registration seeds with their keys");
+        ContractSnapshotCanonicalizer.ParsedProject parsed =
+            ContractSnapshotCanonicalizer.parseProject(parseObj(text));
+        checkEq("deal.semantic-ir/2", parsed.formatVersion(),
+            "the parsed project keeps the /2 envelope");
+        checkEq("DEAL_V1_2_INT32", parsed.semanticProfile(),
+            "the parsed project keeps the profile as supplied");
+        checkEq("mod.a", parsed.entryModule(), "the parsed project keeps the entry module");
+        checkEq(List.of("mod.a", "mod.b"), parsed.modulePaths(),
+            "the parsed project keeps the module order");
+        checkEq(index, parsed.interfaceIndex(),
+            "the interface index inverse retains every module/interface/import/class/field "
+                + "fact");
+        checkEq(index.interfaceIndexDigest(), parsed.interfaceIndex().interfaceIndexDigest(),
+            "the reparsed index keeps its digest");
+        checkEq(ClassRegistrationSeeds.builtinErrorOnly(), parsed.classSeeds(),
+            "the parsed project keeps the class registration seeds");
+        checkEq(RawUnit.fromTyped(modules.get(MOD)), parsed.modules().get(0),
+            "the first module round-trips every complete unit fact");
+        checkEq(RawUnit.fromTyped(modules.get(MOD_B)), parsed.modules().get(1),
+            "the second module round-trips every complete unit fact");
+        checkEq(text, serialize(ContractSnapshotCanonicalizer.toJson(parsed)),
+            "the reparsed project re-serializes byte-identically");
+        assertPass(SemanticIrValidator.validateText(text, projectFacts(index)),
+            "the project text surface");
+
+        // Every retained index field is present and non-default in the fixture.
+        ExternalModuleInterface parsedA = parsed.interfaceIndex().modules().get(MOD);
+        checkEq(List.of("b", "cfg"),
+            parsedA.imports().stream().map(ResolvedImport::alias).toList(),
+            "the resolved import aliases survive in order");
+        checkEq(ExternalModuleKind.HOST, parsedA.imports().get(1).kind(),
+            "the resolved import kind survives");
+        checkEq(new ModuleId("host.cfg"), parsedA.imports().get(1).resolvedModuleId(),
+            "the resolved import target identity survives");
+        checkEq("host/cfg", parsedA.imports().get(1).modulePath(),
+            "the raw import specifier survives");
+        checkEq(List.of("main"),
+            parsedA.exports().stream().map(ExportInterface::name).toList(),
+            "the export entries survive");
+        ClassInterface point = parsedA.classes().get(0);
+        checkEq(new ClassId("mod.a", "Point"), point.classId(),
+            "the class identity survives");
+        checkEq(new ClassFactoryId(7), point.constructionEntry(),
+            "the class construction entry survives");
+        checkEq(List.of("x", "label"),
+            point.fields().stream().map(FieldInterface::name).toList(),
+            "the class field order survives");
+        check(!point.fields().get(0).optional() && point.fields().get(0).hasDefault()
+                && point.fields().get(1).optional() && point.fields().get(1).nullable()
+                && !point.fields().get(1).hasDefault(),
+            "the optional/nullable/hasDefault field facts survive");
+        checkEq(InitializationMode.ONCE_AFTER_DEPENDENCIES,
+            parsed.interfaceIndex().modules().get(MOD_B).initialization(),
+            "the initialization mode survives");
+
+        // Mandatory empties: the empty seed set and the empty index entry
+        // lists stay present and empty, distinct from absent.
+        ExecutableLoweredProject emptySeeds = new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
+            new ClassRegistrationSeeds(Map.of()));
+        String emptyText = SemanticIrValidator.toProjectText(emptySeeds);
+        check(emptyText.contains("\"classSeeds\":[]"),
+            "a project with no class registration seeds emits a present-empty list");
+        check(emptyText.contains("\"classes\":[],\"exports\":[],\"imports\":[]"),
+            "an index entry with no imports/exports/classes emits present-empty lists");
+        ContractSnapshotCanonicalizer.ParsedProject emptyParsed =
+            ContractSnapshotCanonicalizer.parseProject(parseObj(emptyText));
+        check(emptyParsed.classSeeds().registrations().isEmpty(),
+            "the present-empty seeds decode as a real empty seed set");
+        checkEq(emptyText, serialize(ContractSnapshotCanonicalizer.toJson(emptyParsed)),
+            "the present-empty project re-serializes byte-identically");
+        assertPass(SemanticIrValidator.validateText(emptyText, projectFacts(index)),
+            "the present-empty project text surface");
+
+        // The registration key and the contained layout classId stay separate
+        // facts: a disagreement is transported unchanged and never merged into
+        // a unit's own classLayouts.
+        ClassRegistrationSeeds detachedSeeds = new ClassRegistrationSeeds(Map.of(
+            new ClassId("mod.a", "Other"),
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(new ClassId("mod.a", "Point"), List.of()),
+                DefaultOwner.LOCAL)));
+        ExecutableLoweredProject detachedProject = new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD, detachedSeeds);
+        String detachedText = SemanticIrValidator.toProjectText(detachedProject);
+        check(detachedText.contains("\"key\":{\"modulePath\":\"mod.a\",\"name\":\"Other\"")
+                && detachedText.contains("\"layout\":{\"classId\":{\"modulePath\":\"mod.a\","
+                    + "\"name\":\"Point\""),
+            "a seed's registration key and contained layout classId stay separate spellings");
+        ContractSnapshotCanonicalizer.ParsedProject detachedParsed =
+            ContractSnapshotCanonicalizer.parseProject(parseObj(detachedText));
+        checkEq(detachedSeeds, detachedParsed.classSeeds(),
+            "the seed key/layout disagreement survives typed->text->typed unchanged");
+        for (RawUnit raw : detachedParsed.modules()) {
+            check(raw.classLayouts().isEmpty(),
+                "the seeds are never merged into a unit's own classLayouts");
+        }
+
+        // The /1 envelope is never filled or repaired.
+        expectProjectDecodeFailure(
+            text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/1\""),
+            "a /1 project envelope rejects");
+        expectProjectDecodeFailure(
+            text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/3\""),
+            "any other project envelope version rejects");
+        // Missing and unknown project framing fields reject.
+        expectProjectDecodeFailure(withoutKey(text, "formatVersion"),
+            "an absent project formatVersion rejects");
+        expectProjectDecodeFailure(withoutKey(text, "interfaceIndex"),
+            "an absent interfaceIndex rejects");
+        expectProjectDecodeFailure(withoutKey(text, "classSeeds"),
+            "an absent classSeeds rejects");
+        expectProjectDecodeFailure(withNewEntry(text, "futureProjectFact",
+                CanonicalJson.str("x")),
+            "an unknown project field rejects");
+        // The module identity is the entry identity.
+        expectProjectDecodeFailure(duplicateArrayEntry(text, "modules"),
+            "a duplicate project module identity rejects");
+        expectProjectDecodeFailure(serialize(withEntry(parseObj(text), "entryModule",
+                CanonicalJson.str("mod.absent"))),
+            "an entry module outside the carried modules rejects");
+        expectProjectDecodeFailure(serialize(withEntry(parseObj(text), "modules",
+                CanonicalJson.str("not-an-array"))),
+            "a mistyped project modules field rejects");
+        // The interface index keeps its closed shapes and exact members.
+        expectProjectDecodeFailure(withEntryAt(text, "formatVersion",
+                CanonicalJson.str("deal.semantic-interface/2"), "interfaceIndex"),
+            "an interface format bump rejects");
+        expectProjectDecodeFailure(withEntryAt(text, "kind",
+                CanonicalJson.str("NOT_A_KIND"), "interfaceIndex", "modules", 0),
+            "an unknown interface kind rejects");
+        expectProjectDecodeFailure(withoutKeyAt(text, "declaredType", "interfaceIndex",
+                "modules", 0, "exports", 0),
+            "an interface export without its declared type rejects");
+        expectProjectDecodeFailure(withoutKeyAt(text, "optional", "interfaceIndex",
+                "modules", 0, "classes", 0, "fields", 0),
+            "an interface field without its optional member rejects");
+        // The class seeds keep their exact shape and one owner per registration.
+        expectProjectDecodeFailure(withEntryAt(text, "owner",
+                CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0),
+            "an unknown seed owner rejects");
+        expectProjectDecodeFailure(withEntryAt(text, "defaultOwner",
+                CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0, "layout", "fields", 0),
+            "an unknown seed field owner rejects");
+        expectProjectDecodeFailure(withoutKeyAt(text, "owner", "classSeeds", 0),
+            "a seed without its owner member rejects");
+        expectProjectDecodeFailure(duplicateArrayEntry(text, "classSeeds"),
+            "a duplicate class-seed registration key rejects");
+        // A malformed seed descriptor text is a transport decode failure, not
+        // an unchecked parser failure: truncated parameter-list forms
+        // normalize to SemanticIrTextDecodeException at the descriptor owner.
+        for (String truncated : List.of("(", "(int", "(int,", "(int)->", "async(")) {
+            expectProjectDecodeFailure(withEntryAt(text, "descriptor",
+                    CanonicalJson.str(truncated), "classSeeds", 0, "layout", "fields", 0),
+                "a truncated seed descriptor \"" + truncated + "\" rejects as a "
+                    + "transport decode failure");
+        }
+        // The decode failure precedes admission on the validation surface.
+        for (String rejected : List.of(withoutKey(text, "interfaceIndex"),
+                text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/1\""),
+                duplicateArrayEntry(text, "modules"),
+                withEntryAt(text, "descriptor", CanonicalJson.str("("),
+                    "classSeeds", 0, "layout", "fields", 0))) {
+            try {
+                SemanticIrValidator.validateText(rejected, FACTS);
+                fail("a malformed project framing is a decode failure on the validation "
+                    + "surface, never an admission result");
+            } catch (SemanticIrTextDecodeException expected) {
+                passed++;
+            }
+        }
+    }
+
+    private static void expectProjectDecodeFailure(String text, String message) {
+        try {
+            ContractSnapshotCanonicalizer.parseProject(parseObj(text));
+            fail(message + " (no decode failure)");
+        } catch (SemanticIrTextDecodeException expected) {
+            passed++;
+        } catch (RuntimeException other) {
+            fail(message + " (expected SemanticIrTextDecodeException, got " + other
+                + ")");
+        }
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -1728,6 +1992,7 @@ public class SemanticIrValidatorTest {
         testCompleteTransport(transport);
         testTransportIdentityLink();
         testTransportMandatoryEmptiesAndNegatives(text);
+        testProjectTransportAndMandatoryEmpties();
         testRegistrySourceRefDiscriminator(text);
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

@@ -301,11 +301,11 @@ public class LoweringSupportTest {
         try {
             CompiledFixture fixture = compileFixture(tmp, Map.of(
                 "main.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function main(): null {
                       time.nowMillis();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             check(fixture.ok(), "the direct time fixture compiles for execution");
@@ -340,12 +340,12 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "main.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function main(): null {
                       let f: () => int = time.nowMillis;
                       f();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -371,13 +371,13 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "main.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function main(): null {
                       let t = time;
                       let g: () => int = t.nowMillis;
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -399,16 +399,16 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "main.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function pick(t: table): () => int {
-                      return t.nowMillis
+                      return t.nowMillis;
                     }
 
                     export function main(): null {
                       let g: () => int = pick(time);
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -433,20 +433,20 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "a.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function getTime(): table {
-                      return time
+                      return time;
                     }
                     """,
                 "main.deal", """
-                    import * as a from "./a"
+                    import * as a from "./a";
 
                     export function main(): null {
                       let t: table = a.getTime();
                       let g: () => int = t.nowMillis;
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -471,27 +471,27 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "a.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function getTime(): table {
-                      return time
+                      return time;
                     }
                     """,
                 "b.deal", """
-                    import * as a from "./a"
+                    import * as a from "./a";
 
                     export function getTime2(): table {
-                      return a.getTime()
+                      return a.getTime();
                     }
                     """,
                 "main.deal", """
-                    import * as b from "./b"
+                    import * as b from "./b";
 
                     export function main(): null {
                       let t: table = b.getTime2();
                       let g: () => int = t.nowMillis;
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -520,19 +520,19 @@ public class LoweringSupportTest {
         try {
             CompiledFixture fixture = compileFixture(tmp, Map.of(
                 "a.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function getNow(): () => int {
-                      return time.nowMillis
+                      return time.nowMillis;
                     }
                     """,
                 "main.deal", """
-                    import * as a from "./a"
+                    import * as a from "./a";
 
                     export function main(): null {
                       let g: () => int = a.getNow();
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             testCombinedDependencies(fixture);
@@ -558,26 +558,26 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "a.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function getNow(): () => int {
-                      return time.nowMillis
+                      return time.nowMillis;
                     }
                     """,
                 "b.deal", """
-                    import * as a from "./a"
+                    import * as a from "./a";
 
                     export function getNow2(): () => int {
-                      return a.getNow()
+                      return a.getNow();
                     }
                     """,
                 "main.deal", """
-                    import * as b from "./b"
+                    import * as b from "./b";
 
                     export function main(): null {
                       let g: () => int = b.getNow2();
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -606,10 +606,10 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "main.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -633,15 +633,15 @@ public class LoweringSupportTest {
                 Map.of(
                     "other.deal", """
                         export function nowMillis(): int {
-                          return 0
+                          return 0;
                         }
                         """,
                     "main.deal", """
-                        import * as time from "./other"
+                        import * as time from "./other";
 
                         export function main(): null {
                           time.nowMillis();
-                          return null
+                          return null;
                         }
                         """), "main.deal");
             if (triggers == null || other == null) {
@@ -678,17 +678,17 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "main.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     function unrelated(): table {
-                      return {}
+                      return {};
                     }
 
                     export function main(): null {
                       let t: table = unrelated();
                       let g: () => int = t.nowMillis;
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -711,20 +711,20 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "a.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function getTable(): table {
-                      return {}
+                      return {};
                     }
                     """,
                 "main.deal", """
-                    import * as a from "./a"
+                    import * as a from "./a";
 
                     export function main(): null {
                       let t: table = a.getTable();
                       let g: () => int = t.nowMillis;
                       g();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -749,17 +749,17 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "a.deal", """
-                    import * as time from "std/time"
+                    import * as time from "std/time";
 
                     export function getNow(): () => int {
-                      return time.nowMillis
+                      return time.nowMillis;
                     }
                     """,
                 "main.deal", """
-                    import * as a from "./a"
+                    import * as a from "./a";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -787,14 +787,14 @@ public class LoweringSupportTest {
                 Map.of(
                     "lib.deal", """
                         export function greet(): string {
-                          return "ok"
+                          return "ok";
                         }
                         """,
                     "main.deal", """
-                        import * as lib from "./lib"
+                        import * as lib from "./lib";
 
                         export function main(): null {
-                          return null
+                          return null;
                         }
                         """), "main.deal");
             if (importer == null) {
@@ -814,10 +814,10 @@ public class LoweringSupportTest {
             RequirementManifestResult single = compileAndCompute(tmp.resolve("single"),
                 Map.of("main.deal", """
                     export function value(): int {
-                      return 42
+                      return 42;
                     }
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (single == null) {
@@ -834,10 +834,10 @@ public class LoweringSupportTest {
             // declaration itself).
             RequirementManifestResult stdlib = compileAndCompute(tmp.resolve("stdimp"),
                 Map.of("main.deal", """
-                    import * as console from "std/console"
+                    import * as console from "std/console";
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (stdlib == null) {
@@ -864,7 +864,7 @@ public class LoweringSupportTest {
             RequirementManifestResult small = compileAndCompute(tmp.resolve("small"),
                 Map.of("main.deal", """
                     export function one(): int {
-                      return 1
+                      return 1;
                     }
 
                     export function main(): null { return null; }
@@ -872,7 +872,7 @@ public class LoweringSupportTest {
             RequirementManifestResult max = compileAndCompute(tmp.resolve("max"),
                 Map.of("main.deal", """
                     export function maxInt(): int {
-                      return 2147483647
+                      return 2147483647;
                     }
 
                     export function main(): null { return null; }
@@ -880,7 +880,7 @@ public class LoweringSupportTest {
             RequirementManifestResult numberLiteral = compileAndCompute(tmp.resolve("number"),
                 Map.of("main.deal", """
                     export function half(): number {
-                      return 1.5
+                      return 1.5;
                     }
 
                     export function main(): null { return null; }
@@ -911,7 +911,7 @@ public class LoweringSupportTest {
             RequirementManifestResult neg = compileAndCompute(tmp.resolve("neg"),
                 Map.of("main.deal", """
                     export function neg(x: int): int {
-                      return -x
+                      return -x;
                     }
 
                     export function main(): null { return null; }
@@ -919,7 +919,7 @@ public class LoweringSupportTest {
             RequirementManifestResult not = compileAndCompute(tmp.resolve("not"),
                 Map.of("main.deal", """
                     export function not(b: boolean): boolean {
-                      return !b
+                      return !b;
                     }
 
                     export function main(): null { return null; }
@@ -927,7 +927,7 @@ public class LoweringSupportTest {
             RequirementManifestResult add = compileAndCompute(tmp.resolve("add"),
                 Map.of("main.deal", """
                     export function add(x: int, y: int): int {
-                      return x + y
+                      return x + y;
                     }
 
                     export function main(): null { return null; }
@@ -935,7 +935,7 @@ public class LoweringSupportTest {
             RequirementManifestResult eq = compileAndCompute(tmp.resolve("eq"),
                 Map.of("main.deal", """
                     export function eq(x: int, y: int): boolean {
-                      return x === y
+                      return x === y;
                     }
 
                     export function main(): null { return null; }
@@ -943,7 +943,7 @@ public class LoweringSupportTest {
             RequirementManifestResult addNumber = compileAndCompute(tmp.resolve("add-number"),
                 Map.of("main.deal", """
                     export function addN(x: number, y: number): number {
-                      return x + y
+                      return x + y;
                     }
 
                     export function main(): null { return null; }
@@ -980,7 +980,7 @@ public class LoweringSupportTest {
             RequirementManifestResult toInt = compileAndCompute(tmp.resolve("to-int"),
                 Map.of("main.deal", """
                     export function cvt(x: number): int {
-                      return int(x)
+                      return int(x);
                     }
 
                     export function main(): null { return null; }
@@ -988,7 +988,7 @@ public class LoweringSupportTest {
             RequirementManifestResult toNumber = compileAndCompute(tmp.resolve("to-number"),
                 Map.of("main.deal", """
                     export function cvtN(x: int): number {
-                      return number(x)
+                      return number(x);
                     }
 
                     export function main(): null { return null; }
@@ -1022,19 +1022,19 @@ public class LoweringSupportTest {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "helper.deal", """
                     export function helperFn(): int {
-                      return 1
+                      return 1;
                     }
                     """,
                 "main.deal", """
                     import * as time from "std/time";
-                    import * as helper from "./helper"
+                    import * as helper from "./helper";
 
                     export class Point {
                       x: int = 1;
-                      y?: int
+                      y?: int;
                     }
 
-                    async function asyncOne(): int { return 1 }
+                    async function asyncOne(): int { return 1; }
 
                     export async function compute(a: int[]): int {
                       let sum: int = 0;
@@ -1044,23 +1044,23 @@ public class LoweringSupportTest {
                       let neg: int = -sum;
                       let eq: boolean = sum === 0 && n > 1.0;
                       let arr: int[] = [1, 2];
-                      let obj: table = { k: 1 }
+                      let obj: table = { k: 1 };
                       let p: Point = { x: 2, y: 4 };
                       p.y = 3;
                       delete obj.k;
-                      if (has(p.y)) { sum = 1 } else { sum = 2 }
+                      if (has(p.y)) { sum = 1; } else { sum = 2; }
                       let i: int = 0;
                       while (i < a.length) {
-                        if (i > 5) { break }
+                        if (i > 5) { break; }
                         sum = sum + a[i];
-                        i = i + 1
+                        i = i + 1;
                       }
                       for (let j: int = 0; j < 2; j = j + 1) {
-                        if (j === 1) { continue }
-                        sum = sum + j
+                        if (j === 1) { continue; }
+                        sum = sum + j;
                       }
-                      for (let v: int of a) { sum = sum + v }
-                      let f: () => int = function(): int { return 1 }
+                      for (let v: int of a) { sum = sum + v; }
+                      let f: () => int = function(): int { return 1; };
                       let g: () => int = f;
                       g();
                       sum = sum + g();
@@ -1068,15 +1068,15 @@ public class LoweringSupportTest {
                       sum = sum + helper.helperFn();
                       let now: int = time.nowMillis();
                       try {
-                        if (now < 0) { throw { code: "E", message: "x" } }
+                        if (now < 0) { throw { code: "E", message: "x" }; }
                       } catch (e) {
-                        sum = 9
+                        sum = 9;
                       }
-                      return sum
+                      return sum;
                     }
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -1298,18 +1298,18 @@ public class LoweringSupportTest {
         Path tmp = Files.createTempDirectory("deal-manifest-determinism");
         try {
             String source = """
-                import * as time from "std/time"
+                import * as time from "std/time";
 
                 export class Point {
                   x: int = 1;
-                  y?: int
+                  y?: int;
                 }
 
                 export function main(): null {
-                  let p: Point = { x: 2, y: 3 }
+                  let p: Point = { x: 2, y: 3 };
                   let g: () => int = time.nowMillis;
                   g();
-                  return null
+                  return null;
                 }
                 """;
             RequirementManifestResult first = compileAndCompute(tmp.resolve("first"),
@@ -1437,7 +1437,7 @@ public class LoweringSupportTest {
             ProductionObservation production = productionAccept(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      throw { code: "TEST_FAIL", message: "boom" }
+                      throw { code: "TEST_FAIL", message: "boom" };
                     }
                     """), "main.deal", "the builtin-Error-only E10 arm", "TEST_FAIL");
             RequirementManifestResult result = production.manifests();
@@ -1463,9 +1463,9 @@ public class LoweringSupportTest {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      let f: () => int = function(): int { return 1 };
+                      let f: () => int = function(): int { return 1; };
                       f();
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -1495,7 +1495,7 @@ public class LoweringSupportTest {
                         return down(n - 1);
                       }
                       down(2);
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -1521,10 +1521,10 @@ public class LoweringSupportTest {
                     export function main(): null {
                       let f: (a: int, b: int) => int = one;
                       f(1, 2);
-                      return null
+                      return null;
                     }
                     function one(x: int): int {
-                      return x
+                      return x;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -1548,10 +1548,10 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult uncalled = compileAndCompute(tmp.resolve("uncalled"),
                 Map.of("main.deal", """
-                    function orphan(): int { return 1 }
+                    function orphan(): int { return 1; }
 
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (uncalled != null) {
@@ -1564,12 +1564,12 @@ public class LoweringSupportTest {
             RequirementManifestResult called = compileAndCompute(tmp.resolve("called"),
                 Map.of("main.deal", """
                     function helper(x: int): int {
-                      return x
+                      return x;
                     }
 
                     export function main(): null {
                       helper(1);
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (called != null) {
@@ -1584,11 +1584,11 @@ public class LoweringSupportTest {
                 Map.of("main.deal", """
                     export function main(): null {
                       helper(1);
-                      return null
+                      return null;
                     }
 
                     function helper(x: int): int {
-                      return x
+                      return x;
                     }
                     """), "main.deal");
             if (calledMainFirst != null) {
@@ -1613,8 +1613,8 @@ public class LoweringSupportTest {
             RequirementManifestResult binding = compileAndCompute(
                 tmp.resolve("binding"), Map.of("main.deal", """
                     export function main(): null {
-                      let g: () => int = function(): int { return 7 }
-                      return null
+                      let g: () => int = function(): int { return 7; };
+                      return null;
                     }
                     """), "main.deal");
             if (binding != null) {
@@ -1628,8 +1628,8 @@ public class LoweringSupportTest {
             RequirementManifestResult arrayElement = compileAndCompute(
                 tmp.resolve("array"), Map.of("main.deal", """
                     export function main(): null {
-                      let fs: (() => int)[] = [function(): int { return 7 }];
-                      return null
+                      let fs: (() => int)[] = [function(): int { return 7; }];
+                      return null;
                     }
                     """), "main.deal");
             if (arrayElement != null) {
@@ -1642,8 +1642,8 @@ public class LoweringSupportTest {
             RequirementManifestResult tableField = compileAndCompute(
                 tmp.resolve("table"), Map.of("main.deal", """
                     export function main(): null {
-                      let t: table = { f: function(): int { return 7 } }
-                      return null
+                      let t: table = { f: function(): int { return 7; } };
+                      return null;
                     }
                     """), "main.deal");
             if (tableField != null) {
@@ -1660,8 +1660,8 @@ public class LoweringSupportTest {
             RequirementManifestResult iife = compileAndCompute(
                 tmp.resolve("iife"), Map.of("main.deal", """
                     export function main(): null {
-                      let x: int = (function(): int { return 7 })();
-                      return null
+                      let x: int = (function(): int { return 7; })();
+                      return null;
                     }
                     """), "main.deal");
             if (iife != null) {
@@ -1741,7 +1741,7 @@ public class LoweringSupportTest {
             RequirementManifestResult plain = compileAndCompute(tmp.resolve("plain"),
                 Map.of("main.deal", """
                     export function main(): null {
-                      return null
+                      return null;
                     }
                     """), "main.deal");
             if (plain == null) {

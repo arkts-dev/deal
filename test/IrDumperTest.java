@@ -162,7 +162,7 @@ public class IrDumperTest {
 
     static void testVariableDeclaration() {
         System.out.print("  testVariableDeclaration... ");
-        String source = "let x: int = 42\nlet y = 3.14";
+        String source = "let x: int = 42;\nlet y = 3.14;";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 

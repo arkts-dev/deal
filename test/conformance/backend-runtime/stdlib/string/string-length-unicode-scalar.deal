@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: stdlib, string, unicode, v1.2
 
-import * as strings from "std/string"
+import * as strings from "std/string";
 
 export function main(): null {
   let n: int = strings.length("é");

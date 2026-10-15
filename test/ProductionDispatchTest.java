@@ -561,26 +561,26 @@ public class ProductionDispatchTest {
     /** The covered library module: no call, no later-slice construct. */
     private static final String LIB_SOURCE = """
         export function value(): int {
-          return 42
+          return 42;
         }
 
         export function label(): string {
-          return "lib"
+          return "lib";
         }
         """;
 
     /** The covered two-module entry: a COMPILED import, no call. */
     private static final String APP_SOURCE = """
-        import * as lib from "./lib"
-        import * as console from "std/console"
+        import * as lib from "./lib";
+        import * as console from "std/console";
 
         export function main(): null {
-          console.log("PROBE|MAIN-ONCE")
-          return null
+          console.log("PROBE|MAIN-ONCE");
+          return null;
         }
 
         export function label(): string {
-          return "app"
+          return "app";
         }
         """;
 
@@ -592,15 +592,15 @@ public class ProductionDispatchTest {
      */
     private static final String MAP_LIB_SOURCE = """
         export function value(): int {
-          return 42
+          return 42;
         }
 
         export function label(): string {
-          return "lib"
+          return "lib";
         }
 
         export async function load(): int {
-          return 7
+          return 7;
         }
         """;
 
@@ -609,20 +609,20 @@ public class ProductionDispatchTest {
      * export, so both constituent modules own an async-entry definition.
      */
     private static final String MAP_APP_SOURCE = """
-        import * as lib from "./lib"
-        import * as console from "std/console"
+        import * as lib from "./lib";
+        import * as console from "std/console";
 
         export function main(): null {
-          console.log("PROBE|MAIN-ONCE")
-          return null
+          console.log("PROBE|MAIN-ONCE");
+          return null;
         }
 
         export function label(): string {
-          return "app"
+          return "app";
         }
 
         export async function worker(): int {
-          return await lib.load()
+          return await lib.load();
         }
         """;
 
@@ -633,16 +633,16 @@ public class ProductionDispatchTest {
      */
     private static final String DIRECT_EMISSION_LIB_SOURCE = """
         export function value(): int {
-          return 42
+          return 42;
         }
 
         export class Point {
-          x: int = 0
+          x: int = 0;
         }
 
         export class DefaultPoint {
-          x: int = 3
-          y: int = 4
+          x: int = 3;
+          y: int = 4;
         }
         """;
 
@@ -654,11 +654,11 @@ public class ProductionDispatchTest {
      * caller's body).
      */
     private static final String DIRECT_EMISSION_APP_SOURCE = """
-        import * as lib from "./lib"
-        import * as console from "std/console"
+        import * as lib from "./lib";
+        import * as console from "std/console";
 
         export function f(x: int): int {
-          return x
+          return x;
         }
 
         export function main(): null {
@@ -666,7 +666,7 @@ public class ProductionDispatchTest {
           let q: lib.DefaultPoint = {};
           console.log("PROBE|DIRECT-MAIN");
           console.log("PROBE|OMITTED-DEFAULTS");
-          return null
+          return null;
         }
         """;
 
@@ -733,40 +733,40 @@ public class ProductionDispatchTest {
     /** The unsafe-path fixture body: a trivial entry that returns null. */
     private static final String TRIVIAL_MAIN_SOURCE = """
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
     /** The overflow fixture: the production DEAL_ERROR_CODE terminal. */
     private static final String OVERFLOW_SOURCE = """
         export function main(): null {
-          let x: int = 2147483647 + 1
-          return null
+          let x: int = 2147483647 + 1;
+          return null;
         }
         """;
 
     /** The bytes-bearing fixture: the lowering fails CONSTRUCT_UNLOWERED. */
     private static final String BYTES_SOURCE = """
         export function main(): null {
-          let n: int = 3
-          let b: bytes = bytes(n)
-          return null
+          let n: int = 3;
+          let b: bytes = bytes(n);
+          return null;
         }
         """;
 
     private static final String ERROR_SOURCE = """
         export function main(): null {
-          let e: Error = { code: "E1", message: "m" }
-          return null
+          let e: Error = { code: "E1", message: "m" };
+          return null;
         }
         """;
 
     private static final String TIME_SOURCE = """
-        import * as time from "std/time"
+        import * as time from "std/time";
 
         export function main(): null {
-          let t: int = time.nowMillis()
-          return null
+          let t: int = time.nowMillis();
+          return null;
         }
         """;
 
@@ -786,17 +786,17 @@ public class ProductionDispatchTest {
           for (let f: (a: int) => int = counter; f(1) === 1; f = counter) {
             break;
           }
-          return null
+          return null;
         }
         """;
 
     /** The cross-module sync call: the realized external-call arm. */
     private static final String SYNC_CALL_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
-          let x: int = lib.value()
-          return null
+          let x: int = lib.value();
+          return null;
         }
         """;
 
@@ -834,7 +834,7 @@ public class ProductionDispatchTest {
      * module whose inner block redeclares its own module-level class.
      */
     private static final String IMPORTED_DUPLICATE_MAIN =
-        "import * as lib from \"./lib\"\n"
+        "import * as lib from \"./lib\";\n"
             + "\n"
             + "export function main(): null {\n"
             + "  return null;\n"
@@ -866,20 +866,20 @@ public class ProductionDispatchTest {
     /** The cross-module async library. */
     private static final String ASYNC_LIB_SOURCE = """
         export async function getValue(): int {
-          return 42
+          return 42;
         }
         """;
 
     /** The cross-module async call (a never-invoked body carries it). */
     private static final String CROSS_ASYNC_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
-          return null
+          return null;
         }
 
         async function worker(): int {
-          return await lib.getValue()
+          return await lib.getValue();
         }
         """;
 
@@ -891,15 +891,15 @@ public class ProductionDispatchTest {
      */
     private static final String SAME_ASYNC_SOURCE = """
         export function main(): null {
-          return null
+          return null;
         }
 
         async function compute(): int {
-          return 1
+          return 1;
         }
 
         export async function worker(): int {
-          return await compute()
+          return await compute();
         }
         """;
 
@@ -910,10 +910,10 @@ public class ProductionDispatchTest {
 
     /** The host-import fixture: the import is never called. */
     private static final String HOST_IMPORT_SOURCE = """
-        import * as cfg from "host/cfg"
+        import * as cfg from "host/cfg";
 
         export function main(): null {
-          return null
+          return null;
         }
         """;
 
@@ -1194,15 +1194,15 @@ public class ProductionDispatchTest {
         try {
             write(project, "deal.json", DEAL_JSON_LUA);
             write(project, "src/main.deal", """
-                import * as console from "std/console"
+                import * as console from "std/console";
 
                 export function main(): null {
-                  console.log("PROBE|MAIN-ONCE")
-                  return null
+                  console.log("PROBE|MAIN-ONCE");
+                  return null;
                 }
 
                 export function label(): string {
-                  return "single"
+                  return "single";
                 }
                 """);
 
@@ -2172,10 +2172,10 @@ public class ProductionDispatchTest {
                 export function add(a: int, b: int): int;
                 """);
             write(externC, "src/main.deal", """
-                import * as math from "native/math"
+                import * as math from "native/math";
 
                 export function main(): null {
-                  return null
+                  return null;
                 }
                 """);
             ProjectOutcome compile = productionCompile(externC,
@@ -2259,61 +2259,31 @@ public class ProductionDispatchTest {
             + "construct's exact span, the unchanged message, the "
             + "fail-closed compile on both targets --");
 
+        // The historical local-class seeds remain distinct frontend negatives.
         checkPreservedLoweringOrigin("default-block capture",
             Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE), "main", "src/main.deal",
-            "CLASSES", SemanticLowerer.CLASS_DEFAULT_CAPTURE,
-            "SemanticLowerer CLASS_DEFAULT_CAPTURE (default-block free reference "
-                + "'x' resolves to an enclosing-region binding (a detached "
-                + "CLASS_DEFAULT block admits only block-internal allocations and "
-                + "module-level bindings resolved through the module-init block; "
-                + "the closed payload records no captures))",
-            3, 26, 3, 27, 74, 75, 1);
-
+            "FRONTEND", "E1057", "Local class declaration 'Local' is not allowed; classes are module-level",
+            3, 3, 3, 30, 51, 78, 27);
         checkPreservedLoweringOrigin("duplicate class declaration",
             Map.of("src/main.deal", DUPLICATE_CLASS_SOURCE), "main", "src/main.deal",
-            "CONTAINERS_AND_STRINGS", SemanticLowerer.CONSTRUCT_UNLOWERED,
-            "SemanticLowerer CONSTRUCT_UNLOWERED (duplicate class declaration 'A' "
-                + "(the checker rejects duplicate class names; a second layout for "
-                + "@src/A is a fact defect))",
+            "FRONTEND", "E1057", "Local class declaration 'A' is not allowed; classes are module-level",
             3, 5, 3, 28, 59, 82, 23);
-
-        // The nested specificity: the rejected construct lives in an
-        // imported implementation module, so the range names that file and
-        // the inner offender — never the entry module.
         Map<String, String> imported = new java.util.LinkedHashMap<>();
         imported.put("src/main.deal", IMPORTED_DUPLICATE_MAIN);
         imported.put("src/lib.deal", IMPORTED_DUPLICATE_LIB);
         checkPreservedLoweringOrigin("duplicate class declaration in an imported module",
-            imported, "lib", "src/lib.deal", "CONTAINERS_AND_STRINGS",
-            SemanticLowerer.CONSTRUCT_UNLOWERED,
-            "SemanticLowerer CONSTRUCT_UNLOWERED (duplicate class declaration 'A' "
-                + "(the checker rejects duplicate class names; a second layout for "
-                + "@src/A is a fact defect))",
+            imported, "lib", "src/lib.deal", "FRONTEND", "E1057",
+            "Local class declaration 'A' is not allowed; classes are module-level",
             4, 5, 4, 28, 57, 80, 23);
-
-        // The coordinate variants: a supplementary scalar in a leading
-        // comment, tab indentation, and CRLF line endings all keep the
-        // decoded-Unicode-scalar cursor and the half-open conversion.
         checkPreservedLoweringOrigin("supplementary scalar and tab indentation",
-            Map.of("src/main.deal", SUPPLEMENTARY_TAB_CAPTURE_SOURCE), "main",
-            "src/main.deal", "CLASSES", SemanticLowerer.CLASS_DEFAULT_CAPTURE,
-            "SemanticLowerer CLASS_DEFAULT_CAPTURE (default-block free reference "
-                + "'x' resolves to an enclosing-region binding (a detached "
-                + "CLASS_DEFAULT block admits only block-internal allocations and "
-                + "module-level bindings resolved through the module-init block; "
-                + "the closed payload records no captures))",
-            4, 25, 4, 26, 77, 78, 1);
-
+            Map.of("src/main.deal", SUPPLEMENTARY_TAB_CAPTURE_SOURCE), "main", "src/main.deal",
+            "FRONTEND", "E1057", "Local class declaration 'Local' is not allowed; classes are module-level",
+            4, 2, 4, 29, 54, 81, 27);
         checkPreservedLoweringOrigin("CRLF line endings",
-            Map.of("src/main.deal",
-                DEFAULT_CAPTURE_SOURCE.replace("\n", "\r\n")), "main",
-            "src/main.deal", "CLASSES", SemanticLowerer.CLASS_DEFAULT_CAPTURE,
-            "SemanticLowerer CLASS_DEFAULT_CAPTURE (default-block free reference "
-                + "'x' resolves to an enclosing-region binding (a detached "
-                + "CLASS_DEFAULT block admits only block-internal allocations and "
-                + "module-level bindings resolved through the module-init block; "
-                + "the closed payload records no captures))",
-            3, 26, 3, 27, 76, 77, 1);
+            Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE.replace("\n", "\r\n")),
+            "main", "src/main.deal", "FRONTEND", "E1057",
+            "Local class declaration 'Local' is not allowed; classes are module-level",
+            3, 3, 3, 30, 53, 80, 27);
     }
 
     /**
@@ -2361,13 +2331,14 @@ public class ProductionDispatchTest {
             Path offending = project.resolve(offendingRelative).toAbsolutePath()
                 .normalize();
             Path out = project.resolve("out");
-            String expectedMessage = "Common semantic lowering failed: module '"
+            String expectedCode = "FRONTEND".equals(capability) ? rule : "E6005";
+            String expectedMessage = "FRONTEND".equals(capability) ? originText : "Common semantic lowering failed: module '"
                 + offendingModule + "', capability " + capability
                 + ", validatorRule " + rule
                 + ", semanticProfile DEAL_V1_2_INT32, irVersion deal.semantic-ir/2"
                 + ", origin " + originText;
             String humanLine = offending + ":" + startLine + ":" + startColumn
-                + "-" + endLine + ":" + endColumn + ": ERROR E6005: "
+                + "-" + endLine + ":" + endColumn + ": ERROR " + expectedCode + ": "
                 + expectedMessage + " [span " + scalarLength + "]";
 
             // A previous artifact set in the live output root.
@@ -2386,7 +2357,7 @@ public class ProductionDispatchTest {
                 + arm.orchestrator().diagnostics());
             if (errors.size() == 1) {
                 CompilerDiagnostic diagnostic = errors.get(0);
-                checkEq("E6005", diagnostic.code(),
+                checkEq(expectedCode, diagnostic.code(),
                     context + ": the failure is E6005");
                 checkEq(expectedMessage, diagnostic.message(),
                     context + ": the complete pinned E6005 message");
@@ -2432,7 +2403,7 @@ public class ProductionDispatchTest {
                 context + ": the human line is the pinned complete diagnostic: "
                     + cli.stderr());
             String structured = Files.readString(diagnosticsJson);
-            checkStructuredOrigin(context, structured, expectedMessage, offending,
+            checkStructuredOrigin(context, structured, expectedCode, expectedMessage, offending,
                 startLine, startColumn, endLine, endColumn, startOffset,
                 endOffset, scalarLength);
             checkEq(DiagnosticStructuredOutput.toJson(errors), structured,
@@ -2461,7 +2432,7 @@ public class ProductionDispatchTest {
      * the complete message and the exact SOURCE range, and no notes.
      */
     private static void checkStructuredOrigin(String context, String structured,
-            String expectedMessage, Path offending, int startLine, int startColumn,
+            String expectedCode, String expectedMessage, Path offending, int startLine, int startColumn,
             int endLine, int endColumn, int startOffset, int endOffset,
             int scalarLength) {
         CanonicalJson.Value root = CanonicalJson.parse(structured);
@@ -2476,7 +2447,7 @@ public class ProductionDispatchTest {
             return;
         }
         CanonicalJson.Obj diagnostic = (CanonicalJson.Obj) diagnostics.items().get(0);
-        checkEq("E6005", jsonString(jsonField(diagnostic, "code")),
+        checkEq(expectedCode, jsonString(jsonField(diagnostic, "code")),
             context + ": the structured code");
         checkEq("error", jsonString(jsonField(diagnostic, "severity")),
             context + ": the structured severity");
@@ -4136,6 +4107,31 @@ public class ProductionDispatchTest {
                 // compile, no pass and no skip.
                 runs.add(new V12CorpusRun(name, locator, defect.getMessage(),
                     List.of()));
+                continue;
+            }
+            if (raw.contains("// @expected: compile-error E1037")) {
+                List<V12CorpusLeg> rejectedLegs = new ArrayList<>();
+                for (String backend : List.of("luajit", "jvm")) {
+                    Path project = Files.createTempDirectory("removed-power-" + backend);
+                    try {
+                        write(project, "src/main.deal", source);
+                        write(project, "deal.json", "jvm".equals(backend) ? DEAL_JSON_JVM : DEAL_JSON_LUA);
+                        ArmCompile rejected = compileWithInvocation(project, "src/main.deal", productionInvocation());
+                        List<CompilerDiagnostic> errors = rejected.orchestrator().diagnostics().stream()
+                            .filter(d -> "error".equals(d.severity())).toList();
+                        boolean correct = !rejected.success() && !errors.isEmpty()
+                            && "E1037".equals(errors.get(0).code())
+                            && "Expected expression".equals(errors.get(0).message())
+                            && errors.get(0).range().startLine() == 4
+                            && errors.get(0).range().startColumn() == 8
+                            && rejected.orchestrator().semanticEmissionCount() == 0
+                            && !Files.exists(project.resolve("out"));
+                        rejectedLegs.add(new V12CorpusLeg(backend, correct ? null
+                            : "removed exponentiation must reject before publication: " + errors,
+                            Optional.empty()));
+                    } finally { deleteRecursively(project); }
+                }
+                runs.add(new V12CorpusRun(name, locator, null, List.copyOf(rejectedLegs)));
                 continue;
             }
             deal.test.conformance.SidecarExpectations

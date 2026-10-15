@@ -508,10 +508,10 @@ public class BytesCoverageTest {
         }
         String call = fixture.runtimeOk() && "main".equals(fixture.export())
             && "null".equals(fixture.resultType())
-            ? "  fx.main()\n"
-            : "  let r: " + fixture.resultType() + " = fx." + fixture.export() + "()\n";
-        return "import * as fx from \"./corpus/" + specifier + "\"\n\n"
-            + "export function main(): null {\n" + call + "  return null\n}\n";
+            ? "  fx.main();\n"
+            : "  let r: " + fixture.resultType() + " = fx." + fixture.export() + "();\n";
+        return "import * as fx from \"./corpus/" + specifier + "\";\n\n"
+            + "export function main(): null {\n" + call + "  return null;\n}\n";
     }
 
     /** The production project lowering entry over one compiled fixture. */
@@ -768,9 +768,9 @@ public class BytesCoverageTest {
           let read: int = b[1];
           let atEnd: int = b[2];
           if (alias[0] !== 7 || read !== 0) {
-            throw { code: "TEST_FAIL", message: "shape drive" }
+            throw { code: "TEST_FAIL", message: "shape drive" };
           }
-          return null
+          return null;
         }
         """;
 
@@ -942,7 +942,7 @@ public class BytesCoverageTest {
           let b: bytes = bytes(1);
           let xs: int[] = [];
           b[0] = xs[1];
-          return null
+          return null;
         }
         """;
 
@@ -962,16 +962,16 @@ public class BytesCoverageTest {
           let xs: int[] = [];
           try {
             b[0] = xs[1];
-            throw { code: "TEST_FAIL", message: "the missing RHS must fail E8001" }
+            throw { code: "TEST_FAIL", message: "the missing RHS must fail E8001" };
           } catch (e) {
             if (e.code !== "E8001" || e.message !== "expected int") {
-              throw { code: "TEST_FAIL", message: "unexpected row " + e.code + "|" + e.message }
+              throw { code: "TEST_FAIL", message: "unexpected row " + e.code + "|" + e.message };
             }
           }
           if (b[0] !== 0) {
-            throw { code: "TEST_FAIL", message: "a failed byte write must not change storage" }
+            throw { code: "TEST_FAIL", message: "a failed byte write must not change storage" };
           }
-          return null
+          return null;
         }
         """;
 
@@ -1313,7 +1313,7 @@ public class BytesCoverageTest {
           for (let f: (a: int) => int = counter; f(1) === 1; f = counter) {
             break;
           }
-          return null
+          return null;
         }
         """;
 
@@ -1323,12 +1323,12 @@ public class BytesCoverageTest {
      * renders the reference kind {@code table}.
      */
     private static final String DECODED_NESTED_SOURCE = """
-        import * as json from "std/json"
+        import * as json from "std/json";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}")
-          let xs: bytes[][] = t.values
-          return null
+          let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
+          let xs: bytes[][] = t.values;
+          return null;
         }
         """;
 
@@ -1338,10 +1338,10 @@ public class BytesCoverageTest {
      */
     private static final String UNMARKED_NESTED_SOURCE = """
         export function main(): null {
-          let inner: int[] = [1]
-          let holder: table = { values: [inner] }
-          let xs: bytes[][] = holder.values
-          return null
+          let inner: int[] = [1];
+          let holder: table = { values: [inner] };
+          let xs: bytes[][] = holder.values;
+          return null;
         }
         """;
 
@@ -1351,13 +1351,13 @@ public class BytesCoverageTest {
      * conversion and keeps the unmarked {@code array} token.
      */
     private static final String HOST_RETURNED_NESTED_SOURCE = """
-        import * as host from "host/array_return"
+        import * as host from "host/array_return";
 
         export function main(): null {
-          let inner: string[] = host.split("ignored")
-          let holder: table = { values: [inner] }
-          let xs: bytes[][] = holder.values
-          return null
+          let inner: string[] = host.split("ignored");
+          let holder: table = { values: [inner] };
+          let xs: bytes[][] = holder.values;
+          return null;
         }
         """;
 
@@ -1368,13 +1368,13 @@ public class BytesCoverageTest {
      * unmarked).
      */
     private static final String SPLIT_NESTED_SOURCE = """
-        import * as strings from "std/string"
+        import * as strings from "std/string";
 
         export function main(): null {
-          let parts: string[] = strings.split("a,b", ",")
-          let holder: table = { values: [parts] }
-          let xs: bytes[][] = holder.values
-          return null
+          let parts: string[] = strings.split("a,b", ",");
+          let holder: table = { values: [parts] };
+          let xs: bytes[][] = holder.values;
+          return null;
         }
         """;
 
@@ -1385,14 +1385,14 @@ public class BytesCoverageTest {
      * unmarked).
      */
     private static final String KEYS_NESTED_SOURCE = """
-        import * as tables from "std/table"
+        import * as tables from "std/table";
 
         export function main(): null {
-          let t: table = { a: 1 }
-          let ks: string[] = tables.keys(t)
-          let holder: table = { values: [ks] }
-          let xs: bytes[][] = holder.values
-          return null
+          let t: table = { a: 1 };
+          let ks: string[] = tables.keys(t);
+          let holder: table = { values: [ks] };
+          let xs: bytes[][] = holder.values;
+          return null;
         }
         """;
 
@@ -1403,12 +1403,12 @@ public class BytesCoverageTest {
      * recursively.
      */
     private static final String DECODED_DEEP_NESTED_SOURCE = """
-        import * as json from "std/json"
+        import * as json from "std/json";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[[\\"x\\"]]]}")
-          let xs: bytes[][][] = t.values
-          return null
+          let t: table = json.parse("{\\"values\\":[[[\\"x\\"]]]}");
+          let xs: bytes[][][] = t.values;
+          return null;
         }
         """;
 
@@ -1418,35 +1418,35 @@ public class BytesCoverageTest {
      * unchanged by the mark.
      */
     private static final String DECODED_INERTNESS_SOURCE = """
-        import * as json from "std/json"
+        import * as json from "std/json";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[1,2],[3,4]]}")
-          let xs: int[][] = t.values
-          let first: int[] = xs[0]
-          let alias: int[] = xs[0]
+          let t: table = json.parse("{\\"values\\":[[1,2],[3,4]]}");
+          let xs: int[][] = t.values;
+          let first: int[] = xs[0];
+          let alias: int[] = xs[0];
           if (first !== alias) {
-            throw { code: "TEST_FAIL", message: "decoded identity" }
+            throw { code: "TEST_FAIL", message: "decoded identity" };
           }
-          let reread: int[][] = t.values
+          let reread: int[][] = t.values;
           if (reread !== xs) {
-            throw { code: "TEST_FAIL", message: "decoded member identity" }
+            throw { code: "TEST_FAIL", message: "decoded member identity" };
           }
           if (first.length !== 2) {
-            throw { code: "TEST_FAIL", message: "decoded length" }
+            throw { code: "TEST_FAIL", message: "decoded length" };
           }
           if (xs[1][0] !== 3) {
-            throw { code: "TEST_FAIL", message: "decoded indexing" }
+            throw { code: "TEST_FAIL", message: "decoded indexing" };
           }
-          first[1] = 9
+          first[1] = 9;
           if (alias[1] !== 9) {
-            throw { code: "TEST_FAIL", message: "decoded alias mutation" }
+            throw { code: "TEST_FAIL", message: "decoded alias mutation" };
           }
-          let encoded: string = json.stringify(t)
+          let encoded: string = json.stringify(t);
           if (encoded !== "{\\"values\\":[[1,9],[3,4]]}") {
-            throw { code: "TEST_FAIL", message: "decoded stringify: " + encoded }
+            throw { code: "TEST_FAIL", message: "decoded stringify: " + encoded };
           }
-          return null
+          return null;
         }
         """;
 
@@ -1455,13 +1455,13 @@ public class BytesCoverageTest {
      * descriptor with the landed {@code array} actual token.
      */
     private static final String DECODED_ADMISSION_SOURCE = """
-        import * as json from "std/json"
-        import * as tables from "std/table"
+        import * as json from "std/json";
+        import * as tables from "std/table";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[1,2]]}")
-          let ks: string[] = tables.keys(t.values)
-          return null
+          let t: table = json.parse("{\\"values\\":[[1,2]]}");
+          let ks: string[] = tables.keys(t.values);
+          return null;
         }
         """;
 
@@ -1996,20 +1996,20 @@ public class BytesCoverageTest {
           let b: bytes = f(2);
           let c: bytes = f(3);
           if (b.length !== 2 || c.length !== 3) {
-            throw { code: "TEST_FAIL", message: "indirect length" }
+            throw { code: "TEST_FAIL", message: "indirect length" };
           }
           if (b[0] !== 0 || b[1] !== 0 || c[2] !== 0) {
-            throw { code: "TEST_FAIL", message: "indirect zero fill" }
+            throw { code: "TEST_FAIL", message: "indirect zero fill" };
           }
           if (b === c) {
-            throw { code: "TEST_FAIL", message: "indirect allocation identity" }
+            throw { code: "TEST_FAIL", message: "indirect allocation identity" };
           }
           let alias: bytes = b;
           b[0] = 7;
           if (alias[0] !== 7 || b[0] !== 7) {
-            throw { code: "TEST_FAIL", message: "alias observes the write" }
+            throw { code: "TEST_FAIL", message: "alias observes the write" };
           }
-          return null
+          return null;
         }
         """;
 
@@ -2020,30 +2020,30 @@ public class BytesCoverageTest {
      */
     private static final String INDIRECT_BYTES_VALUE_POSITIONS_SOURCE = """
         function call(f: (x: int) => bytes): bytes {
-          return f(2)
+          return f(2);
         }
 
         export function main(): null {
           let g: (x: int, y: int) => bytes = bytes;
           let adapted: bytes = g(2, 3);
           if (adapted.length !== 2) {
-            throw { code: "TEST_FAIL", message: "adapter length" }
+            throw { code: "TEST_FAIL", message: "adapter length" };
           }
           let viaCallback: bytes = call(bytes);
           if (viaCallback.length !== 2) {
-            throw { code: "TEST_FAIL", message: "callback length" }
+            throw { code: "TEST_FAIL", message: "callback length" };
           }
           let xs: ((x: int) => bytes)[] = [bytes];
           let viaElement: bytes = xs[0](3);
           if (viaElement.length !== 3) {
-            throw { code: "TEST_FAIL", message: "element length" }
+            throw { code: "TEST_FAIL", message: "element length" };
           }
           let inferred = bytes;
           let viaInferred: bytes = inferred(3);
           if (viaInferred.length !== 3 || viaInferred[2] !== 0 || viaInferred === viaElement) {
-            throw { code: "TEST_FAIL", message: "inferred bytes allocation" }
+            throw { code: "TEST_FAIL", message: "inferred bytes allocation" };
           }
-          return null
+          return null;
         }
         """;
 
@@ -2052,7 +2052,7 @@ public class BytesCoverageTest {
         export function main(): null {
           let f: (x: int) => bytes = bytes;
           let neg: bytes = f(-1);
-          return null
+          return null;
         }
         """;
 
@@ -2061,7 +2061,7 @@ public class BytesCoverageTest {
         export function main(): null {
           let g: (x: int, y: int) => bytes = bytes;
           let neg: bytes = g(-1, 0);
-          return null
+          return null;
         }
         """;
 
@@ -2477,25 +2477,25 @@ public class BytesCoverageTest {
           alias[0] = 200;
           let fresh: bytes = bytes(2);
           if (b[0] !== 200) {
-            throw { code: "TEST_FAIL", message: "alias mutation not observed" }
+            throw { code: "TEST_FAIL", message: "alias mutation not observed" };
           }
           if (b[1] !== 0 || fresh[0] !== 0) {
-            throw { code: "TEST_FAIL", message: "zero fill mismatch" }
+            throw { code: "TEST_FAIL", message: "zero fill mismatch" };
           }
           if (b.length !== 2 || alias.length !== 2) {
-            throw { code: "TEST_FAIL", message: "logical length mismatch" }
+            throw { code: "TEST_FAIL", message: "logical length mismatch" };
           }
           if (b !== alias || b === fresh) {
-            throw { code: "TEST_FAIL", message: "identity comparison mismatch" }
+            throw { code: "TEST_FAIL", message: "identity comparison mismatch" };
           }
-          return bound(b)
+          return bound(b);
         }
 
         function bound(value: bytes): null {
           if (value[0] !== 200) {
-            throw { code: "TEST_FAIL", message: "boundary crossing lost the value" }
+            throw { code: "TEST_FAIL", message: "boundary crossing lost the value" };
           }
-          return null
+          return null;
         }
         """;
 
@@ -3329,21 +3329,21 @@ public class BytesCoverageTest {
 
     /** A runtime-ok program that prints one unexpected stdout line. */
     private static final String EXTRA_STDOUT_SOURCE = """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         export function main(): null {
-          console.log("UNEXPECTED_STDOUT")
-          return null
+          console.log("UNEXPECTED_STDOUT");
+          return null;
         }
         """;
 
     /** A runtime-ok program that prints one unexpected stderr line. */
     private static final String EXTRA_STDERR_SOURCE = """
-        import * as console from "std/console"
+        import * as console from "std/console";
 
         export function main(): null {
-          console.error("UNEXPECTED_STDERR")
-          return null
+          console.error("UNEXPECTED_STDERR");
+          return null;
         }
         """;
 
@@ -3555,29 +3555,29 @@ public class BytesCoverageTest {
 
     private static final String FIRST_CLASS_BYTES_ALLOCATE_SOURCE = """
         export function main(): null {
-          let annotated: (x: int) => bytes = bytes
-          let inferred = bytes
-          let a: bytes = annotated(2)
-          let b: bytes = inferred(3)
-          let carried: ((x: int) => bytes)[] = [bytes]
-          let c: bytes = carried[0](4)
+          let annotated: (x: int) => bytes = bytes;
+          let inferred = bytes;
+          let a: bytes = annotated(2);
+          let b: bytes = inferred(3);
+          let carried: ((x: int) => bytes)[] = [bytes];
+          let c: bytes = carried[0](4);
           let alias: bytes = a;
-          a[0] = 7
+          a[0] = 7;
           if (alias[0] !== 7 || a.length !== 2 || b.length !== 3 || c.length !== 4) {
-            throw { code: "TEST_FAIL", message: "indirect allocation identity" }
+            throw { code: "TEST_FAIL", message: "indirect allocation identity" };
           }
           if (a[1] !== 0 || b[2] !== 0 || c[3] !== 0) {
-            throw { code: "TEST_FAIL", message: "indirect zero fill" }
+            throw { code: "TEST_FAIL", message: "indirect zero fill" };
           }
-          return null
+          return null;
         }
         """;
 
     private static final String FIRST_CLASS_BYTES_NEGATIVE_SOURCE = """
         export function main(): null {
-          let g: (x: int) => bytes = bytes
-          let bad: bytes = g(-1)
-          return null
+          let g: (x: int) => bytes = bytes;
+          let bad: bytes = g(-1);
+          return null;
         }
         """;
 

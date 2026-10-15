@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, alias, member-access
 
-import * as Lib from "./module_extra_lib"
+import * as Lib from "./module_extra_lib";
 
 export function test_import_alias_member_access(): int {
   let p: Lib.Point = Lib.makePoint(2, 3);

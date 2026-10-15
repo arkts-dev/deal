@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: bytes, modules, functions, tables
 
-import * as Lib from "./bytes_module_lib"
+import * as Lib from "./bytes_module_lib";
 
 export function test_bytes_module_identity(): string {
   let getShared: () => bytes = Lib.makeShared();

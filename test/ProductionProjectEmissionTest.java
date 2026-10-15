@@ -213,7 +213,7 @@ public class ProductionProjectEmissionTest {
 
     /** The covered two-module fixture: a COMPILED import, no call. */
     private static final String APP_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
           return null;
@@ -226,8 +226,8 @@ public class ProductionProjectEmissionTest {
 
     /** The one-main probe: the entry main publishes one effect byte line. */
     private static final String PROBE_APP_SOURCE = """
-        import * as lib from "./lib"
-        import * as console from "std/console"
+        import * as lib from "./lib";
+        import * as console from "std/console";
 
         export function main(): null {
           console.log("PROBE|MAIN-ONCE");
@@ -245,8 +245,8 @@ public class ProductionProjectEmissionTest {
      * the failing catalog entry, never another matching import's.
      */
     private static final String TWO_STDLIB_APP_SOURCE = """
-        import * as console from "std/console"
-        import * as str from "std/string"
+        import * as console from "std/console";
+        import * as str from "std/string";
 
         export function main(): null {
           console.log("PROBE|STDLIB-IMPORT");
@@ -306,7 +306,7 @@ public class ProductionProjectEmissionTest {
 
     /** The cross-module sync call: the realized external-call arm. */
     private static final String SYNC_CALL_APP_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
           let x: int = lib.add(1, 2);
@@ -322,7 +322,7 @@ public class ProductionProjectEmissionTest {
 
     /** The host-import fixture: the import is never called or constructed. */
     private static final String HOST_APP_SOURCE = """
-        import * as cfg from "host/cfg"
+        import * as cfg from "host/cfg";
 
         export function main(): null {
           return null;
@@ -351,7 +351,7 @@ public class ProductionProjectEmissionTest {
 
     /** The extern-C import fixture: the import is never called. */
     private static final String EXTERN_C_APP_SOURCE = """
-        import * as native from "native/math"
+        import * as native from "native/math";
 
         export function main(): null {
             return null;
@@ -370,7 +370,7 @@ public class ProductionProjectEmissionTest {
      * caller's alias-token linkage (the callee is a non-entry module).
      */
     private static final String CROSS_ASYNC_APP_SOURCE = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
 
         export function main(): null {
           return null;
@@ -554,7 +554,7 @@ public class ProductionProjectEmissionTest {
         export function main(): null {
           function inner(): int { return 1; }
           let x: int = inner();
-          return null
+          return null;
         }
         """;
 
@@ -572,12 +572,12 @@ public class ProductionProjectEmissionTest {
     private static final String ADAPTER_SOURCE_APP_SOURCE = """
         export function main(): null {
           let f: (a: int, b: int) => int = make();
-          f(1, 2)
-          return null
+          f(1, 2);
+          return null;
         }
 
         function make(): (a: int) => int {
-          return function(a: int): int { return a; }
+          return function(a: int): int { return a; };
         }
         """;
 
@@ -1086,7 +1086,7 @@ public class ProductionProjectEmissionTest {
                     checkEq(7, diagnostic.range().endColumn(),
                         "the E6005 range ends at the recorded import span end "
                             + "column");
-                    checkEq(45, diagnostic.range().scalarLength(),
+                    checkEq(46, diagnostic.range().scalarLength(),
                         "the E6005 range covers the recorded import span, got "
                             + diagnostic.range());
                 }
@@ -1222,7 +1222,7 @@ public class ProductionProjectEmissionTest {
         """;
 
     private static final String IMPORTED_CLASS_APP_SOURCE = """
-        import * as Lib from "./lib"
+        import * as Lib from "./lib";
 
         export function main(): null {
           let p: Lib.Point = { x: 1, y: 2 };
@@ -2512,13 +2512,13 @@ public class ProductionProjectEmissionTest {
         export function twice(x: int): int { return x * 2; }
         """;
     private static final String EMITTER_APP = """
-        import * as lib from "./lib"
+        import * as lib from "./lib";
         export function main(): null { return null; }
         export function label(): string { return "app"; }
         """;
     private static final String CONSOLE_EMITTER_APP = """
-        import * as lib from "./lib"
-        import * as console from "std/console"
+        import * as lib from "./lib";
+        import * as console from "std/console";
         export function main(): null { console.log("PROBE|MAIN-ONCE"); return null; }
         export function label(): string { return "app"; }
         """;
@@ -2627,7 +2627,7 @@ public class ProductionProjectEmissionTest {
             assertEmitterRun("console main once", runPublished(console, null), 0, "PROBE|MAIN-ONCE\n");
         }
         String libMain = """
-            import * as console from "std/console"
+            import * as console from "std/console";
             export function add(a: int, b: int): int { return a + b; }
             export function main(): null { console.log("PROBE|LIB-MAIN"); return null; }
             """;

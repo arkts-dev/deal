@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi
 
-import * as host from "host/nullreturn_ok"
+import * as host from "host/nullreturn_ok";
 
 export function test_host_null_return_ok(): null {
   host.ping();

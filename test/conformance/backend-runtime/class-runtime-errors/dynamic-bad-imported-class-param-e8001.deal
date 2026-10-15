@@ -3,8 +3,8 @@
 // @expected: runtime-error E8001
 // @features: classes, modules, runtime-errors
 
-import * as json from "std/json"
-import * as Lib from "./imported_class_lib"
+import * as json from "std/json";
+import * as Lib from "./imported_class_lib";
 
 export function test_dynamic_bad_imported_class_param(): int {
   let holder: table = { item: json.parse("{\"value\":\"bad\"}") };

@@ -504,7 +504,7 @@ public class FfiPlanProjectionOracleTest {
         """;
 
     private static final String COUNTING_APP = """
-        import * as native from "ffi/valid"
+        import * as native from "ffi/valid";
 
         export function main(): null {
           // Zero evaluator invocations at load: the plan's evaluators are
@@ -542,7 +542,7 @@ public class FfiPlanProjectionOracleTest {
         """;
 
     private static final String OMITTED_APP = """
-        import * as native from "ffi/valid"
+        import * as native from "ffi/valid";
 
         export function main(): null {
           let probe: native.Probe = {};
@@ -813,7 +813,7 @@ public class FfiPlanProjectionOracleTest {
      * attempt's own recovery completed.
      */
     private static final String DOCTORED_APP = """
-        import * as native from "ffi/valid"
+        import * as native from "ffi/valid";
 
         export function main(): null {
           if (native.fixture_call_count() !== 0) {

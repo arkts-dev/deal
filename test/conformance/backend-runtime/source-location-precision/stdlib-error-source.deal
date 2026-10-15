@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: source-location, stdlib, runtime-errors
 
-import * as str from "std/string"
+import * as str from "std/string";
 
 export function test_source_stdlib_error(): int {
   let holder: table = { value: 10 };

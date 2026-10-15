@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: classes, defaults, functions, modules, host-abi, arrays
 
-import * as probe from "host/planprobe"
+import * as probe from "host/planprobe";
 
 class C {
   a: int = probe.nextValue();

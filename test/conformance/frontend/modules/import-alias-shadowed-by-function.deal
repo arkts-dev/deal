@@ -3,7 +3,7 @@
 // @expected: compile-error E2007
 // @features: modules, diagnostics
 
-import * as Shadow from "./shadow_lib"
+import * as Shadow from "./shadow_lib";
 function Shadow(): int { return 1; }
 
 export function main(): null { return null; }

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: lua-abi, modules, exports
 
-import * as Lib from "./lua_abi_export_lib"
+import * as Lib from "./lua_abi_export_lib";
 
 export function test_export_name_runtime_key(): int {
   let result: int = Lib.normalExport(4);

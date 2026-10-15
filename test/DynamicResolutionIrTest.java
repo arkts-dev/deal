@@ -177,6 +177,21 @@ public class DynamicResolutionIrTest {
         return unit(MOD, bindings, ops);
     }
 
+    /**
+     * The unit rebuilt with another carried interface hash: a synthetic
+     * project's units carry the digest of their own carried interface
+     * index (the project surface ties the two).
+     */
+    private static LoweredModuleUnit withInterfaceHash(LoweredModuleUnit unit,
+            String interfaceHash) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), interfaceHash, unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
+    }
+
     private static void assertPass(Optional<CompilerDiagnostic> diagnostic, String what) {
         check(diagnostic.isEmpty(), what + " passes validation"
             + (diagnostic.isPresent() ? ": " + diagnostic.get().message() : ""));
@@ -455,22 +470,25 @@ public class DynamicResolutionIrTest {
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
         LoweredModuleUnit callee = unit(MOD_B, Map.of(), calleeOps);
 
-        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
-        modules.put(MOD_B, callee);
-        modules.put(MOD, caller);
         ProjectInterfaceIndex index = new ProjectInterfaceIndex(
             ProjectInterfaceIndex.FORMAT_VERSION, Map.of(
                 MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
                     List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES),
                 MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
                     List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        modules.put(MOD_B, withInterfaceHash(callee, index.interfaceIndexDigest()));
+        modules.put(MOD, withInterfaceHash(caller, index.interfaceIndexDigest()));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
             SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
             ClassRegistrationSeeds.builtinErrorOnly());
-        assertPass(SemanticIrValidator.validate(project, FACTS),
+        SemanticIrValidator.ComparisonFacts projectFacts =
+            new SemanticIrValidator.ComparisonFacts(index.interfaceIndexDigest(),
+                SemanticProfile.DEAL_V1_2_INT32, REGISTRY);
+        assertPass(SemanticIrValidator.validate(project, projectFacts),
             "the cross-unit dynamic CALL validates at project level (typed)");
         assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(project),
-                FACTS),
+                projectFacts),
             "the cross-unit dynamic CALL validates at project level (text)");
     }
 

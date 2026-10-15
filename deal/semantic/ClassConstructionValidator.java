@@ -6,20 +6,28 @@ import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
+import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
+import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FieldInterface;
 import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringFailureDetail;
+import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.RawOp;
+import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticOp;
@@ -99,6 +107,555 @@ public final class ClassConstructionValidator {
             return failure;
         }
         return context.checkJsonLayoutCoherence();
+    }
+
+    // =========================================================================
+    // 6. Project seed/interface coherence (the transported declaration facts)
+    // =========================================================================
+
+    /**
+     * The project-level seed/interface coherence rule of the transported
+     * declaration facts (ISSUE-0818): the class registration seeds and the
+     * {@code deal.semantic-interface/1} index are two representations of
+     * the same declaration surface, so a registration that contradicts the
+     * supplied interface facts is rejected content, never a second class
+     * authority. The class validation owner applies this join over the two
+     * records:
+     *
+     * <ul>
+     *   <li>a registration's key names its contained layout — one class
+     *       identity per registration — and carries a declaration owner
+     *       ({@link DefaultOwner#HOST_DEFAULTS}/{@link DefaultOwner#FFI_PLAN});</li>
+     *   <li>a carried builtin {@code Error} registration is exactly the
+     *       compiler-owned layout under the builtin owner (an absent entry is
+     *       not by itself a contradiction: the {@code /2} seed collection
+     *       carries its empty form as a real fact);</li>
+     *   <li>every exported class of a host declaration index entry
+     *       carries exactly one registration;</li>
+     *   <li>a registration the index declares repeats that interface
+     *       class's fields exactly: the same names in the same order,
+     *       {@code required} = {@code !optional}, and a descriptor whose
+     *       declared-type rendering is the entry's {@code declaredType}.
+     *       A descriptor class reference resolves through the exact class
+     *       identity the carried registration seeds name — never through a
+     *       spelling that merely renders the same dotted text — and a
+     *       descriptor that names a class no carried registration covers
+     *       is such a contradiction;</li>
+     *   <li>a registration resolves to the declared class of a host
+     *       declaration entry, never to an implementation or stdlib class.
+     *       A registration that resolves to no interface class is not by
+     *       itself a contradiction: the index declares exported classes
+     *       only, while a declaration module's non-exported class carries
+     *       a registration too.</li>
+     * </ul>
+     *
+     * <p>The check only reads the supplied records: layouts are compared,
+     * never merged into a unit's {@code classLayouts} and never repaired,
+     * and nothing is added to the transported content. The reason is a
+     * transport-level fact report — the decode surface owns the exception
+     * type.</p>
+     *
+     * @return the first violation, or empty when the seeds and the index
+     *         agree on every supplied fact
+     */
+    public static Optional<String> checkProjectSeedCoherence(
+            ProjectInterfaceIndex index, ClassRegistrationSeeds seeds) {
+        Objects.requireNonNull(index, "index must not be null");
+        Objects.requireNonNull(seeds, "seeds must not be null");
+
+        // (a) A carried builtin Error registration: exact layout, exact owner —
+        // the compiler-owned constant, never a module-owned registration. An
+        // absent entry is a legal empty class fact of the /2 seed collection,
+        // not a contradiction between two supplied records.
+        ClassRegistrationSeeds.ClassRegistration error =
+            seeds.registrationFor(ClassId.ERROR);
+        if (error != null && (error.owner() != DefaultOwner.BUILTIN_DEFAULTS
+                || !error.layout().equals(ClassLayout.BUILTIN_ERROR))) {
+            return Optional.of("the builtin " + ClassId.ERROR.text()
+                + " registration carries owner " + error.owner() + " and layout "
+                + error.layout() + "; the compiler-owned registration is exactly "
+                + ClassLayout.BUILTIN_ERROR + " under " + DefaultOwner.BUILTIN_DEFAULTS);
+        }
+
+        // (b) Every exported class of a host declaration entry carries exactly
+        // one registration.
+        for (ExternalModuleInterface module : index.modules().values()) {
+            if (module.kind() != ExternalModuleKind.HOST) {
+                continue;
+            }
+            for (ClassInterface classEntry : module.classes()) {
+                int matches = 0;
+                for (ClassId key : seeds.registrations().keySet()) {
+                    if (key.equals(ClassId.ERROR)) {
+                        continue;
+                    }
+                    LocatedDeclaredClass declared = locateDeclaredClass(index, key);
+                    if (declared != null
+                            && declared.classEntry().equals(classEntry)) {
+                        matches++;
+                    }
+                }
+                if (matches == 0) {
+                    return Optional.of("the host declaration class "
+                        + classEntry.classId() + " of " + module.moduleId()
+                        + " has no class registration seed");
+                }
+                if (matches > 1) {
+                    return Optional.of("the host declaration class "
+                        + classEntry.classId() + " of " + module.moduleId()
+                        + " carries " + matches + " class registration seeds;"
+                        + " one declared class carries exactly one registration");
+                }
+            }
+        }
+
+        // (c) Every registration: one identity per registration, a declaration
+        // owner, and — where the supplied index declares the class — the exact
+        // declared fields in declaration order.
+        for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
+                : seeds.registrations().entrySet()) {
+            ClassId key = entry.getKey();
+            ClassRegistrationSeeds.ClassRegistration registration = entry.getValue();
+            if (key.equals(ClassId.ERROR)) {
+                continue;
+            }
+            if (!key.equals(registration.layout().classId())) {
+                return Optional.of("the " + key + " registration carries layout "
+                    + registration.layout().classId()
+                    + "; a registration's key and its contained layout name one "
+                    + "class identity");
+            }
+            if (registration.owner() != DefaultOwner.HOST_DEFAULTS
+                    && registration.owner() != DefaultOwner.FFI_PLAN) {
+                return Optional.of("the " + key + " registration carries owner "
+                    + registration.owner() + "; a declaration class registration is"
+                    + " owned by " + DefaultOwner.HOST_DEFAULTS + " or "
+                    + DefaultOwner.FFI_PLAN);
+            }
+            LocatedDeclaredClass declared = locateDeclaredClass(index, key);
+            if (declared == null) {
+                continue;
+            }
+            if (declared.module().kind() != ExternalModuleKind.HOST) {
+                return Optional.of("the " + key + " registration names the "
+                    + declared.module().kind() + " module "
+                    + declared.module().moduleId()
+                    + "; a declaration class registration covers host declaration"
+                    + " classes only");
+            }
+            Optional<String> fields =
+                checkSeedFields(key, registration.layout(), declared, index, seeds);
+            if (fields.isPresent()) {
+                return fields;
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * One project seed/module coherence violation of the carried class
+     * facts: the referring unit, the referring construction/field operation and
+     * the transport fact report. The referring operation is the
+     * responsible subject of the violation, so the admission surface
+     * carries its retained origin.
+     *
+     */
+    public record SeedModuleViolation(RawUnit referringUnit, RawOp referringOp,
+                                      String detail) {
+
+        public SeedModuleViolation {
+            Objects.requireNonNull(referringUnit, "referringUnit must not be null");
+            Objects.requireNonNull(referringOp, "referringOp must not be null");
+            Objects.requireNonNull(detail, "detail must not be null");
+        }
+
+        /** The violation as the transport decode surface reports it. */
+        public String reason() {
+            return "module '" + referringUnit.modulePath() + "' "
+                + referringOp.opId() + ": " + detail;
+        }
+    }
+
+    /**
+     * The project-level seed/module join of the transported class facts:
+     * every carried construction of a declaration class — a
+     * {@code CLASS_NEW} whose {@code defaultOwner} is a declaration owner
+     * ({@link DefaultOwner#HOST_DEFAULTS} or {@link DefaultOwner#FFI_PLAN})
+     * — refers to exactly one carried class registration seed, and that
+     * registration repeats the referring operation's owner and contained
+     * layout. The transport carries the seeds and the modules as separate
+     * records, so a disagreement between the two is rejected content:
+     * neither record is repaired and neither becomes an independent class
+     * authority.
+     *
+     * <p>The check only reads the supplied records: the registration's
+     * layout is compared through the canonical layout rendering (the same
+     * rendering the carried operation payload uses), never merged into a
+     * unit's {@code classLayouts}, and a payload shape outside the carried
+     * construction record is left to the closed rule engine that owns
+     * it.</p>
+     *
+     * @return the first violation in supplied unit order and source
+     *         operation order, or empty when the seeds and the referring
+     *         module class facts agree
+     */
+    public static Optional<SeedModuleViolation> checkProjectSeedModuleCoherence(
+            ClassRegistrationSeeds seeds, List<RawUnit> units) {
+        Objects.requireNonNull(seeds, "seeds must not be null");
+        Objects.requireNonNull(units, "units must not be null");
+        for (RawUnit unit : units) {
+            Objects.requireNonNull(unit, "units must not contain null");
+            Map<OpId, List<RawOp>> boundaries = new LinkedHashMap<>();
+            for (RawOp child : unit.ops()) {
+                if (child.parentOpId() != null
+                        && SemanticOpKind.BOUNDARY.name().equals(child.kind())) {
+                    boundaries.computeIfAbsent(child.parentOpId(), ignored -> new ArrayList<>())
+                        .add(child);
+                }
+            }
+            for (RawOp op : unit.ops()) {
+                if (SemanticOpKind.FIELD_READ.name().equals(op.kind())
+                        || SemanticOpKind.FIELD_WRITE.name().equals(op.kind())
+                        || SemanticOpKind.FIELD_DELETE.name().equals(op.kind())) {
+                    Optional<SeedModuleViolation> fieldFailure =
+                        checkSeedFieldOperation(seeds, unit, op,
+                            boundaries.getOrDefault(op.opId(), List.of()));
+                    if (fieldFailure.isPresent()) {
+                        return fieldFailure;
+                    }
+                }
+                if (!SemanticOpKind.CLASS_NEW.name().equals(op.kind())) {
+                    continue;
+                }
+                String owner = stringPayloadField(op.payload(), "defaultOwner");
+                if (!DefaultOwner.HOST_DEFAULTS.name().equals(owner)
+                        && !DefaultOwner.FFI_PLAN.name().equals(owner)) {
+                    continue;
+                }
+                ClassId classId = classIdPayloadField(op.payload(), "classId");
+                if (classId == null) {
+                    continue; // the closed rules own a malformed payload shape
+                }
+                ClassRegistrationSeeds.ClassRegistration registration =
+                    seeds.registrationFor(classId);
+                if (registration == null) {
+                    return Optional.of(new SeedModuleViolation(unit, op,
+                        "the CLASS_NEW carries defaultOwner " + owner + " for "
+                            + classId + ", which no class registration seed registers:"
+                            + " a declaration-class construction is never admissible"
+                            + " without its registration"));
+                }
+                if (!registration.owner().name().equals(owner)) {
+                    return Optional.of(new SeedModuleViolation(unit, op,
+                        "the CLASS_NEW carries defaultOwner " + owner + " for "
+                            + classId + " while its class registration seed carries"
+                            + " owner " + registration.owner()
+                            + ": the referring module class fact and the seed"
+                            + " disagree"));
+                }
+                CanonicalJson.Value layout = payloadField(op.payload(), "layout");
+                if (layout == null || !layout.equals(
+                        ContractSnapshotCanonicalizer.layoutJson(
+                            registration.layout()))) {
+                    return Optional.of(new SeedModuleViolation(unit, op,
+                        "the CLASS_NEW carries a layout that differs from the"
+                            + " registered declaration layout of " + classId
+                            + " (the registered fields in declaration order, their"
+                            + " presence and default owners): the referring module"
+                            + " class fact and the seed disagree"));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Declaration seeds and field operations describe the same layout, even
+     * when a private declaration class has no construction or index export. */
+    private static Optional<SeedModuleViolation> checkSeedFieldOperation(
+            ClassRegistrationSeeds seeds, RawUnit unit, RawOp op,
+            List<RawOp> boundaries) {
+        ClassId classId = classIdPayloadField(op.payload(), "classId");
+        ClassRegistrationSeeds.ClassRegistration registration = classId == null
+            ? null : seeds.registrationFor(classId);
+        if (registration == null) {
+            return Optional.empty(); // other owners resolve non-seed classes
+        }
+        String name = stringPayloadField(op.payload(), "field");
+        if (name == null) {
+            return Optional.empty(); // closed payload rules own malformed shapes
+        }
+        ClassLayout.FieldLayout field = registration.layout().fields().stream()
+            .filter(candidate -> candidate.name().equals(name)).findFirst().orElse(null);
+        if (field == null) {
+            return Optional.of(new SeedModuleViolation(unit, op,
+                "the " + op.kind() + " names unregistered field " + classId + "." + name));
+        }
+        boolean read = SemanticOpKind.FIELD_READ.name().equals(op.kind());
+        boolean delete = SemanticOpKind.FIELD_DELETE.name().equals(op.kind());
+        if (delete && field.required()) {
+            return Optional.of(new SeedModuleViolation(unit, op,
+                "the FIELD_DELETE names required declaration field " + classId + "." + name));
+        }
+        RuntimeDescriptor descriptor = field.descriptor();
+        if (read && !field.required() && !(descriptor instanceof RuntimeDescriptor.Nullable)) {
+            descriptor = new RuntimeDescriptor.Nullable(descriptor);
+        }
+        String expected = descriptor.canonicalSpecText();
+        if (read && !expected.equals(op.resultType())) {
+            return Optional.of(new SeedModuleViolation(unit, op,
+                "the FIELD_READ result for " + classId + "." + name
+                    + " disagrees with its registered declaration descriptor " + expected));
+        }
+        String boundaryKind = read ? BoundaryKind.OPTIONAL_FIELD_READ.name()
+            : delete ? null : BoundaryKind.CLASS_FIELD_ASSIGNMENT.name();
+        for (RawOp child : boundaries) {
+            if (boundaryKind != null
+                    && boundaryKind.equals(stringPayloadField(child.payload(), "kind"))
+                    && !expected.equals(stringPayloadField(child.payload(), "descriptor"))) {
+                return Optional.of(new SeedModuleViolation(unit, child,
+                    "the " + boundaryKind + " for " + classId + "." + name
+                        + " disagrees with its registered declaration descriptor " + expected));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** One payload member of a carried operation payload, or null. */
+    private static CanonicalJson.Value payloadField(CanonicalJson.Obj payload, String key) {
+        for (CanonicalJson.Entry entry : payload.entries()) {
+            if (entry.key().equals(key)) {
+                return entry.value();
+            }
+        }
+        return null;
+    }
+
+    /** One string payload member, or null when absent or not a string. */
+    private static String stringPayloadField(CanonicalJson.Obj payload, String key) {
+        return payloadField(payload, key) instanceof CanonicalJson.Str str
+            ? str.value()
+            : null;
+    }
+
+    /** One class-identity payload member, or null when absent or malformed. */
+    private static ClassId classIdPayloadField(CanonicalJson.Obj payload, String key) {
+        if (!(payloadField(payload, key) instanceof CanonicalJson.Obj classId)) {
+            return null;
+        }
+        try {
+            return ContractSnapshotCanonicalizer.parseClassId(classId);
+        } catch (RuntimeException malformed) {
+            return null;
+        }
+    }
+
+    /** The {@code $external/} descriptor spelling prefix of external modules. */
+    private static final String EXTERNAL_MODULE_PREFIX = "$external/";
+
+    /**
+     * One interface class entry a registration resolves to, with its owning
+     * module entry.
+     */
+    private record LocatedDeclaredClass(ExternalModuleInterface module,
+                                        ClassInterface classEntry) {
+    }
+
+    /**
+     * The interface class entry one registration key names: the entry whose
+     * class identity the key carries, or — for the externals spelling
+     * {@code @$external/<specifier>/<Name>} — the same-named exported class
+     * of the declaration module the raw specifier resolves to (the dotted
+     * module path is the specifier with {@code '/' → '.'}, the module layer's
+     * pinned external module path). Absent for a key the index declares at
+     * no entry.
+     */
+    private static LocatedDeclaredClass locateDeclaredClass(ProjectInterfaceIndex index,
+                                                           ClassId key) {
+        for (ExternalModuleInterface module : index.modules().values()) {
+            for (ClassInterface entry : module.classes()) {
+                if (entry.classId().equals(key)) {
+                    return new LocatedDeclaredClass(module, entry);
+                }
+            }
+        }
+        if (!key.modulePath().startsWith(EXTERNAL_MODULE_PREFIX)) {
+            return null;
+        }
+        String specifier =
+            key.modulePath().substring(EXTERNAL_MODULE_PREFIX.length());
+        if (specifier.isEmpty()) {
+            return null;
+        }
+        ModuleId declaredModule = new ModuleId(specifier.replace('/', '.'));
+        ExternalModuleInterface module = index.modules().get(declaredModule);
+        if (module == null) {
+            return null;
+        }
+        for (ClassInterface entry : module.classes()) {
+            if (entry.classId().name().equals(key.name())) {
+                return new LocatedDeclaredClass(module, entry);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The registered layout repeated against the interface class entry: field
+     * names and order, required/optional presence, and the descriptor's
+     * declared-type rendering.
+     */
+    private static Optional<String> checkSeedFields(ClassId key, ClassLayout layout,
+            LocatedDeclaredClass declared, ProjectInterfaceIndex index,
+            ClassRegistrationSeeds seeds) {
+        List<ClassLayout.FieldLayout> fields = layout.fields();
+        List<FieldInterface> declaredFields = declared.classEntry().fields();
+        if (fields.size() != declaredFields.size()) {
+            return Optional.of("the " + key + " registration carries "
+                + fields.size() + " field(s) while its interface class "
+                + declared.classEntry().classId() + " declares "
+                + declaredFields.size());
+        }
+        for (int i = 0; i < fields.size(); i++) {
+            ClassLayout.FieldLayout field = fields.get(i);
+            FieldInterface declaredField = declaredFields.get(i);
+            if (!field.name().equals(declaredField.name())) {
+                return Optional.of("the " + key + " registration names field '"
+                    + field.name() + "' at position " + i + " while its interface class "
+                    + declared.classEntry().classId() + " declares '"
+                    + declaredField.name() + "' there (declaration order)");
+            }
+            if (field.required() == declaredField.optional()) {
+                return Optional.of("the " + key + " registration marks field '"
+                    + field.name() + "' required=" + field.required()
+                    + " while its interface class declares optional="
+                    + declaredField.optional()
+                    + "; a registered field is required exactly when it is not"
+                    + " optional");
+            }
+            String declaredText = declaredTypeText(field.descriptor(), index, seeds);
+            if (declaredText == null || !declaredText.equals(declaredField.declaredType())) {
+                return Optional.of("the " + key + " registration carries field '"
+                    + field.name() + "' with descriptor '"
+                    + field.descriptor().canonicalSpecText() + "', whose declared type is "
+                    + (declaredText == null
+                        ? "unresolvable in the interface index"
+                        : "'" + declaredText + "'")
+                    + ", while its interface class declares '"
+                    + declaredField.declaredType() + "'");
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The interface's declared-type text of one descriptor (the pinned
+     * {@code CanonicalTypeText} grammar over the descriptor's structural
+     * type), or null when the descriptor names a class the supplied index
+     * declares at no entry. A class reference resolves through the exact
+     * identity the carried class registration seeds name, never through a
+     * spelling that merely renders the same dotted text: the declaration
+     * surface registers every declared class of a declaration module,
+     * exported or not, so an unregistered alternate spelling is
+     * unresolvable even when its rendering matches. The declared text
+     * itself renders through the referenced module's dotted module path
+     * (the declaration surface's rendering, distinct from the transported
+     * descriptor's semantic module path {@code @$external/<specifier>/<Name>}).
+     */
+    private static String declaredTypeText(RuntimeDescriptor descriptor,
+                                          ProjectInterfaceIndex index,
+                                          ClassRegistrationSeeds seeds) {
+        return switch (descriptor) {
+            case RuntimeDescriptor.Null ignored -> "null";
+            case RuntimeDescriptor.Boolean ignored -> "boolean";
+            case RuntimeDescriptor.Int ignored -> "int";
+            case RuntimeDescriptor.Number ignored -> "number";
+            case RuntimeDescriptor.String ignored -> "string";
+            case RuntimeDescriptor.Table ignored -> "table";
+            case RuntimeDescriptor.Bytes ignored -> "bytes";
+            case RuntimeDescriptor.Class classDescriptor ->
+                classReferenceText(classDescriptor.classId(), index, seeds);
+            case RuntimeDescriptor.Array array -> {
+                String element = declaredTypeText(array.element(), index, seeds);
+                if (element == null) {
+                    yield null;
+                }
+                yield array.element() instanceof RuntimeDescriptor.Func
+                        || array.element() instanceof RuntimeDescriptor.Nullable
+                    ? "(" + element + ")[]"
+                    : element + "[]";
+            }
+            case RuntimeDescriptor.Nullable nullable -> {
+                String inner = declaredTypeText(nullable.inner(), index, seeds);
+                if (inner == null) {
+                    yield null;
+                }
+                yield nullable.inner() instanceof RuntimeDescriptor.Func
+                    ? "(" + inner + ") | null"
+                    : inner + " | null";
+            }
+            case RuntimeDescriptor.Func func -> {
+                List<String> params = new ArrayList<>(func.paramTypes().size());
+                for (RuntimeDescriptor param : func.paramTypes()) {
+                    String text = declaredTypeText(param, index, seeds);
+                    if (text == null) {
+                        yield null;
+                    }
+                    params.add(text);
+                }
+                String result = declaredTypeText(func.returnType(), index, seeds);
+                if (result == null) {
+                    yield null;
+                }
+                yield (func.isAsync() ? "async " : "") + "("
+                    + String.join(", ", params) + ") => " + result;
+            }
+        };
+    }
+
+    /**
+     * The declared-type text of one class reference: the pinned builtin
+     * spelling, or the dotted declaration module path of the exact carried
+     * registration the reference names, or the owning interface of an exact
+     * implementation-class identity. Declaration references still require a
+     * seed: an alternate external spelling cannot stand in for its identity.
+     */
+    private static String classReferenceText(ClassId classId, ProjectInterfaceIndex index,
+                                            ClassRegistrationSeeds seeds) {
+        if (classId.equals(ClassId.ERROR)) {
+            return ClassId.ERROR.text();
+        }
+        // Implementation classes have an exact carried interface identity, not
+        // declaration seeds. Render through the owning module only after that
+        // nominal identity resolves; never accept a same-spelled class.
+        LocatedDeclaredClass indexed = locateDeclaredClass(index, classId);
+        if (indexed != null && indexed.module().kind() == ExternalModuleKind.IMPLEMENTATION
+                && indexed.classEntry().classId().equals(classId)) {
+            return "@" + indexed.module().moduleId().path() + "/" + classId.name();
+        }
+        // Declaration references still require the exact registration, including
+        // non-exported classes; an alternate external spelling cannot substitute.
+        if (seeds.registrationFor(classId) == null) {
+            return null;
+        }
+        LocatedDeclaredClass declared = locateDeclaredClass(index, classId);
+        if (declared != null) {
+            return "@" + declared.module().moduleId().path() + "/" + classId.name();
+        }
+        // A registered declaration class the index declares at no class entry
+        // (a non-exported class): its declaration module's own entry renders
+        // the reference.
+        if (classId.modulePath().startsWith(EXTERNAL_MODULE_PREFIX)) {
+            String specifier =
+                classId.modulePath().substring(EXTERNAL_MODULE_PREFIX.length());
+            if (!specifier.isEmpty()) {
+                ExternalModuleInterface module =
+                    index.modules().get(new ModuleId(specifier.replace('/', '.')));
+                if (module != null) {
+                    return "@" + module.moduleId().path() + "/" + classId.name();
+                }
+            }
+        }
+        return null;
     }
 
     // =========================================================================

@@ -262,8 +262,8 @@ public class DirectiveTest {
             "let is a non-declaration anchor (index 0)");
         ParseResult pr = parse("// @jsonable\nlet x = 1;");
         check(pr.diagnostics().stream().anyMatch(
-                d -> d.code().equals("E1043") && d.severity().equals("warning")),
-            "non-declaration anchor produces the finalize E1043 warning");
+                d -> d.code().equals("E1043") && d.severity().equals("error")),
+            "non-declaration anchor produces the finalize E1043 error");
 
         // EOF retention as unanchored.
         r = lex("// @jsonable");
@@ -310,12 +310,12 @@ public class DirectiveTest {
         check(r.program().fileDirectives() != null,
             "ProgramNode carries fileDirectives");
 
-        // Export-wrapped function: E1043 warning, no metadata.
+        // Export-wrapped function: E1043 error, no metadata.
         r = parse("// @jsonable\nexport function f(): int { return 0; }");
-        check(!r.hasErrors(), "E1043 is a warning (no parse errors)");
+        check(r.hasErrors(), "E1043 is a compile error");
         check(diagOf(r, "E1043") != null, "E1043 for export function");
 
-        // Non-exported class: E1043 warning, no metadata.
+        // Non-exported class: E1043 error, no metadata.
         r = parse("// @jsonable\nclass C { x: int = 0; }");
         check(diagOf(r, "E1043") != null, "E1043 for standalone class");
         ClassDeclaration standalone = (ClassDeclaration) r.program()
@@ -331,7 +331,7 @@ public class DirectiveTest {
         r = parse("// @jsonable\nasync function f(): int { return 0; }");
         check(diagOf(r, "E1043") != null, "E1043 for standalone async function");
 
-        // E1043 warning-and-ignore: no synthetic C$fromJson/C$toJson
+        // E1043 incompatible-attachment error: no synthetic C$fromJson/C$toJson
         // symbols and no metadata (ExportExtractor never sees a
         // jsonable class).
         r = parse("// @jsonable\nfunction f(): int { return 0; }");
@@ -403,12 +403,12 @@ public class DirectiveTest {
             "explicit JSON signatures preserved in the export map: "
                 + exports.keySet());
 
-        // Unattached @jsonable in a .d.deal file still warns E1043.
+        // Unattached @jsonable in a .d.deal file still errors E1043.
         r = parseFile("// @jsonable\nlet x = 1;", "lib.d.deal");
         check(diagOf(r, "E1043") != null,
-            "unattached @jsonable in a .d.deal file warns E1043");
+            "unattached @jsonable in a .d.deal file errors E1043");
 
-        // Non-class attachment warns E1043 with no metadata.
+        // Non-class attachment errors E1043 with no metadata.
         r = parseFile("// @jsonable\nexport function f(): int { return 0; }",
             "lib.d.deal");
         check(diagOf(r, "E1043") != null,
@@ -489,7 +489,7 @@ public class DirectiveTest {
                 "export class C { x: int = 0; }\n// @extern-c", "m.d.deal"),
             "E1046"), "@extern-c after a declaration → E1046");
         check(hasError(parseFile(
-                "// @extern-c\nimport * as m from \"./m\"\nexport class C { x: int = 0; }",
+                "// @extern-c\nimport * as m from \"./m\";\nexport class C { x: int = 0; }",
                 "m.d.deal"),
             "E1046"), "@extern-c with a later import → E1046");
     }
@@ -501,7 +501,7 @@ public class DirectiveTest {
     static void testTemplateEmbedded() {
         System.out.println("-- Template-embedded events (D10) --");
 
-        // Recognized jsonable inside an interpolation: one E1043 warning
+        // Recognized jsonable inside an interpolation: one E1043 error
         // at the rebased complete-comment range, no metadata.
         String src = "let s = `${ // @jsonable\n x}`;";
         ParseResult r = parse(src);
@@ -512,8 +512,8 @@ public class DirectiveTest {
             "exactly one E1043, got " + e1043 + ": " + r.diagnostics());
         CompilerDiagnostic w = diagOf(r, "E1043");
         if (w != null) {
-            check(w.severity().equals("warning"),
-                "E1043 severity warning, got " + w.severity());
+            check(w.severity().equals("error"),
+                "E1043 severity error, got " + w.severity());
             check(w.range().origin() == RangeOrigin.SOURCE
                     && w.range().startScalarOffset() == 12
                     && w.range().endScalarOffset() == 24,

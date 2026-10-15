@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, arrays, nullable, tables
 
-import * as Lib from "./jsonable_complex_lib"
+import * as Lib from "./jsonable_complex_lib";
 
 export function test_jsonable_complex_roundtrip(): null {
   let raw: string = "{\"name\":\"Ada\",\"addresses\":[{\"city\":\"London\"}],\"nickname\":null,\"meta\":{\"score\":7}}";

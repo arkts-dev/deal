@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: closures, modules, imports
 
-import * as Lib from "./closure_batch2_lib"
+import * as Lib from "./closure_batch2_lib";
 
 export function test_closure_captures_imported_function(): int {
   let f: (x: int) => int = function(x: int): int {

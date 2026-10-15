@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, optional, nullable, nested
 
-import * as Lib from "./jsonable_batch2_lib"
+import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_optional_nullable_nested_class(): null {
   let explicitNull: Lib.MaybeChild | null = Lib.MaybeChild$fromJson("{\"child\":null}");

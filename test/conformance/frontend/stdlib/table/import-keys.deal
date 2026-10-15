@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: stdlib, table
 
-import * as tbl from "std/table"
+import * as tbl from "std/table";
 
 export function test_table_keys(t: table): string[] {
   return tbl.keys(t);

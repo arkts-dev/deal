@@ -641,7 +641,7 @@ public final class DefaultIrRecorderTest {
         for (SiblingProvider provider : providers) {
             source.append("import * as ").append(provider.alias())
                 .append(" from \"./").append(provider.alias())
-                .append("\"\n");
+                .append("\";\n");
         }
         source.append("function consume(x: ").append(topLevel.alias())
             .append(".Ir): int { return x.v; }\n")
@@ -745,7 +745,7 @@ public final class DefaultIrRecorderTest {
         for (SiblingProvider provider : providers) {
             source.append("import * as ").append(provider.alias())
                 .append(" from \"./").append(provider.alias())
-                .append("\"\n");
+                .append("\";\n");
         }
         source.append(declarationSource).append('\n');
         LexResult lex = new Lexer(source.toString(), "main.deal")
@@ -843,7 +843,7 @@ public final class DefaultIrRecorderTest {
         for (SiblingProvider provider : providers) {
             source.append("import * as ").append(provider.alias())
                 .append(" from \"./").append(provider.alias())
-                .append("\"\n");
+                .append("\";\n");
         }
         source.append(declarationSource).append('\n');
         LexResult lex = new Lexer(source.toString(), "main.deal")
@@ -913,7 +913,7 @@ public final class DefaultIrRecorderTest {
         for (SiblingProvider provider : providers) {
             source.append("import * as ").append(provider.alias())
                 .append(" from \"./").append(provider.alias())
-                .append("\"\n");
+                .append("\";\n");
         }
         source.append("function make(): int {\n")
             .append("  let x: ").append(outerSpelling)
@@ -1042,7 +1042,7 @@ public final class DefaultIrRecorderTest {
         for (SiblingProvider provider : providers) {
             source.append("import * as ").append(provider.alias())
                 .append(" from \"./").append(provider.alias())
-                .append("\"\n");
+                .append("\";\n");
         }
         source.append("function make(w: ").append(ownerSpelling)
             .append("): int { w.inner = { v: 7 }; return w.inner.v; }\n");
@@ -1174,7 +1174,7 @@ public final class DefaultIrRecorderTest {
         for (SiblingProvider provider : providers) {
             source.append("import * as ").append(provider.alias())
                 .append(" from \"./").append(provider.alias())
-                .append("\"\n");
+                .append("\";\n");
         }
         if (localFunction != null) {
             source.append("function ").append(localFunction.name())

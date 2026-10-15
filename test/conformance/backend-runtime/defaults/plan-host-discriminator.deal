@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, host-abi, classes, defaults
 
-import * as cfg from "host/cfg"
+import * as cfg from "host/cfg";
 
 export function test_plan_host_discriminator(): string {
   let s: cfg.ServerConfig = {

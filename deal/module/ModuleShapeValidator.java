@@ -173,8 +173,13 @@ public final class ModuleShapeValidator {
                 }
                 checkNested(fd.body(), diagnostics, isDeclarationFile);
             }
-            case ClassDeclaration cd ->
+            case ClassDeclaration cd -> {
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1057,
+                    "Local class declaration '" + cd.name()
+                        + "' is not allowed; classes are module-level",
+                    cd.span()));
                 checkFieldDefaults(cd, diagnostics, isDeclarationFile);
+            }
             case VariableDeclaration vd ->
                 checkExpression(vd.initializer(), diagnostics,
                     isDeclarationFile);

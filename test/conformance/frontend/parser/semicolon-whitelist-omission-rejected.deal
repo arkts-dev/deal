@@ -1,5 +1,5 @@
 // @spec: Syntactic grammar — Semicolon rules
-// @description: A statement may omit its semicolon only before a whitelisted boundary token (v1.2 defect snippet 48)
+// @description: A statement's required semicolon may not be omitted before the next statement (v1.3 Semicolon rules)
 // @expected: compile-error E1053
 // @features: parser, semicolon, statement-boundary
 

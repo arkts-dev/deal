@@ -3,7 +3,7 @@
 // @expected: runtime-error ASYNC_IMPORTED_SOURCE
 // @features: source-location, async, modules, runtime-errors
 
-import * as Lib from "./imported_async_source_lib"
+import * as Lib from "./imported_async_source_lib";
 
 export async function test_source_imported_async_error(): int {
   return await Lib.fail();

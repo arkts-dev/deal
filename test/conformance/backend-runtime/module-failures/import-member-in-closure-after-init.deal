@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: modules, closures, initialization
 
-import * as Lib from "./value_lib"
+import * as Lib from "./value_lib";
 
 export function test_import_member_in_closure_after_init(): int {
   let f: () => int = function(): int { return Lib.make(); };

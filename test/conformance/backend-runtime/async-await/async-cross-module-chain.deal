@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async-await, modules, runtime
 
-import * as mid from "./async_chain_mid_lib"
+import * as mid from "./async_chain_mid_lib";
 
 export async function test_cross_module_async_chain(): int {
   let x: int = await mid.midAnswer();

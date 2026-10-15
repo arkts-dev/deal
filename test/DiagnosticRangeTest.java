@@ -916,11 +916,11 @@ public class DiagnosticRangeTest {
         }
         checkTemplateCursor(src2, 17, 1, 18, "T2");
 
-        // 3. A sub-lexer error after a recognized escape rebases through the
-        //    scalar map: an escape's decoded scalar maps to the escape's
-        //    first raw scalar, so the '@' diagnostic lands on the raw '@'
-        //    position, not the decoded-coordinate position.
-        String src3 = "let x = `${\\$x + @}`;";
+        // 3. A sub-lexer error after a supplementary scalar inside the
+        //    interpolation rebases verbatim through the scalar map, so the
+        //    '@' diagnostic lands on the raw '@' position, not a
+        //    UTF-16-coordinate position.
+        String src3 = "let x = `${\"\uD83D\uDE00\" + @}`;";
         ParseResult r3 = parseTemplateSource(src3);
         CompilerDiagnostic e1001 = templateDiag(r3.diagnostics(), "E1001");
         check(e1001 != null, "T3: E1001 present for `${\\$x + @}`");
@@ -969,22 +969,23 @@ public class DiagnosticRangeTest {
         checkTemplateCursor(src5, 17, 1, 18, "T5");
 
         // 6. E1042 pseudo-tokens are raw-positioned and scalar-exact: an
-        //    invalid escape after astral content marks the escape character's
-        //    raw position.
-        String src6 = "let x = `hi\uD83D\uDE00\\q`;";
+        //    unterminated interpolation after astral TemplateText marks the
+        //    expression start with the raw run length.
+        String src6 = "let x = `hi\uD83D\uDE00${foo`;";
         ParseResult r6 = parseTemplateSource(src6);
         CompilerDiagnostic e1042 = templateDiag(r6.diagnostics(), "E1042");
-        check(e1042 != null, "T6: E1042 present for the invalid escape after astral");
+        check(e1042 != null,
+            "T6: E1042 present for the unterminated interpolation after astral");
         if (e1042 != null) {
             DiagnosticRange r = e1042.range();
             check(r.origin() == RangeOrigin.SOURCE
-                    && r.startLine() == 1 && r.startColumn() == 14
-                    && r.endLine() == 1 && r.endColumn() == 15
-                    && r.startScalarOffset() == 13 && r.endScalarOffset() == 14
-                    && r.scalarLength() == 1,
-                "T6: E1042 at (1,14)-(1,15) offsets (13,14) len 1, got " + r);
+                    && r.startLine() == 1 && r.startColumn() == 15
+                    && r.endLine() == 1 && r.endColumn() == 17
+                    && r.startScalarOffset() == 14 && r.endScalarOffset() == 16
+                    && r.scalarLength() == 2,
+                "T6: E1042 at (1,15)-(1,17) offsets (14,16) len 2, got " + r);
         }
-        checkTemplateCursor(src6, 13, 1, 14, "T6");
+        checkTemplateCursor(src6, 14, 1, 15, "T6");
 
         // 7. Empty expression: E1042 and the D16 placeholder carry zero
         //    scalar length at the expression-start raw position.

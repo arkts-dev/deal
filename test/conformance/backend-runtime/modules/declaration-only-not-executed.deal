@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: modules, declarations
 
-import * as Decl from "./runtime_missing_decl"
+import * as Decl from "./runtime_missing_decl";
 
 export function test_declaration_only_not_executed(): int {
   let f: () => int = Decl.declaredOnly;

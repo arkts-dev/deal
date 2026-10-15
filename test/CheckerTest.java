@@ -175,7 +175,7 @@ public class CheckerTest {
     private static void cliReject(Path entry, Path out, String backend, String what) throws IOException {
         CliResult result = cliCompile(entry, backend, out);
         check(result.exitCode() == 1, what + " is rejected on " + backend + ": " + result.output());
-        check(result.output().contains("E3019"), what + " rejection is E3019 on " + backend + ": " + result.output());
+        check(result.output().contains("E1057"), what + " local-class placement rejection is E1057 on " + backend + ": " + result.output());
         check(!Files.exists(out), what + " publishes no artifact directory on " + backend);
     }
 
@@ -659,9 +659,10 @@ public class CheckerTest {
             "let c: int = 1 * 2;\n" +
             "let d: int = 1 / 2;\n" +
             "let e: int = 1 % 2;\n" +
-            "let f: int = 2 ** 3;"
+            "let f: int = 2 * 3;"
         );
         assertNoErrors(out, "int arithmetic");
+        assertError(checkProgram("let f: int = 2 ** 3;"), "E1037", "removed power operator rejects");
 
         out = checkProgram(
             "let a: number = 1.0 + 2.0;\n" +
@@ -2434,6 +2435,30 @@ public class CheckerTest {
                     + "    a = (b = {});\n"
                     + "  }"
             };
+            String[] importedCrossings = {
+                "let b: foreign.A = (a = {});",
+                "let b: foreign.A | null = (a = {});",
+                "let b: foreign.A = {}; a = (b = {});"
+            };
+            StringBuilder crossingSource = new StringBuilder(
+                "import * as foreign from \"./foreign/types\";\nclass A { n: int = 7; }\n");
+            for (int i = 0; i < importedCrossings.length; i++) {
+                crossingSource.append("function crossing").append(i)
+                    .append("(): null { let a: A = {}; ").append(importedCrossings[i])
+                    .append(" return null; }\n");
+            }
+            crossingSource.append("export function main(): null { return null; }");
+            Path crossingEntry = cliProject(root, "module_crossings", crossingSource.toString());
+            Files.createDirectories(crossingEntry.resolveSibling("foreign"));
+            Files.writeString(crossingEntry.resolveSibling("foreign").resolve("types.deal"),
+                "export class A { n: int = 7; }");
+            for (String backend : List.of("js", "jvm", "luajit")) {
+                Path out = root.resolve("module_crossings_out_" + backend);
+                CliResult result = cliCompile(crossingEntry, backend, out);
+                check(result.exitCode() == 1 && result.output().split("E3001", -1).length - 1 == 3,
+                    "all three same-name module assignment forms reject on " + backend + ": " + result.output());
+                check(!Files.exists(out), "cross-module rejection publishes no artifacts");
+            }
             String[] names = {"init", "nullable", "assignment"};
             for (int p = 0; p < negatives.length; p++) {
                 Path probeEntry = cliProject(root, "probe_" + names[p],
@@ -2450,7 +2475,7 @@ public class CheckerTest {
             }
 
             Path controlEntry = cliProject(root, "control",
-                "import * as console from \"std/console\"\n"
+                "import * as console from \"std/console\";\n"
                     + "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
@@ -2526,7 +2551,7 @@ public class CheckerTest {
             // A whose factory would be the lexical binding.
             String[] probes = {
                 // explicit provided field, plain class target
-                "import * as console from \"std/console\"\n"
+                "import * as console from \"std/console\";\n"
                     + "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
@@ -2540,7 +2565,7 @@ public class CheckerTest {
                     + "  return null;\n"
                     + "}\n",
                 // nullable class target
-                "import * as console from \"std/console\"\n"
+                "import * as console from \"std/console\";\n"
                     + "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A | null = {};\n"
@@ -2561,28 +2586,25 @@ public class CheckerTest {
             for (int p = 0; p < probes.length; p++) {
                 Path entry = cliProject(root, "probe_" + names[p], probes[p]);
                 Path out = root.resolve("out_" + names[p]);
-                cliAccept(entry, out, "js", "shadowed-declaration construction " + names[p]);
-                Path artifact = out.resolve("main.js");
-                check(Files.isRegularFile(artifact),
-                    "the shadowed-declaration construction (" + names[p]
-                        + ") publishes its JS artifact: " + artifact);
-                if (!Files.isRegularFile(artifact)) continue;
+                cliReject(entry, out, "js", "original local-class construction " + names[p]);
+                String legal = probes[p].replace("class A { n: int = 7; }",
+                    "class A { n: int = 7; }\nclass B { n: string = \"ok\"; }")
+                    .replace("    class A { n: string = \"ok\"; }", "    let other: B = {};");
+                Path legalEntry = cliProject(root, "legal_" + names[p], legal);
+                Path legalOut = root.resolve("legal_out_" + names[p]);
+                cliAccept(legalEntry, legalOut, "js", "module-class target-context construction " + names[p]);
+                check(Files.isRegularFile(legalOut.resolve("main.js")), "legal target-context artifact exists");
+                if (Files.isRegularFile(legalOut.resolve("main.js"))) {
+                    String js = Files.readString(legalOut.resolve("main.js"), StandardCharsets.UTF_8);
+                    check(js.contains("let B$new; let B$meta;") && js.contains("B$new = (provided"),
+                        "the distinct module class retains independent factory artifacts");
+                    check(js.contains("A$new({ [\"n\"]: 8 }"),
+                        "target-context construction selects the annotated module class factory");
+                    check(!js.contains("B$new({ [\"n\"]: 8 }"),
+                        "target-context construction never selects the other class factory");
+                    cliNode(legalOut, tokens[p]);
+                }
 
-                // The emitted artifact selects the outer declaration's own
-                // factory and keeps the shadowing declaration's artifacts
-                // distinct under a renamed base.
-                String js = Files.readString(artifact, StandardCharsets.UTF_8);
-                check(js.contains("let A$1$new; let A$1$meta;"),
-                    "the shadowing declaration's artifacts are renamed "
-                        + "under an unambiguous base (" + names[p] + ")");
-                check(js.contains("A$1$new = (provided"),
-                    "the shadowing declaration's construction closure binds "
-                        + "the renamed base (" + names[p] + ")");
-                check(js.contains("A$new({ [\"n\"]: 8 }"),
-                    "the target-context literal constructs through the outer "
-                        + "declaration's factory (" + names[p] + ")");
-
-                cliNode(out, tokens[p]);
             }
 
             // Nearest legal controls: the shadowing declaration's own
@@ -2590,13 +2612,12 @@ public class CheckerTest {
             // construction after the shadowing block (the declared
             // default stays int).
             Path controlEntry = cliProject(root, "control",
-                "import * as console from \"std/console\"\n"
-                    + "class A { n: int = 7; }\n"
+                "import * as console from \"std/console\";\n"
+                    + "class A { n: int = 7; }\nclass B { n: string = \"ok\"; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
                     + "  {\n"
-                    + "    class A { n: string = \"ok\"; }\n"
-                    + "    let b: A = {};\n"
+                    + "    let b: B = {};\n"
                     + "    if (b.n !== \"ok\") { throw { code: \"INNER_LAYOUT\", "
                     + "message: \"inner\" }; }\n"
                     + "  }\n"
@@ -2661,7 +2682,7 @@ public class CheckerTest {
             }
 
             Path controlEntry = cliProject(root, "control",
-                "import * as console from \"std/console\"\n"
+                "import * as console from \"std/console\";\n"
                     + "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
@@ -3235,7 +3256,7 @@ public class CheckerTest {
         // A module-level user CLASS named bytes is legal (no E2002) and
         // wins over the primitive in type annotations.
         out = checkProgram(
-            "class bytes { x: int }\n" +
+            "class bytes { x: int; }\n" +
             "let b: bytes = { x: 2 };\n" +
             "let n: int = b.x;");
         assertNoErrors(out, "module-level user class named bytes shadows the intrinsic");
@@ -3243,7 +3264,7 @@ public class CheckerTest {
         // In expression position the class wins too: a class is not
         // callable, so bytes(3) is E3008 — never the intrinsic call.
         out = checkProgram(
-            "class bytes { x: int }\n" +
+            "class bytes { x: int; }\n" +
             "let y: int = bytes(3);");
         assertError(out, "E3008",
             "user class named bytes is not callable (class wins over the intrinsic)");
@@ -3268,21 +3289,17 @@ public class CheckerTest {
         assertError(out, "E3008",
             "the shadowing let is not callable while the bytes type stays the primitive");
 
-        // A nested user class named bytes wins over the primitive in
-        // Pass-2 annotation resolution at any nesting depth (the
-        // Pass-1 VariableSymbol and the Pass-2 target must agree).
         out = checkProgram(
+            "class bytes { x: int; }\n" +
             "function f(): number {\n" +
-            "  class bytes { x: int }\n" +
             "  let b: bytes = { x: 2 };\n" +
             "  let n: int = b.x;\n" +
-            "  return 1.5;\n" +
-            "}\n");
-        assertNoErrors(out, "nested user class named bytes wins over the primitive in annotations");
+            "  return 1.5;\n}\n");
+        assertNoErrors(out, "module-level bytes class wins in nested function annotations");
 
         // Two module-level user declarations named bytes still redeclare.
         out = checkProgram(
-            "class bytes { x: int }\n" +
+            "class bytes { x: int; }\n" +
             "function bytes(x: int): int { return x; }");
         assertError(out, "E2002", "two user declarations named bytes still redeclare");
 
