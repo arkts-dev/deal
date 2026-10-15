@@ -1241,6 +1241,21 @@ public class SemanticIrValidatorTest {
             "re-serializing the reparsed unit is byte-stable");
         checkEq(raw, reparsed,
             "the complete raw unit round-trips exactly through the canonical text");
+        checkEq(unit.bodyTable(), reparsed.bodyTable(), "typed body membership survives");
+        checkEq(unit.classFactories(), reparsed.classFactories(), "typed factories survive");
+        checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(), "typed JSON-default rows survive");
+        checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(), "typed binding facts survive");
+        check(text.contains("\"exportPlan\":[{\"descriptor\":"),
+            "the populated export plan keeps its array form");
+        check(text.contains("\"classFactories\":[{\"constructionEntry\":") && text.contains("\"factoryOp\":"),
+            "the populated factory registry keeps its required member names");
+        check(text.contains("\"jsonDefaults\":[{\"classDefaultOps\":[")
+                && text.contains("\"classDefaultOps\":[],\"jsonFromClassOp\":{\"id\":57,"
+                    + "\"modulePath\":\"mod.a\",\"type\":\"op\"}"),
+            "JSON-default framing and the empty-child row survive");
+        check(text.contains("\"key\":{\"id\":4,\"type\":\"function\"}")
+                && text.contains("\"functionId\":{\"id\":4,\"type\":\"function\"}"),
+            "function entries emit separate key and functionId members");
 
         check(text.contains("\"sourceName\":null"),
             "an explicit null sourceName means an anonymous function");

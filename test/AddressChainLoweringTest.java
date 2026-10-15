@@ -1619,11 +1619,19 @@ public class AddressChainLoweringTest {
         List<SemanticOp> duplicate = new ArrayList<>(seeds.get(0)); duplicate.add(duplicate.getFirst());
         assertProtocolFailure(duplicate, "SINGLE_EVALUATION", "appears more than once", null);
         List<SemanticOp> shared = new ArrayList<>(seeds.get(0));
-        SemanticOp original = shared.getLast();
-        shared.add(new SemanticOp(new OpId(MODULE, 99999), original.kind(), original.origin(), original.result(),
-            original.resultType(), original.operands(), original.operandTypes(), original.payload(),
-            original.failurePolicy(), original.contract()));
-        assertProtocolFailure(shared, "SINGLE_EVALUATION", "referenced by more than one chain", null);
+        OpId chainB = new OpId(MODULE, 99999);
+        for (int i = 1; i < seeds.get(0).size(); i++) {
+            SemanticOp original = seeds.get(0).get(i);
+            KindPayload payload = i == 3 ? new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                List.of(shared.getFirst().opId(), new OpId(MODULE, 99997), new OpId(MODULE, 99998)))
+                : original.payload();
+            SemanticOp copy = protocolCopy(original, payload, original.failurePolicy(),
+                protocolOrigin("chain-b.deal", i == 3 ? null : chainB));
+            shared.add(new SemanticOp(new OpId(MODULE, 99996 + i), copy.kind(), copy.origin(), copy.result(),
+                copy.resultType(), copy.operands(), copy.operandTypes(), copy.payload(), copy.failurePolicy(), copy.contract()));
+        }
+        assertProtocolFailure(shared, "SINGLE_EVALUATION",
+            "the producing child " + shared.getFirst().opId() + " is referenced by more than one chain", null);
         List<SemanticOp> reordered = new ArrayList<>(seeds.get(2)); java.util.Collections.reverse(reordered);
         check(AddressChainProtocol.validate(protocolUnit(reordered)).isEmpty(), "chain resolves children by identity, not unit order");
         check(AddressChainProtocol.validate(protocolUnit(List.of())).isEmpty(), "empty unit outside protocol domain");

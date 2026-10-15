@@ -2346,6 +2346,14 @@ public class ProjectLoweringTest {
                 (CanonicalJson.Obj) CanonicalJson.parse(text));
             checkEq(RawUnit.fromTyped(unit), reparsed,
                 unit.moduleId() + ": every unit fact round-trips");
+            checkEq(unit.bodyTable(), reparsed.bodyTable(),
+                unit.moduleId() + ": both membership directions survive");
+            checkEq(unit.classFactories(), reparsed.classFactories(),
+                unit.moduleId() + ": factory registry survives");
+            checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(),
+                unit.moduleId() + ": JSON-default rows survive");
+            checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(),
+                unit.moduleId() + ": parameter/import facts survive");
             checkEq(text, CanonicalJson.serializeText(ContractSnapshotCanonicalizer.toJson(reparsed)),
                 unit.moduleId() + ": canonical text is byte-stable");
             Optional<CompilerDiagnostic> readmitted = SemanticIrValidator.validateText(text, facts);
