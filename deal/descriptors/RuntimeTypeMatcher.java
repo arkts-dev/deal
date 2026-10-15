@@ -38,8 +38,10 @@ import java.util.Objects;
  *       range)} hook ({@code bytes | E8001}); no other predicate is
  *       consulted</td><td>the hook's own E8001 outcome, propagated
  *       unchanged</td></tr>
- *   <tr><td>{@code @...}</td><td>tagged class identity byte-equal to the
- *       parsed {@link DescriptorAst.ClassAtom} full text</td>
+ *   <tr><td>{@code @...} and the builtin {@code Error} atom</td>
+ *       <td>tagged class identity byte-equal to the parsed
+ *       {@link DescriptorAst.ClassAtom} full text (the builtin
+ *       {@code Error} carrier carries exactly {@code Error})</td>
  *       <td>E8001 {@code expected instance of {D}, got {actual}}</td></tr>
  *   <tr><td>{@code [D]}</td><td>backend array representation; elements
  *       checked recursively in index order</td>
@@ -241,7 +243,8 @@ public final class RuntimeTypeMatcher {
         return value;
     }
 
-    /** The class row: tagged class identity byte-equal to the atom's full text. */
+    /** The class row: tagged class identity byte-equal to the atom's full text
+     * (the builtin {@code Error} atom's text is exactly {@code Error}). */
     private Object checkClass(String atomText, Object value, RuntimeSourceLocation range) {
         String tag = model.classIdentityText(value);
         if (tag == null) {

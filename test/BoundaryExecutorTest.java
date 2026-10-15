@@ -239,8 +239,8 @@ public class BoundaryExecutorTest {
             "describe(async Func) is async(int)->string");
         check("@src/app/User".equals(USER.canonicalSpecText()),
             "describe(Type.Class(User, src/app)) is @src/app/User");
-        check("@/Error".equals(BUILTIN_ERROR.canonicalSpecText()),
-            "describe(Type.Class(Error, \"\")) is @/Error");
+        check("Error".equals(BUILTIN_ERROR.canonicalSpecText()),
+            "describe(Type.Class(Error, \"\")) is the bare Error atom");
     }
 
     // =========================================================================
@@ -437,14 +437,24 @@ public class BoundaryExecutorTest {
             "expected class instance", "class", "number",
             new LinkedHashMap<>(), null, "class descriptor vs non-class view");
 
-        // The builtin Error atom is the schema-pinned @/Error spelling.
+        // The builtin Error atom is the schema-pinned bare Error spelling.
         expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, BUILTIN_ERROR,
-            BoundaryValueView.ofClass("@/Error")), "builtin Error atom matches");
+            BoundaryValueView.ofClass("Error")), "builtin Error atom matches");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, BUILTIN_ERROR,
                 BoundaryValueView.ofClass("@src/app/User")),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected instance of @/Error, got @src/app/User", "@/Error", "@src/app/User",
+            "expected instance of Error, got @src/app/User", "Error", "@src/app/User",
             new LinkedHashMap<>(), null, "builtin Error vs foreign class atom");
+        // The superseded v1.2 aliases never match (no fallback identity);
+        // a carrier tagged with one is outside the closed class-atom
+        // vocabulary, so the failure render fails closed as a producer
+        // defect rather than publishing an alias identity.
+        expectDefect(() -> checkCell(FailurePolicyId.TYPE_DESCRIPTOR, BUILTIN_ERROR,
+            BoundaryValueView.ofClass("@$builtin/Error")),
+            "superseded builtin alias carrier never matches the canonical atom");
+        expectDefect(() -> checkCell(FailurePolicyId.TYPE_DESCRIPTOR, BUILTIN_ERROR,
+            BoundaryValueView.ofClass("@/Error")),
+            "superseded empty-module alias carrier never matches the canonical atom");
     }
 
     // =========================================================================

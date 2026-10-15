@@ -66,14 +66,15 @@ end
 -- arguments leave the corresponding fields absent (nil), matching _err's
 -- convention.
 --
--- The canonical identity (runtime page D3/D6): the instance carries the
--- canonical class atom @$builtin/Error, and the canonical boundary matcher
--- matches it byte-for-byte. The bare "Error" spelling is never emitted and
--- fails the canonical parser.
+-- The canonical identity (v1.3 DescriptorV13): the instance carries the
+-- canonical builtin class atom Error (the one class atom without the
+-- leading '@'), and the canonical boundary matcher matches it
+-- byte-for-byte. The superseded v1.2 spellings @/Error and
+-- @$builtin/Error are never emitted and never parse.
 function __rt.error_value(code, message, file, line, column)
   return {
     __kind = "class",
-    __classname = "@$builtin/Error",
+    __classname = "Error",
     code = code,
     message = message,
     file = file,
@@ -465,12 +466,13 @@ end
 -- carries canonical descriptors, and any legacy dialect spelling
 -- ("T[]", "T|null", bare class names, "...T[]") is rejected at the
 -- boundary. error_value tags reified Error instances with the canonical
--- identity @$builtin/Error, matched byte-for-byte here.
+-- identity Error (the builtin class atom), matched byte-for-byte here.
 --
 -- Canonical grammar (canonical-type-system-and-runtime-descriptors D2):
 --
---   descriptor := primitive | class | array | nullable | function
+--   descriptor := primitive | error | class | array | nullable | function
 --   primitive  := "null" | "boolean" | "int" | "number" | "string" | "bytes" | "table"
+--   error      := "Error"
 --   class      := "@" component ("/" component)+
 --   array      := "[" descriptor "]"
 --   nullable   := "?" descriptor
@@ -657,6 +659,9 @@ local function parse_descriptor(text)
       if component == "." or component == ".." then
         return nil  -- "." / ".." as a whole component
       end
+      if not has_separator and component == "$builtin" then
+        return nil  -- the superseded v1.2 builtin namespace forms no class atom
+      end
       if pos <= n and string.byte(text, pos) == 0x2F then
         has_separator = true
         pos = pos + 1  -- consume '/'; the next component must be non-empty
@@ -723,6 +728,14 @@ local function parse_descriptor(text)
         pos = pos + #kw
         return { kind = "primitive", name = kw, text = kw }
       end
+    end
+    -- The builtin Error atom: the exact token "Error" terminating at a
+    -- descriptor position (end of input or a delimiter). The superseded
+    -- v1.2 spellings @/Error and @$builtin/Error are never admitted.
+    if string.sub(text, pos, pos + 4) == "Error"
+        and (pos + 5 > n or not is_identifier_byte(string.byte(text, pos + 5))) then
+      pos = pos + 5
+      return { kind = "class", name = "Error", text = "Error" }
     end
     -- The exact async marker: "async" must be immediately followed by '('.
     if string.sub(text, pos, pos + 4) == "async"
@@ -859,7 +872,7 @@ end
 -- E8003 wrapping at the first failing index, ?D nullables, function
 -- descriptors with byte-for-byte signature comparison (E8010 on
 -- mismatch), and class atoms matched byte-for-byte as complete text
--- (including the canonical projection @$builtin/Error, which
+-- (including the canonical builtin projection Error, which
 -- error_value tags).
 --
 -- This is the boundary path every typed crossing uses: generated

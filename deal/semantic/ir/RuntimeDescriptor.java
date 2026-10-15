@@ -25,8 +25,15 @@ public sealed interface RuntimeDescriptor extends OpResultType
      * variants — the exact inverse of {@link #canonicalSpecText()}. The
      * whole text must be consumed: {@code null}, {@code boolean},
      * {@code int}, {@code number}, {@code string}, {@code table},
-     * {@code bytes}, {@code @modulePath/ClassName}, {@code [element]},
+     * {@code bytes}, the builtin {@code Error} atom, the
+     * {@code @modulePath/ClassName} class atom, {@code [element]},
      * {@code ?inner}, {@code (p1,p2)->r}, {@code async(p1,p2)->r}.
+     *
+     * <p>The superseded v1.2 aliases {@code @/Error} and
+     * {@code @$builtin/Error} never decode: the builtin class is exactly
+     * the bare {@code Error} atom, and the reserved {@code $builtin}
+     * namespace forms no class identity. A malformed or legacy class text
+     * is the documented decode failure, never a fallback identity.</p>
      *
      */
     static RuntimeDescriptor parseCanonicalText(java.lang.String text) {
@@ -70,10 +77,13 @@ public sealed interface RuntimeDescriptor extends OpResultType
             // ')' / ']' / ',' (none of those may appear inside a module
             // path or class name) or at the end of the text; the module
             // path is everything before the last '/', the class name
-            // everything after it. An empty module path is the pinned
-            // builtin spelling (@/Error == ClassId.ERROR); no-slash
-            // segments (@User) and empty class names (@src/, @/) stay
-            // rejected.
+            // everything after it. The superseded v1.2 builtin spellings
+            // are rejected at this decoding boundary: '@' requires a
+            // non-empty module path, so '@/Error' (the empty builtin module
+            // path) and '@$builtin/Error' (the reserved namespace) never
+            // decode to an identity. The canonical builtin class is the
+            // bare 'Error' atom below; no-slash segments (@User) and empty
+            // class names (@src/, @/) stay rejected.
             int end = pos[0] + 1;
             while (end < text.length() && text.charAt(end) != ')'
                     && text.charAt(end) != ']' && text.charAt(end) != ',') {
@@ -86,8 +96,17 @@ public sealed interface RuntimeDescriptor extends OpResultType
                     "not a canonical descriptor text (class text lacks modulePath/ClassName): \""
                         + text + "\"");
             }
+            java.lang.String modulePath = segment.substring(0, slash);
+            if (modulePath.isEmpty()
+                    || modulePath.equals("$builtin")
+                    || modulePath.startsWith("$builtin/")) {
+                throw new SemanticIrTextDecodeException(
+                    "not a canonical descriptor text (the builtin Error class is the bare"
+                        + " 'Error' atom; an '@' class atom requires a module path): \""
+                        + text + "\"");
+            }
             try {
-                ClassId classId = new ClassId(segment.substring(0, slash),
+                ClassId classId = new ClassId(modulePath,
                     segment.substring(slash + 1));
                 pos[0] = end;
                 return new Class(classId);
@@ -117,6 +136,15 @@ public sealed interface RuntimeDescriptor extends OpResultType
                     pos[0] = end;
                     return mapped[i];
                 }
+            }
+        }
+        // The builtin Error atom: the one class identity without the '@'.
+        if (text.startsWith("Error", pos[0])) {
+            int end = pos[0] + "Error".length();
+            if (end == text.length() || text.charAt(end) == ')'
+                    || text.charAt(end) == ']' || text.charAt(end) == ',') {
+                pos[0] = end;
+                return new Class(ClassId.ERROR);
             }
         }
         throw new SemanticIrTextDecodeException(
@@ -244,7 +272,10 @@ public sealed interface RuntimeDescriptor extends OpResultType
     }
 
     /**
-     * A nominal class descriptor; canonical text {@code @modulePath/ClassName}.
+     * A nominal class descriptor; canonical text
+     * {@code @modulePath/ClassName}, or exactly {@code Error} for the
+     * builtin {@code Error} class (the one class atom without the
+     * {@code @}).
      *
      */
     record Class(ClassId classId) implements RuntimeDescriptor {

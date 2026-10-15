@@ -51,7 +51,10 @@ public final class DescriptorService {
      * {@link Type} — the only {@code Type}→{@link RuntimeDescriptor}
      * producer for common units. Total and deterministic over the eleven
      * supported variants; {@link Type.Error} raises {@link Defect} (fail
-     * closed, never an invented descriptor).
+     * closed, never an invented descriptor), and so does a builtin class
+     * other than the intrinsic {@code Error} (the builtin module declares
+     * only {@code Error}; that class's canonical text is exactly
+     * {@code Error}).
      *
      */
     public static RuntimeDescriptor describe(Type type) {
@@ -68,9 +71,7 @@ public final class DescriptorService {
                 "Type.Error reached a descriptor-production position: the internal checker "
                     + "sentinel has no RuntimeDescriptor member in deal.semantic-ir/2 and is "
                     + "excluded from common units");
-            case Type.Class cls -> new RuntimeDescriptor.Class(
-                new ClassId(semanticModulePath(cls.identity()),
-                    cls.name()));
+            case Type.Class cls -> describeClass(cls);
             case Type.Array array -> new RuntimeDescriptor.Array(describe(array.element()));
             case Type.Nullable nullable ->
                 new RuntimeDescriptor.Nullable(describe(nullable.inner()));
@@ -78,6 +79,27 @@ public final class DescriptorService {
                 func.paramTypes().stream().map(DescriptorService::describe).toList(),
                 describe(func.returnType()), func.isAsync());
         };
+    }
+
+    /**
+     * The class arm: the carried identity's canonical module path plus the
+     * class name, projecting to the builtin {@code Error} atom for the
+     * intrinsic builtin identity. A builtin class other than
+     * {@code Error} is a malformed internal fact: it raises the named
+     * {@link Defect} (converted by the unit-production seam into E6005),
+     * never an invented descriptor.
+     */
+    private static RuntimeDescriptor.Class describeClass(Type.Class cls) {
+        if (cls.identity().moduleIdentity()
+                    instanceof CanonicalModuleIdentity.BuiltinModule
+                && !"Error".equals(cls.name())) {
+            throw new Defect(
+                "builtin class '" + cls.name() + "' has no canonical descriptor: "
+                    + "the builtin module declares only the intrinsic 'Error' class "
+                    + "(internal invariant violation)");
+        }
+        return new RuntimeDescriptor.Class(
+            new ClassId(semanticModulePath(cls.identity()), cls.name()));
     }
 
     public static String semanticModulePath(CanonicalClassIdentity identity) {

@@ -1084,17 +1084,16 @@ public final class FailureContractRegistry {
         throw shapeDefect(arm, "actual", token, "a closed typed-boundary token");
     }
 
-    /** The declared or carried canonical class atom ({@code @modulePath/Name}). */
+    /** The declared or carried canonical class atom ({@code Error} or
+     * {@code @modulePath/Name}). */
     private static void requireClassAtom(FailureArm arm, String field, String value) {
         if (!isClassAtomText(value)) {
-            throw shapeDefect(arm, field, value, "a canonical class atom (\"@modulePath/Class\")");
+            throw shapeDefect(arm, field, value,
+                "a canonical class atom (\"Error\" or \"@modulePath/Class\")");
         }
     }
 
     private static boolean isClassAtomText(String value) {
-        if (!value.startsWith("@")) {
-            return false;
-        }
         try {
             return RuntimeDescriptor.parseCanonicalText(value)
                 instanceof RuntimeDescriptor.Class;
@@ -1173,7 +1172,7 @@ public final class FailureContractRegistry {
             return -1;
         }
         char c = text.charAt(start);
-        if (c == '@') {
+        if (c == '@' || text.startsWith("Error", start)) {
             return dialectClassAtomEnd(text, start);
         }
         if (text.startsWith("array(", start)) {
@@ -1250,14 +1249,22 @@ public final class FailureContractRegistry {
     }
 
     /**
-     * One dialect class atom {@code @modulePath/ClassName}: the segment ends
-     * at the dialect delimiters ({@code )}, {@code ]}, {@code ,}, or the
-     * {@code ;} of a dialect parameter list) or the end of the text, a
-     * {@code /} must appear, and the final {@code /}-separated segment must
-     * be non-empty (the pinned builtin {@code @/Error} keeps its empty module
-     * path). Returns the index just past the segment, or {@code -1}.
+     * One dialect class atom — {@code Error} (the builtin atom) or
+     * {@code @modulePath/ClassName} — followed by a dialect delimiter or
+     * the end of the text. The {@code @} form ends at the dialect
+     * delimiters ({@code )}, {@code ]}, {@code ,}, or the {@code ;} of a
+     * dialect parameter list) or the end of the text, a {@code /} must
+     * appear, the final {@code /}-separated segment must be non-empty, and
+     * the reserved {@code $builtin} namespace forms no class atom. Returns
+     * the index just past the segment, or {@code -1}.
      */
     private static int dialectClassAtomEnd(String text, int start) {
+        if (isDialectErrorAtomEnd(text, start)) {
+            return start + "Error".length();
+        }
+        if (start >= text.length() || text.charAt(start) != '@') {
+            return -1;
+        }
         int end = start + 1;
         while (end < text.length()) {
             char c = text.charAt(end);
@@ -1271,7 +1278,27 @@ public final class FailureContractRegistry {
         if (slash < 0 || slash == segment.length() - 1) {
             return -1;
         }
+        String modulePath = segment.substring(0, slash);
+        if (modulePath.isEmpty() || modulePath.equals("$builtin")
+                || modulePath.startsWith("$builtin/")) {
+            return -1;
+        }
         return end;
+    }
+
+    /**
+     * True iff one dialect position carries the builtin {@code Error}
+     * atom: the exact token followed by a dialect delimiter or the end of
+     * the text.
+     */
+    private static boolean isDialectErrorAtomEnd(String text, int start) {
+        if (!text.startsWith("Error", start)) {
+            return false;
+        }
+        int end = start + "Error".length();
+        return end == text.length()
+            || text.charAt(end) == ')' || text.charAt(end) == ']'
+            || text.charAt(end) == ',' || text.charAt(end) == ';';
     }
 
     /** The parameter whose declared source is {@code source}, or {@code null}. */

@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: Error values reified by error_value carry the canonical @$builtin/Error class atom; a thrown and caught Error crosses an Error-typed boundary byte-for-byte with code and message intact, and the canonical matcher re-matches the atom exactly.
+// @description: Error values reified by error_value carry the canonical Error class atom (the one class atom without the leading '@'); a thrown and caught Error crosses an Error-typed boundary byte-for-byte with code and message intact, and the canonical matcher re-matches the atom exactly.
 // @expected: runtime-ok
 // @features: descriptors, error-handling, classes
 

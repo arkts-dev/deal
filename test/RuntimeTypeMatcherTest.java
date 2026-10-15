@@ -242,7 +242,7 @@ public class RuntimeTypeMatcherTest {
         assertFailure("null", "x", "E8001", "expected null, got string", "null vs string");
         assertFailure("null", new TableValue(), "E8001", "expected null, got table", "null vs table");
         assertFailure("null", new ArrayValue(), "E8001", "expected null, got array", "null vs array");
-        assertFailure("null", new ClassValue("@$builtin/Error"), "E8001",
+        assertFailure("null", new ClassValue("Error"), "E8001",
             "expected null, got class", "null vs class");
         assertFailure("null", new FnValue("()->null"), "E8001",
             "expected null, got function", "null vs function");
@@ -378,15 +378,26 @@ public class RuntimeTypeMatcherTest {
     static void testClassRow() {
         System.out.println("-- class row --");
 
-        assertPass("@$builtin/Error", new ClassValue("@$builtin/Error"),
+        assertPass("Error", new ClassValue("Error"),
             "builtin Error tag byte-matches");
+        // The superseded v1.2 builtin spellings are refused at the decoding
+        // boundary and never match the canonical atom.
+        assertFailure("@/Error", new ClassValue("Error"), "E8001",
+            "internal: cannot parse type descriptor: @/Error",
+            "superseded @/Error alias refused at the decoding boundary");
+        assertFailure("@$builtin/Error", new ClassValue("Error"), "E8001",
+            "internal: cannot parse type descriptor: @$builtin/Error",
+            "superseded @$builtin/Error alias refused at the decoding boundary");
+        assertFailure("Error", new ClassValue("@$builtin/Error"), "E8001",
+            "expected instance of Error, got @$builtin/Error",
+            "a value carrying the superseded alias never matches the canonical atom");
         assertPass("@lib/utils/User", new ClassValue("@lib/utils/User"),
             "multi-component root tag byte-matches");
         assertPass("@lib.utils/User", new ClassValue("@lib.utils/User"),
             "dotted non-final component tag byte-matches");
 
-        assertFailure("@$builtin/Error", new ClassValue("@$external/pkg/Error"), "E8001",
-            "expected instance of @$builtin/Error, got @$external/pkg/Error",
+        assertFailure("Error", new ClassValue("@$external/pkg/Error"), "E8001",
+            "expected instance of Error, got @$external/pkg/Error",
             "class tag byte delta");
 
         // Dedicated dotted-tag negative pins: the v1.1 dotted spellings
@@ -404,10 +415,10 @@ public class RuntimeTypeMatcherTest {
             "expected instance of @lib/utils/User, got @lib.utils/User",
             "slash/dot spellings never cross");
 
-        assertFailure("@$builtin/Error", new TableValue(), "E8001",
-            "expected instance of @$builtin/Error, got table", "untagged table value");
-        assertFailure("@$builtin/Error", NULL_VALUE, "E8001",
-            "expected instance of @$builtin/Error, got null", "untagged null value");
+        assertFailure("Error", new TableValue(), "E8001",
+            "expected instance of Error, got table", "untagged table value");
+        assertFailure("Error", NULL_VALUE, "E8001",
+            "expected instance of Error, got null", "untagged null value");
     }
 
     // =========================================================================
@@ -422,7 +433,7 @@ public class RuntimeTypeMatcherTest {
         assertPass("[[int]]", new ArrayValue(new ArrayValue(1.0), new ArrayValue(2.0, 3.0)),
             "nested arrays pass");
         assertPass("[?int]", new ArrayValue(NULL_VALUE, 5.0), "nullable elements pass");
-        assertPass("[@$builtin/Error]", new ArrayValue(new ClassValue("@$builtin/Error")),
+        assertPass("[Error]", new ArrayValue(new ClassValue("Error")),
             "class elements pass");
         assertPass("[(int)->null]", new ArrayValue(new FnValue("(int)->null")),
             "function elements pass");
@@ -438,8 +449,8 @@ public class RuntimeTypeMatcherTest {
         assertFailure("[[int]]", new ArrayValue(new ArrayValue(1.0, "x"), new ArrayValue(2.0)),
             "E8003", "array element 1 type mismatch",
             "outer first failing index reported for nested arrays");
-        assertFailure("[@$builtin/Error]",
-            new ArrayValue(new ClassValue("@$builtin/Error"), new ClassValue("@host.cfg/ServerConfig")),
+        assertFailure("[Error]",
+            new ArrayValue(new ClassValue("Error"), new ClassValue("@host.cfg/ServerConfig")),
             "E8003", "array element 2 type mismatch", "class tag delta inside an array");
 
         // No mutation: the array double's storage is untouched and the
@@ -482,7 +493,7 @@ public class RuntimeTypeMatcherTest {
         assertPass("async(int)->string", new FnValue("async(int)->string"),
             "async wrapper byte-matches");
         assertPass("()->null", new FnValue("()->null"), "zero-arg wrapper byte-matches");
-        assertPass("(@$builtin/Error)->null", new FnValue("(@$builtin/Error)->null"),
+        assertPass("(Error)->null", new FnValue("(Error)->null"),
             "class-typed function byte-matches");
 
         assertFailure("async(int)->string", new FnValue("(int)->string"), "E8010",

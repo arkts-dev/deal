@@ -11,13 +11,17 @@ import java.util.Objects;
  * <ul>
  *   <li>{@link PrimitiveAtom} — one of {@code null}, {@code boolean},
  *       {@code int}, {@code number}, {@code string}, {@code bytes},
- *       {@code table}.</li>
+ *       {@code table}.  The builtin {@code Error} class atom is
+ *       deliberately <em>not</em> a primitive: {@code Error} is a
+ *       nominal class identity and is carried as a
+ *       {@link ClassAtom}.</li>
  *   <li>{@link ClassAtom} — a text-opaque class descriptor atom whose
  *       {@linkplain ClassAtom#fullDescriptorText() full text} includes the
- *       leading {@code @} byte-for-byte as consumed.  No root/path
- *       boundary is ever inferred; equality is byte-for-byte text
- *       equality and the only structural validation the parser applies is
- *       the pinned final-component class-name shape.</li>
+ *       leading {@code @} byte-for-byte as consumed, except for the
+ *       builtin {@code Error} atom whose canonical text is exactly
+ *       {@code Error}.  No root/path boundary is ever inferred; equality
+ *       is byte-for-byte text equality and the only structural validation
+ *       the parser applies is the pinned final-component class-name shape.</li>
  *   <li>{@link ArrayAtom} — {@code [D]}.</li>
  *   <li>{@link NullableAtom} — {@code ?D}.</li>
  *   <li>{@link FunctionAtom} — the exact sync/async marker, the ordered
@@ -49,10 +53,11 @@ public sealed interface DescriptorAst extends DescriptorParseResult
 
     /**
      * A text-opaque class descriptor atom.  {@code fullDescriptorText} is
-     * the complete class descriptor text including the leading {@code @},
-     * byte-for-byte as consumed by the strict parser.  Atoms are never
-     * split into root/path/class-name structure beyond the parser's
-     * final-component class-name validation.
+     * the complete class identity text byte-for-byte as consumed by the
+     * strict parser: {@code @} plus the class text for every non-builtin
+     * class, and exactly {@code Error} for the builtin {@code Error}
+     * class.  Atoms are never split into root/path/class-name structure
+     * beyond the parser's final-component class-name validation.
      */
     record ClassAtom(String fullDescriptorText) implements DescriptorAst {
         public ClassAtom {

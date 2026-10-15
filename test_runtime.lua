@@ -1540,7 +1540,7 @@ end)
 test("error_value shape with span args", function()
   local e = __rt.error_value("E_LIMIT", "fail", "test.deal", 3, 7)
   assert(e.__kind == "class")
-  assert(e.__classname == "@$builtin/Error")
+  assert(e.__classname == "Error")
   assert(e.code == "E_LIMIT")
   assert(e.message == "fail")
   assert(e.file == "test.deal")
@@ -1551,7 +1551,7 @@ end)
 test("error_value shape without span args", function()
   local e = __rt.error_value("", "m")
   assert(e.__kind == "class")
-  assert(e.__classname == "@$builtin/Error")
+  assert(e.__classname == "Error")
   assert(e.code == "")
   assert(e.message == "m")
   assert(e.file == nil)
@@ -1561,24 +1561,25 @@ end)
 
 test("check_type Error passes against error_value outputs", function()
   local e = __rt.error_value("E_LIMIT", "fail")
-  local r = __rt.check_type("@$builtin/Error", e)
+  local r = __rt.check_type("Error", e)
   assert(r == e)
 end)
 
 test("check_type Error rejects non-Error class instances", function()
-  local u = __rt.class_("@$builtin/Error", {code = "", message = ""}, {code = "X"})
-  assert_error(function() __rt.check_type("@$builtin/Error", {__kind = "class", __classname = "User"}) end, "E8001")
+  local u = __rt.class_("Error", {code = "", message = ""}, {code = "X"})
+  assert_error(function() __rt.check_type("Error", {__kind = "class", __classname = "User"}) end, "E8001")
   -- sanity: a genuine Error instance still passes
-  assert(u.__kind == "class" and u.__classname == "@$builtin/Error")
+  assert(u.__kind == "class" and u.__classname == "Error")
 end)
 
-test("check_type rejects the bare Error spelling", function()
-  -- The bare "Error" atom is a legacy dialect spelling (runtime page
-  -- D3/D6): the canonical parser rejects it; the canonical projection
-  -- @$builtin/Error is the only Error atom.
+test("check_type rejects the superseded builtin Error aliases", function()
+  -- The canonical builtin atom is exactly the bare "Error" (v1.3
+  -- DescriptorV13); the superseded v1.2 spellings do not decode.
   local e = __rt.error_value("E8001", "boom")
-  local err = assert_error(function() __rt.check_type("Error", e) end, "E8001")
-  assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
+  for _, alias in ipairs({"@/Error", "@$builtin/Error"}) do
+    local err = assert_error(function() __rt.check_type(alias, e) end, "E8001")
+    assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
+  end
 end)
 
 -- ==================== _deep_copy edge cases ====================
@@ -1750,10 +1751,10 @@ test("the canonical matcher selects its closed arm on every mapped cell", functi
   local bytes = selection(function() __rt.check_type("bytes", 5) end, "E8001")
   assert(bytes.id == "TYPED_BOUNDARY_KIND" and bytes.values.kind == "bytes")
   local klass = selection(function()
-    __rt.check_type("@$builtin/Error", {__kind = "class", __classname = "@src/A"})
+    __rt.check_type("Error", {__kind = "class", __classname = "@src/A"})
   end, "E8001")
   assert(klass.id == "CLASS_IDENTITY")
-  assert(klass.values.expected == "@$builtin/Error")
+  assert(klass.values.expected == "Error")
   assert(klass.values.actual == "@src/A")
   local element = selection(function() __rt.check_type("[int]", {"x"}) end, "E8003")
   assert(element.id == "ARRAY_ELEMENT_KIND" and element.values.oneBasedIndex == 1)
@@ -3019,7 +3020,7 @@ end)
 test("canonical parser accepts class atoms byte-for-byte", function()
   local atoms = {
     "@lib/utils/User", "@lib.utils/User", "@$external/host.cfg/ServerConfig",
-    "@$builtin/Error", "@host.cfg/ServerConfig", "@a/b",
+    "Error", "@host.cfg/ServerConfig", "@a/b",
   }
   for _, t in ipairs(atoms) do
     local ast = assert_parse_ok(t)
@@ -3038,7 +3039,7 @@ end)
 test("canonical parser rejects every legacy dialect spelling", function()
   local legacy = {
     "int[]", "bytes[]", "string[]", "int|null", "?int|null", "string|null",
-    "T[]", "T|null", "...T[]", "User", "Error", "ServerConfig", "Foo",
+    "T[]", "T|null", "...T[]", "User", "ServerConfig", "Foo",
   }
   for _, t in ipairs(legacy) do
     assert_parse_rejected(t)
@@ -3197,20 +3198,24 @@ test("check_canonical_type function row keeps the exact async marker", function(
 end)
 
 test("check_canonical_type class row matches atoms byte-for-byte", function()
-  local probe = { __kind = "class", __classname = "@$builtin/Error" }
-  assert(__rt.check_canonical_type("@$builtin/Error", probe) == probe)
+  local probe = { __kind = "class", __classname = "Error" }
+  assert(__rt.check_canonical_type("Error", probe) == probe)
   local err = assert_error(function()
-    __rt.check_canonical_type("@$builtin/Error", { __kind = "class", __classname = "Error" })
+    __rt.check_canonical_type("Error", { __kind = "class", __classname = "@src/A" })
   end, "E8001")
-  assert(err.message == "expected instance of @$builtin/Error, got Error", tostring(err.message))
+  assert(err.message == "expected instance of Error, got @src/A", tostring(err.message))
   assert_error(function()
-    __rt.check_canonical_type("@$builtin/Error", { __kind = "class", __classname = "@$builtin/Errorx" })
+    __rt.check_canonical_type("Error", { __kind = "class", __classname = "Errorx" })
   end, "E8001")
   assert_error(function()
-    __rt.check_canonical_type("@$builtin/Error", { __kind = "class", __classname = "@host.cfg/ServerConfig" })
+    __rt.check_canonical_type("Error", { __kind = "class", __classname = "@host.cfg/ServerConfig" })
   end, "E8001")
-  assert_error(function() __rt.check_canonical_type("@$builtin/Error", 42) end, "E8001")
-  assert_error(function() __rt.check_canonical_type("@$builtin/Error", {}) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("Error", 42) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("Error", {}) end, "E8001")
+  -- The superseded v1.2 spellings do not reach a class row (no fallback
+  -- identity): they are unparsable text.
+  assert_error(function() __rt.check_canonical_type("@/Error", probe) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("@$builtin/Error", probe) end, "E8001")
 end)
 
 test("check_canonical_type rejects legacy and malformed descriptors", function()
@@ -3250,18 +3255,21 @@ test("boundary flip: check_type IS the canonical matcher", function()
   -- The boundary path now rejects every legacy dialect spelling.
   assert_error(function() __rt.check_type("int[]", { 1, 2 }) end, "E8001")
   assert_error(function() __rt.check_type("string|null", __rt.__NULL) end, "E8001")
-  assert_error(function() __rt.check_type("Error", __rt.error_value("E8001", "boom")) end, "E8001")
+  assert_error(function() __rt.check_type("@/Error", __rt.error_value("E8001", "boom")) end, "E8001")
+  assert_error(function() __rt.check_type("@$builtin/Error", __rt.error_value("E8001", "boom")) end, "E8001")
   -- Canonical spellings pass through the same entry.
   assert(__rt.check_type("[int]", { 1, 2 }) ~= nil)
   assert(__rt.check_type("?string", __rt.__NULL) == __rt.__NULL)
   local ev = __rt.error_value("E8001", "boom")
-  assert(ev.__classname == "@$builtin/Error")
-  assert(__rt.check_type("@$builtin/Error", ev) == ev)
+  assert(ev.__classname == "Error")
+  assert(__rt.check_type("Error", ev) == ev)
   -- The canonical alias entries are the same matcher.
   assert(__rt.check_canonical_type("[int]", { 1 }) ~= nil)
   assert_parse_rejected("int[]")
   assert_parse_rejected("string|null")
-  assert_parse_rejected("Error")
+  -- The superseded builtin aliases are rejected (no fallback identity).
+  assert_parse_rejected("@/Error")
+  assert_parse_rejected("@$builtin/Error")
 end)
 -- ==================== invoke_async_export tests ====================
 -- Driver for the production async-export host ABI runtime half (runtime
@@ -3503,7 +3511,7 @@ test("invoke_async_export malformed protocol inputs raise the host-invocation fa
     __rt.invoke_async_export({}, "oracle", "int[]")
   end, "not a canonical descriptor")
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export({}, "oracle", "Error")
+    __rt.invoke_async_export({}, "oracle", "@$builtin/Error")
   end, "not a canonical descriptor")
   assert_host_invocation_failure(function()
     __rt.invoke_async_export({}, "oracle", nil)
@@ -3600,14 +3608,14 @@ local FFI_BATT_CALL_LINE = 7077
 local FFI_BATT_CALL_COL = 77
 
 -- B5: each code is asserted through BOTH the assert_error err.code path
--- and the error_value reification path (the tagged @$builtin/Error
+-- and the error_value reification path (the tagged Error
 -- instance a generated catch emits via error_value(err.code,
 -- err.message)).
 local function ffi_batt_assert_reified(err, expected_code)
   assert(type(err) == "table", "expected an error table for reification")
   local ev = __rt.error_value(err.code, err.message)
   assert(ev.__kind == "class", "the reified error must be a tagged class instance")
-  assert(ev.__classname == "@$builtin/Error",
+  assert(ev.__classname == "Error",
       "the reified error must carry the canonical Error identity")
   assert(ev.code == expected_code,
       "the reified error code must be " .. tostring(expected_code))

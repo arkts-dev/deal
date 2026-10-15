@@ -8,6 +8,13 @@ import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
+import deal.module.ModuleIdentityAssembly;
+import deal.module.ModuleIdentityResolver;
+import deal.semantic.CanonicalTypeText;
+import deal.semantic.DescriptorService;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -46,6 +53,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         testEncodePinnedShapes();
         testEncodeInvariantViolations();
         testEncodeClassBranch();
+        testCanonicalErrorAgreement();
         testEncodeClassBearingIndexContract();
         testEncodeClassBearingPins();
         testEncodeClassBearingIndexMiss();
@@ -248,10 +256,114 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "@lib.utils/User", "@src.models/User", "@$external/host.cfg/ServerConfig",
             // Hyphens are legal component scalars; only contiguous -> is not.
             "@a-b/c",
-            "@$builtin/Error", "@$external/pkg/Cls",
+            "@$external/pkg/Cls",
+            // The builtin Error atom is exactly the bare token (v1.3
+            // DescriptorV13), at every nesting depth.
+            "Error", "?Error", "[Error]", "[?Error]", "(Error)->null",
+            "async(Error)->[Error]", "(?[Error],Error)->Error",
         };
         for (String text : valid) {
             assertAtom(text, "valid shape");
+        }
+    }
+
+    // =========================================================================
+    // Canonical builtin Error agreement across the descriptor layers
+    // =========================================================================
+
+    /**
+     * The v1.3 builtin-Error projection is one byte-exact text across the
+     * layers: the descriptor constant, the identity assembly's registered
+     * text, the resolver's projection, the semantic-IR ClassId, the
+     * structural DescriptorService, and the interface text agree; both
+     * superseded v1.2 aliases are refused at the decoding boundaries with
+     * no fallback identity.
+     */
+    static void testCanonicalErrorAgreement() {
+        System.out.println("-- canonical builtin Error agreement --");
+
+        check("Error".equals(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR),
+            "the canonical builtin Error atom is exactly Error");
+        check(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR.equals(
+                ModuleIdentityAssembly.INTRINSIC_ERROR_DESCRIPTOR_TEXT),
+            "the identity assembly registers exactly the canonical atom");
+        check(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR.equals(
+                ClassId.ERROR.text()),
+            "the semantic-IR ClassId renders exactly the canonical atom");
+
+        CanonicalClassIdentity errorIdentity =
+            IdentityTestFixtures.errorIdentity();
+        CanonicalClassIdentityIndex resolverIndex =
+            ModuleIdentityResolver.buildIndex(Map.of("",
+                CanonicalModuleIdentity.BuiltinModule.INSTANCE));
+        check(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR.equals(
+                resolverIndex.descriptorTextFor(errorIdentity)),
+            "the module-identity resolver projects exactly the canonical atom");
+        check(errorIdentity.equals(
+                resolverIndex.identityForDescriptorText(
+                    CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR)),
+            "the resolver's reverse lookup recovers the builtin identity");
+
+        Type.Class errorClass = IdentityTestFixtures.errorClassType();
+        check(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR.equals(
+                DescriptorService.describe(errorClass).canonicalSpecText()),
+            "DescriptorService projects exactly the canonical atom");
+        check(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR.equals(
+                CanonicalTypeText.render(errorClass)),
+            "the interface/declared-type text is exactly the canonical atom");
+        check(new RuntimeDescriptor.Class(ClassId.ERROR).equals(
+                RuntimeDescriptor.parseCanonicalText(
+                    CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR)),
+            "the semantic-IR decoder reads the canonical atom as the builtin class");
+
+        DescriptorParseResult parsed =
+            parseResult(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR);
+        check(parsed instanceof DescriptorAst.ClassAtom atom
+                && CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR.equals(
+                    atom.fullDescriptorText()),
+            "the strict parser reads the canonical atom as a ClassAtom");
+        check(CanonicalRuntimeTypeDescriptor.ERROR_DESCRIPTOR.equals(
+                CanonicalRuntimeTypeDescriptor.render((DescriptorAst) parsed)),
+            "render(parse(Error)) round-trips byte-for-byte");
+
+        // Recursive placements decode to the same builtin identity.
+        check(RuntimeDescriptor.parseCanonicalText("?Error") instanceof
+                RuntimeDescriptor.Nullable nullable
+                && new RuntimeDescriptor.Class(ClassId.ERROR)
+                    .equals(nullable.inner()),
+            "?Error decodes recursively to the builtin class");
+        check(RuntimeDescriptor.parseCanonicalText("[Error]") instanceof
+                RuntimeDescriptor.Array array
+                && new RuntimeDescriptor.Class(ClassId.ERROR)
+                    .equals(array.element()),
+            "[Error] decodes recursively to the builtin class");
+        check(RuntimeDescriptor.parseCanonicalText("(Error)->Error") instanceof
+                RuntimeDescriptor.Func func
+                && new RuntimeDescriptor.Class(ClassId.ERROR)
+                    .equals(func.returnType()),
+            "(Error)->Error decodes recursively to the builtin class");
+
+        // The superseded v1.2 aliases are refused, never decoded to the
+        // builtin identity (no fallback identity).
+        for (String alias : new String[] {"@/Error", "@$builtin/Error"}) {
+            check(parseResult(alias) instanceof DescriptorSyntaxError,
+                "the superseded alias " + alias + " is refused by the strict parser");
+            boolean rejected = false;
+            try {
+                RuntimeDescriptor.parseCanonicalText(alias);
+            } catch (SemanticIrTextDecodeException expected) {
+                rejected = true;
+            }
+            check(rejected, "the superseded alias " + alias
+                + " is refused by the semantic-IR decoder");
+            boolean indexMiss = false;
+            try {
+                resolverIndex.identityForDescriptorText(alias);
+            } catch (IllegalStateException expected) {
+                indexMiss = true;
+            }
+            check(indexMiss, "the superseded alias " + alias
+                + " is absent from the identity index (no fallback identity)");
         }
     }
 
@@ -262,12 +374,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
     static void testClassAtomShapes() {
         System.out.println("-- class atom shapes --");
 
+        check(atomOf("Error") instanceof DescriptorAst.ClassAtom c
+                && c.fullDescriptorText().equals("Error"),
+            "the builtin Error atom is exactly the bare token 'Error'");
         check(atomOf("@lib/utils/User") instanceof DescriptorAst.ClassAtom c
                 && c.fullDescriptorText().equals("@lib/utils/User"),
             "multi-component root atom carries the full text with the leading '@'");
-        check(atomOf("@$builtin/Error") instanceof DescriptorAst.ClassAtom c
-                && c.fullDescriptorText().equals("@$builtin/Error"),
-            "builtin atom carries '@$builtin/Error' verbatim");
         check(atomOf("@lib.utils/User") instanceof DescriptorAst.ClassAtom c
                 && c.fullDescriptorText().equals("@lib.utils/User"),
             "dotted non-final component atom carries '@lib.utils/User' verbatim");
@@ -351,7 +463,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         assertAtom("[?@a/b]", "nullable class atom inside an array");
         assertAtom("[(@a/b)->null]", "function with class param inside an array");
         assertAtom("(?@a/b)->null", "nullable class atom as a function parameter");
-        assertAtom("(@lib/utils/User,@$builtin/Error)->[bytes]",
+        assertAtom("(@lib/utils/User,Error)->[bytes]",
             "multi-component and builtin atoms in one parameter list");
     }
 
@@ -434,17 +546,22 @@ public class CanonicalRuntimeTypeDescriptorTest {
         assertError("[...int]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 1,
             "rest-shaped array element rejected");
 
-        // Bare class names.
-        assertError("Error", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 0,
-            "bare builtin Error rejected");
+        // Bare class names (the builtin Error atom is the one bare name
+        // the canonical grammar admits).
         assertError("User", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 0,
             "bare class name User rejected");
-        assertError("?Error", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 1,
-            "bare Error inside a nullable rejected");
-        assertError("(Error)->null", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 1,
-            "bare Error as a parameter rejected");
-        assertError("()->Error", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 4,
-            "bare Error as a return rejected");
+        assertError("?User", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 1,
+            "bare User inside a nullable rejected");
+        assertError("(User)->null", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 1,
+            "bare User as a parameter rejected");
+        assertError("()->User", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 4,
+            "bare User as a return rejected");
+        assertError("Errorx", DescriptorSyntaxError.Kind.BARE_CLASS_NAME, 0,
+            "a name continuing past 'Error' stays a bare-class-name rejection");
+        assertAtom("Error", "the bare builtin Error atom parses");
+        assertAtom("?Error", "bare Error inside a nullable parses");
+        assertAtom("(Error)->null", "bare Error as a parameter parses");
+        assertAtom("()->Error", "bare Error as a return parses");
 
         // Nested nullables and null inners.
         assertError("??int", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
@@ -501,6 +618,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "contiguous -> inside a later component rejected");
         assertError("@Foo", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 4,
             "single-component @Foo rejected");
+        assertError("@$builtin/Error", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 1,
+            "the superseded @$builtin/Error alias is rejected");
+        assertError("@/Error", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 1,
+            "the superseded @/Error alias is rejected");
+        assertError("[@$builtin/Error]", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 2,
+            "the superseded builtin alias is rejected at any nesting depth");
         assertError("@a b/c", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 2,
             "whitespace-containing single component rejected");
         assertError("@a\u0085b/C", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 2,
@@ -653,7 +776,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         "@src.models/User",
         "@$external/pkg/Cls",
         "@$external/host.cfg/ServerConfig",
-        "@$builtin/Error",
+        "Error",
     };
 
     private static final String[] LEAVES = {
@@ -1082,7 +1205,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
                             .equals(identity.moduleIdentity())) {
                         check("Error".equals(identity.className()),
                             "builtin index entry is only ever the Error class");
-                        return "@$builtin/Error";
+                        return "Error";
                     }
                     if (projectModule.equals(identity.moduleIdentity())) {
                         check("User".equals(identity.className()),
@@ -1116,9 +1239,9 @@ public class CanonicalRuntimeTypeDescriptorTest {
                 service.encode(new Type.Class("User", projectClass))),
             "Type.Class encodes to the index-registered project atom "
             + "@lib/utils/User");
-        check("@$builtin/Error".equals(
+        check("Error".equals(
                 service.encode(new Type.Class("Error", builtinError))),
-            "the builtin Error class encodes to @$builtin/Error");
+            "the builtin Error class encodes to the bare Error atom");
         check("@lib/utils/User".equals(service.encode(
                 Types.classType("User", projectClass))),
             "Types.classType encodes to the same index-registered atom");
@@ -1248,7 +1371,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "ServerConfig");
 
     /** Pinned example identity: the intrinsic builtin {@code Error} →
-     * {@code @$builtin/Error}. */
+     * {@code Error}. */
     private static final CanonicalClassIdentity BUILTIN_ERROR_IDENTITY =
         new CanonicalClassIdentity(
             CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error");
@@ -1287,7 +1410,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             EXTERNAL_PKG_CLS_IDENTITY, "@$external/pkg/Cls",
             EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY,
                 "@$external/host.cfg/ServerConfig",
-            BUILTIN_ERROR_IDENTITY, "@$builtin/Error",
+            BUILTIN_ERROR_IDENTITY, "Error",
             ANTI_HOLLOW_IDENTITY, ANTI_HOLLOW_TEXT,
             DOTTED_PROJECT_IDENTITY, DOTTED_PROJECT_TEXT);
 
@@ -1299,7 +1422,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "@$external/pkg/Cls", EXTERNAL_PKG_CLS_IDENTITY,
             "@$external/host.cfg/ServerConfig",
                 EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY,
-            "@$builtin/Error", BUILTIN_ERROR_IDENTITY,
+            "Error", BUILTIN_ERROR_IDENTITY,
             ANTI_HOLLOW_TEXT, ANTI_HOLLOW_IDENTITY,
             DOTTED_PROJECT_TEXT, DOTTED_PROJECT_IDENTITY);
 
@@ -1508,8 +1631,9 @@ public class CanonicalRuntimeTypeDescriptorTest {
     }
 
     /** The v1.1 dotted modulePath spelling of a class leaf:
-     * {@code @<rootText[.relative...]|specifier>/<Name>}; the bare name
-     * for the builtin. */
+     * {@code @<rootText[.relative...]|specifier>/<Name>}; the superseded
+     * {@code @$builtin/Error} spelling for the builtin (the canonical v1.3
+     * builtin atom is exactly {@code Error}). */
     private static String dottedModuleLeaf(Type.Class c) {
         CanonicalClassIdentity id = c.identity();
         if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ProjectModule pm) {
@@ -1523,11 +1647,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
         if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ExternalModule em) {
             return "@" + em.rawImportSpecifier() + "/" + id.className();
         }
-        return id.className();
+        return "@$builtin/" + id.className();
     }
 
     /** The dotted class-name-position spelling of a class leaf:
-     * {@code @<dotted module run>.<Name>}; the bare name for the builtin. */
+     * {@code @<dotted module run>.<Name>}; the superseded
+     * {@code @$builtin.Error} spelling for the builtin. */
     private static String dottedClassNameLeaf(Type.Class c) {
         CanonicalClassIdentity id = c.identity();
         if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ProjectModule pm) {
@@ -1541,7 +1666,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ExternalModule em) {
             return "@" + em.rawImportSpecifier() + "." + id.className();
         }
-        return id.className();
+        return "@$builtin." + id.className();
     }
 
     /** Whether the text contains any corpus class name as an identifier run. */
@@ -1647,7 +1772,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
         }
 
         if (hasClass) {
-            check(text.indexOf('@') >= 0, label + ": class atom present");
+            check(text.indexOf('@') >= 0 || text.contains("Error"),
+                label + ": class atom present");
+            // Never a superseded builtin spelling.
+            check(!text.contains("@/Error") && !text.contains("@$builtin"),
+                label + ": never a superseded builtin spelling");
             // Never the v1.1 dotted modulePath spelling (@<dotted>/<Name>
             // or the bare builtin name).
             String dotted = buildDescriptorText(
@@ -1759,7 +1888,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "@lib/utils/User",
             "@$external/pkg/Cls",
             "@$external/host.cfg/ServerConfig",
-            "@$builtin/Error",
+            "Error",
             ANTI_HOLLOW_TEXT,
             DOTTED_PROJECT_TEXT,
         };
@@ -1821,9 +1950,9 @@ public class CanonicalRuntimeTypeDescriptorTest {
                 new Type.Class("ServerConfig",
                     EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY))),
             "dotted externals specifier encodes to @$external/host.cfg/ServerConfig");
-        check("@$builtin/Error".equals(CLASS_BEARING_ENCODER.encode(
+        check("Error".equals(CLASS_BEARING_ENCODER.encode(
                 new Type.Class("Error", BUILTIN_ERROR_IDENTITY))),
-            "builtin Error encodes to @$builtin/Error");
+            "builtin Error encodes to the bare Error atom");
         check("@lib/utils/User".equals(CLASS_BEARING_ENCODER.encode(
                 Types.classType("User", PROJECT_USER_IDENTITY))),
             "Types.classType carries the identity into the class branch");
@@ -1853,11 +1982,16 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check(!"@host.cfg.ServerConfig".equals(hostText),
             "the dotted class-name shape @host.cfg.ServerConfig is never emitted");
 
-        // The builtin never emits the bare v1.1 Error spelling.
+        // The builtin Error atom is the canonical v1.3 spelling; the
+        // superseded v1.2 spellings are never emitted or decoded.
         String builtinText = CLASS_BEARING_ENCODER.encode(
             new Type.Class("Error", BUILTIN_ERROR_IDENTITY));
-        check(!"Error".equals(builtinText),
-            "the bare v1.1 Error spelling is never emitted");
+        check("Error".equals(builtinText),
+            "the builtin Error class emits the bare Error atom");
+        check(!"@/Error".equals(builtinText),
+            "the superseded @/Error spelling is never emitted");
+        check(!"@$builtin/Error".equals(builtinText),
+            "the superseded @$builtin/Error spelling is never emitted");
         check(!"@$builtin.Error".equals(builtinText),
             "the dotted class-name shape @$builtin.Error is never emitted");
 

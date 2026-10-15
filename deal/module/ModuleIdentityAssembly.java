@@ -27,10 +27,10 @@ public final class ModuleIdentityAssembly {
 
     /**
      * The pinned descriptor-text projection of the intrinsic
-     * {@code Error} class: {@code @$builtin/Error}.
+     * {@code Error} class: exactly {@code Error} (the v1.3 canonical
+     * builtin class atom).
      */
-    public static final String INTRINSIC_ERROR_DESCRIPTOR_TEXT =
-        "@$builtin/Error";
+    public static final String INTRINSIC_ERROR_DESCRIPTOR_TEXT = "Error";
 
     /** The pinned external-declaration descriptor namespace component. */
     private static final String EXTERNAL_NAMESPACE = "$external";

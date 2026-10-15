@@ -21,13 +21,23 @@ import java.util.Objects;
  * authority; no second Type→text producer may exist.
  *
  * <pre>
- * descriptor := primitive | class | array | nullable | function
+ * descriptor := primitive | error | class | array | nullable | function
  * primitive  := "null" | "boolean" | "int" | "number" | "string" | "bytes" | "table"
+ * error      := "Error"
  * class      := "@" component ("/" component)+
  * array      := "[" descriptor "]"
  * nullable   := "?" descriptor
  * function   := "async"? "(" (descriptor ("," descriptor)*)? ")" "-&gt;" descriptor
  * </pre>
+ *
+ * <p>The builtin {@code Error} class is the spec's one nominal class with
+ * a non-{@code @} canonical atom: its descriptor text is exactly
+ * {@link #ERROR_DESCRIPTOR} ({@code "Error"}), at every nesting depth
+ * (arrays, nullables, and sync/async function signatures included). The
+ * {@code "@" ...} class production remains the sole form for every other
+ * class identity; the reserved {@code $builtin} namespace never forms a
+ * class atom in v1.3 (the superseded v1.2 spellings {@code @/Error} and
+ * {@code @$builtin/Error} are rejected, never decoded).</p>
  *
  * <p>A component is a non-empty maximal scalar run that is not
  * {@code .}/{@code ..} as a whole component and is free of U+0000,
@@ -41,15 +51,18 @@ import java.util.Objects;
  * with complete-input consumption.  Offsets in
  * {@link DescriptorSyntaxError} are 0-based scalar offsets.  Legacy
  * spellings ({@code T[]}, {@code T|null}, rest-parameter sigs, bare
- * class names, dotted class-name text) never parse to a valid
- * descriptor.  Parsing never throws and never returns a partial AST.</p>
+ * class names other than the builtin {@code Error} atom, dotted
+ * class-name text, {@code @/Error}, {@code @$builtin/Error}) never parse
+ * to a valid descriptor.  Parsing never throws and never returns a
+ * partial AST.</p>
  *
  * <p>Rendering is total and verbatim: primitive names render as-is, a
- * {@link DescriptorAst.ClassAtom} renders its full text unchanged, and
- * array/nullable/function atoms rebuild {@code [D]}/{@code ?D}/
- * {@code async? (...) -&gt; D}.  For every accepted text,
- * {@code render(parse(text))} is byte-identical to {@code text}, and
- * {@code parse(render(ast))} round-trips for every atom.</p>
+ * {@link DescriptorAst.ClassAtom} renders its full text unchanged (the
+ * builtin {@code Error} atom included), and array/nullable/function atoms
+ * rebuild {@code [D]}/{@code ?D}/{@code async? (...) -&gt; D}.  For every
+ * accepted text, {@code render(parse(text))} is byte-identical to
+ * {@code text}, and {@code parse(render(ast))} round-trips for every
+ * atom.</p>
  *
  * <h2>The per-compilation encode service</h2>
  *
@@ -70,12 +83,12 @@ import java.util.Objects;
  * {@code async? (...) -&gt; D} functions, and class atoms from
  * {@code index.descriptorTextFor(identity)} byte-for-byte
  * ({@code @&lt;configuredRootText&gt;/&lt;relativeModuleComponents&gt;/&lt;ClassName&gt;},
- * {@code @$external/&lt;specifier&gt;/&lt;ClassName&gt;},
- * {@code @$builtin/Error}).  It never emits a legacy spelling
- * ({@code T[]}, {@code T|null}, bare class names, the bare {@code Error}
- * atom).  For every legal type {@code T},
- * {@code render(parse(encode(T)))} equals {@code encode(T)}
- * byte-for-byte.</p>
+ * {@code @$external/&lt;specifier&gt;/&lt;ClassName&gt;}, and the builtin
+ * {@code Error} atom {@code Error}).  It never emits a legacy spelling
+ * ({@code T[]}, {@code T|null}, bare class names other than the builtin
+ * {@code Error} atom, {@code @/Error}, {@code @$builtin/Error}).  For
+ * every legal type {@code T}, {@code render(parse(encode(T)))} equals
+ * {@code encode(T)} byte-for-byte.</p>
  *
  * <p>{@link Type.Error} — the internal checker sentinel — and a class
  * whose identity is absent from the index are pinned internal invariant
@@ -95,6 +108,22 @@ public final class CanonicalRuntimeTypeDescriptor {
      * constant.
      */
     public static final String BYTES_DESCRIPTOR = "bytes";
+
+    /**
+     * The canonical descriptor text of the builtin {@code Error} class:
+     * exactly {@code Error} (the spec's {@code PrimitiveDescriptor}
+     * {@code "Error"} token).  This is the one class identity whose atom
+     * does not start with {@code @}; parsing this constant yields a
+     * {@link DescriptorAst.ClassAtom} whose full text is this constant.
+     */
+    public static final String ERROR_DESCRIPTOR = "Error";
+
+    /**
+     * The reserved first component of the superseded v1.2 builtin
+     * descriptor namespace.  No v1.3 class atom carries it; the builtin
+     * {@code Error} class is exactly {@link #ERROR_DESCRIPTOR}.
+     */
+    private static final String BUILTIN_NAMESPACE_COMPONENT = "$builtin";
 
     /** The canonical primitive keywords, in grammar order. */
     private static final List<String> PRIMITIVE_KEYWORDS =
@@ -329,6 +358,18 @@ public final class CanonicalRuntimeTypeDescriptor {
                     return new DescriptorAst.PrimitiveAtom(keyword);
                 }
             }
+            // The builtin Error atom: the exact token "Error" terminating
+            // at a descriptor position (end of input or a delimiter).  An
+            // identifier run continuing past the token ("Errorx") is a
+            // bare class name and takes the BARE_CLASS_NAME rejection
+            // below.
+            if (matchKeyword(ERROR_DESCRIPTOR)
+                    && (pos + ERROR_DESCRIPTOR.length() >= cps.length
+                        || !isIdentifierScalar(
+                            cps[pos + ERROR_DESCRIPTOR.length()]))) {
+                pos += ERROR_DESCRIPTOR.length();
+                return new DescriptorAst.ClassAtom(ERROR_DESCRIPTOR);
+            }
             // The exact async marker: "async" must be immediately followed
             // by '('; any other continuation is a failure at the scalar
             // that is not '('.
@@ -534,6 +575,18 @@ public final class CanonicalRuntimeTypeDescriptor {
                         DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM,
                         "class-atom component '" + component
                             + "' at scalar offset " + componentStart);
+                }
+                if (!hasSeparator
+                        && component.equals(BUILTIN_NAMESPACE_COMPONENT)) {
+                    // The superseded v1.2 builtin namespace: no v1.3 class
+                    // atom carries it, and the builtin Error class is
+                    // exactly the bare "Error" token.
+                    return new DescriptorSyntaxError(
+                        componentStart,
+                        DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM,
+                        "the reserved '" + BUILTIN_NAMESPACE_COMPONENT
+                            + "' descriptor namespace forms no v1.3 class atom "
+                            + "at scalar offset " + componentStart);
                 }
                 if (pos < cps.length && cps[pos] == '/') {
                     hasSeparator = true;

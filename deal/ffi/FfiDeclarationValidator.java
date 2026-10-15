@@ -1355,7 +1355,7 @@ public final class FfiDeclarationValidator {
      * The canonical descriptor of a provider type through the
      * compilation's single encoder; the intrinsic {@code Error} class —
      * whose identity the checker synthesizes outside the identity
-     * assembly — projects to the pinned {@code @$builtin/Error} atom.
+     * assembly — projects to the pinned {@code Error} atom.
      * Any other unregistered identity is an internal invariant
      * violation and propagates.
      */

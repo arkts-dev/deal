@@ -24,7 +24,9 @@ public record DescriptorSyntaxError(int scalarOffset, Kind kind, String message)
         UNEXPECTED_END,
         /** A complete descriptor was parsed but scalars remain unconsumed. */
         TRAILING_CONTENT,
-        /** A bare class name without the leading {@code @} (legacy spelling). */
+        /** A bare class name without the leading {@code @} (legacy spelling);
+         * the builtin {@code Error} atom is the one bare name the canonical
+         * grammar admits. */
         BARE_CLASS_NAME,
         /** A nullable whose inner descriptor is itself a nullable. */
         NESTED_NULLABLE,
@@ -33,7 +35,8 @@ public record DescriptorSyntaxError(int scalarOffset, Kind kind, String message)
         /**
          * A class atom that violates the pinned class-atom shape: empty
          * components, a lone {@code @}, a trailing slash, {@code .}/{@code ..}
-         * whole components, fewer than two components, contiguous {@code ->}
+         * whole components, the reserved {@code $builtin} namespace as first
+         * component, fewer than two components, contiguous {@code ->}
          * inside a component, or a final component that is not
          * identifier-shaped (including any dotted class-name text such as
          * {@code @src.models.User}).

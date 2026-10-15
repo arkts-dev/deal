@@ -1538,7 +1538,7 @@ public class ClassConstructionValidatorTest {
                             false),
                         new FieldInterface("others", "(@host.facade/Other | null)[]", true,
                             false, false),
-                        new FieldInterface("failure", "@/Error", false, false, false)),
+                        new FieldInterface("failure", "Error", false, false, false)),
                     new ClassFactoryId(3)),
                 new ClassInterface(FACADE_OTHER_DECLARED,
                     List.of(new FieldInterface("count", "int", false, false, true)),

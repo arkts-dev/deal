@@ -14,8 +14,9 @@ package deal.identity;
  *
  * <p>The index is a bijection between registered
  * {@link CanonicalClassIdentity} values — keyed structurally by their
- * {@code (moduleIdentity, className)} pair — and full class descriptor
- * texts (including the leading {@code '@'}), keyed byte-for-byte. Every
+ * {@code (moduleIdentity, className)} pair — and canonical class-identity
+ * texts (the builtin {@code Error} atom {@code Error}, or the
+ * {@code @}-prefixed class descriptor text), keyed byte-for-byte. Every
  * registered identity maps to exactly one text and every registered text
  * maps back to exactly one identity. Consumer code recovers identity
  * structure from text only through this index; it never reverse-parses a
@@ -44,7 +45,8 @@ public interface CanonicalClassIdentityIndex {
 
     /**
      * Returns the index-registered canonical descriptor text for the
-     * given identity, byte-for-byte (including the leading {@code '@'}).
+     * given identity, byte-for-byte (the builtin {@code Error} atom
+     * {@code Error}, or the {@code @}-prefixed class descriptor text).
      *
      * <p>The lookup key is the identity's structural
      * {@code (moduleIdentity, className)} pair.</p>
