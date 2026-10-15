@@ -55,7 +55,6 @@ import deal.test.conformance.JvmCompilation;
 import deal.test.conformance.SidecarExpectations;
 
 import java.io.File;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -66,8 +65,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 
 public class BytesCoverageTest {
 
@@ -3027,36 +3024,11 @@ public class BytesCoverageTest {
         return resolved.toString();
     }
 
-    /**
-     * The bounded subprocess contract (the harness budget): the child wait
-     * and both concurrent stream drains share one monotonic deadline; the
-     * 1 MiB cap reports overflow instead of truncating; a read failure stays
-     * a visible capture-health outcome; every post-start path stops the
-     * tracked process tree, closes the pipes, and reaps the child; and an
-     * interrupt stops the tree, reaps, and preserves the interrupt status.
-     * Scratch cleanup stays with the caller's {@code finally}.
-     */
-    private static final int STREAM_CAP_BYTES = 1 << 20;
-    private static final long PROCESS_BUDGET_SECONDS = 300;
-    private static final long KILL_GRACE_SECONDS = 10;
-    private static final long DESCENDANT_POLL_NANOS = TimeUnit.MILLISECONDS.toNanos(10);
-
-    /**
-     * One bounded subprocess run: the exit status, the complete separate
-     * stdout and stderr captures, and the capture health.
-     */
     private record BoundedRun(int exitCode, String stdout, String stderr,
-                              boolean stdoutOverflow, boolean stderrOverflow,
-                              boolean stdoutReadFailure, boolean stderrReadFailure) {
-
+                              boolean stdoutOverflow, boolean stderrOverflow) {
         boolean captureClean() {
-            return !stdoutOverflow() && !stderrOverflow()
-                && !stdoutReadFailure() && !stderrReadFailure();
+            return !stdoutOverflow() && !stderrOverflow();
         }
-    }
-
-    /** One drained stream: the retained text and its capture health. */
-    private record Capture(String text, boolean overflow, boolean readFailure) {
     }
 
     /**
@@ -3071,12 +3043,7 @@ public class BytesCoverageTest {
         if (run.stdoutOverflow() || run.stderrOverflow()) {
             return "capture overflow: the "
                 + (run.stdoutOverflow() ? "stdout" : "stderr")
-                + " capture exceeded the " + STREAM_CAP_BYTES + "-byte cap";
-        }
-        if (run.stdoutReadFailure() || run.stderrReadFailure()) {
-            return "capture read failure: the "
-                + (run.stdoutReadFailure() ? "stdout" : "stderr")
-                + " capture did not drain to EOF";
+                + " capture exceeded the " + BoundedProcess.STREAM_CAP_BYTES + "-byte cap";
         }
         if (run.exitCode() != expectedExit) {
             return "exit: captured " + run.exitCode() + ", pinned " + expectedExit;
@@ -3108,154 +3075,12 @@ public class BytesCoverageTest {
             + "complete transcript are pin-exact, but " + divergence);
     }
 
-    /**
-     * Runs one subprocess under the bounded-output and deadline contract. The
-     * child wait and both drains share one monotonic deadline; a held pipe or
-     * a live descendant is stopped, drained within a fixed grace window, and
-     * reported as a hard timeout, never as a skip.
-     */
     private static BoundedRun runBounded(List<String> argv, Path workingDir,
             Map<String, String> environment) throws Exception {
-        return runBounded(argv, workingDir, environment, PROCESS_BUDGET_SECONDS);
-    }
-
-    private static BoundedRun runBounded(List<String> argv, Path workingDir,
-            Map<String, String> environment, long budgetSeconds) throws Exception {
-        ProcessBuilder builder = new ProcessBuilder(argv);
-        builder.directory(workingDir.toFile());
-        builder.environment().putAll(environment);
-        Process process = builder.start();
-        Set<ProcessHandle> descendants =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
-        long deadline = System.nanoTime()
-            + TimeUnit.SECONDS.toNanos(budgetSeconds);
-        CompletableFuture<Capture> stdout = drainAsync(process.getInputStream());
-        CompletableFuture<Capture> stderr = drainAsync(process.getErrorStream());
-        try {
-            boolean drained = awaitExit(process, descendants, deadline)
-                && awaitDrains(stdout, stderr, deadline);
-            if (!drained) {
-                stopProcessTree(process, descendants);
-                closePipes(process);
-                awaitDrains(stdout, stderr, System.nanoTime()
-                    + TimeUnit.SECONDS.toNanos(KILL_GRACE_SECONDS));
-                throw new AssertionError("BOUNDED_PROCESS_TIMEOUT " + argv.get(0));
-            }
-            Capture out = stdout.join();
-            Capture err = stderr.join();
-            return new BoundedRun(process.exitValue(), out.text(), err.text(),
-                out.overflow(), err.overflow(), out.readFailure(), err.readFailure());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw interrupted;
-        } finally {
-            stopProcessTree(process, descendants);
-            closePipes(process);
-            reap(process);
-        }
-    }
-
-    /**
-     * Waits for the child under the deadline while snapshotting its
-     * descendants, so a descendant that survives the direct child stays
-     * tracked for the stop path.
-     */
-    private static boolean awaitExit(Process process, Set<ProcessHandle> descendants,
-            long deadline) throws InterruptedException {
-        while (true) {
-            process.descendants().forEach(descendants::add);
-            long remaining = deadline - System.nanoTime();
-            if (remaining <= 0) {
-                return !process.isAlive();
-            }
-            if (process.waitFor(Math.min(remaining, DESCENDANT_POLL_NANOS),
-                    TimeUnit.NANOSECONDS)) {
-                return true;
-            }
-        }
-    }
-
-    /** Waits for both captures under the deadline; never blocks past it. */
-    private static boolean awaitDrains(CompletableFuture<Capture> stdout,
-            CompletableFuture<Capture> stderr, long deadline)
-            throws InterruptedException {
-        while (System.nanoTime() < deadline) {
-            if (stdout.isDone() && stderr.isDone()) {
-                return true;
-            }
-            long remaining = Math.max(1, deadline - System.nanoTime());
-            TimeUnit.NANOSECONDS.sleep(Math.min(DESCENDANT_POLL_NANOS, remaining));
-        }
-        return stdout.isDone() && stderr.isDone();
-    }
-
-    /** Drains one stream to EOF in the background; capture failures are data. */
-    private static CompletableFuture<Capture> drainAsync(InputStream stream) {
-        return CompletableFuture.supplyAsync(() -> drainCapped(stream));
-    }
-
-    /**
-     * Drains one stream to EOF, retaining at most the cap. Bytes past the cap
-     * set the overflow signal, and a read failure keeps the bytes read so far
-     * with the read-failure signal - neither is silently dropped.
-     */
-    private static Capture drainCapped(InputStream stream) {
-        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        boolean overflow = false;
-        try {
-            int read;
-            while ((read = stream.read(buffer)) >= 0) {
-                int room = STREAM_CAP_BYTES - captured.size();
-                if (read <= room) {
-                    captured.write(buffer, 0, read);
-                } else {
-                    if (room > 0) {
-                        captured.write(buffer, 0, room);
-                    }
-                    overflow = true;
-                }
-            }
-        } catch (java.io.IOException failure) {
-            return new Capture(captured.toString(StandardCharsets.UTF_8), overflow,
-                true);
-        }
-        return new Capture(captured.toString(StandardCharsets.UTF_8), overflow, false);
-    }
-
-    /** Stops the child and every snapshotted descendant. */
-    private static void stopProcessTree(Process process, Set<ProcessHandle> descendants) {
-        process.descendants().forEach(descendants::add);
-        descendants.forEach(ProcessHandle::destroyForcibly);
-        process.destroyForcibly();
-    }
-
-    /** Closes the child pipes so a drain blocked on a held pipe can finish. */
-    private static void closePipes(Process process) {
-        try {
-            process.getInputStream().close();
-        } catch (Exception ignored) {
-            // the pipe is already gone
-        }
-        try {
-            process.getErrorStream().close();
-        } catch (Exception ignored) {
-            // the pipe is already gone
-        }
-    }
-
-    /** Reaps the child within a bounded wait, preserving the interrupt status. */
-    private static void reap(Process process) {
-        boolean interrupted = Thread.interrupted();
-        try {
-            process.waitFor(KILL_GRACE_SECONDS, TimeUnit.SECONDS);
-        } catch (InterruptedException interruption) {
-            interrupted = true;
-        } finally {
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+            argv, workingDir, environment);
+        return new BoundedRun(result.exitCode(), result.stdout(), result.stderr(),
+            result.stdoutTruncated(), result.stderrTruncated());
     }
 
     private static ArtifactRun luaProduction(Drive drive) throws Exception {
@@ -3479,9 +3304,9 @@ public class BytesCoverageTest {
             "-d", classes.toString()));
         argv.addAll(sources);
         JvmCompilation.Result compile = JvmCompilation.compile(argv, workspace,
-            TimeUnit.SECONDS.toMillis(PROCESS_BUDGET_SECONDS));
+            BoundedProcess.SUBPROCESS_BUDGET_MS);
         return new BoundedRun(compile.exitCode(), compile.stdout(), compile.stderr(),
-            false, false, false, false);
+            false, false);
     }
 
     /** One bounded {@code java} run of a compiled artifact or probe. */
@@ -3494,7 +3319,7 @@ public class BytesCoverageTest {
 
     /** The failed-run placeholder: a compile that produced no artifact. */
     private static BoundedRun failedRun() {
-        return new BoundedRun(-1, "", "", false, false, false, false);
+        return new BoundedRun(-1, "", "", false, false);
     }
 
     // =========================================================================
@@ -3562,64 +3387,16 @@ public class BytesCoverageTest {
             checkEq(3, wrongStatus.exitCode(), "the wrong-status control keeps its "
                 + "exit status through the runner");
 
-            Capture underCap = drainCapped(fixedStream(STREAM_CAP_BYTES - 1));
-            Capture atCap = drainCapped(fixedStream(STREAM_CAP_BYTES));
-            Capture overCap = drainCapped(fixedStream(STREAM_CAP_BYTES + 1));
-            check(!underCap.overflow() && !atCap.overflow()
-                    && underCap.text().length() == STREAM_CAP_BYTES - 1
-                    && atCap.text().length() == STREAM_CAP_BYTES,
-                "a capture at or below the cap keeps every byte and no overflow "
-                    + "signal");
-            check(overCap.overflow()
-                    && overCap.text().length() == STREAM_CAP_BYTES,
-                "a capture past the cap reports overflow and keeps the capped bytes");
-
-            Capture readFailure = drainCapped(new InputStream() {
-                @Override
-                public int read() {
-                    return 'x';
-                }
-
-                @Override
-                public int read(byte[] bytes, int offset, int length)
-                        throws java.io.IOException {
-                    throw new java.io.IOException("synthetic read failure");
-                }
-            });
-            check(readFailure.readFailure(),
-                "a read failure is reported through the capture path");
-            check(!readFailure.overflow(),
-                "a read failure is not conflated with an overflow");
+            for (boolean stdout : List.of(false, true)) {
+                BoundedRun truncated = new BoundedRun(0, "OK\n", "", stdout, !stdout);
+                check(transcriptDivergence(truncated, 0, "OK\n").startsWith(
+                    "capture overflow:"), "a truncated stream cannot earn transcript credit");
+            }
         } finally {
             deleteRecursively(scratch);
         }
 
         checkProgramOutputFailsTheTranscript();
-        checkInterruptedRunStopsItsChild();
-        checkHeldPipeDescendantRunIsBounded();
-    }
-
-    /** A stream of exactly {@code length} 'x' bytes, then EOF. */
-    private static InputStream fixedStream(int length) {
-        return new InputStream() {
-            private int remaining = length;
-
-            @Override
-            public int read() {
-                return remaining-- > 0 ? 'x' : -1;
-            }
-
-            @Override
-            public int read(byte[] bytes, int offset, int count) {
-                if (remaining <= 0) {
-                    return -1;
-                }
-                int produced = Math.min(count, remaining);
-                java.util.Arrays.fill(bytes, offset, offset + produced, (byte) 'x');
-                remaining -= produced;
-                return produced;
-            }
-        };
     }
 
     /**
@@ -3660,116 +3437,6 @@ public class BytesCoverageTest {
         } finally {
             deleteRecursively(root);
         }
-    }
-
-    /**
-     * An interrupted run must stop its child, reap it, and preserve the
-     * interrupt status; the child must not survive the interruption.
-     */
-    private static void checkInterruptedRunStopsItsChild() throws Exception {
-        Path scratch = Files.createTempDirectory("bytes-interrupt-");
-        Path pidFile = scratch.resolve("child.pid");
-        boolean[] interrupted = { false };
-        boolean[] interruptPreserved = { false };
-        Throwable[] unexpected = { null };
-        Thread runner = new Thread(() -> {
-            try {
-                runBounded(List.of("sh", "-c",
-                    "echo $$ > " + pidFile + "; exec sleep 30"), scratch, Map.of());
-                unexpected[0] = new AssertionError("the interrupted run returned");
-            } catch (InterruptedException expected) {
-                interrupted[0] = true;
-                interruptPreserved[0] = Thread.currentThread().isInterrupted();
-            } catch (Throwable failure) {
-                unexpected[0] = failure;
-            }
-        });
-        runner.start();
-        long child = awaitPid(pidFile);
-        runner.interrupt();
-        runner.join(TimeUnit.SECONDS.toMillis(20));
-        try {
-            check(!runner.isAlive(),
-                "the interrupted runner completes within its budget");
-            checkEq(null, unexpected[0],
-                "the interrupted runner reports no other failure");
-            check(interrupted[0],
-                "the interrupted run reports InterruptedException");
-            check(interruptPreserved[0],
-                "the interrupted run preserves the interrupt status");
-            check(child > 0, "the interruption control captured its child pid");
-            check(awaitGone(child, 5_000),
-                "the interrupted child is stopped, not leaked");
-        } finally {
-            deleteRecursively(scratch);
-        }
-    }
-
-    /**
-     * A descendant that survives its parent while holding the pipes is
-     * stopped by the runner and reported as a bounded timeout, never as an
-     * unbounded drain.
-     */
-    private static void checkHeldPipeDescendantRunIsBounded() throws Exception {
-        Path scratch = Files.createTempDirectory("bytes-held-pipe-");
-        Path pidFile = scratch.resolve("descendant.pid");
-        long started = System.nanoTime();
-        AssertionError timeout = null;
-        try {
-            runBounded(List.of("sh", "-c",
-                "sleep 30 & echo $! > " + pidFile + "; sleep 0.2; exit 0"),
-                scratch, Map.of(), 1);
-        } catch (AssertionError failure) {
-            timeout = failure;
-        }
-        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(
-            System.nanoTime() - started);
-        try {
-            check(timeout != null && timeout.getMessage() != null
-                    && timeout.getMessage().contains("BOUNDED_PROCESS_TIMEOUT"),
-                "the held-pipe run is reported as a bounded timeout: " + timeout);
-            check(elapsedMillis < 30_000, "the held-pipe run completes bounded: "
-                + elapsedMillis + " ms");
-            long descendant = awaitPid(pidFile);
-            check(descendant > 0,
-                "the held-pipe control captured its descendant pid");
-            check(awaitGone(descendant, 5_000),
-                "the held-pipe descendant is stopped, not leaked");
-        } finally {
-            deleteRecursively(scratch);
-        }
-    }
-
-    /** Waits (bounded) for a child-written pid file; -1 when none appears. */
-    private static long awaitPid(Path file) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        while (System.nanoTime() < deadline) {
-            if (Files.exists(file)) {
-                try {
-                    String text = Files.readString(file).strip();
-                    if (!text.isEmpty()) {
-                        return Long.parseLong(text);
-                    }
-                } catch (Exception notYet) {
-                    // the writer is still completing the file; retry
-                }
-            }
-            TimeUnit.MILLISECONDS.sleep(10);
-        }
-        return -1;
-    }
-
-    /** Bounded wait for a killed process to leave the process table. */
-    private static boolean awaitGone(long pid, long millis)
-            throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
-        while (System.nanoTime() < deadline) {
-            if (ProcessHandle.of(pid).map(handle -> !handle.isAlive()).orElse(true)) {
-                return true;
-            }
-            TimeUnit.MILLISECONDS.sleep(20);
-        }
-        return ProcessHandle.of(pid).map(handle -> !handle.isAlive()).orElse(true);
     }
 
     // =========================================================================

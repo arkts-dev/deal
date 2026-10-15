@@ -3174,6 +3174,34 @@ public class DiagnosticRangeTest {
             "formatter must be deterministic");
     }
 
+    private static String expectedJsonRange(String file, String positions, String origin) {
+        String[] values = positions.split(",");
+        String[] fields = {"startLine", "startColumn", "endLine", "endColumn",
+            "startScalarOffset", "endScalarOffset", "scalarLength"};
+        StringBuilder json = new StringBuilder("{\n  \"file\": \"" + file + "\",\n");
+        for (int i = 0; i < fields.length; i++) {
+            json.append("  \"").append(fields[i]).append("\": ").append(values[i]).append(",\n");
+        }
+        return json.append("  \"origin\": \"").append(origin).append("\"\n}").toString();
+    }
+
+    private static String expectedJsonDocument(String code, String message, String range, String notes) {
+        return "{\n  \"version\": 1,\n  \"diagnostics\": [\n    {\n"
+            + "      \"code\": \"" + code + "\",\n      \"severity\": \"error\",\n"
+            + "      \"message\": \"" + message + "\",\n      \"range\": "
+            + range.replace("\n", "\n      ") + ",\n      \"notes\": "
+            + notes.replace("\n", "\n      ") + "\n    }\n  ]\n}";
+    }
+
+    private static String expectedJsonNote(String message, String range) {
+        return "{\n  \"message\": \"" + message + "\",\n  \"range\": "
+            + range.replace("\n", "\n  ") + "\n}";
+    }
+
+    private static String expectedJsonNotes(String... notes) {
+        return "[\n" + String.join(",\n", notes).indent(2).stripTrailing() + "\n]";
+    }
+
     private static void testStructuredOutput() {
         System.out.println("-- DiagnosticStructuredOutput: deterministic JSON v1 (D8) --");
 
@@ -3192,28 +3220,8 @@ public class DiagnosticRangeTest {
         // endLine, endColumn, startScalarOffset, endScalarOffset,
         // scalarLength, origin}, notes).
         CompilerDiagnostic multi = multiLineDiagnostic();
-        String multiJson = "{\n"
-            + "  \"version\": 1,\n"
-            + "  \"diagnostics\": [\n"
-            + "    {\n"
-            + "      \"code\": \"E3001\",\n"
-            + "      \"severity\": \"error\",\n"
-            + "      \"message\": \"type mismatch\",\n"
-            + "      \"range\": {\n"
-            + "        \"file\": \"src/main.deal\",\n"
-            + "        \"startLine\": 2,\n"
-            + "        \"startColumn\": 5,\n"
-            + "        \"endLine\": 3,\n"
-            + "        \"endColumn\": 9,\n"
-            + "        \"startScalarOffset\": 20,\n"
-            + "        \"endScalarOffset\": 24,\n"
-            + "        \"scalarLength\": 4,\n"
-            + "        \"origin\": \"SOURCE\"\n"
-            + "      },\n"
-            + "      \"notes\": []\n"
-            + "    }\n"
-            + "  ]\n"
-            + "}";
+        String multiRange = expectedJsonRange("src/main.deal", "2,5,3,9,20,24,4", "SOURCE");
+        String multiJson = expectedJsonDocument("E3001", "type mismatch", multiRange, "[]");
         check(DiagnosticStructuredOutput.toJson(List.of(multi)).equals(multiJson),
             "single-diagnostic JSON field order, got: "
                 + DiagnosticStructuredOutput.toJson(List.of(multi)));
@@ -3223,28 +3231,8 @@ public class DiagnosticRangeTest {
         CompilerDiagnostic zero = CompilerDiagnostic.error(DiagnosticCode.E2010,
             "Entry module must export 'main'",
             new DiagnosticRange("f.deal", 1, 1, 1, 1, 0, 0, 0, RangeOrigin.SOURCE));
-        String zeroJson = "{\n"
-            + "  \"version\": 1,\n"
-            + "  \"diagnostics\": [\n"
-            + "    {\n"
-            + "      \"code\": \"E2010\",\n"
-            + "      \"severity\": \"error\",\n"
-            + "      \"message\": \"Entry module must export 'main'\",\n"
-            + "      \"range\": {\n"
-            + "        \"file\": \"f.deal\",\n"
-            + "        \"startLine\": 1,\n"
-            + "        \"startColumn\": 1,\n"
-            + "        \"endLine\": 1,\n"
-            + "        \"endColumn\": 1,\n"
-            + "        \"startScalarOffset\": 0,\n"
-            + "        \"endScalarOffset\": 0,\n"
-            + "        \"scalarLength\": 0,\n"
-            + "        \"origin\": \"SOURCE\"\n"
-            + "      },\n"
-            + "      \"notes\": []\n"
-            + "    }\n"
-            + "  ]\n"
-            + "}";
+        String zeroJson = expectedJsonDocument("E2010", "Entry module must export 'main'",
+            expectedJsonRange("f.deal", "1,1,1,1,0,0,0", "SOURCE"), "[]");
         check(DiagnosticStructuredOutput.toJson(List.of(zero)).equals(zeroJson),
             "zero-length SOURCE JSON, got: "
                 + DiagnosticStructuredOutput.toJson(List.of(zero)));
@@ -3255,33 +3243,9 @@ public class DiagnosticRangeTest {
         CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
             "circular jsonable dependency", "mod.deal",
             "missing anchor: class declaration span for cycle node 'A'");
-        String synJson = "{\n"
-            + "  \"version\": 1,\n"
-            + "  \"diagnostics\": [\n"
-            + "    {\n"
-            + "      \"code\": \"E4008\",\n"
-            + "      \"severity\": \"error\",\n"
-            + "      \"message\": \"circular jsonable dependency\",\n"
-            + "      \"range\": {\n"
-            + "        \"file\": \"mod.deal\",\n"
-            + "        \"startLine\": 1,\n"
-            + "        \"startColumn\": 1,\n"
-            + "        \"endLine\": 1,\n"
-            + "        \"endColumn\": 1,\n"
-            + "        \"startScalarOffset\": 0,\n"
-            + "        \"endScalarOffset\": 0,\n"
-            + "        \"scalarLength\": 0,\n"
-            + "        \"origin\": \"SYNTHETIC\"\n"
-            + "      },\n"
-            + "      \"notes\": [\n"
-            + "        {\n"
-            + "          \"message\": \"missing anchor: class declaration span for cycle node 'A'\",\n"
-            + "          \"range\": null\n"
-            + "        }\n"
-            + "      ]\n"
-            + "    }\n"
-            + "  ]\n"
-            + "}";
+        String synJson = expectedJsonDocument("E4008", "circular jsonable dependency",
+            expectedJsonRange("mod.deal", "1,1,1,1,0,0,0", "SYNTHETIC"),
+            expectedJsonNotes(expectedJsonNote("missing anchor: class declaration span for cycle node 'A'", "null")));
         check(DiagnosticStructuredOutput.toJson(List.of(syn)).equals(synJson),
             "SYNTHETIC JSON with message-only anchor note, got: "
                 + DiagnosticStructuredOutput.toJson(List.of(syn)));
@@ -3295,47 +3259,9 @@ public class DiagnosticRangeTest {
                     new DiagnosticRange("other.deal", 1, 2, 1, 6, 0, 4, 4,
                         RangeOrigin.SOURCE))),
             DiagnosticCode.E3001);
-        String notesJson = "{\n"
-            + "  \"version\": 1,\n"
-            + "  \"diagnostics\": [\n"
-            + "    {\n"
-            + "      \"code\": \"E3001\",\n"
-            + "      \"severity\": \"error\",\n"
-            + "      \"message\": \"type mismatch\",\n"
-            + "      \"range\": {\n"
-            + "        \"file\": \"src/main.deal\",\n"
-            + "        \"startLine\": 2,\n"
-            + "        \"startColumn\": 5,\n"
-            + "        \"endLine\": 3,\n"
-            + "        \"endColumn\": 9,\n"
-            + "        \"startScalarOffset\": 20,\n"
-            + "        \"endScalarOffset\": 24,\n"
-            + "        \"scalarLength\": 4,\n"
-            + "        \"origin\": \"SOURCE\"\n"
-            + "      },\n"
-            + "      \"notes\": [\n"
-            + "        {\n"
-            + "          \"message\": \"hint\",\n"
-            + "          \"range\": null\n"
-            + "        },\n"
-            + "        {\n"
-            + "          \"message\": \"see declaration\",\n"
-            + "          \"range\": {\n"
-            + "            \"file\": \"other.deal\",\n"
-            + "            \"startLine\": 1,\n"
-            + "            \"startColumn\": 2,\n"
-            + "            \"endLine\": 1,\n"
-            + "            \"endColumn\": 6,\n"
-            + "            \"startScalarOffset\": 0,\n"
-            + "            \"endScalarOffset\": 4,\n"
-            + "            \"scalarLength\": 4,\n"
-            + "            \"origin\": \"SOURCE\"\n"
-            + "          }\n"
-            + "        }\n"
-            + "      ]\n"
-            + "    }\n"
-            + "  ]\n"
-            + "}";
+        String notesJson = expectedJsonDocument("E3001", "type mismatch", multiRange,
+            expectedJsonNotes(expectedJsonNote("hint", "null"),
+                expectedJsonNote("see declaration", expectedJsonRange("other.deal", "1,2,1,6,0,4,4", "SOURCE"))));
         check(DiagnosticStructuredOutput.toJson(List.of(withNotes)).equals(notesJson),
             "both note shapes serialized in order, got: "
                 + DiagnosticStructuredOutput.toJson(List.of(withNotes)));

@@ -410,6 +410,207 @@ public class ErrorRethrowTransportProductionTest {
         }
     }
 
+    static final String HOST_ERROR_LIB_SOURCE = """
+        function inner(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export function fail(): int {
+          return inner();
+        }
+
+        async function ainner(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+
+        export async function afail(): int {
+          return await ainner();
+        }
+
+        export function boom(): int {
+          return 2147483647 + 1;
+        }
+
+        export function echo(e: Error): int { throw e; }
+        export function alias(): boolean {
+          let first: Error = { code: "seed", message: "seed" };
+          try { throw { code: "X", message: "x" }; } catch (caught) { first = caught; }
+          first.code = "Z";
+          let again: Error = { code: "seed", message: "seed" };
+          try { throw first; } catch (caught) { again = caught; }
+          return first === again && again.code === "Z";
+        }
+        """;
+
+    static final String HOST_ERROR_APP_SOURCE = """
+        import * as helper from "./lib";
+        export function main(): null { return null; }
+        export function run(): int { return helper.fail(); }
+        export function reraise(): int {
+          try { return helper.fail(); } catch (e) { throw e; }
+        }
+        export function leafFail(): int {
+          let t: table = { value: "bad" };
+          let x: int = t.value;
+          return x;
+        }
+        export function recur(n: int, step: (n: int) => int): int {
+          if (n === 0) {
+            let t: table = { value: "bad" };
+            let x: int = t.value;
+            return x;
+          }
+          return step(n - 1);
+        }
+        export function swallow(): int {
+          try { return helper.fail(); } catch (e) { return 0; }
+        }
+        export async function arun(): int { return await helper.afail(); }
+        export async function areraise(): int {
+          try { return await helper.afail(); } catch (e) { throw e; }
+        }
+        export function overflow(): int { return helper.boom(); }
+        export function replaced(): int {
+          try { return helper.fail(); }
+          catch (e) { throw { code: "REPLACED", message: "handled" }; }
+        }
+        export function echo(e: Error): int { return helper.echo(e); }
+        export function alias(): boolean { return helper.alias(); }
+        export function mutate(): int {
+          let saved: Error = { code: "seed", message: "seed" };
+          function step(): int {
+            try {
+              try { return helper.fail(); }
+              catch (e) { saved = e; throw { code: "OUTER", message: "outer" }; }
+            } catch (o) {
+              saved.code = "CHANGED";
+              saved.message = "changed";
+              throw o;
+            }
+          }
+          return step();
+        }
+        """;
+
+    static void assertProductionHostTransport(String stdout, String stderr, boolean jvm) {
+        checkEq("", stderr, "production host probe has no stderr");
+        Map<String, String[]> rows = new LinkedHashMap<>();
+        for (String line : stdout.split("\n", -1)) {
+            if (line.startsWith("HOST-ERR|")) {
+                String[] fields = line.split("\\|", -1);
+                if (fields.length == 4 && fields[1].equals("swallow")) {
+                    checkEq("HOST-ERR|swallow|none|0", line, "handling export returns zero");
+                } else {
+                    checkEq(9, fields.length, "closed host error row: " + line);
+                    if (fields.length == 9) {
+                        check(rows.put(fields[1], fields) == null, "unique host row " + fields[1]);
+                    }
+                }
+            }
+        }
+        checkEq(Set.of("run", "reraise", "leafFail", "arun", "areraise", "overflow", "replaced", "mutate"),
+            rows.keySet(), "complete production host error rows");
+        hostFields(stdout, "HOST-ERR|swallow|", 2);
+        for (String name : List.of("run", "reraise", "leafFail", "arun", "areraise", "overflow", "replaced")) {
+            String[] row = rows.get(name);
+            check(row != null, "host error " + name + " exists");
+            if (row == null) {
+                continue;
+            }
+            boolean overflow = name.equals("overflow");
+            boolean replaced = name.equals("replaced");
+            boolean async = name.startsWith("a");
+            boolean appOrigin = name.equals("leafFail") || replaced;
+            checkEq(overflow ? "E8004" : replaced ? "REPLACED" : "E8001", row[2], name + " code");
+            checkEq(overflow ? "int out of safe range" : replaced ? "handled" : "expected int",
+                row[3], name + " message");
+            check(appOrigin ? row[4].contains("src/app.deal:")
+                : row[4].endsWith("src/lib.deal:" + (overflow ? "22:10" : async ? "13:16" : "3:16")),
+                name + " raising origin: " + row[4]);
+            checkEq(overflow || replaced ? "-" : "int", row[5], name + " expected");
+            checkEq(overflow || replaced ? "-" : "string", row[6], name + " actual");
+            String frames = appOrigin ? "" : overflow ? "lib#boom@F\\d+,"
+                : async ? "lib#ainner@F\\d+,lib#afail@F\\d+," : "lib#inner@F\\d+,lib#fail@F\\d+,";
+            check(row[7].matches(frames + "app#" + name + "@F\\d+"), name + " named frames: " + row[7]);
+            checkEq(replaced ? "E8001" : "-", row[8], name + " applicable cause");
+        }
+        for (List<String> pair : List.of(List.of("run", "reraise"), List.of("arun", "areraise"))) {
+            String[] direct = rows.get(pair.get(0));
+            String[] rethrow = rows.get(pair.get(1));
+            if (direct != null && rethrow != null) {
+                for (int field : List.of(2, 3, 4, 5, 6, 8)) {
+                    checkEq(direct[field], rethrow[field], pair + " preserves field " + field);
+                }
+            }
+        }
+        String[] cause = hostFields(stdout, "HOST-CAUSE|mutate|", 9);
+        if (cause != null) {
+            checkEq(List.of("OUTER", "outer", "E8001", "expected int"),
+                List.of(cause[0], cause[1], cause[2], cause[3]), "saved cause keeps captured values");
+            check(cause[4].endsWith("src/lib.deal:3:16"), "saved cause keeps raising origin");
+            checkEq("int", cause[5], "saved cause expected");
+            checkEq("string", cause[6], "saved cause actual");
+            check(cause[7].matches("lib#inner@F\\d+,lib#fail@F\\d+,app#step@F\\d+,app#mutate@F\\d+"),
+                "saved cause keeps captured frames: " + cause[7]);
+            checkEq("-", cause[8], "saved cause gains no cause");
+        }
+        String[] reentry = hostFields(stdout, "HOST-REENTRY|recur|", 7);
+        if (reentry != null) {
+            checkEq("E8001", reentry[0], "reentry code");
+            checkEq("expected int", reentry[1], "reentry message");
+            check(reentry[2].contains("src/app.deal:"), "reentry raising origin");
+            checkEq("int", reentry[3], "reentry expected");
+            checkEq("string", reentry[4], "reentry actual");
+            check(reentry[5].matches("app#recur@F\\d+,app#recur@F\\d+,app#recur@F\\d+"),
+                "three live reentry frames: " + reentry[5]);
+            String[] frames = reentry[5].split(",");
+            check(frames.length == 3 && frames[0].equals(frames[1]) && frames[1].equals(frames[2]),
+                "reentry frames have identical labels without deduplication");
+            checkEq("-", reentry[6], "reentry invents no cause");
+        }
+        String[] empty = hostFields(stdout, "HOST-EMPTY|recur|", 1);
+        if (empty != null) {
+            checkEq("-", empty[0], "reentry leaves no active frame");
+        }
+        String[] clean = hostFields(stdout, "HOST-CLEAN|leafFail|", 1);
+        if (clean != null) {
+            check(clean[0].matches("app#leafFail@F\\d+"), "cleanup after failure and success");
+        }
+        String[] alias = hostFields(stdout, "HOST-ID|alias|", 1);
+        if (alias != null) {
+            checkEq("true", alias[0], "catch/rethrow alias preserves Error identity");
+        }
+        if (jvm) {
+            String[] echo = hostFields(stdout, "HOST-ID|echo|", 5);
+            if (echo != null) {
+                checkEq("true", echo[0], "unchanged rethrow preserves DealError identity");
+                checkEq("true", echo[1], "unchanged rethrow preserves reified Error identity");
+                checkEq("E8001", echo[2], "identity echo code");
+                check(echo[3].endsWith("src/lib.deal:3:16"), "identity echo origin");
+                checkEq("-", echo[4], "identity echo gains no cause");
+            }
+        }
+    }
+
+    private static String[] hostFields(String stdout, String prefix, int count) {
+        List<String> matches = stdout.lines().filter(line -> line.startsWith(prefix)).toList();
+        checkEq(1, matches.size(), "exactly one " + prefix + " row");
+        if (matches.size() != 1) {
+            return null;
+        }
+        String[] fields = matches.get(0).substring(prefix.length()).split("\\|", -1);
+        checkEq(count, fields.length, "closed " + prefix + " row");
+        return fields.length == count ? fields : null;
+    }
+
+    static int productionHostFailures() {
+        return failed;
+    }
+
     public static void main(String[] args) throws Exception {
         testRethrowAcrossHandler();
         testSavedCauseAliasMutation();

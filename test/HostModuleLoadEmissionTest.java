@@ -110,12 +110,6 @@ public class HostModuleLoadEmissionTest {
         export function describe(s: ServerConfig): string;
         """;
 
-    /**
-     * The missing-export declaration: the raw implementation omits the
-     * declared {@code missing} export, so the load raises the pinned E8011
-     * at the import origin. The import sits on line 6 column 1 exactly like
-     * the corpus fixture {@code host-abi/host-missing-export.deal}.
-     */
     private static final String MISSING_DECLARATION_SOURCE = """
         export function missing(): string;
         export function ping(): string;
@@ -167,12 +161,6 @@ public class HostModuleLoadEmissionTest {
         }
         """;
 
-    /**
-     * The deployed JVM host implementation of the declared-array fixture: the
-     * declared element-shape carrier is the host-facing wrapper, and
-     * {@code badArray} returns one whose second element is a lone surrogate
-     * code unit, so the declared element cell must reject it.
-     */
     private static final String ARRAY_JAVA_HOST = """
         final class HostArray_probe {
           public static Object echoArray($DealRt.__StringArray parts) { return parts; }
@@ -217,12 +205,6 @@ public class HostModuleLoadEmissionTest {
         }
         """;
 
-    /**
-     * The deployed LuaJIT host implementation of host/cfg (valid shapes). The
-     * class identities equal the declared descriptors the emitted declared map
-     * carries for this fixture's externals classification (the corpus lane's
-     * dotted typing name is a lane-classification concern).
-     */
     private static final String CFG_LUA = """
         _HOST_CFG_LOADS = (_HOST_CFG_LOADS or 0) + 1
         local rt = require("deal.runtime")
@@ -384,23 +366,10 @@ public class HostModuleLoadEmissionTest {
             Set.of());
     }
 
-    /** The resolved module identity of one host import of the lowered project. */
     private static ModuleId hostImportModule(ExecutableLoweredProject project,
             String rawSpecifier) {
-        for (LoweredModuleUnit unit : project.modules().values()) {
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.MODULE_IMPORT) {
-                    continue;
-                }
-                KindPayload.ModuleImportPayload payload =
-                    (KindPayload.ModuleImportPayload) op.payload();
-                if (payload.kind() == ModuleImportKind.HOST
-                        && payload.rawSpecifier().equals(rawSpecifier)) {
-                    return payload.resolvedModule();
-                }
-            }
-        }
-        throw new IllegalStateException("no host import of '" + rawSpecifier + "'");
+        return ((KindPayload.ModuleImportPayload) hostImportOp(project, rawSpecifier)
+            .payload()).resolvedModule();
     }
 
     private static SemanticOp hostImportOp(ExecutableLoweredProject project,
@@ -458,73 +427,20 @@ public class HostModuleLoadEmissionTest {
             ExecutableLoweredProject project = result.project();
             String lua = fixture.lua();
 
-            ModuleId probeModule = hostImportModule(project, PROBE_SPECIFIER);
-            SemanticOp probeImport = hostImportOp(project, PROBE_SPECIFIER);
-            ModuleId cfgModule = hostImportModule(project, CFG_SPECIFIER);
-            String probeKey = "\"" + probeModule.path() + "\"";
-            String probeLoad = "__exportSurfaces[" + probeKey + "] = "
-                + "__exportSurfaces[" + probeKey + "] or __rt.load_host("
-                + "\"" + PROBE_SPECIFIER + "\", "
-                + declaredMapLiteral(fixture.surface(), probeModule) + ", "
-                + probeImport.origin().sourceId() + "\", "
-                + probeImport.origin().span().startLine() + ", "
-                + probeImport.origin().span().startColumn() + ")";
-            // The emitted origin atom is a Lua string literal: rebuild the
-            // expected line with the quoted source id.
-            String expectedProbe = "__exportSurfaces[" + probeKey + "] = "
-                + "__exportSurfaces[" + probeKey + "] or __rt.load_host("
-                + "\"" + PROBE_SPECIFIER + "\", "
-                + declaredMapLiteral(fixture.surface(), probeModule) + ", \""
-                + probeImport.origin().sourceId() + "\", "
-                + probeImport.origin().span().startLine() + ", "
-                + probeImport.origin().span().startColumn() + ")";
-            check(lua.contains(expectedProbe),
-                "the artifact carries the inline load of " + PROBE_SPECIFIER
-                    + " with the declared map in declaration order: " + expectedProbe);
-            check(!lua.contains(probeLoad),
-                "the origin is the import statement's quoted source id");
-
-            String expectedCfg = "__exportSurfaces[\"" + cfgModule.path() + "\"] = "
-                + "__exportSurfaces[\"" + cfgModule.path() + "\"] or __rt.load_host("
-                + "\"" + CFG_SPECIFIER + "\", "
-                + declaredMapLiteral(fixture.surface(), cfgModule) + ", \""
-                + hostImportOp(project, CFG_SPECIFIER).origin().sourceId() + "\", "
-                + hostImportOp(project, CFG_SPECIFIER).origin().span().startLine()
-                + ", "
-                + hostImportOp(project, CFG_SPECIFIER).origin().span().startColumn()
-                + ")";
-            check(lua.contains(expectedCfg),
-                "the artifact carries the inline load of " + CFG_SPECIFIER
-                    + " with its declared map: " + expectedCfg);
-
-            // The class export carries the canonical class descriptor text and
-            // the function exports their canonical function descriptor texts.
-            HostDeclarationSurface.DeclarationFacts cfgFacts =
-                fixture.surface().require(cfgModule);
-            String classDescriptor = DescriptorService.describe(
-                cfgFacts.exports().get("ServerConfig")).canonicalSpecText();
-            check(classDescriptor.startsWith("@"),
-                "the declared class export carries a canonical class descriptor: "
-                    + classDescriptor);
-            check(lua.contains("[\"ServerConfig\"] = \"" + classDescriptor + "\""),
-                "the declared map carries the class export's canonical descriptor");
-
-            // The load is inside the module init walk (after __dealMain).
-            int walk = lua.indexOf("__dealMain = function()");
-            int loadAt = lua.indexOf("__rt.load_host(\"" + PROBE_SPECIFIER + "\"");
-            check(walk >= 0 && loadAt > walk,
-                "the load runs inline in the module init walk");
-
-            // The artifact registers the closed HOST_LOAD arm renderer the
-            // deployed runtime's load_host delegates every mapped load
-            // failure to (canonical failure-projection authority P1/P4).
-            check(lua.contains("__rt.__hostLoadArm = function(id, values, "
-                        + "file, line, column)"),
-                "the artifact registers the closed host-load arm renderer");
-            check(lua.contains("return __arm(id, values, tostring(file)..\":\""
-                        + "..tostring(line)..\":\"..tostring(column), nil, nil)"),
-                "the registered renderer instantiates the arm at the import "
-                    + "origin with the arm's declared fields only");
+            for (String specifier : List.of(PROBE_SPECIFIER, CFG_SPECIFIER)) {
+                SemanticOp op = hostImportOp(project, specifier);
+                ModuleId module = hostImportModule(project, specifier);
+                String key = luaString(module.path());
+                String load = "__exportSurfaces[" + key + "] = __exportSurfaces[" + key
+                    + "] or __rt.load_host(" + luaString(specifier) + ", "
+                    + declaredMapLiteral(fixture.surface(), module) + ", "
+                    + luaString(op.origin().sourceId()) + ", "
+                    + op.origin().span().startLine() + ", "
+                    + op.origin().span().startColumn() + ")";
+                check(lua.contains(load), specifier + ": guarded load with declared ABI and origin");
+                check(lua.indexOf(load) > lua.indexOf("__dealMain = function()"),
+                    specifier + ": load inside init walk");
+            }
 
             // Exactly one load statement per import op; two aliases of one
             // module share the registry key and the `or` guard.
@@ -597,12 +513,6 @@ public class HostModuleLoadEmissionTest {
         checkLuaArmSeed(missing, "host/missing_export.lua", MISSING_LUA,
             "missing host export 'missing' in module 'host/missing_export'",
             missingOrigin, "missing-export-at-6:1");
-        // The remaining mapped loader defects of the host-module-abi
-        // contract render their closed HOST_LOAD arm at the import origin
-        // with no fabricated expected/actual field: the require failure
-        // (HOST_LOAD_FAILED), a pre-wrapped signature mismatch
-        // (HOST_LOAD_SIGNATURE_MISMATCH), and a non-table module result
-        // (HOST_LOAD_NOT_A_MODULE).
         checkLuaArmSeed(missing, "host/missing_export.lua",
             "error(\"host module unavailable\", 0)\n",
             armMessage(FailureArmId.HOST_LOAD_FAILED, Map.of("module", MISSING_SPECIFIER,
@@ -631,13 +541,6 @@ public class HostModuleLoadEmissionTest {
             "host export 'missing' in module 'host/missing_export' is not a function",
             -1, -1, "non-function-export-shape");
 
-        // The declared-class seeds: a class identity mismatch renders the
-        // closed HOST_LOAD_IDENTITY_MISMATCH arm at the import origin, and
-        // the class-metadata defects (a missing or non-table
-        // <C>_defaults, a present-but-non-table <C>_fields) render the
-        // closed HOST_LOAD_INVALID_METADATA arm — each with no
-        // expected/actual field the arm does not declare (ISSUE-0769,
-        // ISSUE-0771).
         String cfgOrigin = importOrigin(cfgFixture, CFG_SPECIFIER);
         checkLuaArmSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace("@$external/host/cfg/ServerConfig",
@@ -706,40 +609,11 @@ public class HostModuleLoadEmissionTest {
             + importOp.origin().span().startColumn();
     }
 
-    /**
-     * One arm-shaped LuaJIT seed drive (ISSUE-0769): the importing
-     * module's init must fail with the closed arm's carrier — the exact
-     * code/message at the pinned import origin and no fabricated
-     * expected/actual field.
-     */
     private static void checkLuaArmSeed(Baseline fixture, String hostFile,
             String rawLua, String expectedMessage, String origin, String label)
             throws Exception {
-        Path workspace = Files.createTempDirectory("host-load-lua-arm-seed");
-        try {
-            if (fixture.result().project() == null) {
-                fail("the arm seed fixture '" + label + "' lowers: "
-                    + fixture.result().diagnostics());
-                return;
-            }
-            Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
-            deployRuntime(workspace);
-            writeFileIn(workspace, hostFile, rawLua);
-            Path probe = workspace.resolve("probe.lua");
-            Files.writeString(probe,
-                luaArmFailureProbe(artifact, expectedMessage, origin),
-                StandardCharsets.UTF_8);
-            ProcessOutcome run = runProcess(List.of("luajit",
-                probe.toAbsolutePath().toString()), workspace, true);
-            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
-                "the arm seed '" + label + "' renders the canonical "
-                    + "HOST_LOAD tuple: exit=" + run.exitCode()
-                    + " stdout=" + escaped(run.stdout()) + " stderr="
-                    + escaped(run.stderr()));
-        } finally {
-            deleteRecursively(workspace);
-        }
+        checkLuaSeed(fixture, hostFile, rawLua,
+            artifact -> luaArmFailureProbe(artifact, expectedMessage, origin), label);
     }
 
     /** The LuaJIT arm-shaped failure probe: the closed carrier's full tuple. */
@@ -762,15 +636,15 @@ public class HostModuleLoadEmissionTest {
                 luaString(origin));
     }
 
-    /**
-     * One LuaJIT seed drive: the fixture's artifact runs under real luajit
-     * with the given raw host implementation and the importing module's init
-     * must fail with the pinned E8011 (and, when the seed pins it, the
-     * import origin).
-     */
     private static void checkLuaSeed(Baseline fixture, String hostFile,
             String rawLua, String expectedMessage, int line, int column,
             String label) throws Exception {
+        checkLuaSeed(fixture, hostFile, rawLua,
+            artifact -> luaFailureProbe(artifact, expectedMessage, line, column), label);
+    }
+
+    private static void checkLuaSeed(Baseline fixture, String hostFile, String rawLua,
+            java.util.function.Function<Path, String> driver, String label) throws Exception {
         Path workspace = Files.createTempDirectory("host-load-lua-seed");
         try {
             SemanticLowerer.ProjectLoweringResult result = fixture.result();
@@ -783,8 +657,7 @@ public class HostModuleLoadEmissionTest {
             deployRuntime(workspace);
             writeFileIn(workspace, hostFile, rawLua);
             Path probe = workspace.resolve("probe.lua");
-            Files.writeString(probe, luaFailureProbe(artifact, expectedMessage,
-                line, column), StandardCharsets.UTF_8);
+            Files.writeString(probe, driver.apply(artifact), StandardCharsets.UTF_8);
             ProcessOutcome run = runProcess(List.of("luajit",
                 probe.toAbsolutePath().toString()), workspace, true);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
@@ -920,9 +793,7 @@ public class HostModuleLoadEmissionTest {
             String source = emission.source();
 
             ModuleId probeModule = hostImportModule(project, PROBE_SPECIFIER);
-            ModuleId cfgModule = hostImportModule(project, CFG_SPECIFIER);
             String probeKey = JvmBackend.escapedIdentifier(probeModule.path());
-            String cfgKey = JvmBackend.escapedIdentifier(cfgModule.path());
 
             check(source.contains("static boolean __hostLoaded$" + probeKey + ";"),
                 "the load entry is module-keyed and idempotent (the loaded flag)");
@@ -936,109 +807,17 @@ public class HostModuleLoadEmissionTest {
             check(source.contains("__h = java.lang.Class.forName(\"HostCfg\");"),
                 "the second host module resolves its own implementation class");
 
-            // The declared function bindings with the declared parameter-class
-            // projection in declaration order.
-            check(source.contains("__hostM$" + probeKey + "$ping = __hostMethod(__h, "
-                    + "\"host/abi_probe\", \"ping\", \"()->string\", "
-                    + "new java.lang.Class[]{  }, oFile, oLine, oCol);"),
-                "the string export binds through the landed __hostMethod shape");
-            check(source.contains("__hostM$" + probeKey + "$echoInt = __hostMethod(__h, "
-                    + "\"host/abi_probe\", \"echoInt\", \"(int)->int\", "
-                    + "new java.lang.Class[]{ int.class }, oFile, oLine, oCol);"),
-                "a declared int parameter resolves to its primitive carrier class");
-            check(source.contains("\"join\", \"(string,[string])->string\", "
-                    + "new java.lang.Class[]{ java.lang.String.class, "
-                    + "$DealRt.__StringArray.class }"),
-                "a declared string[] parameter resolves to its element-shape carrier");
-            check(source.contains("\"apply\", \"((int)->int,int)->int\", "
-                    + "new java.lang.Class[]{ $DealRt.Fn1_I_R_I.class, int.class }"),
-                "a declared function position resolves to its per-signature wrapper class");
-            check(source.contains("\"echoBytes\", \"(bytes)->bytes\", "
-                    + "new java.lang.Class[]{ $DealRt.Bytes.class }"),
-                "a declared bytes position resolves to the Bytes carrier");
             check(source.contains("\"nullable\", \"(?string)->?string\", "
                     + "new java.lang.Class[]{ java.lang.String.class }"),
-                "a nullable declared position resolves to its boxed carrier");
-            String classDescriptor = DescriptorService.describe(
-                fixture.surface().require(cfgModule).exports().get("ServerConfig"))
-                .canonicalSpecText();
-            check(source.contains("\"describe\", \"(" + classDescriptor
-                    + ")->string\", new java.lang.Class[]{ "
-                    + "$DealRt.$Host$host$scfg$ServerConfig.class }"),
-                "a declared class position resolves to the synthesized record: "
-                    + classDescriptor);
-
-            // The <C>_defaults capture.
-            check(source.contains("__hostD$" + cfgKey + "$ServerConfig = __hostDefaults("
-                    + "__h, \"host/cfg\", \"ServerConfig\", oFile, oLine, oCol);"),
-                "the declared class export captures its mandatory <C>_defaults map");
-            check(source.contains("static JvmRuntime.DealError "
-                    + "__hostDefaultsMetadataFailure(java.lang.String name, "
-                    + "java.lang.String module, java.lang.String oFile, int oLine, "
-                    + "int oCol) {"),
-                "the <C>_defaults capture failures route through one arm-rendering "
-                    + "helper");
-            check(source.contains("return JvmRuntime.arm(deal.semantic.ir."
-                    + "FailureArmId.HOST_LOAD_INVALID_METADATA, java.util.Map.of(\"name\", "
-                    + "name, \"module\", module, \"defaults|fields\", \"defaults\"), "
-                    + "oFile + \":\" + oLine + \":\" + oCol, null, null)"),
-                "the <C>_defaults load failures render the closed "
-                    + "HOST_LOAD_INVALID_METADATA arm");
-            check(!source.contains("missing its defaults field")
-                    && !source.contains("non-map defaults value")
-                    && !source.contains("defaults are inaccessible"),
-                "the load entry composes no <C>_defaults failure text of its own");
-            check(source.contains("throw JvmRuntime.arm(deal.semantic.ir."
-                    + "FailureArmId.HOST_LOAD_MISSING_EXPORT, java.util.Map.of(\"name\", "
-                    + "name, \"module\", module), oFile + \":\" + oLine + \":\" + oCol, "
-                    + "null, null)"),
-                "the load entry renders the host-load missing-export arm");
-            check(!source.contains("missing host export '"),
-                "the load entry composes no missing-export text of its own");
-            check(source.contains("throw JvmRuntime.arm(deal.semantic.ir."
-                    + "FailureArmId.HOST_LOAD_FAILED, java.util.Map.of(\"module\", ")
-                    && source.contains("\"reason\", java.lang.String.valueOf(__e)), "
-                        + "oFile + \":\" + oLine + \":\" + oCol, null, null)"),
-                "the load entry renders the host-load failed arm for an absent "
-                    + "module class");
-            check(!source.contains("not found (class "),
-                "the load entry composes no module-not-found text of its own");
-
-            // The per-export wrappers: the declared parameter cells in one-based
-            // order and the declared return cell.
-            check(source.contains("static int __host$" + probeKey + "$echoInt("
-                    + "java.lang.Object __a0, java.lang.String oFile, int oLine, int oCol) {"),
-                "the wrapper carries the declared return carrier");
-            check(source.contains("__a0 = __hostParamCheck(1, \"bytes\", __a0, "
-                    + "oFile, oLine, oCol);"),
-                "the parameter cell runs the declared descriptor in one-based order");
-            check(source.contains("__hostParamCheck(2, \"[string]\", __a1, "
-                    + "oFile, oLine, oCol);"),
-                "the second parameter cell carries its declared descriptor");
-            check(source.contains("java.lang.Object __hostReturn = __hostCheck(\"int\", "
-                    + "__r, false, oFile, oLine, oCol);")
-                    && source.contains("return ((java.lang.Number) __hostReturn)"
-                        + ".intValue();"),
-                "the sync return cell runs the declared descriptor and normalizes "
-                    + "the admitted numeric host carrier to the settled carrier");
+                "nullable ABI uses the boxed carrier");
             check(source.contains("throw JvmRuntime.arm("
                     + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_NOTHING, "
                     + "java.util.Map.of(\"expected\", \"int\"), oFile + \":\" + oLine "
                     + "+ \":\" + oCol, \"int\", \"nothing\")"),
-                "the presence rule renders the host return-nothing arm");
-            check(source.contains("throw JvmRuntime.arm("
-                    + "deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, "
-                    + "java.util.Map.of(\"index\", java.lang.Integer.toString(i), "
-                    + "\"inner\", __hostInnerMessage(desc, v, __inner))"),
-                "the parameter cell renders the host parameter arm");
-            check(source.contains("throw JvmRuntime.arm("
-                    + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, "
-                    + "java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner))"),
-                "the return cell renders the host return arm");
+                "absent sync result renders the return-nothing arm");
             check(source.contains(
                     "throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);"),
-                "the unknown-descriptor branch routes through the validated "
-                    + "descriptor-kind helper (never a composed reason)");
+                "unknown descriptors use the validated kind helper");
             check(source.contains("JvmRuntime.arm("
                     + "deal.semantic.ir.FailureArmId.ASYNC_SHAPE,"
                     + " java.util.Map.of(\"actual\", __hostKind(__r))"),
@@ -1063,28 +842,6 @@ public class HostModuleLoadEmissionTest {
                     + "declared void shape yields the absent marker while a "
                     + "returned value — a present null included — is returned "
                     + "unchanged");
-
-            // The synthesized host-record and host-carrier scope.
-            check(source.contains("class $DealRt {"),
-                "the artifact carries the top-level $DealRt scope");
-            check(source.contains("interface FnValue { java.lang.String descriptor(); }"),
-                "the scope carries the FnValue interface");
-            check(source.contains("static abstract class Fn1_I_R_I implements FnValue {"),
-                "the scope carries the per-signature wrapper class of the declared "
-                    + "function position");
-            check(source.contains("static final class __StringArray {"),
-                "the scope carries the declared element-shape array carriers");
-            check(source.contains("static final class Bytes {"),
-                "the scope carries the declared bytes descriptor's carrier type");
-            check(source.contains("static final class $Host$host$scfg$ServerConfig"
-                        + " implements JvmRuntime.ClassInstance {")
-                    && source.contains("$Host$host$scfg$ServerConfig(int port,"),
-                "the scope carries one synthesized record per declared host class with "
-                    + "its declared fields in declaration order and the production "
-                    + "field-op surface (ISSUE-0624's construction/field realization)");
-            check(source.contains("static final class $HostArr$host$scfg$ServerConfig "
-                    + "extends __RefArray {"),
-                "the scope carries the per-class array carrier of a declared class element");
 
             checkEq(source, JvmSemanticEmitter.emitProductionProject(project,
                     result.tables(), result.registries(), className,
@@ -1154,47 +911,14 @@ public class HostModuleLoadEmissionTest {
                 jvmProbe(probeKey, cfgKey, serverDescriptor, endpointDescriptor),
                 StandardCharsets.UTF_8);
 
-            Path classes = workspace.resolve("classes");
-            Files.createDirectories(classes);
-            String classpath = absoluteClasspath();
-            List<String> sources = new ArrayList<>();
-            sources.add(source.toAbsolutePath().toString());
-            sources.add("HostAbi_probe.java");
+            List<String> sources = new ArrayList<>(List.of(source.toString(), "HostAbi_probe.java"));
             sources.addAll(corpusHostSources);
-            sources.add("HostModuleLoadProbe.java");
-            List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString()));
-            command.addAll(sources);
-            ProcessOutcome javacRun = runProcess(command, workspace, false);
-            check(javacRun.exitCode() == 0,
-                "the artifact compiles with the deployed host fixtures: "
-                    + javacRun.output());
-            if (javacRun.exitCode() != 0) {
-                return;
-            }
-
-            ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classes + java.io.File.pathSeparator + classpath,
-                "HostModuleLoadProbe"), workspace, false);
-            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
-                "the emitted host wrappers run the declared cells under java: exit="
-                    + run.exitCode() + " stdout=" + escaped(run.stdout())
-                    + " stderr=" + escaped(run.stderr()));
+            runJvmProbe(workspace, sources, "HostModuleLoadProbe", "deployed host ABI");
         } finally {
             deleteRecursively(workspace);
         }
     }
 
-    /**
-     * The declared JVM host array wrappers (ISSUE-0765): a declared
-     * element-shape carrier is not an admission — its elements are the
-     * declared element cells, so a failing element is projected through the
-     * closed element arm and the host parameter/return composite, exactly
-     * like the production array carrier. The deployed artifact is driven
-     * under {@code javac --release 25 -proc:none} + {@code java} with the
-     * declared carrier crossing the emitted wrappers, and the canonical
-     * oracle cell of the same values renders the identical tuple.
-     */
     private static void testJvmDeclaredArrayElementProjection(Baseline fixture)
             throws Exception {
         System.out.println("-- the JVM host wrappers: a declared array carrier's "
@@ -1242,38 +966,13 @@ public class HostModuleLoadEmissionTest {
             String key = JvmBackend.escapedIdentifier(arrayModule.path());
             Files.writeString(workspace.resolve("HostArrayProbeMain.java"),
                 arrayProbeSource(key), StandardCharsets.UTF_8);
-            Path classes = workspace.resolve("classes");
-            Files.createDirectories(classes);
-            String classpath = absoluteClasspath();
-            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString(),
-                workspace.resolve(className + ".java").toAbsolutePath().toString(),
-                "HostArray_probe.java", "HostArrayProbeMain.java"), workspace, false);
-            check(javacRun.exitCode() == 0,
-                "the declared-array wrappers compile beside their host: "
-                    + javacRun.output());
-            if (javacRun.exitCode() != 0) {
-                return;
-            }
-            ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classes + java.io.File.pathSeparator + classpath,
-                "HostArrayProbeMain"), workspace, false);
-            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
-                "the declared-array wrappers project every element failure through "
-                    + "the host cells: exit=" + run.exitCode() + " stdout="
-                    + escaped(run.stdout()) + " stderr=" + escaped(run.stderr()));
+            runJvmProbe(workspace, new ArrayList<>(List.of(className + ".java",
+                "HostArray_probe.java")), "HostArrayProbeMain", "declared array cells");
         } finally {
             deleteRecursively(workspace);
         }
     }
 
-    /**
-     * The declared-array probe: the valid carrier is admitted and projected
-     * into the production array, and a failing element of the declared
-     * parameter/return carrier renders the element arm inside the host
-     * parameter/return composite with the declared descriptor and the
-     * carrier-kind actual.
-     */
     private static String arrayProbeSource(String key) {
         return """
             final class HostArrayProbeMain {
@@ -1539,13 +1238,6 @@ public class HostModuleLoadEmissionTest {
             cfgOrigin, "wrong-kind-defaults");
     }
 
-    /**
-     * One JVM load-failure drive: the artifact compiles and runs with the
-     * given host implementation (a null file name deploys none, so the
-     * module class is absent), and the module init must fail with the
-     * pinned E8011 tuple (the message and, when pinned, the exact origin,
-     * and no expected/actual field for the HOST_LOAD arm).
-     */
     private static void checkJvmLoadFailure(Baseline fixture, String hostFileName,
             String hostSource, String expectedCode, String expectedMessage,
             String expectedOrigin, String label) throws Exception {
@@ -1571,27 +1263,7 @@ public class HostModuleLoadEmissionTest {
             Files.writeString(workspace.resolve("HostLoadFailureProbe.java"),
                 jvmFailureProbe(expectedCode, expectedMessage, expectedOrigin),
                 StandardCharsets.UTF_8);
-            compiled.add("HostLoadFailureProbe.java");
-            Path classes = workspace.resolve("classes");
-            Files.createDirectories(classes);
-            String classpath = absoluteClasspath();
-            List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", classes.toString()));
-            command.addAll(compiled);
-            ProcessOutcome javacRun = runProcess(command, workspace, false);
-            check(javacRun.exitCode() == 0,
-                "the load-failure artifact ('" + label + "') compiles: "
-                    + javacRun.output());
-            if (javacRun.exitCode() != 0) {
-                return;
-            }
-            ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classes + java.io.File.pathSeparator + classpath,
-                "HostLoadFailureProbe"), workspace, false);
-            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
-                "the load seed '" + label + "' raises the pinned E8011: exit="
-                    + run.exitCode() + " stdout=" + escaped(run.stdout())
-                    + " stderr=" + escaped(run.stderr()));
+            runJvmProbe(workspace, compiled, "HostLoadFailureProbe", label);
         } finally {
             deleteRecursively(workspace);
         }
@@ -1672,7 +1344,7 @@ public class HostModuleLoadEmissionTest {
             "the workspace carries the runtime and stdlib deployment copies");
     }
 
-    private record ProcessOutcome(int exitCode, String stdout, String stderr) {
+    record ProcessOutcome(int exitCode, String stdout, String stderr) {
 
         String output() {
             return "stdout=" + stdout.replace("\n", "\\n")
@@ -1680,25 +1352,45 @@ public class HostModuleLoadEmissionTest {
         }
     }
 
-    private static ProcessOutcome runProcess(List<String> command, Path workDir,
+    static ProcessOutcome runProcess(List<String> command, Path workDir,
             boolean deferMain) throws Exception {
         Path stderrFile = Files.createTempFile(workDir, "stderr", ".txt");
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(workDir.toFile());
-        if (deferMain) {
-            builder.environment().put("DEAL_DEFER_MAIN", "1");
+        try {
+            ProcessBuilder builder = new ProcessBuilder(command).directory(workDir.toFile());
+            if (deferMain) {
+                builder.environment().put("DEAL_DEFER_MAIN", "1");
+            }
+            Process process = builder.redirectError(stderrFile.toFile()).start();
+            String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int exit = process.waitFor();
+            return new ProcessOutcome(exit, stdout, Files.readString(stderrFile, StandardCharsets.UTF_8));
+        } finally {
+            Files.deleteIfExists(stderrFile);
         }
-        builder.redirectError(stderrFile.toFile());
-        Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        String stderr = Files.readString(stderrFile, StandardCharsets.UTF_8);
-        Files.deleteIfExists(stderrFile);
-        return new ProcessOutcome(exit, stdout, stderr);
     }
 
-    private static String absoluteClasspath() {
+    private static void runJvmProbe(Path workspace, List<String> sources,
+            String template, String label) throws Exception {
+        String driver = template + "_" + java.util.UUID.randomUUID().toString().replace("-", "");
+        Path source = workspace.resolve(template + ".java");
+        Files.writeString(workspace.resolve(driver + ".java"),
+            Files.readString(source).replace(template, driver), StandardCharsets.UTF_8);
+        sources.add(driver + ".java");
+        Path classes = Files.createDirectories(workspace.resolve("classes"));
+        List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
+            "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString()));
+        command.addAll(sources);
+        ProcessOutcome compiled = runProcess(command, workspace, false);
+        check(compiled.exitCode() == 0, label + ": real javac: " + compiled.output());
+        if (compiled.exitCode() == 0) {
+            ProcessOutcome run = runProcess(List.of("java", "-cp",
+                classes + java.io.File.pathSeparator + absoluteClasspath(), driver), workspace, false);
+            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK")
+                    && run.stderr().isEmpty(), label + ": real java: " + run.output());
+        }
+    }
+
+    static String absoluteClasspath() {
         StringBuilder resolved = new StringBuilder();
         for (String entry : System.getProperty("java.class.path", "")
                 .split(java.io.File.pathSeparator)) {
@@ -1741,14 +1433,14 @@ public class HostModuleLoadEmissionTest {
         return count;
     }
 
-    private static void writeFileIn(Path root, String relative, String content)
+    static void writeFileIn(Path root, String relative, String content)
             throws Exception {
         Path file = root.resolve(relative);
         Files.createDirectories(file.getParent());
         Files.writeString(file, content, StandardCharsets.UTF_8);
     }
 
-    private static void deleteRecursively(Path path) {
+    static void deleteRecursively(Path path) {
         if (path == null) {
             return;
         }

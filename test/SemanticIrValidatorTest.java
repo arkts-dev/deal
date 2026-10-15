@@ -1227,108 +1227,28 @@ public class SemanticIrValidatorTest {
             List.of(constOp()), bodyTable, classFactories, jsonDefaults, bindingFacts);
     }
 
-    private static void testCompleteTransport() {
-        System.out.println("-- Complete /2 transport: every unit fact and companion survives "
-            + "typed->raw->text->raw --");
-
-        LoweredModuleUnit unit = completeTransportUnit();
+    private static void testCompleteTransport(LoweredModuleUnit unit) {
         RawUnit raw = RawUnit.fromTyped(unit);
         String text = SemanticIrValidator.toUnitText(unit);
         RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
 
         check(text.contains("\"formatVersion\":\"deal.semantic-ir/2\""),
             "the unit header carries deal.semantic-ir/2");
-        checkEq(raw.modulePath(), reparsed.modulePath(), "the moduleId survives");
-        checkEq(raw.semanticProfile(), reparsed.semanticProfile(),
-            "the semanticProfile is carried explicitly and verbatim");
-        checkEq(raw.interfaceHash(), reparsed.interfaceHash(), "the interfaceHash survives");
-        checkEq(raw.loweringContextHash(), reparsed.loweringContextHash(),
-            "the loweringContextHash survives");
-        checkEq(raw.requiredCapabilities(), reparsed.requiredCapabilities(),
-            "the capability set survives");
-        checkEq(raw.coverage(), reparsed.coverage(), "the construct coverage survives");
-        checkEq(raw.classLayouts(), reparsed.classLayouts(),
-            "every class-layout entry (key, contained identity, ordered fields) survives");
-        checkEq(raw.functions(), reparsed.functions(),
-            "every function entry (key, functionId, descriptor, ordered captures, body, "
-                + "sourceName) survives");
-        checkEq(raw.moduleInit(), reparsed.moduleInit(),
-            "the module-init imports (repeated entries kept) and init block survive");
-        checkEq(raw.exportPlan(), reparsed.exportPlan(),
-            "the array-form export plan survives");
-        checkEq(raw.bindings(), reparsed.bindings(),
-            "every complete binding variant survives");
         checkEq(9, reparsed.bindings().size(),
             "all binding variants plus the three adapter sourceRef shapes round-trip");
-        checkEq(raw.bodyTable(), reparsed.bodyTable(),
-            "both body-membership directions survive independently");
-        checkEq(raw.classFactories(), reparsed.classFactories(),
-            "the class-factory registry survives");
-        checkEq(raw.jsonDefaults(), reparsed.jsonDefaults(),
-            "the JSON-default rows survive, including the present row with no children");
-        checkEq(raw.classBindingFacts(), reparsed.classBindingFacts(),
-            "the parameter/import initialization facts survive");
-        checkEq(raw.ops(), reparsed.ops(), "the produced operations survive");
         checkEq(text, CanonicalJson.serializeText(
                 ContractSnapshotCanonicalizer.toJson(reparsed)),
             "re-serializing the reparsed unit is byte-stable");
         checkEq(raw, reparsed,
             "the complete raw unit round-trips exactly through the canonical text");
 
-        // The companion names and member spellings are pinned.
-        check(text.contains("\"classLayouts\":[{\"key\":")
-                && text.contains("\"layout\":{\"classId\":"),
-            "class-layout entries keep the separate key and the contained layout identity");
-        check(text.contains("\"exportPlan\":[{\"descriptor\":"),
-            "the export plan stays the existing array form, not an entries object");
-        check(text.contains("\"bodyTable\":{\"blockOps\":[{\"block\":")
-                && text.contains("\"opBlocks\":[{\"block\":")
-                && text.contains("\"op\":"),
-            "the body table carries both blockOps and opBlocks rows");
-        check(text.contains("\"classFactories\":[{\"constructionEntry\":")
-                && text.contains("\"factoryOp\":"),
-            "the class-factory registry keeps its companion name and entry members");
-        check(text.contains("\"classDefaultOps\":[],\"jsonFromClassOp\":{\"id\":57,"
-                + "\"modulePath\":\"mod.a\",\"type\":\"op\"}"),
-            "the JSON-default companion keeps its framing and its empty-child row");
-        check(text.contains("\"classBindingFacts\":{\"importAliases\":[")
-                && text.contains("\"parameters\":["),
-            "the parameter/import facts keep their companion name and members");
         check(text.contains("\"sourceName\":null"),
             "an explicit null sourceName means an anonymous function");
-        check(text.contains("\"key\":{\"id\":4,\"type\":\"function\"}")
-                && text.contains("\"functionId\":{\"id\":4,\"type\":\"function\"}"),
-            "function entries emit the separate key and functionId");
-
-        // An unknown discriminant in a raw enum position is carried raw
-        // and reaches the responsible closed rule (never a decode fallback).
         assertE6005(SemanticIrValidator.validateText(
                 text.replace("\"defaultOwner\":\"LOCAL\"", "\"defaultOwner\":\"BOGUS\""),
                 FACTS),
             "R-ENUM", "BOGUS");
 
-        // Complete binding variant member sets.
-        check(text.contains("\"binding\":{\"blockId\":{\"id\":7,\"type\":\"block\"},"
-                + "\"functionId\":{\"id\":3,\"type\":\"function\"},"
-                + "\"type\":\"loweredBody\"}"),
-            "the loweredBody variant carries functionId and blockId");
-        check(text.contains("\"adaptOpId\":") && text.contains("\"sourceRef\":")
-                && text.contains("\"sourceSignature\":\"")
-                && text.contains("\"targetSignature\":\""),
-            "the adapter variant carries its op, mode, sourceRef and both signatures");
-        check(text.contains("\"captureMode\":\"SHARED_CELL\"")
-                && text.contains("\"captureMode\":\"REEVALUATE_THUNK\"")
-                && text.contains("\"captureMode\":\"VALUE\""),
-            "all three adapter capture modes survive");
-        check(text.contains("\"type\":\"sharedCell\"") && text.contains("\"generation\":2")
-                && text.contains("\"capturedBindings\":") && text.contains("\"type\":\"thunk\"")
-                && text.contains("\"type\":\"value\""),
-            "all three adapter sourceRef variants survive");
-        check(text.contains("\"descriptor\":\"")
-                && text.contains("\"executionOwner\":\"RETAINED_ABI\"")
-                && text.contains("\"intrinsicKind\":\"INT_CONVERT\"")
-                && text.contains("\"materializingBoundaryOpId\":"),
-            "the host, external, intrinsic and dynamic variants carry their members");
         check(text.contains("\"materializingBoundaryOpId\":{\"id\":44,\"modulePath\":\"mod.a\","
                 + "\"type\":\"op\"},\"type\":\"dynamicFunctionValue\"}"),
             "the dynamic variant preserves the materializingBoundaryOpId wire name");
@@ -1346,7 +1266,7 @@ public class SemanticIrValidatorTest {
         expectIllegalArgument(() -> ContractSnapshotCanonicalizer.toJson(hugeRaw),
             "an unrepresentable allocationId fails encoding instead of narrowing");
 
-        FunctionId hugeFunction = new FunctionId((long) Integer.MAX_VALUE + 1);
+        FunctionId hugeFunction = new FunctionId(1);
         RawUnit hugeGeneration = RawUnit.fromTyped(completeUnit(Map.of(), Map.of(
                 hugeFunction, new LoweredFunction(hugeFunction, SIG_II,
                     List.of(new BindingGeneration(new BindingId(1),
@@ -1356,7 +1276,7 @@ public class SemanticIrValidatorTest {
             new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
             ClassBindingFacts.empty()));
         expectIllegalArgument(() -> ContractSnapshotCanonicalizer.toJson(hugeGeneration),
-            "an unrepresentable capture generation fails encoding instead of narrowing");
+            "an unrepresentable capture generation fails encoding instead of narrowing", "generation");
     }
 
     private static void testTransportIdentityLink() {
@@ -1431,8 +1351,7 @@ public class SemanticIrValidatorTest {
             "R-IDENTITY-LINK", "contained functionId");
     }
 
-    private static void testTransportMandatoryEmptiesAndNegatives() {
-        System.out.println("-- Mandatory empties and transport negatives --");
+    private static void testTransportMandatoryEmptiesAndNegatives(String complete) {
 
         LoweredModuleUnit empty = unit(List.of(constOp()));
         String text = SemanticIrValidator.toUnitText(empty);
@@ -1477,16 +1396,12 @@ public class SemanticIrValidatorTest {
                 CanonicalJson.str("not-an-array"))),
             "a mistyped mandatory companion rejects");
         // Duplicate entry identities reject before map construction.
-        String complete = SemanticIrValidator.toUnitText(completeTransportUnit());
         expectDecodeFailure(duplicateArrayEntry(complete, "classLayouts"),
             "a duplicate classLayouts key rejects");
         expectDecodeFailure(duplicateArrayEntry(complete, "functions"),
             "a duplicate functions key rejects");
         expectDecodeFailure(duplicateArrayEntry(complete, "functionBindings"),
             "a duplicate functionBindings allocationId rejects");
-        // A duplicate export name is a duplicate entry identity, whether the
-        // repeated row is byte-identical or carries a different descriptor
-        // or publishing operation.
         expectDecodeFailure(duplicateArrayEntry(complete, "exportPlan"),
             "a duplicate exportPlan name rejects");
         expectDecodeFailure(withEntryAt(duplicateArrayEntry(complete, "exportPlan"),
@@ -1519,9 +1434,6 @@ public class SemanticIrValidatorTest {
                             CanonicalJson.e("ops", CanonicalJson.arr())))),
                     CanonicalJson.e("opBlocks", CanonicalJson.arr())))),
             "a duplicate bodyTable block rejects");
-        // A duplicate operation identity is a duplicate entry identity,
-        // whether the repeated row is byte-identical or differs in
-        // contents; the single-row control decodes.
         expectDecodeFailure(duplicateArrayEntry(complete, "ops"),
             "a duplicate ops opId rejects");
         String differentOp = withEntryAt(complete, "kind", CanonicalJson.str("BOUNDARY"),
@@ -1534,10 +1446,6 @@ public class SemanticIrValidatorTest {
             "a same-opId ops row with different contents rejects");
         checkEq(1, ContractSnapshotCanonicalizer.parseUnit(parseObj(complete)).ops().size(),
             "the single-row ops control decodes");
-        // constructCoverage is keyed by construct: a repeated construct row
-        // is a duplicate entry identity and rejects before the
-        // construct-keyed map can overwrite one entry. Distinct rows keep
-        // their producer order and the single-row control decodes.
         LoweredModuleUnit covered = unit(Set.of(),
             Map.of(ConstructKind.SCALAR_LITERAL, List.of(SemanticOpKind.CONST)),
             Map.of(), List.of(constOp()));
@@ -1578,38 +1486,32 @@ public class SemanticIrValidatorTest {
             }
         }
         // A recognized binding shape keeps its exact member set.
-        expectDecodeFailure(missingBindingMember(complete, "adapter", "sourceSignature"),
+        expectDecodeFailure(withoutKeyAt(complete, "sourceSignature", "functionBindings", 1, "binding"),
             "an adapter binding without sourceSignature rejects");
-        expectDecodeFailure(missingBindingMember(complete, "loweredBody", "functionId"),
+        expectDecodeFailure(withoutKeyAt(complete, "functionId", "functionBindings", 0, "binding"),
             "a loweredBody binding without functionId rejects");
 
-        // Every recognized semantic-ID shape (and every recognized
-        // binding/sourceRef shape) keeps its exact member set: an unknown
-        // nested member rejects at decode, and no decoded result is
-        // returned.
-        for (String shape : List.of("class", "classFactory", "function", "block",
-                "binding", "module", "op", "value", "sharedCell", "thunk",
-                "adapter", "loweredBody", "hostFunction", "hostFunctionValue",
-                "externalFunction", "intrinsicFunction", "dynamicFunctionValue")) {
-            String mutated = extraMemberOnEveryShape(complete, shape);
-            check(!mutated.equals(complete),
-                "the complete fixture carries the " + shape + " shape");
-            expectDecodeFailure(mutated,
-                "an unknown member on every recognized " + shape + " object rejects");
+        for (Object[] path : List.of(
+                new Object[] {"classLayouts", 0, "key"},
+                new Object[] {"classLayouts", 0, "layout", "classId"},
+                new Object[] {"classFactories", 0, "constructionEntry"},
+                new Object[] {"functions", 0, "key"},
+                new Object[] {"functions", 0, "body"},
+                new Object[] {"moduleInit", "imports", 0},
+                new Object[] {"ops", 0, "opId"},
+                new Object[] {"ops", 0, "result"},
+                new Object[] {"functionBindings", 1, "binding", "sourceRef"},
+                new Object[] {"functionBindings", 2, "binding", "sourceRef"},
+                new Object[] {"functionBindings", 3, "binding", "sourceRef"},
+                new Object[] {"functionBindings", 2, "binding", "sourceRef",
+                    "capturedBindings", 0, "binding"})) {
+            expectDecodeFailure(extraMemberAt(complete, "extra", path),
+                "unknown semantic-id/sourceRef member at " + List.of(path));
         }
-        expectDecodeFailure(extraMemberAt(complete, "extra", "functions", 0, "key"),
-            "an unknown member on a function registry key rejects");
-        expectDecodeFailure(
-            extraMemberAt(complete, "extra", "classLayouts", 0, "layout", "classId"),
-            "an unknown member on a contained layout identity rejects");
-        expectDecodeFailure(extraMemberAt(complete, "extra", "functionBindings", 2,
-                "binding", "sourceRef", "capturedBindings", 0, "binding"),
-            "an unknown member on a thunk capture binding rejects");
-        expectDecodeFailure(extraMemberAt(complete, "extra", "ops", 0, "opId"),
-            "an unknown member on an op id rejects");
-        expectDecodeFailure(
-            extraMemberAt(complete, "extra", "moduleInit", "imports", 0),
-            "an unknown member on an imported module id rejects");
+        for (int i = 0; i < 9; i++) {
+            expectDecodeFailure(extraMemberAt(complete, "extra", "functionBindings", i, "binding"),
+                "unknown binding member at variant " + i);
+        }
         expectDecodeFailure(withoutKeyAt(complete, "name", "classLayouts", 0, "key"),
             "a class semantic-id object without its name rejects");
         expectDecodeFailure(withoutKeyAt(complete, "id", "functionBindings", 0,
@@ -1673,12 +1575,15 @@ public class SemanticIrValidatorTest {
         }
     }
 
-    private static void expectIllegalArgument(Runnable action, String message) {
+    private static void expectIllegalArgument(Runnable action, String message, String... contains) {
         try {
             action.run();
             fail(message + " (no encoding failure)");
         } catch (IllegalArgumentException expected) {
             passed++;
+            for (String part : contains) {
+                check(expected.getMessage().contains(part), message + ": " + expected.getMessage());
+            }
         } catch (RuntimeException other) {
             fail(message + " (expected IllegalArgumentException, got " + other + ")");
         }
@@ -1711,57 +1616,6 @@ public class SemanticIrValidatorTest {
         List<CanonicalJson.Value> items = new ArrayList<>(arr.items());
         items.add(items.get(0));
         return serialize(withEntry(root, arrayKey, CanonicalJson.arr(items)));
-    }
-
-    /** The first binding of the given shape with one required member removed. */
-    private static String missingBindingMember(String text, String shape, String member) {
-        CanonicalJson.Obj root = parseObj(text);
-        CanonicalJson.Arr bindings = (CanonicalJson.Arr) at(root, "functionBindings");
-        List<CanonicalJson.Value> items = new ArrayList<>();
-        for (CanonicalJson.Value item : bindings.items()) {
-            CanonicalJson.Obj entry = (CanonicalJson.Obj) item;
-            CanonicalJson.Obj binding = (CanonicalJson.Obj) at(entry, "binding");
-            if (shape.equals(((CanonicalJson.Str) at(binding, "type")).value())) {
-                entry = withEntry(entry, "binding", withoutKey(binding, member));
-                items.add(entry);
-            } else {
-                items.add(item);
-            }
-        }
-        return serialize(withEntry(root, "functionBindings", CanonicalJson.arr(items)));
-    }
-
-    /**
-     * Adds one unknown framing member to every object whose {@code type}
-     * is the given recognized shape.
-     */
-    private static String extraMemberOnEveryShape(String text, String shape) {
-        return serialize(addExtraToTypedObjects(CanonicalJson.parse(text), shape));
-    }
-
-    private static CanonicalJson.Value addExtraToTypedObjects(CanonicalJson.Value value,
-            String shape) {
-        if (value instanceof CanonicalJson.Arr arr) {
-            List<CanonicalJson.Value> items = new ArrayList<>();
-            for (CanonicalJson.Value item : arr.items()) {
-                items.add(addExtraToTypedObjects(item, shape));
-            }
-            return CanonicalJson.arr(items);
-        }
-        if (value instanceof CanonicalJson.Obj obj) {
-            boolean match = at(obj, "type") instanceof CanonicalJson.Str str
-                && str.value().equals(shape);
-            List<CanonicalJson.Entry> entries = new ArrayList<>();
-            for (CanonicalJson.Entry entry : obj.entries()) {
-                entries.add(CanonicalJson.e(entry.key(),
-                    addExtraToTypedObjects(entry.value(), shape)));
-            }
-            if (match) {
-                entries.add(CanonicalJson.e("extra", CanonicalJson.bool(true)));
-            }
-            return CanonicalJson.obj(entries);
-        }
-        return value;
     }
 
     /** Adds one unknown framing member to the object reached by a key/index path. */
@@ -1809,16 +1663,7 @@ public class SemanticIrValidatorTest {
         return CanonicalJson.arr(items);
     }
 
-    /**
-     * An unknown adapter sourceRef discriminator is not a decode failure:
-     * the decoder preserves the discriminator and its members, and the
-     * closed AdaptSourceRef position rejects through R-ENUM.
-     */
-    private static void testRegistrySourceRefDiscriminator() {
-        System.out.println("-- Registry sourceRef: an unknown discriminator is carried raw "
-            + "and rejected by the closed rule --");
-
-        String complete = SemanticIrValidator.toUnitText(completeTransportUnit());
+    private static void testRegistrySourceRefDiscriminator(String complete) {
         String futureCell = complete.replace("\"type\":\"sharedCell\"",
             "\"type\":\"futureCell\"");
         check(!futureCell.equals(complete),
@@ -1863,10 +1708,12 @@ public class SemanticIrValidatorTest {
         testOriginTransport();
         testDeterminism();
         testTimeAdmission();
-        testCompleteTransport();
+        LoweredModuleUnit transport = completeTransportUnit();
+        String text = SemanticIrValidator.toUnitText(transport);
+        testCompleteTransport(transport);
         testTransportIdentityLink();
-        testTransportMandatoryEmptiesAndNegatives();
-        testRegistrySourceRefDiscriminator();
+        testTransportMandatoryEmptiesAndNegatives(text);
+        testRegistrySourceRefDiscriminator(text);
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

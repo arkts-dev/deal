@@ -1210,105 +1210,339 @@ public class ControlFlowLoweringTest {
     }
 
     static void testValidatorNegatives() {
-        System.out.println("-- Mutated units: E6005 CONTROL_BLOCK_TREE/CONTROL_EXIT --");
-
-        CheckedSlice slice = checkSlice("for (;;) { break; }");
-        if (slice == null) {
-            return;
-        }
-        SemanticLowerer.LoweringResult result = lowerDetected(slice);
+        SemanticLowerer.LoweringResult result = lowerDetected(checkSlice("for (;;) { break; }"));
         testTestlessForArm(result);
-        if (result == null || result.hasErrors() || result.unit() == null) {
-            return;
-        }
-        LoweredModuleUnit unit = result.unit();
-        StructuredBodyTable table = result.table();
+    }
 
-        // --- (a) An op after a terminator in its block is the represented
-        //     unreachable tail: appending a synthetic CONST op to the body
-        //     block after the BREAK validates (the dominance clause is
-        //     removed). The retargeted live negative then corrupts the same
-        //     unit differently — the appended op is listed in two blocks —
-        //     and still fails E6005 CONTROL_BLOCK_TREE. ---
-        {
-            SemanticOp breakOp = ofKind(unit.ops(), SemanticOpKind.BREAK).get(0);
-            OpId extraId = new OpId(MODULE, 999_999);
-            SemanticOp extra = syntheticOp(extraId, SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
-                new ValueId(999_999), RuntimeDescriptor.Int.INSTANCE,
-                FailurePolicyId.NO_DEAL_FAILURE, null);
-            List<SemanticOp> tailOps = new ArrayList<>(unit.ops());
-            tailOps.add(extra);
-            Map<BlockId, List<OpId>> tailBlocks = new LinkedHashMap<>();
-            for (Map.Entry<BlockId, List<OpId>> entry : table.blockOps().entrySet()) {
-                List<OpId> ids = new ArrayList<>(entry.getValue());
-                if (ids.contains(breakOp.opId())) {
-                    ids.add(extraId);
-                }
-                tailBlocks.put(entry.getKey(), ids);
-            }
-            StructuredBodyTable tail = rebuildTable(tailBlocks, unit);
-            Optional<CompilerDiagnostic> validation = ControlFlowValidator.validate(
-                withOps(unit, tailOps), tail);
-            check(validation.isEmpty(),
-                "an op after a terminator in its block validates as the represented "
-                    + "unreachable tail: " + validation);
+    private record FlowCase(String name, String rule, String detail,
+                            java.util.function.Consumer<FlowMutation> mutate) {}
 
-            // The retargeted live negative: the same appended op listed in
-            // two blocks is a corrupted unit and still fails closed with
-            // CONTROL_BLOCK_TREE.
-            Map<BlockId, List<OpId>> corruptBlocks = new LinkedHashMap<>();
-            boolean first = true;
-            for (Map.Entry<BlockId, List<OpId>> entry : tailBlocks.entrySet()) {
-                List<OpId> ids = new ArrayList<>(entry.getValue());
-                if (first) {
-                    ids.add(extraId);
-                    first = false;
-                }
-                corruptBlocks.put(entry.getKey(), ids);
-            }
-            assertControlE6005(
-                ControlFlowValidator.validate(withOps(unit, tailOps),
-                    rebuildTable(corruptBlocks, unit)),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "member of more than one block");
+    private static final class FlowMutation {
+        final LoweredModuleUnit seed;
+        final List<SemanticOp> ops;
+        final Map<BlockId, List<OpId>> blocks = new LinkedHashMap<>();
+        final Map<OpId, BlockId> inverse;
+        SourceOrigin offender;
+
+        FlowMutation(SemanticLowerer.LoweringResult lowered) {
+            seed = lowered.unit();
+            ops = new ArrayList<>(seed.ops());
+            lowered.table().blockOps().forEach((b, ids) -> blocks.put(b, new ArrayList<>(ids)));
+            inverse = new LinkedHashMap<>(lowered.table().opBlocks());
         }
 
-        // --- (b) A BREAK targeting a non-loop op. ---
-        {
-            SemanticOp breakOp = ofKind(unit.ops(), SemanticOpKind.BREAK).get(0);
-            SemanticOp constOp = ofKind(unit.ops(), SemanticOpKind.CONST).get(0);
-            SemanticOp retargeted = rebuildOp(breakOp,
-                new KindPayload.BreakPayload(constOp.opId()));
-            List<SemanticOp> corruptOps = new ArrayList<>(unit.ops());
-            corruptOps.set(corruptOps.indexOf(breakOp), retargeted);
-            assertControlE6005(
-                ControlFlowValidator.validate(withOps(unit, corruptOps), table),
-                ControlFlowValidator.CONTROL_EXIT, "not a LOOP or FOR_EACH");
+        SemanticOp first(SemanticOpKind kind) { return ofKind(ops, kind).get(0); }
+
+        void replace(SemanticOp op, KindPayload payload) {
+            offender = new SourceOrigin("offending.deal",
+                new SourceSpan("offending.deal", 2, 3, 2, 7, 10, 15),
+                SourceOriginKind.USER, new AnchorId(1), op.origin().parentOpId());
+            SemanticOp changed = rebuildOp(op, payload);
+            ops.set(ops.indexOf(op), new SemanticOp(changed.opId(), changed.kind(), offender,
+                changed.result(), changed.resultType(), changed.operands(), changed.operandTypes(),
+                changed.payload(), changed.failurePolicy(), changed.contract()));
         }
 
-        // --- (c) An orphan block: an extra table block referenced by no
-        //     payload position. ---
-        {
-            Map<BlockId, List<OpId>> corruptBlocks = new LinkedHashMap<>(
-                table.blockOps());
-            corruptBlocks.put(new BlockId(7_777), List.of());
-            assertControlE6005(
-                ControlFlowValidator.validate(unit, rebuildTable(corruptBlocks, unit)),
-                ControlFlowValidator.CONTROL_BLOCK_TREE, "orphan block");
+        void mark(SemanticOp op) { replace(op, op.payload()); }
+
+        void unlist(SemanticOp op, boolean removeInverse) {
+            blocks.values().forEach(ids -> ids.remove(op.opId()));
+            if (removeInverse) { inverse.remove(op.opId()); }
+            mark(op);
+        }
+
+        Optional<CompilerDiagnostic> validate() {
+            LoweredModuleUnit unit = withOps(seed, ops, new StructuredBodyTable(blocks, inverse));
+            return ControlFlowValidator.validate(unit, unit.bodyTable());
         }
     }
 
-    private static LoweredModuleUnit withOps(LoweredModuleUnit unit, List<SemanticOp> ops) {
+    private static void testValidatorMutationMatrix() {
+        CheckedSlice source = checkSlice("""
+            if (true) { "x"; } else { "y"; }
+            for (;;) { if (true) { try { break; } catch (e) { continue; } } else { "tail"; } }
+            for (;;) { break; }
+            """);
+        SemanticLowerer.LoweringResult produced = lowerDetected(source);
+        check(!produced.hasErrors(), "source mutation seed lowers: " + produced.diagnostics());
+        if (produced.hasErrors()) { return; }
+        LoweredModuleUnit seed = produced.unit();
+        deal.semantic.ir.FunctionId f = new deal.semantic.ir.FunctionId(900), g = new deal.semantic.ir.FunctionId(901);
+        BlockId otherRoot = new BlockId(900);
+        RuntimeDescriptor.Func signature = new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Null.INSTANCE);
+        SemanticOp returned = syntheticOp(new OpId(MODULE, 900000), SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(null, f, new OpId(MODULE, 900010), new OpId(MODULE, 900011)),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp otherReturn = syntheticOp(new OpId(MODULE, 900003), SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(null, g, new OpId(MODULE, 900012), new OpId(MODULE, 900013)),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+        List<SemanticOp> seedOps = new ArrayList<>(seed.ops()); seedOps.add(returned); seedOps.add(otherReturn);
+        Map<BlockId, List<OpId>> seedBlocks = new LinkedHashMap<>(produced.table().blockOps());
+        List<OpId> rootOps = new ArrayList<>(seedBlocks.get(seed.moduleInit().initBlock())); rootOps.add(returned.opId());
+        BlockId functionRoot = new BlockId(901);
+        seedBlocks.put(functionRoot, rootOps.stream().filter(id ->
+            opById(seedOps, id).kind() != SemanticOpKind.MODULE_INIT).toList());
+        seedBlocks.put(seed.moduleInit().initBlock(), rootOps.stream().filter(id ->
+            opById(seedOps, id).kind() == SemanticOpKind.MODULE_INIT).toList());
+        seedBlocks.put(otherRoot, List.of(otherReturn.opId()));
+        LoweredModuleUnit withFunctions = new LoweredModuleUnit(seed.formatVersion(), seed.semanticProfile(), seed.moduleId(),
+            seed.interfaceHash(), seed.loweringContextHash(), seed.requiredCapabilities(), seed.constructCoverage(),
+            seed.classLayouts(), Map.of(f, new deal.semantic.ir.LoweredFunction(f, signature, List.of(), functionRoot),
+                g, new deal.semantic.ir.LoweredFunction(g, signature, List.of(), otherRoot)), seed.moduleInit(),
+            seed.exportPlan(), seed.functionBindings(), seedOps, rebuildTable(seedBlocks),
+            seed.classFactories(), seed.jsonDefaults(), seed.classBindingFacts());
+        SemanticLowerer.LoweringResult lowered = new SemanticLowerer.LoweringResult(withFunctions,
+            withFunctions.bodyTable(), produced.diagnostics());
+        check(!lowered.hasErrors(), "validator source seed lowers: " + lowered.diagnostics());
+        if (lowered.hasErrors()) { return; }
+        check(ControlFlowValidator.validate(lowered.unit(), lowered.table()).isEmpty(),
+            "unmutated source seed validates");
+        BlockId ghost = new BlockId(7777);
+        OpId missing = new OpId(MODULE, 999999);
+        List<FlowCase> cases = List.of(
+            new FlowCase("orphan", "CONTROL_BLOCK_TREE", "orphan block", m -> m.blocks.put(ghost, new ArrayList<>())),
+            new FlowCase("missing function root", "CONTROL_BLOCK_TREE", "body block", m -> {
+                BlockId root = m.seed.functions().values().iterator().next().body();
+                m.blocks.remove(root);
+                m.inverse.entrySet().removeIf(entry -> entry.getValue().equals(root));
+            }),
+            new FlowCase("missing init root", "CONTROL_BLOCK_TREE", "module init block", m -> {
+                BlockId root = m.seed.moduleInit().initBlock();
+                m.blocks.remove(root); m.inverse.entrySet().removeIf(entry -> entry.getValue().equals(root));
+                m.seed.functions().values().forEach(function -> m.blocks.putIfAbsent(function.body(), new ArrayList<>()));
+                m.blocks.remove(root);
+            }),
+            new FlowCase("missing payload block", "CONTROL_BLOCK_TREE", "which is not a block of the table", m -> {
+                SemanticOp branch = m.first(SemanticOpKind.BRANCH);
+                KindPayload.BranchPayload p = (KindPayload.BranchPayload) branch.payload();
+                m.replace(branch, new KindPayload.BranchPayload(p.selector(), p.condition(), ghost, p.alternateBlock()));
+            }),
+            new FlowCase("unproduced listed op", "CONTROL_BLOCK_TREE", "not a produced op", m -> {
+                m.blocks.get(m.seed.moduleInit().initBlock()).add(missing);
+                m.inverse.put(missing, m.seed.moduleInit().initBlock());
+            }),
+            new FlowCase("duplicate membership", "CONTROL_BLOCK_TREE", "member of more than one block", m -> {
+                SemanticOp op = m.first(SemanticOpKind.CONST); m.mark(op);
+                m.blocks.get(m.seed.moduleInit().initBlock()).add(op.opId());
+            }),
+            new FlowCase("duplicate within block", "CONTROL_BLOCK_TREE", "listed twice in one block", m -> {
+                SemanticOp op = m.first(SemanticOpKind.CONST); m.mark(op);
+                m.blocks.get(m.inverse.get(op.opId())).add(op.opId());
+            }),
+            new FlowCase("missing inverse", "CONTROL_BLOCK_TREE", "no inverse membership entry", m -> {
+                SemanticOp op = m.first(SemanticOpKind.CONST); m.mark(op); m.inverse.remove(op.opId());
+            }),
+            new FlowCase("conflicting inverse", "CONTROL_BLOCK_TREE", "inverse-map conflict", m -> {
+                SemanticOp op = m.first(SemanticOpKind.CONST); m.mark(op); m.inverse.put(op.opId(), ghost);
+            }),
+            new FlowCase("inverse only", "CONTROL_BLOCK_TREE", "listed in no block", m ->
+                m.unlist(m.first(SemanticOpKind.CONST), false)),
+            new FlowCase("root referenced", "CONTROL_BLOCK_TREE", "root block", m -> {
+                SemanticOp branch = m.first(SemanticOpKind.BRANCH);
+                KindPayload.BranchPayload p = (KindPayload.BranchPayload) branch.payload();
+                m.replace(branch, new KindPayload.BranchPayload(p.selector(), p.condition(),
+                    m.seed.moduleInit().initBlock(), p.alternateBlock()));
+            }),
+            new FlowCase("control op unlisted", "CONTROL_BLOCK_TREE", "not a member of any block", m ->
+                m.unlist(m.first(SemanticOpKind.BRANCH), true)),
+            new FlowCase("CONST unlisted", "CONTROL_BLOCK_TREE", "member of no block", m ->
+                m.unlist(m.first(SemanticOpKind.CONST), true)),
+            new FlowCase("ASSIGN unlisted", "CONTROL_BLOCK_TREE", "member of no block", m -> {
+                SemanticOp op = syntheticOp(missing, SemanticOpKind.ASSIGN,
+                    new KindPayload.AssignPayload(deal.semantic.ir.AssignTargetKind.VARIABLE, List.of()),
+                    null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+                m.ops.add(op); m.mark(op);
+            }),
+            new FlowCase("BREAK unlisted precedes exit rejection", "CONTROL_BLOCK_TREE", "member of no block", m ->
+                m.unlist(m.first(SemanticOpKind.BREAK), true)),
+            new FlowCase("unproduced inverse op", "CONTROL_BLOCK_TREE", "not a produced op", m ->
+                m.inverse.put(missing, m.seed.moduleInit().initBlock())),
+            new FlowCase("same payload block twice", "CONTROL_BLOCK_TREE", "more than one control payload position", m -> {
+                SemanticOp branch = m.first(SemanticOpKind.BRANCH);
+                KindPayload.BranchPayload p = (KindPayload.BranchPayload) branch.payload();
+                m.replace(branch, new KindPayload.BranchPayload(p.selector(), p.condition(), p.selectedBlock(), p.selectedBlock()));
+            }),
+            new FlowCase("second referencing op", "CONTROL_BLOCK_TREE", "more than one control payload position", m -> {
+                List<SemanticOp> loops = ofKind(m.ops, SemanticOpKind.LOOP);
+                KindPayload.LoopPayload first = (KindPayload.LoopPayload) loops.get(0).payload();
+                KindPayload.LoopPayload second = (KindPayload.LoopPayload) loops.get(1).payload();
+                m.replace(loops.get(1), new KindPayload.LoopPayload(second.selector(), second.initBlock(),
+                    second.condition(), first.bodyBlock(), second.updateBlock()));
+            }),
+            new FlowCase("cyclic nesting", "CONTROL_BLOCK_TREE", "cyclic block nesting", m -> {
+                List<SemanticOp> loops = ofKind(m.ops, SemanticOpKind.LOOP);
+                SemanticOp a = loops.get(0), b = loops.get(1);
+                BlockId aBody = ((KindPayload.LoopPayload) a.payload()).bodyBlock();
+                BlockId bBody = ((KindPayload.LoopPayload) b.payload()).bodyBlock();
+                m.blocks.values().forEach(ids -> { ids.remove(a.opId()); ids.remove(b.opId()); });
+                m.blocks.get(bBody).add(a.opId()); m.inverse.put(a.opId(), bBody);
+                m.blocks.get(aBody).add(b.opId()); m.inverse.put(b.opId(), aBody);
+            }),
+            new FlowCase("BREAK non-loop", "CONTROL_EXIT", "not a LOOP or FOR_EACH", m ->
+                m.replace(m.first(SemanticOpKind.BREAK), new KindPayload.BreakPayload(m.first(SemanticOpKind.CONST).opId()))),
+            new FlowCase("BREAK absent target", "CONTROL_EXIT", "not a LOOP or FOR_EACH", m ->
+                m.replace(m.first(SemanticOpKind.BREAK), new KindPayload.BreakPayload(missing))),
+            new FlowCase("BREAK sibling target", "CONTROL_EXIT", "does not enclose its block", m ->
+                m.replace(m.first(SemanticOpKind.BREAK), new KindPayload.BreakPayload(ofKind(m.ops, SemanticOpKind.LOOP).get(1).opId()))),
+            new FlowCase("RETURN wrong function", "CONTROL_EXIT", "belongs to the block tree rooted", m -> {
+                SemanticOp op = m.first(SemanticOpKind.RETURN);
+                KindPayload.ReturnPayload p = (KindPayload.ReturnPayload) op.payload();
+                deal.semantic.ir.FunctionId other = m.seed.functions().keySet().stream()
+                    .filter(id -> !id.equals(p.function())).findFirst().orElseThrow();
+                m.replace(op, new KindPayload.ReturnPayload(p.value(), other, p.enclosingInvocationOpId(), p.returnBoundaryOpId()));
+            }),
+            new FlowCase("RETURN absent function", "CONTROL_EXIT", "not a function of the unit", m -> {
+                SemanticOp op = m.first(SemanticOpKind.RETURN);
+                KindPayload.ReturnPayload p = (KindPayload.ReturnPayload) op.payload();
+                m.replace(op, new KindPayload.ReturnPayload(p.value(), new deal.semantic.ir.FunctionId(999),
+                    p.enclosingInvocationOpId(), p.returnBoundaryOpId()));
+            }));
+        for (FlowCase row : cases) {
+            FlowMutation mutation = new FlowMutation(lowered);
+            row.mutate().accept(mutation);
+            Optional<CompilerDiagnostic> failure = mutation.validate();
+            assertControlE6005(failure, row.rule(), row.detail());
+            check(failure.equals(mutation.validate()), row.name() + " deterministic diagnostic");
+            if (failure.isPresent()) {
+                check(mutation.offender == null ? failure.get().range().isCanonicalSynthetic()
+                        : failure.get().range().equals(mutation.offender.span().range()),
+                    row.name() + " exact offending range: " + failure.get().range());
+            }
+        }
+        testFlowTableContracts(lowered);
+        testRepresentedTails(lowered);
+        testCallOwnedReturns(lowered);
+        FlowMutation exempt = new FlowMutation(lowered);
+        deal.semantic.ir.FunctionId function = lowered.unit().functions().keySet().iterator().next();
+        RuntimeDescriptor.Func sig = new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Null.INSTANCE);
+        List<KindPayload> payloads = List.of(
+            new KindPayload.ModuleInitPayload(MODULE, List.of(), lowered.unit().moduleInit().initBlock()),
+            new KindPayload.ExternalEntryPayload("export", function, sig, false, missing, null),
+            new KindPayload.ClassFactoryPayload(new deal.semantic.ir.ClassId(MODULE.path(), "Box"), List.of(), missing),
+            new KindPayload.CallbackInvokePayload(new ValueId(999), sig, List.of(), missing),
+            new KindPayload.EntryInvokePayload(MODULE, function));
+        List<SemanticOpKind> kinds = List.of(SemanticOpKind.MODULE_INIT, SemanticOpKind.EXTERNAL_ENTRY,
+            SemanticOpKind.CLASS_FACTORY, SemanticOpKind.CALLBACK_INVOKE, SemanticOpKind.ENTRY_INVOKE);
+        for (int index = 0; index < kinds.size(); index++) {
+            exempt.ops.add(syntheticOp(new OpId(MODULE, 920000 + index), kinds.get(index), payloads.get(index),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        }
+        check(exempt.validate().isEmpty(), "five module-level kinds exempt from block completeness");
+    }
+
+    private static void expectFlowException(Class<? extends Throwable> type, Runnable action) {
+        try { action.run(); fail("expected " + type.getName()); }
+        catch (Throwable failure) { check(type.isInstance(failure), "exact exception family " + failure); }
+    }
+
+    private static void testFlowTableContracts(SemanticLowerer.LoweringResult lowered) {
+        FlowMutation mutation = new FlowMutation(lowered);
+        StructuredBodyTable table = new StructuredBodyTable(mutation.blocks, mutation.inverse);
+        Map<BlockId, List<OpId>> before = new LinkedHashMap<>(table.blockOps());
+        mutation.blocks.values().forEach(List::clear); mutation.inverse.clear();
+        check(table.blockOps().equals(before) && table.opBlocks().equals(lowered.table().opBlocks()),
+            "constructor defensively copies maps and nested lists");
+        expectFlowException(UnsupportedOperationException.class, () -> table.blockOps().clear());
+        expectFlowException(UnsupportedOperationException.class, () -> table.opBlocks().clear());
+        expectFlowException(UnsupportedOperationException.class, () -> table.blockOps().values().iterator().next().add(new OpId(MODULE, 999)));
+        expectFlowException(NullPointerException.class, () -> ControlFlowValidator.validate(null, table));
+        expectFlowException(NullPointerException.class, () -> ControlFlowValidator.validate(lowered.unit(), null));
+        expectFlowException(NullPointerException.class, () -> new StructuredBodyTable(null, Map.of()));
+        expectFlowException(NullPointerException.class, () -> new StructuredBodyTable(Map.of(), null));
+        expectFlowException(NullPointerException.class, () -> new StructuredBodyTable(
+            Map.of(new BlockId(0), Arrays.asList(new OpId(MODULE, 1), null)), Map.of()));
+        Map<BlockId, List<OpId>> nullKey = new LinkedHashMap<>(); nullKey.put(null, List.of());
+        expectFlowException(NullPointerException.class, () -> new StructuredBodyTable(nullKey, Map.of()));
+        List<SemanticOp> opsBefore = new ArrayList<>(lowered.unit().ops());
+        ControlFlowValidator.validate(lowered.unit(), table);
+        check(lowered.unit().ops().equals(opsBefore), "validation leaves unit unchanged");
+        check(table.blockOps().equals(before) && table.opBlocks().equals(lowered.table().opBlocks()),
+            "validation leaves table unchanged");
+    }
+
+    private static void testRepresentedTails(SemanticLowerer.LoweringResult lowered) {
+        for (SemanticOpKind kind : List.of(SemanticOpKind.RETURN, SemanticOpKind.THROW,
+                SemanticOpKind.BREAK, SemanticOpKind.CONTINUE)) {
+            FlowMutation mutation = new FlowMutation(lowered);
+            SemanticOp terminal;
+            if (kind == SemanticOpKind.THROW) {
+                terminal = syntheticOp(new OpId(MODULE, 900001), kind,
+                    new KindPayload.ThrowPayload(new ValueId(900001)), null, null,
+                    FailurePolicyId.THROW_TRANSFER, null);
+                SemanticOp returned = mutation.first(SemanticOpKind.RETURN);
+                BlockId block = mutation.inverse.remove(returned.opId());
+                mutation.blocks.get(block).remove(returned.opId()); mutation.ops.remove(returned);
+                mutation.ops.add(terminal); mutation.blocks.get(block).add(terminal.opId());
+                mutation.inverse.put(terminal.opId(), block);
+            } else { terminal = mutation.first(kind); }
+            SemanticOp tail = syntheticOp(new OpId(MODULE, 900002), SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(1)), new ValueId(900002),
+                RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+            mutation.ops.add(tail);
+            BlockId block = mutation.inverse.get(terminal.opId());
+            List<OpId> ids = mutation.blocks.get(block);
+            ids.add(ids.indexOf(terminal.opId()) + 1, tail.opId()); mutation.inverse.put(tail.opId(), block);
+            check(mutation.validate().isEmpty(), kind + " represented unreachable tail accepted");
+            ids.add(tail.opId());
+            assertControlE6005(mutation.validate(), "CONTROL_BLOCK_TREE", "listed twice in one block");
+        }
+    }
+
+    private static void testCallOwnedReturns(SemanticLowerer.LoweringResult lowered) {
+        deal.semantic.ir.FunctionId function = lowered.unit().functions().keySet().iterator().next();
+        BlockId body = lowered.unit().functions().get(function).body();
+        for (boolean async : List.of(false, true)) {
+            for (int mode = 0; mode < 3; mode++) {
+                FlowMutation mutation = new FlowMutation(lowered);
+                OpId invocation = new OpId(MODULE, 910001), record = new OpId(MODULE, 910002);
+                OpId cell = new OpId(MODULE, 910003), host = new OpId(MODULE, 910004), external = new OpId(MODULE, 910005);
+                KindPayload.CallCallee callee = mode == 1
+                    ? new KindPayload.CallCallee.Static(new deal.semantic.ir.FunctionExecutionBinding.LoweredBody(function, body))
+                    : new KindPayload.CallCallee.Dynamic(new ValueId(910001));
+                KindPayload payload = async
+                    ? new KindPayload.AsyncStartPayload(callee, deal.semantic.ir.AsyncStartSource.DEAL_BODY,
+                        deal.semantic.ir.ParameterBoundaryMode.RUN, List.of(), RuntimeDescriptor.Null.INSTANCE, cell, null, null)
+                    : new KindPayload.CallPayload(mode == 1 ? deal.semantic.ir.CallMode.DIRECT : deal.semantic.ir.CallMode.INDIRECT,
+                        callee, new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Null.INSTANCE), List.of(),
+                        mode == 1 ? cell : null, mode == 1 ? null : new KindPayload.DynamicReturnBoundary(cell, host, external),
+                        mode == 1 ? body : null, null);
+                SemanticOp call = syntheticOp(invocation, async ? SemanticOpKind.ASYNC_START : SemanticOpKind.CALL,
+                    payload, async ? new deal.semantic.ir.AsyncTokenId.Canonical(1, deal.semantic.ir.AsyncTokenOwner.DEAL_BODY_TASK)
+                        : new ValueId(910002), async ? deal.semantic.ir.InternalResultType.INTERNAL_ASYNC
+                        : RuntimeDescriptor.Null.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+                SemanticOp returned = syntheticOp(record, SemanticOpKind.RETURN,
+                    new KindPayload.ReturnPayload(null, new deal.semantic.ir.FunctionId(999), invocation, cell),
+                    null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+                mutation.ops.add(call); mutation.ops.add(returned);
+                mutation.blocks.get(body).add(invocation); mutation.inverse.put(invocation, body);
+                if (mode == 2) { mutation.blocks.get(body).add(record); mutation.inverse.put(record, body); }
+                for (OpId id : async ? List.of(cell) : List.of(cell, host, external)) {
+                    SemanticOp boundary = syntheticOp(id, SemanticOpKind.BOUNDARY,
+                        new KindPayload.BoundaryPayload(id.equals(cell) ? BoundaryKind.FUNCTION_RETURN
+                            : id.equals(host) ? BoundaryKind.HOST_TO_DEAL : BoundaryKind.EXTERNAL_RETURN,
+                            RuntimeDescriptor.Null.INSTANCE, new ValueId(910003),
+                            new BoundaryRealization.RuntimeValidation("runtime-validation")), null, null,
+                        id.equals(host) ? FailurePolicyId.HOST_SYNC_RETURN : FailurePolicyId.TYPE_DESCRIPTOR,
+                        id.equals(cell) ? record : invocation);
+                    mutation.ops.add(boundary); mutation.blocks.get(body).add(id); mutation.inverse.put(id, body);
+                }
+                if (mode == 0) { check(mutation.validate().isEmpty(), "dynamic call-owned RETURN outside block tree, async=" + async); }
+                else { assertControlE6005(mutation.validate(), mode == 1 ? "CONTROL_BLOCK_TREE" : "CONTROL_EXIT",
+                    mode == 1 ? "member of no block" : "not a function of the unit"); }
+            }
+        }
+    }
+
+    private static LoweredModuleUnit withOps(LoweredModuleUnit unit, List<SemanticOp> ops,
+                                             StructuredBodyTable table) {
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            ops, unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            ops, table, unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
     }
 
-    private static StructuredBodyTable rebuildTable(Map<BlockId, List<OpId>> blocks,
-                                                    LoweredModuleUnit unit) {
+    private static StructuredBodyTable rebuildTable(Map<BlockId, List<OpId>> blocks) {
         Map<OpId, BlockId> inverse = new LinkedHashMap<>();
         for (Map.Entry<BlockId, List<OpId>> entry : blocks.entrySet()) {
             for (OpId id : entry.getValue()) {
@@ -1365,6 +1599,12 @@ public class ControlFlowLoweringTest {
             rule + " diagnostic is error-severity E6005");
         check(d.message().contains("validatorRule " + rule + ","),
             rule + " is named as the validator rule; got \"" + d.message() + "\"");
+        check(d.message().startsWith("Common semantic lowering failed")
+                && d.message().contains("module 'main'")
+                && d.message().contains("semanticProfile DEAL_V1_2_INT32")
+                && d.message().contains("irVersion deal.semantic-ir/2")
+                && d.diagnosticCode().phase() == DiagnosticCode.Phase.BACKEND_LOWERING,
+            rule + " full diagnostic projection fields");
         check(d.message().contains("capability EVALUATION_ORDER"),
             rule + " message carries capability EVALUATION_ORDER");
         check(d.message().contains("ControlFlowValidator " + rule),
@@ -1623,6 +1863,7 @@ public class ControlFlowLoweringTest {
         testBreakContinueTargets();
         testDiscardArm();
         testValidatorNegatives();
+        testValidatorMutationMatrix();
         testChainsInsideBlocksT2();
         testCoverageRows();
         testDeterminism();

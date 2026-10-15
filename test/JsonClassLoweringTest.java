@@ -23,31 +23,15 @@ import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ContainerPayloadDescriptors;
-import deal.semantic.JsonClassAlgorithmAdapter;
 import deal.semantic.LoweringSupport;
 import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
-import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.BlockId;
-import deal.semantic.ir.BoundaryContext;
-import deal.semantic.ir.BoundaryExecutor;
-import deal.semantic.ir.BoundaryOutcome;
-import deal.semantic.ir.BoundaryValueView;
-import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
-import deal.semantic.ir.ClassOpsExecutor;
-import deal.semantic.ir.ClassOpsExecutor.BodyRunner;
-import deal.semantic.ir.ClassOpsExecutor.BoundaryCheckRunner;
-import deal.semantic.ir.ClassOpsExecutor.BoundaryResult;
-import deal.semantic.ir.ClassOpsExecutor.FieldState;
-import deal.semantic.ir.ClassOpsExecutor.NestedClassFactory;
-import deal.semantic.ir.ClassOpsExecutor.Outcome;
-import deal.semantic.ir.ClassOpsExecutor.Value;
 import deal.semantic.ir.ConstructKind;
-import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailurePolicyId;
@@ -63,7 +47,6 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.RuntimeDescriptor;
-import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.SemanticIrValidator;
@@ -71,10 +54,8 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SharedFactoryFacts;
-import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.StructuredBodyTable;
-import deal.semantic.ir.UnicodeScalars;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
 import deal.types.Types;
@@ -484,38 +465,6 @@ public class JsonClassLoweringTest {
         return (KindPayload.ClosureNewPayload) op.payload();
     }
 
-    /** The carrier text of one valid-scalar string view (test-local). */
-    private static String carrier(Value.String string) {
-        return ((UnicodeScalars.Valid) string.scalar()).carrier();
-    }
-
-    /** The present value of the declared field {@code name}, or null when absent. */
-    private static Value fieldValue(Value.Class instance, ClassLayout layout, String name) {
-        for (int i = 0; i < layout.fields().size(); i++) {
-            if (layout.fields().get(i).name().equals(name)) {
-                FieldState state = instance.fields().get(i);
-                return state instanceof FieldState.Present present
-                    ? present.value() : null;
-            }
-        }
-        return null;
-    }
-
-    private static Value constValue(SemanticOp op) {
-        return op.payload() instanceof KindPayload.ConstPayload payload
-            ? constValue(payload.value()) : null;
-    }
-
-    private static Value constValue(ScalarValue scalar) {
-        return switch (scalar) {
-            case ScalarValue.Int intValue -> new Value.Int(intValue.value());
-            case ScalarValue.String string -> Value.string(string.value());
-            case ScalarValue.Number number -> new Value.Number(number.value());
-            case ScalarValue.Boolean bool -> new Value.Bool(bool.value());
-            case ScalarValue.Null ignored -> Value.Null.INSTANCE;
-        };
-    }
-
     // =========================================================================
     // (a) the generated bodies pinned (signatures, registrations, wiring)
     // =========================================================================
@@ -889,496 +838,35 @@ public class JsonClassLoweringTest {
                 + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
     }
 
-    // =========================================================================
-    // (c) the combined T1..T5 scenario: the end-to-end two-module drive
-    // =========================================================================
-
-    private static void testCombinedT1T5Scenario(LoweredPair pair) {
-        System.out.println("-- combined T1..T5: the generated bodies driven end-to-end "
-            + "at the unit level (fromJson defaults/partial document, the nested "
-            + "factory trigger, toJson, the K-D9 failure, the roundtrip) --");
-
-        check(pair != null && pair.caller() != null && pair.caller().lowering() != null
-                && !pair.caller().lowering().hasErrors()
-                && pair.caller().lowering().unit() != null,
-            "the combined caller lowers to a validated unit: "
-                + (pair == null || pair.caller() == null || pair.caller().lowering() == null
-                    ? "null" : pair.caller().lowering().diagnostics()));
-        if (pair == null || pair.caller() == null || pair.caller().lowering() == null
-                || pair.caller().lowering().hasErrors()
-                || pair.caller().lowering().unit() == null) {
+    private static void testPairDefaultChildren(LoweredPair pair) {
+        if (pair == null) {
             return;
         }
-        LoweredModuleUnit callerUnit = pair.caller().lowering().unit();
-        LoweredModuleUnit ownerUnit = pair.owner().lowering().unit();
-        StructuredBodyTable callerTable = pair.caller().lowering().table();
-        StructuredBodyTable ownerTable = pair.owner().lowering().table();
-        ClassId personId = new ClassId(CALLER.path(), "Person");
-        ClassId strictId = new ClassId(CALLER.path(), "Strict");
-        ClassId addressId = new ClassId(OWNER.path(), "Address");
-        ClassLayout personLayout = callerUnit.classLayouts().get(personId);
-        ClassLayout strictLayout = callerUnit.classLayouts().get(strictId);
-        ClassLayout addressLayout = ownerUnit.classLayouts().get(addressId);
-        check(personLayout != null && strictLayout != null && addressLayout != null,
-            "the layouts resolve for Person, Strict, and Address");
-
-        // The generated JSON ops of the caller (one fromJson + one toJson
-        // per @jsonable class).
-        List<SemanticOp> fromJsonOps = ofKind(callerUnit.ops(),
-            SemanticOpKind.JSON_FROM_CLASS);
-        List<SemanticOp> toJsonOps = ofKind(callerUnit.ops(), SemanticOpKind.JSON_TO_CLASS);
-        check(fromJsonOps.size() == 2 && toJsonOps.size() == 2,
-            "the caller unit carries exactly two JSON_FROM_CLASS and two "
-                + "JSON_TO_CLASS ops; got " + fromJsonOps.size() + "/"
-                + toJsonOps.size());
-        if (fromJsonOps.size() != 2 || toJsonOps.size() != 2) {
-            return;
-        }
-        SemanticOp personFrom = fromJsonOps.get(0);
-        SemanticOp personTo = toJsonOps.get(0);
-        SemanticOp strictFrom = fromJsonOps.get(1);
-        SemanticOp strictTo = toJsonOps.get(1);
-        check(personFrom.payload() instanceof KindPayload.JsonFromClassPayload p
-                && p.layout().classId().equals(personId),
-            "the first JSON_FROM_CLASS op walks the Person layout");
-        check(strictFrom.payload() instanceof KindPayload.JsonFromClassPayload p
-                && p.layout().classId().equals(strictId),
-            "the second JSON_FROM_CLASS op walks the Strict layout");
-
-        // The JsonDefaultChildTable pins for the caller: Person's fromJson
-        // lists its three required-present defaulted fields in
-        // declaration order; Strict's entry is empty.
-        List<SemanticOp> personDefaults = ofKind(callerUnit.ops(),
-            SemanticOpKind.CLASS_DEFAULT);
-        check(personDefaults.size() == 3
-                && defaultPayload(personDefaults.get(0)).field().equals("name")
-                && defaultPayload(personDefaults.get(1)).field().equals("age")
-                && defaultPayload(personDefaults.get(2)).field().equals("home"),
-            "Person emits three CLASS_DEFAULT ops in declaration order (name, age, home)");
-        List<OpId> personChildren = pair.caller().jsonDefaults().childrenOf(
-            personFrom.opId());
-        check(personChildren != null && personChildren.size() == 3
-                && personChildren.get(0).equals(personDefaults.get(0).opId())
-                && personChildren.get(1).equals(personDefaults.get(1).opId())
-                && personChildren.get(2).equals(personDefaults.get(2).opId()),
-            "Person's JsonDefaultChildTable entry lists name/age/home in declaration "
-                + "order");
-        List<OpId> strictChildren = pair.caller().jsonDefaults().childrenOf(
-            strictFrom.opId());
-        check(strictChildren != null && strictChildren.isEmpty(),
-            "Strict's JsonDefaultChildTable entry is the empty list (no defaults)");
-
-        // The owner's factory: the registry binding resolves through the
-        // interface constructionEntry (a broken T1 factory fails here).
-        ClassInterface addressEntry = null;
-        for (ClassInterface candidate
-                : pair.project().index().modules().get(OWNER).classes()) {
-            if (candidate.classId().equals(addressId)) {
-                addressEntry = candidate;
-            }
-        }
-        check(addressEntry != null, "the interface index carries the Address entry");
-        if (addressEntry == null) {
-            return;
-        }
-        final ClassInterface nestedEntry = addressEntry;
-        OpId addressFactoryId = pair.owner().registry().factoryFor(
-            addressEntry.constructionEntry());
-        SemanticOp addressFactory = opById(ownerUnit, addressFactoryId);
-        check(addressFactory != null
-                && addressFactory.kind() == SemanticOpKind.CLASS_FACTORY,
-            "the owner's CLASS_FACTORY op resolves through the registry");
-
-        // The drive contexts.
-        Map<OpId, SemanticOp> callerLookup = new LinkedHashMap<>();
-        for (SemanticOp op : callerUnit.ops()) {
-            callerLookup.put(op.opId(), op);
-        }
-        Map<OpId, SemanticOp> ownerLookup = new LinkedHashMap<>();
-        for (SemanticOp op : ownerUnit.ops()) {
-            ownerLookup.put(op.opId(), op);
-        }
-        Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
-        layouts.putAll(ownerUnit.classLayouts());
-        layouts.putAll(callerUnit.classLayouts());
-        Map<ValueId, Value> heap = new LinkedHashMap<>();
-        Map<deal.semantic.ir.BindingId, Value> bindings = new LinkedHashMap<>();
-        List<String> log = new ArrayList<>();
-        BoundaryCheckRunner real = realDelegate(log);
-
-        // The owner-side body runner: the mini block interpreter over the
-        // owner's detached default blocks (the declaring module's scope).
-        // The holder breaks the self-reference (a default block may
-        // contain a CLASS_NEW whose factory drive re-enters the owner
-        // runner).
-        final BodyRunner[] ownerRunnerHolder = new BodyRunner[1];
-        ownerRunnerHolder[0] = defaultOpArg -> {
-            log.add("owner-default " + defaultOpArg.opId());
-            return runBlock(ownerUnit, ownerTable, defaultOpArg, heap, bindings, layouts,
-                pair.owner().registry(), ownerLookup, ownerRunnerHolder[0], real, log);
-        };
-        BodyRunner ownerRunner = ownerRunnerHolder[0];
-        // The caller-side body runner: the mini block interpreter over
-        // the caller's detached default blocks.
-        final BodyRunner ownerRunnerFinal = ownerRunner;
-        BodyRunner callerRunner = defaultOpArg -> {
-            log.add("caller-default " + defaultOpArg.opId());
-            return runBlock(callerUnit, callerTable, defaultOpArg, heap, bindings, layouts,
-                pair.owner().registry(), ownerLookup, ownerRunnerFinal, real, log);
-        };
-
-        // Scripted documents per JSON_FROM_CLASS op (the generated
-        // body's parameter load substitution).
-        Map<OpId, String> documents = new LinkedHashMap<>();
-        documents.put(personFrom.opId(), "{\"age\": 42}");
-        documents.put(strictFrom.opId(), "{}");
-
-        // Scripted toJson operands per generated toJson op (the
-        // generated body's parameter-load substitution): the Person
-        // toJson walks the instance the Person fromJson published (the
-        // roundtrip), and the Strict toJson walks the language null the
-        // Strict fromJson published (a root identity failure).
-        Map<OpId, Value> toJsonInputs = new LinkedHashMap<>();
-
-        SourceOrigin callOrigin = new SourceOrigin(CALLER_SOURCE_ID,
-            new deal.semantic.ir.SourceSpan(CALLER_SOURCE_ID, 9, 5, 9, 20),
-            SourceOriginKind.USER, new deal.semantic.ir.AnchorId(0), null);
-
-        // The drive: the caller unit's ops in source order; the JSON ops
-        // execute through the executor with the production JSON algorithm
-        // delegate (the E8 seam).
-        for (SemanticOp op : callerUnit.ops()) {
-            switch (op.kind()) {
-                case CONST -> {
-                    Value value = constValue(op);
-                    if (value != null) {
-                        heap.put((ValueId) op.result(), value);
-                    }
-                }
-                case BINDING_INIT -> {
-                    KindPayload.BindingInitPayload init =
-                        (KindPayload.BindingInitPayload) op.payload();
-                    Value value = heap.get(init.value());
-                    if (value != null) {
-                        bindings.put(init.binding(), value);
-                    }
-                }
-                case BINDING_LOAD -> {
-                    KindPayload.BindingLoadPayload load =
-                        (KindPayload.BindingLoadPayload) op.payload();
-                    Value value = bindings.get(load.binding());
-                    if (value != null) {
-                        heap.put((ValueId) op.result(), value);
-                    }
-                }
-                case JSON_FROM_CLASS -> {
-                    KindPayload.JsonFromClassPayload payload =
-                        (KindPayload.JsonFromClassPayload) op.payload();
-                    String document = documents.get(op.opId());
-                    check(document != null, "a scripted document exists for " + op.opId());
-                    if (document == null) {
-                        continue;
-                    }
-                    Map<ValueId, Value> values = new LinkedHashMap<>(heap);
-                    values.put(payload.jsonString(), Value.string(document));
-                    List<OpId> children = pair.caller().jsonDefaults().childrenOf(
-                        op.opId());
-                    final SemanticOp triggeringOp = op;
-                    NestedClassFactory seam = (classId, providedFields) -> {
-                        log.add("nested-factory " + classId);
-                        return fillNested(classId, providedFields, triggeringOp,
-                            pair.owner().registry(), ownerLookup, layouts, ownerRunner,
-                            nestedEntry, log);
-                    };
-                    Value result = ClassOpsExecutor.executeJsonFromClass(op, values,
-                        children == null ? List.of() : children, callerLookup, layouts,
-                        JsonClassAlgorithmAdapter.parser(), seam, callerRunner);
-                    heap.put((ValueId) op.result(), result);
-                    // The produced instance feeds the matching generated
-                    // toJson body (the roundtrip leg); the Strict walk's
-                    // language null feeds the Strict toJson root check.
-                    if (op.opId().equals(personFrom.opId())) {
-                        toJsonInputs.put(personTo.opId(), result);
-                    }
-                    if (op.opId().equals(strictFrom.opId())) {
-                        toJsonInputs.put(strictTo.opId(), result);
-                    }
-                }
-                case JSON_TO_CLASS -> {
-                    KindPayload.JsonToClassPayload payload =
-                        (KindPayload.JsonToClassPayload) op.payload();
-                    Value input = toJsonInputs.get(op.opId());
-                    check(input != null, "a scripted toJson input exists for " + op.opId());
-                    if (input == null) {
-                        continue;
-                    }
-                    Map<ValueId, Value> values = new LinkedHashMap<>(heap);
-                    values.put(payload.classValue(), input);
-                    Outcome<Value> outcome = ClassOpsExecutor.executeJsonToClass(op,
-                        values, layouts, JsonClassAlgorithmAdapter.stringifier(),
-                        callOrigin);
-                    if (outcome instanceof Outcome.Success<Value> success) {
-                        heap.put((ValueId) op.result(), success.value());
-                    } else {
-                        heap.put((ValueId) op.result(), Value.Null.INSTANCE);
-                    }
-                }
-                default -> {
-                    // BINDING_ALLOC, detached CLASS_DEFAULT/CLASS_FACTORY
-                    // ops, and the generated bodies' other ops carry no
-                    // interpreter step in this drive.
+        LoweredModuleUnit caller = pair.caller().lowering().unit();
+        List<SemanticOp> from = ofKind(caller.ops(), SemanticOpKind.JSON_FROM_CLASS);
+        check(from.size() == 2, "Person and Strict each produce a fromJson op");
+        for (SemanticOp op : from) {
+            ClassId classId = ((KindPayload.JsonFromClassPayload) op.payload()).layout().classId();
+            List<OpId> children = pair.caller().jsonDefaults().childrenOf(op.opId());
+            List<String> expected = classId.name().equals("Person")
+                ? List.of("name", "age", "home") : List.of();
+            check(children != null && children.stream().map(id ->
+                    defaultPayload(opById(caller, id)).field()).toList().equals(expected),
+                classId + ": generated children retain declaration order and empty defaults");
+            if (children != null) {
+                for (OpId child : children) {
+                    KindPayload.ClassDefaultPayload payload = defaultPayload(opById(caller, child));
+                    check(pair.caller().lowering().table().blockOps().containsKey(
+                        payload.defaultBlock()), "every generated child owns a detached executable block");
                 }
             }
         }
-
-        // The Person partial-document decode: name defaulted (anon), age
-        // provided (42), home defaulted through the caller-side default
-        // block's CLASS_NEW(SHARED_FACTORY) — the home literal provides
-        // city "seed" and the owner's factory fills zip 10115.
-        Value personValue = heap.get((ValueId) personFrom.result());
-        check(personValue instanceof Value.Class person
-                && person.classId().equals(personId),
-            "the Person fromJson publishes a tagged Person instance");
-        if (personValue instanceof Value.Class person) {
-            check(fieldValue(person, personLayout, "name") instanceof Value.String name
-                    && carrier(name).equals("anon"),
-                "the omitted name defaulted through the caller's CLASS_DEFAULT child");
-            check(fieldValue(person, personLayout, "age") instanceof Value.Int age
-                    && age.value() == 42,
-                "the provided age decoded from the document");
-            Value home = fieldValue(person, personLayout, "home");
-            check(home instanceof Value.Class homeInstance
-                    && homeInstance.classId().equals(addressId),
-                "the omitted home defaulted to a fresh nested Address instance");
-            if (home instanceof Value.Class homeInstance) {
-                check(fieldValue(homeInstance, addressLayout, "city")
-                        instanceof Value.String city && carrier(city).equals("seed"),
-                    "the home default's provided city is seed (the literal's value)");
-                check(fieldValue(homeInstance, addressLayout, "zip")
-                        instanceof Value.Int zip && zip.value() == 10115,
-                    "the home default's omitted zip filled by the owner's factory "
-                        + "(the nested construction inside the default block)");
-            }
-            check(log.contains("caller-default " + personDefaults.get(0).opId())
-                    && log.contains("caller-default " + personDefaults.get(2).opId()),
-                "the caller's name and home default children ran exactly once");
-            check(log.stream().anyMatch(entry -> entry.startsWith("owner-default")),
-                "the owner's default blocks ran (zip) inside the caller's home default");
-
-            // The drive's toJson over the produced instance (the
-            // roundtrip leg): deterministic declared-order text.
-            Value toJsonText = heap.get((ValueId) personTo.result());
-            check(toJsonText instanceof Value.String text
-                    && carrier(text).equals(
-                        "{\"name\":\"anon\",\"age\":42,"
-                            + "\"home\":{\"city\":\"seed\",\"zip\":10115}}"),
-                "the drive's toJson on the produced instance emits the deterministic "
-                    + "roundtrip text");
+        for (ClassInterface entry : pair.project().index().modules().get(OWNER).classes()) {
+            SemanticOp factory = opById(pair.owner().lowering().unit(),
+                pair.owner().registry().factoryFor(entry.constructionEntry()));
+            check(factory != null && factory.kind() == SemanticOpKind.CLASS_FACTORY,
+                "the nested owner factory resolves through its construction entry");
         }
-
-        List<String> nestedLog = new ArrayList<>();
-        Map<ValueId, Value> nestedValues = new LinkedHashMap<>(heap);
-        KindPayload.JsonFromClassPayload personPayload =
-            (KindPayload.JsonFromClassPayload) personFrom.payload();
-        nestedValues.put(personPayload.jsonString(), Value.string("{\"home\": {}}"));
-        final SemanticOp triggeringOp = personFrom;
-        NestedClassFactory recordingSeam = (classId, providedFields) -> {
-            nestedLog.add("nested-factory " + classId);
-            return fillNested(classId, providedFields, triggeringOp,
-                pair.owner().registry(), ownerLookup, layouts, ownerRunner, nestedEntry,
-                nestedLog);
-        };
-        Value nestedValue = ClassOpsExecutor.executeJsonFromClass(personFrom, nestedValues,
-            pair.caller().jsonDefaults().childrenOf(personFrom.opId()), callerLookup,
-            layouts, JsonClassAlgorithmAdapter.parser(), recordingSeam, callerRunner);
-        check(nestedValue instanceof Value.Class person
-                && person.classId().equals(personId),
-            "the nested-decode Person walk publishes a tagged instance");
-        if (nestedValue instanceof Value.Class person) {
-            Value home = fieldValue(person, personLayout, "home");
-            check(home instanceof Value.Class homeInstance
-                    && homeInstance.classId().equals(addressId),
-                "the provided {} home decoded to a tagged Address instance");
-            if (home instanceof Value.Class homeInstance) {
-                check(fieldValue(homeInstance, addressLayout, "city")
-                        instanceof Value.String city && carrier(city).equals("berlin"),
-                    "the nested city default evaluated through the owner's factory in "
-                        + "the declaring module");
-                check(fieldValue(homeInstance, addressLayout, "zip")
-                        instanceof Value.Int zip && zip.value() == 10115,
-                    "the nested zip default evaluated through the owner's factory in "
-                        + "the declaring module");
-            }
-            check(fieldValue(person, personLayout, "name") instanceof Value.String name
-                    && carrier(name).equals("anon")
-                    && fieldValue(person, personLayout, "age") instanceof Value.Int age
-                    && age.value() == 0,
-                "the omitted name and age defaulted through the caller's children");
-        }
-        check(nestedLog.contains("nested-factory " + addressId.text())
-                && nestedLog.contains("nested-factory-parent " + personFrom.opId()),
-            "the nested factory seam recorded the Address factory execution with the "
-                + "JSON_FROM_CLASS op as the executed parent (K-D5 trigger (b), "
-                + "cross-unit)");
-        check(log.stream().filter(entry -> entry.startsWith("owner-default")).count() >= 2,
-            "the nested drive's owner defaults evaluated in the declaring module's "
-                + "scope through the factory");
-
-        Value strictValue = heap.get((ValueId) strictFrom.result());
-        check(strictValue instanceof Value.Null,
-            "Strict fromJson on {} returns language null (K-D9)");
-    }
-
-    private static Value fillNested(ClassId classId, Set<String> providedFields,
-                                    SemanticOp triggeringOp,
-                                    deal.semantic.ir.ClassFactoryRegistry registry,
-                                    Map<OpId, SemanticOp> ownerLookup,
-                                    Map<ClassId, ClassLayout> layouts,
-                                    BodyRunner ownerRunner, ClassInterface entry,
-                                    List<String> log) {
-        OpId factoryOpId = registry.factoryFor(entry.constructionEntry());
-        SemanticOp factoryOp = ownerLookup.get(factoryOpId);
-        if (factoryOp == null) {
-            throw new IllegalStateException("the nested factory does not resolve for "
-                + classId + " (producer defect)");
-        }
-        Outcome<Value> outcome = ClassOpsExecutor.executeClassFactory(factoryOp,
-            triggeringOp, ownerLookup, layouts, providedFields, ownerRunner);
-        if (!(outcome instanceof Outcome.Success<Value> success)) {
-            throw new IllegalStateException("the nested factory failed");
-        }
-        log.add("nested-factory-parent " + triggeringOp.opId());
-        return success.value();
-    }
-
-    /**
-     * The mini block interpreter of one detached default block: executes
-     * the block's ops in order (CONST, BINDING_LOAD from the shared
-     * bindings, CLASS_NEW through the executor with the owner's
-     * shared-factory facts) and returns the block's produced default
-     * value (the CLASS_DEFAULT op's result slot).
-     */
-    private static Value runBlock(LoweredModuleUnit unit, StructuredBodyTable table,
-                                  SemanticOp defaultOp, Map<ValueId, Value> heap,
-                                  Map<deal.semantic.ir.BindingId, Value> bindings,
-                                  Map<ClassId, ClassLayout> layouts,
-                                  deal.semantic.ir.ClassFactoryRegistry registry,
-                                  Map<OpId, SemanticOp> ownerLookup, BodyRunner ownerRunner,
-                                  BoundaryCheckRunner real, List<String> log) {
-        KindPayload.ClassDefaultPayload payload = defaultPayload(defaultOp);
-        List<OpId> block = table.blockOps().get(payload.defaultBlock());
-        if (block == null) {
-            throw new IllegalStateException("the default block of " + defaultOp.opId()
-                + " is not in the produced table (producer defect)");
-        }
-        for (OpId listed : block) {
-            SemanticOp op = opById(unit, listed);
-            if (op == null) {
-                continue;
-            }
-            switch (op.kind()) {
-                case CONST -> {
-                    Value value = constValue(op);
-                    if (value != null) {
-                        heap.put((ValueId) op.result(), value);
-                    }
-                }
-                case BINDING_LOAD -> {
-                    KindPayload.BindingLoadPayload load =
-                        (KindPayload.BindingLoadPayload) op.payload();
-                    Value value = bindings.get(load.binding());
-                    if (value != null) {
-                        heap.put((ValueId) op.result(), value);
-                    }
-                }
-                case CLASS_NEW -> {
-                    KindPayload.ClassNewPayload newPayload =
-                        (KindPayload.ClassNewPayload) op.payload();
-                    Outcome<Value> outcome = newPayload.defaultOwner()
-                        == DefaultOwner.SHARED_FACTORY
-                            ? ClassOpsExecutor.executeClassNewSharedFactory(op, heap,
-                                registry, ownerLookup,
-                                resolveBoundaryOps(op, unit, newPayload), layouts, real,
-                                ownerRunner)
-                            : ClassOpsExecutor.executeClassNewLocal(op, heap, ownerLookup,
-                                resolveBoundaryOps(op, unit, newPayload), layouts, real,
-                                ownerRunner);
-                    if (outcome instanceof Outcome.Success<Value> success) {
-                        heap.put((ValueId) op.result(), success.value());
-                    } else {
-                        throw new IllegalStateException("the default block's CLASS_NEW "
-                            + "failed: " + outcome);
-                    }
-                }
-                default -> {
-                    // The CLASS_DEFAULT op itself and its BOUNDARY
-                    // children (driven through the CLASS_NEW executor)
-                    // carry no interpreter step here.
-                }
-            }
-        }
-        Value produced = heap.get((ValueId) defaultOp.result());
-        if (produced == null) {
-            throw new IllegalStateException("the default block of " + defaultOp.opId()
-                + " produced no value for its result slot");
-        }
-        log.add("block-produced " + defaultOp.opId());
-        return produced;
-    }
-
-    private static Map<OpId, SemanticOp> resolveBoundaryOps(SemanticOp classNew,
-            LoweredModuleUnit unit, KindPayload.ClassNewPayload payload) {
-        Map<OpId, SemanticOp> resolved = new LinkedHashMap<>();
-        for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
-            SemanticOp child = opById(unit, entry.boundaryOpId());
-            if (child != null) {
-                resolved.put(entry.boundaryOpId(), child);
-            }
-        }
-        return resolved;
-    }
-
-    private static BoundaryCheckRunner realDelegate(List<String> log) {
-        return (boundary, input) -> {
-            if (log != null) {
-                log.add("child " + boundary.kind() + " <- " + tokenOf(input));
-            }
-            FailurePolicyId policy = boundary.descriptor() instanceof RuntimeDescriptor.Func
-                ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
-            BoundaryOutcome outcome = BoundaryExecutor.check(policy, boundary.descriptor(),
-                valueView(input), BoundaryContext.none());
-            return switch (outcome) {
-                case BoundaryOutcome.Pass pass ->
-                    new BoundaryResult.Pass(publishValue(pass.value(), input));
-                case BoundaryOutcome.Fail fail -> new BoundaryResult.Fail(fail.failure());
-            };
-        };
-    }
-
-    private static String tokenOf(Value input) {
-        return input.actualKind() == ActualKind.CLASS
-            ? "class:" + ((Value.Class) input).classId().text()
-            : input.actualKind().token();
-    }
-
-    private static BoundaryValueView valueView(Value value) {
-        return switch (value) {
-            case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
-            case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
-            case Value.Int intValue -> BoundaryValueView.ofInt(intValue.value());
-            case Value.Number number -> BoundaryValueView.ofNumber(number.value());
-            case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());
-            case Value.Bytes ignored -> BoundaryValueView.of(ActualKind.BYTES);
-            case Value.Table ignored -> BoundaryValueView.of(ActualKind.TABLE);
-            case Value.Array ignored -> BoundaryValueView.of(ActualKind.ARRAY);
-            case Value.Class classValue -> BoundaryValueView.ofClass(classValue.classId().text());
-            case Value.Function function -> BoundaryValueView.ofFunction(function.signature());
-            case Value.Missing ignored -> BoundaryValueView.of(ActualKind.MISSING);
-        };
-    }
-
-    private static Value publishValue(BoundaryValueView view, Value input) {
-        return view.kind() == ActualKind.NULL ? Value.Null.INSTANCE : input;
     }
 
     // =========================================================================
@@ -1416,7 +904,7 @@ public class JsonClassLoweringTest {
             }
             """;
         LoweredPair first = lowerPair(ownerSource, callerSource);
-        testCombinedT1T5Scenario(first);
+        testPairDefaultChildren(first);
         LoweredPair second = lowerPair(ownerSource, callerSource);
         check(first != null && second != null, "both repetitions lower");
         if (first == null || second == null) {

@@ -20,6 +20,7 @@ import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.semantic.AdapterShapeMap;
 import deal.semantic.AdapterThunkConstruction;
+import deal.semantic.BindingsProductionValidator;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
@@ -1541,6 +1542,34 @@ public class AdapterShapeMapPayloadTest {
             "repeated lowering produces byte-identical deal.semantic-ir/2 dumps");
         check(first.shapeMapFacts().emissions().equals(second.shapeMapFacts().emissions()),
             "repeated lowering records identical emission facts");
+        LoweredModuleUnit secondUnit = second.lowering().unit();
+        check(BindingsProductionValidator.validate(unit, unit.bodyTable(),
+                unit.classBindingFacts()).isEmpty()
+                && BindingsProductionValidator.validate(secondUnit, secondUnit.bodyTable(),
+                    secondUnit.classBindingFacts()).isEmpty(),
+            "combined adapter corpus passes binding validation on both independent lowerings");
+        List<BindingsProductionValidator.DerivedCellKind> derived =
+            BindingsProductionValidator.deriveCellKinds(unit, unit.bodyTable());
+        check(derived.equals(BindingsProductionValidator.deriveCellKinds(secondUnit,
+                secondUnit.bodyTable())),
+            "independent lowerings derive identical cell kinds");
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.BindingAllocPayload alloc) {
+                check(derived.stream().anyMatch(row ->
+                        row.key().binding().equals(alloc.binding())
+                            && row.key().generation() == alloc.generation()
+                            && row.key().scope().equals(alloc.scope())
+                            && row.kind() == alloc.cellKind()),
+                    "every ALLOC agrees with validator cell derivation");
+            } else if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group) {
+                for (BindingId member : group.bindings()) {
+                    check(derived.stream().anyMatch(row ->
+                            row.key().binding().equals(member) && row.key().generation() == 0
+                                && row.kind() == BindingCellKind.SHARED_CELL),
+                        "group member derives shared cell");
+                }
+            }
+        }
     }
 
     /** The fixed combined-corpus source over the earlier children's production. */

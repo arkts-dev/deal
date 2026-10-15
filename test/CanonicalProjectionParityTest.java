@@ -4153,476 +4153,188 @@ public class CanonicalProjectionParityTest {
      * bad-return probe runs the same null crossing and lets the raw host's
      * wrong-kind result reach the closed return cell.
      */
-    private static final String NULL_CROSSING_DRIVER = """
-        import * as host from "host/null_crossing"
+    private record NullAdmission(int line, String export, boolean async, String prelude,
+                                 String expression, String seen, String message) {}
 
-        export function test_take_null_literal(): null {
-          let seen: string = host.takeNull(null)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the null literal crossed the null parameter as a non-sentinel" }
-          }
-          return null
+    private static final List<NullAdmission> NULL_ADMISSIONS = List.of(
+        new NullAdmission(3, "test_take_null_literal", false, "", "host.takeNull(null)", "sentinel", "the null literal crossed the null parameter as a non-sentinel"),
+        new NullAdmission(11, "test_take_nullable_int_literal", false, "", "host.takeNullableInt(null)", "sentinel", "the null literal crossed the nullable primitive parameter as a non-sentinel"),
+        new NullAdmission(19, "test_take_null_from_host", false, "let value: null = host.returnNull()\n", "host.takeNull(value)", "sentinel", "the admitted host null crossed the null parameter as a non-sentinel"),
+        new NullAdmission(28, "test_take_nullable_int_from_host", false, "let value: int | null = host.returnNullableInt()\n", "host.takeNullableInt(value)", "sentinel", "the admitted host null crossed the nullable primitive parameter as a non-sentinel"),
+        new NullAdmission(42, "test_async_take_null", true, "", "await host.asyncTakeNull(null)", "sentinel", "the async null crossing delivered a non-sentinel"),
+        new NullAdmission(50, "test_async_take_nullable_int", true, "", "await host.asyncTakeNullableInt(null)", "sentinel", "the async nullable crossing delivered a non-sentinel"),
+        new NullAdmission(58, "test_async_take_null_then_int", true, "", "await host.asyncTakeNullThenInt(null, 7)", "sentinel+7", "the async null crossing shifted the arguments before a non-null parameter"),
+        new NullAdmission(66, "test_async_take_pair", true, "", "await host.asyncTakePair(null, 7)", "sentinel+7", "the async nullable crossing shifted the null argument's position"),
+        new NullAdmission(82, "test_dynamic_async_take_null", true, "", "await applyAsyncNull(host.asyncTakeNull)", "sentinel", "the dynamic async null crossing delivered a non-sentinel"),
+        new NullAdmission(90, "test_dynamic_async_take_nullable_int", true, "", "await applyAsyncNullableInt(host.asyncTakeNullableInt)", "sentinel", "the dynamic async nullable crossing delivered a non-sentinel"),
+        new NullAdmission(106, "test_dynamic_async_take_null_then_int", true, "", "await applyAsyncNullThenInt(host.asyncTakeNullThenInt)", "sentinel+7", "the dynamic async null crossing shifted the arguments before a non-null parameter"),
+        new NullAdmission(114, "test_dynamic_async_take_pair", true, "", "await applyAsyncPair(host.asyncTakePair)", "sentinel+7", "the dynamic async nullable crossing shifted the null argument's position"),
+        new NullAdmission(130, "test_dynamic_take_null", false, "", "applyNull(host.takeNull)", "sentinel", "the dynamic null crossing delivered a non-sentinel"),
+        new NullAdmission(138, "test_dynamic_take_nullable_int", false, "", "applyNullableInt(host.takeNullableInt)", "sentinel", "the dynamic nullable crossing delivered a non-sentinel"),
+        new NullAdmission(268, "test_async_take_null_from_host", true, "let value: null = host.returnNull()\n", "await host.asyncTakeNull(value)", "sentinel", "the admitted host null crossed the async null host start as a non-sentinel"),
+        new NullAdmission(277, "test_dynamic_async_take_null_from_host", true, "let value: null = host.returnNull()\n", "await applyAsyncNullValue(host.asyncTakeNull, value)", "sentinel", "the dynamic async admission delivered a non-sentinel for the admitted host null")
+    );
+
+    private static final String NULL_CROSSING_DRIVER = nullCrossingDriver();
+
+    private record NullHelper(int line, boolean async, String name, String parameters, String expression) {}
+
+    private record NullRejectSource(int line, boolean async, String export, String expression) {}
+
+    private static String nullCrossingDriver() {
+        java.util.TreeMap<Integer, String> blocks = new java.util.TreeMap<>();
+        blocks.put(1, "import * as host from \"host/null_crossing\"\n");
+        for (NullAdmission row : NULL_ADMISSIONS) {
+            String body = row.prelude() + "let seen: string = " + row.expression() + "\n"
+                + "if (seen !== \"" + row.seen() + "\") {\n"
+                + "  throw { code: \"PROBE_NULL_CROSSING\", message: \"" + row.message() + "\" }\n"
+                + "}\nreturn null\n";
+            blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null", body));
         }
-
-        export function test_take_nullable_int_literal(): null {
-          let seen: string = host.takeNullableInt(null)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the null literal crossed the nullable primitive parameter as a non-sentinel" }
-          }
-          return null
+        blocks.put(37, nullFunction("export ", false, "test_take_null_bad_return", "", "null",
+            "host.takeNullBadReturn(null)\nreturn null\n"));
+        List<NullHelper> helpers = List.of(
+            new NullHelper(74, true, "applyAsyncNull", "value: null", "null"),
+            new NullHelper(78, true, "applyAsyncNullableInt", "value: int | null", "null"),
+            new NullHelper(98, true, "applyAsyncNullThenInt", "value: null, count: int", "null, 7"),
+            new NullHelper(102, true, "applyAsyncPair", "value: int | null, count: int | null", "null, 7"),
+            new NullHelper(122, false, "applyNull", "value: null", "null"),
+            new NullHelper(126, false, "applyNullableInt", "value: int | null", "null"),
+            new NullHelper(162, false, "applyTable", "value: table", "bag.value"),
+            new NullHelper(166, false, "applyArray", "value: int[]", "bag.value"),
+            new NullHelper(190, true, "applyAsyncTable", "value: table", "bag.value"),
+            new NullHelper(194, true, "applyAsyncArray", "value: int[]", "bag.value"),
+            new NullHelper(228, false, "applyTableMissing", "value: table", "bag.missing"),
+            new NullHelper(232, false, "applyArrayMissing", "value: int[]", "bag.missing"),
+            new NullHelper(246, true, "applyAsyncTableMissing", "value: table", "bag.missing"),
+            new NullHelper(250, true, "applyAsyncArrayMissing", "value: int[]", "bag.missing"),
+            new NullHelper(264, true, "applyAsyncNullValue", "value: null", "value"));
+        for (NullHelper row : helpers) {
+            String expression = row.expression();
+            String parameters = "f: " + (row.async() ? "async " : "") + "(" + row.parameters() + ") => string"
+                + (expression.startsWith("bag.") ? ", bag: table" : expression.equals("value") ? ", value: null" : "");
+            blocks.put(row.line(), nullFunction("", row.async(), row.name(), parameters, "string",
+                "return " + (row.async() ? "await " : "") + "f(" + expression + ")\n"));
         }
-
-        export function test_take_null_from_host(): null {
-          let value: null = host.returnNull()
-          let seen: string = host.takeNull(value)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the admitted host null crossed the null parameter as a non-sentinel" }
-          }
-          return null
+        blocks.put(146, nullFunction("", false, "bagWithNull", "", "table",
+            "let bag: table = {};\nbag.value = null\nreturn bag\n"));
+        List<NullRejectSource> rejections = List.of(
+            new NullRejectSource(152, false, "test_reject_table_dynamic_null", "host.takeTable(bagWithNull().value)"),
+            new NullRejectSource(157, false, "test_reject_array_dynamic_null", "host.takeArray(bagWithNull().value)"),
+            new NullRejectSource(170, false, "test_dynamic_reject_table_dynamic_null", "applyTable(host.takeTable, bagWithNull())"),
+            new NullRejectSource(175, false, "test_dynamic_reject_array_dynamic_null", "applyArray(host.takeArray, bagWithNull())"),
+            new NullRejectSource(180, true, "test_async_reject_table_dynamic_null", "await host.asyncTakeTable(bagWithNull().value)"),
+            new NullRejectSource(185, true, "test_async_reject_array_dynamic_null", "await host.asyncTakeArray(bagWithNull().value)"),
+            new NullRejectSource(198, true, "test_dynamic_async_reject_table_dynamic_null", "await applyAsyncTable(host.asyncTakeTable, bagWithNull())"),
+            new NullRejectSource(203, true, "test_dynamic_async_reject_array_dynamic_null", "await applyAsyncArray(host.asyncTakeArray, bagWithNull())"),
+            new NullRejectSource(208, false, "test_reject_table_missing_field", "host.takeTable(bagWithNull().missing)"),
+            new NullRejectSource(213, false, "test_reject_array_missing_field", "host.takeArray(bagWithNull().missing)"),
+            new NullRejectSource(218, true, "test_async_reject_table_missing_field", "await host.asyncTakeTable(bagWithNull().missing)"),
+            new NullRejectSource(223, true, "test_async_reject_array_missing_field", "await host.asyncTakeArray(bagWithNull().missing)"),
+            new NullRejectSource(236, false, "test_dynamic_reject_table_missing_field", "applyTableMissing(host.takeTable, bagWithNull())"),
+            new NullRejectSource(241, false, "test_dynamic_reject_array_missing_field", "applyArrayMissing(host.takeArray, bagWithNull())"),
+            new NullRejectSource(254, true, "test_dynamic_async_reject_table_missing_field", "await applyAsyncTableMissing(host.asyncTakeTable, bagWithNull())"),
+            new NullRejectSource(259, true, "test_dynamic_async_reject_array_missing_field", "await applyAsyncArrayMissing(host.asyncTakeArray, bagWithNull())"));
+        for (NullRejectSource row : rejections) {
+            blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null",
+                row.expression() + "\nreturn null\n"));
         }
-
-        export function test_take_nullable_int_from_host(): null {
-          let value: int | null = host.returnNullableInt()
-          let seen: string = host.takeNullableInt(value)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the admitted host null crossed the nullable primitive parameter as a non-sentinel" }
-          }
-          return null
+        blocks.put(286, nullFunction("export ", false, "main", "", "null", "return null\n"));
+        blocks.put(319, nullFunction("export ", false, "test_take_nullable_array_bad_return", "", "null",
+            "host.takeNullableArrayBadReturn([null, 7])\nreturn null\n"));
+        blocks.put(324, nullArrayDriver());
+        StringBuilder source = new StringBuilder();
+        int line = 1;
+        for (var block : blocks.entrySet()) {
+            if (line > block.getKey()) throw new IllegalStateException("overlapping null-crossing fixture blocks");
+            source.append("\n".repeat(block.getKey() - line)).append(block.getValue());
+            line = block.getKey() + (int) block.getValue().chars().filter(c -> c == '\n').count();
         }
+        return source.toString();
+    }
 
-        export function test_take_null_bad_return(): null {
-          host.takeNullBadReturn(null)
-          return null
-        }
-
-        export async function test_async_take_null(): null {
-          let seen: string = await host.asyncTakeNull(null)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the async null crossing delivered a non-sentinel" }
-          }
-          return null
-        }
-
-        export async function test_async_take_nullable_int(): null {
-          let seen: string = await host.asyncTakeNullableInt(null)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the async nullable crossing delivered a non-sentinel" }
-          }
-          return null
-        }
-
-        export async function test_async_take_null_then_int(): null {
-          let seen: string = await host.asyncTakeNullThenInt(null, 7)
-          if (seen !== "sentinel+7") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the async null crossing shifted the arguments before a non-null parameter" }
-          }
-          return null
-        }
-
-        export async function test_async_take_pair(): null {
-          let seen: string = await host.asyncTakePair(null, 7)
-          if (seen !== "sentinel+7") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the async nullable crossing shifted the null argument's position" }
-          }
-          return null
-        }
-
-        async function applyAsyncNull(f: async (value: null) => string): string {
-          return await f(null)
-        }
-
-        async function applyAsyncNullableInt(f: async (value: int | null) => string): string {
-          return await f(null)
-        }
-
-        export async function test_dynamic_async_take_null(): null {
-          let seen: string = await applyAsyncNull(host.asyncTakeNull)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async null crossing delivered a non-sentinel" }
-          }
-          return null
-        }
-
-        export async function test_dynamic_async_take_nullable_int(): null {
-          let seen: string = await applyAsyncNullableInt(host.asyncTakeNullableInt)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async nullable crossing delivered a non-sentinel" }
-          }
-          return null
-        }
-
-        async function applyAsyncNullThenInt(f: async (value: null, count: int) => string): string {
-          return await f(null, 7)
-        }
-
-        async function applyAsyncPair(f: async (value: int | null, count: int | null) => string): string {
-          return await f(null, 7)
-        }
-
-        export async function test_dynamic_async_take_null_then_int(): null {
-          let seen: string = await applyAsyncNullThenInt(host.asyncTakeNullThenInt)
-          if (seen !== "sentinel+7") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async null crossing shifted the arguments before a non-null parameter" }
-          }
-          return null
-        }
-
-        export async function test_dynamic_async_take_pair(): null {
-          let seen: string = await applyAsyncPair(host.asyncTakePair)
-          if (seen !== "sentinel+7") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async nullable crossing shifted the null argument's position" }
-          }
-          return null
-        }
-
-        function applyNull(f: (value: null) => string): string {
-          return f(null)
-        }
-
-        function applyNullableInt(f: (value: int | null) => string): string {
-          return f(null)
-        }
-
-        export function test_dynamic_take_null(): null {
-          let seen: string = applyNull(host.takeNull)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic null crossing delivered a non-sentinel" }
-          }
-          return null
-        }
-
-        export function test_dynamic_take_nullable_int(): null {
-          let seen: string = applyNullableInt(host.takeNullableInt)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic nullable crossing delivered a non-sentinel" }
-          }
-          return null
-        }
-
-        function bagWithNull(): table {
-          let bag: table = {};
-          bag.value = null
-          return bag
-        }
-
-        export function test_reject_table_dynamic_null(): null {
-          host.takeTable(bagWithNull().value)
-          return null
-        }
-
-        export function test_reject_array_dynamic_null(): null {
-          host.takeArray(bagWithNull().value)
-          return null
-        }
-
-        function applyTable(f: (value: table) => string, bag: table): string {
-          return f(bag.value)
-        }
-
-        function applyArray(f: (value: int[]) => string, bag: table): string {
-          return f(bag.value)
-        }
-
-        export function test_dynamic_reject_table_dynamic_null(): null {
-          applyTable(host.takeTable, bagWithNull())
-          return null
-        }
-
-        export function test_dynamic_reject_array_dynamic_null(): null {
-          applyArray(host.takeArray, bagWithNull())
-          return null
-        }
-
-        export async function test_async_reject_table_dynamic_null(): null {
-          await host.asyncTakeTable(bagWithNull().value)
-          return null
-        }
-
-        export async function test_async_reject_array_dynamic_null(): null {
-          await host.asyncTakeArray(bagWithNull().value)
-          return null
-        }
-
-        async function applyAsyncTable(f: async (value: table) => string, bag: table): string {
-          return await f(bag.value)
-        }
-
-        async function applyAsyncArray(f: async (value: int[]) => string, bag: table): string {
-          return await f(bag.value)
-        }
-
-        export async function test_dynamic_async_reject_table_dynamic_null(): null {
-          await applyAsyncTable(host.asyncTakeTable, bagWithNull())
-          return null
-        }
-
-        export async function test_dynamic_async_reject_array_dynamic_null(): null {
-          await applyAsyncArray(host.asyncTakeArray, bagWithNull())
-          return null
-        }
-
-        export function test_reject_table_missing_field(): null {
-          host.takeTable(bagWithNull().missing)
-          return null
-        }
-
-        export function test_reject_array_missing_field(): null {
-          host.takeArray(bagWithNull().missing)
-          return null
-        }
-
-        export async function test_async_reject_table_missing_field(): null {
-          await host.asyncTakeTable(bagWithNull().missing)
-          return null
-        }
-
-        export async function test_async_reject_array_missing_field(): null {
-          await host.asyncTakeArray(bagWithNull().missing)
-          return null
-        }
-
-        function applyTableMissing(f: (value: table) => string, bag: table): string {
-          return f(bag.missing)
-        }
-
-        function applyArrayMissing(f: (value: int[]) => string, bag: table): string {
-          return f(bag.missing)
-        }
-
-        export function test_dynamic_reject_table_missing_field(): null {
-          applyTableMissing(host.takeTable, bagWithNull())
-          return null
-        }
-
-        export function test_dynamic_reject_array_missing_field(): null {
-          applyArrayMissing(host.takeArray, bagWithNull())
-          return null
-        }
-
-        async function applyAsyncTableMissing(f: async (value: table) => string, bag: table): string {
-          return await f(bag.missing)
-        }
-
-        async function applyAsyncArrayMissing(f: async (value: int[]) => string, bag: table): string {
-          return await f(bag.missing)
-        }
-
-        export async function test_dynamic_async_reject_table_missing_field(): null {
-          await applyAsyncTableMissing(host.asyncTakeTable, bagWithNull())
-          return null
-        }
-
-        export async function test_dynamic_async_reject_array_missing_field(): null {
-          await applyAsyncArrayMissing(host.asyncTakeArray, bagWithNull())
-          return null
-        }
-
-        async function applyAsyncNullValue(f: async (value: null) => string, value: null): string {
-          return await f(value)
-        }
-
-        export async function test_async_take_null_from_host(): null {
-          let value: null = host.returnNull()
-          let seen: string = await host.asyncTakeNull(value)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the admitted host null crossed the async null host start as a non-sentinel" }
-          }
-          return null
-        }
-
-        export async function test_dynamic_async_take_null_from_host(): null {
-          let value: null = host.returnNull()
-          let seen: string = await applyAsyncNullValue(host.asyncTakeNull, value)
-          if (seen !== "sentinel") {
-            throw { code: "PROBE_NULL_CROSSING", message: "the dynamic async admission delivered a non-sentinel for the admitted host null" }
-          }
-          return null
-        }
-
-        export function test_take_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let seen: string = host.takeNullableArray(xs)
-          if (seen !== "sentinel+7") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument did not reach the host as the null sentinel" }
-          }
-          if (xs.length !== 2) {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its length" }
-          }
-          let first: int | null = xs[0]
-          if (first !== null) {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its language null after the crossing" }
-          }
-          let second: int | null = xs[1]
-          if (second !== null) {
-            if (second !== 7) {
-              throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument changed its element after the crossing" }
+    private static String nullArrayDriver() {
+        String array = "let xs: (int | null)[] = [null, 7]\n";
+        String nested = "let inner: (int | null)[] = [null, 7]\n"
+            + "let outer: (int | null)[][] = [inner, inner]\n";
+        StringBuilder source = new StringBuilder();
+        for (boolean async : List.of(false, true)) {
+            String await = async ? "await " : "";
+            String prefix = async ? "async" : "";
+            String take = async ? "asyncTakeNullableArray" : "takeNullableArray";
+            String shared = async ? "asyncTakeSharedArray" : "takeSharedArray";
+            String roundtrip = async ? "asyncRoundtripArray" : "roundtripArray";
+            String write = async ? "asyncWriteArray" : "writeArray";
+            String body = array + "let seen: string = " + await + "host." + take + "(xs)\n"
+                + nullArrayCheck("seen !== \"sentinel+7\"", "null sentinel at host parameter");
+            if (!async) {
+                body += nullArrayCheck("xs.length !== 2", "array length after crossing")
+                    + "let first: int | null = xs[0]\n"
+                    + nullArrayCheck("first !== null", "null element after crossing")
+                    + "let second: int | null = xs[1]\n"
+                    + nullArrayIntCheck("second", 7);
             }
-          } else {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its element after the crossing" }
-          }
-          return null
+            source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
+                + "take_nullable_array", "", "null", body + "return null\n"));
+            source.append(nullFunction("export ", async, async ? "test_async_shared_nullable_array"
+                : "test_shared_nullable_array_argument", "", "null",
+                array + "let seen: string = " + await + "host." + shared + "(xs, xs)\n"
+                    + nullArrayCheck("seen !== \"same\"", prefix + " shared argument identity")
+                    + nested + "let seenNested: string = " + await + "host." + shared
+                    + "(outer[0], outer[1])\n"
+                    + nullArrayCheck("seenNested !== \"same\"", prefix + " nested argument identity")
+                    + "return null\n"));
+            source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
+                + "roundtrip_nullable_array", "", "null",
+                array + "let back: (int | null)[] = " + await + "host." + roundtrip + "(xs)\n"
+                    + nullArrayCheck("back !== xs", prefix + " roundtrip identity") + "return null\n"));
+            source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
+                + "write_nullable_array", "", "null",
+                array + "let written: string = " + await + "host." + write + "(xs)\n"
+                    + nullArrayCheck("written !== \"written\"", prefix + " host write report")
+                    + "let second: int | null = xs[1]\n" + nullArrayIntCheck("second", 8)
+                    + "let first: int | null = xs[0]\n"
+                    + nullArrayCheck("first !== null", prefix + " host write preserves null")
+                    + "return null\n"));
         }
+        source.append(nullFunction("export ", false, "test_take_nested_nullable_array", "", "null",
+            "let xs: (int | null)[][] = [[null, 7], [8]]\n"
+                + "let seen: string = host.takeNestedNullableArray(xs)\n"
+                + nullArrayCheck("seen !== \"nested\"", "nested null sentinel at host parameter")
+                + "return null\n"));
+        source.append(nullFunction("export ", false, "test_stash_nullable_array", "", "null",
+            array + "let stashed: string = host.stashArray(xs)\n"
+                + nullArrayCheck("stashed !== \"stashed\"", "host stash report")
+                + "let same: string = host.sameAsStash(xs)\n"
+                + nullArrayCheck("same !== \"same\"", "identity across host calls") + "return null\n"));
+        source.append(nullFunction("export ", false, "test_nested_write_nullable_array", "", "null",
+            nested + "let written: string = host.writeNestedArray(outer)\n"
+                + nullArrayCheck("written !== \"written\"", "nested host write report")
+                + "let viaFirst: int | null = outer[0][1]\n" + nullArrayIntCheck("viaFirst", 8)
+                + "let viaAlias: int | null = outer[1][1]\n" + nullArrayIntCheck("viaAlias", 8)
+                + "let firstElement: int | null = outer[0][0]\n"
+                + nullArrayCheck("firstElement !== null", "nested host write preserves null")
+                + "return null\n"));
+        return source.toString();
+    }
 
-        export function test_take_nested_nullable_array(): null {
-          let xs: (int | null)[][] = [[null, 7], [8]]
-          let seen: string = host.takeNestedNullableArray(xs)
-          if (seen !== "nested") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nested nullable-array argument did not reach the host as the null sentinel" }
-          }
-          return null
-        }
+    private static String nullArrayCheck(String condition, String message) {
+        return "if (" + condition + ") {\n"
+            + "  throw { code: \"PROBE_NULL_ARRAY\", message: \"" + message + "\" }\n}\n";
+    }
 
-        export function test_take_nullable_array_bad_return(): null {
-          host.takeNullableArrayBadReturn([null, 7])
-          return null
-        }
+    private static String nullArrayIntCheck(String name, int expected) {
+        return "if (" + name + " !== null) {\n"
+            + nullArrayCheck(name + " !== " + expected, name + " must equal " + expected).indent(2)
+            + "} else {\n  throw { code: \"PROBE_NULL_ARRAY\", message: \"" + name
+            + " must not be null\" }\n}\n";
+    }
 
-        export async function test_async_take_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let seen: string = await host.asyncTakeNullableArray(xs)
-          if (seen !== "sentinel+7") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the async nullable-array argument did not reach the host as the null sentinel" }
-          }
-          return null
-        }
-
-        export function test_shared_nullable_array_argument(): null {
-          let xs: (int | null)[] = [null, 7]
-          let seen: string = host.takeSharedArray(xs, xs)
-          if (seen !== "same") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the same nullable-array argument crossed as two carriers" }
-          }
-          let inner: (int | null)[] = [null, 7]
-          let outer: (int | null)[][] = [inner, inner]
-          let nested: string = host.takeSharedArray(outer[0], outer[1])
-          if (nested !== "same") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the aliased nested nullable-array element crossed as two carriers" }
-          }
-          return null
-        }
-
-        export function test_roundtrip_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let back: (int | null)[] = host.roundtripArray(xs)
-          if (back !== xs) {
-            throw { code: "PROBE_NULL_ARRAY", message: "the host roundtrip detached the nullable-array argument" }
-          }
-          return null
-        }
-
-        export function test_stash_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let stashed: string = host.stashArray(xs)
-          if (stashed !== "stashed") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument did not reach the host" }
-          }
-          let same: string = host.sameAsStash(xs)
-          if (same !== "same") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument lost its identity across host calls" }
-          }
-          return null
-        }
-
-        export function test_write_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let written: string = host.writeArray(xs)
-          if (written !== "written") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nullable-array argument did not reach the host" }
-          }
-          let second: int | null = xs[1]
-          if (second !== null) {
-            if (second !== 8) {
-              throw { code: "PROBE_NULL_ARRAY", message: "the host write to the nullable-array argument stayed invisible to the DEAL side" }
-            }
-          } else {
-            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nullable-array argument's element to null" }
-          }
-          let first: int | null = xs[0]
-          if (first !== null) {
-            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nullable-array argument's null element" }
-          }
-          return null
-        }
-
-        export async function test_async_shared_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let seen: string = await host.asyncTakeSharedArray(xs, xs)
-          if (seen !== "same") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the same async nullable-array argument crossed as two carriers" }
-          }
-          let inner: (int | null)[] = [null, 7]
-          let outer: (int | null)[][] = [inner, inner]
-          let nested: string = await host.asyncTakeSharedArray(outer[0], outer[1])
-          if (nested !== "same") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the aliased nested async nullable-array element crossed as two carriers" }
-          }
-          return null
-        }
-
-        export async function test_async_roundtrip_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let back: (int | null)[] = await host.asyncRoundtripArray(xs)
-          if (back !== xs) {
-            throw { code: "PROBE_NULL_ARRAY", message: "the async host roundtrip detached the nullable-array argument" }
-          }
-          return null
-        }
-
-        export function test_nested_write_nullable_array(): null {
-          let inner: (int | null)[] = [null, 7]
-          let outer: (int | null)[][] = [inner, inner]
-          let written: string = host.writeNestedArray(outer)
-          if (written !== "written") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nested nullable-array argument did not reach the host" }
-          }
-          let viaFirst: int | null = outer[0][1]
-          if (viaFirst !== null) {
-            if (viaFirst !== 8) {
-              throw { code: "PROBE_NULL_ARRAY", message: "the host write to the nested nullable-array element stayed invisible to the DEAL side" }
-            }
-          } else {
-            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nested nullable-array element to null" }
-          }
-          let viaAlias: int | null = outer[1][1]
-          if (viaAlias !== null) {
-            if (viaAlias !== 8) {
-              throw { code: "PROBE_NULL_ARRAY", message: "the nested alias did not observe the host write" }
-            }
-          } else {
-            throw { code: "PROBE_NULL_ARRAY", message: "the nested alias observed the host write as null" }
-          }
-          let firstElement: int | null = outer[0][0]
-          if (firstElement !== null) {
-            throw { code: "PROBE_NULL_ARRAY", message: "the host write changed the nested nullable-array null element" }
-          }
-          return null
-        }
-
-        export async function test_async_write_nullable_array(): null {
-          let xs: (int | null)[] = [null, 7]
-          let written: string = await host.asyncWriteArray(xs)
-          if (written !== "written") {
-            throw { code: "PROBE_NULL_ARRAY", message: "the async nullable-array argument did not reach the host" }
-          }
-          let second: int | null = xs[1]
-          if (second !== null) {
-            if (second !== 8) {
-              throw { code: "PROBE_NULL_ARRAY", message: "the async host write to the nullable-array argument stayed invisible to the DEAL side" }
-            }
-          } else {
-            throw { code: "PROBE_NULL_ARRAY", message: "the async host write changed the nullable-array element to null" }
-          }
-          let first: int | null = xs[0]
-          if (first !== null) {
-            throw { code: "PROBE_NULL_ARRAY", message: "the async host write changed the nullable-array null element" }
-          }
-          return null
-        }
-
-        export function main(): null {
-          return null
-        }
-        """;
+    private static String nullFunction(String prefix, boolean async, String name,
+            String parameters, String result, String body) {
+        return prefix + (async ? "async " : "") + "function " + name + "(" + parameters + "): "
+            + result + " {\n" + body.indent(2) + "}\n";
+    }
 
     /**
      * The LuaJIT null host: every accepting export distinguishes the
@@ -4631,179 +4343,73 @@ public class CanonicalProjectionParityTest {
      * real int for its declared string return.
      */
     private static String luaNullCrossingHost() {
-        return """
+        StringBuilder host = new StringBuilder("""
             local rt = require("deal.runtime")
-
             local function report(value, count)
               if value == rt.__NULL and count == 7 then return "sentinel+7" end
               if value == nil and count == 7 then return "plain-nil+7" end
-              if value == 7 and (count == rt.__NULL or count == nil) then
-                return "shifted"
-              end
+              if value == 7 and (count == rt.__NULL or count == nil) then return "shifted" end
               return "other"
             end
-
             local stash = nil
-
+            local function nullableArray(value)
+              if type(value) == "table" then return report(value[1], value[2]) end
+              return "other"
+            end
+            local function shared(first, second)
+              if type(first) == "table" and first == second then return "same" end
+              return "different"
+            end
             return {
-              takeNull = function(value)
-                if value == rt.__NULL then return "sentinel" end
-                if value == nil then return "plain-nil" end
-                return "other"
-              end,
-              takeNullableInt = function(value)
-                if value == rt.__NULL then return "sentinel" end
-                if value == nil then return "plain-nil" end
-                return "other"
-              end,
-              takeNullableArray = function(value)
-                if type(value) == "table" and value[1] == rt.__NULL
-                    and value[2] == 7 then
-                  return "sentinel+7"
-                end
-                if type(value) == "table" and value[1] == nil
-                    and value[2] == 7 then
-                  return "plain-nil+7"
-                end
-                return "other"
-              end,
-              takeNestedNullableArray = function(value)
+            """);
+        String single = "if value == rt.__NULL then return \"sentinel\" end\n"
+            + "if value == nil then return \"plain-nil\" end\nreturn \"other\"";
+        String pair = "return report(value, count)";
+        String[][] rows = {
+            {"takeNull", "value", single}, {"takeNullableInt", "value", single},
+            {"takeTable", "value", "return \"unexpected-table-admission\""},
+            {"takeArray", "value", "return \"unexpected-array-admission\""},
+            {"takeNullBadReturn", "value", "return 7"},
+            {"asyncTakeNull", "value", single}, {"asyncTakeNullableInt", "value", single},
+            {"asyncTakeNullThenInt", "value, count", pair}, {"asyncTakePair", "value, count", pair},
+            {"asyncTakeTable", "value", "return \"unexpected-table-admission\""},
+            {"asyncTakeArray", "value", "return \"unexpected-array-admission\""},
+            {"returnNull", "", "return rt.__NULL"}, {"returnNullableInt", "", "return rt.__NULL"},
+            {"takeNullableArray", "value", "return nullableArray(value)"},
+            {"asyncTakeNullableArray", "value", "return nullableArray(value)"},
+            {"takeNullableArrayBadReturn", "value", "return 7"},
+            {"takeNestedNullableArray", "value", """
                 if type(value) == "table" and type(value[1]) == "table"
                     and value[1][1] == rt.__NULL and value[1][2] == 7
-                    and type(value[2]) == "table" and value[2][1] == 8 then
-                  return "nested"
-                end
+                    and type(value[2]) == "table" and value[2][1] == 8 then return "nested" end
                 return "other"
-              end,
-              takeSharedArray = function(first, second)
-                -- The identity probe: the two argument positions must
-                -- observe one and the same carrier table.
-                if type(first) == "table" and first == second then
-                  return "same"
-                end
-                return "different"
-              end,
-              roundtripArray = function(value)
-                -- The roundtrip probe: the raw host hands back the very
-                -- table it received, so the DEAL side observes its own
-                -- carrier again.
-                return value
-              end,
-              writeArray = function(value)
-                -- The host-write probe: the write lands in the shared
-                -- carrier, so the DEAL side reads it back after the call.
-                if type(value) == "table" then
-                  value[2] = 8
-                  return "written"
-                end
-                return "other"
-              end,
-              writeNestedArray = function(value)
-                -- The nested host-write probe: the write lands in the
-                -- shared inner carrier, so both the DEAL outer read and
-                -- the aliased nested element observe it after the call.
-                if type(value) == "table" and type(value[1]) == "table" then
-                  value[1][2] = 8
-                  return "written"
-                end
-                return "other"
-              end,
-              asyncWriteArray = function(value)
-                -- The async host-write probe: the start commits the write
-                -- into the shared carrier before completing.
-                if type(value) == "table" then
-                  value[2] = 8
-                end
-                return rt.async_start(function() return "written" end)
-              end,
-              stashArray = function(value)
-                stash = value
-                return "stashed"
-              end,
-              sameAsStash = function(value)
-                if value == stash then return "same" end
-                return "different"
-              end,
-              asyncTakeSharedArray = function(first, second)
-                if type(first) == "table" and first == second then
-                  return rt.async_start(function() return "same" end)
-                end
-                return rt.async_start(function() return "different" end)
-              end,
-              asyncRoundtripArray = function(value)
-                return rt.async_start(function() return value end)
-              end,
-              takeNullableArrayBadReturn = function(value)
-                return 7
-              end,
-              asyncTakeNullableArray = function(value)
-                if type(value) == "table" and value[1] == rt.__NULL
-                    and value[2] == 7 then
-                  return rt.async_start(function() return "sentinel+7" end)
-                end
-                if type(value) == "table" and value[1] == nil
-                    and value[2] == 7 then
-                  return rt.async_start(function() return "plain-nil+7" end)
-                end
-                return rt.async_start(function() return "other" end)
-              end,
-              takeTable = function(value)
-                return "unexpected-table-admission"
-              end,
-              takeArray = function(value)
-                return "unexpected-array-admission"
-              end,
-              takeNullBadReturn = function(value)
-                return 7
-              end,
-              asyncTakeNull = function(value)
-                if value == rt.__NULL then
-                  return rt.async_start(function() return "sentinel" end)
-                end
-                if value == nil then
-                  return rt.async_start(function() return "plain-nil" end)
-                end
-                return rt.async_start(function() return "other" end)
-              end,
-              asyncTakeNullableInt = function(value)
-                if value == rt.__NULL then
-                  return rt.async_start(function() return "sentinel" end)
-                end
-                if value == nil then
-                  return rt.async_start(function() return "plain-nil" end)
-                end
-                return rt.async_start(function() return "other" end)
-              end,
-              asyncTakeNullThenInt = function(value, count)
-                if value == rt.__NULL and count == 7 then
-                  return rt.async_start(function() return "sentinel+7" end)
-                end
-                return rt.async_start(function() return report(value, count) end)
-              end,
-              asyncTakePair = function(value, count)
-                if value == rt.__NULL and count == 7 then
-                  return rt.async_start(function() return "sentinel+7" end)
-                end
-                return rt.async_start(function() return report(value, count) end)
-              end,
-              asyncTakeTable = function(value)
-                return rt.async_start(function()
-                  return "unexpected-table-admission"
-                end)
-              end,
-              asyncTakeArray = function(value)
-                return rt.async_start(function()
-                  return "unexpected-array-admission"
-                end)
-              end,
-              returnNull = function()
-                return rt.__NULL
-              end,
-              returnNullableInt = function()
-                return rt.__NULL
-              end,
+                """},
+            {"takeSharedArray", "first, second", "return shared(first, second)"},
+            {"asyncTakeSharedArray", "first, second", "return shared(first, second)"},
+            {"roundtripArray", "value", "return value"},
+            {"asyncRoundtripArray", "value", "return value"},
+            {"writeArray", "value", "if type(value) == \"table\" then value[2] = 8 return \"written\" end\nreturn \"other\""},
+            {"writeNestedArray", "value", "if type(value) == \"table\" and type(value[1]) == \"table\" then value[1][2] = 8 return \"written\" end\nreturn \"other\""},
+            {"asyncWriteArray", "value", "if type(value) == \"table\" then value[2] = 8 end\nreturn \"written\""},
+            {"stashArray", "value", "stash = value\nreturn \"stashed\""},
+            {"sameAsStash", "value", "if value == stash then return \"same\" end\nreturn \"different\""}
+        };
+        for (String[] row : rows) {
+            String body = row[2];
+            if (row[0].startsWith("async")) {
+                if (body.equals(single)) {
+                    body = body.replace("return \"sentinel\"", "return rt.async_start(function() return \"sentinel\" end)")
+                        .replace("return \"plain-nil\"", "return rt.async_start(function() return \"plain-nil\" end)")
+                        .replace("return \"other\"", "return rt.async_start(function() return \"other\" end)");
+                } else {
+                    body = "local result = (function()\n" + body + "\nend)()\n"
+                        + "return rt.async_start(function() return result end)";
+                }
             }
-            """;
+            host.append(row[0]).append(" = function(").append(row[1]).append(")\n")
+                .append(body).append("\nend,\n");
+        }
+        return host.append("}\n").toString();
     }
 
     /**
@@ -4844,16 +4450,8 @@ public class CanonicalProjectionParityTest {
                 return java.lang.Integer.valueOf(7);
               }
               public static Object asyncTakeNullableArray($DealRt.__IntOrNullArray value) {
-                return java.util.concurrent.CompletableFuture.completedFuture(
-                    value.data.length == 2 && value.data[0] == null
-                        && java.lang.Integer.valueOf(7).equals(value.data[1])
-                            ? "sentinel+7" : "other");
+                return java.util.concurrent.CompletableFuture.completedFuture(takeNullableArray(value));
               }
-              // The declared identity/write surface: the JVM host ABI
-              // materializes one carrier per array parameter crossing and
-              // copies declared-array writes back at normal return, so the
-              // identity probes stay LuaJIT/oracle-owned while every
-              // declared export still needs its load-surface method.
               public static Object takeSharedArray($DealRt.__IntOrNullArray first,
                   $DealRt.__IntOrNullArray second) {
                 return first == second ? "same" : "different";
@@ -4878,11 +4476,7 @@ public class CanonicalProjectionParityTest {
                 return "written";
               }
               public static Object asyncWriteArray($DealRt.__IntOrNullArray value) {
-                if (value.data.length > 1) {
-                  value.data[1] = java.lang.Integer.valueOf(8);
-                }
-                return java.util.concurrent.CompletableFuture.completedFuture(
-                    "written");
+                return java.util.concurrent.CompletableFuture.completedFuture(writeArray(value));
               }
               public static Object stashArray($DealRt.__IntOrNullArray value) {
                 return "stashed";
@@ -4943,11 +4537,13 @@ public class CanonicalProjectionParityTest {
             """;
     }
 
-    /**
-     * The oracle-side nullable-array argument probe: one argument whose
-     * array value carries the language null at element 1 and the given int
-     * at element 2 — the shape every raw host reports as the sentinel tuple.
-     */
+    private static void writeNullableArray(List<SemanticOracle.Value> args) {
+        if (args.size() == 1 && args.get(0) instanceof SemanticOracle.Value.ArrayValue array
+                && array.elements().size() > 1) {
+            array.elements().set(1, new SemanticOracle.Value.IntValue(8L));
+        }
+    }
+
     private static String nullableArrayElement(
             List<SemanticOracle.Value> args, long intValue) {
         return args.size() == 1
@@ -4961,11 +4557,6 @@ public class CanonicalProjectionParityTest {
             ? "sentinel+7" : "other";
     }
 
-    /**
-     * The oracle-side nested nullable-array argument probe: one argument
-     * whose first element is the nullable array {@code [null, inner]} and
-     * whose second element is the array {@code [tail]}.
-     */
     private static String nestedNullableArrayElement(
             List<SemanticOracle.Value> args, long inner, long tail) {
         if (args.size() != 1
@@ -5059,27 +4650,13 @@ public class CanonicalProjectionParityTest {
                 } else if ("asyncTakeNullableArray".equals(export)) {
                     asyncSeen.put(operationLabel, nullableArrayElement(args, 7));
                 } else if ("asyncTakeSharedArray".equals(export)) {
-                    // The async identity probe: the two argument positions
-                    // must observe the same array value.
                     asyncSeen.put(operationLabel,
                         args.size() == 2 && args.get(0) == args.get(1)
                             ? "same" : "different");
                 } else if ("asyncRoundtripArray".equals(export)) {
-                    // The async roundtrip probe: the completed value is the
-                    // very array value the start received.
                     asyncReturned.put(operationLabel, args.get(0));
                 } else if ("asyncWriteArray".equals(export)) {
-                    // The async host-write probe: the start commits the write
-                    // into the shared array value's own element list before
-                    // completing, so the DEAL side reads it back after the
-                    // await.
-                    if (args.size() == 1
-                            && args.get(0)
-                                instanceof SemanticOracle.Value.ArrayValue array
-                            && array.elements().size() > 1) {
-                        array.elements().set(1,
-                            new SemanticOracle.Value.IntValue(8L));
-                    }
+                    writeNullableArray(args);
                     asyncSeen.put(operationLabel, "written");
                 }
                 return new AsyncStartOutcome.Operation(operationLabel);
@@ -5120,34 +4697,15 @@ public class CanonicalProjectionParityTest {
                                 ? "same" : "different"));
                     case "roundtripArray" -> new SyncOutcome.Returned(args.get(0));
                     case "writeArray" -> {
-                        // The host-write probe: the scenario host commits the
-                        // write into the shared array value's own element list,
-                        // which is how the oracle models a host's in-place
-                        // mutation of a reference value.
-                        if (args.size() == 1
-                                && args.get(0)
-                                    instanceof SemanticOracle.Value.ArrayValue array
-                                && array.elements().size() > 1) {
-                            array.elements().set(1,
-                                new SemanticOracle.Value.IntValue(8L));
-                        }
+                        writeNullableArray(args);
                         yield new SyncOutcome.Returned(
                             new SemanticOracle.Value.StrValue("written"));
                     }
                     case "writeNestedArray" -> {
-                        // The nested host-write probe: the write lands in the
-                        // shared inner array value's own element list, so the
-                        // outer read and the aliased nested element both
-                        // observe it after the call.
                         if (args.size() == 1
-                                && args.get(0)
-                                    instanceof SemanticOracle.Value.ArrayValue outer
-                                && !outer.elements().isEmpty()
-                                && outer.elements().get(0)
-                                    instanceof SemanticOracle.Value.ArrayValue inner
-                                && inner.elements().size() > 1) {
-                            inner.elements().set(1,
-                                new SemanticOracle.Value.IntValue(8L));
+                                && args.get(0) instanceof SemanticOracle.Value.ArrayValue outer
+                                && !outer.elements().isEmpty()) {
+                            writeNullableArray(List.of(outer.elements().get(0)));
                         }
                         yield new SyncOutcome.Returned(
                             new SemanticOracle.Value.StrValue("written"));
@@ -5227,246 +4785,63 @@ public class CanonicalProjectionParityTest {
     }
 
     /** The admitted null crossings on all three consumers. */
-    private static void driveNullCrossingAdmissions(Compiled compiled)
-            throws Exception {
-        assertNullCrossingAdmission(compiled, "test_take_null_literal",
-            "the null literal at the null parameter");
-        assertNullCrossingAdmission(compiled, "test_take_nullable_int_literal",
-            "the null literal at the nullable primitive parameter");
-        assertNullCrossingAdmission(compiled, "test_take_null_from_host",
-            "the admitted host null at the null parameter");
-        assertNullCrossingAdmission(compiled, "test_take_nullable_int_from_host",
-            "the admitted host null at the nullable primitive parameter");
-        assertNullCrossingAdmission(compiled, "test_dynamic_take_null",
-            "the dynamic null literal at the null parameter");
-        assertNullCrossingAdmission(compiled, "test_dynamic_take_nullable_int",
-            "the dynamic null literal at the nullable primitive parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_async_take_null",
-            "the async null literal at the null parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_async_take_nullable_int",
-            "the async null literal at the nullable primitive parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_null",
-            "the dynamic async null literal at the null parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_nullable_int",
-            "the dynamic async null literal at the nullable primitive parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_async_take_null_from_host",
-            "the admitted host null at the async null host start");
-        assertAsyncNullCrossingAdmission(compiled,
-            "test_dynamic_async_take_null_from_host",
-            "the admitted host null at the dynamic async null host start");
-        assertAsyncNullCrossingAdmission(compiled, "test_async_take_null_then_int",
-            "the async null literal before a non-null int parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_async_take_pair",
-            "the async null literal before a non-null argument (both nullable)");
-        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_null_then_int",
-            "the dynamic async null literal before a non-null int parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_dynamic_async_take_pair",
-            "the dynamic async null literal before a non-null argument (both nullable)");
-    }
-
-    /**
-     * The nullable-array null crossings: a valid nullable-array argument
-     * (and its nested form) reaches the raw host with the explicit null
-     * sentinel at its null element, the DEAL-side array keeps its language
-     * null after the crossing, and the async start projects the same
-     * argument — complete without a failure event on the oracle, the LuaJIT
-     * artifact, and the JVM artifact.
-     */
-    private static void driveNullCrossingArrayAdmissions(Compiled compiled)
-            throws Exception {
-        assertNullCrossingAdmission(compiled, "test_take_nullable_array",
-            "the nullable-array argument at a nullable-element host parameter");
-        assertNullCrossingAdmission(compiled, "test_take_nested_nullable_array",
-            "the nested nullable-array argument at a nullable-element host "
-                + "parameter");
-        assertAsyncNullCrossingAdmission(compiled, "test_async_take_nullable_array",
-            "the async nullable-array argument at a nullable-element host "
-                + "parameter");
-    }
-
-    /**
-     * The nullable-array identity crossings (ISSUE-0814): the same DEAL
-     * array crossing two declared parameter positions, a nested element
-     * alias, a host roundtrip, and an across-calls stash probe must all
-     * observe one carrier on the oracle and the LuaJIT artifact — the two
-     * consumers whose shared array value keeps its reference identity. A
-     * detached projection would materialize two carriers per argument pair,
-     * hand the host a copy per crossing, and break the roundtrip identity.
-     */
-    private static void driveNullCrossingArrayIdentity(Compiled compiled)
-            throws Exception {
-        assertNullCrossingSharedAdmission(compiled,
-            "test_shared_nullable_array_argument",
-            "the same nullable-array argument and its nested alias at two "
-                + "declared parameter positions");
-        assertNullCrossingSharedAdmission(compiled, "test_roundtrip_nullable_array",
-            "the host roundtrip of the nullable-array argument");
-        assertNullCrossingSharedAdmission(compiled, "test_stash_nullable_array",
-            "the nullable-array argument's identity across two host calls");
-        assertAsyncNullCrossingSharedAdmission(compiled,
-            "test_async_shared_nullable_array",
-            "the same async nullable-array argument and its nested alias at "
-                + "two recorded argument positions");
-        assertAsyncNullCrossingSharedAdmission(compiled,
-            "test_async_roundtrip_nullable_array",
-            "the async host roundtrip of the nullable-array argument");
-    }
-
-    /**
-     * The nullable-array host-write crossing (ISSUE-0814): the scenario
-     * host's in-place write to the shared carrier must be visible to the
-     * DEAL side after the call — the oracle's scenario host commits into
-     * the shared array value's element list, and the LuaJIT artifact's raw
-     * host into the shared table. A nested write must also reach the DEAL
-     * outer read and the aliased nested element, and an async start's
-     * write must be visible after the await.
-     */
-    private static void driveNullCrossingArrayWrite(Compiled compiled)
-            throws Exception {
-        assertNullCrossingSharedAdmission(compiled, "test_write_nullable_array",
-            "the host write to the nullable-array argument");
-        assertNullCrossingSharedAdmission(compiled,
-            "test_nested_write_nullable_array",
-            "the host write to the nested nullable-array element and its alias");
-        assertAsyncNullCrossingSharedAdmission(compiled,
-            "test_async_write_nullable_array",
-            "the async host write to the nullable-array argument");
-    }
-
-    /**
-     * One admitted crossing on the oracle and the LuaJIT artifact — the two
-     * consumers whose shared array value keeps its reference identity, so
-     * the identity and host-write probes are observable there (the JVM host
-     * ABI materializes one carrier per parameter crossing).
-     */
-    private static void assertNullCrossingSharedAdmission(Compiled compiled,
-            String export, String what) throws Exception {
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
-            compiled.project(), compiled.tables(), compiled.registries(),
-            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
-            List.of());
-        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-            what + " (oracle): the shared-crossing probe completes: "
-                + run.terminal());
-        String lua = luaArtifactOutput(compiled,
-            Map.of("null_crossing", luaNullCrossingHost()),
-            luaExportProbe(compiled, export));
-        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
-            + "the shared-crossing probe completes and observes one shared "
-            + "carrier: " + lua);
-    }
-
-    /** One admitted async crossing on the oracle and the LuaJIT artifact. */
-    private static void assertAsyncNullCrossingSharedAdmission(Compiled compiled,
-            String export, String what) throws Exception {
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
-            compiled.project(), compiled.tables(), nullCrossingResponder(),
-            compiled.checkedProject().entryModule(), export, List.of());
-        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-            what + " (oracle): the async shared-crossing probe completes: "
-                + run.terminal());
-        String lua = luaArtifactOutput(compiled,
-            Map.of("null_crossing", luaNullCrossingHost()),
-            luaExportProbe(compiled, export));
-        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
-            + "the async shared-crossing probe completes and observes one "
-            + "shared carrier: " + lua);
-    }
-
-    /**
-     * The nullable-array crossing's subsequent failure projection: the raw
-     * host returns a real int for the declared {@code string} return after
-     * the nullable-array argument was admitted, so the closed
-     * {@code HOST_SYNC_RETURN_CELL} arm renders its own tuple at the call
-     * origin — byte-exact and identical on the oracle, the LuaJIT artifact,
-     * and the JVM artifact. An unprojected array element would fail earlier
-     * with a different tuple, so the projection also proves the admission.
-     */
-    private static void driveNullCrossingArrayBadReturn(Compiled compiled)
-            throws Exception {
-        String export = "test_take_nullable_array_bad_return";
-        Tuple expected = hostReturnCellTuple("string",
-            FailureProjections.kindReason(RuntimeDescriptor.String.INSTANCE),
-            "number", 320, 3);
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
-            compiled.project(), compiled.tables(), compiled.registries(),
-            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
-            List.of());
-        Tuple oracle = failureTuple(compiled, run);
-        checkEq(expected, oracle, "the nullable-array crossing's subsequent "
-            + "failure (oracle): the closed return cell's own tuple at the call "
-            + "origin");
-        String luaOutput = luaArtifactOutput(compiled,
-            Map.of("null_crossing", luaNullCrossingHost()),
-            luaExportProbe(compiled, export));
-        Tuple lua = parseLuaProbe(luaOutput, compiled);
-        checkEq(expected, lua, "the nullable-array crossing's subsequent "
-            + "failure (luajit): the closed return cell's own tuple at the call "
-            + "origin: " + luaOutput);
-        String jvmOutput = jvmExportOutput(compiled, export,
-            Map.of("null_crossing", jvmNullCrossingHost()));
-        Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
-        checkEq(expected, jvm, "the nullable-array crossing's subsequent "
-            + "failure (jvm): the closed return cell's own tuple at the call "
-            + "origin: " + jvmOutput);
-        if (oracle != null && lua != null) {
-            checkEq(null, firstDifferingField(oracle, lua),
-                "the nullable-array crossing's subsequent failure: the oracle "
-                    + "and the LuaJIT artifact render the identical tuple");
-        }
-        if (oracle != null && jvm != null) {
-            checkEq(null, firstDifferingField(oracle, jvm),
-                "the nullable-array crossing's subsequent failure: the oracle "
-                    + "and the JVM artifact render the identical tuple");
+    private static void driveNullCrossingAdmissions(Compiled compiled) throws Exception {
+        for (NullAdmission row : NULL_ADMISSIONS) {
+            assertNullCrossingAdmission(compiled, row.export(), row.async(), true);
         }
     }
 
-    /** One admitted crossing through the async host start. */
-    private static void assertAsyncNullCrossingAdmission(Compiled compiled,
-            String export, String what) throws Exception {
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
-            compiled.project(), compiled.tables(), nullCrossingResponder(),
-            compiled.checkedProject().entryModule(), export, List.of());
-        check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-            what + " (oracle): the admitted crossing completes: " + run.terminal());
-        String lua = luaArtifactOutput(compiled,
-            Map.of("null_crossing", luaNullCrossingHost()),
-            luaExportProbe(compiled, export));
-        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
-            + "the admitted crossing completes and the raw host observed the "
-            + "explicit null sentinel: " + lua);
-        String jvm = jvmExportOutput(compiled, export,
-            Map.of("null_crossing", jvmNullCrossingHost()));
-        check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
-            + " (jvm): the admitted crossing completes and the raw host observed "
-            + "the language-null carrier: " + jvm);
+    private static void driveNullCrossingArrayAdmissions(Compiled compiled) throws Exception {
+        for (String export : List.of("test_take_nullable_array", "test_take_nested_nullable_array",
+                "test_async_take_nullable_array")) {
+            assertNullCrossingAdmission(compiled, export, export.contains("_async_"), true);
+        }
     }
 
-    /**
-     * One admitted crossing: the probe completes on the oracle, the LuaJIT
-     * artifact, and the JVM artifact. Each probe's own body rejects a raw
-     * host report other than {@code sentinel}, so the drive proves both the
-     * admission and the raw-host representation.
-     */
+    private static void driveNullCrossingArrayIdentity(Compiled compiled) throws Exception {
+        for (String export : List.of("test_shared_nullable_array_argument", "test_roundtrip_nullable_array",
+                "test_stash_nullable_array", "test_async_shared_nullable_array",
+                "test_async_roundtrip_nullable_array")) {
+            assertNullCrossingAdmission(compiled, export, export.contains("_async_"), false);
+        }
+    }
+
+    private static void driveNullCrossingArrayWrite(Compiled compiled) throws Exception {
+        for (String export : List.of("test_write_nullable_array", "test_nested_write_nullable_array",
+                "test_async_write_nullable_array")) {
+            assertNullCrossingAdmission(compiled, export, export.contains("_async_"), false);
+        }
+    }
+
+    private static void driveNullCrossingArrayBadReturn(Compiled compiled) throws Exception {
+        assertNullCrossingRejection(compiled, "test_take_nullable_array_bad_return",
+            hostReturnCellTuple("string", FailureProjections.kindReason(RuntimeDescriptor.String.INSTANCE),
+                "number", 320, 3), "nullable-array admission followed by invalid host return", false);
+    }
+
     private static void assertNullCrossingAdmission(Compiled compiled, String export,
-            String what) throws Exception {
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
-            compiled.project(), compiled.tables(), compiled.registries(),
-            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
-            List.of());
+            boolean async, boolean jvm) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = nullCrossingRun(compiled, export, async);
         check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-            what + " (oracle): the admitted crossing completes: " + run.terminal());
+            export + " (oracle): crossing probe completes: " + run.terminal());
         String lua = luaArtifactOutput(compiled,
-            Map.of("null_crossing", luaNullCrossingHost()),
-            luaExportProbe(compiled, export));
-        check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
-            + "the admitted crossing completes and the raw host observed the "
-            + "explicit null sentinel: " + lua);
-        String jvm = jvmExportOutput(compiled, export,
-            Map.of("null_crossing", jvmNullCrossingHost()));
-        check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
-            + " (jvm): the admitted crossing completes and the raw host observed "
-            + "the language-null carrier: " + jvm);
+            Map.of("null_crossing", luaNullCrossingHost()), luaExportProbe(compiled, export));
+        check(lua.contains("OK") && !lua.contains("ERR|"),
+            export + " (luajit): crossing probe completes: " + lua);
+        if (jvm) {
+            String output = jvmExportOutput(compiled, export,
+                Map.of("null_crossing", jvmNullCrossingHost()));
+            check(output != null && output.contains("OK") && !output.contains("ERR|"),
+                export + " (jvm): crossing probe completes: " + output);
+        }
+    }
+
+    private static SemanticRuntimeModel.ConsumerRun nullCrossingRun(Compiled compiled,
+            String export, boolean async) {
+        return async ? SemanticOracle.invokeAsyncEntry(compiled.project(), compiled.tables(),
+            nullCrossingResponder(), compiled.checkedProject().entryModule(), export, List.of())
+            : SemanticOracle.invokeSyncEntry(compiled.project(), compiled.tables(), compiled.registries(),
+                nullCrossingResponder(), compiled.checkedProject().entryModule(), export, List.of());
     }
 
     /**
@@ -5480,40 +4855,9 @@ public class CanonicalProjectionParityTest {
      */
     private static void driveNullCrossingBadReturn(Compiled compiled)
             throws Exception {
-        String export = "test_take_null_bad_return";
-        Tuple expected = hostReturnCellTuple("string",
-            FailureProjections.kindReason(RuntimeDescriptor.String.INSTANCE),
-            "number", 38, 3);
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
-            compiled.project(), compiled.tables(), compiled.registries(),
-            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
-            List.of());
-        Tuple oracle = failureTuple(compiled, run);
-        checkEq(expected, oracle, "the null crossing's subsequent failure "
-            + "(oracle): the closed return cell's own tuple at the call origin");
-        String luaOutput = luaArtifactOutput(compiled,
-            Map.of("null_crossing", luaNullCrossingHost()),
-            luaExportProbe(compiled, export));
-        Tuple lua = parseLuaProbe(luaOutput, compiled);
-        checkEq(expected, lua, "the null crossing's subsequent failure "
-            + "(luajit): the closed return cell's own tuple at the call origin: "
-            + luaOutput);
-        String jvmOutput = jvmExportOutput(compiled, export,
-            Map.of("null_crossing", jvmNullCrossingHost()));
-        Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
-        checkEq(expected, jvm, "the null crossing's subsequent failure "
-            + "(jvm): the closed return cell's own tuple at the call origin: "
-            + jvmOutput);
-        if (oracle != null && lua != null) {
-            checkEq(null, firstDifferingField(oracle, lua),
-                "the null crossing's subsequent failure: the oracle and the "
-                    + "LuaJIT artifact render the identical tuple");
-        }
-        if (oracle != null && jvm != null) {
-            checkEq(null, firstDifferingField(oracle, jvm),
-                "the null crossing's subsequent failure: the oracle and the "
-                    + "JVM artifact render the identical tuple");
-        }
+        assertNullCrossingRejection(compiled, "test_take_null_bad_return",
+            hostReturnCellTuple("string", FailureProjections.kindReason(RuntimeDescriptor.String.INSTANCE),
+                "number", 38, 3), "null admission followed by invalid host return", false);
     }
 
     /**
@@ -5643,110 +4987,36 @@ public class CanonicalProjectionParityTest {
      * the representation-only matcher, would complete on Lua while the
      * other two consumers reject.
      */
-    private static void driveNullCrossingRejections(Compiled compiled)
-            throws Exception {
-        Tuple tableCell = hostParameterCellTuple("table", 1,
-            FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE), "table",
-            153, 3);
-        Tuple arrayCell = hostParameterCellTuple("[int]", 1,
-            FailureProjections.kindReason(
-                new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
-            "table", 158, 3);
-        assertNullCrossingRejection(compiled, "test_reject_table_dynamic_null",
-            tableCell, "the dynamically supplied null at the non-nullable "
-                + "table parameter");
-        assertNullCrossingRejection(compiled, "test_reject_array_dynamic_null",
-            arrayCell, "the dynamically supplied null at the non-nullable "
-                + "array parameter");
-        assertNullCrossingRejection(compiled,
-            "test_dynamic_reject_table_dynamic_null",
-            typedBoundaryKindTuple("table", "null", 163, 12),
-            "the function-valued call's dynamically supplied null at the "
-                + "non-nullable table parameter");
-        assertNullCrossingRejection(compiled,
-            "test_dynamic_reject_array_dynamic_null",
-            typedBoundaryKindTuple("array", "null", 167, 10),
-            "the function-valued call's dynamically supplied null at the "
-                + "non-nullable array parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_async_reject_table_dynamic_null",
-            hostParameterCellTuple("table", 1,
-                FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
-                "table", 181, 9),
-            "the async start's dynamically supplied null at the non-nullable "
-                + "table parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_async_reject_array_dynamic_null",
-            hostParameterCellTuple("[int]", 1,
-                FailureProjections.kindReason(
-                    new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
-                "table", 186, 9),
-            "the async start's dynamically supplied null at the non-nullable "
-                + "array parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_dynamic_async_reject_table_dynamic_null",
-            typedBoundaryKindTuple("table", "null", 191, 18),
-            "the function-valued async start's dynamically supplied null at "
-                + "the non-nullable table parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_dynamic_async_reject_array_dynamic_null",
-            typedBoundaryKindTuple("array", "null", 195, 16),
-            "the function-valued async start's dynamically supplied null at "
-                + "the non-nullable array parameter");
-        // The absent-marker controls: a missing field (never a language
-        // null) supplied to the same non-nullable positions must be
-        // rejected by the same cells. The deployed matcher's table row
-        // admits every Lua table and its array row every element-less one,
-        // so the absent marker's chunk-side marker table would cross a
-        // non-nullable table/array host parameter exactly like a real
-        // table unless the emitted parameter admission distinguishes it
-        // first.
-        assertNullCrossingRejection(compiled, "test_reject_table_missing_field",
-            hostParameterCellTuple("table", 1,
-                FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
-                "nil", 209, 3),
-            "the missing field at the non-nullable table parameter");
-        assertNullCrossingRejection(compiled, "test_reject_array_missing_field",
-            hostParameterCellTuple("[int]", 1,
-                FailureProjections.kindReason(
-                    new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
-                "nil", 214, 3),
-            "the missing field at the non-nullable array parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_async_reject_table_missing_field",
-            hostParameterCellTuple("table", 1,
-                FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
-                "nil", 219, 9),
-            "the async start's missing field at the non-nullable table "
-                + "parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_async_reject_array_missing_field",
-            hostParameterCellTuple("[int]", 1,
-                FailureProjections.kindReason(
-                    new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
-                "nil", 224, 9),
-            "the async start's missing field at the non-nullable array "
-                + "parameter");
-        assertNullCrossingRejection(compiled,
-            "test_dynamic_reject_table_missing_field",
-            typedBoundaryKindTuple("table", "nil", 229, 12),
-            "the function-valued call's missing field at the non-nullable "
-                + "table parameter");
-        assertNullCrossingRejection(compiled,
-            "test_dynamic_reject_array_missing_field",
-            typedBoundaryKindTuple("array", "nil", 233, 10),
-            "the function-valued call's missing field at the non-nullable "
-                + "array parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_dynamic_async_reject_table_missing_field",
-            typedBoundaryKindTuple("table", "nil", 247, 18),
-            "the function-valued async start's missing field at the "
-                + "non-nullable table parameter");
-        assertAsyncNullCrossingRejection(compiled,
-            "test_dynamic_async_reject_array_missing_field",
-            typedBoundaryKindTuple("array", "nil", 251, 16),
-            "the function-valued async start's missing field at the "
-                + "non-nullable array parameter");
+    private record NullRejection(String export, boolean async, boolean indirect,
+                                 String kind, String actual, int line, int column) {}
+
+    private static void driveNullCrossingRejections(Compiled compiled) throws Exception {
+        List<NullRejection> rows = List.of(
+            new NullRejection("test_reject_table_dynamic_null", false, false, "table", "table", 153, 3),
+            new NullRejection("test_reject_array_dynamic_null", false, false, "array", "table", 158, 3),
+            new NullRejection("test_dynamic_reject_table_dynamic_null", false, true, "table", "null", 163, 12),
+            new NullRejection("test_dynamic_reject_array_dynamic_null", false, true, "array", "null", 167, 10),
+            new NullRejection("test_async_reject_table_dynamic_null", true, false, "table", "table", 181, 9),
+            new NullRejection("test_async_reject_array_dynamic_null", true, false, "array", "table", 186, 9),
+            new NullRejection("test_dynamic_async_reject_table_dynamic_null", true, true, "table", "null", 191, 18),
+            new NullRejection("test_dynamic_async_reject_array_dynamic_null", true, true, "array", "null", 195, 16),
+            new NullRejection("test_reject_table_missing_field", false, false, "table", "nil", 209, 3),
+            new NullRejection("test_reject_array_missing_field", false, false, "array", "nil", 214, 3),
+            new NullRejection("test_async_reject_table_missing_field", true, false, "table", "nil", 219, 9),
+            new NullRejection("test_async_reject_array_missing_field", true, false, "array", "nil", 224, 9),
+            new NullRejection("test_dynamic_reject_table_missing_field", false, true, "table", "nil", 229, 12),
+            new NullRejection("test_dynamic_reject_array_missing_field", false, true, "array", "nil", 233, 10),
+            new NullRejection("test_dynamic_async_reject_table_missing_field", true, true, "table", "nil", 247, 18),
+            new NullRejection("test_dynamic_async_reject_array_missing_field", true, true, "array", "nil", 251, 16));
+        for (NullRejection row : rows) {
+            boolean array = row.kind().equals("array");
+            Tuple expected = row.indirect()
+                ? typedBoundaryKindTuple(row.kind(), row.actual(), row.line(), row.column())
+                : hostParameterCellTuple(array ? "[int]" : "table", 1,
+                    FailureProjections.kindReason(array ? new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)
+                        : RuntimeDescriptor.Table.INSTANCE), row.actual(), row.line(), row.column());
+            assertNullCrossingRejection(compiled, row.export(), expected, row.export(), row.async());
+        }
     }
 
     /** The closed {@code TYPE_DESCRIPTOR} kind tuple at one probe origin. */
@@ -5770,65 +5040,20 @@ public class CanonicalProjectionParityTest {
             arm.expected(), arm.actual());
     }
 
-    /**
-     * One rejected sync crossing: the three consumers render the declared
-     * parameter cell's closed tuple at the recorded call origin; the raw
-     * host is never invoked (its own report would complete the probe).
-     */
     private static void assertNullCrossingRejection(Compiled compiled, String export,
-            Tuple expected, String what) throws Exception {
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
-            compiled.project(), compiled.tables(), compiled.registries(),
-            nullCrossingResponder(), compiled.checkedProject().entryModule(), export,
-            List.of());
+            Tuple expected, String what, boolean async) throws Exception {
+        SemanticRuntimeModel.ConsumerRun run = nullCrossingRun(compiled, export, async);
         Tuple oracle = failureTuple(compiled, run);
-        checkEq(expected, oracle, what + " (oracle): the incompatible null is "
-            + "rejected by the declared parameter cell's own tuple");
+        checkEq(expected, oracle, what + " (oracle): the closed cell's tuple");
         String luaOutput = luaArtifactOutput(compiled,
             Map.of("null_crossing", luaNullCrossingHost()),
             luaExportProbe(compiled, export));
         Tuple lua = parseLuaProbe(luaOutput, compiled);
-        checkEq(expected, lua, what + " (luajit): the incompatible null is "
-            + "rejected by the declared parameter cell's own tuple: " + luaOutput);
+        checkEq(expected, lua, what + " (luajit): the closed cell's tuple: " + luaOutput);
         String jvmOutput = jvmExportOutput(compiled, export,
             Map.of("null_crossing", jvmNullCrossingHost()));
         Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
-        checkEq(expected, jvm, what + " (jvm): the incompatible null is rejected "
-            + "by the declared parameter cell's own tuple: " + jvmOutput);
-        if (oracle != null && lua != null) {
-            checkEq(null, firstDifferingField(oracle, lua), what + ": the oracle "
-                + "and the LuaJIT artifact render the identical tuple");
-        }
-        if (oracle != null && jvm != null) {
-            checkEq(null, firstDifferingField(oracle, jvm), what + ": the oracle "
-                + "and the JVM artifact render the identical tuple");
-        }
-    }
-
-    /**
-     * One rejected async crossing: the same closed parameter-cell tuple at
-     * the recorded start origin on the three consumers, the raw host's
-     * async start never reached.
-     */
-    private static void assertAsyncNullCrossingRejection(Compiled compiled,
-            String export, Tuple expected, String what) throws Exception {
-        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
-            compiled.project(), compiled.tables(), nullCrossingResponder(),
-            compiled.checkedProject().entryModule(), export, List.of());
-        Tuple oracle = failureTuple(compiled, run);
-        checkEq(expected, oracle, what + " (oracle): the incompatible null is "
-            + "rejected by the declared parameter cell's own tuple");
-        String luaOutput = luaArtifactOutput(compiled,
-            Map.of("null_crossing", luaNullCrossingHost()),
-            luaExportProbe(compiled, export));
-        Tuple lua = parseLuaProbe(luaOutput, compiled);
-        checkEq(expected, lua, what + " (luajit): the incompatible null is "
-            + "rejected by the declared parameter cell's own tuple: " + luaOutput);
-        String jvmOutput = jvmExportOutput(compiled, export,
-            Map.of("null_crossing", jvmNullCrossingHost()));
-        Tuple jvm = jvmOutput == null ? null : parseJvmProbe(jvmOutput, compiled);
-        checkEq(expected, jvm, what + " (jvm): the incompatible null is rejected "
-            + "by the declared parameter cell's own tuple: " + jvmOutput);
+        checkEq(expected, jvm, what + " (jvm): the closed cell's tuple: " + jvmOutput);
         if (oracle != null && lua != null) {
             checkEq(null, firstDifferingField(oracle, lua), what + ": the oracle "
                 + "and the LuaJIT artifact render the identical tuple");

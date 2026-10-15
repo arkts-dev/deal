@@ -48,7 +48,6 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticIdAllocator;
-import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
@@ -64,7 +63,6 @@ import deal.semantic.ir.ValueId;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1807,102 +1805,6 @@ public class BindingsValidationTest {
     }
 
     // =========================================================================
-    // 7. The combined corpus and byte-identical repeated lowering
-    // =========================================================================
-
-    private static void testCombinedCorpusAndDeterminism() {
-        System.out.println("-- combined corpus: all three modes + byte-identical repetition --");
-
-        String source = combinedCorpusSource();
-        SemanticLowerer.ValidationCoreResult first = validatedResult(source,
-            "the combined corpus (first lowering)");
-        testCellKindInvariant(first);
-        SemanticLowerer.ValidationCoreResult second = validatedResult(source,
-            "the combined corpus (second lowering)");
-        if (first == null || second == null) {
-            return;
-        }
-        LoweredModuleUnit unit = first.lowering().unit();
-        List<SemanticOp> ops = unit.ops();
-        Map<CaptureMode, Integer> modeCounts = new java.util.EnumMap<>(CaptureMode.class);
-        int adapters = 0;
-        for (SemanticOp op : ops) {
-            if (op.kind() == SemanticOpKind.FUNCTION_ADAPT) {
-                adapters++;
-                KindPayload.FunctionAdaptPayload payload =
-                    (KindPayload.FunctionAdaptPayload) op.payload();
-                modeCounts.merge(payload.mode(), 1, Integer::sum);
-            }
-        }
-        check(adapters == 6, "six adapters over the earlier children's production; got "
-            + adapters);
-        check(modeCounts.getOrDefault(CaptureMode.VALUE, 0) == 3,
-            "three VALUE adapters (g over the proved load, m over the CLOSURE_NEW "
-                + "result, n over the intrinsic identity); got "
-                + modeCounts.getOrDefault(CaptureMode.VALUE, 0));
-        check(modeCounts.getOrDefault(CaptureMode.SHARED_CELL, 0) == 1,
-            "one SHARED_CELL adapter (h over the reassigned f); got "
-                + modeCounts.getOrDefault(CaptureMode.SHARED_CELL, 0));
-        check(modeCounts.getOrDefault(CaptureMode.REEVALUATE_THUNK, 0) == 2,
-            "two REEVALUATE_THUNK adapters (k's declaration and k's assignment over "
-                + "the (s = inner) composite source); got "
-                + modeCounts.getOrDefault(CaptureMode.REEVALUATE_THUNK, 0));
-
-        // Registry one-to-one across the corpus: every AdapterBinding key
-        // is distinct and registered exactly once.
-        Set<Long> adapterKeys = new java.util.HashSet<>();
-        int adapterBindings = 0;
-        for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
-                : unit.functionBindings().entrySet()) {
-            if (entry.getValue() instanceof FunctionExecutionBinding.AdapterBinding) {
-                adapterBindings++;
-                check(adapterKeys.add(entry.getKey().id()),
-                    "the adapter registration keys are distinct");
-            }
-        }
-        check(adapterBindings == 6, "six AdapterBinding registrations; got " + adapterBindings);
-
-        // Byte-identical repeated lowering (D10: dependency order, source
-        // order, semantic role, synthetic ordinal).
-        byte[] firstDump = SemanticIrDumper.dumpModule(first.lowering().unit());
-        byte[] secondDump = SemanticIrDumper.dumpModule(second.lowering().unit());
-        check(Arrays.equals(firstDump, secondDump),
-            "repeated lowering produces byte-identical deal.semantic-ir/2 dumps");
-        check(first.shapeMapFacts().equals(second.shapeMapFacts()),
-            "repeated lowering records identical shape-map facts");
-        check(BindingsProductionValidator.deriveCellKinds(first.lowering().unit(),
-                first.lowering().table())
-                .equals(BindingsProductionValidator.deriveCellKinds(second.lowering().unit(),
-                    second.lowering().table())),
-            "repeated lowering derives identical cell kinds");
-    }
-
-    /** The fixed combined-corpus source over the earlier children's production. */
-    private static String combinedCorpusSource() {
-        return """
-            function inner(x: int): null {}
-            function even(): null {
-              let oddRef: () => null = odd;
-            }
-            function odd(): null {
-              let evenRef: () => null = even;
-            }
-            function main(): null {
-              let f: (x: int) => null = inner;
-              let g: (a: int, b: int) => null = f;
-              f = f;
-              let h: (a: int, b: int) => null = f;
-              let s: (x: int) => null = inner;
-              let k: (a: int, b: int) => null = (s = inner);
-              k = (s = inner);
-              let m: (a: int, b: int) => null = function(x: int): null {};
-              let n: (a: number, b: number) => int = int;
-              let p: (a: int, b: int) => null = g;
-            }
-            """;
-    }
-
-    // =========================================================================
     // Runner
     // =========================================================================
 
@@ -1917,7 +1819,6 @@ public class BindingsValidationTest {
         testIrLevelPositives();
         testFailureOriginProjection();
         testGroupShapeOffenderOrigins();
-        testCombinedCorpusAndDeterminism();
 
         System.out.println("\nBindings production validation: " + passed + " passed, "
             + failed + " failed");

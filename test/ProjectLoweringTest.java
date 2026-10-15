@@ -275,13 +275,6 @@ public class ProjectLoweringTest {
 
     private static final ClassId SEGMENT = new ClassId("src", "Segment");
 
-    /**
-     * The companion-ownership fixture (ISSUE-0816): one module-level class
-     * with a defaulted field and an ordinary closure with a captured
-     * variable (the exporting module), one plain module without class
-     * content interleaved in the dependency closure, and a consumer that
-     * constructs the imported class and detaches the imported closure.
-     */
     private static final ModuleId MID = new ModuleId("mid");
 
     private static final String OWNERSHIP_UTIL_SOURCE = """
@@ -735,16 +728,6 @@ public class ProjectLoweringTest {
         }
     }
 
-    /**
-     * The complete unit/project ownership (ISSUE-0816): the unit owns the
-     * body table, the class-factory registry, the JSON-default child table
-     * and the parameter/import initialization facts; the executable project
-     * owns the class registration seeds; and every retained lowering-result
-     * accessor is exactly that owned record — never a detached copy. The
-     * fixture carries a module-level class, an imported class and an
-     * ordinary closure with a captured variable, with a plain module
-     * interleaved between them.
-     */
     private static void testUnitProjectCompanionOwnership() throws Exception {
         System.out.println("-- the complete unit/project companion ownership: the "
             + "unit owns bodyTable/classFactories/jsonDefaults/classBindingFacts, "
@@ -904,20 +887,12 @@ public class ProjectLoweringTest {
             check(sawClassModule && sawPlainModule && sawImportingModule,
                 "the closure carries the class, plain and importing modules");
             testResultBoundaryViewOwnership(lowered, result.namespaces());
+            testCompleteUnitTransport(project, lowered);
         } finally {
             deleteRecursively(project.root());
         }
     }
 
-    /**
-     * The lowering-result boundary (ISSUE-0816 review): a successful
-     * {@link SemanticLowerer.ProjectLoweringResult} can never expose a
-     * companion view that disagrees with its project — a missing, extra or
-     * differing table/registry/seed view rejects before successful exposure
-     * — and a content-equal detached view is replaced by the project's own
-     * record. A failed result carries exactly the first E6005 and no
-     * companions.
-     */
     private static void testResultBoundaryViewOwnership(
             ExecutableLoweredProject lowered,
             NamespaceRegistrations namespaces) {
@@ -974,56 +949,30 @@ public class ProjectLoweringTest {
             "the result seeds are the project's owned classSeeds even when a "
                 + "content-equal copy was supplied");
 
-        // (2) Missing, extra and differing table views reject.
-        Map<ModuleId, StructuredBodyTable> missingTables =
-            new LinkedHashMap<>(copiedTables);
-        missingTables.remove(classModule);
-        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
-                lowered, missingTables, copiedRegistries, lowered.classSeeds(),
-                namespaces, List.of()),
-            "a result table view missing the module " + classModule + " rejects");
-        Map<ModuleId, StructuredBodyTable> extraTables =
-            new LinkedHashMap<>(copiedTables);
-        extraTables.put(new ModuleId("extra"),
-            new StructuredBodyTable(Map.of(), Map.of()));
-        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
-                lowered, extraTables, copiedRegistries, lowered.classSeeds(),
-                namespaces, List.of()),
-            "a result table view with an extra module rejects");
-        Map<ModuleId, StructuredBodyTable> differingTables =
-            new LinkedHashMap<>(copiedTables);
-        differingTables.put(classModule,
-            new StructuredBodyTable(Map.of(), ownedTable.opBlocks()));
-        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
-                lowered, differingTables, copiedRegistries, lowered.classSeeds(),
-                namespaces, List.of()),
-            "a result table view differing from the owned bodyTable rejects");
-
-        // (3) Missing, extra and differing registry views reject.
-        Map<ModuleId, ClassFactoryRegistry> missingRegistries =
-            new LinkedHashMap<>(copiedRegistries);
-        missingRegistries.remove(classModule);
-        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
-                lowered, copiedTables, missingRegistries, lowered.classSeeds(),
-                namespaces, List.of()),
-            "a result registry view missing the module " + classModule
-                + " rejects");
-        Map<ModuleId, ClassFactoryRegistry> extraRegistries =
-            new LinkedHashMap<>(copiedRegistries);
-        extraRegistries.put(new ModuleId("extra"),
-            new ClassFactoryRegistry(Map.of()));
-        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
-                lowered, copiedTables, extraRegistries, lowered.classSeeds(),
-                namespaces, List.of()),
-            "a result registry view with an extra module rejects");
-        Map<ModuleId, ClassFactoryRegistry> differingRegistries =
-            new LinkedHashMap<>(copiedRegistries);
-        differingRegistries.put(classModule, new ClassFactoryRegistry(Map.of()));
-        expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
-                lowered, copiedTables, differingRegistries, lowered.classSeeds(),
-                namespaces, List.of()),
-            "a result registry view differing from the owned classFactories "
-                + "rejects");
+        for (String defect : List.of("missing", "extra", "differing")) {
+            Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>(copiedTables);
+            Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>(copiedRegistries);
+            switch (defect) {
+                case "missing" -> {
+                    tables.remove(classModule);
+                    registries.remove(classModule);
+                }
+                case "extra" -> {
+                    tables.put(new ModuleId("extra"), new StructuredBodyTable(Map.of(), Map.of()));
+                    registries.put(new ModuleId("extra"), new ClassFactoryRegistry(Map.of()));
+                }
+                case "differing" -> {
+                    tables.put(classModule, new StructuredBodyTable(Map.of(), ownedTable.opBlocks()));
+                    registries.put(classModule, new ClassFactoryRegistry(Map.of()));
+                }
+            }
+            expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                    lowered, tables, copiedRegistries, lowered.classSeeds(), namespaces, List.of()),
+                defect + " table view rejects");
+            expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
+                    lowered, copiedTables, registries, lowered.classSeeds(), namespaces, List.of()),
+                defect + " registry view rejects");
+        }
 
         // (4) Missing and differing seed views reject.
         expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
@@ -2381,106 +2330,36 @@ public class ProjectLoweringTest {
         return null;
     }
 
-    /**
-     * The combined T1+T2 check (ISSUE-0817): the real ownership fixture's
-     * units round-trip every fact — the T1-owned companions (bodyTable in
-     * both directions, classFactories, jsonDefaults, classBindingFacts)
-     * and every other unit fact — through the canonical text, and repeated
-     * dumps are byte-identical.
-     */
-    private static void testCompleteUnitTransport() throws Exception {
-        System.out.println("-- the complete /2 unit transport over the real legal "
-            + "project --");
-        RealProject project = compileProject(OWNERSHIP_APP_SOURCE,
-            Map.of("src/util.deal", OWNERSHIP_UTIL_SOURCE,
-                "src/mid.deal", OWNERSHIP_MID_SOURCE), Map.of());
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
-            check(!result.hasErrors() && result.project() != null,
-                "the transport fixture lowers: " + result.diagnostics());
-            if (result.project() == null) {
-                return;
+    private static void testCompleteUnitTransport(RealProject project,
+            ExecutableLoweredProject lowered) {
+        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+            project.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_2_INT32,
+            invocation().capabilityRegistryHash());
+        boolean sawCaptures = false;
+        boolean sawImportAliases = false;
+        boolean sawClassLayout = false;
+        for (LoweredModuleUnit unit : lowered.modules().values()) {
+            String text = SemanticIrValidator.toUnitText(unit);
+            checkEq(SemanticIrDumper.dumpModuleText(unit), text,
+                unit.moduleId() + ": dump uses canonical unit mapping");
+            RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
+                (CanonicalJson.Obj) CanonicalJson.parse(text));
+            checkEq(RawUnit.fromTyped(unit), reparsed,
+                unit.moduleId() + ": every unit fact round-trips");
+            checkEq(text, CanonicalJson.serializeText(ContractSnapshotCanonicalizer.toJson(reparsed)),
+                unit.moduleId() + ": canonical text is byte-stable");
+            Optional<CompilerDiagnostic> readmitted = SemanticIrValidator.validateText(text, facts);
+            check(readmitted.isEmpty(), unit.moduleId() + ": text re-admits: " + readmitted);
+            sawCaptures |= reparsed.functions().stream().anyMatch(f -> !f.captures().isEmpty());
+            sawClassLayout |= !reparsed.classLayouts().isEmpty();
+            sawImportAliases |= !reparsed.classBindingFacts().importAliases().isEmpty();
+            for (RawUnit.RawClassLayout entry : reparsed.classLayouts()) {
+                checkEq(entry.key(), entry.layout().classId(),
+                    unit.moduleId() + ": layout key matches contained identity");
             }
-            ExecutableLoweredProject lowered = result.project();
-            SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_2_INT32,
-                    invocation().capabilityRegistryHash());
-            boolean sawCaptures = false;
-            boolean sawImportAliases = false;
-            boolean sawClassLayout = false;
-            for (LoweredModuleUnit unit : lowered.modules().values()) {
-                RawUnit raw = RawUnit.fromTyped(unit);
-                String text = SemanticIrValidator.toUnitText(unit);
-                checkEq(SemanticIrDumper.dumpModuleText(unit), text,
-                    "the module dump of " + unit.moduleId()
-                        + " is exactly the canonical unit mapping");
-                check(text.contains("\"formatVersion\":\"deal.semantic-ir/2\""),
-                    "module " + unit.moduleId() + " carries the /2 envelope");
-                RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
-                    (CanonicalJson.Obj) CanonicalJson.parse(text));
-                checkEq(raw, reparsed,
-                    "every unit fact of module " + unit.moduleId()
-                        + " survives typed->raw->text->raw unchanged");
-                checkEq(text, CanonicalJson.serializeText(
-                        ContractSnapshotCanonicalizer.toJson(reparsed)),
-                    "the transported text of module " + unit.moduleId()
-                        + " re-serializes byte-identically");
-                // The T1-owned companions are exact views of the unit's
-                // records, and they survive the text transport exactly.
-                checkEq(unit.bodyTable(), reparsed.bodyTable(),
-                    "module " + unit.moduleId() + " keeps both membership directions");
-                checkEq(unit.classFactories(), reparsed.classFactories(),
-                    "module " + unit.moduleId() + " keeps its factory registry");
-                checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(),
-                    "module " + unit.moduleId() + " keeps its JSON-default rows");
-                checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(),
-                    "module " + unit.moduleId()
-                        + " keeps its parameter/import facts");
-                Optional<CompilerDiagnostic> readmitted =
-                    SemanticIrValidator.validateText(text, facts);
-                check(readmitted.isEmpty(),
-                    "the dumped text of module " + unit.moduleId()
-                        + " re-admits through the text surface: "
-                        + readmitted.map(CompilerDiagnostic::message).orElse(""));
-                for (RawUnit.RawFunction function : reparsed.functions()) {
-                    if (!function.captures().isEmpty()) {
-                        sawCaptures = true;
-                    }
-                }
-                if (!reparsed.classLayouts().isEmpty()) {
-                    sawClassLayout = true;
-                    for (RawUnit.RawClassLayout entry : reparsed.classLayouts()) {
-                        checkEq(entry.key(), entry.layout().classId(),
-                            "module " + unit.moduleId()
-                                + " keeps layout keys equal to the contained identities");
-                    }
-                }
-                if (!reparsed.classBindingFacts().importAliases().isEmpty()) {
-                    sawImportAliases = true;
-                }
-            }
-            check(sawClassLayout, "the class module's layout rows survive the transport");
-            check(sawCaptures,
-                "the ordinary closure captures survive the transport with their "
-                    + "generations");
-            check(sawImportAliases,
-                "the importing module's import-alias facts survive the transport");
-
-            SemanticIrDumper.ProjectDump first = SemanticIrDumper.dumpProject(lowered);
-            SemanticIrDumper.ProjectDump second = SemanticIrDumper.dumpProject(lowered);
-            check(java.util.Arrays.equals(first.manifest(), second.manifest()),
-                "repeated project manifests are byte-identical");
-            for (int i = 0; i < first.modules().size(); i++) {
-                check(java.util.Arrays.equals(first.modules().get(i).bytes(),
-                        second.modules().get(i).bytes()),
-                    "repeated dumps of module " + first.modules().get(i).moduleId()
-                        + " are byte-identical");
-            }
-        } finally {
-            deleteRecursively(project.root());
         }
+        check(sawClassLayout && sawCaptures && sawImportAliases,
+            "real transport exercises layouts, closure generations and import aliases");
     }
 
     public static void main(String[] args) throws Exception {
@@ -2496,7 +2375,6 @@ public class ProjectLoweringTest {
             testUnitProjectCompanionOwnership();
             testNamespaceRegistrationFailureOrigins(baseline);
             testComposedChainOverUnifiedUnits(baseline);
-            testCompleteUnitTransport();
             testInProjectClassArm();
             importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,
                 Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());

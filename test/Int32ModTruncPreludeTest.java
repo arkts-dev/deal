@@ -286,36 +286,31 @@ public final class Int32ModTruncPreludeTest {
 
     private static ProcessOutcome runProcess(List<String> command, Path workDir)
             throws Exception {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(workDir.toFile());
-        Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        return new ProcessOutcome(process.waitFor(), stdout, stderr);
+        if (command.get(0).equals("javac")) {
+            var compiled = deal.test.conformance.JvmCompilation.compile(command, workDir);
+            return new ProcessOutcome(compiled.exitCode(), compiled.stdout(), compiled.stderr());
+        }
+        BoundedProcess.BoundedResult run = BoundedProcess.runCaptured(command, workDir);
+        check(!run.stdoutTruncated() && !run.stderrTruncated(), "complete numeric probe capture");
+        return new ProcessOutcome(run.exitCode(), run.stdout(), run.stderr());
     }
 
     private static ProcessOutcome runLuaProbe(Project project, String driverName,
             String driver, boolean deferMain) throws Exception {
         writeFile(project.out(), driverName, driver);
-        ProcessBuilder builder = new ProcessBuilder("luajit", driverName);
-        builder.directory(project.out().toFile());
-        if (deferMain) {
-            builder.environment().put("DEAL_DEFER_MAIN", "1");
-        }
-        Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        return new ProcessOutcome(process.waitFor(), stdout, stderr);
+        BoundedProcess.BoundedResult run = BoundedProcess.runCaptured(List.of("luajit", driverName),
+            project.out(), deferMain ? Map.of("DEAL_DEFER_MAIN", "1") : Map.of());
+        check(!run.stdoutTruncated() && !run.stderrTruncated(), "complete Lua numeric probe capture");
+        return new ProcessOutcome(run.exitCode(), run.stdout(), run.stderr());
     }
 
     /** Compiles and runs one Java probe against one emitted production class. */
     private static ProcessOutcome runJvmProbe(Path out, Path classes, String probeName,
             String probe, String... sources) throws Exception {
         Files.createDirectories(classes);
+        String driver = probeName + "_" + java.util.UUID.randomUUID().toString().replace("-", "");
+        probe = probe.replace(probeName, driver);
+        probeName = driver;
         writeFile(out, probeName + ".java", probe);
         List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
             "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString()));
@@ -331,7 +326,7 @@ public final class Int32ModTruncPreludeTest {
             return javac;
         }
         return runProcess(List.of("java", "-cp",
-            absoluteClasspath() + File.pathSeparator + classes, probeName), out);
+            classes + File.pathSeparator + absoluteClasspath(), probeName), out);
     }
 
     private static String absoluteClasspath() {
@@ -895,7 +890,7 @@ public final class Int32ModTruncPreludeTest {
                 + javac.output());
             if (javac.exitCode() == 0) {
                 ProcessOutcome run = runProcess(List.of("java", "-cp",
-                    absoluteClasspath() + File.pathSeparator + classes, className),
+                    classes + File.pathSeparator + absoluteClasspath(), className),
                     jvmProject.out());
                 checkEq(0, run.exitCode(), FIXTURE + " (JVM): the emitted production "
                     + "artifact executes with the pinned runtime-ok exit code: "

@@ -7,17 +7,20 @@ import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
+import deal.test.HostModuleLoadEmissionTest.ProcessOutcome;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static deal.test.HostModuleLoadEmissionTest.deleteRecursively;
+import static deal.test.HostModuleLoadEmissionTest.writeFileIn;
 
 public class LuaJitChunkLocalBoundTest {
 
@@ -39,17 +42,6 @@ public class LuaJitChunkLocalBoundTest {
     /** The marker the growing fixture prints once its sums hold. */
     private static final String FIXTURE_MARKER = "GROWING-FACTORY-OK";
 
-    /**
-     * The chunk-level locals the budget probe appends to a real production
-     * chunk. LuaJIT admits 200 locals in one function and the emitted
-     * chunk's module-init walk spends nearly all of them, so the fixed
-     * prelude helper set must stay chunk-global: the ISSUE-0757 async entry
-     * linkage's four helpers declared chunk-level locals and the walk probe
-     * of the failure-arm battery stopped loading at the limit. The fixture
-     * chunk had 11 chunk-level locals of headroom before the helpers became
-     * chunk-global and 15 after, so the 12-local probe body is the
-     * regression control for the defect.
-     */
     private static final int PROBE_LOCALS = 12;
 
     private static final String DEAL_JSON = """
@@ -103,8 +95,8 @@ public class LuaJitChunkLocalBoundTest {
             + "compile, the bounded store, and the real luajit run --");
         Path root = Files.createTempDirectory("deal-chunk-bound-");
         try {
-            write(root, "deal.json", DEAL_JSON);
-            write(root, "src/main.deal", growingFactorySource());
+            writeFileIn(root, "deal.json", DEAL_JSON);
+            writeFileIn(root, "src/main.deal", growingFactorySource());
             Path entry = root.resolve("src/main.deal").toAbsolutePath();
             Path out = root.resolve("out").toAbsolutePath();
             List<String> diagnostics = new ArrayList<>();
@@ -140,7 +132,7 @@ public class LuaJitChunkLocalBoundTest {
                 "the store declaration precedes the factory assignments and "
                     + "references");
 
-            ProcessOutcome run = runProcess(out, List.of("luajit", "main.lua"));
+            ProcessOutcome run = HostModuleLoadEmissionTest.runProcess(List.of("luajit", "main.lua"), out, false);
             checkEq(0, run.exitCode(),
                 "the growing-factory chunk executes under real luajit: "
                     + run.output());
@@ -154,14 +146,6 @@ public class LuaJitChunkLocalBoundTest {
         }
     }
 
-    /**
-     * The growing fixture: 300 exported zero-capture functions, ten group
-     * functions each calling ten of them, one default producer, and one
-     * exported class with 150 defaulted fields. The groups and the wide
-     * class keep the executed path honest (the closure sum and the
-     * default-produced field sum) while the factory count exceeds the
-     * 200-local budget.
-     */
     private static String growingFactorySource() {
         StringBuilder source = new StringBuilder();
         source.append("import * as console from \"std/console\";\n\n");
@@ -233,7 +217,7 @@ public class LuaJitChunkLocalBoundTest {
             "the skill example chunk declares no per-factory chunk-level "
                 + "local");
 
-        ProcessOutcome run = runProcess(out, List.of("luajit", "main.lua"));
+        ProcessOutcome run = HostModuleLoadEmissionTest.runProcess(List.of("luajit", "main.lua"), out, false);
         checkEq(0, run.exitCode(),
             "the unchanged skill example executes under real luajit: "
                 + run.output());
@@ -247,17 +231,10 @@ public class LuaJitChunkLocalBoundTest {
     // 3. The prelude's main-chunk local budget
     // =========================================================================
 
-    /**
-     * The prelude's fixed helper set spends no main-chunk local: the guard
-     * loads the real production chunk of the skill example with an appended
-     * body of {@link #PROBE_LOCALS} chunk-level locals under real luajit, so
-     * a helper set that declares chunk-level locals fails to load here
-     * before it can push a legitimate program body over LuaJIT's limit.
-     */
     private static void testPreludeChunkLocalBudget(Path root) throws Exception {
         System.out.println("-- the prelude's main-chunk local budget: the "
             + "production chunk and the appended probe body --");
-        write(root, "budget-probe.lua", """
+        writeFileIn(root, "budget-probe.lua", """
             local text = io.open("out/main.lua"):read("*a")
             text = text:gsub("%%s*$", "")
             local tail = 'return __exportSurfaces["main"]'
@@ -276,8 +253,8 @@ public class LuaJitChunkLocalBoundTest {
               print("BUDGET-OK")
             end
             """.formatted(PROBE_LOCALS));
-        ProcessOutcome run = runProcess(root,
-            List.of("luajit", "budget-probe.lua"));
+        ProcessOutcome run = HostModuleLoadEmissionTest.runProcess(
+            List.of("luajit", "budget-probe.lua"), root, false);
         checkEq(0, run.exitCode(),
             "the local-budget probe runs under real luajit: " + run.output());
         check(run.stdout().contains("BUDGET-OK"),
@@ -306,12 +283,6 @@ public class LuaJitChunkLocalBoundTest {
             ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
-    /**
-     * Compiles one entry through the production path: strict locate, the
-     * manifest-owned context, and the orchestrator's real compile. The
-     * override pins the output to a fresh directory so no probe writes
-     * into the checkout.
-     */
     private static boolean productionCompile(Path entry, Path output,
                                              List<String> diagnostics) {
         ProjectLocator.LocateResult located = ProjectLocator.locate(
@@ -337,55 +308,6 @@ public class LuaJitChunkLocalBoundTest {
         } catch (Exception e) {
             diagnostics.add(e.toString());
             return false;
-        }
-    }
-
-    private record ProcessOutcome(int exitCode, String stdout, String stderr) {
-        String output() {
-            return "exit " + exitCode + ", stdout '"
-                + stdout.replace("\n", "\\n") + "', stderr '"
-                + stderr.replace("\n", "\\n") + "'";
-        }
-    }
-
-    private static ProcessOutcome runProcess(Path workDir, List<String> command)
-            throws Exception {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(workDir.toFile());
-        Process process = builder.start();
-        String stdout = new String(process.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        return new ProcessOutcome(exit, stdout, stderr);
-    }
-
-    private static void write(Path root, String relative, String content)
-            throws Exception {
-        Path file = root.resolve(relative);
-        Files.createDirectories(file.getParent());
-        Files.writeString(file, content, StandardCharsets.UTF_8);
-    }
-
-    private static void deleteRecursively(Path path) {
-        if (path == null) {
-            return;
-        }
-        try {
-            if (Files.exists(path)) {
-                try (var walk = Files.walk(path)) {
-                    walk.sorted(Comparator.reverseOrder()).forEach(entry -> {
-                        try {
-                            Files.deleteIfExists(entry);
-                        } catch (java.io.IOException ignored) {
-                            // best effort
-                        }
-                    });
-                }
-            }
-        } catch (java.io.IOException ignored) {
-            // best effort
         }
     }
 

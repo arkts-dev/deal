@@ -626,88 +626,11 @@ public class FailureArmAuthorityTest {
             if (drive == null) {
                 return;
             }
-            // The supplied await origins: the drive's own source text names
-            // every await position, and the one lowering must select exactly
-            // those positions for the declared completion descriptors (P3).
-            Map<String, String> supplied = new LinkedHashMap<>();
-            for (CompletionCell cell : COMPLETION_CELLS) {
-                String origin = awaitOriginAt(drive.entryFile(),
-                    COMPLETION_ENTRY_SOURCE, cell);
-                supplied.put(cell.label(), origin);
-                check(drive.completionCells().contains(cell.declaredSpec() + "@" + origin),
-                    "the lowering selects the await expression at " + origin + " as the "
-                        + cell.label() + " completion cell's origin; lowered cells: "
-                        + drive.completionCells());
-            }
-
-            // The oracle leg: the completion boundary attaches the boundary
-            // op's own SourceOrigin to the rendered arm.
-            Map<String, Tuple> oracleFailures = new LinkedHashMap<>();
-            Map<String, String> oracleAdmissions = new LinkedHashMap<>();
-            for (CompletionCell cell : COMPLETION_CELLS) {
-                SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
-                    drive.project(), drive.tables(), completionResponder(),
-                    drive.project().entryModule(), cell.export(), List.of());
-                if (run.terminal()
-                        instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
-                    SemanticRuntimeModel.ErrorSnapshot error = failure.error();
-                    oracleFailures.put(cell.label(), new Tuple(error.code(),
-                        error.message(), error.origin(), error.expected(),
-                        error.actual()));
-                } else {
-                    check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                        cell.label() + ": the admitted completion succeeds: " + run.terminal());
-                    oracleAdmissions.put(cell.label(), String.valueOf(run.terminal()));
-                }
-            }
-
-            // The two staged production artifacts under the real toolchains.
-            Map<String, String> luaRows = runLuaCompletionDrive(drive,
-                COMPLETION_LUA_HOST, COMPLETION_CELLS);
-            Map<String, String> jvmRows = runJvmCompletionDrive(drive,
-                COMPLETION_JVM_HOST, COMPLETION_CELLS);
-
-            Map<String, Tuple> captured = new LinkedHashMap<>();
-            for (CompletionCell cell : COMPLETION_CELLS) {
-                if (!cell.failing()) {
-                    // The matching-signature controls: the declared
-                    // signature's own carrier stays admitted on every
-                    // consumer, so the arm selection rejects the differing
-                    // signature rather than every function completion.
-                    check(oracleAdmissions.containsKey(cell.label()),
-                        "the oracle admits the " + cell.label() + " matching function "
-                            + "completion: " + oracleAdmissions.get(cell.label()));
-                    checkEq(cell.label() + "|OK", luaRows.get(cell.label()),
-                        "the LuaJIT artifact admits the " + cell.label() + " matching "
-                            + "function completion");
-                    checkEq(cell.label() + "|OK", jvmRows.get(cell.label()),
-                        "the JVM artifact admits the " + cell.label() + " matching "
-                            + "function completion");
-                    continue;
-                }
-                Tuple expected = new Tuple("E8010", "function signature mismatch: "
-                    + "expected (int)->int, got (int)->string", supplied.get(cell.label()),
-                    "(int)->int", "(int)->string");
-                Tuple oracle = oracleFailures.get(cell.label());
-                check(oracle != null, "the oracle fails the " + cell.label()
-                    + " function completion cell");
-                Tuple lua = tupleOfConsumerRow(cell, luaRows.get(cell.label()),
-                    "the LuaJIT artifact");
-                Tuple jvm = tupleOfConsumerRow(cell, jvmRows.get(cell.label()),
-                    "the JVM artifact");
-                if (oracle == null || lua == null || jvm == null) {
-                    continue;
-                }
-                checkEq(expected, oracle, "the oracle publishes the " + cell.label()
-                    + " function completion signature tuple at the supplied await origin");
-                checkEq(null, firstDifferingField(expected, lua), "the LuaJIT artifact "
-                    + "publishes the oracle's identical " + cell.label() + " tuple");
-                checkEq(null, firstDifferingField(expected, jvm), "the JVM artifact "
-                    + "publishes the oracle's identical " + cell.label() + " tuple");
-                checkEq(null, firstDifferingField(lua, jvm), "the LuaJIT and the JVM "
-                    + "artifacts publish the identical " + cell.label() + " tuple");
-                captured.put(cell.label(), lua);
-            }
+            Map<String, Tuple> captured = driveCompletions(drive, COMPLETION_ENTRY_SOURCE,
+                COMPLETION_CELLS, FailureArmAuthorityTest::completionResponder, COMPLETION_LUA_HOST,
+                COMPLETION_JVM_HOST, (cell, origin) -> new Tuple("E8010",
+                    "function signature mismatch: expected (int)->int, got (int)->string",
+                    origin, "(int)->int", "(int)->string"));
 
             // The span negative operates on the origins the consumers
             // actually published: the two failing cells render the identical
@@ -759,84 +682,63 @@ public class FailureArmAuthorityTest {
             if (drive == null) {
                 return;
             }
-            // The supplied await origins: the drive's own source text names
-            // every await position, and the one lowering must select exactly
-            // those positions for the declared completion descriptors (P3).
-            Map<String, String> supplied = new LinkedHashMap<>();
-            for (CompletionCell cell : NULL_COMPLETION_CELLS) {
-                String origin = awaitOriginAt(drive.entryFile(),
-                    NULL_COMPLETION_ENTRY_SOURCE, cell);
-                supplied.put(cell.label(), origin);
-                check(drive.completionCells().contains(cell.declaredSpec() + "@" + origin),
-                    "the lowering selects the await expression at " + origin + " as the "
-                        + cell.label() + " completion cell's origin; lowered cells: "
-                        + drive.completionCells());
-            }
-
-            // The oracle leg: the completion boundary attaches the boundary
-            // op's own SourceOrigin to the rendered arm.
-            Map<String, Tuple> oracleFailures = new LinkedHashMap<>();
-            Map<String, String> oracleAdmissions = new LinkedHashMap<>();
-            for (CompletionCell cell : NULL_COMPLETION_CELLS) {
-                SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
-                    drive.project(), drive.tables(), nullCompletionResponder(),
-                    drive.project().entryModule(), cell.export(), List.of());
-                if (run.terminal()
-                        instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
-                    SemanticRuntimeModel.ErrorSnapshot error = failure.error();
-                    oracleFailures.put(cell.label(), new Tuple(error.code(),
-                        error.message(), error.origin(), error.expected(),
-                        error.actual()));
-                } else {
-                    check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                        cell.label() + ": the admitted completion succeeds: " + run.terminal());
-                    oracleAdmissions.put(cell.label(), String.valueOf(run.terminal()));
-                }
-            }
-
-            // The two staged production artifacts under the real toolchains.
-            Map<String, String> luaRows = runLuaCompletionDrive(drive,
-                NULL_COMPLETION_LUA_HOST, NULL_COMPLETION_CELLS);
-            Map<String, String> jvmRows = runJvmCompletionDrive(drive,
-                NULL_COMPLETION_JVM_HOST, NULL_COMPLETION_CELLS);
-
-            for (CompletionCell cell : NULL_COMPLETION_CELLS) {
-                if (!cell.failing()) {
-                    check(oracleAdmissions.containsKey(cell.label()),
-                        "the oracle admits the " + cell.label() + " language-null "
-                            + "completion: " + oracleAdmissions.get(cell.label()));
-                    checkEq(cell.label() + "|OK", luaRows.get(cell.label()),
-                        "the LuaJIT artifact admits the " + cell.label()
-                            + " language-null completion");
-                    checkEq(cell.label() + "|OK", jvmRows.get(cell.label()),
-                        "the JVM artifact admits the " + cell.label()
-                            + " language-null completion");
-                    continue;
-                }
-                Tuple expected = new Tuple("E8001", "expected " + cell.declaredSpec(),
-                    supplied.get(cell.label()), cell.declaredSpec(), cell.actual());
-                Tuple oracle = oracleFailures.get(cell.label());
-                check(oracle != null, "the oracle fails the " + cell.label()
-                    + " wrong-kind completion cell");
-                Tuple lua = tupleOfConsumerRow(cell, luaRows.get(cell.label()),
-                    "the LuaJIT artifact");
-                Tuple jvm = tupleOfConsumerRow(cell, jvmRows.get(cell.label()),
-                    "the JVM artifact");
-                if (oracle == null || lua == null || jvm == null) {
-                    continue;
-                }
-                checkEq(expected, oracle, "the oracle publishes the " + cell.label()
-                    + " completion kind tuple at the supplied await origin");
-                checkEq(null, firstDifferingField(expected, lua), "the LuaJIT artifact "
-                    + "publishes the oracle's identical " + cell.label() + " tuple");
-                checkEq(null, firstDifferingField(expected, jvm), "the JVM artifact "
-                    + "publishes the oracle's identical " + cell.label() + " tuple");
-                checkEq(null, firstDifferingField(lua, jvm), "the LuaJIT and the JVM "
-                    + "artifacts publish the identical " + cell.label() + " tuple");
-            }
+            driveCompletions(drive, NULL_COMPLETION_ENTRY_SOURCE, NULL_COMPLETION_CELLS,
+                FailureArmAuthorityTest::nullCompletionResponder, NULL_COMPLETION_LUA_HOST, NULL_COMPLETION_JVM_HOST,
+                (cell, origin) -> new Tuple("E8001", "expected " + cell.declaredSpec(),
+                    origin, cell.declaredSpec(), cell.actual()));
         } finally {
             deleteRecursively(root);
         }
+    }
+
+    private static Map<String, Tuple> driveCompletions(CompletionDrive drive, String source,
+            List<CompletionCell> cells, java.util.function.Supplier<SemanticOracle.HostResponder> responder,
+            String luaHost, String jvmHost,
+            java.util.function.BiFunction<CompletionCell, String, Tuple> expectedTuple) throws Exception {
+        Map<String, String> origins = new LinkedHashMap<>();
+        Map<String, Tuple> failures = new LinkedHashMap<>();
+        Map<String, String> admissions = new LinkedHashMap<>();
+        for (CompletionCell cell : cells) {
+            String origin = awaitOriginAt(drive.entryFile(), source, cell);
+            origins.put(cell.label(), origin);
+            check(drive.completionCells().contains(cell.declaredSpec() + "@" + origin),
+                cell.label() + ": lowering selects await origin " + origin + ": " + drive.completionCells());
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
+                drive.project(), drive.tables(), responder.get(), drive.project().entryModule(), cell.export(), List.of());
+            if (run.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
+                SemanticRuntimeModel.ErrorSnapshot error = failure.error();
+                failures.put(cell.label(), new Tuple(error.code(), error.message(), error.origin(),
+                    error.expected(), error.actual()));
+            } else {
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    cell.label() + ": admitted completion succeeds: " + run.terminal());
+                admissions.put(cell.label(), String.valueOf(run.terminal()));
+            }
+        }
+        Map<String, String> luaRows = runLuaCompletionDrive(drive, luaHost, cells);
+        Map<String, String> jvmRows = runJvmCompletionDrive(drive, jvmHost, cells);
+        Map<String, Tuple> captured = new LinkedHashMap<>();
+        for (CompletionCell cell : cells) {
+            String what = cell.label() + " completion";
+            if (!cell.failing()) {
+                check(admissions.containsKey(cell.label()), what + " admitted by Oracle: " + admissions.get(cell.label()));
+                checkEq(cell.label() + "|OK", luaRows.get(cell.label()), what + " admitted by LuaJIT artifact");
+                checkEq(cell.label() + "|OK", jvmRows.get(cell.label()), what + " admitted by JVM artifact");
+                continue;
+            }
+            Tuple expected = expectedTuple.apply(cell, origins.get(cell.label()));
+            Tuple oracle = failures.get(cell.label());
+            check(oracle != null, what + " fails on Oracle");
+            Tuple lua = tupleOfConsumerRow(cell, luaRows.get(cell.label()), "the LuaJIT artifact");
+            Tuple jvm = tupleOfConsumerRow(cell, jvmRows.get(cell.label()), "the JVM artifact");
+            if (oracle == null || lua == null || jvm == null) continue;
+            checkEq(expected, oracle, what + ": Oracle tuple at supplied await origin");
+            checkEq(null, firstDifferingField(expected, lua), what + ": LuaJIT tuple identity");
+            checkEq(null, firstDifferingField(expected, jvm), what + ": JVM tuple identity");
+            checkEq(null, firstDifferingField(lua, jvm), what + ": LuaJIT/JVM tuple identity");
+            captured.put(cell.label(), lua);
+        }
+        return captured;
     }
 
     /** One cell of the completion-signature drive. */
@@ -2429,6 +2331,55 @@ public class FailureArmAuthorityTest {
      * serialized Lua renderer — never a fabricated DEAL-visible token. The
      * matching renders stay green (the control).
      */
+    private record RenderProbe(String lane, String label, String arguments, String expected, String value) {
+        RenderProbe(String lane, String label, String arguments, String expected) {
+            this(lane, label, arguments, expected, lane.equals("template") ? "value" : "value.m");
+        }
+    }
+
+    private static void renderProbes(String name, RenderProbe... probes) throws Exception {
+        StringBuilder source = new StringBuilder();
+        for (RenderProbe probe : probes) {
+            String function = switch (probe.lane()) {
+                case "arm" -> "__arm";
+                case "template" -> "__renderTemplate";
+                default -> throw new IllegalArgumentException(probe.lane());
+            };
+            source.append("do local ok, value = pcall(").append(function).append(", ")
+                .append(probe.arguments()).append(")\nprint(").append(luaString(probe.label()))
+                .append(" .. '|' .. tostring(ok) .. '|' .. (ok and ")
+                .append(probe.value())
+                .append(" or '')) end\n");
+        }
+        List<String> rows = runPreludeProbe(source.toString(), name, probes.length);
+        for (int i = 0; i < probes.length; i++) {
+            RenderProbe probe = probes[i];
+            checkEq(probe.label() + "|" + probe.expected(), rows.get(i),
+                name + ": Lua " + probe.lane() + " " + probe.label());
+        }
+    }
+
+    private static RenderProbe armProbe(String label, String arguments, String expected) {
+        return new RenderProbe("arm", label, arguments, expected);
+    }
+
+    private static RenderProbe innerProbe(String lane, String label, String inner, boolean admitted) {
+        String arguments = "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = " + luaString(inner) + "}"
+            + (lane.equals("arm") ? ", \"-\", \"int\", \"number\"" : "");
+        return new RenderProbe(lane, label, arguments,
+            admitted ? "true|parameter 1 type mismatch: " + inner : "false|");
+    }
+
+    private static void signatureProbes(String name, String[][] rows, RenderProbe... extra) throws Exception {
+        List<RenderProbe> probes = new ArrayList<>();
+        for (String[] row : rows) {
+            probes.add(innerProbe("arm", row[0], "function signature mismatch: expected "
+                + row[1] + ", got " + row[2], Boolean.parseBoolean(row[3])));
+        }
+        probes.addAll(List.of(extra));
+        renderProbes(name, probes.toArray(RenderProbe[]::new));
+    }
+
     static void testDeclaredFieldShapeNegatives() throws Exception {
         System.out.println("-- the declared expected/actual shapes fail closed --");
         expectDefect(() -> FailureContractRegistry.render(
@@ -2478,40 +2429,15 @@ public class FailureArmAuthorityTest {
             "the fractional ladder arm keeps its pinned actual token");
         // The serialized Lua renderer's equivalent fail-closed validation,
         // under real luajit.
-        List<String> rows = runPreludeProbe("""
-            local ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "WRONG", "string")
-            print("kind-expected|" .. tostring(ok))
-            ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "int", "WRONG")
-            print("kind-actual|" .. tostring(ok))
-            ok = pcall(__arm, "JSON_STRINGIFY_UNSUPPORTED", {actual = "function"}, "-",
-              "WRONG", "function")
-            print("pinned-expected|" .. tostring(ok))
-            ok = pcall(__arm, "INT32_RANGE", nil, "-", nil, "WRONG")
-            print("fieldless-actual|" .. tostring(ok))
-            ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "string", "string")
-            print("kind-pair|" .. tostring(ok))
-            ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "frobnicate"}, "-",
-              "frobnicate", "string")
-            print("kind-text|" .. tostring(ok))
-            local value = __arm("TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "int", "string")
-            print("control|" .. value.code .. "|" .. value.e .. "|" .. value.a .. "|"
-              .. value.m)
-            """, "field-shape-probe", 7);
-        checkEq("kind-expected|false", rows.get(0),
-            "the Lua renderer fails closed on a fabricated kind expected token");
-        checkEq("kind-actual|false", rows.get(1),
-            "the Lua renderer fails closed on a fabricated typed-boundary actual");
-        checkEq("pinned-expected|false", rows.get(2),
-            "the Lua renderer fails closed on a fabricated pinned expected text");
-        checkEq("fieldless-actual|false", rows.get(3),
-            "the Lua renderer fails closed on an actual field a field-less arm declares none");
-        checkEq("kind-pair|false", rows.get(4),
-            "the Lua renderer derives the kind token from the arm's serialized "
-                + "parameter sources (a closed-but-foreign pair fails closed)");
-        checkEq("kind-text|false", rows.get(5),
-            "the Lua renderer fails closed on an unknown kind text");
-        checkEq("control|E8001|int|string|expected int", rows.get(6),
-            "the Lua renderer keeps the arm's own declared fields green");
+        renderProbes("field-shape-probe",
+            armProbe("kind-expected", "\"TYPED_BOUNDARY_KIND\", {kind = \"int\"}, \"-\", \"WRONG\", \"string\"", "false|"),
+            armProbe("kind-actual", "\"TYPED_BOUNDARY_KIND\", {kind = \"int\"}, \"-\", \"int\", \"WRONG\"", "false|"),
+            armProbe("pinned-expected", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"WRONG\", \"function\"", "false|"),
+            armProbe("fieldless-actual", "\"INT32_RANGE\", nil, \"-\", nil, \"WRONG\"", "false|"),
+            armProbe("kind-pair", "\"TYPED_BOUNDARY_KIND\", {kind = \"int\"}, \"-\", \"string\", \"string\"", "false|"),
+            armProbe("kind-text", "\"TYPED_BOUNDARY_KIND\", {kind = \"frobnicate\"}, \"-\", \"frobnicate\", \"string\"", "false|"),
+            new RenderProbe("arm", "control", "\"TYPED_BOUNDARY_KIND\", {kind = \"int\"}, \"-\", \"int\", \"string\"",
+                "true|E8001|int|string|expected int", "value.code .. '|' .. value.e .. '|' .. value.a .. '|' .. value.m"));
     }
 
     // =========================================================================
@@ -2538,30 +2464,11 @@ public class FailureArmAuthorityTest {
                 "@/Error").actual,
             "the JVM arm render keeps the carried canonical atom (the control)");
         // The serialized Lua renderer, under real luajit.
-        List<String> rows = runPreludeProbe("""
-            local ok = pcall(__arm, "JSON_TO_WALK",
-              {fieldPath = "x", actual = "class:arm/walk/Walk"}, "-", nil,
-              "class:arm/walk/Walk")
-            print("class-spelling|" .. tostring(ok))
-            ok = pcall(__arm, "JSON_TO_WALK",
-              {fieldPath = "x", actual = "class:not-a-canonical-atom"}, "-", nil,
-              "class:not-a-canonical-atom")
-            print("class-nonatom|" .. tostring(ok))
-            ok = pcall(__arm, "JSON_TO_WALK", {fieldPath = "x", actual = "class:"},
-              "-", nil, "class:")
-            print("class-empty|" .. tostring(ok))
-            ok, value = pcall(__arm, "JSON_TO_WALK",
-              {fieldPath = "", actual = "@/Error"}, "-", nil, "@/Error")
-            print("atom-control|" .. tostring(ok) .. "|" .. (ok and value.a or ""))
-            """, "class-spelling-probe", 4);
-        checkEq("class-spelling|false", rows.get(0),
-            "the Lua arm renderer fails closed on the superseded class: spelling");
-        checkEq("class-nonatom|false", rows.get(1),
-            "the Lua arm renderer fails closed on a class:-prefixed non-atom");
-        checkEq("class-empty|false", rows.get(2),
-            "the Lua arm renderer fails closed on the empty class: prefix");
-        checkEq("atom-control|true|@/Error", rows.get(3),
-            "the Lua arm renderer keeps the carried canonical atom (the control)");
+        renderProbes("class-spelling-probe",
+            armProbe("class-spelling", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:arm/walk/Walk\"}, \"-\", nil, \"class:arm/walk/Walk\"", "false|"),
+            armProbe("class-nonatom", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:not-a-canonical-atom\"}, \"-\", nil, \"class:not-a-canonical-atom\"", "false|"),
+            armProbe("class-empty", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:\"}, \"-\", nil, \"class:\"", "false|"),
+            new RenderProbe("arm", "atom-control", "\"JSON_TO_WALK\", {fieldPath = \"\", actual = \"@/Error\"}, \"-\", nil, \"@/Error\"", "true|@/Error", "value.a"));
     }
 
     // =========================================================================
@@ -2625,61 +2532,17 @@ public class FailureArmAuthorityTest {
                 + "actual (the control)");
         // The serialized Lua arm renderer, under real luajit: the six
         // contradictory pairs fail closed and the matching pairs render.
-        List<String> rows = runPreludeProbe("""
-            local ok, value = pcall(__arm, "JSON_TO_WALK",
-              {fieldPath = "data.k", actual = "function"}, "-", nil, "number")
-            print("walk-actual|" .. tostring(ok))
-            ok = pcall(__arm, "JSON_STRINGIFY_UNSUPPORTED", {actual = "function"},
-              "-", "string, number, boolean, or table", "bytes")
-            print("stdjson-actual|" .. tostring(ok))
-            ok = pcall(__arm, "CLASS_IDENTITY",
-              {expected = "@corpus/a/A", actual = "@corpus/b/B"}, "-", "@corpus/c/C",
-              "@corpus/b/B")
-            print("identity-expected|" .. tostring(ok))
-            ok = pcall(__arm, "CLASS_IDENTITY",
-              {expected = "@corpus/a/A", actual = "@corpus/b/B"}, "-", "@corpus/a/A",
-              "@corpus/c/C")
-            print("identity-actual|" .. tostring(ok))
-            ok = pcall(__arm, "FUNCTION_SIGNATURE_MISMATCH",
-              {expected = "(int)->int", actual = "(int)->string"}, "-",
-              "(int)->number", "(int)->string")
-            print("signature-expected|" .. tostring(ok))
-            ok = pcall(__arm, "FUNCTION_SIGNATURE_MISMATCH",
-              {expected = "(int)->int", actual = "(int)->string"}, "-",
-              "(int)->int", "(int)->number")
-            print("signature-actual|" .. tostring(ok))
-            value = __arm("JSON_TO_WALK",
-              {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
-            print("walk-control|" .. value.code .. "|" .. value.a .. "|" .. value.m)
-            value = __arm("FUNCTION_SIGNATURE_MISMATCH",
-              {expected = "(int)->int", actual = "(int)->string"}, "-",
-              "(int)->int", "(int)->string")
-            print("signature-control|" .. value.code .. "|" .. value.m)
-            """, "field-binding-probe", 8);
-        checkEq("walk-actual|false", rows.get(0),
-            "the Lua arm renderer fails closed on the walk arm's contradictory "
-                + "actual");
-        checkEq("stdjson-actual|false", rows.get(1),
-            "the Lua arm renderer fails closed on the std/json arm's contradictory "
-                + "actual");
-        checkEq("identity-expected|false", rows.get(2),
-            "the Lua arm renderer fails closed on the identity arm's contradictory "
-                + "expected operand");
-        checkEq("identity-actual|false", rows.get(3),
-            "the Lua arm renderer fails closed on the identity arm's contradictory "
-                + "actual operand");
-        checkEq("signature-expected|false", rows.get(4),
-            "the Lua arm renderer fails closed on the signature arm's contradictory "
-                + "expected operand");
-        checkEq("signature-actual|false", rows.get(5),
-            "the Lua arm renderer fails closed on the signature arm's contradictory "
-                + "actual operand");
-        checkEq("walk-control|E8001|function|value at data.k is not JSON serializable: "
-                + "function", rows.get(6),
-            "the Lua arm renderer keeps the matching walk pair (the control)");
-        checkEq("signature-control|E8010|function signature mismatch: expected "
-                + "(int)->int, got (int)->string", rows.get(7),
-            "the Lua arm renderer keeps the matching signature pair (the control)");
+        renderProbes("field-binding-probe",
+            armProbe("walk-actual", "\"JSON_TO_WALK\", {fieldPath = \"data.k\", actual = \"function\"}, \"-\", nil, \"number\"", "false|"),
+            armProbe("stdjson-actual", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"string, number, boolean, or table\", \"bytes\"", "false|"),
+            armProbe("identity-expected", "\"CLASS_IDENTITY\", {expected = \"@corpus/a/A\", actual = \"@corpus/b/B\"}, \"-\", \"@corpus/c/C\", \"@corpus/b/B\"", "false|"),
+            armProbe("identity-actual", "\"CLASS_IDENTITY\", {expected = \"@corpus/a/A\", actual = \"@corpus/b/B\"}, \"-\", \"@corpus/a/A\", \"@corpus/c/C\"", "false|"),
+            armProbe("signature-expected", "\"FUNCTION_SIGNATURE_MISMATCH\", {expected = \"(int)->int\", actual = \"(int)->string\"}, \"-\", \"(int)->number\", \"(int)->string\"", "false|"),
+            armProbe("signature-actual", "\"FUNCTION_SIGNATURE_MISMATCH\", {expected = \"(int)->int\", actual = \"(int)->string\"}, \"-\", \"(int)->int\", \"(int)->number\"", "false|"),
+            new RenderProbe("arm", "walk-control", "\"JSON_TO_WALK\", {fieldPath = \"data.k\", actual = \"function\"}, \"-\", nil, \"function\"",
+                "true|E8001|function|value at data.k is not JSON serializable: function", "value.code .. '|' .. value.a .. '|' .. value.m"),
+            new RenderProbe("arm", "signature-control", "\"FUNCTION_SIGNATURE_MISMATCH\", {expected = \"(int)->int\", actual = \"(int)->string\"}, \"-\", \"(int)->int\", \"(int)->string\"",
+                "true|E8010|function signature mismatch: expected (int)->int, got (int)->string", "value.code .. '|' .. value.m"));
     }
 
     // =========================================================================
@@ -2765,42 +2628,16 @@ public class FailureArmAuthorityTest {
 
         // The emitted Lua prelude, under real luajit: the same negatives on
         // both the arm renderer and the raw template renderer.
-        List<String> rows = runPreludeProbe("""
-            local ok = pcall(__arm, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "invented reason"}, "-", "int", "number")
-            print("invented|" .. tostring(ok))
-            ok = pcall(__arm, "HOST_SYNC_RETURN_CELL",
-              {inner = "expected int, got string"}, "-", "string", "string")
-            print("suffixed|" .. tostring(ok))
-            ok = pcall(__renderTemplate, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "invented reason"})
-            print("template-invented|" .. tostring(ok))
-            ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "expected bytes"}, "-", "bytes", "number")
-            print("kind-control|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "function signature mismatch: expected (int)->int, got (string)->int"},
-              "-", "?(int)->int", "table")
-            print("signature-control|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            ok, value = pcall(__arm, "HOST_SYNC_RETURN_CELL",
-              {inner = "int out of safe range"}, "-", "int", "number")
-            print("range-control|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            """, "inner-reason-probe", 6);
-        checkEq("invented|false", rows.get(0),
-            "the Lua arm renderer rejects an invented host inner reason");
-        checkEq("suffixed|false", rows.get(1),
-            "the Lua arm renderer rejects a composed suffixed kind reason");
-        checkEq("template-invented|false", rows.get(2),
-            "the Lua template renderer rejects an invented host inner reason");
-        checkEq("kind-control|true|parameter 1 type mismatch: expected bytes",
-            rows.get(3),
-            "the Lua arm renderer keeps the descriptor-kind reason (the control)");
-        checkEq("signature-control|true|parameter 1 type mismatch: function signature "
-                + "mismatch: expected (int)->int, got (string)->int", rows.get(4),
-            "the Lua arm renderer keeps the signature pass-through (the control)");
-        checkEq("range-control|true|return value 1 type mismatch: int out of safe "
-                + "range", rows.get(5),
-            "the Lua arm renderer keeps the signed32-range pass-through (the control)");
+        renderProbes("inner-reason-probe",
+            innerProbe("arm", "invented", "invented reason", false),
+            armProbe("suffixed", "\"HOST_SYNC_RETURN_CELL\", {inner = \"expected int, got string\"}, \"-\", \"string\", \"string\"", "false|"),
+            innerProbe("template", "template-invented", "invented reason", false),
+            armProbe("kind-control", "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = \"expected bytes\"}, \"-\", \"bytes\", \"number\"",
+                "true|parameter 1 type mismatch: expected bytes"),
+            armProbe("signature-control", "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = \"function signature mismatch: expected (int)->int, got (string)->int\"}, \"-\", \"?(int)->int\", \"table\"",
+                "true|parameter 1 type mismatch: function signature mismatch: expected (int)->int, got (string)->int"),
+            armProbe("range-control", "\"HOST_SYNC_RETURN_CELL\", {inner = \"int out of safe range\"}, \"-\", \"int\", \"number\"",
+                "true|return value 1 type mismatch: int out of safe range"));
     }
 
     // =========================================================================
@@ -2863,94 +2700,25 @@ public class FailureArmAuthorityTest {
 
         // The emitted Lua prelude, under real luajit: the same negatives and
         // controls on the arm renderer and the raw template renderer.
-        List<String> rows = runPreludeProbe("""
-            local cases = {
-              {"sig-malformed-expected", "function signature mismatch: expected (bogus)->int, got (int)->int"},
-              {"sig-malformed-actual", "function signature mismatch: expected (int)->int, got (bogus)->int"},
-              {"sig-dialect-malformed-param", "function signature mismatch: expected function(bogus;int), got function(int;int)"},
-              {"sig-dialect-malformed-result", "function signature mismatch: expected function(int;int), got function(int;bogus)"},
-              {"sig-nested-composite", "function signature mismatch: expected (()->int)->int, got (int)->int"},
-              {"sig-nested-params", "function signature mismatch: expected (int,(string)->int)->int, got (int)->int"},
-              {"sig-dialect", "function signature mismatch: expected function(int;int), got function(int;int)"},
-              {"sig-dialect-zero", "function signature mismatch: expected function(;int), got function(int;int)"},
-              {"sig-dialect-nested", "function signature mismatch: expected function(function(int;int);function(int;int)), got function(int;int)"},
-              {"identity-empty-expected", "expected instance of @src/, got @src/B"},
-              {"identity-empty-carried", "expected instance of @src/A, got @src/"},
-              {"identity-builtin", "expected instance of @/Error, got @src/B"},
-              {"identity-canonical", "expected instance of @src/A, got @src/B"},
-              {"sig-nested-actual", "function signature mismatch: expected (int)->int, got (()->int)->int"},
-              {"sig-dialect-zero-actual", "function signature mismatch: expected function(int;int), got function(;int)"},
-            }
-            for _, case in ipairs(cases) do
-              local ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
-                {index = "1", inner = case[2]}, "-", "int", "number")
-              print(case[1] .. "|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            end
-            local ok, value = pcall(__renderTemplate, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "function signature mismatch: expected function(bogus;int), got function(int;int)"})
-            print("template-malformed|" .. tostring(ok) .. "|")
-            ok, value = pcall(__renderTemplate, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "function signature mismatch: expected function(;int), got function(int;int)"})
-            print("template-zero|" .. tostring(ok) .. "|" .. (ok and value or ""))
-            """, "descriptor-depth-probe", 17);
-        checkEq("sig-malformed-expected|false|", rows.get(0),
-            "the Lua arm renderer rejects the malformed expected-side parameter");
-        checkEq("sig-malformed-actual|false|", rows.get(1),
-            "the Lua arm renderer rejects the malformed actual-side parameter");
-        checkEq("sig-dialect-malformed-param|false|", rows.get(2),
-            "the Lua arm renderer rejects the malformed dialect parameter");
-        checkEq("sig-dialect-malformed-result|false|", rows.get(3),
-            "the Lua arm renderer rejects the malformed dialect result");
-        checkEq("sig-nested-composite|true|parameter 1 type mismatch: function "
-                + "signature mismatch: expected (()->int)->int, got (int)->int",
-            rows.get(4),
-            "the Lua arm renderer keeps the nested canonical composite (the control)");
-        checkEq("sig-nested-params|true|parameter 1 type mismatch: function "
-                + "signature mismatch: expected (int,(string)->int)->int, got "
-                + "(int)->int", rows.get(5),
-            "the Lua arm renderer keeps the nested canonical parameter list (the "
-                + "control)");
-        checkEq("sig-dialect|true|parameter 1 type mismatch: function signature "
-                + "mismatch: expected function(int;int), got function(int;int)",
-            rows.get(6),
-            "the Lua arm renderer keeps the internal function spelling (the control)");
-        checkEq("sig-dialect-zero|true|parameter 1 type mismatch: function signature "
-                + "mismatch: expected function(;int), got function(int;int)",
-            rows.get(7),
-            "the Lua arm renderer keeps the zero-parameter spelling (the control)");
-        checkEq("sig-dialect-nested|true|parameter 1 type mismatch: function "
-                + "signature mismatch: expected "
-                + "function(function(int;int);function(int;int)), got "
-                + "function(int;int)", rows.get(8),
-            "the Lua arm renderer keeps the nested dialect spelling (the control)");
-        checkEq("identity-empty-expected|false|", rows.get(9),
-            "the Lua arm renderer rejects the empty expected-side identity segment");
-        checkEq("identity-empty-carried|false|", rows.get(10),
-            "the Lua arm renderer rejects the empty carried identity segment");
-        checkEq("identity-builtin|true|parameter 1 type mismatch: expected "
-                + "instance of @/Error, got @src/B", rows.get(11),
-            "the Lua arm renderer keeps the builtin identity atom (the control)");
-        checkEq("identity-canonical|true|parameter 1 type mismatch: expected "
-                + "instance of @src/A, got @src/B", rows.get(12),
-            "the Lua arm renderer keeps the canonical identity composite (the "
-                + "control)");
-        checkEq("sig-nested-actual|true|parameter 1 type mismatch: function "
-                + "signature mismatch: expected (int)->int, got (()->int)->int",
-            rows.get(13),
-            "the Lua arm renderer keeps the nested composite on the actual side "
-                + "(the control)");
-        checkEq("sig-dialect-zero-actual|true|parameter 1 type mismatch: function "
-                + "signature mismatch: expected function(int;int), got "
-                + "function(;int)", rows.get(14),
-            "the Lua arm renderer keeps the zero-parameter spelling on the actual "
-                + "side (the control)");
-        checkEq("template-malformed|false|", rows.get(15),
-            "the Lua template renderer rejects the malformed dialect parameter");
-        checkEq("template-zero|true|parameter 1 type mismatch: function signature "
-                + "mismatch: expected function(;int), got function(int;int)",
-            rows.get(16),
-            "the Lua template renderer keeps the zero-parameter pass-through (the "
-                + "control)");
+        signatureProbes("descriptor-depth-probe", new String[][] {
+            {"sig-malformed-expected", "(bogus)->int", "(int)->int", "false"},
+            {"sig-malformed-actual", "(int)->int", "(bogus)->int", "false"},
+            {"sig-dialect-malformed-param", "function(bogus;int)", "function(int;int)", "false"},
+            {"sig-dialect-malformed-result", "function(int;int)", "function(int;bogus)", "false"},
+            {"sig-nested-composite", "(()->int)->int", "(int)->int", "true"},
+            {"sig-nested-params", "(int,(string)->int)->int", "(int)->int", "true"},
+            {"sig-dialect", "function(int;int)", "function(int;int)", "true"},
+            {"sig-dialect-zero", "function(;int)", "function(int;int)", "true"},
+            {"sig-dialect-nested", "function(function(int;int);function(int;int))", "function(int;int)", "true"},
+            {"sig-nested-actual", "(int)->int", "(()->int)->int", "true"},
+            {"sig-dialect-zero-actual", "function(int;int)", "function(;int)", "true"}
+        },
+            innerProbe("arm", "identity-empty-expected", "expected instance of @src/, got @src/B", false),
+            innerProbe("arm", "identity-empty-carried", "expected instance of @src/A, got @src/", false),
+            innerProbe("arm", "identity-builtin", "expected instance of @/Error, got @src/B", true),
+            innerProbe("arm", "identity-canonical", "expected instance of @src/A, got @src/B", true),
+            innerProbe("template", "template-malformed", "function signature mismatch: expected function(bogus;int), got function(int;int)", false),
+            innerProbe("template", "template-zero", "function signature mismatch: expected function(;int), got function(int;int)", true));
     }
 
     /**
@@ -3019,64 +2787,22 @@ public class FailureArmAuthorityTest {
 
         // The emitted Lua prelude, under real luajit: the same negatives and
         // controls on the arm renderer.
-        List<String> rows = runPreludeProbe("""
-            local cases = {
-              {"canonical-null", "function signature mismatch: expected ?null, got (int)->int"},
-              {"canonical-null-actual", "function signature mismatch: expected (int)->int, got ?null"},
-              {"canonical-double", "function signature mismatch: expected ??int, got (int)->int"},
-              {"canonical-array-null", "function signature mismatch: expected [?null], got [int]"},
-              {"canonical-param-double", "function signature mismatch: expected (??int)->int, got (int)->int"},
-              {"dialect-null", "function signature mismatch: expected nullable(null), got (int)->int"},
-              {"dialect-double", "function signature mismatch: expected nullable(nullable(int)), got (int)->int"},
-              {"dialect-array-null", "function signature mismatch: expected array(nullable(null)), got array(int)"},
-              {"dialect-fn-double", "function signature mismatch: expected function(nullable(nullable(int));int), got function(int;int)"},
-              {"valid-int", "function signature mismatch: expected ?int, got (int)->int"},
-              {"valid-array", "function signature mismatch: expected [?int], got [int]"},
-              {"valid-nullable-fn", "function signature mismatch: expected ?(int)->int, got (int)->int"},
-              {"valid-dialect-int", "function signature mismatch: expected nullable(int), got (int)->int"},
-              {"valid-dialect-nested", "function signature mismatch: expected nullable(array(nullable(int))), got array(int)"},
-            }
-            for _, case in ipairs(cases) do
-              local ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
-                {index = "1", inner = case[2]}, "-", "int", "number")
-              print(case[1] .. "|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            end
-            """, "nullable-invariant-probe", 14);
-        checkEq("canonical-null|false|", rows.get(0),
-            "the Lua arm renderer rejects the canonical ?null inner");
-        checkEq("canonical-null-actual|false|", rows.get(1),
-            "the Lua arm renderer rejects the canonical ?null actual side");
-        checkEq("canonical-double|false|", rows.get(2),
-            "the Lua arm renderer rejects the canonical ??int inner");
-        checkEq("canonical-array-null|false|", rows.get(3),
-            "the Lua arm renderer rejects the canonical [?null] element");
-        checkEq("canonical-param-double|false|", rows.get(4),
-            "the Lua arm renderer rejects the canonical (??int)->int parameter");
-        checkEq("dialect-null|false|", rows.get(5),
-            "the Lua arm renderer rejects the dialect nullable(null) inner");
-        checkEq("dialect-double|false|", rows.get(6),
-            "the Lua arm renderer rejects the dialect nullable(nullable(int)) inner");
-        checkEq("dialect-array-null|false|", rows.get(7),
-            "the Lua arm renderer rejects the dialect array(nullable(null)) element");
-        checkEq("dialect-fn-double|false|", rows.get(8),
-            "the Lua arm renderer rejects the dialect nullable(nullable(int)) "
-                + "parameter");
-        checkEq("valid-int|true|parameter 1 type mismatch: function signature mismatch: "
-                + "expected ?int, got (int)->int", rows.get(9),
-            "the Lua arm renderer keeps the canonical ?int signature (the control)");
-        checkEq("valid-array|true|parameter 1 type mismatch: function signature "
-                + "mismatch: expected [?int], got [int]", rows.get(10),
-            "the Lua arm renderer keeps the canonical [?int] element (the control)");
-        checkEq("valid-nullable-fn|true|parameter 1 type mismatch: function signature "
-                + "mismatch: expected ?(int)->int, got (int)->int", rows.get(11),
-            "the Lua arm renderer keeps the canonical nullable function (the control)");
-        checkEq("valid-dialect-int|true|parameter 1 type mismatch: function signature "
-                + "mismatch: expected nullable(int), got (int)->int", rows.get(12),
-            "the Lua arm renderer keeps the dialect nullable(int) (the control)");
-        checkEq("valid-dialect-nested|true|parameter 1 type mismatch: function "
-                + "signature mismatch: expected nullable(array(nullable(int))), got "
-                + "array(int)", rows.get(13),
-            "the Lua arm renderer keeps the nested dialect nullable (the control)");
+        signatureProbes("nullable-invariant-probe", new String[][] {
+            {"canonical-null", "?null", "(int)->int", "false"},
+            {"canonical-null-actual", "(int)->int", "?null", "false"},
+            {"canonical-double", "??int", "(int)->int", "false"},
+            {"canonical-array-null", "[?null]", "[int]", "false"},
+            {"canonical-param-double", "(??int)->int", "(int)->int", "false"},
+            {"dialect-null", "nullable(null)", "(int)->int", "false"},
+            {"dialect-double", "nullable(nullable(int))", "(int)->int", "false"},
+            {"dialect-array-null", "array(nullable(null))", "array(int)", "false"},
+            {"dialect-fn-double", "function(nullable(nullable(int));int)", "function(int;int)", "false"},
+            {"valid-int", "?int", "(int)->int", "true"},
+            {"valid-array", "[?int]", "[int]", "true"},
+            {"valid-nullable-fn", "?(int)->int", "(int)->int", "true"},
+            {"valid-dialect-int", "nullable(int)", "(int)->int", "true"},
+            {"valid-dialect-nested", "nullable(array(nullable(int)))", "array(int)", "true"}
+        });
     }
 
     /**
@@ -3120,44 +2846,17 @@ public class FailureArmAuthorityTest {
                 "(int)->int", "number").msg,
             "the JVM arm render keeps the function kind reason (the control)");
         // The emitted Lua prelude, under real luajit.
-        List<String> rows = runPreludeProbe("""
-            local negatives = {
-              {"sig-array", "function signature mismatch: expected array, got (int)->int"},
-              {"sig-function", "function signature mismatch: expected function, got (int)->int"},
-              {"sig-array-actual", "function signature mismatch: expected (int)->int, got array"},
-              {"sig-function-actual", "function signature mismatch: expected (int)->int, got function"},
-            }
-            for _, case in ipairs(negatives) do
-              local ok = pcall(__arm, "HOST_PARAMETER_CELL",
-                {index = "1", inner = case[2]}, "-", "int", "number")
-              print(case[1] .. "|" .. tostring(ok))
-            end
-            local ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "expected array"}, "-", "[int]", "number")
-            print("kind-array|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            ok, value = pcall(__arm, "HOST_PARAMETER_CELL",
-              {index = "1", inner = "expected function"}, "-", "(int)->int", "number")
-            print("kind-function|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            ok, value = pcall(__arm, "TYPED_BOUNDARY_KIND", {kind = "array"}, "-",
-              "array", "string")
-            print("kind-arm|" .. tostring(ok) .. "|" .. (ok and value.m or ""))
-            """, "kind-only-vocabulary-probe", 7);
-        checkEq("sig-array|false", rows.get(0),
-            "the Lua arm renderer rejects the kind-only array signature text");
-        checkEq("sig-function|false", rows.get(1),
-            "the Lua arm renderer rejects the kind-only function signature text");
-        checkEq("sig-array-actual|false", rows.get(2),
-            "the Lua arm renderer rejects the kind-only array actual side");
-        checkEq("sig-function-actual|false", rows.get(3),
-            "the Lua arm renderer rejects the kind-only function actual side");
-        checkEq("kind-array|true|parameter 1 type mismatch: expected array",
-            rows.get(4),
-            "the Lua arm renderer keeps the array kind reason (the control)");
-        checkEq("kind-function|true|parameter 1 type mismatch: expected function",
-            rows.get(5),
-            "the Lua arm renderer keeps the function kind reason (the control)");
-        checkEq("kind-arm|true|expected array", rows.get(6),
-            "the Lua arm renderer keeps the bare array kind arm (the control)");
+        signatureProbes("kind-only-vocabulary-probe", new String[][] {
+            {"sig-array", "array", "(int)->int", "false"},
+            {"sig-function", "function", "(int)->int", "false"},
+            {"sig-array-actual", "(int)->int", "array", "false"},
+            {"sig-function-actual", "(int)->int", "function", "false"}
+        },
+            armProbe("kind-array", "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = \"expected array\"}, \"-\", \"[int]\", \"number\"",
+                "true|parameter 1 type mismatch: expected array"),
+            armProbe("kind-function", "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = \"expected function\"}, \"-\", \"(int)->int\", \"number\"",
+                "true|parameter 1 type mismatch: expected function"),
+            armProbe("kind-arm", "\"TYPED_BOUNDARY_KIND\", {kind = \"array\"}, \"-\", \"array\", \"string\"", "true|expected array"));
     }
 
     /**

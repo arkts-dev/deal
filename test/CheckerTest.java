@@ -146,6 +146,52 @@ public class CheckerTest {
         check(found, context + ": expected diagnostic " + code);
     }
 
+    private record CliResult(int exitCode, String output) {}
+
+    private static Path cliProject(Path root, String name, String source) throws IOException {
+        Path project = root.resolve(name);
+        Files.createDirectories(project.resolve("src"));
+        Files.writeString(project.resolve("deal.json"),
+            "{\"languageVersion\":\"1.3\",\"backend\":\"js\",\"moduleRoots\":[\"src\"]}\n");
+        Path entry = project.resolve("src/main.deal");
+        Files.writeString(entry, source);
+        return entry;
+    }
+
+    private static CliResult cliCompile(Path entry, String backend, Path out) throws IOException {
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        try (PrintStream capture = new PrintStream(err, true, StandardCharsets.UTF_8)) {
+            System.setErr(capture);
+            int exitCode = Main.run(new String[]{"compile", entry.toString(),
+                "--backend", backend, "--output", out.toString()});
+            capture.flush();
+            return new CliResult(exitCode, err.toString(StandardCharsets.UTF_8));
+        } finally {
+            System.setErr(originalErr);
+        }
+    }
+
+    private static void cliReject(Path entry, Path out, String backend, String what) throws IOException {
+        CliResult result = cliCompile(entry, backend, out);
+        check(result.exitCode() == 1, what + " is rejected on " + backend + ": " + result.output());
+        check(result.output().contains("E3019"), what + " rejection is E3019 on " + backend + ": " + result.output());
+        check(!Files.exists(out), what + " publishes no artifact directory on " + backend);
+    }
+
+    private static void cliAccept(Path entry, Path out, String backend, String what) throws IOException {
+        CliResult result = cliCompile(entry, backend, out);
+        check(result.exitCode() == 0, what + " compiles on " + backend + ": " + result.output());
+    }
+
+    private static void cliNode(Path out, String token) throws IOException, InterruptedException {
+        Process node = new ProcessBuilder("node", "main.js").directory(out.toFile())
+            .redirectErrorStream(true).start();
+        String output = new String(node.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        int exitCode = node.waitFor();
+        check(exitCode == 0 && output.contains(token), token + " executes (exit " + exitCode + "): " + output);
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -2390,13 +2436,7 @@ public class CheckerTest {
             };
             String[] names = {"init", "nullable", "assignment"};
             for (int p = 0; p < negatives.length; p++) {
-                Path probeSrc = root.resolve("probe_" + names[p] + "/src");
-                Files.createDirectories(probeSrc);
-                Files.writeString(root.resolve("probe_" + names[p] + "/deal.json"),
-                    "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
-                        + "\"moduleRoots\":[\"src\"]}\n");
-                Path probeEntry = probeSrc.resolve("main.deal");
-                Files.writeString(probeEntry,
+                Path probeEntry = cliProject(root, "probe_" + names[p],
                     "class A { n: int = 7; }\n"
                         + "export function main(): null {\n"
                         + "  let a: A = {};\n"
@@ -2405,41 +2445,11 @@ public class CheckerTest {
                         + "}\n");
                 for (String backend : List.of("js", "jvm", "luajit")) {
                     Path out = root.resolve("out_" + names[p] + "_" + backend);
-                    ByteArrayOutputStream err = new ByteArrayOutputStream();
-                    PrintStream originalErr = System.err;
-                    int exitCode;
-                    try {
-                        System.setErr(new PrintStream(err, true,
-                            StandardCharsets.UTF_8));
-                        exitCode = Main.run(new String[]{"compile",
-                            probeEntry.toString(), "--backend", backend,
-                            "--output", out.toString()});
-                        System.err.flush();
-                    } finally {
-                        System.setErr(originalErr);
-                    }
-                    String stderr = err.toString(StandardCharsets.UTF_8);
-                    check(exitCode == 1,
-                        "the constructed-literal provenance crossing ("
-                            + names[p] + ") is rejected on " + backend
-                            + ": " + stderr);
-                    check(stderr.contains("E3019"),
-                        "the " + backend + " rejection of the " + names[p]
-                            + " probe is E3019: " + stderr);
-                    check(!Files.exists(out),
-                        "the rejected " + backend + " compile of the "
-                            + names[p] + " probe publishes no artifact "
-                            + "directory");
+                    cliReject(probeEntry, out, backend, "constructed-literal " + names[p]);
                 }
             }
 
-            Path controlSrc = root.resolve("control/src");
-            Files.createDirectories(controlSrc);
-            Files.writeString(root.resolve("control/deal.json"),
-                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
-                    + "\"moduleRoots\":[\"src\"]}\n");
-            Path controlEntry = controlSrc.resolve("main.deal");
-            Files.writeString(controlEntry,
+            Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\"\n"
                     + "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
@@ -2460,23 +2470,7 @@ public class CheckerTest {
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = backend.equals("js")
                     ? controlOutJs : root.resolve("control_out_" + backend);
-                ByteArrayOutputStream err = new ByteArrayOutputStream();
-                PrintStream originalErr = System.err;
-                int exitCode;
-                try {
-                    System.setErr(new PrintStream(err, true,
-                        StandardCharsets.UTF_8));
-                    exitCode = Main.run(new String[]{"compile",
-                        controlEntry.toString(), "--backend", backend,
-                        "--output", out.toString()});
-                    System.err.flush();
-                } finally {
-                    System.setErr(originalErr);
-                }
-                String stderr = err.toString(StandardCharsets.UTF_8);
-                check(exitCode == 0,
-                    "the same-declaration constructed-literal control "
-                        + "compiles on " + backend + ": " + stderr);
+                cliAccept(controlEntry, out, backend, "same-declaration constructed-literal control");
             }
 
             Path artifact = controlOutJs.resolve("main.js");
@@ -2484,17 +2478,7 @@ public class CheckerTest {
                 "the constructed-literal control's JS artifact exists: "
                     + artifact);
             if (Files.isRegularFile(artifact)) {
-                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
-                pb.directory(controlOutJs.toFile());
-                pb.redirectErrorStream(true);
-                Process node = pb.start();
-                String output = new String(node.getInputStream().readAllBytes(),
-                    StandardCharsets.UTF_8);
-                int nodeExit = node.waitFor();
-                check(nodeExit == 0 && output.contains("CONSTRUCTED_OK"),
-                    "the control artifact executes the same-declaration "
-                        + "constructed-literal value assertion (exit "
-                        + nodeExit + "): " + output);
+                cliNode(controlOutJs, "CONSTRUCTED_OK");
             }
         } catch (IOException e) {
             fail("public constructed-literal provenance: I/O failure: "
@@ -2575,32 +2559,9 @@ public class CheckerTest {
             String[] names = {"explicit", "nullable"};
             String[] tokens = {"SHADOW_CONSTRUCTION_OK", "SHADOW_NULLABLE_OK"};
             for (int p = 0; p < probes.length; p++) {
-                Path srcDir = root.resolve("probe_" + names[p] + "/src");
-                Files.createDirectories(srcDir);
-                Files.writeString(root.resolve("probe_" + names[p]
-                    + "/deal.json"),
-                    "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
-                        + "\"moduleRoots\":[\"src\"]}\n");
-                Path entry = srcDir.resolve("main.deal");
-                Files.writeString(entry, probes[p]);
+                Path entry = cliProject(root, "probe_" + names[p], probes[p]);
                 Path out = root.resolve("out_" + names[p]);
-                ByteArrayOutputStream err = new ByteArrayOutputStream();
-                PrintStream originalErr = System.err;
-                int exitCode;
-                try {
-                    System.setErr(new PrintStream(err, true,
-                        StandardCharsets.UTF_8));
-                    exitCode = Main.run(new String[]{"compile",
-                        entry.toString(), "--backend", "js",
-                        "--output", out.toString()});
-                    System.err.flush();
-                } finally {
-                    System.setErr(originalErr);
-                }
-                String stderr = err.toString(StandardCharsets.UTF_8);
-                check(exitCode == 0,
-                    "the shadowed-declaration construction (" + names[p]
-                        + ") compiles on js: " + stderr);
+                cliAccept(entry, out, "js", "shadowed-declaration construction " + names[p]);
                 Path artifact = out.resolve("main.js");
                 check(Files.isRegularFile(artifact),
                     "the shadowed-declaration construction (" + names[p]
@@ -2621,30 +2582,14 @@ public class CheckerTest {
                     "the target-context literal constructs through the outer "
                         + "declaration's factory (" + names[p] + ")");
 
-                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
-                pb.directory(out.toFile());
-                pb.redirectErrorStream(true);
-                Process node = pb.start();
-                String output = new String(node.getInputStream().readAllBytes(),
-                    StandardCharsets.UTF_8);
-                int nodeExit = node.waitFor();
-                check(nodeExit == 0 && output.contains(tokens[p]),
-                    "the " + names[p] + " shadowed-declaration construction "
-                        + "executes with the outer declaration's layout "
-                        + "(exit " + nodeExit + "): " + output);
+                cliNode(out, tokens[p]);
             }
 
             // Nearest legal controls: the shadowing declaration's own
             // construction (its field stays string) and a module-level
             // construction after the shadowing block (the declared
             // default stays int).
-            Path controlSrc = root.resolve("control/src");
-            Files.createDirectories(controlSrc);
-            Files.writeString(root.resolve("control/deal.json"),
-                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
-                    + "\"moduleRoots\":[\"src\"]}\n");
-            Path controlEntry = controlSrc.resolve("main.deal");
-            Files.writeString(controlEntry,
+            Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\"\n"
                     + "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
@@ -2662,38 +2607,13 @@ public class CheckerTest {
                     + "  return null;\n"
                     + "}\n");
             Path controlOut = root.resolve("control_out");
-            ByteArrayOutputStream err = new ByteArrayOutputStream();
-            PrintStream originalErr = System.err;
-            int exitCode;
-            try {
-                System.setErr(new PrintStream(err, true,
-                    StandardCharsets.UTF_8));
-                exitCode = Main.run(new String[]{"compile",
-                    controlEntry.toString(), "--backend", "js",
-                    "--output", controlOut.toString()});
-                System.err.flush();
-            } finally {
-                System.setErr(originalErr);
-            }
-            String stderr = err.toString(StandardCharsets.UTF_8);
-            check(exitCode == 0,
-                "the legal shadowing control compiles on js: " + stderr);
+            cliAccept(controlEntry, controlOut, "js", "legal shadowing control");
             Path controlArtifact = controlOut.resolve("main.js");
             check(Files.isRegularFile(controlArtifact),
                 "the legal shadowing control publishes its JS artifact: "
                     + controlArtifact);
             if (Files.isRegularFile(controlArtifact)) {
-                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
-                pb.directory(controlOut.toFile());
-                pb.redirectErrorStream(true);
-                Process node = pb.start();
-                String output = new String(node.getInputStream().readAllBytes(),
-                    StandardCharsets.UTF_8);
-                int nodeExit = node.waitFor();
-                check(nodeExit == 0 && output.contains("SHADOW_CONTROL_OK"),
-                    "the legal shadowing control executes the inner and "
-                        + "module-level layouts (exit " + nodeExit + "): "
-                        + output);
+                cliNode(controlOut, "SHADOW_CONTROL_OK");
             }
         } catch (IOException e) {
             fail("shadow construction: I/O failure: " + e.getMessage());
@@ -2724,13 +2644,7 @@ public class CheckerTest {
             return;
         }
         try {
-            Path probeSrc = root.resolve("probe/src");
-            Files.createDirectories(probeSrc);
-            Files.writeString(root.resolve("probe/deal.json"),
-                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
-                    + "\"moduleRoots\":[\"src\"]}\n");
-            Path probeEntry = probeSrc.resolve("main.deal");
-            Files.writeString(probeEntry,
+            Path probeEntry = cliProject(root, "probe",
                 "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
@@ -2743,37 +2657,10 @@ public class CheckerTest {
                     + "}\n");
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = root.resolve("probe_out_" + backend);
-                ByteArrayOutputStream err = new ByteArrayOutputStream();
-                PrintStream originalErr = System.err;
-                int exitCode;
-                try {
-                    System.setErr(new PrintStream(err, true,
-                        StandardCharsets.UTF_8));
-                    exitCode = Main.run(new String[]{"compile",
-                        probeEntry.toString(), "--backend", backend,
-                        "--output", out.toString()});
-                    System.err.flush();
-                } finally {
-                    System.setErr(originalErr);
-                }
-                String stderr = err.toString(StandardCharsets.UTF_8);
-                check(exitCode == 1,
-                    "the assignment-expression provenance crossing is "
-                        + "rejected on " + backend + ": " + stderr);
-                check(stderr.contains("E3019"),
-                    "the " + backend + " rejection is E3019: " + stderr);
-                check(!Files.exists(out),
-                    "the rejected " + backend + " compile publishes no "
-                        + "artifact directory");
+                cliReject(probeEntry, out, backend, "assignment-expression provenance crossing");
             }
 
-            Path controlSrc = root.resolve("control/src");
-            Files.createDirectories(controlSrc);
-            Files.writeString(root.resolve("control/deal.json"),
-                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
-                    + "\"moduleRoots\":[\"src\"]}\n");
-            Path controlEntry = controlSrc.resolve("main.deal");
-            Files.writeString(controlEntry,
+            Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\"\n"
                     + "class A { n: int = 7; }\n"
                     + "export function main(): null {\n"
@@ -2794,40 +2681,14 @@ public class CheckerTest {
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = backend.equals("js")
                     ? controlOutJs : root.resolve("control_out_" + backend);
-                ByteArrayOutputStream err = new ByteArrayOutputStream();
-                PrintStream originalErr = System.err;
-                int exitCode;
-                try {
-                    System.setErr(new PrintStream(err, true,
-                        StandardCharsets.UTF_8));
-                    exitCode = Main.run(new String[]{"compile",
-                        controlEntry.toString(), "--backend", backend,
-                        "--output", out.toString()});
-                    System.err.flush();
-                } finally {
-                    System.setErr(originalErr);
-                }
-                String stderr = err.toString(StandardCharsets.UTF_8);
-                check(exitCode == 0,
-                    "the same-declaration assignment-expression control "
-                        + "compiles on " + backend + ": " + stderr);
+                cliAccept(controlEntry, out, backend, "same-declaration assignment-expression control");
             }
 
             Path artifact = controlOutJs.resolve("main.js");
             check(Files.isRegularFile(artifact),
                 "the control's JS artifact exists: " + artifact);
             if (Files.isRegularFile(artifact)) {
-                ProcessBuilder pb = new ProcessBuilder("node", "main.js");
-                pb.directory(controlOutJs.toFile());
-                pb.redirectErrorStream(true);
-                Process node = pb.start();
-                String output = new String(node.getInputStream().readAllBytes(),
-                    StandardCharsets.UTF_8);
-                int nodeExit = node.waitFor();
-                check(nodeExit == 0 && output.contains("PROVENANCE_OK"),
-                    "the control artifact executes the same-declaration "
-                        + "value assertion (exit " + nodeExit + "): "
-                        + output);
+                cliNode(controlOutJs, "PROVENANCE_OK");
             }
         } catch (IOException e) {
             fail("public provenance: I/O failure: " + e.getMessage());

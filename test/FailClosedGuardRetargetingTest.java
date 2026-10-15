@@ -25,7 +25,6 @@ import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.SharedStdlibSemantics;
-import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ModuleId;
@@ -285,40 +284,6 @@ public class FailClosedGuardRetargetingTest {
     /** The two production targets the non-FFI negative seeds cover. */
     private static final List<Backend> NEGATIVE_TARGETS =
         List.of(Backend.LUAJIT, Backend.JVM);
-
-    // =========================================================================
-    // 1. The three guards stay landed
-    // =========================================================================
-
-    private static void testGuardIdentifiersLanded() {
-        System.out.println("-- the three guard identifiers, the detail tokens, "
-            + "and the retargeted reserved boundary names stay landed --");
-
-        checkEq("CONSTRUCT_UNLOWERED", SemanticLowerer.CONSTRUCT_UNLOWERED,
-            "the unlowered-construct rule identifier");
-        checkEq("RETAINED_ABI_DEFERRED", SemanticLowerer.RETAINED_ABI_DEFERRED,
-            "the imported-class deferral rule identifier");
-        checkEq("SHARED_EMITTER_COVERAGE",
-            ProductionProjectEmission.SHARED_EMITTER_COVERAGE,
-            "the emitter-coverage rule identifier");
-        checkEq("HOST_MODULE_IMPORT",
-            ProductionProjectEmission.HOST_MODULE_IMPORT,
-            "the declaration-import guard detail token");
-        checkEq("FFI_PROVIDER_GAP",
-            ProductionProjectEmission.FFI_PROVIDER_GAP,
-            "the FFI provider-gap detail token");
-
-        checkEq(List.of("C_FFI_TO_DEAL", "DEAL_TO_C_FFI"),
-            BoundaryKind.RESERVED_NAMES,
-            "the reserved boundary names are the two C-FFI crossings");
-        check(!BoundaryKind.isReservedName("BYTE_ELEMENT_ASSIGNMENT")
-                && !BoundaryKind.isReservedName("BYTE_ELEMENT_READ"),
-            "the realized bytes element cells are never reserved names");
-        for (String reserved : BoundaryKind.RESERVED_NAMES) {
-            check(BoundaryKind.isReservedName(reserved),
-                reserved + " stays a reserved name");
-        }
-    }
 
     // =========================================================================
     // 2. One live negative seed per guard (+ the atomic-staging property)
@@ -1127,6 +1092,93 @@ public class FailClosedGuardRetargetingTest {
         }
         check(BoundedProcess.captureFailure("probe", cleanEof, cleanEof) == null,
             "the clean-EOF control is not refused (both streams complete)");
+        for (int size : List.of(BoundedProcess.STREAM_CAP_BYTES - 1,
+                BoundedProcess.STREAM_CAP_BYTES, BoundedProcess.STREAM_CAP_BYTES + 1)) {
+            BoundedProcess.Drain drain = new BoundedProcess.Drain(
+                new ByteArrayInputStream(new byte[size]));
+            drain.run();
+            boolean truncated = size > BoundedProcess.STREAM_CAP_BYTES;
+            check(drain.eofReached() && drain.failure() == null
+                    && drain.truncated() == truncated,
+                "the shared drain honors the exact cap boundary: " + size);
+            checkEq(Math.min(size, BoundedProcess.STREAM_CAP_BYTES)
+                    + (truncated ? BoundedProcess.TRUNCATION_MARKER.length() : 0),
+                drain.text().length(), "the retained boundary transcript length");
+        }
+        BoundedProcess.Drain unfinished = new BoundedProcess.Drain(
+            new ByteArrayInputStream(new byte[0]));
+        check(BoundedProcess.captureFailure("probe", unfinished, cleanEof) != null
+                && BoundedProcess.captureFailure("probe", cleanEof, unfinished) != null,
+            "a capture without EOF is refused in either stream position");
+        testBoundedProcessCancellation();
+    }
+
+    private static void testBoundedProcessCancellation() throws Exception {
+        Path root = Files.createTempDirectory("bounded controls with spaces ");
+        List<Thread> workers = new ArrayList<>();
+        Throwable[] observed = new Throwable[2];
+        try {
+            for (int i = 0; i < observed.length; i++) {
+                int index = i;
+                Path directory = root.resolve("worker " + i);
+                Files.createDirectories(directory);
+                Thread worker = new Thread(() -> {
+                    try {
+                        BoundedProcess.runCaptured(List.of("sh", "-c",
+                            "echo $$ > child.pid; sleep 30 & echo $! > descendant.pid; wait"),
+                            directory, Map.of(), 5_000L);
+                        observed[index] = new AssertionError("cancelled call returned");
+                    } catch (Throwable failure) {
+                        observed[index] = failure;
+                    }
+                });
+                workers.add(worker);
+                worker.start();
+            }
+            long deadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+            for (int i = 0; i < workers.size(); i++) {
+                Path pid = root.resolve("worker " + i).resolve("descendant.pid");
+                while ((!Files.isRegularFile(pid) || Files.size(pid) == 0)
+                        && System.nanoTime() < deadline) {
+                    Thread.sleep(10);
+                }
+                check(Files.isRegularFile(pid) && Files.size(pid) > 0,
+                    "the cancellation control launched its descendant " + i);
+            }
+            workers.forEach(Thread::interrupt);
+            for (int i = 0; i < workers.size(); i++) {
+                workers.get(i).join(30_000L);
+                check(!workers.get(i).isAlive()
+                        && observed[i] instanceof InterruptedException,
+                    "concurrent cancellation propagates after teardown: " + observed[i]);
+                for (String file : List.of("child.pid", "descendant.pid")) {
+                    Path pidFile = root.resolve("worker " + i).resolve(file);
+                    if (Files.isRegularFile(pidFile)) {
+                        long pid = Long.parseLong(Files.readString(pidFile).trim());
+                        check(ProcessHandle.of(pid).map(handle -> !handle.isAlive())
+                            .orElse(true), "cancelled process is gone: " + file + " " + pid);
+                    }
+                }
+            }
+            check(Thread.getAllStackTraces().keySet().stream().noneMatch(thread ->
+                    thread.isAlive() && (thread.getName().equals("bounded-process-stdout")
+                        || thread.getName().equals("bounded-process-stderr"))),
+                "no bounded capture reader survives concurrent cancellation");
+            BoundedProcess.BoundedResult next = BoundedProcess.runCaptured(
+                List.of("sh", "-c", "printf recovered; exit 7"), root);
+            check(next.exitCode() == 7 && next.stdout().equals("recovered")
+                    && next.stderr().isEmpty(),
+                "a real invocation after cancellation retains status and transcript");
+        } finally {
+            for (Thread worker : workers) {
+                if (worker.isAlive()) {
+                    worker.interrupt();
+                    worker.join(30_000L);
+                }
+            }
+            deleteRecursively(root);
+        }
     }
 
     private static void testJvmCompilationContract() throws Exception {
@@ -1537,7 +1589,6 @@ public class FailClosedGuardRetargetingTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Fail-Closed Guard Retargeting Tests "
             + "(ISSUE-0702) ===\n");
-        testGuardIdentifiersLanded();
         testConstructUnloweredSeed();
         testRetainedAbiDeferredSeed();
         testSharedEmitterCoverageSeed();

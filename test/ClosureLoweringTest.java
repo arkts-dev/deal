@@ -1545,6 +1545,199 @@ public class ClosureLoweringTest {
     // Runner
     // =========================================================================
 
+    private static SemanticLowerer.GroupCoreResult lowerGroups(String source) {
+        CheckedSlice slice = checkSlice(source);
+        if (slice == null) {
+            throw new AssertionError("group source must check");
+        }
+        return SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
+            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(MODULE)));
+    }
+
+    private static boolean namesBinding(SemanticOp op, BindingId binding) {
+        return switch (op.payload()) {
+            case KindPayload.BindingAllocPayload p -> p.binding().equals(binding);
+            case KindPayload.BindingInitPayload p -> p.binding().equals(binding);
+            default -> false;
+        };
+    }
+
+    private static void testRecursiveGroups() {
+        String source = """
+            function f(): null {
+              let h: () => null = function(): null { let copy: () => null = laterFn; };
+              let gRef: () => null = g;
+            }
+            function g(): null { let fRef: () => null = f; }
+            function laterFn(): null {}
+            function self(): null { let copy: () => null = self; }
+            function a(): null { let bRef: () => null = b; }
+            function b(): null { let aRef: () => null = a; }
+            function outer(): null {
+              let before = 1;
+              function n(): null { let mRef: () => null = m; }
+              function m(): null { let nRef: () => null = n; }
+              let after = 2;
+            }
+            """;
+        SemanticLowerer.GroupCoreResult first = lowerGroups(source);
+        check(!first.lowering().hasErrors() && first.lowering().unit() != null,
+            "combined SCC corpus lowers: " + first.lowering().diagnostics());
+        if (first.lowering().hasErrors()) {
+            return;
+        }
+        LoweredModuleUnit unit = first.lowering().unit();
+        List<SemanticOp> ops = unit.ops();
+        check(first.groups().size() == 3 && ofKind(ops, SemanticOpKind.RECURSIVE_GROUP_INIT).size() == 3,
+            "two module SCCs and one nested SCC, each emitted exactly once");
+        java.util.Set<ValueId> identities = new java.util.HashSet<>();
+        for (SemanticLowerer.GroupFacts group : first.groups()) {
+            SemanticOp groupOp = ops.stream().filter(o -> o.opId().equals(group.opId()))
+                .findFirst().orElseThrow();
+            KindPayload.RecursiveGroupInitPayload payload =
+                (KindPayload.RecursiveGroupInitPayload) groupOp.payload();
+            check(groupOp.result() == null && groupOp.resultType() == null,
+                "group initialization has no result");
+            check(group.members().size() == 2
+                    && payload.bindings().equals(group.members().stream()
+                        .map(SemanticLowerer.GroupMemberFacts::binding).toList())
+                    && payload.functions().equals(group.members().stream()
+                        .map(SemanticLowerer.GroupMemberFacts::functionId).toList()),
+                "payload and facts agree in declaration order");
+            for (SemanticLowerer.GroupMemberFacts member : group.members()) {
+                check(identities.add(member.identity()), "distinct preassigned group identities");
+                SemanticLowerer.BindingCoreBinding binding = fact(first.bindingFacts(), member.name());
+                check(binding.incarnations().size() == 1, "one member incarnation");
+                SemanticLowerer.BindingCoreIncarnation incarnation = binding.incarnations().get(0);
+                check(incarnation.generation() == 0
+                        && incarnation.producer() == SemanticLowerer.BindingProducer.RECURSIVE_GROUP_INIT
+                        && incarnation.cellKind() == BindingCellKind.SHARED_CELL
+                        && incarnation.scope().equals(group.block()),
+                    "group owns generation-zero shared cell in its block");
+                check(ops.stream().noneMatch(o -> namesBinding(o, member.binding())),
+                    "group members have no separate ALLOC or INIT");
+                check(unit.functionBindings().get(new FunctionAllocationIdentity(member.identity().id()))
+                        instanceof FunctionExecutionBinding.LoweredBody body
+                        && body.functionId().equals(member.functionId())
+                        && body.blockId().equals(member.bodyBlock()),
+                    "member identity registers its exact lowered body");
+                LoweredFunction function = unit.functions().get(member.functionId());
+                check(function != null && function.captureBindings().equals(member.captures().stream()
+                        .map(SemanticLowerer.ClosureCapture::binding).toList()),
+                    "function captures agree with member facts");
+                SemanticLowerer.GroupMemberFacts sibling = group.members().stream()
+                    .filter(m -> !m.binding().equals(member.binding())).findFirst().orElseThrow();
+                check(member.captures().stream().anyMatch(c -> c.binding().equals(sibling.binding())
+                        && c.producer() == SemanticLowerer.BindingProducer.RECURSIVE_GROUP_INIT),
+                    "mutual capture resolves through group");
+                check(ofKind(ops, SemanticOpKind.BINDING_LOAD).stream().anyMatch(o ->
+                        o.payload() instanceof KindPayload.BindingLoadPayload p
+                        && p.binding().equals(member.binding()) && p.generation() == 0
+                        && member.identity().equals(o.result())),
+                    "member load publishes preassigned identity");
+            }
+        }
+        List<SemanticLowerer.GroupFacts> moduleGroups = first.groups().stream()
+            .filter(g -> g.block().equals(unit.moduleInit().initBlock())).toList();
+        check(moduleGroups.stream().map(g -> g.members().stream()
+                .map(SemanticLowerer.GroupMemberFacts::name).toList()).toList()
+                .equals(List.of(List.of("f", "g"), List.of("a", "b"))),
+            "disjoint module SCCs follow first-member declaration order");
+        for (SemanticLowerer.GroupFacts group : moduleGroups) {
+            check(ops.stream().filter(o -> o.payload() instanceof KindPayload.BindingAllocPayload p
+                    && p.scope().equals(unit.moduleInit().initBlock()))
+                    .allMatch(o -> indexOf(ops, o.opId()) < indexOf(ops, group.opId())),
+                "module groups follow hoisted allocations");
+        }
+        check(indexOf(ops, moduleGroups.get(0).opId()) < indexOf(ops, moduleGroups.get(1).opId()),
+            "module group op order is stable");
+        SemanticLowerer.GroupFacts nested = first.groups().stream()
+            .filter(g -> !g.block().equals(unit.moduleInit().initBlock())).findFirst().orElseThrow();
+        check(nested.members().stream().map(SemanticLowerer.GroupMemberFacts::name).toList()
+                .equals(List.of("n", "m")), "nested SCC declaration order");
+        BindingId before = fact(first.bindingFacts(), "before").binding();
+        BindingId after = fact(first.bindingFacts(), "after").binding();
+        SemanticOp beforeInit = ops.stream().filter(o -> o.payload() instanceof KindPayload.BindingInitPayload p
+            && p.binding().equals(before)).findFirst().orElseThrow();
+        SemanticOp afterAlloc = ops.stream().filter(o -> o.payload() instanceof KindPayload.BindingAllocPayload p
+            && p.binding().equals(after)).findFirst().orElseThrow();
+        check(indexOf(ops, beforeInit.opId()) < indexOf(ops, nested.opId())
+                && indexOf(ops, nested.opId()) < indexOf(ops, afterAlloc.opId()),
+            "nested group is emitted at first member declaration");
+        check(first.closures().stream().anyMatch(c -> c.bodyBlock().equals(nested.block())),
+            "nested group belongs to enclosing closure body");
+        SemanticLowerer.GroupCoreResult pair = lowerGroups("""
+            function f(): null { let gRef: () => null = g; }
+            function g(): null { let fRef: () => null = f; }
+            """);
+        check(!pair.lowering().hasErrors() && pair.groups().size() == 1
+                && ofKind(pair.lowering().unit().ops(), SemanticOpKind.CLOSURE_NEW).isEmpty(),
+            "isolated mutual pair produces no closure allocations");
+        for (SemanticLowerer.GroupMemberFacts member : pair.groups().getFirst().members()) {
+            BindingId sibling = pair.groups().getFirst().members().stream()
+                .filter(m -> !m.binding().equals(member.binding())).findFirst().orElseThrow().binding();
+            check(member.captures().size() == 1 && member.captures().getFirst().binding().equals(sibling)
+                    && pair.lowering().unit().functions().get(member.functionId()).captureBindings().equals(List.of(sibling)),
+                "isolated pair captures exactly its sibling, with no extra binding");
+        }
+        SemanticLowerer.GroupCoreResult singletonResult = lowerGroups("function f(): null { let self: () => null = f; }");
+        check(!singletonResult.lowering().hasErrors() && singletonResult.groups().isEmpty()
+                && ofKind(singletonResult.lowering().unit().ops(), SemanticOpKind.RECURSIVE_GROUP_INIT).isEmpty()
+                && ofKind(singletonResult.lowering().unit().ops(), SemanticOpKind.CLOSURE_NEW).size() == 1,
+            "isolated self SCC never emits a group");
+        for (String singleton : List.of("self", "laterFn", "outer")) {
+            SemanticLowerer.BindingCoreBinding binding = fact(first.bindingFacts(), singleton);
+            check(ops.stream().anyMatch(o -> o.kind() == SemanticOpKind.BINDING_ALLOC
+                    && namesBinding(o, binding.binding()))
+                    && ops.stream().anyMatch(o -> o.kind() == SemanticOpKind.BINDING_INIT
+                        && namesBinding(o, binding.binding()) && o.result() == null),
+                "singleton " + singleton + " retains separate ALLOC/INIT");
+        }
+        check(ofKind(ops, SemanticOpKind.CLOSURE_NEW).size() == 4,
+            "self recursion and ungrouped sibling stay closures, plus outer and nested h");
+        BindingId later = fact(first.bindingFacts(), "laterFn").binding();
+        SemanticLowerer.GroupMemberFacts f = moduleGroups.get(0).members().get(0);
+        check(f.captures().size() == 2 && f.captures().stream().anyMatch(c ->
+                c.binding().equals(later) && c.generation() == 0
+                && c.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC),
+            "member detaching chain captures later module function through hoist");
+        SemanticLowerer.ClosureFacts h = first.closures().stream()
+            .filter(c -> c.captures().size() == 1 && c.captures().get(0).binding().equals(later))
+            .findFirst().orElseThrow();
+        check(h.captures().get(0).generation() == 0
+                && h.captures().get(0).producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC
+                && h.captures().get(0).scope().equals(unit.moduleInit().initBlock()),
+            "nested closure resolves later function's module-init allocation");
+        SemanticOp laterClosure = ofKind(ops, SemanticOpKind.CLOSURE_NEW).stream()
+            .filter(o -> ops.stream().anyMatch(load -> load.payload() instanceof KindPayload.BindingLoadPayload p
+                && p.binding().equals(later) && o.result().equals(load.result())))
+            .findFirst().orElseThrow();
+        check(indexOf(ops, moduleGroups.get(0).opId()) < indexOf(ops, laterClosure.opId()),
+            "group precedes later closure, whose identity is reused by hoisted load");
+        SemanticLowerer.GroupCoreResult second = lowerGroups(source);
+        check(!second.lowering().hasErrors()
+                && Arrays.equals(SemanticIrDumper.dumpModule(unit),
+                    SemanticIrDumper.dumpModule(second.lowering().unit())),
+            "independent group lowerings produce identical dumps");
+        SemanticLowerer.GroupCoreResult foreign = lowerGroups("""
+            function f(): null { g(); }
+            function g(): null { let fRef: () => null = f; }
+            """);
+        check(foreign.lowering().unit() == null && foreign.lowering().hasErrors()
+                && foreign.lowering().diagnostics().get(0).code().equals("E6005")
+                && foreign.lowering().diagnostics().get(0).message().contains(SemanticLowerer.CONSTRUCT_UNLOWERED),
+            "group member unsupported call fails closed");
+        CheckedSlice slice = checkSlice(source);
+        SemanticLowerer.GroupCoreResult legacy = SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
+            SemanticProfile.LEGACY_SAFE_INT, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(MODULE)));
+        check(legacy.lowering().unit() == null && legacy.lowering().hasErrors()
+                && legacy.lowering().diagnostics().get(0).code().equals("E6005")
+                && legacy.lowering().diagnostics().get(0).message().contains(SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
+            "group entry rejects legacy profile");
+    }
+
     public static void main(String[] args) {
         System.out.println("=== Closure Lowering Test (ISSUE-0445 closure child) ===\n");
 
@@ -1560,6 +1753,7 @@ public class ClosureLoweringTest {
         testDeterminism(hoistedSlice, hoisted);
         testFailClosedNegatives();
         testDeclarationDescriptorOrigins();
+        testRecursiveGroups();
 
         System.out.println("\nClosure lowering: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {

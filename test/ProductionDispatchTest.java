@@ -46,6 +46,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1087,8 +1088,7 @@ public class ProductionDispatchTest {
      * The running distribution's classpath entries resolved against the
      * test process's working directory: the emitted-artifact toolchain
      * runs in an isolated workspace, so a relative entry would not
-     * resolve there (the same pinned form as
-     * {@code JvmProductionProjectEmissionTest.absoluteClasspath}).
+     * resolve there.
      */
     private static String absoluteClasspath() {
         StringBuilder resolved = new StringBuilder();
@@ -1498,97 +1498,119 @@ public class ProductionDispatchTest {
      * declaration range, and one import-order-independent provider
      * digest — never the private sibling's plan.
      */
-    private static void testProductionSameNameSiblingCollision()
+    private record CollisionCase(String name, String irSource, String codecSource,
+            List<String> entries, boolean plan, boolean codecPlan, boolean runtime,
+            boolean wrap, boolean execute) {
+    }
+
+    private static Map<String, String> checkCollision(CollisionCase scenario)
             throws Exception {
-        System.out.println("-- production invocation: a non-exported"
-            + " same-name sibling class never becomes the provider (both"
-            + " import orders; exact resource and digest) --");
-
-        Path root = Files.createTempDirectory("production-collision-");
+        Path root = Files.createTempDirectory("production-" + scenario.name() + "-");
         try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", COLLISION_IR_SOURCE);
-            write(root, "src/m/codec.deal", COLLISION_CODEC_SOURCE);
-            write(root, "src/main.deal", COLLISION_MAIN_CODEC_FIRST);
-            write(root, "src/main_ir_first.deal",
-                COLLISION_MAIN_IR_FIRST);
-
-            String codecFirstDigest = null;
-            String codecFirstCodecDigest = null;
-            for (String entry : List.of("src/main.deal",
-                    "src/main_ir_first.deal")) {
-                String label = entry.contains("ir_first") ? "ir-first"
-                    : "codec-first";
-                boolean irFirst = label.equals("ir-first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label + " collision"
-                    + " compile succeeds through the production"
-                    + " invocation: " + compile.orchestrator()
-                        .diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                check(mainUri != null && irUri != null
-                        && codecUri != null, "the " + label + " collision"
-                    + " compile exposes every module identity");
-                if (mainUri == null || irUri == null || codecUri == null) {
-                    continue;
-                }
-                DiagnosticRange irDeclaration = classDeclarationRange(
-                    COLLISION_IR_SOURCE, irUri.substring("file://"
-                        .length()), "Ir");
-                DiagnosticRange privateIrDeclaration =
-                    classDeclarationRange(COLLISION_CODEC_SOURCE,
-                        codecUri.substring("file://".length()), "Ir");
-                check(irDeclaration != null
-                        && privateIrDeclaration != null,
-                    "the collision control resolves both sibling Ir"
-                        + " declaration ranges");
-                if (irDeclaration == null
-                        || privateIrDeclaration == null) {
-                    continue;
-                }
-
-                String irDigest = checkClassDefaultResource(orchestrator,
-                    label, mainUri, irUri, "ir", "Ir", irDeclaration,
-                    privateIrDeclaration);
-                String codecDigest = checkClassDefaultResource(
-                    orchestrator, label, mainUri, codecUri, "codec",
-                    "Codec", classDeclarationRange(COLLISION_CODEC_SOURCE,
-                        codecUri.substring("file://".length()), "Codec"),
-                    privateIrDeclaration);
-                if (irFirst) {
-                    checkEq(codecFirstDigest, irDigest, "the Ir provider"
-                        + " digest is import-order independent");
-                    checkEq(codecFirstCodecDigest, codecDigest, "the Codec"
-                        + " provider digest is import-order independent");
-                } else {
-                    codecFirstDigest = irDigest;
-                    codecFirstCodecDigest = codecDigest;
-                }
-            }
+            return checkCollision(scenario, root);
         } finally {
             deleteRecursively(root);
         }
+    }
+
+    private static Map<String, String> checkCollision(CollisionCase scenario, Path root)
+            throws Exception {
+        Map<String, String> firstDigests = new LinkedHashMap<>();
+        write(root, "deal.json", DEAL_JSON_JS);
+        write(root, "src/m/ir.deal", scenario.irSource());
+        write(root, "src/m/codec.deal", scenario.codecSource());
+        for (int i = 0; i < scenario.entries().size(); i++) {
+            String stem = i == 0 ? "main" : "main_ir_first";
+            String entry = "src/" + stem + ".deal";
+            String label = scenario.name() + (i == 0 ? " codec-first" : " ir-first");
+            write(root, entry, scenario.entries().get(i));
+            ArmCompile compile = compileWithInvocation(root, entry, productionInvocation());
+            check(compile.success(), label + " compiles: " + compile.orchestrator().diagnostics());
+            if (!compile.success()) {
+                continue;
+            }
+            CompilationOrchestrator orchestrator = compile.orchestrator();
+            String mainUri = serializerModuleUri(orchestrator, "/" + entry);
+            String irUri = serializerModuleUri(orchestrator, "/src/m/ir.deal");
+            String codecUri = serializerModuleUri(orchestrator, "/src/m/codec.deal");
+            check(mainUri != null && irUri != null && codecUri != null,
+                label + " exposes every module identity");
+            if (mainUri == null || irUri == null || codecUri == null) {
+                continue;
+            }
+            DiagnosticRange ir = classDeclarationRange(scenario.irSource(),
+                irUri.substring("file://".length()), "Ir");
+            DiagnosticRange sibling = classDeclarationRange(scenario.codecSource(),
+                codecUri.substring("file://".length()), "Ir");
+            check(ir != null && sibling != null, label + " resolves both sibling ranges");
+            if (ir == null || sibling == null) {
+                continue;
+            }
+            Map<String, String> digests = new LinkedHashMap<>();
+            if (scenario.plan()) {
+                digests.put("Ir plan", checkClassDefaultResource(orchestrator, label,
+                    mainUri, irUri, "ir", "Ir", ir, sibling));
+            }
+            if (scenario.codecPlan()) {
+                DiagnosticRange codec = classDeclarationRange(scenario.codecSource(),
+                    codecUri.substring("file://".length()), "Codec");
+                check(codec != null, label + " resolves Codec range");
+                digests.put("Codec plan", checkClassDefaultResource(orchestrator, label,
+                    mainUri, codecUri, "codec", "Codec", codec, sibling));
+            }
+            if (scenario.runtime()) {
+                String digest = checkCollisionRuntimeEdge(orchestrator, label, mainUri,
+                    irUri, "Ir", ir, sibling);
+                digests.put("Ir runtime", digest);
+                if (scenario.plan()) {
+                    checkEq(digests.get("Ir plan"), digest,
+                        label + " runtime and plan name the same provider digest");
+                }
+            }
+            if (scenario.wrap()) {
+                DiagnosticRange wrap = classDeclarationRange(scenario.irSource(),
+                    irUri.substring("file://".length()), "Wrap");
+                check(wrap != null, label + " resolves Wrap range");
+                digests.put("Wrap runtime", checkCollisionRuntimeEdge(orchestrator,
+                    label, mainUri, irUri, "Wrap", wrap, null));
+            }
+            if (i == 0) {
+                firstDigests.putAll(digests);
+            } else {
+                checkEq(firstDigests, digests, label + " provider digests are import-order independent");
+            }
+            if (scenario.execute()) {
+                checkJsArtifactRun(label, root.resolve("out"), stem + ".js");
+            }
+        }
+        return firstDigests;
+    }
+
+    private static String checkCollisionRuntimeEdge(CompilationOrchestrator orchestrator,
+            String label, String mainUri, String providerUri, String className,
+            DiagnosticRange declaration, DiagnosticRange forbidden) {
+        List<RuntimeImportDependency> edges = classEdges(orchestrator, mainUri,
+            className, RuntimeImportDependency.Reason.RUNTIME_USE);
+        checkEq(1, edges.size(), label + " exactly one ordinary " + className + " edge");
+        if (edges.size() != 1) {
+            return null;
+        }
+        RuntimeImportDependency edge = edges.get(0);
+        checkEq(providerUri, edge.toSemanticModuleIdentity().canonicalResolvedSourceUri(),
+            label + " " + className + " declaring provider");
+        checkEq("ir", edge.importAlias(), label + " " + className + " spelled alias");
+        DiagnosticRange actual = edge.semanticResourceIdentity()
+            .lexicalDeclarationIdentity().sourceScalarRange();
+        checkEq(declaration, actual, label + " " + className + " exact declaration range");
+        check(!actual.equals(forbidden), label + " " + className + " excludes sibling");
+        check(edge.providerContractDigest() != null && !edge.providerContractDigest().isEmpty(),
+            label + " " + className + " nonempty provider digest");
+        return edge.providerContractDigest();
+    }
+
+    private static void testProductionSameNameSiblingCollision() throws Exception {
+        checkCollision(new CollisionCase("same-name", COLLISION_IR_SOURCE, COLLISION_CODEC_SOURCE,
+            List.of(COLLISION_MAIN_CODEC_FIRST, COLLISION_MAIN_IR_FIRST), true, true, false, false, false));
     }
 
     /**
@@ -1601,180 +1623,19 @@ public class ProductionDispatchTest {
      * must construct that provider's class (the demanded default 7 is
      * observable on stdout, never the sibling's 93).
      */
-    private static void testProductionContextualCallSiblingCollision()
-            throws Exception {
-        System.out.println("-- production invocation: the resolved imported"
-            + " callee's parameter context owns the class literal (both"
-            + " import orders; exact provider, digest, and artifact"
-            + " outcome) --");
-
+    private static void testProductionContextualCallSiblingCollision() throws Exception {
         Path root = Files.createTempDirectory("production-contextual-");
         try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", CONTEXTUAL_IR_SOURCE);
-            write(root, "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE);
-            write(root, "src/main.deal", CONTEXTUAL_MAIN_CODEC_FIRST);
-            write(root, "src/main_ir_first.deal",
-                CONTEXTUAL_MAIN_IR_FIRST);
-            write(root, "src/main_body.deal",
-                CONTEXTUAL_BODY_CODEC_FIRST);
-            write(root, "src/main_body_ir_first.deal",
-                CONTEXTUAL_BODY_IR_FIRST);
-
-            String codecFirstDigest = null;
-            String codecFirstCodecDigest = null;
-            for (String entry : List.of("src/main.deal",
-                    "src/main_ir_first.deal")) {
-                String label = entry.contains("ir_first") ? "ir-first"
-                    : "codec-first";
-                boolean irFirst = label.equals("ir-first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label + " contextual"
-                    + " collision compile succeeds through the production"
-                    + " invocation: " + compile.orchestrator()
-                        .diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                check(mainUri != null && irUri != null
-                        && codecUri != null, "the " + label
-                    + " contextual collision compile exposes every module"
-                    + " identity");
-                if (mainUri == null || irUri == null || codecUri == null) {
-                    continue;
-                }
-                DiagnosticRange irDeclaration = classDeclarationRange(
-                    CONTEXTUAL_IR_SOURCE, irUri.substring("file://"
-                        .length()), "Ir");
-                DiagnosticRange codecIrDeclaration = classDeclarationRange(
-                    CONTEXTUAL_CODEC_SOURCE, codecUri.substring("file://"
-                        .length()), "Ir");
-                check(irDeclaration != null
-                        && codecIrDeclaration != null,
-                    "the contextual collision resolves both sibling Ir"
-                        + " declaration ranges");
-                if (irDeclaration == null || codecIrDeclaration == null) {
-                    continue;
-                }
-
-                String irDigest = checkClassDefaultResource(orchestrator,
-                    label, mainUri, irUri, "ir", "Ir", irDeclaration,
-                    codecIrDeclaration);
-                String codecDigest = checkClassDefaultResource(
-                    orchestrator, label, mainUri, codecUri, "codec",
-                    "Codec", classDeclarationRange(CONTEXTUAL_CODEC_SOURCE,
-                        codecUri.substring("file://".length()), "Codec"),
-                    codecIrDeclaration);
-                if (irFirst) {
-                    checkEq(codecFirstDigest, irDigest, "the contextual Ir"
-                        + " provider digest is import-order independent");
-                    checkEq(codecFirstCodecDigest, codecDigest, "the"
-                        + " contextual Codec provider digest is"
-                        + " import-order independent");
-                } else {
-                    codecFirstDigest = irDigest;
-                    codecFirstCodecDigest = codecDigest;
-                }
-
-                // The published artifact constructs the recorded
-                // provider's class: the demanded default (7) is the
-                // observable outcome, never the sibling's (93).
-                checkJsArtifactRun(label, root.resolve("out"),
-                    irFirst ? "main_ir_first.js" : "main.js");
-            }
-
-            // The same collision with the construction in a function body
-            // (the original reproducer's shape): the ordinary runtime-use
-            // edge and the emitted construction must target the resolved
-            // callee's declaring module in both import orders.
-            String bodyCodecFirstDigest = null;
-            for (String entry : List.of("src/main_body.deal",
-                    "src/main_body_ir_first.deal")) {
-                String label = entry.contains("ir_first")
-                    ? "body ir-first" : "body codec-first";
-                boolean irFirst = entry.contains("ir_first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label + " contextual"
-                    + " collision compile succeeds through the production"
-                    + " invocation: " + compile.orchestrator()
-                        .diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                DiagnosticRange irDeclaration = mainUri == null
-                        || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(CONTEXTUAL_IR_SOURCE,
-                        irUri.substring("file://".length()), "Ir");
-                check(irDeclaration != null, "the " + label
-                    + " collision resolves the declaring declaration"
-                    + " range");
-                if (irDeclaration == null) {
-                    continue;
-                }
-                List<RuntimeImportDependency> edges = classEdges(
-                    orchestrator, mainUri, "Ir",
-                    RuntimeImportDependency.Reason.RUNTIME_USE);
-                checkEq(1, edges.size(), "the " + label + " completed"
-                    + " graph holds exactly one ordinary Ir edge");
-                if (edges.size() != 1) {
-                    continue;
-                }
-                RuntimeImportDependency edge = edges.get(0);
-                checkEq(irUri, edge.toSemanticModuleIdentity()
-                        .canonicalResolvedSourceUri(), "the " + label
-                    + " ordinary Ir edge targets the declaring module");
-                checkEq("ir", edge.importAlias(), "the " + label
-                    + " ordinary Ir edge keeps the spelled alias");
-                checkEq(irDeclaration, edge.semanticResourceIdentity()
-                        .lexicalDeclarationIdentity().sourceScalarRange(),
-                    "the " + label + " ordinary Ir edge carries the exact"
-                        + " defining declaration range");
-                if (irFirst) {
-                    checkEq(bodyCodecFirstDigest,
-                        edge.providerContractDigest(), "the " + label
-                        + " ordinary Ir provider digest is import-order"
-                        + " independent");
-                } else {
-                    bodyCodecFirstDigest = edge.providerContractDigest();
-                    checkEq(codecFirstDigest, bodyCodecFirstDigest,
-                        "the body-walk Ir provider digest equals the"
-                            + " plan-default digest of the same provider");
-                }
-
-                // The published artifact constructs the recorded
-                // provider's class: the demanded default (7) is the
-                // observable outcome, never the sibling's (93).
-                checkJsArtifactRun(label, root.resolve("out"),
-                    irFirst ? "main_body_ir_first.js" : "main_body.js");
-            }
+            Map<String, String> plan = checkCollision(new CollisionCase("contextual",
+                CONTEXTUAL_IR_SOURCE, CONTEXTUAL_CODEC_SOURCE,
+                List.of(CONTEXTUAL_MAIN_CODEC_FIRST, CONTEXTUAL_MAIN_IR_FIRST),
+                true, true, false, false, true), root);
+            Map<String, String> body = checkCollision(new CollisionCase("contextual-body",
+                CONTEXTUAL_IR_SOURCE, CONTEXTUAL_CODEC_SOURCE,
+                List.of(CONTEXTUAL_BODY_CODEC_FIRST, CONTEXTUAL_BODY_IR_FIRST),
+                false, false, true, false, true), root);
+            checkEq(plan.get("Ir plan"), body.get("Ir runtime"),
+                "contextual body and plan use the same provider digest");
         } finally {
             deleteRecursively(root);
         }
@@ -1788,125 +1649,10 @@ public class ProductionDispatchTest {
      * completed ordinary walk and the published artifact must follow
      * the nested declaration's provider in both import orders.
      */
-    private static void testProductionShadowedLocalCalleeCollision()
-            throws Exception {
-        System.out.println("-- production invocation: a nested callee"
-            + " declaration shadows the module function (both import"
-            + " orders; exact provider, declaration, and artifact"
-            + " outcome) --");
-
-        Path root = Files.createTempDirectory("production-shadowed-");
-        try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", CONTEXTUAL_IR_SOURCE);
-            write(root, "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE);
-            write(root, "src/main.deal", SHADOWED_CALLEE_CODEC_FIRST);
-            write(root, "src/main_ir_first.deal",
-                SHADOWED_CALLEE_IR_FIRST);
-
-            String codecFirstDigest = null;
-            for (String entry : List.of("src/main.deal",
-                    "src/main_ir_first.deal")) {
-                String label = entry.contains("ir_first") ? "ir-first"
-                    : "codec-first";
-                boolean irFirst = label.equals("ir-first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label
-                    + " shadowed-callee collision compile succeeds"
-                    + " through the production invocation: "
-                    + compile.orchestrator().diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                check(mainUri != null && irUri != null
-                        && codecUri != null, "the " + label
-                    + " shadowed-callee collision exposes every module"
-                    + " identity");
-                if (mainUri == null || irUri == null
-                        || codecUri == null) {
-                    continue;
-                }
-                DiagnosticRange irDeclaration = classDeclarationRange(
-                    CONTEXTUAL_IR_SOURCE,
-                    irUri.substring("file://".length()), "Ir");
-                DiagnosticRange codecIrDeclaration =
-                    classDeclarationRange(CONTEXTUAL_CODEC_SOURCE,
-                        codecUri.substring("file://".length()), "Ir");
-                check(irDeclaration != null
-                        && codecIrDeclaration != null, "the " + label
-                    + " shadowed-callee collision resolves both sibling"
-                    + " Ir declaration ranges");
-                if (irDeclaration == null
-                        || codecIrDeclaration == null) {
-                    continue;
-                }
-
-                // The nested declaration's parameter context owns the
-                // literal: the ordinary walk's occurrence and its
-                // runtime-use edge name the nested provider's exact
-                // declaration, never the top-level declaration's
-                // sibling provider.
-                List<RuntimeImportDependency> edges = classEdges(
-                    orchestrator, mainUri, "Ir",
-                    RuntimeImportDependency.Reason.RUNTIME_USE);
-                checkEq(1, edges.size(), "the " + label + " completed"
-                    + " graph holds exactly one ordinary Ir edge");
-                if (edges.size() != 1) {
-                    continue;
-                }
-                RuntimeImportDependency edge = edges.get(0);
-                checkEq(irUri, edge.toSemanticModuleIdentity()
-                        .canonicalResolvedSourceUri(), "the " + label
-                    + " ordinary Ir edge targets the nested declaration's"
-                    + " declaring module");
-                checkEq("ir", edge.importAlias(), "the " + label
-                    + " ordinary Ir edge keeps the spelled alias");
-                checkEq(irDeclaration, edge.semanticResourceIdentity()
-                        .lexicalDeclarationIdentity().sourceScalarRange(),
-                    "the " + label + " ordinary Ir edge carries the exact"
-                        + " nested declaration range");
-                check(!codecIrDeclaration.equals(edge
-                        .semanticResourceIdentity()
-                        .lexicalDeclarationIdentity().sourceScalarRange()),
-                    "the " + label + " ordinary Ir edge never binds the"
-                        + " top-level declaration's sibling provider");
-                if (irFirst) {
-                    checkEq(codecFirstDigest,
-                        edge.providerContractDigest(), "the " + label
-                        + " ordinary Ir provider digest is import-order"
-                        + " independent");
-                } else {
-                    codecFirstDigest = edge.providerContractDigest();
-                }
-
-                // The published artifact constructs the recorded
-                // provider's class: the demanded default (7) is the
-                // observable outcome, never the sibling's (93).
-                checkJsArtifactRun(label, root.resolve("out"),
-                    irFirst ? "main_ir_first.js" : "main.js");
-            }
-        } finally {
-            deleteRecursively(root);
-        }
+    private static void testProductionShadowedLocalCalleeCollision() throws Exception {
+        checkCollision(new CollisionCase("shadowed-callee", CONTEXTUAL_IR_SOURCE,
+            CONTEXTUAL_CODEC_SOURCE, List.of(SHADOWED_CALLEE_CODEC_FIRST, SHADOWED_CALLEE_IR_FIRST),
+            false, false, true, false, true));
     }
 
     /**
@@ -1917,70 +1663,9 @@ public class ProductionDispatchTest {
      * provider. The completed plan, its digest, and the published
      * artifact's construction must all name that provider.
      */
-    private static void testProductionNestedSiblingCollision()
-            throws Exception {
-        System.out.println("-- production invocation: a nested literal of an"
-            + " imported class keeps the declaring program's field provider"
-            + " --");
-
-        Path root = Files.createTempDirectory("production-nested-");
-        try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", NESTED_IR_SOURCE);
-            write(root, "src/m/codec.deal", NESTED_CODEC_SOURCE);
-            write(root, "src/main.deal", NESTED_MAIN_CODEC_FIRST);
-
-            ArmCompile compile = compileWithInvocation(root,
-                "src/main.deal", productionInvocation());
-            check(compile.success(), "the nested collision compile"
-                + " succeeds through the production invocation: "
-                + compile.orchestrator().diagnostics());
-            if (compile.success()) {
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/src/main.deal");
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                DiagnosticRange irDeclaration = classDeclarationRange(
-                    NESTED_IR_SOURCE, irUri.substring("file://".length()),
-                    "Ir");
-                DiagnosticRange codecIrDeclaration = classDeclarationRange(
-                    NESTED_CODEC_SOURCE, codecUri.substring("file://"
-                        .length()), "Ir");
-                check(mainUri != null && irUri != null
-                        && codecUri != null && irDeclaration != null
-                        && codecIrDeclaration != null,
-                    "the nested collision resolves every module identity"
-                        + " and declaration range");
-                if (mainUri != null && irUri != null && codecUri != null
-                        && irDeclaration != null
-                        && codecIrDeclaration != null) {
-                    checkClassDefaultResource(orchestrator, "codec-first",
-                        mainUri, irUri, "ir", "Ir", irDeclaration,
-                        codecIrDeclaration);
-                }
-                // The published artifact constructs the inner Ir of the
-                // declaring program: the demanded default (7) is the
-                // observable outcome, never the sibling's (93).
-                checkSiblingJsRun("the nested collision",
-                    root.resolve("out"));
-            }
-        } finally {
-            deleteRecursively(root);
-        }
+    private static void testProductionNestedSiblingCollision() throws Exception {
+        checkCollision(new CollisionCase("nested", NESTED_IR_SOURCE, NESTED_CODEC_SOURCE,
+            List.of(NESTED_MAIN_CODEC_FIRST), true, false, false, false, true));
     }
 
     /**
@@ -1991,129 +1676,9 @@ public class ProductionDispatchTest {
      * declaration names — one import-order-independent digest — and the
      * published artifact must print the demanded default (7).
      */
-    private static void testProductionDeclaredContextSiblingCollision()
-            throws Exception {
-        System.out.println("-- production invocation: declared return types,"
-            + " array annotations, and assignment targets keep their"
-            + " provider (both import orders; exact resource and digest)"
-            + " --");
-
-        Path root = Files.createTempDirectory(
-            "production-declared-context-");
-        try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", RETURN_IR_SOURCE);
-            write(root, "src/m/codec.deal", RETURN_CODEC_SOURCE);
-            write(root, "src/main.deal", RETURN_MAIN_CODEC_FIRST);
-            write(root, "src/main_ir_first.deal", RETURN_MAIN_IR_FIRST);
-
-            String codecFirstDigest = null;
-            String codecFirstCodecDigest = null;
-            for (String entry : List.of("src/main.deal",
-                    "src/main_ir_first.deal")) {
-                String label = entry.contains("ir_first") ? "ir-first"
-                    : "codec-first";
-                boolean irFirst = label.equals("ir-first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label + " declared-"
-                    + "context collision compile succeeds through the"
-                    + " production invocation: " + compile.orchestrator()
-                        .diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                DiagnosticRange irDeclaration = classDeclarationRange(
-                    RETURN_IR_SOURCE, irUri.substring("file://".length()),
-                    "Ir");
-                DiagnosticRange codecIrDeclaration = classDeclarationRange(
-                    RETURN_CODEC_SOURCE, codecUri.substring("file://"
-                        .length()), "Ir");
-                check(mainUri != null && irUri != null && codecUri != null
-                        && irDeclaration != null
-                        && codecIrDeclaration != null,
-                    "the " + label + " declared-context collision resolves"
-                        + " every module identity and declaration range");
-                if (mainUri == null || irUri == null || codecUri == null
-                        || irDeclaration == null
-                        || codecIrDeclaration == null) {
-                    continue;
-                }
-                String irDigest = checkClassDefaultResource(orchestrator,
-                    label, mainUri, irUri, "ir", "Ir", irDeclaration,
-                    codecIrDeclaration);
-                String codecDigest = checkClassDefaultResource(
-                    orchestrator, label, mainUri, codecUri, "codec",
-                    "Codec", classDeclarationRange(RETURN_CODEC_SOURCE,
-                        codecUri.substring("file://".length()),
-                        "Codec"), codecIrDeclaration);
-                // The body literals (the returned literal, the
-                // assignment value, and the array element) are the
-                // ordinary walk's runtime demands: exactly one edge, on
-                // the declared provider, with the exact defining range
-                // and the same provider digest as the plan route.
-                List<RuntimeImportDependency> bodyEdges = classEdges(
-                    orchestrator, mainUri, "Ir",
-                    RuntimeImportDependency.Reason.RUNTIME_USE);
-                checkEq(1, bodyEdges.size(), "the " + label + " body"
-                    + " walk holds exactly one ordinary Ir edge");
-                if (bodyEdges.size() == 1) {
-                    RuntimeImportDependency edge = bodyEdges.get(0);
-                    checkEq(irUri, edge.toSemanticModuleIdentity()
-                        .canonicalResolvedSourceUri(), "the " + label
-                        + " ordinary Ir edge targets the declaring"
-                        + " module");
-                    checkEq("ir", edge.importAlias(), "the " + label
-                        + " ordinary Ir edge keeps the spelled alias");
-                    checkEq(irDeclaration, edge.semanticResourceIdentity()
-                        .lexicalDeclarationIdentity()
-                        .sourceScalarRange(), "the " + label
-                        + " ordinary Ir edge carries the exact defining"
-                        + " declaration range");
-                    checkEq(irDigest, edge.providerContractDigest(),
-                        "the " + label + " body-walk Ir provider digest"
-                            + " equals the plan-default digest of the"
-                            + " same provider");
-                }
-                if (irFirst) {
-                    checkEq(codecFirstDigest, irDigest, "the declared-"
-                        + "context Ir provider digest is import-order"
-                        + " independent");
-                    checkEq(codecFirstCodecDigest, codecDigest, "the"
-                        + " declared-context Codec provider digest is"
-                        + " import-order independent");
-                } else {
-                    codecFirstDigest = irDigest;
-                    codecFirstCodecDigest = codecDigest;
-                }
-
-                // The published artifact constructs only the named
-                // provider's class: the demanded default (7) is the
-                // observable outcome of every literal shape.
-                checkJsArtifactRun(label, root.resolve("out"),
-                    irFirst ? "main_ir_first.js" : "main.js");
-            }
-        } finally {
-            deleteRecursively(root);
-        }
+    private static void testProductionDeclaredContextSiblingCollision() throws Exception {
+        checkCollision(new CollisionCase("declared-context", RETURN_IR_SOURCE, RETURN_CODEC_SOURCE,
+            List.of(RETURN_MAIN_CODEC_FIRST, RETURN_MAIN_IR_FIRST), true, true, true, false, true));
     }
 
     /**
@@ -2126,254 +1691,15 @@ public class ProductionDispatchTest {
      * import-order independent, and the published artifact prints the
      * demanded default value.
      */
-    private static void testProductionIdentifierAssignmentCollision()
-            throws Exception {
-        System.out.println("-- production invocation: an identifier"
-            + " assignment keeps the target binding's declared provider"
-            + " (both import orders; exact resource, digest, and artifact"
-            + " outcome) --");
-
-        Path root = Files.createTempDirectory("production-assignment-");
-        try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", ASSIGN_IR_SOURCE);
-            write(root, "src/m/codec.deal", ASSIGN_CODEC_SOURCE);
-            write(root, "src/main.deal", ASSIGN_MAIN_CODEC_FIRST);
-            write(root, "src/main_ir_first.deal", ASSIGN_MAIN_IR_FIRST);
-
-            String codecFirstDigest = null;
-            for (String entry : List.of("src/main.deal",
-                    "src/main_ir_first.deal")) {
-                String label = entry.contains("ir_first") ? "ir-first"
-                    : "codec-first";
-                boolean irFirst = label.equals("ir-first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label + " assignment"
-                    + " collision compile succeeds through the production"
-                    + " invocation: " + compile.orchestrator()
-                        .diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                DiagnosticRange irDeclaration = mainUri == null
-                        || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(ASSIGN_IR_SOURCE,
-                        irUri.substring("file://".length()), "Ir");
-                DiagnosticRange codecIrDeclaration = mainUri == null
-                        || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(ASSIGN_CODEC_SOURCE,
-                        codecUri.substring("file://".length()), "Ir");
-                check(mainUri != null && irUri != null && codecUri != null
-                        && irDeclaration != null
-                        && codecIrDeclaration != null,
-                    "the " + label + " assignment collision resolves every"
-                        + " module identity and declaration range");
-                if (mainUri == null || irUri == null || codecUri == null
-                        || irDeclaration == null
-                        || codecIrDeclaration == null) {
-                    continue;
-                }
-                // The assignment literal, the parameter assignment, and
-                // the call argument are the ordinary walk's runtime
-                // demands: exactly one edge, on the declaring provider,
-                // with the exact defining range and digest — never the
-                // identity-equal sibling.
-                List<RuntimeImportDependency> edges = classEdges(
-                    orchestrator, mainUri, "Ir",
-                    RuntimeImportDependency.Reason.RUNTIME_USE);
-                checkEq(1, edges.size(), "the " + label + " assignment"
-                    + " walk holds exactly one ordinary Ir edge");
-                if (edges.size() != 1) {
-                    continue;
-                }
-                RuntimeImportDependency edge = edges.get(0);
-                checkEq(irUri, edge.toSemanticModuleIdentity()
-                    .canonicalResolvedSourceUri(), "the " + label
-                    + " ordinary Ir edge targets the declaring module");
-                checkEq("ir", edge.importAlias(), "the " + label
-                    + " ordinary Ir edge keeps the spelled alias");
-                checkEq(irDeclaration, edge.semanticResourceIdentity()
-                    .lexicalDeclarationIdentity().sourceScalarRange(),
-                    "the " + label + " ordinary Ir edge carries the exact"
-                        + " defining declaration range");
-                check(!edge.semanticResourceIdentity()
-                    .lexicalDeclarationIdentity().sourceScalarRange()
-                    .equals(codecIrDeclaration), "the " + label
-                    + " ordinary Ir edge never binds the sibling"
-                    + " declaration");
-                if (irFirst) {
-                    checkEq(codecFirstDigest, edge.providerContractDigest(),
-                        "the assignment Ir provider digest is"
-                            + " import-order independent");
-                } else {
-                    codecFirstDigest = edge.providerContractDigest();
-                }
-
-                // The published artifact constructs the binding's own
-                // provider: the demanded default (7) is the observable
-                // outcome of the assignment literal and the parameter
-                // assignment alike, never the sibling's (93).
-                checkJsArtifactRun(label, root.resolve("out"),
-                    irFirst ? "main_ir_first.js" : "main.js");
-            }
-        } finally {
-            deleteRecursively(root);
-        }
+    private static void testProductionIdentifierAssignmentCollision() throws Exception {
+        checkCollision(new CollisionCase("identifier-assignment", ASSIGN_IR_SOURCE, ASSIGN_CODEC_SOURCE,
+            List.of(ASSIGN_MAIN_CODEC_FIRST, ASSIGN_MAIN_IR_FIRST), false, false, true, false, true));
     }
 
-    private static void testProductionMemberAssignmentCollision()
-            throws Exception {
-        System.out.println("-- production invocation: a member assignment"
-            + " keeps the owner binding's exact field provider (both"
-            + " import orders; exact resource, digest, and artifact"
-            + " outcome) --");
-
-        Path root = Files.createTempDirectory("production-member-");
-        try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", ASSIGN_MEMBER_IR_SOURCE);
-            write(root, "src/m/codec.deal", ASSIGN_MEMBER_CODEC_SOURCE);
-            write(root, "src/main.deal", ASSIGN_MEMBER_MAIN_CODEC_FIRST);
-            write(root, "src/main_ir_first.deal",
-                ASSIGN_MEMBER_MAIN_IR_FIRST);
-
-            String codecFirstDigest = null;
-            for (String entry : List.of("src/main.deal",
-                    "src/main_ir_first.deal")) {
-                String label = entry.contains("ir_first") ? "ir-first"
-                    : "codec-first";
-                boolean irFirst = label.equals("ir-first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label + " member"
-                    + " collision compile succeeds through the production"
-                    + " invocation: " + compile.orchestrator()
-                        .diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                DiagnosticRange irDeclaration = mainUri == null
-                        || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(ASSIGN_MEMBER_IR_SOURCE,
-                        irUri.substring("file://".length()), "Ir");
-                DiagnosticRange codecIrDeclaration = mainUri == null
-                        || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(ASSIGN_MEMBER_CODEC_SOURCE,
-                        codecUri.substring("file://".length()), "Ir");
-                DiagnosticRange irWrapDeclaration = mainUri == null
-                        || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(ASSIGN_MEMBER_IR_SOURCE,
-                        irUri.substring("file://".length()), "Wrap");
-                check(mainUri != null && irUri != null && codecUri != null
-                        && irDeclaration != null
-                        && codecIrDeclaration != null
-                        && irWrapDeclaration != null,
-                    "the " + label + " member collision resolves every"
-                        + " module identity and declaration range");
-                if (mainUri == null || irUri == null || codecUri == null
-                        || irDeclaration == null
-                        || codecIrDeclaration == null
-                        || irWrapDeclaration == null) {
-                    continue;
-                }
-                // The assigned literals of every owner shape are the
-                // ordinary walk's runtime demands: exactly one edge on
-                // the declaring provider with the exact defining range
-                // and digest — never the identity-equal sibling.
-                List<RuntimeImportDependency> edges = classEdges(
-                    orchestrator, mainUri, "Ir",
-                    RuntimeImportDependency.Reason.RUNTIME_USE);
-                checkEq(1, edges.size(), "the " + label + " member"
-                    + " assignment walk holds exactly one ordinary Ir"
-                    + " edge");
-                List<RuntimeImportDependency> wrapEdges = classEdges(
-                    orchestrator, mainUri, "Wrap",
-                    RuntimeImportDependency.Reason.RUNTIME_USE);
-                checkEq(1, wrapEdges.size(), "the " + label + " member"
-                    + " assignment walk holds exactly one ordinary Wrap"
-                    + " edge");
-                if (edges.size() != 1 || wrapEdges.size() != 1) {
-                    continue;
-                }
-                RuntimeImportDependency edge = edges.get(0);
-                checkEq(irUri, edge.toSemanticModuleIdentity()
-                    .canonicalResolvedSourceUri(), "the " + label
-                    + " ordinary Ir edge targets the declaring module");
-                checkEq("ir", edge.importAlias(), "the " + label
-                    + " ordinary Ir edge keeps the spelled alias");
-                checkEq(irDeclaration, edge.semanticResourceIdentity()
-                    .lexicalDeclarationIdentity().sourceScalarRange(),
-                    "the " + label + " ordinary Ir edge carries the exact"
-                        + " defining declaration range");
-                check(!edge.semanticResourceIdentity()
-                    .lexicalDeclarationIdentity().sourceScalarRange()
-                    .equals(codecIrDeclaration), "the " + label
-                    + " ordinary Ir edge never binds the sibling"
-                    + " declaration");
-                RuntimeImportDependency wrapEdge = wrapEdges.get(0);
-                checkEq(irUri, wrapEdge.toSemanticModuleIdentity()
-                    .canonicalResolvedSourceUri(), "the " + label
-                    + " ordinary Wrap edge targets the declaring module");
-                checkEq("ir", wrapEdge.importAlias(), "the " + label
-                    + " ordinary Wrap edge keeps the spelled alias");
-                checkEq(irWrapDeclaration, wrapEdge.semanticResourceIdentity()
-                    .lexicalDeclarationIdentity().sourceScalarRange(),
-                    "the " + label + " ordinary Wrap edge carries the"
-                        + " exact defining declaration range");
-                if (irFirst) {
-                    checkEq(codecFirstDigest, edge.providerContractDigest(),
-                        "the member-assignment Ir provider digest is"
-                            + " import-order independent");
-                } else {
-                    codecFirstDigest = edge.providerContractDigest();
-                }
-
-                // The published artifact constructs every owner shape's
-                // own provider: the demanded default (7), never the
-                // sibling's (93).
-                checkJsArtifactRun(label, root.resolve("out"),
-                    irFirst ? "main_ir_first.js" : "main.js");
-            }
-        } finally {
-            deleteRecursively(root);
-        }
+    private static void testProductionMemberAssignmentCollision() throws Exception {
+        checkCollision(new CollisionCase("member-assignment", ASSIGN_MEMBER_IR_SOURCE,
+            ASSIGN_MEMBER_CODEC_SOURCE, List.of(ASSIGN_MEMBER_MAIN_CODEC_FIRST, ASSIGN_MEMBER_MAIN_IR_FIRST),
+            false, false, true, true, true));
     }
 
     /**
@@ -2389,120 +1715,9 @@ public class ProductionDispatchTest {
      * import-order-independent digest, and the published artifact
      * outcome.
      */
-    private static void testProductionShadowingInitializerCollision()
-            throws Exception {
-        System.out.println("-- production invocation: an assignment inside"
-            + " a shadowing let's own initializer targets the enclosing"
-            + " binding and keeps its declared provider (both import orders;"
-            + " exact resource, digest, and artifact outcome) --");
-
-        Path root = Files.createTempDirectory("production-shadowing-");
-        try {
-            write(root, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(root, "src/m/ir.deal", SHADOW_IR_SOURCE);
-            write(root, "src/m/codec.deal", SHADOW_CODEC_SOURCE);
-            write(root, "src/main.deal", SHADOW_MAIN_CODEC_FIRST);
-            write(root, "src/main_ir_first.deal", SHADOW_MAIN_IR_FIRST);
-
-            String codecFirstDigest = null;
-            for (String entry : List.of("src/main.deal",
-                    "src/main_ir_first.deal")) {
-                String label = entry.contains("ir_first") ? "ir-first"
-                    : "codec-first";
-                boolean irFirst = label.equals("ir-first");
-                ArmCompile compile = compileWithInvocation(root, entry,
-                    productionInvocation());
-                check(compile.success(), "the " + label + " shadowing"
-                    + " collision compile succeeds through the production"
-                    + " invocation: " + compile.orchestrator()
-                        .diagnostics());
-                if (!compile.success()) {
-                    continue;
-                }
-                CompilationOrchestrator orchestrator =
-                    compile.orchestrator();
-                String mainUri = serializerModuleUri(orchestrator,
-                    "/" + entry);
-                String irUri = serializerModuleUri(orchestrator,
-                    "/src/m/ir.deal");
-                String codecUri = serializerModuleUri(orchestrator,
-                    "/src/m/codec.deal");
-                DiagnosticRange irDeclaration = mainUri == null
-                    || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(SHADOW_IR_SOURCE,
-                        irUri.substring("file://".length()), "Ir");
-                DiagnosticRange codecIrDeclaration = mainUri == null
-                    || irUri == null || codecUri == null ? null
-                    : classDeclarationRange(SHADOW_CODEC_SOURCE,
-                        codecUri.substring("file://".length()), "Ir");
-                check(mainUri != null && irUri != null && codecUri != null
-                        && irDeclaration != null
-                        && codecIrDeclaration != null,
-                    "the " + label + " shadowing collision resolves every"
-                        + " module identity and declaration range");
-                if (mainUri == null || irUri == null || codecUri == null
-                        || irDeclaration == null
-                        || codecIrDeclaration == null) {
-                    continue;
-                }
-                // Both literals of the probe (the enclosing declaration's
-                // initializer and the assignment inside the shadowing
-                // initializer) are the ordinary walk's demanded
-                // construction of the enclosing binding's class: exactly
-                // one edge, on the enclosing provider, with the exact
-                // defining range and digest — never the identity-equal
-                // sibling the pending annotation names.
-                List<RuntimeImportDependency> edges = classEdges(
-                    orchestrator, mainUri, "Ir",
-                    RuntimeImportDependency.Reason.RUNTIME_USE);
-                checkEq(1, edges.size(), "the " + label + " shadowing"
-                    + " walk holds exactly one ordinary Ir edge");
-                if (edges.size() != 1) {
-                    continue;
-                }
-                RuntimeImportDependency edge = edges.get(0);
-                checkEq(irUri, edge.toSemanticModuleIdentity()
-                    .canonicalResolvedSourceUri(), "the " + label
-                    + " ordinary Ir edge targets the declaring module");
-                checkEq("ir", edge.importAlias(), "the " + label
-                    + " ordinary Ir edge keeps the spelled alias");
-                checkEq(irDeclaration, edge.semanticResourceIdentity()
-                    .lexicalDeclarationIdentity().sourceScalarRange(),
-                    "the " + label + " ordinary Ir edge carries the exact"
-                        + " defining declaration range");
-                check(!edge.semanticResourceIdentity()
-                    .lexicalDeclarationIdentity().sourceScalarRange()
-                    .equals(codecIrDeclaration), "the " + label
-                    + " ordinary Ir edge never binds the sibling"
-                    + " declaration");
-                if (irFirst) {
-                    checkEq(codecFirstDigest, edge.providerContractDigest(),
-                        "the shadowing Ir provider digest is"
-                            + " import-order independent");
-                } else {
-                    codecFirstDigest = edge.providerContractDigest();
-                }
-
-                // The published artifact constructs the enclosing
-                // binding's own provider: the demanded default (7) —
-                // never the sibling's (93), which is what the pre-fix
-                // recorder emitted under codec-first imports.
-                checkJsArtifactRun(label, root.resolve("out"),
-                    irFirst ? "main_ir_first.js" : "main.js");
-            }
-        } finally {
-            deleteRecursively(root);
-        }
+    private static void testProductionShadowingInitializerCollision() throws Exception {
+        checkCollision(new CollisionCase("shadowing-initializer", SHADOW_IR_SOURCE, SHADOW_CODEC_SOURCE,
+            List.of(SHADOW_MAIN_CODEC_FIRST, SHADOW_MAIN_IR_FIRST), false, false, true, false, true));
     }
 
     /**
@@ -4003,9 +3218,6 @@ public class ProductionDispatchTest {
             check(jvmCompile.exitCode() == 0,
                 "the direct-emission JVM compile succeeds: "
                     + jvmCompile.stderr());
-            check(jvmCompile.exitCode() == 0,
-                "the omitted-default JVM compile succeeds: "
-                    + jvmCompile.stderr());
             if (jvmCompile.exitCode() == 0) {
                 MappedArtifact artifact = prepareMappedArtifact(project, jvmOut,
                     "Main.java");
@@ -4023,9 +3235,6 @@ public class ProductionDispatchTest {
                     jvmOut.toString(), jvmOut.resolve("Main.java").toString());
                 check(javac.exitCode() == 0,
                     "the direct-emission JVM artifact compiles: "
-                        + javac.output());
-                check(javac.exitCode() == 0,
-                    "the omitted-default JVM artifact compiles: "
                         + javac.output());
                 if (javac.exitCode() == 0) {
                     ProcessOutcome run = runProcess(jvmOut, "java", "-cp",
@@ -4054,9 +3263,6 @@ public class ProductionDispatchTest {
                 luaOut.toAbsolutePath().toString());
             check(luaCompile.exitCode() == 0,
                 "the direct-emission LuaJIT compile succeeds: "
-                    + luaCompile.stderr());
-            check(luaCompile.exitCode() == 0,
-                "the omitted-default LuaJIT compile succeeds: "
                     + luaCompile.stderr());
             if (luaCompile.exitCode() == 0) {
                 MappedArtifact artifact = prepareMappedArtifact(project, luaOut,
@@ -5199,162 +4405,46 @@ public class ProductionDispatchTest {
         Path scratch = Files.createTempDirectory("v12-split-capture-");
         try {
             int cap = BoundedProcess.STREAM_CAP_BYTES;
-            String marker = "PRESSURE-OK\n";
-            BoundedProcess.BoundedResult exactLimit = null;
-            for (int bytes : List.of(cap - 1, cap)) {
-                BoundedProcess.BoundedResult pressure = runBounded(120_000L,
-                    scratch, "java", "-cp", absoluteClasspath(),
-                    SplitCaptureChild.class.getName(), "pressure",
-                    Integer.toString(bytes));
-                check(!pressure.stdoutTruncated()
-                        && !pressure.stderrTruncated(),
-                    "the " + bytes + "-byte stderr flood stays inside the"
-                        + " shared per-stream bound: stdoutTruncated="
-                        + pressure.stdoutTruncated() + ", stderrTruncated="
-                        + pressure.stderrTruncated());
-                checkEq(0, pressure.exitCode(), "the " + bytes + "-byte"
-                    + " child exits 0 (the concurrent capped drains never"
-                    + " deadlock the full pipe)");
-                checkEq(marker, pressure.stdout(), "the " + bytes + "-byte"
-                    + " child's stdout stays a separate complete stream");
-                checkEq(bytes, byteLength(pressure.stderr()), "the complete"
-                    + " " + bytes + "-byte stderr flood is captured");
-                check(allBytes(pressure.stderr(), (byte) 'x'), "every"
-                    + " stderr byte of the " + bytes + "-byte flood"
-                    + " survives");
-                check(transcriptRefusal(pressure).isEmpty(), "the " + bytes
-                    + "-byte observation is inside the bound, not refused");
-                if (bytes == cap) {
-                    exactLimit = pressure;
+            for (boolean stdout : List.of(false, true)) {
+                String mode = stdout ? "stdout-pressure" : "pressure";
+                String marker = stdout ? "STDOUT-PRESSURE-OK\n" : "PRESSURE-OK\n";
+                byte value = (byte) (stdout ? 'y' : 'x');
+                for (int bytes : List.of(cap - 1, cap, cap + 1)) {
+                    String label = mode + " " + bytes;
+                    BoundedProcess.BoundedResult run = runBounded(120_000L, scratch,
+                        "java", "-cp", absoluteClasspath(), SplitCaptureChild.class.getName(),
+                        mode, Integer.toString(bytes));
+                    String flood = stdout ? run.stdout() : run.stderr();
+                    boolean overflow = bytes > cap;
+                    checkEq(0, run.exitCode(), label + " exits without pipe deadlock");
+                    checkEq(marker, stdout ? run.stderr() : run.stdout(), label + " separate stream");
+                    checkEq(stdout && overflow, run.stdoutTruncated(), label + " stdout truncation");
+                    checkEq(!stdout && overflow, run.stderrTruncated(), label + " stderr truncation");
+                    checkEq(overflow ? cap + BoundedProcess.TRUNCATION_MARKER.length() : bytes,
+                        byteLength(flood), label + " captured length");
+                    check(allBytes(overflow ? flood.substring(0, cap) : flood, value),
+                        label + " every retained flood byte survives");
+                    Optional<String> refusal = transcriptRefusal(run);
+                    Optional<String> match = mismatchAgainst(label, "luajit", run,
+                        run.stdout(), run.stderr(), 0);
+                    if (overflow) {
+                        check(flood.endsWith(BoundedProcess.TRUNCATION_MARKER), label + " truncation marker");
+                        check(refusal.isPresent() && refusal.get().contains("truncated")
+                            && refusal.get().contains(Integer.toString(cap)), label + " named refusal");
+                        check(match.isPresent() && match.get().contains("truncated"),
+                            label + " refuses even exactly matching retained prefix");
+                    } else {
+                        check(refusal.isEmpty() && match.isEmpty(), label + " exact transcript accepted");
+                        if (bytes == cap) {
+                            check(mismatchAgainst(label, "luajit", run,
+                                run.stdout() + (stdout ? "y" : ""), run.stderr() + (stdout ? "" : "x"),
+                                0).isPresent(), label + " extra expected byte refused");
+                            check(mismatchAgainst(label, "luajit", run, run.stdout(), run.stderr(),
+                                1).isPresent(), label + " wrong expected exit refused");
+                        }
+                    }
                 }
             }
-
-            // The exact-limit acceptance and its deliberate
-            // wrong-observation controls: the exact transcript is accepted
-            // byte-for-byte, while an extra expected byte and a wrong
-            // expected exit status are rejected.
-            if (exactLimit != null) {
-                String exactStderr = exactLimit.stderr();
-                Optional<String> accepted = mismatchAgainst("pressure-cap",
-                    "luajit", exactLimit, marker, exactStderr, 0);
-                check(accepted.isEmpty(), "the exact-limit transcript is"
-                    + " accepted byte-for-byte: "
-                    + accepted.orElse("match"));
-                Optional<String> extraByte = mismatchAgainst("pressure-cap",
-                    "luajit", exactLimit, marker, exactStderr + "x", 0);
-                check(extraByte.isPresent(), "an extra expected byte on the"
-                    + " exact-limit transcript is rejected: " + extraByte);
-                Optional<String> wrongExit = mismatchAgainst("pressure-cap",
-                    "luajit", exactLimit, marker, exactStderr, 1);
-                check(wrongExit.isPresent(), "a wrong expected exit status"
-                    + " on the exact-limit transcript is rejected: "
-                    + wrongExit);
-            }
-
-            // The limit-plus-one control: the helper retains the bounded
-            // prefix plus its truncation marker and flags the overflow; the
-            // drive's refusal must win before any exact comparison, even
-            // when the retained streams equal the expected bytes.
-            BoundedProcess.BoundedResult overLimit = runBounded(120_000L,
-                scratch, "java", "-cp", absoluteClasspath(),
-                SplitCaptureChild.class.getName(), "pressure",
-                Integer.toString(cap + 1));
-            check(!overLimit.stdoutTruncated()
-                    && overLimit.stderrTruncated(),
-                "the cap-plus-one child flags only the overflowing stream:"
-                    + " stdoutTruncated=" + overLimit.stdoutTruncated()
-                    + ", stderrTruncated=" + overLimit.stderrTruncated());
-            checkEq(0, overLimit.exitCode(), "the cap-plus-one child's own"
-                + " exit status is preserved verbatim");
-            checkEq(marker, overLimit.stdout(), "the cap-plus-one child's"
-                + " stdout stays its own complete stream");
-            checkEq(cap + BoundedProcess.TRUNCATION_MARKER.length(),
-                byteLength(overLimit.stderr()), "the retained overflow"
-                    + " stream is the bounded cap prefix plus the helper's"
-                    + " truncation marker");
-            check(overLimit.stderr().endsWith(
-                    BoundedProcess.TRUNCATION_MARKER),
-                "the retained prefix carries the shared helper's"
-                    + " truncation marker at the cut point");
-            Optional<String> overLimitRefusal = transcriptRefusal(overLimit);
-            check(overLimitRefusal.isPresent()
-                    && overLimitRefusal.get().contains("truncated")
-                    && overLimitRefusal.get()
-                        .contains(Integer.toString(cap)),
-                "the over-limit observation is refused by name before any"
-                    + " comparison: " + overLimitRefusal);
-            Optional<String> prefixNotBlessed = mismatchAgainst(
-                "pressure-overflow", "luajit", overLimit, marker,
-                overLimit.stderr(), 0);
-            check(prefixNotBlessed.isPresent()
-                    && prefixNotBlessed.get().contains("truncated"),
-                "the exact comparison refuses the truncated observation"
-                    + " even when its retained streams equal the expected"
-                    + " bytes: " + prefixNotBlessed);
-
-            // The same boundary matrix on the stdout position: the shared
-            // cap is per stream, so an overflowing stdout is refused the
-            // same way while its stderr stays its own complete stream.
-            String stdoutMarker = "STDOUT-PRESSURE-OK\n";
-            for (int bytes : List.of(cap - 1, cap)) {
-                BoundedProcess.BoundedResult stdoutFlood = runBounded(
-                    120_000L, scratch, "java", "-cp", absoluteClasspath(),
-                    SplitCaptureChild.class.getName(), "stdout-pressure",
-                    Integer.toString(bytes));
-                check(!stdoutFlood.stdoutTruncated()
-                        && !stdoutFlood.stderrTruncated(),
-                    "the " + bytes + "-byte stdout flood stays inside the"
-                        + " shared per-stream bound: stdoutTruncated="
-                        + stdoutFlood.stdoutTruncated()
-                        + ", stderrTruncated="
-                        + stdoutFlood.stderrTruncated());
-                checkEq(0, stdoutFlood.exitCode(), "the " + bytes + "-byte"
-                    + " stdout child exits 0");
-                checkEq(bytes, byteLength(stdoutFlood.stdout()), "the"
-                    + " complete " + bytes + "-byte stdout flood is"
-                    + " captured");
-                check(allBytes(stdoutFlood.stdout(), (byte) 'y'), "every"
-                    + " stdout byte of the " + bytes + "-byte flood"
-                    + " survives");
-                checkEq(stdoutMarker, stdoutFlood.stderr(), "the " + bytes
-                    + "-byte stdout child's stderr stays its own complete"
-                    + " stream");
-                check(transcriptRefusal(stdoutFlood).isEmpty(), "the "
-                    + bytes + "-byte stdout observation is inside the"
-                    + " bound, not refused");
-            }
-            BoundedProcess.BoundedResult stdoutOverLimit = runBounded(
-                120_000L, scratch, "java", "-cp", absoluteClasspath(),
-                SplitCaptureChild.class.getName(), "stdout-pressure",
-                Integer.toString(cap + 1));
-            check(stdoutOverLimit.stdoutTruncated()
-                    && !stdoutOverLimit.stderrTruncated(),
-                "the stdout cap-plus-one child flags only the overflowing"
-                    + " stream: stdoutTruncated="
-                    + stdoutOverLimit.stdoutTruncated()
-                    + ", stderrTruncated="
-                    + stdoutOverLimit.stderrTruncated());
-            checkEq(cap + BoundedProcess.TRUNCATION_MARKER.length(),
-                byteLength(stdoutOverLimit.stdout()), "the retained stdout"
-                    + " overflow is the bounded cap prefix plus the helper's"
-                    + " truncation marker");
-            checkEq(stdoutMarker, stdoutOverLimit.stderr(), "the stdout"
-                + " cap-plus-one child's stderr stays its own complete"
-                + " stream");
-            Optional<String> stdoutRefusal =
-                transcriptRefusal(stdoutOverLimit);
-            check(stdoutRefusal.isPresent()
-                    && stdoutRefusal.get().contains("truncated"),
-                "the stdout over-limit observation is refused by name before"
-                    + " any comparison: " + stdoutRefusal);
-            Optional<String> stdoutNotBlessed = mismatchAgainst(
-                "stdout-overflow", "luajit", stdoutOverLimit,
-                stdoutOverLimit.stdout(), stdoutMarker, 0);
-            check(stdoutNotBlessed.isPresent()
-                    && stdoutNotBlessed.get().contains("truncated"),
-                "the exact comparison refuses the truncated stdout even when"
-                    + " its retained streams equal the expected bytes: "
-                    + stdoutNotBlessed);
 
             // The deadline control: the helper's one deadline covers the
             // child wait and both streams, so the sleeping child is

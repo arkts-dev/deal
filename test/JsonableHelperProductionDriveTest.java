@@ -518,301 +518,24 @@ public class JsonableHelperProductionDriveTest {
                              Capture capture, boolean probeDefect) {
     }
 
-    // =========================================================================
-    // 3b. The bounded real-toolchain runner (the release-pipeline contract)
-    // =========================================================================
-
-    /**
-     * The bounded-subprocess contract of the release pipeline (the
-     * verified bounded-subprocess pages): every gate-executed real-toolchain
-     * invocation drains both streams concurrently with a cap, runs under one
-     * monotonic deadline, owns its whole process tree on every exit path,
-     * and reports an exceeded deadline as the named hard
-     * {@link BoundedProcessTimeoutException}. The runner starts each child
-     * through {@code setsid} (when available) so the whole owned tree can be
-     * killed even after the direct child exits and a descendant is
-     * reparented.
-     */
-    private static final int STREAM_CAP_BYTES = 1 << 20;
-
-    private static final String TRUNCATION_MARKER = "\n[STREAM TRUNCATED at 1 MiB]\n";
-
-    private static final long BOUNDED_PROCESS_BUDGET_MS = 300_000L;
-
-    private static final long POST_KILL_DRAIN_BUDGET_MS = 5_000L;
-
-    private static final long REAP_BUDGET_MS = 5_000L;
-
-    /** A hard gate failure, never a skip: an {@link AssertionError} so no
-     * probe-style {@code catch (Exception)} guard reads a hung toolchain as
-     * absent. */
-    private static final class BoundedProcessTimeoutException extends AssertionError {
-        private static final long serialVersionUID = 1L;
-
-        BoundedProcessTimeoutException(String message) {
-            super(message);
-        }
-    }
-
-    /** One stream's capped, concurrent drain: the first
-     * {@link #STREAM_CAP_BYTES} bytes are retained and the read continues to
-     * EOF, so a child that saturates a pipe can never deadlock the harness.
-     * A reader failure is recorded — never swallowed and never replaced by
-     * an empty transcript — and fails the invocation after teardown. */
-    private static final class CappedDrain implements Runnable {
-
-        private final java.io.InputStream stream;
-        private final java.io.ByteArrayOutputStream retained =
-            new java.io.ByteArrayOutputStream();
-        private volatile boolean truncated;
-        private volatile java.io.IOException failure;
-
-        CappedDrain(java.io.InputStream stream) {
-            this.stream = stream;
-        }
-
-        @Override
-        public void run() {
-            byte[] buffer = new byte[8192];
-            try (java.io.InputStream in = stream) {
-                int read;
-                while ((read = in.read(buffer)) >= 0) {
-                    int kept = Math.min(read, STREAM_CAP_BYTES - retained.size());
-                    if (kept > 0) {
-                        retained.write(buffer, 0, kept);
-                    }
-                    if (kept < read) {
-                        truncated = true;
-                    }
-                }
-            } catch (java.io.IOException failed) {
-                failure = failed;
-            }
-        }
-
-        /** The recorded reader failure, or {@code null} for a clean EOF. */
-        java.io.IOException failure() {
-            return failure;
-        }
-
-        String text() {
-            String drained = new String(retained.toByteArray(), StandardCharsets.UTF_8);
-            return truncated ? drained + TRUNCATION_MARKER : drained;
-        }
-    }
+    private static final long BOUNDED_PROCESS_BUDGET_MS = BoundedProcess.SUBPROCESS_BUDGET_MS;
 
     private record ProcessOutcome(int exitCode, String stdout, String stderr) {
     }
 
-    private static final String SETSID_BINARY =
-        firstExecutable("/usr/bin/setsid", "/bin/setsid");
-    private static final String KILL_BINARY =
-        firstExecutable("/bin/kill", "/usr/bin/kill");
-
-    /**
-     * The descendant pid file of the bounded-process controls. It is
-     * written and read as a name relative to the child's own working
-     * directory (the audit-owned scratch root), so a temporary root that
-     * contains spaces is never split by the shell — an interpolated
-     * absolute path would redirect to a truncated path outside the
-     * allocated scratch root.
-     */
-    private static final String DESCENDANT_PID_FILE = "descendant.pid";
-
-    private static String firstExecutable(String... candidates) {
-        for (String candidate : candidates) {
-            if (Files.isExecutable(Path.of(candidate))) {
-                return candidate;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * The bounded real-toolchain runner: separate stdout/stderr
-     * transcripts, both streams drained concurrently with the canonical
-     * 1 MiB cap, the canonical 300000 ms deadline, and on timeout
-     * descendants-then-group-then-child forcible termination plus a drain
-     * to EOF and a reap, reported as the named hard
-     * {@link BoundedProcessTimeoutException}. One monotonic deadline covers
-     * the direct child and the drainage of both streams. The child is owned
-     * for the whole call: every path out of the wait — the child's
-     * completion, the deadline, an interruption of the waiting thread, or
-     * any other failure — terminates the whole owned tree, drains both
-     * streams to EOF, and reaps the direct child before the outcome returns
-     * or propagates.
-     */
     private static ProcessOutcome runProcess(Path directory, Map<String, String> env,
             long budgetMs, String... command) throws Exception {
-        if (command.length > 0 && "javac".equals(command[0])) {
+        if ("javac".equals(command[0])) {
             JvmCompilation.Result compile = JvmCompilation.compile(List.of(command),
                 directory, budgetMs);
             return new ProcessOutcome(compile.exitCode(), compile.stdout(), compile.stderr());
         }
-        boolean ownGroup = SETSID_BINARY != null;
-        List<String> argv = new ArrayList<>();
-        if (ownGroup) {
-            argv.add(SETSID_BINARY);
+        BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+            List.of(command), directory, env, budgetMs);
+        if (result.stdoutTruncated() || result.stderrTruncated()) {
+            throw new AssertionError("truncated jsonable transcript: " + command[0]);
         }
-        argv.addAll(java.util.Arrays.asList(command));
-        ProcessBuilder builder = new ProcessBuilder(argv);
-        builder.directory(directory.toFile());
-        builder.redirectErrorStream(false);
-        builder.environment().putAll(env);
-        long deadlineNanos = System.nanoTime()
-            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        Process process = builder.start();
-        CappedDrain stdout = new CappedDrain(process.getInputStream());
-        CappedDrain stderr = new CappedDrain(process.getErrorStream());
-        Thread stdoutThread = new Thread(stdout, "jsonable-stdout-" + command[0]);
-        Thread stderrThread = new Thread(stderr, "jsonable-stderr-" + command[0]);
-        stdoutThread.setDaemon(true);
-        stderrThread.setDaemon(true);
-        stdoutThread.start();
-        stderrThread.start();
-        boolean[] interrupted = {false};
-        boolean finished = false;
-        boolean drained = false;
-        String timeout = null;
-        try {
-            finished = waitForChild(process, deadlineNanos, interrupted);
-            // The same deadline bounds the child and its stream drainage: a
-            // reparented descendant that holds the inherited pipes ends the
-            // invocation with the named timeout, never with a delay.
-            drained = awaitDrains(stdoutThread, stderrThread, deadlineNanos, interrupted);
-            if (!finished) {
-                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0];
-            } else if (!drained) {
-                timeout = "BOUNDED_PROCESS_TIMEOUT " + command[0]
-                    + " (the stream drainage exceeded the child deadline)";
-            }
-        } finally {
-            // The finally owns the whole tree before any outcome propagates.
-            terminateTree(process, ownGroup, interrupted);
-            awaitDrains(stdoutThread, stderrThread, System.nanoTime()
-                + java.util.concurrent.TimeUnit.MILLISECONDS
-                    .toNanos(POST_KILL_DRAIN_BUDGET_MS), interrupted);
-            reap(process, interrupted);
-        }
-        if (interrupted[0]) {
-            Thread.interrupted();
-            throw new InterruptedException("interrupted while waiting for " + command[0]);
-        }
-        if (timeout != null) {
-            throw new BoundedProcessTimeoutException(timeout);
-        }
-        // A completed child whose transcript could not be read cleanly is a
-        // failed invocation, never a partially empty observation.
-        if (stdout.failure() != null || stderr.failure() != null) {
-            throw new AssertionError("BOUNDED_PROCESS_DRAIN_FAILURE " + command[0]
-                + " (stdout " + stdout.failure() + "; stderr "
-                + stderr.failure() + ")");
-        }
-        return new ProcessOutcome(process.exitValue(), stdout.text(), stderr.text());
-    }
-
-    /** Waits for the direct child inside the one deadline; {@code false}
-     * means the deadline expired. */
-    private static boolean waitForChild(Process process, long deadlineNanos,
-            boolean[] interrupted) throws InterruptedException {
-        long remaining = deadlineNanos - System.nanoTime();
-        if (remaining <= 0) {
-            return false;
-        }
-        try {
-            return process.waitFor(remaining, java.util.concurrent.TimeUnit.NANOSECONDS);
-        } catch (InterruptedException interruptedWait) {
-            interrupted[0] = true;
-            throw interruptedWait;
-        }
-    }
-
-    /** Terminates the owned tree: descendants first, then the child's process
-     * group (when the runner created one), then the direct child. */
-    private static void terminateTree(Process process, boolean ownGroup,
-            boolean[] interrupted) {
-        try {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-        } catch (RuntimeException ignored) {
-            // A vanished subtree is already gone; the direct child is next.
-        }
-        if (ownGroup) {
-            killProcessGroup(process.pid(), interrupted);
-        }
-        process.destroyForcibly();
-    }
-
-    /** Kills every remaining member of the child's own process group from
-     * outside the group; the helper's own wait is bounded. */
-    private static void killProcessGroup(long groupId, boolean[] interrupted) {
-        List<String> argv = KILL_BINARY != null
-            ? List.of(KILL_BINARY, "-KILL", "--", "-" + groupId)
-            : List.of("bash", "-c", "kill -KILL -- -\"$1\"", "jsonable-kill-group",
-                Long.toString(groupId));
-        try {
-            ProcessBuilder killerBuilder = new ProcessBuilder(argv);
-            killerBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-            killerBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            Process killer = killerBuilder.start();
-            boolean killed = false;
-            try {
-                killed = killer.waitFor(POST_KILL_DRAIN_BUDGET_MS,
-                    java.util.concurrent.TimeUnit.MILLISECONDS);
-            } catch (InterruptedException interruptedKill) {
-                interrupted[0] = true;
-            }
-            if (!killed) {
-                killer.destroyForcibly();
-            }
-        } catch (Exception ignored) {
-            // The direct child's destroyForcibly remains the backstop.
-        }
-    }
-
-    /** Joins both capped drains to EOF inside the deadline; {@code false}
-     * means a drain was still alive at the deadline. */
-    private static boolean awaitDrains(Thread stdoutThread, Thread stderrThread,
-            long deadlineNanos, boolean[] interrupted) {
-        boolean drained = true;
-        for (Thread thread : new Thread[] {stdoutThread, stderrThread}) {
-            while (thread.isAlive()) {
-                long remaining = deadlineNanos - System.nanoTime();
-                if (remaining <= 0) {
-                    drained = false;
-                    break;
-                }
-                try {
-                    thread.join(Math.max(1L,
-                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining)));
-                } catch (InterruptedException interruptedJoin) {
-                    interrupted[0] = true;
-                }
-            }
-        }
-        return drained;
-    }
-
-    /** Reaps the direct child inside a bounded window even when the waiting
-     * thread is interrupted. */
-    private static void reap(Process process, boolean[] interrupted) {
-        long deadlineNanos = System.nanoTime()
-            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(REAP_BUDGET_MS);
-        while (process.isAlive()) {
-            long remaining = deadlineNanos - System.nanoTime();
-            if (remaining <= 0) {
-                process.destroyForcibly();
-                return;
-            }
-            try {
-                if (process.waitFor(Math.max(1L,
-                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining)),
-                        java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                    return;
-                }
-            } catch (InterruptedException interruptedReap) {
-                interrupted[0] = true;
-            }
-        }
+        return new ProcessOutcome(result.exitCode(), result.stdout(), result.stderr());
     }
 
     private record Export(String name, int index) {
@@ -2236,8 +1959,17 @@ public class JsonableHelperProductionDriveTest {
 
     private static PreparedSynthetic prepareSynthetic(String label, String source,
             List<Export> exports) throws Exception {
+        return prepareSynthetic(label, source, exports, Map.of());
+    }
+
+    private static PreparedSynthetic prepareSynthetic(String label, String source,
+            List<Export> exports, Map<String, String> companions) throws Exception {
         Project project = syntheticProject("app", source, Target.LUAJIT);
         try {
+            for (Map.Entry<String, String> companion : companions.entrySet()) {
+                Files.writeString(project.srcRoot().resolve(companion.getKey() + ".deal"),
+                    companion.getValue(), StandardCharsets.UTF_8);
+            }
             Path driver = project.srcRoot().resolve("__oracle_drive.deal");
             Files.writeString(driver, oracleDriver(project, exports), StandardCharsets.UTF_8);
             Project oracleProject = new Project(project.root(), project.srcRoot(), driver,
@@ -2249,6 +1981,42 @@ public class JsonableHelperProductionDriveTest {
         } catch (Exception failure) {
             deleteRecursively(project.root());
             throw failure;
+        }
+    }
+
+    private static Lowered driveHelperFailure(String label, String source, String call,
+            String message, String actual) throws Exception {
+        List<Export> exports = exportsOf(source);
+        String position = lineOf(source, call) + ":" + columnOf(source, call);
+        try (PreparedSynthetic prepared = prepareSynthetic(label, source, exports)) {
+            Lowered lowered = prepared.oracle();
+            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(lowered);
+            check(oracle != null && oracle.code().equals("E8001")
+                    && oracle.message().equals(message)
+                    && java.util.Objects.equals(actual, oracle.actual())
+                    && oracle.expected() == null && position.equals(originPosition(oracle.origin())),
+                label + ": literal oracle failure tuple and call origin: " + oracle);
+            for (Target target : Target.values()) {
+                Project project = withOutput(prepared.project(), "out-" + target.laneName());
+                Compilation compilation = emitChecked(project, prepared.compilation(), target);
+                check(compilation.compiled(), label + " [" + target.laneName()
+                    + "]: production emission: " + compilation.diagnostics());
+                if (!compilation.compiled()) {
+                    continue;
+                }
+                Execution execution = target == Target.LUAJIT
+                    ? executeLua(project, exports) : executeJvm(project, exports);
+                Capture capture = execution.capture();
+                check(execution.exitCode() == 1 && execution.stdout().isEmpty()
+                        && execution.stderr().isEmpty() && !execution.probeDefect()
+                        && capture != null && capture.code().equals("E8001")
+                        && capture.message().equals(message) && capture.expected() == null
+                        && java.util.Objects.equals(actual, capture.actual())
+                        && position.equals(capture.line() + ":" + capture.column())
+                        && capture.sourceFile() != null && capture.sourceFile().endsWith("app.deal"),
+                    label + " [" + target.laneName() + "]: exact completed failure: " + execution);
+            }
+            return lowered;
         }
     }
 
@@ -2306,78 +2074,15 @@ public class JsonableHelperProductionDriveTest {
               return null;
             }
             """;
-        int line = lineOf(source, "f(w)");
-        int column = columnOf(source, "f(w)");
-        String expectedPosition = line + ":" + column;
-        List<Export> exports = exportsOf(source);
-        // The oracle leg.
-        try (PreparedSynthetic prepared = prepareSynthetic("dynamic-helper-origin", source,
-                exports)) {
-            Lowered lowered = prepared.oracle();
-            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(lowered);
-            check(oracle != null,
-                "the oracle rejects the cyclic helper invocation");
-            if (oracle != null) {
-                checkEq("E8001", oracle.code(), "the oracle's code");
-                checkEq("cyclic value cannot be encoded as JSON", oracle.message(),
-                    "the oracle's message");
-                checkEq(expectedPosition, originPosition(oracle.origin()),
-                    "the oracle renders the f(w) call origin (got " + oracle.origin()
-                        + ")");
-            }
-            // The covered lowering path: the f(w) call is a dynamic
-            // DEAL-body invocation (CallMode.INDIRECT over a CallCallee.Dynamic),
-            // never a statically resolved call.
-            if (lowered != null) {
-                boolean dynamicCall = false;
-                for (LoweredModuleUnit unit : lowered.project().modules().values()) {
-                    for (SemanticOp op : unit.ops()) {
-                        if (op.kind() == SemanticOpKind.CALL
-                                && op.payload() instanceof KindPayload.CallPayload call
-                                && call.callee()
-                                    instanceof KindPayload.CallCallee.Dynamic
-                                && call.dynamicReturnBoundary() != null) {
-                            dynamicCall = true;
-                        }
-                    }
-                }
-                check(dynamicCall, "the f(w) call lowers as a dynamic "
-                    + "DEAL-body invocation");
-            }
-            for (Target target : Target.values()) {
-                Project project = withOutput(prepared.project(), "out-" + target.laneName());
-                Compilation compilation = emitChecked(project, prepared.compilation(), target);
-                List<String> diagnostics = compilation.diagnostics();
-                boolean compiled = compilation.compiled();
-                check(compiled, "the dynamic-helper project compiles ["
-                    + target.laneName() + "]: " + diagnostics);
-                if (!compiled) {
-                    continue;
-                }
-                Execution execution = target == Target.LUAJIT
-                    ? executeLua(project, exports) : executeJvm(project, exports);
-                Capture capture = execution.capture();
-                check(capture != null, "the dynamic-helper project fails on ["
-                    + target.laneName() + "] (exit " + execution.exitCode()
-                    + "; stderr " + execution.stderr() + ")");
-                if (capture == null) {
-                    continue;
-                }
-                checkEq("E8001", capture.code(), "the " + target.laneName()
-                    + " artifact's code");
-                checkEq("cyclic value cannot be encoded as JSON", capture.message(),
-                    "the " + target.laneName() + " artifact's message");
-                checkEq(expectedPosition,
-                    capture.line() + ":" + capture.column(), "the "
-                        + target.laneName() + " artifact renders the f(w) call "
-                        + "origin (got " + capture.sourceFile() + ":"
-                        + capture.line() + ":" + capture.column() + ")");
-                check(capture.sourceFile() != null
-                        && capture.sourceFile().endsWith("app.deal"),
-                    "the " + target.laneName() + " artifact's origin names the "
-                        + "declaring module file");
-            }
-        }
+        Lowered lowered = driveHelperFailure("dynamic-helper-origin", source, "f(w)",
+            "cyclic value cannot be encoded as JSON", null);
+        check(lowered != null && lowered.project().modules().values().stream()
+            .flatMap(unit -> unit.ops().stream()).anyMatch(op ->
+                op.kind() == SemanticOpKind.CALL
+                    && op.payload() instanceof KindPayload.CallPayload call
+                    && call.callee() instanceof KindPayload.CallCallee.Dynamic
+                    && call.dynamicReturnBoundary() != null),
+            "the f(w) call lowers as a dynamic DEAL-body invocation");
     }
 
     /**
@@ -2543,60 +2248,8 @@ public class JsonableHelperProductionDriveTest {
               return null;
             }
             """;
-        int line = lineOf(source, "Wrapper$toJson(w)");
-        int column = columnOf(source, "Wrapper$toJson(w)");
-        String expectedPosition = line + ":" + column;
-        List<Export> exports = exportsOf(source);
-        String oracleMessage = null;
-        try (PreparedSynthetic prepared = prepareSynthetic("table-class-instance", source,
-                exports)) {
-            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
-            check(oracle != null, "the oracle rejects the class instance inside "
-                + "an array nested in a table field");
-            if (oracle != null) {
-                checkEq("E8001", oracle.code(), "the oracle's code");
-                check(oracle.message() != null
-                        && oracle.message().startsWith("value at data.children[0] "
-                            + "is not JSON serializable: "),
-                    "the oracle's pinned walk message (got " + oracle.message() + ")");
-                checkEq(expectedPosition, originPosition(oracle.origin()),
-                    "the oracle renders the helper call origin (got "
-                        + oracle.origin() + ")");
-                oracleMessage = oracle.message();
-            }
-            for (Target target : Target.values()) {
-                Project project = withOutput(prepared.project(), "out-" + target.laneName());
-                Compilation compilation = emitChecked(project, prepared.compilation(), target);
-                List<String> diagnostics = compilation.diagnostics();
-                boolean compiled = compilation.compiled();
-                check(compiled, "the table-class-instance project compiles ["
-                    + target.laneName() + "]: " + diagnostics);
-                if (!compiled) {
-                    continue;
-                }
-                Execution execution = target == Target.LUAJIT
-                    ? executeLua(project, exports) : executeJvm(project, exports);
-                Capture capture = execution.capture();
-                check(capture != null, "the table-class-instance project fails on ["
-                    + target.laneName() + "] (exit " + execution.exitCode()
-                    + "; stderr " + execution.stderr() + ")");
-                if (capture == null) {
-                    continue;
-                }
-                checkEq("E8001", capture.code(), "the " + target.laneName()
-                    + " artifact's code");
-                if (oracleMessage != null) {
-                    checkEq(oracleMessage, capture.message(), "the "
-                        + target.laneName() + " artifact reproduces the oracle's "
-                        + "pinned walk message");
-                }
-                checkEq(expectedPosition,
-                    capture.line() + ":" + capture.column(), "the "
-                        + target.laneName() + " artifact renders the helper call "
-                        + "origin (got " + capture.sourceFile() + ":"
-                        + capture.line() + ":" + capture.column() + ")");
-            }
-        }
+        driveHelperFailure("table-class-instance", source, "Wrapper$toJson(w)",
+            "value at data.children[0] is not JSON serializable: @src/Child", "@src/Child");
     }
 
     // =========================================================================
@@ -2621,8 +2274,13 @@ public class JsonableHelperProductionDriveTest {
      */
     private static Compilation driveExactHelperProgram(String label, String source)
             throws Exception {
+        return driveExactHelperProgram(label, source, Map.of());
+    }
+
+    private static Compilation driveExactHelperProgram(String label, String source,
+            Map<String, String> companions) throws Exception {
         List<Export> exports = exportsOf(source);
-        try (PreparedSynthetic prepared = prepareSynthetic(label, source, exports)) {
+        try (PreparedSynthetic prepared = prepareSynthetic(label, source, exports, companions)) {
             Project project = prepared.project();
             SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
             Compilation preparation = prepared.compilation();
@@ -2860,93 +2518,11 @@ public class JsonableHelperProductionDriveTest {
         System.out.println("-- the nested-class walk's depth bound: 511 links "
             + "succeed, 512 links fail through the walk arm on all three "
             + "consumers --");
-        String validSource = nestedClassDepthSource(511, nestedChainText(511));
-        List<Export> validExports = exportsOf(validSource);
-        try (PreparedSynthetic prepared = prepareSynthetic("nested-class-depth-ok", validSource,
-                validExports)) {
-            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
-            check(oracle == null, "the 511-link chain (512 containers) completes "
-                + "on the oracle (outcome "
-                + (oracle == null ? "success"
-                    : oracle.code() + " " + oracle.message())
-                + ")");
-            for (Target target : Target.values()) {
-                Project project = withOutput(prepared.project(), "out-" + target.laneName());
-                Compilation compilation = emitChecked(project, prepared.compilation(), target);
-                List<String> diagnostics = compilation.diagnostics();
-                boolean compiled = compilation.compiled();
-                check(compiled, "the 511-link project compiles ["
-                    + target.laneName() + "]: " + diagnostics);
-                if (!compiled) {
-                    continue;
-                }
-                Execution execution = target == Target.LUAJIT
-                    ? executeLua(project, validExports)
-                    : executeJvm(project, validExports);
-                for (String mismatch : validDepthArtifactMismatches(execution)) {
-                    check(false, "the 511-link chain (512 containers) "
-                        + "completes on the " + target.laneName() + " artifact: "
-                        + mismatch);
-                }
-            }
-        }
-        String invalidSource = nestedClassDepthSource(512, null);
-        List<Export> invalidExports = exportsOf(invalidSource);
-        String expectedPosition = lineOf(invalidSource, "Wrapper$toJson(w)") + ":"
-            + columnOf(invalidSource, "Wrapper$toJson(w)");
-        String expectedMessage = "value at child.data" + ".next".repeat(512)
-            + " is not JSON serializable: table";
-        String oracleMessage = null;
-        try (PreparedSynthetic prepared = prepareSynthetic("nested-class-depth-overflow",
-                invalidSource, invalidExports)) {
-            SemanticRuntimeModel.ErrorSnapshot oracle = oracleMainFailure(prepared.oracle());
-            check(oracle != null, "the 512-link chain exceeds the depth bound on "
-                + "the oracle");
-            if (oracle != null) {
-                checkEq("E8001", oracle.code(), "the oracle's depth-overflow code");
-                checkEq(expectedMessage, oracle.message(),
-                    "the oracle's walk-arm message names the exceeding container");
-                checkEq("table", oracle.actual(),
-                    "the oracle's actual token is the exceeding container's table");
-                checkEq(expectedPosition, originPosition(oracle.origin()),
-                    "the oracle renders the helper call origin (got "
-                        + oracle.origin() + ")");
-                oracleMessage = oracle.message();
-            }
-            for (Target target : Target.values()) {
-                Project project = withOutput(prepared.project(), "out-" + target.laneName());
-                Compilation compilation = emitChecked(project, prepared.compilation(), target);
-                List<String> diagnostics = compilation.diagnostics();
-                boolean compiled = compilation.compiled();
-                check(compiled, "the 512-link project compiles ["
-                    + target.laneName() + "]: " + diagnostics);
-                if (!compiled) {
-                    continue;
-                }
-                Execution execution = target == Target.LUAJIT
-                    ? executeLua(project, invalidExports)
-                    : executeJvm(project, invalidExports);
-                Capture capture = execution.capture();
-                check(capture != null, "the 512-link chain fails on the "
-                    + target.laneName() + " artifact (exit " + execution.exitCode()
-                    + ")");
-                if (capture == null) {
-                    continue;
-                }
-                checkEq("E8001", capture.code(),
-                    "the " + target.laneName() + " depth-overflow code");
-                if (oracleMessage != null) {
-                    checkEq(oracleMessage, capture.message(), "the "
-                        + target.laneName() + " artifact reproduces the oracle's "
-                        + "walk-arm message");
-                }
-                checkEq(expectedPosition,
-                    capture.line() + ":" + capture.column(), "the "
-                        + target.laneName() + " artifact renders the helper call "
-                        + "origin (got " + capture.sourceFile() + ":"
-                        + capture.line() + ":" + capture.column() + ")");
-            }
-        }
+        driveExactHelperProgram("nested-class-depth-ok",
+            nestedClassDepthSource(511, nestedChainText(511)));
+        driveHelperFailure("nested-class-depth-overflow", nestedClassDepthSource(512, null),
+            "Wrapper$toJson(w)", "value at child.data" + ".next".repeat(512)
+                + " is not JSON serializable: table", "table");
     }
 
     // =========================================================================
@@ -3314,144 +2890,6 @@ public class JsonableHelperProductionDriveTest {
             out.append("// padding line ").append(i).append('\n');
         }
         return out.toString();
-    }
-
-    /**
-     * The bounded-subprocess controls (the release-pipeline contract kept
-     * in this retained drive): the runner owns the whole child tree on
-     * every exit path. A shell that starts a persistent descendant and
-     * waits on it exceeds a one-second deadline; the call returns with the
-     * named timeout, the recorded descendant is gone and no owned reader
-     * thread survives. The cancellation path interrupts the waiting thread,
-     * preserves the interruption, and leaves no descendant or reader
-     * behind before it returns. A stream reader that fails is recorded and
-     * fails the invocation instead of manufacturing an empty transcript.
-     */
-    private static void testBoundedProcessControls() throws Exception {
-        System.out.println("-- the bounded-subprocess controls: the deadline and "
-            + "cancellation paths own the whole child tree --");
-        Path deadlineScratch = Files.createTempDirectory("jsonable-bounded-deadline-");
-        try {
-            Path pidFile = deadlineScratch.resolve(DESCENDANT_PID_FILE);
-            try {
-                runProcess(deadlineScratch, Map.of(), 1_000L, "sh", "-c",
-                    "sleep 30 & echo $! > " + DESCENDANT_PID_FILE + "; wait");
-                check(false, "the persistent descendant exceeds the one-second "
-                    + "deadline");
-            } catch (BoundedProcessTimeoutException expected) {
-                check(expected.getMessage() != null
-                        && expected.getMessage().startsWith("BOUNDED_PROCESS_TIMEOUT"),
-                    "the deadline path reports the named timeout: "
-                        + expected.getMessage());
-            }
-            checkOwnedDescendantGone(pidFile, "the deadline path");
-            checkNoOwnedReaders("the deadline path");
-        } finally {
-            deleteRecursively(deadlineScratch);
-        }
-        // The cancellation path, with several concurrent owned workers:
-        // every waiting thread is interrupted, every interruption is
-        // preserved, and no owned descendant or reader survives any call
-        // before the workers return.
-        int workerCount = 2;
-        Path[] cancelScratches = new Path[workerCount];
-        Path[] cancelPids = new Path[workerCount];
-        Throwable[] cancelObserved = new Throwable[workerCount];
-        Thread[] cancelWorkers = new Thread[workerCount];
-        try {
-            for (int i = 0; i < workerCount; i++) {
-                cancelScratches[i] = Files.createTempDirectory(
-                    "jsonable-bounded-cancel-" + i + "-");
-                cancelPids[i] = cancelScratches[i].resolve(DESCENDANT_PID_FILE);
-                final int index = i;
-                cancelWorkers[i] = new Thread(() -> {
-                    try {
-                        runProcess(cancelScratches[index], Map.of(), 60_000L,
-                            "sh", "-c", "sleep 30 & echo $! > "
-                                + DESCENDANT_PID_FILE + "; wait");
-                    } catch (Throwable failure) {
-                        cancelObserved[index] = failure;
-                    }
-                }, "jsonable-bounded-cancel-worker-" + i);
-                cancelWorkers[i].start();
-            }
-            long waitDeadline = System.nanoTime()
-                + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
-            for (int i = 0; i < workerCount; i++) {
-                while (!Files.isRegularFile(cancelPids[i])
-                        && System.nanoTime() < waitDeadline) {
-                    Thread.sleep(20);
-                }
-                check(Files.isRegularFile(cancelPids[i]), "the cancelled "
-                    + "worker " + i + " records its persistent descendant");
-            }
-            for (int i = 0; i < workerCount; i++) {
-                cancelWorkers[i].interrupt();
-            }
-            for (int i = 0; i < workerCount; i++) {
-                cancelWorkers[i].join(
-                    java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
-                check(!cancelWorkers[i].isAlive(), "the cancelled worker " + i
-                    + " returns after teardown");
-                check(cancelObserved[i] instanceof InterruptedException,
-                    "the cancellation path preserves the interruption of "
-                        + "worker " + i + ": " + cancelObserved[i]);
-                checkOwnedDescendantGone(cancelPids[i],
-                    "the cancellation path of worker " + i);
-            }
-            checkNoOwnedReaders("the concurrent cancellation path");
-        } finally {
-            for (int i = 0; i < workerCount; i++) {
-                if (cancelScratches[i] != null) {
-                    deleteRecursively(cancelScratches[i]);
-                }
-            }
-        }
-        CappedDrain failing = new CappedDrain(new java.io.InputStream() {
-            @Override
-            public int read() throws java.io.IOException {
-                throw new java.io.IOException("review-read-failure");
-            }
-        });
-        failing.run();
-        check(failing.failure() != null
-                && "review-read-failure".equals(failing.failure().getMessage()),
-            "the capped drain records a reader failure instead of returning an "
-                + "empty transcript: " + failing.failure());
-        CappedDrain clean = new CappedDrain(new java.io.ByteArrayInputStream(
-            "ok".getBytes(StandardCharsets.UTF_8)));
-        clean.run();
-        check(clean.failure() == null && "ok".equals(clean.text()),
-            "the capped drain returns a clean EOF transcript (the control)");
-    }
-
-    /** The recorded persistent descendant is gone after the call returns. */
-    private static void checkOwnedDescendantGone(Path pidFile, String label)
-            throws Exception {
-        check(Files.isRegularFile(pidFile), label + ": the child recorded its "
-            + "descendant pid");
-        if (!Files.isRegularFile(pidFile)) {
-            return;
-        }
-        long pid = Long.parseLong(Files.readString(pidFile,
-            StandardCharsets.UTF_8).trim());
-        check(ProcessHandle.of(pid).isEmpty()
-                || !ProcessHandle.of(pid).get().isAlive(),
-            label + ": the owned descendant " + pid + " is gone after the call");
-    }
-
-    /** No owned transcript-reader thread survives the call. */
-    private static void checkNoOwnedReaders(String label) {
-        List<String> alive = new ArrayList<>();
-        for (Thread thread : Thread.getAllStackTraces().keySet()) {
-            String name = thread.getName();
-            if (thread.isAlive() && (name.startsWith("jsonable-stdout-")
-                    || name.startsWith("jsonable-stderr-"))) {
-                alive.add(name);
-            }
-        }
-        check(alive.isEmpty(), label + ": no owned reader thread survives: "
-            + alive);
     }
 
     /**
@@ -4037,6 +3475,43 @@ public class JsonableHelperProductionDriveTest {
         testDynamicHelperOrigin();
         testHelperFunctionBindingInvocation();
         testTableClassInstanceRejection();
+        driveExactHelperProgram("cross-owner-json-defaults", """
+            import * as Owner from "./owner"
+            function nameDefault(): string { return "anon"; }
+            function ageDefault(): int { return 0; }
+            function homeDefault(): Owner.Address { return {city: "seed"}; }
+            // @jsonable
+            export class Person {
+              name: string = nameDefault();
+              age: int = ageDefault();
+              home: Owner.Address = homeDefault();
+            }
+            export function test_default_order(): null {
+              let p: Person | null = Person$fromJson("{\\"age\\":42}");
+              if (p === null) { throw {code: "MISMATCH", message: "partial rejected"}; }
+              else {
+                if (Person$toJson(p) !== "{\\"name\\":\\"anon\\",\\"age\\":42,\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115}}") {
+                  throw {code: "MISMATCH", message: "partial/default order"};
+                }
+              }
+              let nested: Person | null = Person$fromJson("{\\"home\\":{}}");
+              if (nested === null) { throw {code: "MISMATCH", message: "nested rejected"}; }
+              else {
+                if (Person$toJson(nested) !== "{\\"name\\":\\"anon\\",\\"age\\":0,\\"home\\":{\\"city\\":\\"berlin\\",\\"zip\\":10115}}") {
+                  throw {code: "MISMATCH", message: "nested defaults"};
+                }
+              }
+              let bad: Person | null = Person$fromJson("{\\"age\\":\\"bad\\"}");
+              if (bad !== null) {
+                throw {code: "MISMATCH", message: "failure ran defaults"};
+              }
+              return null;
+            }
+            export function main(): null { return null; }
+            """, Map.of("owner", """
+                // @jsonable
+                export class Address { city: string = "berlin"; zip: int = 10115; }
+                """));
         testNestedTableNumericVariants();
         testNestedClassDepthBound();
         testDepthArtifactCreditNegativeControl();
@@ -4051,7 +3526,6 @@ public class JsonableHelperProductionDriveTest {
         testExactHelperArtifactNegativeControls();
         testRuntimeOkNegativeControls();
         testRawProfileNegativeControl();
-        testBoundedProcessControls();
         System.out.println("");
         System.out.println("Jsonable helper production drive: " + passed
             + " passed, " + failed + " failed");

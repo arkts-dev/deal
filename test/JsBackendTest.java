@@ -3099,134 +3099,34 @@ public class JsBackendTest {
         System.out.println("-- Node: signed-int32 matrix under DEAL_V1_2_INT32 --");
         if (!nodeAvailable) { skipNode("signed-int32 matrix"); return; }
 
-        // Boundary acceptance: the inclusive signed-32 extremes pass.
-        NodeResult maxOk = runDealNodeProfile(
-            "export function test(): int { return 2147483647; }",
-            "int32-max-ok", SemanticProfile.DEAL_V1_2_INT32);
-        check(maxOk.exitCode() == 0 && maxOk.output().equals("2147483647"),
-            "2147483647 is the accepted int32 maximum: " + maxOk.output());
-
-        NodeResult minOk = runDealNodeProfile(
-            "export function test(): int { return -2147483648; }",
-            "int32-min-ok", SemanticProfile.DEAL_V1_2_INT32);
-        check(minOk.exitCode() == 0 && minOk.output().equals("-2147483648"),
-            "-2147483648 is the accepted int32 minimum: " + minOk.output());
-        // Overflow on every producing site: E8004 with the pinned
-        // "int out of safe range" message, exit 1.
-        NodeResult addOver = runDealNodeProfile(
-            "export function test(): int { return 2147483647 + 1; }",
-            "int32-add-over", SemanticProfile.DEAL_V1_2_INT32);
-        check(addOver.exitCode() == 1
-                && addOver.output().contains("DEAL_ERROR_CODE: E8004")
-                && addOver.output().contains("int out of safe range"),
-            "2147483647 + 1 → E8004 'int out of safe range', exit 1: "
-                + addOver.output());
-
-        NodeResult subUnder = runDealNodeProfile(
-            "export function test(): int { return -2147483648 - 1; }",
-            "int32-sub-under", SemanticProfile.DEAL_V1_2_INT32);
-        check(subUnder.exitCode() == 1
-                && subUnder.output().contains("DEAL_ERROR_CODE: E8004")
-                && subUnder.output().contains("int out of safe range"),
-            "-2147483648 - 1 → E8004 'int out of safe range', exit 1: "
-                + subUnder.output());
-
-        NodeResult divOver = runDealNodeProfile(
-            "export function test(): int { return -2147483648 / -1; }",
-            "int32-div-over", SemanticProfile.DEAL_V1_2_INT32);
-        check(divOver.exitCode() == 1
-                && divOver.output().contains("DEAL_ERROR_CODE: E8004"),
-            "MIN_VALUE / -1 → E8004 (the truncated quotient leaves the "
-                + "int32 range), exit 1: " + divOver.output());
-
-        NodeResult modMinNegOne = runDealNodeProfile(
-            "export function test(): int { return -2147483648 % -1; }",
-            "int32-mod-min-neg-one", SemanticProfile.DEAL_V1_2_INT32);
-        check(modMinNegOne.exitCode() == 0
-                && modMinNegOne.output().equals("0"),
-            "MIN_VALUE % -1 → 0 (the v1.2 remainder rule gates the "
-                + "truncated remainder only — only / overflows on "
-                + "MIN_VALUE / -1), exit 0: " + modMinNegOne.output());
-
-        NodeResult negOver = runDealNodeProfile(
-            "export function test(): int { return -(-2147483648); }",
-            "int32-neg-over", SemanticProfile.DEAL_V1_2_INT32);
-        check(negOver.exitCode() == 1
-                && negOver.output().contains("DEAL_ERROR_CODE: E8004"),
-            "-(-2147483648) → E8004 via checkInt, exit 1: "
-                + negOver.output());
-
-        // E8005 first on a zero divisor (intDiv and intMod alike).
-        NodeResult divz = runDealNodeProfile(
-            "export function test(): int { return 5 / 0; }",
-            "int32-div-zero", SemanticProfile.DEAL_V1_2_INT32);
-        check(divz.exitCode() == 1
-                && divz.output().contains("DEAL_ERROR_CODE: E8005")
-                && divz.output().contains("integer division by zero"),
-            "zero divisor → E8005, exit 1: " + divz.output());
-
-        NodeResult modz = runDealNodeProfile(
-            "export function test(): int { return 5 % 0; }",
-            "int32-mod-zero", SemanticProfile.DEAL_V1_2_INT32);
-        check(modz.exitCode() == 1
-                && modz.output().contains("DEAL_ERROR_CODE: E8005"),
-            "mod by zero → E8005, exit 1: " + modz.output());
-
-        NodeResult negexp = runDealNodeProfile(
-            "export function test(): int { return 2 ** -1; }",
-            "int32-neg-exp", SemanticProfile.DEAL_V1_2_INT32);
-        check(negexp.exitCode() == 1
-                && negexp.output().contains("DEAL_ERROR_CODE: E8006"),
-            "negative exponent → E8006, exit 1: " + negexp.output());
-
-        NodeResult powOver = runDealNodeProfile(
-            "export function test(): int { return 2 ** 10000; }",
-            "int32-pow-over", SemanticProfile.DEAL_V1_2_INT32);
-        check(powOver.exitCode() == 1
-                && powOver.output().contains("DEAL_ERROR_CODE: E8001")
-                && powOver.output().contains("expected int, got infinity"),
-            "2 ** 10000 → E8001 'expected int, got infinity' (the "
-                + "±Infinity arm stays before the range arm), exit 1: "
-                + powOver.output());
-
-        // Truncating division/remainder signs stay truncation-toward-zero.
-        NodeResult trunc = runDealNodeProfile(
-            "export function test(): int { let a: int = -7 / 3; "
-                + "let b: int = 7 / -3; let c: int = -7 % 3; "
-                + "if (a === -2 && b === -2 && c === -1) { return 1; } "
-                + "return 0; }",
-            "int32-trunc-signs", SemanticProfile.DEAL_V1_2_INT32);
-        check(trunc.exitCode() == 0 && trunc.output().equals("1"),
-            "-7 / 3 === -2, 7 / -3 === -2, -7 % 3 === -1 (truncation "
-                + "toward zero): " + trunc.output());
-
-        // Conversion boundaries: int() of a finite out-of-range value is
-        // E8004; NaN/±Infinity/non-integer are E8001.
-        NodeResult convRange = runDealNodeProfile(
-            "export function test(): int { return int(2147483648.0); }",
-            "int32-conv-range", SemanticProfile.DEAL_V1_2_INT32);
-        check(convRange.exitCode() == 1
-                && convRange.output().contains("DEAL_ERROR_CODE: E8004")
-                && convRange.output().contains("int out of safe range"),
-            "int(2147483648.0) → E8004, exit 1: " + convRange.output());
-
-        NodeResult convNan = runDealNodeProfile(
-            "export function test(): int { return int(0.0 / 0.0); }",
-            "int32-conv-nan", SemanticProfile.DEAL_V1_2_INT32);
-        check(convNan.exitCode() == 1
-                && convNan.output().contains("DEAL_ERROR_CODE: E8001")
-                && convNan.output().contains("expected int, got NaN"),
-            "int(NaN) → E8001 'expected int, got NaN', exit 1: "
-                + convNan.output());
-
-        NodeResult convInf = runDealNodeProfile(
-            "export function test(): int { return int(1.0 / 0.0); }",
-            "int32-conv-inf", SemanticProfile.DEAL_V1_2_INT32);
-        check(convInf.exitCode() == 1
-                && convInf.output().contains("DEAL_ERROR_CODE: E8001")
-                && convInf.output().contains("expected int, got infinity"),
-            "int(Infinity) → E8001 'expected int, got infinity', exit 1: "
-                + convInf.output());
+        String[][] rows = {
+            {"max-ok", "return 2147483647;", "2147483647"},
+            {"min-ok", "return -2147483648;", "-2147483648"},
+            {"add-over", "return 2147483647 + 1;", "E8004", "int out of safe range"},
+            {"sub-under", "return -2147483648 - 1;", "E8004", "int out of safe range"},
+            {"div-over", "return -2147483648 / -1;", "E8004"},
+            {"mod-min-neg-one", "return -2147483648 % -1;", "0"},
+            {"neg-over", "return -(-2147483648);", "E8004"},
+            {"div-zero", "return 5 / 0;", "E8005", "integer division by zero"},
+            {"mod-zero", "return 5 % 0;", "E8005"},
+            {"neg-exp", "return 2 ** -1;", "E8006"},
+            {"pow-over", "return 2 ** 10000;", "E8001", "expected int, got infinity"},
+            {"trunc-signs", "let a: int = -7 / 3; let b: int = 7 / -3; let c: int = -7 % 3; "
+                + "if (a === -2 && b === -2 && c === -1) { return 1; } return 0;", "1"},
+            {"conv-range", "return int(2147483648.0);", "E8004", "int out of safe range"},
+            {"conv-nan", "return int(0.0 / 0.0);", "E8001", "expected int, got NaN"},
+            {"conv-inf", "return int(1.0 / 0.0);", "E8001", "expected int, got infinity"}
+        };
+        for (String[] row : rows) {
+            NodeResult result = runDealNodeProfile("export function test(): int { " + row[1] + " }",
+                "int32-" + row[0], SemanticProfile.DEAL_V1_2_INT32);
+            boolean failure = row[2].startsWith("E");
+            check(result.exitCode() == (failure ? 1 : 0)
+                    && (failure ? result.output().contains("DEAL_ERROR_CODE: " + row[2])
+                        && (row.length == 3 || result.output().contains(row[3]))
+                        : result.output().equals(row[2])),
+                "int32-" + row[0] + ": " + result.output());
+        }
 
         PreparedJs fractional = prepareJs(
             "export function test(): int { return int(3.5); }",

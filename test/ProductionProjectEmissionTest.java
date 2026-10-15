@@ -108,6 +108,91 @@ public class ProductionProjectEmissionTest {
     // ProductionProjectEmission directly)
     // =========================================================================
 
+    static final String SHADOWING_SOURCE = """
+        export function main(): null {
+          let x: int = 3;
+          {
+            let x: int = x + 1;
+            if (x !== 4) { throw { code: "SHADOW_FAIL", message: "shadowing initializer" }; }
+          }
+          if (x !== 3) { throw { code: "SHADOW_FAIL", message: "block outer restored" }; }
+          if (true) {
+            let x: int = 9;
+            if (x !== 9) { throw { code: "SHADOW_FAIL", message: "if-body shadow" }; }
+          }
+          if (x !== 3) { throw { code: "SHADOW_FAIL", message: "if-body outer restored" }; }
+          while (false) {
+            let x: int = 11;
+            if (x !== 11) { throw { code: "SHADOW_FAIL", message: "loop-body shadow" }; }
+          }
+          if (x !== 3) { throw { code: "SHADOW_FAIL", message: "loop-body outer restored" }; }
+          let sum: int = 0;
+          let values: int[] = [1, 2];
+          for (let v: int of values) {
+            let before: int = v;
+            let v: int = 10;
+            sum = sum + before + v;
+          }
+          if (sum !== 23) { throw { code: "SHADOW_FAIL", message: "for-of shadow" }; }
+          let h: int = 3;
+          let hsum: int = 0;
+          for (let h: int = h + 1; hsum < 9;) { hsum = hsum + h; }
+          if (hsum !== 12) { throw { code: "SHADOW_FAIL", message: "for-head initializer" }; }
+          if (h !== 3) { throw { code: "SHADOW_FAIL", message: "for-head outer restored" }; }
+          let nl: string | null = "ab";
+          if (nl !== null) {
+            for (let nl: int = 0; false;) {}
+            let nlText: string = nl;
+            if (nlText !== "ab") { throw { code: "SHADOW_FAIL", message: "for-head shadow restored" }; }
+          }
+          let nb: string | null = "cd";
+          if (nb !== null) {
+            { let nb: int = 0; if (true) {} else {} }
+            let nbText: string = nb;
+            if (nbText !== "cd") { throw { code: "SHADOW_FAIL", message: "branch shadow restored" }; }
+          }
+          try {
+            throw { code: "SHADOW_X", message: "catch shadow" };
+          } catch (e) {
+            let e: Error = e;
+            if (e.code !== "SHADOW_X") { throw { code: "SHADOW_FAIL", message: "catch shadow" }; }
+          }
+          return null;
+        }
+        """;
+
+    static final String DYNAMIC_TABLE_SOURCE = """
+        export function main(): null {
+          let t: table = { x: 7 };
+          let k: string = "x";
+          let n: int = t[k];
+          if (n !== 7) { throw { code: "DYN_FAIL", message: "variable key" }; }
+          let u: table = {};
+          let mk: () => string = function(): string { return "y"; };
+          u[mk()] = 9;
+          let m: int = u[mk()];
+          if (m !== 9) { throw { code: "DYN_FAIL", message: "effectful key" }; }
+          let q: table = {};
+          let miss: int | null = q[k];
+          if (miss !== null) { throw { code: "DYN_FAIL", message: "missing" }; }
+          let v: table = { s: 1 };
+          let nn: int | null = v["s"];
+          let got: int = 0;
+          if (nn !== null) { got = nn; }
+          if (got !== 1) { throw { code: "DYN_FAIL", message: "nullable" }; }
+          let order: int = 0;
+          let receiver: () => table = function(): table { order = order * 10 + 1; return u; };
+          let key: () => string = function(): string { order = order * 10 + 2; return "y"; };
+          let value: () => int = function(): int { order = order * 10 + 3; return 11; };
+          receiver()[key()] = value();
+          if (order !== 123) { throw { code: "DYN_FAIL", message: "write evaluation order" }; }
+          order = 0;
+          let ordered: int = receiver()[key()];
+          if (order !== 12 || ordered !== 11) { throw { code: "DYN_FAIL", message: "read evaluation order" }; }
+          return null;
+        }
+        """;
+
     private static final ModuleId LIB = new ModuleId("lib");
     private static final ModuleId HOST_CFG = new ModuleId("host.cfg");
     private static final String HOST_CFG_SPECIFIER = "host/cfg";
@@ -347,6 +432,11 @@ public class ProductionProjectEmissionTest {
 
     private static Fixture compileProject(Map<String, String> sources,
             Map<String, String> externals) throws Exception {
+        return compileProject(sources, externals, Backend.LUAJIT, fixtureInvocation());
+    }
+
+    private static Fixture compileProject(Map<String, String> sources,
+            Map<String, String> externals, Backend backend, CompilerInvocation invocation) throws Exception {
         Path root = Files.createTempDirectory("production-arm-fixture");
         Path src = root.resolve("src");
         for (Map.Entry<String, String> source : sources.entrySet()) {
@@ -360,8 +450,8 @@ public class ProductionProjectEmissionTest {
         Path entry = src.resolve("app.deal").toAbsolutePath();
         Path output = root.resolve("out").toAbsolutePath();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(entry, output,
-            false, false, false, false, Backend.LUAJIT, resolvedExternals,
-            List.of(src.toAbsolutePath()), null, null, fixtureInvocation());
+            false, false, false, false, backend, resolvedExternals,
+            List.of(src.toAbsolutePath()), null, null, invocation);
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
@@ -777,55 +867,33 @@ public class ProductionProjectEmissionTest {
     //    call emits and stages
     // =========================================================================
 
+    private static String stagedLua(Fixture fixture, Path out, String label) throws Exception {
+        PublicationStager stager = PublicationStager.forRoot(out);
+        try {
+            ProductionProjectEmission.Result result = emit(fixture, Backend.LUAJIT, stager, false);
+            check(result.emitted(), label + " emits: " + result.diagnostics());
+            check(result.diagnostics().isEmpty(), label + " has no diagnostics: " + result.diagnostics());
+            checkEq("app.lua", result.artifactRelativePath(), label + " entry artifact");
+            var artifact = stager.stagedSet().artifact("app.lua");
+            check(artifact.isPresent(), label + " artifact staged before publication");
+            return artifact.isPresent() ? new String(artifact.orElseThrow().content(), StandardCharsets.UTF_8) : "";
+        } finally {
+            stager.discard();
+        }
+    }
+
     private static void testAtomicFailures(Fixture failing) throws Exception {
         System.out.println("-- a failing lowering stages nothing and preserves the "
             + "previous artifact set; the cross-module sync call emits and "
             + "stages --");
 
-        Fixture bytes = bytesFixture();
-        Path bytesOut = bytes.root().resolve("out-arm");
-        try {
-            PublicationStager stager = PublicationStager.forRoot(bytesOut);
-            ProductionProjectEmission.Result result;
+        for (String label : List.of("bytes", "nested-declaration")) {
+            Fixture fixture = label.equals("bytes") ? bytesFixture() : nestedDeclarationFixture();
             try {
-                result = emit(bytes, Backend.LUAJIT, stager, false);
-                check(result.emitted(), "the bytes-bearing run emits: "
-                    + result.diagnostics());
-                check(result.diagnostics().isEmpty(),
-                    "the bytes allocation carries no diagnostic: "
-                        + result.diagnostics());
-                checkEq("app.lua", result.artifactRelativePath(),
-                    "the bytes-bearing run stages the entry module's chunk");
-                check(stager.stagedSet().artifact("app.lua").isPresent(),
-                    "the bytes-bearing run stages its one project artifact");
+                stagedLua(fixture, fixture.root().resolve("out-arm"), label);
             } finally {
-                stager.discard();
+                deleteRecursively(fixture.root());
             }
-        } finally {
-            deleteRecursively(bytes.root());
-        }
-
-        Fixture nested = nestedDeclarationFixture();
-        Path nestedOut = nested.root().resolve("out-arm");
-        try {
-            PublicationStager stager = PublicationStager.forRoot(nestedOut);
-            ProductionProjectEmission.Result result;
-            try {
-                result = emit(nested, Backend.LUAJIT, stager, false);
-                check(result.emitted(), "the nested-declaration run emits: "
-                    + result.diagnostics());
-                check(result.diagnostics().isEmpty(),
-                    "the nested declaration carries no diagnostic: "
-                        + result.diagnostics());
-                checkEq("app.lua", result.artifactRelativePath(),
-                    "the nested-declaration run stages the entry module's chunk");
-                check(stager.stagedSet().artifact("app.lua").isPresent(),
-                    "the nested-declaration run stages its one project artifact");
-            } finally {
-                stager.discard();
-            }
-        } finally {
-            deleteRecursively(nested.root());
         }
 
         Path out = failing.root().resolve("out-arm");
@@ -859,34 +927,12 @@ public class ProductionProjectEmissionTest {
         try {
             writeFileIn(syncOut, "app.lua", "-- previous artifact\n");
             writeFileIn(syncOut, "deal/runtime.lua", "-- previous runtime\n");
-            PublicationStager stager = PublicationStager.forRoot(syncOut);
-            ProductionProjectEmission.Result result;
-            try {
-                result = emit(sync, Backend.LUAJIT, stager, false);
-                check(result.emitted(),
-                    "the cross-module sync call emits: " + result.diagnostics());
-                check(result.diagnostics().isEmpty(),
-                    "the emitted cross-module sync call carries no diagnostic: "
-                        + result.diagnostics());
-                checkEq("app.lua", result.artifactRelativePath(),
-                    "the cross-module sync call stages the entry module's chunk");
-                check(stager.stagedSet().artifact("app.lua").isPresent(),
-                    "the cross-module sync call stages its one project artifact");
-                String chunk = new String(stager.stagedSet().artifact("app.lua")
-                    .orElseThrow().content(), StandardCharsets.UTF_8);
-                check(chunk.contains("__module = \"lib\"")
-                        && chunk.contains("__modStack[#__modStack + 1] = __module")
-                        && chunk.contains("pcall(__factories.F")
-                        && !chunk.contains("SharedM"),
-                    "the staged chunk runs the callee unit's entry under the "
-                        + "callee module context and references no per-module "
-                        + "artifact");
-                check(chunk.contains("__svStack"),
-                    "the staged chunk preserves the callee body's private "
-                        + "state across the invocation");
-            } finally {
-                stager.discard();
-            }
+            String chunk = stagedLua(sync, syncOut, "cross-module sync call");
+            check(chunk.contains("__module = \"lib\"")
+                && chunk.contains("__modStack[#__modStack + 1] = __module")
+                && chunk.contains("pcall(__factories.F") && !chunk.contains("SharedM"),
+                "staged call uses the callee module context without per-module artifact");
+            check(chunk.contains("__svStack"), "staged call preserves private callee state");
         } finally {
             deleteRecursively(sync.root());
         }
@@ -907,25 +953,7 @@ public class ProductionProjectEmissionTest {
         // project artifact and no guard fires.
         Path out = fixture.root().resolve("out-arm");
         {
-            PublicationStager stager = PublicationStager.forRoot(out);
-            ProductionProjectEmission.Result result;
-            String chunk;
-            try {
-                result = emit(fixture, Backend.LUAJIT, stager, false);
-                check(result.emitted(),
-                    "the HOST-declaration import emits: " + result.diagnostics());
-                check(result.diagnostics().isEmpty(),
-                    "the HOST-declaration import carries no diagnostic: "
-                        + result.diagnostics());
-                checkEq("app.lua", result.artifactRelativePath(),
-                    "the HOST-declaration import stages the entry module's chunk");
-                check(stager.stagedSet().artifact("app.lua").isPresent(),
-                    "the HOST-declaration import stages its one project artifact");
-                chunk = new String(stager.stagedSet().artifact("app.lua")
-                    .orElseThrow().content(), StandardCharsets.UTF_8);
-            } finally {
-                stager.discard();
-            }
+            String chunk = stagedLua(fixture, out, "HOST-declaration import");
             HostDeclarationSurface.DeclarationFacts facts =
                 fixture.surface().require(HOST_CFG);
             checkEq(HostDeclarationSurface.DeclarationKind.HOST, facts.kind(),
@@ -952,28 +980,7 @@ public class ProductionProjectEmissionTest {
             checkEq(HostDeclarationSurface.DeclarationKind.EXTERN_C,
                 externC.surface().require(NATIVE_MATH).kind(),
                 "the probe's declaration module is EXTERN_C-kind");
-            PublicationStager stager = PublicationStager.forRoot(externCOut);
-            ProductionProjectEmission.Result result;
-            String chunk;
-            try {
-                result = emit(externC, Backend.LUAJIT, stager, false);
-                check(result.emitted(),
-                    "the extern-C declaration import emits: "
-                        + result.diagnostics());
-                check(result.diagnostics().isEmpty(),
-                    "the extern-C declaration import carries no guard "
-                        + "diagnostic: " + result.diagnostics());
-                checkEq("app.lua", result.artifactRelativePath(),
-                    "the extern-C declaration import stages the entry "
-                        + "module's chunk");
-                check(stager.stagedSet().artifact("app.lua").isPresent(),
-                    "the extern-C declaration import stages its one project "
-                        + "artifact");
-                chunk = new String(stager.stagedSet().artifact("app.lua")
-                    .orElseThrow().content(), StandardCharsets.UTF_8);
-            } finally {
-                stager.discard();
-            }
+            String chunk = stagedLua(externC, externCOut, "extern-C declaration import");
             check(chunk.contains("__exportSurfaces[\"" + NATIVE_MATH.path()
                     + "\"] = __exportSurfaces[\"" + NATIVE_MATH.path()
                     + "\"] or __rt.load_ffi(\"ffi:@$external/"
@@ -1590,27 +1597,13 @@ public class ProductionProjectEmissionTest {
     private static SharedEmissionFailure assertAbsentEntryRejection(String target,
             String what, DiagnosticRange expected, String expectedMessage,
             EmitterDrive drive) throws Exception {
-        try {
-            drive.emit();
-            fail(what + " [" + target + "]: the emitter rejects the absent entry");
-            return null;
-        } catch (SharedEmissionFailure rejection) {
-            checkEq(expectedMessage, rejection.getMessage(),
-                what + " [" + target + "]: the rejection message is the unchanged"
-                    + " complete text");
-            checkEq(expected, rejection.diagnosticRange(),
-                what + " [" + target + "]: the rejection carries the identifying"
-                    + " MODULE_IMPORT's own exact range");
+        SharedEmissionFailure rejection = assertEmitterRejection(target, what, expected, expectedMessage, drive);
+        if (rejection != null) {
             check(rejection.getCause() instanceof IllegalStateException
-                    && expectedMessage.equals(rejection.getCause().getMessage()),
-                what + " [" + target + "]: the failed lookup remains the rejection's"
-                    + " own cause with the unchanged message: " + rejection.getCause());
-            return rejection;
-        } catch (IllegalStateException other) {
-            fail(what + " [" + target + "]: the rejection is the source-bearing"
-                + " shared emitter signal: " + other);
-            return null;
+                && expectedMessage.equals(rejection.getCause().getMessage()),
+                what + " [" + target + "]: unchanged lookup cause: " + rejection.getCause());
         }
+        return rejection;
     }
 
     /**
@@ -1798,6 +1791,22 @@ public class ProductionProjectEmissionTest {
      * the project lowering closed with no project, and the shared E6005
      * carries the function declaration's own exact range.
      */
+    private static void assertDescriptorRejection(String label,
+            SemanticLowerer.ProjectLoweringResult result, DiagnosticRange expected) {
+        check(result.project() == null && !result.diagnostics().isEmpty()
+            && result.tables().isEmpty() && result.registries().isEmpty(),
+            label + " fails closed with no project, tables, or registries");
+        check(expected.origin() == RangeOrigin.SOURCE && expected.file().endsWith("src/app.deal")
+            && expected.scalarLength() > 0, label + " real declaration SOURCE span");
+        if (!result.diagnostics().isEmpty()) {
+            CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+            checkEq("E6005", diagnostic.code(), label + " diagnostic code");
+            check(diagnostic.message().contains(ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
+                label + " unchanged descriptor failure: " + diagnostic.message());
+            checkEq(expected, diagnostic.range(), label + " exact declaration-owned range");
+        }
+    }
+
     private static void testDeclarationSignatureOrigin() throws Exception {
         System.out.println("-- the corrupted declared function signature keeps "
             + "the declaration's own range through lowerProject --");
@@ -1825,30 +1834,7 @@ public class ProductionProjectEmissionTest {
             table.define("f", new Symbol.FunctionSymbol("f",
                 new Type.Func(List.of(), Type.Error.INSTANCE, false)));
 
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            check(result.project() == null && !result.diagnostics().isEmpty()
-                    && result.tables().isEmpty()
-                    && result.registries().isEmpty(),
-                "the corrupted signature fails the project lowering closed with "
-                    + "no project, tables, or registries");
-            if (result.diagnostics().isEmpty()) {
-                return;
-            }
-            CompilerDiagnostic diagnostic = result.diagnostics().get(0);
-            DiagnosticRange expected = target.span().range();
-            check(expected.origin() == RangeOrigin.SOURCE
-                    && expected.file().endsWith("src/app.deal")
-                    && expected.scalarLength() > 0,
-                "the function declaration carries a real SOURCE span in its own "
-                    + "module file: " + expected);
-            check("E6005".equals(diagnostic.code())
-                    && diagnostic.message().contains(
-                        ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
-                "the corrupted signature converts to the unchanged E6005 "
-                    + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
-            checkEq(expected, diagnostic.range(),
-                "the failure carries exactly the function declaration's own "
-                    + "converted range");
+            assertDescriptorRejection("corrupted function signature", lower(fixture), target.span().range());
         } finally {
             deleteRecursively(fixture.root());
         }
@@ -1896,20 +1882,11 @@ public class ProductionProjectEmissionTest {
                         false)));
 
                 SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-                check(result.project() == null && !result.diagnostics().isEmpty()
-                        && result.tables().isEmpty() && result.registries().isEmpty(),
-                    "the corrupted " + helper + " signature fails the project lowering "
-                        + "closed with no project, tables, or registries");
+                assertDescriptorRejection(helper, result, target.span().range());
                 if (result.diagnostics().isEmpty()) {
                     continue;
                 }
-                CompilerDiagnostic diagnostic = result.diagnostics().get(0);
-                check("E6005".equals(diagnostic.code())
-                        && diagnostic.message().contains(
-                            ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
-                    "the corrupted " + helper + " signature converts to the unchanged "
-                        + "E6005 DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
-                DiagnosticRange range = diagnostic.range();
+                DiagnosticRange range = result.diagnostics().get(0).range();
                 check(range.origin() == RangeOrigin.SOURCE
                         && range.file().endsWith("src/app.deal")
                         && range.startLine() == 2 && range.startColumn() == 8
@@ -1976,15 +1953,8 @@ public class ProductionProjectEmissionTest {
             }
 
             SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            check(result.project() == null && !result.diagnostics().isEmpty()
-                    && result.tables().isEmpty() && result.registries().isEmpty(),
-                "the corrupted for-let counter fails the project lowering closed with "
-                    + "no project, tables, or registries");
-            if (result.diagnostics().isEmpty()) {
-                return;
-            }
-            CompilerDiagnostic diagnostic = result.diagnostics().get(0);
             DiagnosticRange expected = counter.typeAnnotation().get().span().range();
+            assertDescriptorRejection("corrupted for-let counter", result, expected);
             check(expected.origin() == RangeOrigin.SOURCE
                     && expected.file().endsWith("src/app.deal")
                     && expected.startLine() == 2 && expected.startColumn() == 15
@@ -1994,14 +1964,7 @@ public class ProductionProjectEmissionTest {
                     && expected.scalarLength() == 3,
                 "the counter declares a real SOURCE annotation span 2:15-2:18 "
                     + "[45,48) length 3: " + expected);
-            check("E6005".equals(diagnostic.code())
-                    && diagnostic.message().contains(
-                        ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
-                "the corrupted for-let counter converts to the unchanged E6005 "
-                    + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
-            checkEq(expected, diagnostic.range(),
-                "the failure carries exactly the counter annotation's own converted "
-                    + "range");
+
         } finally {
             deleteRecursively(fixture.root());
         }
@@ -2038,24 +2001,22 @@ public class ProductionProjectEmissionTest {
     private static SharedEmissionFailure assertStdlibCatalogMissRejection(
             String target, DiagnosticRange expected, String expectedMessage,
             EmitterDrive drive) throws Exception {
+        return assertEmitterRejection(target, "empty-catalog STDLIB import", expected, expectedMessage, drive);
+    }
+
+    private static SharedEmissionFailure assertEmitterRejection(String target, String label,
+            DiagnosticRange expected, String expectedMessage, EmitterDrive drive) throws Exception {
         try {
             drive.emit();
-            fail("the empty-catalog STDLIB import [" + target
-                + "]: the emitter rejects");
-            return null;
+            fail(label + " [" + target + "]: emitter must reject");
         } catch (SharedEmissionFailure rejection) {
-            checkEq(expectedMessage, rejection.getMessage(),
-                "the empty-catalog STDLIB import [" + target + "]: the rejection"
-                    + " message is the unchanged complete text");
-            checkEq(expected, rejection.diagnosticRange(),
-                "the empty-catalog STDLIB import [" + target + "]: the rejection"
-                    + " carries the recorded MODULE_IMPORT's own exact range");
+            checkEq(expectedMessage, rejection.getMessage(), label + " [" + target + "]: complete message");
+            checkEq(expected, rejection.diagnosticRange(), label + " [" + target + "]: exact range");
             return rejection;
         } catch (IllegalStateException other) {
-            fail("the empty-catalog STDLIB import [" + target + "]: the rejection"
-                + " is the source-bearing shared signal: " + other);
-            return null;
+            fail(label + " [" + target + "]: rejection must carry origin: " + other);
         }
+        return null;
     }
 
     /**
@@ -2070,28 +2031,15 @@ public class ProductionProjectEmissionTest {
         check(expected.origin() == RangeOrigin.SOURCE && expected.scalarLength() > 0,
             what + ": the offending op carries a real SOURCE span: " + expected);
         for (String target : List.of("LuaJIT", "JVM")) {
-            try {
+            assertEmitterRejection(target, what, expected, expectedMessage, () -> {
                 if ("JVM".equals(target)) {
-                    JvmSemanticEmitter.emitProductionProject(project,
-                        lowering.tables(), lowering.registries(), "FixtureProbe",
-                        fixture.surface());
+                    JvmSemanticEmitter.emitProductionProject(project, lowering.tables(),
+                        lowering.registries(), "FixtureProbe", fixture.surface());
                 } else {
-                    LuaSemanticEmitter.emitProductionProject(project,
-                        lowering.tables(), lowering.registries(), fixture.surface(),
-                        null);
+                    LuaSemanticEmitter.emitProductionProject(project, lowering.tables(),
+                        lowering.registries(), fixture.surface(), null);
                 }
-                fail(what + " [" + target + "]: the emitter rejects");
-            } catch (SharedEmissionFailure rejection) {
-                checkEq(expectedMessage, rejection.getMessage(),
-                    what + " [" + target + "]: the rejection message is the"
-                        + " unchanged text");
-                checkEq(expected, rejection.diagnosticRange(),
-                    what + " [" + target + "]: the rejection carries the"
-                        + " offending op's own exact range");
-            } catch (IllegalStateException other) {
-                fail(what + " [" + target + "]: the rejection is the"
-                    + " source-bearing shared signal: " + other);
-            }
+            });
         }
     }
 
@@ -2202,237 +2150,85 @@ public class ProductionProjectEmissionTest {
 
     private static void testCrossModuleAsyncEmission(Fixture cross, Fixture same)
             throws Exception {
-        System.out.println("-- the cross-module async call emits through the "
-            + "entity-local async entry and executes; a same-module async call "
-            + "emits --");
+        checkAsyncEmission(cross, "cross-module", 42);
+        checkAsyncEmission(same, "same-module", 1);
+    }
 
-        Path crossOut = cross.root().resolve("out-luajit");
-        {
-            PublicationStager stager = PublicationStager.forRoot(crossOut);
-            ProductionProjectEmission.Result result;
+    private static void checkAsyncEmission(Fixture fixture, String label, int expected)
+            throws Exception {
+        for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
+            String artifact = backend == Backend.LUAJIT ? "app.lua" : "App.java";
+            Path out = fixture.root().resolve(backend == Backend.LUAJIT ? "out-luajit" : "out-jvm");
+            PublicationStager stager = PublicationStager.forRoot(out);
             try {
-                result = emit(cross, Backend.LUAJIT, stager, false);
-                check(result.emitted(),
-                    "the cross-module async closure emits: "
-                        + result.diagnostics());
-                checkEq("app.lua", result.artifactRelativePath(),
-                    "the cross-module async artifact is the entry chunk");
+                ProductionProjectEmission.Result result = emit(fixture, backend, stager, false);
+                check(result.emitted(), label + " " + backend + " emits: " + result.diagnostics());
+                checkEq(artifact, result.artifactRelativePath(), label + " entry artifact");
                 checkEq(1L, stager.stagedSet().relativePaths().stream()
-                        .filter(path -> path.endsWith(".lua")
-                            && !path.startsWith("std/")
-                            && !path.equals("deal/runtime.lua")).count(),
-                    "exactly one staged project artifact");
-                stager.publish();
-            } finally {
-                stager.discard();
-            }
-            String chunk = Files.readString(crossOut.resolve("app.lua"),
-                StandardCharsets.UTF_8);
-            check(!chunk.contains("EXTERNAL_ASYNC_CALL"),
-                "the emitted chunk carries no superseded guard token");
-            check(!chunk.contains("SharedM"),
-                "the emitted chunk references no per-module async-entry surface");
-            check(chunk.contains("__asyncEntries[\"" + LIB.path()
-                    + "#getValue\"]"),
-                "the chunk carries one async entry per async export of the "
-                    + "callee closure module");
-            writeFileIn(cross.root(), "deal/runtime.lua",
-                Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
-            writeFileIn(cross.root(), "probe.lua", """
-                local surfaces = dofile("out-luajit/app.lua")
-                local worker = surfaces.worker
-                assert(type(worker) == "table" and worker.__kind == "function",
-                  "the entry surface publishes the cross-module async export")
-                local handle = worker.f()
-                assert(type(handle) == "table" and handle.__kind == "async",
-                  "the published async export produces an async operation")
-                require("deal.runtime").async_step(handle)
-                local completion = handle.__result
-                assert(handle.__done and completion == 42,
-                  "the cross-module await completes with 42, got "
-                    .. tostring(completion))
-                print("PROBE|ASYNC-RESULT|" .. tostring(completion))
-                """);
-            ProcessOutcome luaRun = runProcess(List.of("luajit", "probe.lua"),
-                cross.root());
-            checkEq(0, luaRun.exitCode(),
-                "the cross-module await path executes under luajit: "
-                    + luaRun.output());
-            check(luaRun.stdout().contains("PROBE|ASYNC-RESULT|42"),
-                "the cross-module await completes with 42 under luajit: "
-                    + luaRun.stdout());
-        }
-
-        // The JVM target of the same closure: the class source compiles
-        // with javac --release 25 -proc:none and the runner executes the
-        // exported async function through the artifact's published
-        // surface.
-        Path crossJvmOut = cross.root().resolve("out-jvm");
-        Path crossJvmClasses = cross.root().resolve("cross-classes");
-        {
-            PublicationStager stager = PublicationStager.forRoot(crossJvmOut);
-            ProductionProjectEmission.Result result;
-            try {
-                result = emit(cross, Backend.JVM, stager, false);
-                check(result.emitted(),
-                    "the cross-module async JVM closure emits: "
-                        + result.diagnostics());
-                stager.publish();
-            } finally {
-                stager.discard();
-            }
-            String source = Files.readString(crossJvmOut.resolve("App.java"),
-                StandardCharsets.UTF_8);
-            check(!source.contains("EXTERNAL_ASYNC_CALL"),
-                "the emitted JVM class carries no superseded guard token");
-            check(!source.contains("SharedM"),
-                "the emitted JVM class references no per-module class");
-            String crossDriver = "AsyncCrossRunner_"
-                + java.util.UUID.randomUUID().toString().replace("-", "");
-            writeFileIn(crossJvmOut, crossDriver + ".java", """
-                import deal.codegen.jvm.JvmRuntime;
-
-                public final class %s {
-                  public static void main(String[] args) {
-                    App.main(new String[0]);
-                    JvmRuntime.Table surface = App.EXPORT_SURFACES.get("app");
-                    JvmRuntime.FunctionValue worker =
-                        (JvmRuntime.FunctionValue) surface.read("worker");
-                    Object completion = worker.fn.invoke(new Object[0]);
-                    System.out.println("PROBE|ASYNC-RESULT|" + completion);
-                  }
+                    .filter(path -> path.endsWith(backend == Backend.LUAJIT ? ".lua" : ".java")
+                        && !path.startsWith("std/") && !path.equals("deal/runtime.lua")).count(),
+                    label + " one staged project artifact");
+                if (!result.emitted()) {
+                    continue;
                 }
-                """.formatted(crossDriver));
-            Files.createDirectories(crossJvmClasses);
-            String classpath = absoluteClasspath();
-            ProcessOutcome javacRun = compileJvm(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", crossJvmClasses.toString(),
-                crossJvmOut.resolve("App.java").toAbsolutePath().toString(),
-                crossJvmOut.resolve(crossDriver + ".java").toAbsolutePath().toString()),
-                cross.root());
-            checkEq(0, javacRun.exitCode(),
-                "the cross-module async JVM artifact compiles: "
-                    + javacRun.output());
-            if (javacRun.exitCode() == 0) {
-                ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
-                    crossJvmClasses + java.io.File.pathSeparator + classpath,
-                    crossDriver), cross.root());
-                checkEq(0, jvmRun.exitCode(),
-                    "the cross-module await path executes under java: "
-                        + jvmRun.output());
-                check(jvmRun.stdout().contains("PROBE|ASYNC-RESULT|42"),
-                    "the cross-module await completes with 42 under java: "
-                        + jvmRun.stdout());
-            }
-        }
-
-        // The same-module async call: accepted, emitted, and executed on
-        // both targets. The awaiting call is reachable through the
-        // exported zero-arity async function's published surface, so the
-        // runner's invocation really runs the ASYNC_START(DEAL_BODY)/
-        // AWAIT path (never merely compiling a never-invoked body).
-        Path sameOut = same.root().resolve("out-luajit");
-        {
-            PublicationStager stager = PublicationStager.forRoot(sameOut);
-            ProductionProjectEmission.Result result;
-            try {
-                result = emit(same, Backend.LUAJIT, stager, false);
-                check(result.emitted(), "the same-module async closure emits: "
-                    + result.diagnostics());
-                checkEq("app.lua", result.artifactRelativePath(),
-                    "the same-module async artifact is the entry chunk");
                 stager.publish();
             } finally {
                 stager.discard();
             }
-            check(Files.isRegularFile(sameOut.resolve("app.lua")),
-                "the published same-module async chunk exists");
-            writeFileIn(same.root(), "deal/runtime.lua",
-                Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
-            writeFileIn(same.root(), "probe.lua", """
-                local surfaces = dofile("out-luajit/app.lua")
-                assert(type(surfaces) == "table",
-                  "the chunk returns the entry surface")
-                local worker = surfaces.worker
-                assert(type(worker) == "table" and worker.__kind == "function",
-                  "the entry surface publishes the same-module async export")
-                local handle = worker.f()
-                assert(type(handle) == "table" and handle.__kind == "async",
-                  "the published async export produces an async operation")
-                require("deal.runtime").async_step(handle)
-                local completion = handle.__result
-                assert(handle.__done and completion == 1,
-                  "the awaiting call completes with 1, got "
-                    .. tostring(completion))
-                print("PROBE|ASYNC-RESULT|" .. tostring(completion))
-                """);
-            ProcessOutcome luaRun = runProcess(List.of("luajit", "probe.lua"),
-                same.root());
-            checkEq(0, luaRun.exitCode(),
-                "the same-module await path executes under luajit: "
-                    + luaRun.output());
-            check(luaRun.stdout().contains("PROBE|ASYNC-RESULT|1"),
-                "the awaiting call completes with 1 under luajit: "
-                    + luaRun.stdout());
-        }
-
-        // The JVM target of the same fixture: the class source compiles
-        // with javac --release 25 -proc:none and the runner executes the
-        // exported async function through the artifact's published
-        // surface.
-        Path jvmOut = same.root().resolve("out-jvm");
-        Path jvmClasses = same.root().resolve("same-classes");
-        {
-            PublicationStager stager = PublicationStager.forRoot(jvmOut);
-            ProductionProjectEmission.Result result;
-            try {
-                result = emit(same, Backend.JVM, stager, false);
-                check(result.emitted(),
-                    "the same-module async JVM closure emits: "
-                        + result.diagnostics());
-                stager.publish();
-            } finally {
-                stager.discard();
-            }
-            check(Files.isRegularFile(jvmOut.resolve("App.java")),
-                "the published same-module async JVM artifact exists");
-            String sameDriver = "AsyncWorkerRunner_"
-                + java.util.UUID.randomUUID().toString().replace("-", "");
-            writeFileIn(jvmOut, sameDriver + ".java", """
-                import deal.codegen.jvm.JvmRuntime;
-
-                public final class %s {
-                  public static void main(String[] args) {
-                    App.main(new String[0]);
-                    JvmRuntime.Table surface = App.EXPORT_SURFACES.get("app");
-                    JvmRuntime.FunctionValue worker =
-                        (JvmRuntime.FunctionValue) surface.read("worker");
-                    Object completion = worker.fn.invoke(new Object[0]);
-                    System.out.println("PROBE|ASYNC-RESULT|" + completion);
-                  }
+            check(Files.isRegularFile(out.resolve(artifact)), label + " published artifact exists");
+            String source = Files.readString(out.resolve(artifact), StandardCharsets.UTF_8);
+            check(!source.contains("EXTERNAL_ASYNC_CALL") && !source.contains("SharedM"),
+                label + " uses project-local async entries");
+            ProcessOutcome run;
+            if (backend == Backend.LUAJIT) {
+                if (label.equals("cross-module")) {
+                    check(source.contains("__asyncEntries[\"" + LIB.path() + "#getValue\"]"),
+                        label + " includes callee async export entry");
                 }
-                """.formatted(sameDriver));
-            Files.createDirectories(jvmClasses);
-            String classpath = absoluteClasspath();
-            ProcessOutcome javacRun = compileJvm(List.of("javac", "--release", "25",
-                "-proc:none", "-cp", classpath, "-d", jvmClasses.toString(),
-                jvmOut.resolve("App.java").toAbsolutePath().toString(),
-                jvmOut.resolve(sameDriver + ".java").toAbsolutePath().toString()),
-                same.root());
-            checkEq(0, javacRun.exitCode(),
-                "the same-module async JVM artifact compiles: "
-                    + javacRun.output());
-            if (javacRun.exitCode() == 0) {
-                ProcessOutcome jvmRun = runProcess(List.of("java", "-cp",
-                    jvmClasses + java.io.File.pathSeparator + classpath,
-                    sameDriver), same.root());
-                checkEq(0, jvmRun.exitCode(),
-                    "the same-module await path executes under java: "
-                        + jvmRun.output());
-                check(jvmRun.stdout().contains("PROBE|ASYNC-RESULT|1"),
-                    "the awaiting call completes with 1 under java: "
-                        + jvmRun.stdout());
+                writeFileIn(fixture.root(), "deal/runtime.lua",
+                    Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
+                writeFileIn(fixture.root(), "probe.lua", """
+                    local surfaces = dofile("out-luajit/app.lua")
+                    assert(type(surfaces) == "table", "entry surface")
+                    local worker = surfaces.worker
+                    assert(type(worker) == "table" and worker.__kind == "function", "async export")
+                    local handle = worker.f()
+                    assert(type(handle) == "table" and handle.__kind == "async", "async operation")
+                    require("deal.runtime").async_step(handle)
+                    assert(handle.__done and handle.__result == %d, "await completion")
+                    print("PROBE|ASYNC-RESULT|" .. tostring(handle.__result))
+                    """.formatted(expected));
+                run = runProcess(List.of("luajit", "probe.lua"), fixture.root());
+            } else {
+                String driver = "AsyncWorkerRunner_"
+                    + java.util.UUID.randomUUID().toString().replace("-", "");
+                writeFileIn(out, driver + ".java", """
+                    import deal.codegen.jvm.JvmRuntime;
+                    public final class %s {
+                      public static void main(String[] args) {
+                        App.main(new String[0]);
+                        JvmRuntime.Table surface = App.EXPORT_SURFACES.get("app");
+                        JvmRuntime.FunctionValue worker = (JvmRuntime.FunctionValue) surface.read("worker");
+                        System.out.println("PROBE|ASYNC-RESULT|" + worker.fn.invoke(new Object[0]));
+                      }
+                    }
+                    """.formatted(driver));
+                Path classes = fixture.root().resolve("async-classes");
+                Files.createDirectories(classes);
+                String classpath = absoluteClasspath();
+                ProcessOutcome compiled = compileJvm(List.of("javac", "--release", "25", "-proc:none",
+                    "-cp", classpath, "-d", classes.toString(), out.resolve(artifact).toString(),
+                    out.resolve(driver + ".java").toString()), fixture.root());
+                checkEq(0, compiled.exitCode(), label + " artifact compiles: " + compiled.output());
+                if (compiled.exitCode() != 0) {
+                    continue;
+                }
+                run = runProcess(List.of("java", "-cp", classes + java.io.File.pathSeparator + classpath,
+                    driver), fixture.root());
             }
+            checkEq(0, run.exitCode(), label + " " + backend + " runs: " + run.output());
+            checkEq("PROBE|ASYNC-RESULT|" + expected + "\n", run.stdout(), label + " await result");
+            checkEq("", run.stderr(), label + " no trace output");
         }
     }
 
@@ -2710,6 +2506,402 @@ public class ProductionProjectEmissionTest {
         return snapshot;
     }
 
+    private static final String EMITTER_LIB = """
+        export class Counter { n: int = 0; }
+        export function add(a: int, b: int): int { return a + b; }
+        export function twice(x: int): int { return x * 2; }
+        """;
+    private static final String EMITTER_APP = """
+        import * as lib from "./lib"
+        export function main(): null { return null; }
+        export function label(): string { return "app"; }
+        """;
+    private static final String CONSOLE_EMITTER_APP = """
+        import * as lib from "./lib"
+        import * as console from "std/console"
+        export function main(): null { console.log("PROBE|MAIN-ONCE"); return null; }
+        export function label(): string { return "app"; }
+        """;
+
+    private record PublishedEmitter(Fixture fixture, SemanticLowerer.ProjectLoweringResult lowering,
+            Backend backend, Path out, String source) implements AutoCloseable {
+        public void close() { deleteRecursively(fixture.root()); }
+    }
+
+    private static PublishedEmitter publishedEmitter(Backend backend, String lib, String app) throws Exception {
+        Fixture fixture = compileProject(Map.of("src/lib.deal", lib, "src/app.deal", app),
+            Map.of(), backend, productionInvocation());
+        try {
+            var lowering = lower(fixture);
+            check(lowering.project() != null && lowering.diagnostics().isEmpty(),
+                backend + " emitter fixture lowers: " + lowering.diagnostics());
+            if (lowering.project() == null) {
+                throw new AssertionError("emitter fixture lowering failed");
+            }
+            Path out = fixture.root().resolve("out");
+            String source = Files.readString(out.resolve(backend == Backend.JVM ? "App.java" : "app.lua"));
+            return new PublishedEmitter(fixture, lowering, backend, out, source);
+        } catch (Throwable failure) {
+            deleteRecursively(fixture.root());
+            throw failure;
+        }
+    }
+
+    private static ProcessOutcome runPublished(PublishedEmitter fixture, String probe) throws Exception {
+        if (fixture.backend() == Backend.LUAJIT) {
+            if (probe == null) {
+                return runProcess(List.of("luajit", "app.lua"), fixture.out());
+            }
+            writeFileIn(fixture.out(), "probe.lua", probe);
+            return runProcess(List.of("luajit", "probe.lua"), fixture.out());
+        }
+        return runJavaEmission(fixture.out(), "App", fixture.source(), probe);
+    }
+
+    private static ProcessOutcome runJavaEmission(Path out, String className, String source,
+            String probe) throws Exception {
+        Path classes = Files.createTempDirectory(out, "classes-");
+        writeFileIn(out, className + ".java", source);
+        List<String> command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none",
+            "-sourcepath", "", "-cp", absoluteClasspath(), "-d", classes.toString(),
+            out.resolve(className + ".java").toString()));
+        String driver = "ProductionEmitterProbe_" + java.util.UUID.randomUUID().toString().replace("-", "");
+        if (probe != null) {
+            writeFileIn(out, driver + ".java", "import deal.codegen.jvm.JvmRuntime;\npublic class "
+                + driver + " {\n" + probe + "\n}\n");
+            command.add(out.resolve(driver + ".java").toString());
+        }
+        ProcessOutcome compiled = compileJvm(command, out);
+        checkEq(0, compiled.exitCode(), "production emitter javac: " + compiled.output());
+        if (compiled.exitCode() != 0) {
+            throw new AssertionError(compiled.output());
+        }
+        return runProcess(List.of("java", "-ea", "-cp",
+            classes + java.io.File.pathSeparator + absoluteClasspath(), probe == null ? className : driver), out);
+    }
+
+    private static void assertEmitterRun(String label, ProcessOutcome run, int exit, String stdout) {
+        checkEq(exit, run.exitCode(), label + " exit: " + run.output());
+        checkEq(stdout, run.stdout(), label + " stdout");
+        checkEq("", run.stderr(), label + " stderr");
+    }
+
+    private static void testProductionEmitterLanes() throws Exception {
+        for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM)) {
+            try (PublishedEmitter quiet = publishedEmitter(backend, EMITTER_LIB, EMITTER_APP)) {
+                assertEmitterRun(backend + " quiet artifact", runPublished(quiet, null), 0, "");
+                testEmitterContracts(quiet);
+                assertEmitterRun(backend + " export surfaces", runPublished(quiet, surfaceProbe(quiet)), 0, "PROBE-OK\n");
+                if (backend == Backend.JVM) {
+                    var module = JvmSemanticEmitter.emitProductionModule(
+                        quiet.lowering().project().modules().get(LIB), quiet.lowering().tables().get(LIB), false, "Library");
+                    checkEq("Library", module.className(), "non-entry public module API class name");
+                    check(!module.source().contains("$asyncExportHost"), "non-entry module has no async host reference");
+                    check(module.source().contains("System.out.println(\"DEAL_ERROR_CODE: \" + e.code);"),
+                        "non-entry module retains error terminal");
+                    assertEmitterRun("non-entry direct module API", runJavaEmission(quiet.out(),
+                        module.className(), module.source(), null), 0, "");
+                }
+            }
+            for (String source : List.of(SHADOWING_SOURCE, DYNAMIC_TABLE_SOURCE)) {
+                try (PublishedEmitter fixture = publishedEmitter(backend, EMITTER_LIB, source)) {
+                    assertEmitterRun(backend + " binding/evaluation regression", runPublished(fixture, null), 0, "");
+                }
+            }
+            try (PublishedEmitter overflow = publishedEmitter(backend, EMITTER_LIB,
+                    "export function main(): null { let x: int = 2147483647 + 1; return null; }")) {
+                assertEmitterRun(backend + " overflow terminal", runPublished(overflow, null), 1, "DEAL_ERROR_CODE: E8004\n");
+            }
+            try (PublishedEmitter host = publishedEmitter(backend,
+                    ErrorRethrowTransportProductionTest.HOST_ERROR_LIB_SOURCE,
+                    ErrorRethrowTransportProductionTest.HOST_ERROR_APP_SOURCE)) {
+                ProcessOutcome run = runPublished(host, hostProbe(host));
+                checkEq(0, run.exitCode(), backend + " host probe exit: " + run.output());
+                int before = ErrorRethrowTransportProductionTest.productionHostFailures();
+                ErrorRethrowTransportProductionTest.assertProductionHostTransport(run.stdout(), run.stderr(), backend == Backend.JVM);
+                checkEq(before, ErrorRethrowTransportProductionTest.productionHostFailures(), backend + " complete host observations");
+            }
+        }
+        try (PublishedEmitter console = publishedEmitter(Backend.LUAJIT, EMITTER_LIB, CONSOLE_EMITTER_APP)) {
+            testEmitterContracts(console);
+            assertEmitterRun("console main once", runPublished(console, null), 0, "PROBE|MAIN-ONCE\n");
+        }
+        String libMain = """
+            import * as console from "std/console"
+            export function add(a: int, b: int): int { return a + b; }
+            export function main(): null { console.log("PROBE|LIB-MAIN"); return null; }
+            """;
+        try (PublishedEmitter nonentry = publishedEmitter(Backend.LUAJIT, libMain, CONSOLE_EMITTER_APP)) {
+            for (ModuleId module : List.of(LIB, new ModuleId("app"))) {
+                checkEq(1L, nonentry.lowering().project().modules().get(module).ops().stream()
+                    .filter(op -> op.kind() == SemanticOpKind.ENTRY_INVOKE).count(), "nonvacuous main delegation " + module);
+            }
+            checkEq(1, countOccurrences(nonentry.source(), "\"START\", \"ENTRY_INVOKE\""), "only entry delegation emitted");
+            assertEmitterRun("non-entry main skipped", runPublished(nonentry, null), 0, "PROBE|MAIN-ONCE\n");
+        }
+        StringBuilder growth = new StringBuilder();
+        for (int i = 0; i < 201; i++) {
+            growth.append("export function f").append(String.format("%03d", i)).append("(): null { return null; }\n");
+        }
+        growth.append("export function main(): null { f000(); f100(); f200(); return null; }");
+        try (PublishedEmitter fixture = publishedEmitter(Backend.LUAJIT, EMITTER_LIB, growth.toString())) {
+            assertEmitterRun("201-export chunk loads", runPublished(fixture, null), 0, "");
+        }
+        for (boolean ffi : List.of(false, true)) {
+            try {
+                if (ffi) {
+                    LuaSemanticEmitter.emitProductionProject(null, Map.of(), Map.of(), new HostDeclarationSurface(Map.of()),
+                        new FfiEmissionInput(Map.of(), ""));
+                } else {
+                    LuaSemanticEmitter.emitProductionProject(null, Map.of(), Map.of(), new HostDeclarationSurface(Map.of()));
+                }
+                fail("null project rejected by Lua production API, FFI=" + ffi);
+            } catch (NullPointerException expected) {
+                passed++;
+            }
+        }
+    }
+
+    private static void testEmitterContracts(PublishedEmitter fixture) throws Exception {
+        var result = fixture.lowering();
+        var project = result.project();
+        boolean jvm = fixture.backend() == Backend.JVM;
+        String source = fixture.source();
+        ModuleId app = new ModuleId("app");
+        checkEq(List.of(LIB, app), List.copyOf(project.modules().keySet()), "closure dependency order");
+        checkEq(app, project.entryModule(), "project entry identity");
+        String repeated = jvm ? JvmSemanticEmitter.emitProductionProject(project, result.tables(), result.registries(),
+            "App", fixture.fixture().surface()).source() : LuaSemanticEmitter.emitProductionProject(project,
+            result.tables(), result.registries(), fixture.fixture().surface());
+        checkEq(source, repeated, "production API repeats published artifact byte-identically");
+        int walks = source.indexOf(jvm ? "    MODULE = \"lib\";" : "__dealMain = function()");
+        int libWalk = source.indexOf(jvm ? "    MODULE = \"lib\";" : "__module = \"lib\"", walks);
+        int appWalk = source.indexOf(jvm ? "    MODULE = \"app\";" : "__module = \"app\"", walks);
+        check(walks >= 0 && libWalk >= walks && appWalk > libWalk, "emitted dependency walk order");
+        int store = jvm ? -1 : source.indexOf("local __factories = {}");
+        if (!jvm) {
+            check(store >= 0 && store < walks, "bounded factory store before walks");
+            check(source.contains("__traceMode = false") && source.contains("__ev = function() end")
+                && !source.contains("io.stderr:write(\"R|"), "Lua production trace disabled");
+            check(source.contains("error(__mainErr, 0)"), "Lua non-DEAL terminal rethrows");
+            check(LuaSemanticEmitter.emitProject(project, result.tables(), result.registries())
+                .contains("io.stderr:write(\"R|success|null\\n\")"), "Lua trace entry remains distinct");
+            for (boolean tables : List.of(false, true)) {
+                try {
+                    LuaSemanticEmitter.emitProductionProject(project, tables ? null : result.tables(),
+                        tables ? result.registries() : null, fixture.fixture().surface());
+                    fail("Lua null tables/registries rejected");
+                } catch (NullPointerException expected) {
+                    passed++;
+                }
+            }
+        } else {
+            check(source.contains("EXPORT_SURFACES = JvmRuntime.EXPORT_SURFACES;"), "runtime registry forwarding");
+            check(source.contains("JvmRuntime.setTraceEnabled(false);") && !source.contains("setTraceEnabled(true)")
+                && !source.contains("R|") && !source.contains("DEAL_ERROR_SNAPSHOT"), "JVM production trace disabled");
+            var trace = JvmSemanticEmitter.emitProject(project, result.tables(), result.registries());
+            check(trace.className().startsWith("SharedM") && trace.source().contains("R|"), "JVM trace entry remains distinct");
+            var custom = JvmSemanticEmitter.emitProductionProject(project, result.tables(), result.registries(),
+                "CustomApp", fixture.fixture().surface());
+            checkEq("CustomApp", custom.className(), "custom class name forwarding");
+            check(custom.source().contains("public final class CustomApp {"), "custom class declaration");
+            var module = JvmSemanticEmitter.emitProductionModule(project.modules().get(app), result.tables().get(app), true, "AppModule");
+            checkEq("AppModule", module.className(), "entry module API name");
+            check(module.source().contains("JvmRuntime.setTraceEnabled(false);"), "entry module API production mode");
+        }
+        int publication = -1;
+        int defaults = 0;
+        for (var unit : project.modules().values()) {
+            for (var function : unit.functions().values()) {
+                String factory = jvm ? "static JvmRuntime.FunctionValue F" + function.functionId().id() + "("
+                    : "__factories.F" + function.functionId().id() + " = function(";
+                int at = source.indexOf(factory);
+                check(jvm ? at >= 0 : at > store && at < walks, "closure factory " + function.functionId());
+            }
+            for (SemanticOp op : unit.ops()) {
+                if (op.payload() instanceof KindPayload.ExportPublishPayload export) {
+                    long id = export.value().id();
+                    String write = jvm ? "exportSurface(\"" + unit.moduleId().path() + "\").write(\"" + export.name() + "\", v" + id + ");"
+                        : "__exportSurfaces[\"" + unit.moduleId().path() + "\"][\"" + export.name()
+                            + "\"] = {__kind = \"function\", sig = \"" + export.descriptor().canonicalSpecText()
+                            + "\", f = __unfn(S.v" + id + "), __val = S.v" + id + "}";
+                    int at = source.indexOf(write);
+                    check(at > publication && source.indexOf(write, at + 1) < 0, "unique ordered publication " + export.name());
+                    publication = at;
+                }
+                if (!jvm && op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                    defaults++;
+                    int at = source.indexOf("__factories.D" + op.opId().id() + " = function()");
+                    check(at > store && at < walks, "detached default before init");
+                }
+                if (op.kind() == SemanticOpKind.ENTRY_INVOKE) {
+                    checkEq(1L, unit.ops().stream().filter(call -> call.kind() == SemanticOpKind.CALL
+                        && op.opId().equals(call.origin().parentOpId())).count(), "one CALL delegated per entry");
+                }
+            }
+        }
+        if (!jvm) { check(defaults > 0, "detached default coverage nonvacuous"); }
+        checkEq(1L, project.modules().get(app).ops().stream().filter(op -> op.kind() == SemanticOpKind.ENTRY_INVOKE).count(), "one entry main");
+        checkEq(0L, project.modules().get(LIB).ops().stream().filter(op -> op.kind() == SemanticOpKind.ENTRY_INVOKE).count(), "quiet library has no main");
+    }
+
+    private static String surfaceProbe(PublishedEmitter fixture) {
+        boolean jvm = fixture.backend() == Backend.JVM;
+        StringBuilder probe = new StringBuilder(jvm ? """
+            public static void main(String[] args) {
+              App.main(new String[0]);
+              var surfaces = App.EXPORT_SURFACES;
+              assert surfaces == JvmRuntime.EXPORT_SURFACES;
+              assert new java.util.ArrayList<>(surfaces.keySet()).equals(java.util.List.of("lib", "app"));
+              assert !JvmRuntime.moduleInitNeeded("lib") && !JvmRuntime.moduleInitNeeded("app");
+            """ : """
+            local returned = dofile("app.lua")
+            assert(returned == __exportSurfaces.app)
+            local count = 0
+            for _ in pairs(__exportSurfaces) do count = count + 1 end
+            assert(count == 2)
+            """);
+        for (var unit : fixture.lowering().project().modules().values()) {
+            List<KindPayload.ExportPublishPayload> exports = unit.ops().stream()
+                .filter(op -> op.kind() == SemanticOpKind.EXPORT_PUBLISH)
+                .map(op -> (KindPayload.ExportPublishPayload) op.payload()).toList();
+            String name = unit.moduleId().path();
+            if (jvm) {
+                String names = exports.stream().map(export -> "\"" + export.name() + "\"")
+                    .collect(java.util.stream.Collectors.joining(","));
+                probe.append("assert new java.util.ArrayList<>(surfaces.get(\"").append(name)
+                    .append("\").entries.keySet()).equals(java.util.List.of(").append(names).append("));\n");
+            } else {
+                probe.append("local count = 0\nfor _ in pairs(__exportSurfaces.").append(name)
+                    .append(") do count = count + 1 end\nassert(count == ").append(exports.size()).append(")\n");
+            }
+            for (var export : exports) {
+                String access = jvm ? "surfaces.get(\"" + name + "\").read(\"" + export.name() + "\")"
+                    : "__exportSurfaces." + name + "." + export.name();
+                String spec = export.descriptor().canonicalSpecText();
+                if (jvm) {
+                    probe.append("assert ").append(access).append(" instanceof JvmRuntime.FunctionValue;\nassert ((JvmRuntime.FunctionValue)")
+                        .append(access).append(").spec.equals(\"").append(spec).append("\");\n");
+                } else {
+                    probe.append("assert(type(").append(access).append(") == 'table' and ").append(access)
+                        .append(".__kind == 'function' and ").append(access).append(".sig == '")
+                        .append(spec).append("')\n");
+                    probe.append("assert(type(").append(access).append(".f) == 'function')\n");
+                }
+            }
+        }
+        probe.append(jvm ? """
+              assert java.util.Objects.equals(5L, ((JvmRuntime.FunctionValue) surfaces.get("lib").read("add")).fn.invoke(new Object[]{2L, 3L}));
+              assert java.util.Objects.equals(8L, ((JvmRuntime.FunctionValue) surfaces.get("lib").read("twice")).fn.invoke(new Object[]{4L}));
+              assert java.util.Objects.equals("app", ((JvmRuntime.FunctionValue) surfaces.get("app").read("label")).fn.invoke(new Object[0]));
+              App.dealMain();
+              assert surfaces == App.EXPORT_SURFACES && surfaces.size() == 2;
+              assert !JvmRuntime.moduleInitNeeded("lib") && !JvmRuntime.moduleInitNeeded("app");
+              assert surfaces.containsKey("lib") && surfaces.containsKey("app");
+              System.out.println("PROBE-OK");
+            }
+            """ : "assert(__exportSurfaces.lib.add.f(2, 3) == 5)\nprint('PROBE-OK')\n");
+        return probe.toString();
+    }
+
+    private static String hostProbe(PublishedEmitter fixture) {
+        if (fixture.backend() == Backend.LUAJIT) {
+            return """
+                local rt = require("deal.runtime")
+                local s = dofile("app.lua")
+                local function field(v) return v == nil and "-" or tostring(v) end
+                local function cause(e) return type(e) == "table" and e.cause and field(e.cause.code) or "-" end
+                local function report(prefix, ok, e)
+                  if ok then print(prefix .. "none|" .. tostring(e))
+                  elseif type(e) == "table" then
+                    print(prefix .. field(e.code) .. "|" .. field(e.m) .. "|" .. field(e.o)
+                      .. "|" .. field(e.e) .. "|" .. field(e.a) .. "|" .. field(e.f) .. "|" .. cause(e))
+                  else print(prefix .. "raw|" .. tostring(e)) end
+                end
+                for _, name in ipairs({"run", "reraise", "leafFail", "swallow", "arun", "areraise", "overflow", "replaced", "mutate"}) do
+                  local ok, e = pcall(s[name].f)
+                  if ok and type(e) == "table" and e.__kind == "async" then ok, e = pcall(rt.async_step, e) end
+                  report("HOST-ERR|" .. name .. "|", ok, e)
+                end
+                local step
+                step = {__kind = "function", sig = "(int)->int", f = function(n) return s.recur.f(n, step) end}
+                report("HOST-REENTRY|recur|", pcall(s.recur.f, 2, step))
+                print("HOST-EMPTY|recur|" .. ((__frames == nil or next(__frames) == nil) and "-" or table.concat(__frames, ",")))
+                local ok, e = pcall(s.leafFail.f)
+                print("HOST-CLEAN|leafFail|" .. (not ok and type(e) == "table" and field(e.f) or "none"))
+                ok, e = pcall(s.mutate.f)
+                if not ok and type(e) == "table" and e.cause then
+                  local c = e.cause
+                  print("HOST-CAUSE|mutate|" .. field(e.code) .. "|" .. field(e.m) .. "|" .. field(c.code)
+                    .. "|" .. field(c.m) .. "|" .. field(c.o) .. "|" .. field(c.e) .. "|" .. field(c.a)
+                    .. "|" .. field(c.f) .. "|" .. cause(c))
+                else print("HOST-CAUSE|mutate|none") end
+                ok, e = pcall(s.alias.f)
+                print("HOST-ID|alias|" .. (ok and type(e) == "boolean" and tostring(e) or "missing"))
+                """;
+        }
+        var unit = fixture.lowering().project().modules().get(new ModuleId("app"));
+        List<Long> async = new ArrayList<>();
+        for (String name : List.of("arun", "areraise")) {
+            var entries = unit.ops().stream().filter(op -> op.payload() instanceof KindPayload.ExternalEntryPayload entry
+                && entry.async() && entry.exportName().equals(name)).toList();
+            checkEq(1, entries.size(), "host async entry " + name);
+            if (entries.size() != 1) { throw new AssertionError("missing host async entry " + name); }
+            async.add(entries.get(0).opId().id());
+        }
+        return """
+            static JvmRuntime.Table surface;
+            static Object invoke(String name, Object... args) { return ((JvmRuntime.FunctionValue) surface.read(name)).fn.invoke(args); }
+            static String field(String v) { return v == null ? "-" : v; }
+            static JvmRuntime.DealError capture(Runnable action) {
+              try { action.run(); } catch (JvmRuntime.DealError error) {
+                return error;
+              }
+              throw new AssertionError("expected host failure");
+            }
+            static String fields(JvmRuntime.DealError e) {
+              return e.code + "|" + e.msg + "|" + field(e.origin) + "|" + field(e.expected) + "|"
+                + field(e.actual) + "|" + field(e.frames) + "|" + (e.cause == null ? "-" : e.cause.code);
+            }
+            static void drive(String name, long id) {
+              JvmRuntime.DealError e = capture(() -> {
+                try { App.class.getMethod("ae" + id, String.class, boolean.class, Object[].class).invoke(null, "-", true, new Object[0]); }
+                catch (java.lang.reflect.InvocationTargetException error) {
+                  if (error.getCause() instanceof JvmRuntime.DealError deal) throw deal;
+                  throw new AssertionError(error.getCause());
+                }
+                catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+              });
+              System.out.println("HOST-ERR|" + name + "|" + fields(e));
+            }
+            public static void main(String[] args) {
+              App.main(new String[0]);
+              surface = App.EXPORT_SURFACES.get("app");
+              for (String name : new String[]{"run", "reraise", "leafFail", "swallow", "overflow", "replaced", "mutate"}) {
+                try { System.out.println("HOST-ERR|" + name + "|none|" + invoke(name)); }
+                catch (JvmRuntime.DealError error) { System.out.println("HOST-ERR|" + name + "|" + fields(error)); }
+              }
+              drive("arun", %dL);
+              drive("areraise", %dL);
+              System.out.println("HOST-ID|alias|" + invoke("alias"));
+              JvmRuntime.DealError original = capture(() -> invoke("run"));
+              var value = original.reify();
+              var echo = capture(() -> invoke("echo", value));
+              System.out.println("HOST-ID|echo|" + (echo == original) + "|" + (echo.reify() == value)
+                + "|" + echo.code + "|" + echo.origin + "|" + (echo.cause == null ? "-" : echo.cause.code));
+              JvmRuntime.FunctionValue[] step = new JvmRuntime.FunctionValue[1];
+              step[0] = new JvmRuntime.FunctionValue(a -> invoke("recur", a[0], step[0]), "(int)->int", "(int)->int", null);
+              System.out.println("HOST-REENTRY|recur|" + fields(capture(() -> invoke("recur", 2L, step[0]))));
+              System.out.println("HOST-EMPTY|recur|" + JvmRuntime.framesText());
+              System.out.println("HOST-CLEAN|leafFail|" + field(capture(() -> invoke("leafFail")).frames));
+              var mutated = capture(() -> invoke("mutate"));
+              var cause = mutated.cause;
+              System.out.println("HOST-CAUSE|mutate|" + mutated.code + "|" + mutated.msg + "|"
+                + (cause == null ? "none" : fields(cause)));
+            }
+            """.formatted(async.get(0), async.get(1));
+    }
+
     private static int countOccurrences(String text, String needle) {
         int count = 0;
         int at = text.indexOf(needle);
@@ -2753,8 +2945,8 @@ public class ProductionProjectEmissionTest {
             throws Exception {
         BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
             command, workDir);
-        return new ProcessOutcome(result.exitCode(), result.stdout(),
-            result.stderr());
+        check(!result.stdoutTruncated() && !result.stderrTruncated(), "complete production process capture");
+        return new ProcessOutcome(result.exitCode(), result.stdout(), result.stderr());
     }
 
     private static void writeFileIn(Path root, String relative, String content)
@@ -2823,6 +3015,7 @@ public class ProductionProjectEmissionTest {
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
             testSourceMapEmission(fixture, failing, unmapped);
+            testProductionEmitterLanes();
         } finally {
             deleteRecursively(externC == null ? null : externC.root());
             deleteRecursively(host == null ? null : host.root());

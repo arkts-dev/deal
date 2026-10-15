@@ -62,6 +62,8 @@ import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.ValueId;
 import deal.semantic.ir.ExternalModuleInterface;
@@ -218,6 +220,7 @@ public class AddressChainLoweringTest {
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         ValueId result = lowerer.lowerAssignment(assignment);
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 4,
             "x = 1 produces CONST + VARIABLE_ASSIGNMENT + BINDING_STORE + ASSIGN = 4 ops; got "
                 + ops.size());
@@ -320,6 +323,7 @@ public class AddressChainLoweringTest {
         ValueId committed = lowerer.lowerAssignment(assignment);
         lowerer.closeForEachScope();
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 4,
             "f = n produces BINDING_LOAD + VARIABLE_ASSIGNMENT + BINDING_STORE + ASSIGN = 4 "
                 + "ops; got " + ops.size());
@@ -432,6 +436,7 @@ public class AddressChainLoweringTest {
         ValueId result = lowerer.lowerAssignment(assignment);
         lowerer.closeForEachScope();
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 4,
             "t.y = 9 produces BINDING_LOAD + CONST + MEMBER_WRITE + ASSIGN = 4 ops; got "
                 + ops.size());
@@ -500,6 +505,7 @@ public class AddressChainLoweringTest {
         ValueId result = lowerer.lowerAssignment(assignment);
         lowerer.closeForEachScope();
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 6,
             "t[\"k\"] = 9 produces BINDING_LOAD + CONST(k) + CONST(9) + INDEX_NORMALIZE + "
                 + "INDEX_WRITE + ASSIGN = 6 ops; got " + ops.size());
@@ -585,6 +591,7 @@ public class AddressChainLoweringTest {
         ValueId result = lowerer.lowerAssignment(assignment);
         lowerer.closeForEachScope();
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 8,
             "a[0] = 9 produces BINDING_LOAD + CONST(k) + CONST(v) + ARRAY_LENGTH + "
                 + "INDEX_NORMALIZE + BOUNDARY + INDEX_WRITE + ASSIGN = 8 ops; got "
@@ -693,6 +700,7 @@ public class AddressChainLoweringTest {
         ValueId result = lowerer.lowerAssignment(assignment);
         lowerer.closeForEachScope();
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 9,
             "xs[xs.length] = 9 produces receiver load + key load + ARRAY_LENGTH(key) + "
                 + "CONST(v) + ARRAY_LENGTH(lengthOp) + INDEX_NORMALIZE + BOUNDARY + "
@@ -772,6 +780,7 @@ public class AddressChainLoweringTest {
         ValueId result = lowerer.lowerAssignment(assignment);
         lowerer.closeForEachScope();
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 4,
             "c.f = 9 produces BINDING_LOAD + CONST + FIELD_WRITE + ASSIGN = 4 ops; got "
                 + ops.size());
@@ -834,6 +843,7 @@ public class AddressChainLoweringTest {
             lowerer.lowerDelete(delete);
             lowerer.closeForEachScope();
             List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
             check(ops.size() == 3,
                 "delete t.y produces BINDING_LOAD + MEMBER_DELETE + DELETE = 3 ops; got "
                     + ops.size());
@@ -875,6 +885,7 @@ public class AddressChainLoweringTest {
             lowerer.lowerDelete(delete);
             lowerer.closeForEachScope();
             List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
             check(ops.size() == 5,
                 "delete t[\"k\"] produces BINDING_LOAD + CONST + INDEX_NORMALIZE + "
                     + "INDEX_DELETE + DELETE = 5 ops; got " + ops.size());
@@ -937,6 +948,7 @@ public class AddressChainLoweringTest {
             lowerer.lowerDelete(delete);
             lowerer.closeForEachScope();
             List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
             check(ops.size() == 7,
                 "delete a[0] produces BINDING_LOAD + CONST + ARRAY_LENGTH + "
                     + "INDEX_NORMALIZE + BOUNDARY + INDEX_DELETE + DELETE = 7 ops; got "
@@ -1014,6 +1026,7 @@ public class AddressChainLoweringTest {
             lowerer.lowerDelete(delete);
             lowerer.closeForEachScope();
             List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
             check(ops.size() == 3,
                 "delete c.f produces BINDING_LOAD + FIELD_DELETE + DELETE = 3 ops; got "
                     + ops.size());
@@ -1064,6 +1077,7 @@ public class AddressChainLoweringTest {
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         ValueId result = lowerer.lowerAssignment(outer);
         List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
         check(ops.size() == 7,
             "x = (y = 1) produces 7 ops — the inner chain's four ops plus the outer "
                 + "chain's boundary/store/op (the inner ASSIGN op is itself the outer "
@@ -1099,6 +1113,7 @@ public class AddressChainLoweringTest {
             "the outer ASSIGN publishes the inner chain's committed value identity");
         check(result.equals(innerChain.result()),
             "lowerAssignment returns the committed value");
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "nested assignment chain protocol admission");
         KindPayload.AssignPayload innerPayload =
             (KindPayload.AssignPayload) innerChain.payload();
         check(innerPayload.childOps().size() == 3,
@@ -1166,6 +1181,7 @@ public class AddressChainLoweringTest {
                 lowerer.lowerAssignment(assignment);
                 lowerer.closeForEachScope();
                 List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
                 Optional<SemanticOp> normalize = ops.stream()
                     .filter(op -> op.kind() == SemanticOpKind.INDEX_NORMALIZE)
                     .findFirst();
@@ -1203,6 +1219,7 @@ public class AddressChainLoweringTest {
                 lowerer.lowerDelete(delete);
                 lowerer.closeForEachScope();
                 List<SemanticOp> ops = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered arm passes address protocol");
                 Optional<SemanticOp> chain = ops.stream()
                     .filter(op -> op.kind() == SemanticOpKind.DELETE)
                     .findFirst();
@@ -1504,6 +1521,245 @@ public class AddressChainLoweringTest {
     // Runner
     // =========================================================================
 
+    private static List<SemanticOp> protocolSeed(int arm) {
+        IdentifierExpr receiver = ident("r", 1), variable = ident("x", 2);
+        LiteralExpr key = arm == 1 ? stringLit("k", 3) : intLit(0, 3);
+        LiteralExpr value = intLit(7, 5);
+        Type receiverType = arm == 1 ? Type.Table.INSTANCE : new Type.Array(Type.Int.INSTANCE);
+        ExpressionNode target = arm == 0 ? variable : arm == 1 ? member(receiver, "k", 3) : index(receiver, key, 3);
+        SymbolTable symbols = new SymbolTable();
+        symbols.define("r", new Symbol.VariableSymbol("r", receiverType, false));
+        symbols.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        Map<ExpressionNode, Type> types = new java.util.IdentityHashMap<>();
+        types.put(receiver, receiverType); types.put(variable, Type.Int.INSTANCE);
+        types.put(key, arm == 1 ? Type.String.INSTANCE : Type.Int.INSTANCE);
+        types.put(value, Type.Int.INSTANCE); types.put(target, arm == 1 ? Type.Table.INSTANCE : Type.Int.INSTANCE);
+        SemanticLowerer.ModuleLowerer producer = lowerer(checks(types, symbols));
+        if (arm != 0) { producer.openForEachScope("r"); }
+        producer.lowerAssignment(assign(target, value));
+        if (arm != 0) { producer.closeForEachScope(); }
+        List<SemanticOp> ops = producer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered protocol seed " + arm);
+        return ops;
+    }
+
+    private static LoweredModuleUnit protocolUnit(List<SemanticOp> ops) {
+        LoweredModuleUnit unit = lowerer(checks(Map.of(), new SymbolTable()))
+            .buildUnit(Map.of(), List.of(), INTERFACE_HASH, REGISTRY_HASH);
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(), unit.moduleId(),
+            unit.interfaceHash(), unit.loweringContextHash(), unit.requiredCapabilities(), unit.constructCoverage(),
+            unit.classLayouts(), unit.functions(), unit.moduleInit(), unit.exportPlan(),
+            unit.functionBindings(), ops, unit.bodyTable(), unit.classFactories(),
+            unit.jsonDefaults(), unit.classBindingFacts());
+    }
+
+    private static SemanticOp protocolCopy(SemanticOp op, KindPayload payload, FailurePolicyId policy,
+                                            SourceOrigin origin) {
+        deal.semantic.ir.ClosedSelector selector = payload instanceof deal.semantic.ir.KindPayload.SelectorCarrying p
+            ? p.selector() : null;
+        OperationContractSnapshot contract = new OperationContractSnapshot(OperationContractSnapshot.VERSION,
+            op.kind(), op.resultType(), op.operandTypes(), selector, payload, policy, List.of(), "placeholder");
+        contract = new OperationContractSnapshot(OperationContractSnapshot.VERSION, op.kind(), op.resultType(),
+            op.operandTypes(), selector, payload, policy, List.of(), ContractSnapshotCanonicalizer.digest(contract));
+        return new SemanticOp(op.opId(), op.kind(), origin, op.result(), op.resultType(), op.operands(),
+            op.operandTypes(), payload, policy, contract);
+    }
+
+    private record ProtocolCase(int arm, String detail, java.util.function.Consumer<List<SemanticOp>> mutate) {}
+
+    private static void testProtocolMutationMatrix() {
+        List<List<SemanticOp>> seeds = List.of(protocolSeed(0), protocolSeed(1), protocolSeed(2));
+        List<ProtocolCase> rows = List.of(
+            new ProtocolCase(1, "resolved table reference", ops -> {
+                SemanticOp chain = ops.getLast();
+                List<OpId> ids = new ArrayList<>(((KindPayload.AssignPayload) chain.payload()).childOps());
+                java.util.Collections.swap(ids, 0, 1);
+                ops.set(ops.size() - 1, protocolCopy(chain, new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT, ids),
+                    chain.failurePolicy(), chain.origin()));
+            }),
+            new ProtocolCase(1, "ValueId result", ops -> {
+                SemanticOp value = ops.get(1), commit = ops.get(2);
+                ops.set(1, new SemanticOp(value.opId(), commit.kind(), value.origin(), null, null,
+                    List.of(), List.of(), commit.payload(), commit.failurePolicy(), commit.contract()));
+            }),
+            new ProtocolCase(0, "descriptor-kind policy", ops -> {
+                SemanticOp boundary = ops.get(1);
+                ops.set(1, protocolCopy(boundary, boundary.payload(), FailurePolicyId.ARRAY_DELETE_BOUNDS, boundary.origin()));
+            }),
+            new ProtocolCase(2, "ARRAY_READ", ops -> {
+                SemanticOp normalize = ops.get(4);
+                KindPayload.IndexNormalizePayload p = (KindPayload.IndexNormalizePayload) normalize.payload();
+                ops.set(4, protocolCopy(normalize, new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_READ,
+                    p.rawKey(), p.currentLength()), normalize.failurePolicy(), normalize.origin()));
+            }),
+            new ProtocolCase(2, "6 children", ops -> {
+                SemanticOp chain = ops.getLast();
+                List<OpId> ids = new ArrayList<>(((KindPayload.AssignPayload) chain.payload()).childOps()); ids.remove(3);
+                ops.set(ops.size() - 1, protocolCopy(chain, new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT, ids),
+                    chain.failurePolicy(), chain.origin()));
+            }),
+            new ProtocolCase(0, "value child", ops -> {
+                SemanticOp chain = ops.getLast();
+                List<OpId> ids = new ArrayList<>(((KindPayload.AssignPayload) chain.payload()).childOps());
+                java.util.Collections.swap(ids, 0, 2);
+                ops.set(ops.size() - 1, protocolCopy(chain, new KindPayload.AssignPayload(AssignTargetKind.VARIABLE, ids),
+                    chain.failurePolicy(), chain.origin()));
+            }),
+            new ProtocolCase(0, "VARIABLE_ASSIGNMENT", ops -> {
+                SemanticOp chain = ops.getLast();
+                List<OpId> ids = new ArrayList<>(((KindPayload.AssignPayload) chain.payload()).childOps());
+                java.util.Collections.swap(ids, 1, 2);
+                ops.set(ops.size() - 1, protocolCopy(chain, new KindPayload.AssignPayload(AssignTargetKind.VARIABLE, ids),
+                    chain.failurePolicy(), chain.origin()));
+            }));
+        for (ProtocolCase row : rows) {
+            List<SemanticOp> ops = new ArrayList<>(seeds.get(row.arm())); row.mutate().accept(ops);
+            assertProtocolFailure(ops, "ADDRESS_CHAIN_SHAPE", row.detail(), null);
+        }
+        List<SemanticOp> duplicate = new ArrayList<>(seeds.get(0)); duplicate.add(duplicate.getFirst());
+        assertProtocolFailure(duplicate, "SINGLE_EVALUATION", "appears more than once", null);
+        List<SemanticOp> shared = new ArrayList<>(seeds.get(0));
+        SemanticOp original = shared.getLast();
+        shared.add(new SemanticOp(new OpId(MODULE, 99999), original.kind(), original.origin(), original.result(),
+            original.resultType(), original.operands(), original.operandTypes(), original.payload(),
+            original.failurePolicy(), original.contract()));
+        assertProtocolFailure(shared, "SINGLE_EVALUATION", "referenced by more than one chain", null);
+        List<SemanticOp> reordered = new ArrayList<>(seeds.get(2)); java.util.Collections.reverse(reordered);
+        check(AddressChainProtocol.validate(protocolUnit(reordered)).isEmpty(), "chain resolves children by identity, not unit order");
+        check(AddressChainProtocol.validate(protocolUnit(List.of())).isEmpty(), "empty unit outside protocol domain");
+        check(AddressChainProtocol.validate(protocolUnit(List.of(seeds.get(0).getFirst()))).isEmpty(), "non-chain unit outside protocol domain");
+        testProtocolOrigins(seeds.get(0));
+        CheckedSlice adapterSource = checkSlice("""
+            function inner(x: int): null {}
+            function main(): null {
+              let f: (x: int) => null = inner;
+              let g: (a: int, b: int) => null = inner;
+              g = f;
+            }
+            """);
+        SemanticLowerer.ShapeMapCoreResult adapted = SemanticLowerer.lowerModuleShapeMapCore(moduleOf(adapterSource),
+            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(MODULE)));
+        check(!adapted.lowering().hasErrors(), "adapter assignment lowers: " + adapted.lowering().diagnostics());
+        if (!adapted.lowering().hasErrors()) {
+            check(adapted.lowering().unit().ops().stream().anyMatch(op ->
+                op.payload() instanceof KindPayload.AssignPayload p && p.childOps().size() == 4),
+                "actual adapter VARIABLE chain exercised");
+            check(AddressChainProtocol.validate(adapted.lowering().unit()).isEmpty(), "adapter VARIABLE chain admitted");
+        }
+        testNormalizedSlots();
+    }
+
+    private static void assertProtocolFailure(List<SemanticOp> ops, String rule, String detail, SourceOrigin expected) {
+        LoweredModuleUnit unit = protocolUnit(ops);
+        Optional<CompilerDiagnostic> failure = AddressChainProtocol.validate(unit);
+        checkE6005(failure, rule, detail);
+        if (failure.isPresent()) {
+            String message = failure.get().message();
+            check(message.startsWith("Common semantic lowering failed")
+                    && message.contains("validatorRule " + rule + ",")
+                    && message.contains("semanticProfile DEAL_V1_2_INT32")
+                    && message.contains("irVersion deal.semantic-ir/2")
+                    && message.contains("AddressChainProtocol " + rule)
+                    && message.contains(detail) && failure.get().severity().equals("error"),
+                "exact protocol rule/detail: " + message);
+            if (expected != null) { check(failure.get().range().equals(expected.span().range()), "exact protocol offending range"); }
+        }
+        check(failure.equals(AddressChainProtocol.validate(unit)), "protocol diagnostic deterministic");
+        check(unit.ops().equals(ops), "protocol leaves operations unchanged");
+    }
+
+    private static SourceOrigin protocolOrigin(String file, OpId parent) {
+        return new SourceOrigin(file, new SourceSpan(file, 2, 3, 2, 7, 10, 15),
+            SourceOriginKind.USER, new deal.semantic.ir.AnchorId(1), parent);
+    }
+
+    private static void testProtocolOrigins(List<SemanticOp> seed) {
+        for (boolean originless : List.of(false, true)) {
+            for (int defect = 0; defect < 5; defect++) {
+                List<SemanticOp> ops = new ArrayList<>(seed);
+                OpId chainId = seed.getLast().opId();
+                for (int i = 0; i < ops.size(); i++) {
+                    SemanticOp op = ops.get(i);
+                    SourceOrigin origin = protocolOrigin(List.of("value.deal", "boundary.deal", "commit.deal", "chain.deal").get(i),
+                        i == 3 ? null : chainId);
+                    if (originless && i == 3) { origin = new SourceOrigin("", SourceSpan.synthetic(""),
+                        SourceOriginKind.SYNTHETIC, new deal.semantic.ir.AnchorId(0), null); }
+                    ops.set(i, protocolCopy(op, op.payload(), op.failurePolicy(), origin));
+                }
+                SemanticOp boundary = ops.get(1), commit = ops.get(2), chain = ops.get(3);
+                KindPayload.BoundaryPayload p = (KindPayload.BoundaryPayload) boundary.payload();
+                SourceOrigin expected = boundary.origin();
+                String detail;
+                switch (defect) {
+                    case 0 -> {
+                        ops.set(1, protocolCopy(boundary, new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION,
+                            p.descriptor(), p.input(), p.realization()), boundary.failurePolicy(), boundary.origin()));
+                        detail = "must carry kind VARIABLE_ASSIGNMENT";
+                    }
+                    case 1 -> {
+                        expected = protocolOrigin("boundary.deal", new OpId(MODULE, 99998));
+                        ops.set(1, protocolCopy(boundary, p, boundary.failurePolicy(), expected));
+                        detail = "must record the chain op as its parentOpId";
+                    }
+                    case 2 -> {
+                        ops.set(1, protocolCopy(boundary, new KindPayload.BoundaryPayload(p.kind(), p.descriptor(),
+                            new ValueId(99997), p.realization()), boundary.failurePolicy(), boundary.origin()));
+                        detail = "must reference the resolved value";
+                    }
+                    case 3 -> {
+                        KindPayload.BindingStorePayload store = (KindPayload.BindingStorePayload) commit.payload();
+                        ops.set(2, protocolCopy(commit, new KindPayload.BindingStorePayload(store.binding(), store.generation(),
+                            new ValueId(99996)), commit.failurePolicy(), commit.origin()));
+                        expected = commit.origin(); detail = "stored value must reference the resolved value";
+                    }
+                    default -> {
+                        ops.remove(1);
+                        ops.set(2, protocolCopy(chain, new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                            List.of(seed.get(0).opId(), commit.opId())), chain.failurePolicy(), chain.origin()));
+                        expected = chain.origin(); detail = "2 children";
+                    }
+                }
+                assertProtocolFailure(ops, "ADDRESS_CHAIN_SHAPE", detail, expected);
+            }
+        }
+    }
+
+    private static void testNormalizedSlots() {
+        for (IndexMode mode : List.of(IndexMode.ARRAY_READ, IndexMode.ARRAY_WRITE)) {
+            for (int length : List.of(0, 3)) {
+                for (int index : List.of(-1, 0, 2, 3, 5)) {
+                    deal.semantic.ir.NormalizedSlot.ArraySlot slot = deal.semantic.ir.NormalizedSlot.arraySlot(mode, index, length);
+                    check(slot.index() == index && slot.present() == (index < length)
+                            && slot.append() == (mode == IndexMode.ARRAY_WRITE && index == length)
+                            && slot.resultType() == RuntimeDescriptor.Int.INSTANCE,
+                        "normalization pure computation " + mode + " " + index + "/" + length);
+                    check(slot.equals(deal.semantic.ir.NormalizedSlot.arraySlot(mode, index, length)), "normalization stable");
+                }
+            }
+        }
+        for (IndexMode mode : List.of(IndexMode.TABLE_READ, IndexMode.TABLE_WRITE)) {
+            for (String key : List.of("0", "k")) {
+                deal.semantic.ir.NormalizedSlot.TableSlot slot = deal.semantic.ir.NormalizedSlot.tableSlot(mode, key);
+                check(slot.key().equals(key) && slot.resultType() == RuntimeDescriptor.String.INSTANCE
+                        && slot.equals(new deal.semantic.ir.NormalizedSlot.TableSlot(key)), "table keys never coerced");
+            }
+        }
+        expectProtocolException(IllegalArgumentException.class, () -> deal.semantic.ir.NormalizedSlot.arraySlot(IndexMode.TABLE_READ, 1, 1));
+        expectProtocolException(IllegalArgumentException.class, () -> deal.semantic.ir.NormalizedSlot.tableSlot(IndexMode.ARRAY_WRITE, "k"));
+        expectProtocolException(NullPointerException.class, () -> deal.semantic.ir.NormalizedSlot.tableSlot(IndexMode.TABLE_WRITE, null));
+        SemanticOp normalize = protocolSeed(2).get(4);
+        check(SemanticIrValidator.validate(protocolUnit(List.of(normalize)), facts()).isEmpty(), "INDEX_NORMALIZE pure policy admitted");
+        SemanticOp wrong = protocolCopy(normalize, normalize.payload(), FailurePolicyId.TYPE_DESCRIPTOR, normalize.origin());
+        Optional<CompilerDiagnostic> failure = SemanticIrValidator.validate(protocolUnit(List.of(wrong)), facts());
+        check(failure.isPresent() && failure.get().message().contains("R-POLICY-KIND"), "INDEX_NORMALIZE wrong policy rejected");
+    }
+
+    private static void expectProtocolException(Class<? extends Throwable> type, Runnable action) {
+        try { action.run(); fail("expected " + type.getName()); }
+        catch (Throwable failure) { check(type.isInstance(failure), "exact normalization exception " + failure); }
+    }
+
     public static void main(String[] args) {
         System.out.println("=== Address Chain Lowering Test (ISSUE-0405) ===\n");
 
@@ -1518,6 +1774,7 @@ public class AddressChainLoweringTest {
         testNestedChainParentage();
         testE3018StringKeyGate();
         testProtocolValidationOfLoweredChains();
+        testProtocolMutationMatrix();
         testModuleCorpusAndDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

@@ -1446,7 +1446,247 @@ public class ClassOpsExecutorTest {
     // Runner
     // =========================================================================
 
+    private static final ModuleId FACTORY_OWNER = new ModuleId("owner.mod");
+    private static final ModuleId FACTORY_CALLER = new ModuleId("caller.mod");
+    private static final ClassId SHARED_CLASS = new ClassId(FACTORY_OWNER.path(), "Point");
+    private static final deal.semantic.ir.ClassFactoryId FACTORY_ENTRY = new deal.semantic.ir.ClassFactoryId(7);
+
+    private static SemanticOp sharedOp(ModuleId module, SemanticOpKind kind, KindPayload payload,
+                                       SemanticValue result, OpResultType type, FailurePolicyId policy, OpId parent) {
+        OpId id = new OpId(module, nextOpId++);
+        OperationContractSnapshot contract = contractFor(kind, payload, type, List.of(), policy, "placeholder");
+        contract = contractFor(kind, payload, type, List.of(), policy, ContractSnapshotCanonicalizer.digest(contract));
+        SourceOrigin origin = new SourceOrigin(module.path() + ".deal",
+            new SourceSpan(module.path() + ".deal", 1, 3, 1, 6), SourceOriginKind.USER, new AnchorId(0), parent);
+        return new SemanticOp(id, kind, origin, result, type, List.of(), List.of(), payload, policy, contract);
+    }
+
+    private record SharedFixture(ClassLayout layout, SemanticOp factory, SemanticOp caller,
+                                 Map<OpId, SemanticOp> ownerOps, Map<OpId, SemanticOp> boundaries,
+                                 Map<OpId, Value> produced, Map<ValueId, Value> provided) {
+        deal.semantic.ir.ClassFactoryRegistry registry() {
+            return new deal.semantic.ir.ClassFactoryRegistry(Map.of(FACTORY_ENTRY, factory.opId()));
+        }
+        Map<ClassId, ClassLayout> layouts() { return Map.of(SHARED_CLASS, layout); }
+    }
+
+    private static SharedFixture sharedFixture(List<String> providedNames) {
+        ClassLayout layout = new ClassLayout(SHARED_CLASS,
+            List.of(field("a", INT, true), field("b", INT, true), field("c", INT, false)));
+        List<SemanticOp> defaults = new ArrayList<>();
+        Map<OpId, Value> produced = new LinkedHashMap<>();
+        for (String name : List.of("a", "b")) {
+            SemanticOp def = sharedOp(FACTORY_OWNER, SemanticOpKind.CLASS_DEFAULT,
+                new KindPayload.ClassDefaultPayload(SHARED_CLASS, name, new BlockId(1)),
+                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
+            defaults.add(def); produced.put(def.opId(), new Value.Int(name.equals("a") ? 10 : 99));
+        }
+        SemanticOp factory = sharedOp(FACTORY_OWNER, SemanticOpKind.CLASS_FACTORY,
+            new KindPayload.ClassFactoryPayload(SHARED_CLASS, defaults.stream().map(SemanticOp::opId).toList(),
+                new OpId(FACTORY_CALLER, nextOpId++)), nextValue(), new RuntimeDescriptor.Class(SHARED_CLASS),
+            FailurePolicyId.CLASS_CONSTRUCTION, null);
+        List<KindPayload.ProvidedField> provided = new ArrayList<>();
+        Map<ValueId, Value> values = new LinkedHashMap<>();
+        for (String name : providedNames) {
+            ValueId id = nextValue(); provided.add(new KindPayload.ProvidedField(name, id)); values.put(id, new Value.Int(20));
+        }
+        OpId callerId = new OpId(FACTORY_CALLER, nextOpId++);
+        List<KindPayload.FieldBoundary> fields = new ArrayList<>();
+        Map<OpId, SemanticOp> boundaries = new LinkedHashMap<>();
+        for (String name : List.of("a", "b")) {
+            KindPayload.ProvidedField input = provided.stream().filter(p -> p.name().equals(name)).findFirst().orElse(null);
+            BoundaryKind kind = input == null ? BoundaryKind.CLASS_DEFAULT_FIELD : BoundaryKind.CLASS_LITERAL_FIELD;
+            SemanticOp boundary = sharedOp(FACTORY_CALLER, SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(kind, INT, input == null ? (ValueId) factory.result() : input.valueOpId(),
+                    new BoundaryRealization.RuntimeValidation("runtime-validation")), null, null,
+                FailurePolicyId.TYPE_DESCRIPTOR, callerId);
+            boundaries.put(boundary.opId(), boundary); fields.add(new KindPayload.FieldBoundary(name, kind, boundary.opId()));
+        }
+        KindPayload payload = new KindPayload.ClassNewPayload(SHARED_CLASS, layout, provided,
+            DefaultOwner.SHARED_FACTORY, List.of(), FACTORY_ENTRY, fields);
+        RuntimeDescriptor descriptor = new RuntimeDescriptor.Class(SHARED_CLASS);
+        OperationContractSnapshot contract = contractFor(SemanticOpKind.CLASS_NEW, payload,
+            descriptor, List.of(), FailurePolicyId.CLASS_CONSTRUCTION, "placeholder");
+        contract = contractFor(SemanticOpKind.CLASS_NEW, payload, descriptor,
+            List.of(), FailurePolicyId.CLASS_CONSTRUCTION, ContractSnapshotCanonicalizer.digest(contract));
+        SemanticOp caller = new SemanticOp(callerId, SemanticOpKind.CLASS_NEW, originAt(null, 8), nextValue(),
+            descriptor, List.of(), List.of(), payload, FailurePolicyId.CLASS_CONSTRUCTION, contract);
+        Map<OpId, SemanticOp> ownerOps = new LinkedHashMap<>(); ownerOps.put(factory.opId(), factory);
+        defaults.forEach(op -> ownerOps.put(op.opId(), op));
+        return new SharedFixture(layout, factory, caller, ownerOps, boundaries, produced, values);
+    }
+
+    private static SemanticOp sharedCopy(SemanticOp op, KindPayload payload, SemanticValue result, OpResultType type) {
+        OperationContractSnapshot contract = contractFor(op.kind(), payload, type, op.operandTypes(), op.failurePolicy(), "placeholder");
+        contract = contractFor(op.kind(), payload, type, op.operandTypes(), op.failurePolicy(), ContractSnapshotCanonicalizer.digest(contract));
+        return new SemanticOp(op.opId(), op.kind(), op.origin(), result, type, op.operands(), op.operandTypes(), payload,
+            op.failurePolicy(), contract);
+    }
+
+    private static Outcome<Value> executeShared(SharedFixture f, BoundaryCheckRunner boundary, BodyRunner body) {
+        return ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(),
+            f.ownerOps(), f.boundaries(), f.layouts(), boundary, body);
+    }
+
+    private static void testSharedFactoryExecution() {
+        SharedFixture f = sharedFixture(List.of("b"));
+        List<String> log = new ArrayList<>();
+        List<SemanticOp> invoked = new ArrayList<>();
+        BodyRunner body = op -> {
+            invoked.add(op); log.add("default " + op.opId()); return f.produced().get(op.opId());
+        };
+        Outcome<Value> transfer = ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(),
+            f.layouts(), Set.of("b"), body);
+        check(transfer instanceof Outcome.Success<Value> s && s.value() instanceof Value.Class instance
+                && instance.classId().equals(SHARED_CLASS) && instance.fields().size() == 3
+                && new Value.Int(10).equals(fieldValue(instance, f.layout(), "a"))
+                && fieldValue(instance, f.layout(), "b") == null && fieldValue(instance, f.layout(), "c") == null,
+            "direct factory API transfers omitted defaults and leaves provided/optional fields missing");
+        check(invoked.size() == 1 && invoked.getFirst() == f.ownerOps().get(invoked.getFirst().opId())
+                && invoked.getFirst().opId().module().equals(FACTORY_OWNER)
+                && f.caller().opId().module().equals(FACTORY_CALLER) && f.factory().origin().parentOpId() == null,
+            "factory dispatch passes exact owner op under cross-unit dynamic trigger");
+        SemanticOp wrongTrigger = sharedOp(FACTORY_CALLER, SemanticOpKind.FIELD_READ,
+            new KindPayload.FieldReadPayload(nextValue(), SHARED_CLASS, "a"), nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
+        expectDefect(() -> ClassOpsExecutor.executeClassFactory(f.factory(), wrongTrigger, f.ownerOps(), f.layouts(), Set.of(), body),
+            "factory non-construction trigger");
+        expectDefect(() -> ClassOpsExecutor.executeClassFactory(f.factory(), f.factory(), f.ownerOps(), f.layouts(), Set.of(), body),
+            "factory self trigger");
+        List<Value> instances = new ArrayList<>();
+        for (int run = 0; run < 2; run++) {
+            log.clear(); invoked.clear();
+            ScriptedDelegate delegate = new ScriptedDelegate(log, -1, null);
+            Outcome<Value> outcome = ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), new RecordingValues(f.provided(), log),
+                f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), delegate, body);
+            check(outcome instanceof Outcome.Success<Value> s && s.value() instanceof Value.Class instance
+                    && instance.classId().equals(SHARED_CLASS) && instance.fields().size() == 3
+                    && new Value.Int(10).equals(fieldValue(instance, f.layout(), "a"))
+                    && new Value.Int(20).equals(fieldValue(instance, f.layout(), "b"))
+                    && fieldValue(instance, f.layout(), "c") == null,
+                "shared full API overlays provided fields after transfer and publishes tag last");
+            check(log.equals(List.of("resolve " + f.provided().keySet().iterator().next(),
+                    "default " + invoked.getFirst().opId(), "child[0] CLASS_DEFAULT_FIELD <- int", "child[1] CLASS_LITERAL_FIELD <- int"))
+                    && invoked.size() == 1 && delegate.calls() == 2,
+                "shared source resolution precedes skip-provided defaults and declaration-order boundaries, zero return cells");
+            check(invoked.stream().allMatch(op -> op == f.ownerOps().get(op.opId())
+                    && op.opId().module().equals(FACTORY_OWNER)),
+                "full shared API executes exact owner-unit default operations");
+            if (outcome instanceof Outcome.Success<Value> s) { instances.add(s.value()); }
+        }
+        SharedFixture omitted = sharedFixture(List.of());
+        List<Outcome<Value>> repeated = new ArrayList<>();
+        for (int run = 0; run < 2; run++) {
+            List<OpId> ordered = new ArrayList<>();
+            repeated.add(executeShared(omitted, (p, v) -> new BoundaryResult.Pass(v), op -> {
+                ordered.add(op.opId()); return omitted.produced().get(op.opId());
+            }));
+            check(ordered.equals(((KindPayload.ClassFactoryPayload) omitted.factory().payload()).classDefaultOpIds()),
+                "all omitted defaults execute in declaration order on each independent drive");
+        }
+        check(repeated.get(0).equals(repeated.get(1)) && repeated.get(0) instanceof Outcome.Success<Value> s
+                && s.value() instanceof Value.Class instance
+                && new Value.Int(10).equals(fieldValue(instance, omitted.layout(), "a"))
+                && new Value.Int(99).equals(fieldValue(instance, omitted.layout(), "b")),
+            "all-default shared constructions repeat with equal transferred contents");
+        check(instances.size() == 2 && instances.get(0) != instances.get(1) && instances.get(0).equals(instances.get(1)),
+            "fresh identity with deterministic equal contents on isolated drives");
+        SharedFixture extra = sharedFixture(List.of("zz", "x"));
+        List<SemanticOp> effects = new ArrayList<>();
+        ScriptedDelegate noChecks = new ScriptedDelegate(new ArrayList<>(), -1, null);
+        Outcome<Value> failure = executeShared(extra, noChecks, op -> { effects.add(op); return extra.produced().get(op.opId()); });
+        check(failure instanceof Outcome.Failure<Value> failed
+                && failed.failure().failure().policy() == FailurePolicyId.CLASS_CONSTRUCTION
+                && failed.failure().failure().code() == DiagnosticCode.E8007
+                && failed.failure().failure().message().equals("extra field 'zz' in class '@owner.mod/Point'")
+                && failed.failure().origin().equals(extra.caller().origin())
+                && effects.size() == 2 && noChecks.calls() == 0,
+            "first source-order extra key rejects after defaults, before field application, with exact caller origin");
+        SharedFixture failing = sharedFixture(List.of()); effects.clear();
+        ScriptedDelegate stopped = new ScriptedDelegate(new ArrayList<>(), -1, null);
+        try {
+            executeShared(failing, stopped, op -> {
+                effects.add(op);
+                if (effects.size() == 2) { throw new IllegalStateException("default " + op.opId()); }
+                return failing.produced().get(op.opId());
+            });
+            fail("failing default must prevent caller publication");
+        } catch (IllegalStateException expected) {
+            check(expected.getMessage().equals("default " + effects.getLast().opId())
+                    && effects.size() == 2 && stopped.calls() == 0,
+                "default failure preserves prior effect, propagates unchanged, and stops boundaries/publication");
+        }
+        BoundaryFailure selected = deal.semantic.ir.FailureProjections.kindFailure("int", "string");
+        ScriptedDelegate firstFailure = new ScriptedDelegate(new ArrayList<>(), 0, selected);
+        Outcome<Value> boundaryFailure = executeShared(f, firstFailure, body);
+        check(boundaryFailure instanceof Outcome.Failure<Value> failed
+                && failed.failure().failure().equals(selected) && firstFailure.calls() == 1,
+            "shared lane stops at first boundary failure");
+        testSharedFactoryDefects(f);
+    }
+
+    private static void testSharedFactoryDefects(SharedFixture f) {
+        BoundaryCheckRunner pass = (p, v) -> new BoundaryResult.Pass(v);
+        BodyRunner body = op -> f.produced().get(op.opId());
+        KindPayload.ClassNewPayload p = (KindPayload.ClassNewPayload) f.caller().payload();
+        List<KindPayload> malformed = List.of(
+            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), DefaultOwner.LOCAL, List.of(), null, p.fieldBoundaries()),
+            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), DefaultOwner.SHARED_FACTORY, List.of(), null, p.fieldBoundaries()),
+            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), DefaultOwner.SHARED_FACTORY,
+                ((KindPayload.ClassFactoryPayload) f.factory().payload()).classDefaultOpIds(), FACTORY_ENTRY, p.fieldBoundaries()));
+        for (KindPayload broken : malformed) {
+            SemanticOp caller = sharedCopy(f.caller(), broken, f.caller().result(), f.caller().resultType());
+            expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(caller, f.provided(), f.registry(), f.ownerOps(),
+                f.boundaries(), f.layouts(), pass, body), "shared payload owner/ref/default-list mutation");
+        }
+        expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(),
+            new deal.semantic.ir.ClassFactoryRegistry(Map.of()), f.ownerOps(), f.boundaries(), f.layouts(), pass, body), "missing registry binding");
+        expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(),
+            Map.of(), f.boundaries(), f.layouts(), pass, body), "factory absent from owner lookup");
+        SemanticOp notFactory = sharedOp(FACTORY_OWNER, SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+            nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp wrongClass = sharedCopy(f.factory(), new KindPayload.ClassFactoryPayload(new ClassId("owner.mod", "Other"),
+            ((KindPayload.ClassFactoryPayload) f.factory().payload()).classDefaultOpIds(), f.caller().opId()),
+            f.factory().result(), f.factory().resultType());
+        SemanticOp noResult = sharedCopy(f.factory(), f.factory().payload(), null, null);
+        for (SemanticOp broken : List.of(notFactory, wrongClass, noResult)) {
+            Map<OpId, SemanticOp> owner = new LinkedHashMap<>(f.ownerOps()); owner.put(broken.opId(), broken);
+            deal.semantic.ir.ClassFactoryRegistry registry = new deal.semantic.ir.ClassFactoryRegistry(Map.of(FACTORY_ENTRY, broken.opId()));
+            expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), registry, owner,
+                f.boundaries(), f.layouts(), pass, body), "factory kind/class/result mutation");
+        }
+        Map<OpId, SemanticOp> wrongInput = new LinkedHashMap<>(f.boundaries());
+        SemanticOp boundary = wrongInput.values().iterator().next();
+        KindPayload.BoundaryPayload bp = (KindPayload.BoundaryPayload) boundary.payload();
+        wrongInput.put(boundary.opId(), sharedCopy(boundary, new KindPayload.BoundaryPayload(bp.kind(), bp.descriptor(),
+            nextValue(), bp.realization()), null, null));
+        expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(),
+            wrongInput, f.layouts(), pass, body), "default boundary must extract factory result");
+        KindPayload.ClassFactoryPayload factoryPayload = (KindPayload.ClassFactoryPayload) f.factory().payload();
+        SemanticOp missingField = sharedCopy(f.factory(), new KindPayload.ClassFactoryPayload(SHARED_CLASS,
+            List.of(factoryPayload.classDefaultOpIds().getLast()), f.caller().opId()), f.factory().result(), f.factory().resultType());
+        Map<OpId, SemanticOp> owner = new LinkedHashMap<>(f.ownerOps()); owner.put(missingField.opId(), missingField);
+        expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), owner,
+            f.boundaries(), f.layouts(), pass, body), "transfer missing named default field");
+        List<Runnable> guards = List.of(
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(null, f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass, body),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), null, f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass, body),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), null, f.ownerOps(), f.boundaries(), f.layouts(), pass, body),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), null, f.boundaries(), f.layouts(), pass, body),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), null, f.layouts(), pass, body),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), null, pass, body),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), null, body),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass, null),
+            () -> ClassOpsExecutor.executeClassFactory(null, f.caller(), f.ownerOps(), f.layouts(), Set.of(), body),
+            () -> ClassOpsExecutor.executeClassFactory(f.factory(), null, f.ownerOps(), f.layouts(), Set.of(), body),
+            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), null, f.layouts(), Set.of(), body),
+            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(), null, Set.of(), body),
+            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(), f.layouts(), null, body),
+            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(), f.layouts(), Set.of(), null));
+        guards.forEach(action -> expectNpe(action, "shared factory API null argument"));
+    }
+
     public static void main(String[] args) {
+        testSharedFactoryExecution();
         System.out.println("=== Class Ops Executor Tests (ISSUE-0512 K-D4/K-D11) ===\n");
 
         testValueViewClassification();

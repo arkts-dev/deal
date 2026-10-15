@@ -227,503 +227,6 @@ public class JsonClassExecutorTest {
     }
 
     // =========================================================================
-    // The fixture JSON delegate (the pinned rows, test-only)
-    // =========================================================================
-
-    /**
-     * The fixture JSON algorithm delegate implementing exactly the
-     * pinned E8 {@code JSON_PARSE}/{@code JSON_STRINGIFY} rows over the
-     * executor's value view: a compact RFC-8259 scalar-valid recursive
-     * parser (signed32 integer lexical mapping; duplicate keys keep the
-     * last value and the first position; document order preserved) and
-     * a recursive stringifier (first-insertion and index order,
-     * RFC-8259 escaping, {@code Double.toString} number formatting,
-     * path-local cycle detection, nonfinite failures) with the pinned
-     * {@code JSON_TO_CLASS} segment convention (table key {@code k} →
-     * {@code ".k"}, array element {@code i} → {@code "[i]"}, the root
-     * value itself → the caller's prefix).
-     */
-    private static final class FixtureJson {
-
-        private static ClassOpsExecutor.JsonParser parser() {
-            return FixtureJson::parse;
-        }
-
-        private static ClassOpsExecutor.JsonStringifier stringifier() {
-            return FixtureJson::stringify;
-        }
-
-        private static ClassOpsExecutor.JsonParse parse(UnicodeScalars.Valid text) {
-            try {
-                Reader reader = new Reader(text.carrier());
-                reader.skipWs();
-                Value value = reader.parseValue();
-                reader.skipWs();
-                if (!reader.atEnd()) {
-                    return new JsonParse.SyntaxFailure();
-                }
-                return new JsonParse.Success(value);
-            } catch (SyntaxFailure failure) {
-                return new JsonParse.SyntaxFailure();
-            }
-        }
-
-        private static final class SyntaxFailure extends RuntimeException {
-
-            private static final long serialVersionUID = 1L;
-        }
-
-        /** The compact code-point reader of the fixture parser. */
-        private static final class Reader {
-
-            private final String carrier;
-            private int index = 0;
-
-            Reader(String carrier) {
-                this.carrier = carrier;
-            }
-
-            boolean atEnd() {
-                return index >= carrier.length();
-            }
-
-            void skipWs() {
-                while (!atEnd()) {
-                    char c = carrier.charAt(index);
-                    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                        index++;
-                        continue;
-                    }
-                    return;
-                }
-            }
-
-            Value parseValue() {
-                if (atEnd()) {
-                    throw new SyntaxFailure();
-                }
-                char c = carrier.charAt(index);
-                return switch (c) {
-                    case '{' -> parseObject();
-                    case '[' -> parseArray();
-                    case '"' -> new Value.String(parseString());
-                    case 't' -> parseLiteral("true", new Value.Bool(true));
-                    case 'f' -> parseLiteral("false", new Value.Bool(false));
-                    case 'n' -> parseLiteral("null", Value.Null.INSTANCE);
-                    default -> {
-                        if (c == '-' || (c >= '0' && c <= '9')) {
-                            yield parseNumber();
-                        }
-                        throw new SyntaxFailure();
-                    }
-                };
-            }
-
-            Value parseLiteral(String literal, Value value) {
-                if (carrier.startsWith(literal, index)) {
-                    index += literal.length();
-                    return value;
-                }
-                throw new SyntaxFailure();
-            }
-
-            Value parseObject() {
-                index++; // '{'
-                SemanticTable<Value> entries = new SemanticTable<>();
-                skipWs();
-                if (!atEnd() && carrier.charAt(index) == '}') {
-                    index++;
-                    return new Value.Table(entries);
-                }
-                while (true) {
-                    skipWs();
-                    if (atEnd() || carrier.charAt(index) != '"') {
-                        throw new SyntaxFailure();
-                    }
-                    String key = parseString().carrier();
-                    skipWs();
-                    if (atEnd() || carrier.charAt(index) != ':') {
-                        throw new SyntaxFailure();
-                    }
-                    index++;
-                    skipWs();
-                    Value value = parseValue();
-                    // Duplicate keys keep the last value and the first
-                    // position (SemanticTable.put replaces in place).
-                    entries.put(key, value);
-                    skipWs();
-                    if (!atEnd() && carrier.charAt(index) == ',') {
-                        index++;
-                        continue;
-                    }
-                    if (!atEnd() && carrier.charAt(index) == '}') {
-                        index++;
-                        return new Value.Table(entries);
-                    }
-                    throw new SyntaxFailure();
-                }
-            }
-
-            Value parseArray() {
-                index++; // '['
-                List<Value> elements = new ArrayList<>();
-                skipWs();
-                if (!atEnd() && carrier.charAt(index) == ']') {
-                    index++;
-                    return new Value.Array(SemanticArray.of(elements));
-                }
-                while (true) {
-                    skipWs();
-                    elements.add(parseValue());
-                    skipWs();
-                    if (!atEnd() && carrier.charAt(index) == ',') {
-                        index++;
-                        continue;
-                    }
-                    if (!atEnd() && carrier.charAt(index) == ']') {
-                        index++;
-                        return new Value.Array(SemanticArray.of(elements));
-                    }
-                    throw new SyntaxFailure();
-                }
-            }
-
-            UnicodeScalars.Valid parseString() {
-                index++; // '"'
-                StringBuilder out = new StringBuilder();
-                while (true) {
-                    if (atEnd()) {
-                        throw new SyntaxFailure();
-                    }
-                    char c = carrier.charAt(index++);
-                    if (c == '"') {
-                        UnicodeScalars.ScalarString scalar = UnicodeScalars.validate(
-                            out.toString());
-                        if (!(scalar instanceof UnicodeScalars.Valid valid)) {
-                            throw new SyntaxFailure();
-                        }
-                        return valid;
-                    }
-                    if (c == '\\') {
-                        if (atEnd()) {
-                            throw new SyntaxFailure();
-                        }
-                        char escape = carrier.charAt(index++);
-                        switch (escape) {
-                            case '"' -> out.append('"');
-                            case '\\' -> out.append('\\');
-                            case '/' -> out.append('/');
-                            case 'b' -> out.append('\b');
-                            case 'f' -> out.append('\f');
-                            case 'n' -> out.append('\n');
-                            case 'r' -> out.append('\r');
-                            case 't' -> out.append('\t');
-                            case 'u' -> out.appendCodePoint(parseHex4());
-                            default -> throw new SyntaxFailure();
-                        }
-                        continue;
-                    }
-                    if (c < 0x20) {
-                        throw new SyntaxFailure();
-                    }
-                    out.append(c);
-                }
-            }
-
-            int parseHex4() {
-                if (index + 4 > carrier.length()) {
-                    throw new SyntaxFailure();
-                }
-                int value = 0;
-                for (int i = 0; i < 4; i++) {
-                    char c = carrier.charAt(index++);
-                    int digit = Character.digit(c, 16);
-                    if (digit < 0) {
-                        throw new SyntaxFailure();
-                    }
-                    value = value * 16 + digit;
-                }
-                if (value >= 0xD800 && value <= 0xDBFF) {
-                    // A high surrogate escape: RFC-8259 pairs it with a
-                    // following \uDC00-\uDFFF low surrogate.
-                    if (index + 6 <= carrier.length()
-                            && carrier.charAt(index) == '\\'
-                            && carrier.charAt(index + 1) == 'u') {
-                        int low = 0;
-                        boolean lowValid = true;
-                        for (int i = 2; i < 6; i++) {
-                            char c = carrier.charAt(index + i);
-                            int digit = Character.digit(c, 16);
-                            if (digit < 0) {
-                                lowValid = false;
-                                break;
-                            }
-                            low = low * 16 + digit;
-                        }
-                        if (lowValid && low >= 0xDC00 && low <= 0xDFFF) {
-                            index += 6;
-                            return Character.toCodePoint((char) value, (char) low);
-                        }
-                    }
-                    throw new SyntaxFailure();
-                }
-                if (value >= 0xDC00 && value <= 0xDFFF) {
-                    throw new SyntaxFailure();
-                }
-                return value;
-            }
-
-            Value parseNumber() {
-                int start = index;
-                if (!atEnd() && carrier.charAt(index) == '-') {
-                    index++;
-                }
-                boolean integerForm = true;
-                if (atEnd() || carrier.charAt(index) < '0' || carrier.charAt(index) > '9') {
-                    throw new SyntaxFailure();
-                }
-                if (carrier.charAt(index) == '0') {
-                    index++;
-                    if (!atEnd() && carrier.charAt(index) >= '0'
-                            && carrier.charAt(index) <= '9') {
-                        throw new SyntaxFailure(); // leading zero
-                    }
-                } else {
-                    while (!atEnd() && carrier.charAt(index) >= '0'
-                            && carrier.charAt(index) <= '9') {
-                        index++;
-                    }
-                }
-                if (!atEnd() && (carrier.charAt(index) == '.'
-                        || carrier.charAt(index) == 'e'
-                        || carrier.charAt(index) == 'E')) {
-                    integerForm = false;
-                    if (carrier.charAt(index) == '.') {
-                        index++;
-                        if (atEnd() || carrier.charAt(index) < '0'
-                                || carrier.charAt(index) > '9') {
-                            throw new SyntaxFailure();
-                        }
-                        while (!atEnd() && carrier.charAt(index) >= '0'
-                                && carrier.charAt(index) <= '9') {
-                            index++;
-                        }
-                    }
-                    if (!atEnd() && (carrier.charAt(index) == 'e'
-                            || carrier.charAt(index) == 'E')) {
-                        index++;
-                        if (!atEnd() && (carrier.charAt(index) == '+'
-                                || carrier.charAt(index) == '-')) {
-                            index++;
-                        }
-                        if (atEnd() || carrier.charAt(index) < '0'
-                                || carrier.charAt(index) > '9') {
-                            throw new SyntaxFailure();
-                        }
-                        while (!atEnd() && carrier.charAt(index) >= '0'
-                                && carrier.charAt(index) <= '9') {
-                            index++;
-                        }
-                    }
-                }
-                String lexeme = carrier.substring(start, index);
-                if (!integerForm) {
-                    return new Value.Number(Double.parseDouble(lexeme));
-                }
-                // The signed32 integer lexical mapping: an integer lexical
-                // form within [-2147483648, 2147483647] becomes Int (-0
-                // normalized to 0); every out-of-range integer form
-                // becomes Number.
-                long parsed = Long.parseLong(lexeme);
-                if (parsed >= Integer.MIN_VALUE && parsed <= Integer.MAX_VALUE) {
-                    return new Value.Int((int) parsed);
-                }
-                return new Value.Number((double) parsed);
-            }
-        }
-
-        private static ClassOpsExecutor.JsonStringify stringify(Value value, String prefix) {
-            return stringify(value, prefix, 0);
-        }
-
-        private static ClassOpsExecutor.JsonStringify stringify(Value value, String prefix,
-                                                               int depth) {
-            return stringify(value, prefix, depth,
-                java.util.Collections.newSetFromMap(
-                    new java.util.IdentityHashMap<>()));
-        }
-
-        private static ClassOpsExecutor.JsonStringify stringify(Value value, String prefix,
-                                                               int depth,
-                                                               Set<Object> path) {
-            try {
-                UnicodeScalars.ScalarString scalar = UnicodeScalars.validate(
-                    stringifyValue(value, "", path, depth));
-                if (!(scalar instanceof UnicodeScalars.Valid valid)) {
-                    throw new IllegalStateException("the fixture stringify emitted an "
-                        + "invalid scalar sequence — a fixture defect");
-                }
-                return new JsonStringify.Success(valid);
-            } catch (StringifyFailure failure) {
-                return new JsonStringify.Failure(prefix + failure.relativePath,
-                    failure.actual, failure.cycle);
-            }
-        }
-
-        private static final class StringifyFailure extends RuntimeException {
-
-            private static final long serialVersionUID = 1L;
-
-            final String relativePath;
-            final String actual;
-            final boolean cycle;
-
-            StringifyFailure(String relativePath, String actual) {
-                this(relativePath, actual, false);
-            }
-
-            StringifyFailure(String relativePath, String actual, boolean cycle) {
-                super("value at " + relativePath + " is not JSON serializable: " + actual);
-                this.relativePath = relativePath;
-                this.actual = actual;
-                this.cycle = cycle;
-            }
-        }
-
-        private static String stringifyValue(Value value, String relativePath,
-                                           Set<Object> path, int depth) {
-            switch (value) {
-                case Value.Null ignored -> {
-                    return "null";
-                }
-                case Value.Bool bool -> {
-                    return bool.value() ? "true" : "false";
-                }
-                case Value.Int intValue -> {
-                    return Integer.toString(intValue.value());
-                }
-                case Value.Number number -> {
-                    if (!Double.isFinite(number.value())) {
-                        throw new StringifyFailure(relativePath,
-                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                                ActualKind.NUMBER, null));
-                    }
-                    return Double.toString(number.value());
-                }
-                case Value.String string -> {
-                    if (!(string.scalar() instanceof UnicodeScalars.Valid valid)) {
-                        throw new StringifyFailure(relativePath,
-                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                                ActualKind.INVALID_UNICODE, null));
-                    }
-                    return escape(valid.carrier());
-                }
-                case Value.Table table -> {
-                    if (depth > ClassOpsExecutor.JSON_MAX_DEPTH) {
-                        throw new StringifyFailure(relativePath,
-                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                                ActualKind.TABLE, null));
-                    }
-                    if (!path.add(table.table())) {
-                        throw new StringifyFailure(relativePath,
-                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                                ActualKind.TABLE, null), true);
-                    }
-                    try {
-                        StringBuilder out = new StringBuilder();
-                        out.append('{');
-                        List<String> keys = table.table().keys();
-                        for (int i = 0; i < keys.size(); i++) {
-                            if (i > 0) {
-                                out.append(',');
-                            }
-                            String key = keys.get(i);
-                            out.append(escape(key));
-                            out.append(':');
-                            out.append(stringifyValue(table.table().get(key)
-                                instanceof SemanticTable.Lookup.Present<Value> present
-                                    ? present.value()
-                                    : Value.Null.INSTANCE,
-                                relativePath + "." + key, path, depth + 1));
-                        }
-                        out.append('}');
-                        return out.toString();
-                    } finally {
-                        path.remove(table.table());
-                    }
-                }
-                case Value.Array array -> {
-                    if (depth > ClassOpsExecutor.JSON_MAX_DEPTH) {
-                        throw new StringifyFailure(relativePath,
-                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                                ActualKind.ARRAY, null));
-                    }
-                    if (!path.add(array.array())) {
-                        throw new StringifyFailure(relativePath,
-                            deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                                ActualKind.ARRAY, null), true);
-                    }
-                    try {
-                        StringBuilder out = new StringBuilder();
-                        out.append('[');
-                        for (int i = 0; i < array.array().size(); i++) {
-                            if (i > 0) {
-                                out.append(',');
-                            }
-                            out.append(stringifyValue(array.array().elementAt(i),
-                                relativePath + "[" + i + "]", path, depth + 1));
-                        }
-                        out.append(']');
-                        return out.toString();
-                    } finally {
-                        path.remove(array.array());
-                    }
-                }
-                case Value.Bytes ignored -> throw new StringifyFailure(relativePath,
-                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                        ActualKind.BYTES, null));
-                case Value.Class classValue -> throw new StringifyFailure(relativePath,
-                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                        ActualKind.CLASS, classValue.classId().text()));
-                case Value.Function ignored -> throw new StringifyFailure(relativePath,
-                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                        ActualKind.FUNCTION, null));
-                case Value.Missing ignored -> throw new StringifyFailure(relativePath,
-                    deal.semantic.ir.FailureProjections.typedBoundaryToken(
-                        ActualKind.MISSING, null));
-            }
-        }
-
-        /** The RFC-8259 escaping of one scalar string (the E8 row). */
-        private static String escape(String carrier) {
-            StringBuilder out = new StringBuilder();
-            out.append('"');
-            for (int i = 0; i < carrier.length(); ) {
-                int codePoint = carrier.codePointAt(i);
-                i += Character.charCount(codePoint);
-                switch (codePoint) {
-                    case '"' -> out.append("\\\"");
-                    case '\\' -> out.append("\\\\");
-                    case '\b' -> out.append("\\b");
-                    case '\f' -> out.append("\\f");
-                    case '\n' -> out.append("\\n");
-                    case '\r' -> out.append("\\r");
-                    case '\t' -> out.append("\\t");
-                    default -> {
-                        if (codePoint < 0x20) {
-                            out.append(String.format("\\u%04x", codePoint));
-                        } else {
-                            out.appendCodePoint(codePoint);
-                        }
-                    }
-                }
-            }
-            out.append('"');
-            return out.toString();
-        }
-    }
-
-    // =========================================================================
     // Fixture seams: the recording body runner and the nested-factory trigger
     // =========================================================================
 
@@ -806,339 +309,77 @@ public class JsonClassExecutorTest {
         }
     }
 
-    // =========================================================================
-    // (a) the fixture delegate implements the pinned rows; adapter parity
-    // =========================================================================
-
-    private static void testFixtureRowsAndAdapterParity() {
-        System.out.println("-- the fixture delegate implements the pinned rows; the "
-            + "production adapter agrees --");
-
-        // Signed32 integer lexical mapping: integer forms within range
-        // become Int, out-of-range/fraction/exponent forms become Number,
-        // -0 normalizes to 0.
-        ClassOpsExecutor.JsonParse maxInt = FixtureJson.parse(
-            (UnicodeScalars.Valid) UnicodeScalars.validate("2147483647"));
-        ClassOpsExecutor.JsonParse outOfRange = FixtureJson.parse(
-            (UnicodeScalars.Valid) UnicodeScalars.validate("2147483648"));
-        ClassOpsExecutor.JsonParse fraction = FixtureJson.parse(
-            (UnicodeScalars.Valid) UnicodeScalars.validate("1.5"));
-        ClassOpsExecutor.JsonParse negativeZero = FixtureJson.parse(
-            (UnicodeScalars.Valid) UnicodeScalars.validate("-0"));
-        check(maxInt instanceof JsonParse.Success success
-                && success.value() instanceof Value.Int intValue
-                && intValue.value() == 2147483647,
-            "the fixture maps the in-range integer lexical form to Int");
-        check(outOfRange instanceof JsonParse.Success success
-                && success.value() instanceof Value.Number number
-                && number.value() == 2147483648.0,
-            "the fixture maps the out-of-range integer lexical form to Number");
-        check(fraction instanceof JsonParse.Success success
-                && success.value() instanceof Value.Number number
-                && number.value() == 1.5,
-            "the fixture maps the fraction form to Number");
-        check(negativeZero instanceof JsonParse.Success success
-                && success.value() instanceof Value.Int intValue
-                && intValue.value() == 0,
-            "the fixture normalizes -0 to Int 0");
-        check(FixtureJson.parse((UnicodeScalars.Valid) UnicodeScalars.validate("{x"))
-                instanceof JsonParse.SyntaxFailure,
-            "the fixture rejects a syntax defect");
-
-        // Duplicate keys keep the last value and the first position.
-        JsonParse.Success duplicates = (JsonParse.Success) FixtureJson.parse(
-            (UnicodeScalars.Valid) UnicodeScalars.validate("{\"a\":1,\"b\":2,\"a\":3}"));
-        Value.Table dupTable = (Value.Table) duplicates.value();
-        check(dupTable.table().keys().equals(List.of("a", "b")),
-            "duplicate keys keep the first position (document order a, b)");
-        SemanticTable.Lookup<Value> a = dupTable.table().get("a");
-        check(a instanceof SemanticTable.Lookup.Present<Value> present
-                && present.value() instanceof Value.Int intValue
-                && intValue.value() == 3,
-            "duplicate keys keep the last value (a = 3)");
-
-        // Stringify rows: escaping, insertion/index order, nonfinite.
-        SemanticTable<Value> escapeTable = new SemanticTable<>();
-        escapeTable.put("q", Value.string("a\"b\n"));
-        escapeTable.put("z", new Value.Int(2));
-        JsonStringify escaped = FixtureJson.stringify(new Value.Table(escapeTable), "");
-        check(escaped instanceof JsonStringify.Success success
-                && success.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2}"),
-            "the fixture stringifies with RFC-8259 escaping and first-insertion order");
-        JsonStringify nonfinite = FixtureJson.stringify(new Value.Number(Double.NaN), "f");
-        check(nonfinite instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("f")
-                && failure.actual().equals(ActualKind.NUMBER.token()),
-            "the fixture fails a nonfinite number at the caller's prefix");
-
-        // The production adapter agrees with the fixture on the same rows.
-        ClassOpsExecutor.JsonParser adapterParser = JsonClassAlgorithmAdapter.parser();
-        ClassOpsExecutor.JsonStringifier adapterStringifier =
-            JsonClassAlgorithmAdapter.stringifier();
-        String[] parses = {"2147483647", "-0", "1.5", "{\"a\":1,\"b\":2,\"a\":3}", "{x",
-            "\"text\"", "[]"};
-        for (String text : parses) {
-            UnicodeScalars.Valid valid = (UnicodeScalars.Valid) UnicodeScalars.validate(text);
-            JsonParse fixtureParse = FixtureJson.parse(valid);
-            JsonParse adapterParse = adapterParser.parse(valid);
-            check(fixtureParse.getClass() == adapterParse.getClass(),
-                "adapter/fixture parse terminal parity for '" + text + "'");
-            if (fixtureParse instanceof JsonParse.Success fixtureSuccess
-                    && adapterParse instanceof JsonParse.Success adapterSuccess) {
-                check(valuesEqual(fixtureSuccess.value(), adapterSuccess.value()),
-                    "adapter/fixture parsed-value parity for '" + text + "'");
-            }
+    private static void testAlgorithmObservations() {
+        ClassOpsExecutor.JsonParser parser = JsonClassAlgorithmAdapter.parser();
+        String[] numbers = {"2147483647", "-2147483648", "-0", "2147483648", "1.5", "1e0"};
+        double[] expected = {2147483647, -2147483648, 0, 2147483648.0, 1.5, 1.0};
+        for (int i = 0; i < numbers.length; i++) {
+            JsonParse parsed = parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate(numbers[i]));
+            Value value = ((JsonParse.Success) parsed).value();
+            check(i < 3 ? value instanceof Value.Int n && n.value() == expected[i]
+                    : value instanceof Value.Number number && number.value() == expected[i],
+                "numeric lexical variant and value: " + numbers[i]);
         }
-        JsonStringify adapterEscaped = adapterStringifier.stringify(
-            new Value.Table(escapeTable), "");
-        check(adapterEscaped instanceof JsonStringify.Success success
-                && success.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2}"),
-            "the adapter stringifies identically to the fixture");
-        JsonStringify adapterNonfinite = adapterStringifier.stringify(
-            new Value.Number(Double.NaN), "f");
-        check(adapterNonfinite instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("f")
-                && failure.actual().equals(ActualKind.NUMBER.token()),
-            "the adapter fails a nonfinite number at the caller's prefix");
+        check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate("{x"))
+            instanceof JsonParse.SyntaxFailure, "invalid JSON syntax is rejected");
+        Value.Table duplicates = (Value.Table) ((JsonParse.Success) parser.parse(
+            (UnicodeScalars.Valid) UnicodeScalars.validate("{\"a\":1,\"b\":2,\"a\":3}"))).value();
+        check(duplicates.table().keys().equals(List.of("a", "b"))
+                && duplicates.table().get("a") instanceof SemanticTable.Lookup.Present<Value> p
+                && p.value() instanceof Value.Int n && n.value() == 3,
+            "duplicate keys retain first position and last value");
+        check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate("\"text\""))
+                instanceof JsonParse.Success p && p.value() instanceof Value.String s
+                && carrier(s).equals("text"), "string parse retains literal text");
+        check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate("[]"))
+                instanceof JsonParse.Success p && p.value() instanceof Value.Array a
+                && a.array().size() == 0, "empty array parse retains its variant");
+        SemanticTable<Value> escaped = new SemanticTable<>();
+        escaped.put("q", Value.string("a\"b\n"));
+        escaped.put("z", new Value.Int(2));
+        check(JsonClassAlgorithmAdapter.stringifier().stringify(new Value.Table(escaped), "")
+                instanceof JsonStringify.Success s
+                && s.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2}"),
+            "escaping and first-insertion order are literal-exact");
+        assertStringifyFailure(new Value.Number(Double.NaN), "f", "f", "number", false);
+        Value function = new Value.Function(new RuntimeDescriptor.Func(List.of(),
+            RuntimeDescriptor.Null.INSTANCE, false));
+        List<Value> unsupported = List.of(function,
+            instanceOf(layoutOf(POINT, field("x", INT, true)), Map.of("x", new Value.Int(1))),
+            Value.string("\uD800"), Value.Missing.INSTANCE);
+        List<String> tokens = List.of("function", "@corpus.json/Point", "invalid-unicode", "nil");
+        for (int i = 0; i < unsupported.size(); i++) {
+            assertStringifyFailure(rawTable(Map.of("k", unsupported.get(i))),
+                "data", "data.k", tokens.get(i), false);
+        }
+        SemanticTable<Value> dotted = new SemanticTable<>();
+        dotted.put("a", new Value.Array(SemanticArray.of(new Value.Int(1))));
+        dotted.put("a.0", function);
+        assertStringifyFailure(new Value.Table(dotted), "data", "data.a.0", "function", false);
+        dotted.put("a", new Value.Array(SemanticArray.of(function)));
+        dotted.put("a.0", new Value.Int(1));
+        assertStringifyFailure(new Value.Table(dotted), "data", "data.a[0]", "function", false);
+        assertStringifyFailure(rawTable(Map.of("a.0", new Value.Array(SemanticArray.of(function)))),
+            "data", "data.a.0[0]", "function", false);
+        SemanticTable<Value> cycle = new SemanticTable<>();
+        cycle.put("self", new Value.Table(cycle));
+        assertStringifyFailure(new Value.Table(cycle), "data", "data.self", "table", true);
+        cycle = new SemanticTable<>();
+        cycle.put("a", new Value.Array(SemanticArray.of(new Value.Table(cycle))));
+        assertStringifyFailure(new Value.Table(cycle), "data", "data.a[0]", "table", true);
+    }
 
-        // Unsupported carriers inside a table-typed runtime value: the
-        // seam's pinned Failure terminal (never a producer throw) with
-        // the exact pinned-convention fieldPath and the canonical
-        // actual-kind tokens — fixture and production adapter agree.
-        SemanticTable<Value> functionTable = new SemanticTable<>();
-        functionTable.put("k", new Value.Function(new RuntimeDescriptor.Func(List.of(),
-            RuntimeDescriptor.Null.INSTANCE, false)));
-        JsonStringify fixtureFunction = FixtureJson.stringify(
-            new Value.Table(functionTable), "data");
-        JsonStringify adapterFunction = adapterStringifier.stringify(
-            new Value.Table(functionTable), "data");
-        check(fixtureFunction instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the fixture fails a function inside a table at data.k with the function token");
-        check(adapterFunction instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the adapter fails a function inside a table at data.k with the function token");
-
-        SemanticTable<Value> classTable = new SemanticTable<>();
-        classTable.put("k", instanceOf(layoutOf(POINT, field("x", INT, true)),
-            Map.of("x", new Value.Int(1))));
-        String classToken = deal.semantic.ir.FailureProjections.typedBoundaryToken(
-            ActualKind.CLASS, POINT.text());
-        JsonStringify fixtureClass = FixtureJson.stringify(
-            new Value.Table(classTable), "data");
-        JsonStringify adapterClass = adapterStringifier.stringify(
-            new Value.Table(classTable), "data");
-        check(fixtureClass instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(classToken),
-            "the fixture fails a class instance inside a table at data.k with the "
-                + "class token");
-        check(adapterClass instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(classToken),
-            "the adapter fails a class instance inside a table at data.k with the "
-                + "class token");
-
-        SemanticTable<Value> invalidTable = new SemanticTable<>();
-        invalidTable.put("k", Value.string("\uD800"));
-        JsonStringify fixtureInvalid = FixtureJson.stringify(
-            new Value.Table(invalidTable), "data");
-        JsonStringify adapterInvalid = adapterStringifier.stringify(
-            new Value.Table(invalidTable), "data");
-        check(fixtureInvalid instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(ActualKind.INVALID_UNICODE.token()),
-            "the fixture fails an invalid-scalar string inside a table at data.k with the "
-                + "invalid-unicode token");
-        check(adapterInvalid instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(ActualKind.INVALID_UNICODE.token()),
-            "the adapter fails an invalid-scalar string inside a table at data.k with the "
-                + "invalid-unicode token");
-
-        SemanticTable<Value> missingTable = new SemanticTable<>();
-        missingTable.put("k", Value.Missing.INSTANCE);
-        JsonStringify fixtureMissing = FixtureJson.stringify(
-            new Value.Table(missingTable), "data");
-        JsonStringify adapterMissing = adapterStringifier.stringify(
-            new Value.Table(missingTable), "data");
-        check(fixtureMissing instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(deal.semantic.ir.FailureProjections
-                    .typedBoundaryToken(ActualKind.MISSING, null)),
-            "the fixture fails the internal missing view inside a table at data.k with "
-                + "the typed-boundary nil token");
-        check(adapterMissing instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.k")
-                && failure.actual().equals(deal.semantic.ir.FailureProjections
-                    .typedBoundaryToken(ActualKind.MISSING, null)),
-            "the adapter fails the internal missing view inside a table at data.k with "
-                + "the typed-boundary nil token");
-
-        // Dotted table keys: E8's dot-joined failure path is ambiguous
-        // (a table key is never re-escaped there, so "a.0" may be the
-        // key "a.0" or the array element 0 under key "a"), and the
-        // pinned segment convention must be resolved against the actual
-        // value structure — a table key always appends ".key", an array
-        // element always "[i]" — never the reported string. Fixture and
-        // production adapter agree on the exact fieldPath.
-        SemanticTable<Value> dottedFunctionData = new SemanticTable<>();
-        dottedFunctionData.put("a", new Value.Array(SemanticArray.of(new Value.Int(1))));
-        dottedFunctionData.put("a.0", new Value.Function(new RuntimeDescriptor.Func(
-            List.of(), RuntimeDescriptor.Null.INSTANCE, false)));
-        JsonStringify fixtureDottedKey = FixtureJson.stringify(
-            new Value.Table(dottedFunctionData), "data");
-        JsonStringify adapterDottedKey = adapterStringifier.stringify(
-            new Value.Table(dottedFunctionData), "data");
-        check(fixtureDottedKey instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a.0")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the fixture fails a function at the dotted key a.0 as data.a.0 (a table "
-                + "key always appends .key)");
-        check(adapterDottedKey instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a.0")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the adapter fails a function at the dotted key a.0 as data.a.0 (the "
-                + "segment-aware first-failure replay, never the ambiguous dot string)");
-
-        // The mirror ambiguity: the same reported string "a.0" resolves
-        // as the array element under key "a" when the first failure is
-        // there — a key-spelling guess would misreport .a.0.
-        SemanticTable<Value> dottedArrayData = new SemanticTable<>();
-        dottedArrayData.put("a", new Value.Array(SemanticArray.of(
-            new Value.Function(new RuntimeDescriptor.Func(List.of(),
-                RuntimeDescriptor.Null.INSTANCE, false)))));
-        dottedArrayData.put("a.0", new Value.Int(1));
-        JsonStringify fixtureDottedArray = FixtureJson.stringify(
-            new Value.Table(dottedArrayData), "data");
-        JsonStringify adapterDottedArray = adapterStringifier.stringify(
-            new Value.Table(dottedArrayData), "data");
-        check(fixtureDottedArray instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a[0]")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the fixture fails the array element under key a as data.a[0] even with a "
-                + "dotted sibling key present");
-        check(adapterDottedArray instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a[0]")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the adapter fails the array element under key a as data.a[0] even with a "
-                + "dotted sibling key present (the first failure is the array element, "
-                + "not the key)");
-
-        // A dotted key carrying a failing array child: the key's own
-        // segments stay .key and the child appends its index.
-        SemanticTable<Value> dottedArrayChild = new SemanticTable<>();
-        dottedArrayChild.put("a.0", new Value.Array(SemanticArray.of(
-            new Value.Function(new RuntimeDescriptor.Func(List.of(),
-                RuntimeDescriptor.Null.INSTANCE, false)))));
-        JsonStringify fixtureDottedChild = FixtureJson.stringify(
-            new Value.Table(dottedArrayChild), "data");
-        JsonStringify adapterDottedChild = adapterStringifier.stringify(
-            new Value.Table(dottedArrayChild), "data");
-        check(fixtureDottedChild instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a.0[0]")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the fixture fails an array element under a dotted key as data.a.0[0]");
-        check(adapterDottedChild instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a.0[0]")
-                && failure.actual().equals(ActualKind.FUNCTION.token()),
-            "the adapter fails an array element under a dotted key as data.a.0[0]");
-
-        // Cyclic containers through the production adapter: the
-        // pre-walk short-circuits the re-entry before the mapping (the
-        // mapping cannot represent a cycle) and carries the closed cycle
-        // selection at the re-entering container's pinned path — the
-        // needle's own marker selects the walk family's cycle arm, never
-        // a token comparison (jsonable-tojson-walk-arm-binding W3).
-        SemanticTable<Value> selfTable = new SemanticTable<>();
-        selfTable.put("self", new Value.Table(selfTable));
-        JsonStringify fixtureSelfCycle = FixtureJson.stringify(
-            new Value.Table(selfTable), "data");
-        JsonStringify adapterSelfCycle = adapterStringifier.stringify(
-            new Value.Table(selfTable), "data");
-        check(fixtureSelfCycle instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.self")
-                && failure.cycle(),
-            "the fixture fails a self-referential table at data.self with the closed "
-                + "cycle selection");
-        check(adapterSelfCycle instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.self")
-                && failure.cycle(),
-            "the adapter fails a self-referential table at data.self with the closed "
-                + "cycle selection (never a producer crash)");
-
-        // A table/array cycle: the re-entering table reports its closed
-        // cycle selection at the pinned mixed path .a[0].
-        SemanticTable<Value> cycleTable = new SemanticTable<>();
-        SemanticArray<Value> cycleArray = SemanticArray.of(List.of(
-            new Value.Table(cycleTable)));
-        cycleTable.put("a", new Value.Array(cycleArray));
-        JsonStringify fixtureMixedCycle = FixtureJson.stringify(
-            new Value.Table(cycleTable), "data");
-        JsonStringify adapterMixedCycle = adapterStringifier.stringify(
-            new Value.Table(cycleTable), "data");
-        check(fixtureMixedCycle instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a[0]")
-                && failure.cycle(),
-            "the fixture fails a table/array cycle at data.a[0] with the closed cycle "
-                + "selection");
-        check(adapterMixedCycle instanceof JsonStringify.Failure failure
-                && failure.fieldPath().equals("data.a[0]")
-                && failure.cycle(),
-            "the adapter fails a table/array cycle at data.a[0] with the closed cycle "
-                + "selection (never a producer crash)");
+    private static void assertStringifyFailure(Value value, String prefix,
+            String path, String actual, boolean cycle) {
+        JsonStringify result = JsonClassAlgorithmAdapter.stringifier().stringify(value, prefix);
+        check(result instanceof JsonStringify.Failure f && f.fieldPath().equals(path)
+                && f.actual().equals(actual) && f.cycle() == cycle,
+            "literal stringify failure " + path + " / " + actual + " / " + cycle + ": " + result);
     }
 
     /** The carrier text of one valid-scalar string view (test-local). */
     private static String carrier(Value.String string) {
         return ((UnicodeScalars.Valid) string.scalar()).carrier();
-    }
-
-    /** Structural equality of two JSON-shaped values (fixture vs adapter). */
-    private static boolean valuesEqual(Value left, Value right) {
-        if (left.actualKind() != right.actualKind()) {
-            return false;
-        }
-        return switch (left) {
-            case Value.Int intValue -> ((Value.Int) right).value() == intValue.value();
-            case Value.Number number ->
-                Double.compare(number.value(), ((Value.Number) right).value()) == 0;
-            case Value.String string ->
-                carrier(string).equals(carrier((Value.String) right));
-            case Value.Table table -> {
-                Value.Table other = (Value.Table) right;
-                if (!table.table().keys().equals(other.table().keys())) {
-                    yield false;
-                }
-                boolean equal = true;
-                for (String key : table.table().keys()) {
-                    Value leftEntry = table.table().get(key)
-                        instanceof SemanticTable.Lookup.Present<Value> leftPresent
-                            ? leftPresent.value() : null;
-                    Value rightEntry = other.table().get(key)
-                        instanceof SemanticTable.Lookup.Present<Value> rightPresent
-                            ? rightPresent.value() : null;
-                    equal &= leftEntry != null && rightEntry != null
-                        && valuesEqual(leftEntry, rightEntry);
-                }
-                yield equal;
-            }
-            case Value.Array array -> {
-                Value.Array other = (Value.Array) right;
-                if (array.array().size() != other.array().size()) {
-                    yield false;
-                }
-                boolean equal = true;
-                for (int i = 0; i < array.array().size(); i++) {
-                    equal &= valuesEqual(array.array().elementAt(i),
-                        other.array().elementAt(i));
-                }
-                yield equal;
-            }
-            default -> true; // Null/Bool
-        };
     }
 
     // =========================================================================
@@ -1161,24 +402,24 @@ public class JsonClassExecutorTest {
         // A JSON null returns language null.
         Value nullResult = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("null")), List.of(), defaultOps, layouts,
-            FixtureJson.parser(), missingFactorySeam(), runner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
         check(nullResult instanceof Value.Null, "a JSON null top level returns null");
 
         // A non-object scalar returns language null.
         Value scalarResult = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("42")), List.of(), defaultOps, layouts,
-            FixtureJson.parser(), missingFactorySeam(), runner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
         check(scalarResult instanceof Value.Null, "a scalar top level returns null");
 
         // A non-empty array returns language null.
         Value nonEmpty = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("[1]")), List.of(), defaultOps, layouts,
-            FixtureJson.parser(), missingFactorySeam(), runner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
         check(nonEmpty instanceof Value.Null, "a non-empty array top level returns null");
 
         Value emptyObject = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{}")), List.of(), defaultOps, layouts,
-            FixtureJson.parser(), missingFactorySeam(), runner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
         check(emptyObject instanceof Value.Null,
             "{} with absent required no-default fields returns null (K-D9)");
 
@@ -1202,7 +443,7 @@ public class JsonClassExecutorTest {
         Value collapsedObject = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
             Map.of(defaultJsonId, Value.string("{}")), List.of(xDefault.opId(),
                 tagDefault.opId()), defaultedOps, Map.of(POINT, defaulted),
-            FixtureJson.parser(), missingFactorySeam(), defaultsRunner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), defaultsRunner);
         check(collapsedObject instanceof Value.Class instance
                 && fieldValue(instance, defaulted, "x") instanceof Value.Int intValue
                 && intValue.value() == 40,
@@ -1213,7 +454,7 @@ public class JsonClassExecutorTest {
         Value collapsedArray = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
             Map.of(defaultJsonId, Value.string("[]")), List.of(xDefault.opId(),
                 tagDefault.opId()), defaultedOps, Map.of(POINT, defaulted),
-            FixtureJson.parser(), missingFactorySeam(), collapseRunner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), collapseRunner);
         check(collapsedArray instanceof Value.Class instance
                 && fieldValue(instance, defaulted, "tag") instanceof Value.String string
                 && carrier(string).equals("pt"),
@@ -1255,7 +496,7 @@ public class JsonClassExecutorTest {
         ScriptedBodyRunner syntaxRunner = new ScriptedBodyRunner(logSyntax, produced, null);
         Value syntax = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{oops")), childIds, defaultOps, layouts,
-            FixtureJson.parser(), missingFactorySeam(), syntaxRunner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), syntaxRunner);
         check(syntax instanceof Value.Null, "a syntax defect returns null");
         check(syntaxRunner.calls() == 0, "no default runs after a syntax defect");
 
@@ -1265,7 +506,7 @@ public class JsonClassExecutorTest {
         ScriptedBodyRunner keyRunner = new ScriptedBodyRunner(logKey, produced, null);
         Value extraKey = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"x\":1,\"alien\":true,\"tag\":\"t\"}")),
-            childIds, defaultOps, layouts, FixtureJson.parser(), missingFactorySeam(),
+            childIds, defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             keyRunner);
         check(extraKey instanceof Value.Null, "an unknown key returns null");
         check(keyRunner.calls() == 0, "no default runs after the extra-key gate");
@@ -1275,7 +516,7 @@ public class JsonClassExecutorTest {
         ScriptedBodyRunner intRunner = new ScriptedBodyRunner(logInt, produced, null);
         Value intFailure = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"x\":1.5,\"tag\":\"t\"}")), childIds,
-            defaultOps, layouts, FixtureJson.parser(), missingFactorySeam(), intRunner);
+            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), intRunner);
         check(intFailure instanceof Value.Null,
             "an int field with a fractional Number carrier returns null");
         check(intRunner.calls() == 0,
@@ -1284,7 +525,7 @@ public class JsonClassExecutorTest {
         // A JSON null on a non-nullable field fails.
         Value nullFailure = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"x\":null,\"tag\":\"t\"}")), childIds,
-            defaultOps, layouts, FixtureJson.parser(), missingFactorySeam(),
+            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), produced, null));
         check(nullFailure instanceof Value.Null,
             "a JSON null on a non-nullable field returns null");
@@ -1293,7 +534,7 @@ public class JsonClassExecutorTest {
         // null).
         Value presentNull = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"x\":1,\"tag\":\"t\",\"note\":null}")),
-            childIds, defaultOps, layouts, FixtureJson.parser(), missingFactorySeam(),
+            childIds, defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), produced, null));
         check(presentNull instanceof Value.Class instance
                 && fieldState(instance, point, "note") instanceof FieldState.Present
@@ -1304,7 +545,7 @@ public class JsonClassExecutorTest {
         // missing).
         Value missingNote = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"x\":1,\"tag\":\"t\"}")), childIds,
-            defaultOps, layouts, FixtureJson.parser(), missingFactorySeam(),
+            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), produced, null));
         check(missingNote instanceof Value.Class instance
                 && fieldState(instance, point, "note") instanceof FieldState.Missing,
@@ -1318,13 +559,13 @@ public class JsonClassExecutorTest {
         SemanticOp tableOp = jsonFromOp(withTable, tableJsonId);
         Value nonEmptyArray = ClassOpsExecutor.executeJsonFromClass(tableOp,
             Map.of(tableJsonId, Value.string("{\"data\":[1,2]}")), List.of(), Map.of(),
-            Map.of(POINT, withTable), FixtureJson.parser(), missingFactorySeam(),
+            Map.of(POINT, withTable), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
         check(nonEmptyArray instanceof Value.Null,
             "a non-empty array-shaped table field value returns null");
         Value collapsedTable = ClassOpsExecutor.executeJsonFromClass(tableOp,
             Map.of(tableJsonId, Value.string("{\"data\":[]}")), List.of(), Map.of(),
-            Map.of(POINT, withTable), FixtureJson.parser(), missingFactorySeam(),
+            Map.of(POINT, withTable), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
         check(collapsedTable instanceof Value.Class instance
                 && fieldValue(instance, withTable, "data") instanceof Value.Table table
@@ -1336,7 +577,7 @@ public class JsonClassExecutorTest {
         SemanticOp strictOp = jsonFromOp(strict, strictJsonId);
         Value noDefault = ClassOpsExecutor.executeJsonFromClass(strictOp,
             Map.of(strictJsonId, Value.string("{}")), List.of(), Map.of(),
-            Map.of(POINT, strict), FixtureJson.parser(), missingFactorySeam(),
+            Map.of(POINT, strict), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
         check(noDefault instanceof Value.Null,
             "an absent required-present no-default key returns null (K-D9)");
@@ -1349,7 +590,7 @@ public class JsonClassExecutorTest {
             tagDefault.opId());
         Value failingDefault = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{}")), childIds, defaultOps, layouts,
-            FixtureJson.parser(), missingFactorySeam(), failingRunner);
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), failingRunner);
         check(failingDefault instanceof Value.Null, "a failing default child returns null");
         check(logFailing.equals(List.of("default " + xDefault.opId(),
                 "default " + tagDefault.opId())),
@@ -1361,7 +602,7 @@ public class JsonClassExecutorTest {
         };
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(op,
                 Map.of(jsonId, Value.string("{}")), childIds, defaultOps, layouts,
-                FixtureJson.parser(), missingFactorySeam(), defectiveRunner),
+                JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), defectiveRunner),
             "a body-runner Defect during a local default child fails closed "
                 + "(never language null)");
     }
@@ -1417,7 +658,7 @@ public class JsonClassExecutorTest {
         ScriptedBodyRunner runner = new ScriptedBodyRunner(log, produced, null);
         Value decoded = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"home\":{}}")), List.of(nameDefault.opId()),
-            defaultOps, layouts, FixtureJson.parser(), seam, runner);
+            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), seam, runner);
 
         check(decoded instanceof Value.Class instance
                 && instance.classId().equals(POINT),
@@ -1442,18 +683,14 @@ public class JsonClassExecutorTest {
         check(fieldValue(instance, person, "name") instanceof Value.String name
                 && carrier(name).equals("anon"),
             "the caller's own default child ran for the omitted name field");
-        check(log.contains("nested-default " + cityDefault.opId())
-                && log.contains("nested-default " + zipDefault.opId()),
-            "the fixture seam drove the real executeClassFactory (the nested factory "
-                + "children ran)");
-        check(log.indexOf("nested-default " + cityDefault.opId())
-                < log.indexOf("nested-default " + zipDefault.opId()),
-            "the factory's children ran in declaration order");
+        check(log.equals(List.of("nested-default " + cityDefault.opId(),
+                "nested-default " + zipDefault.opId(), "default " + nameDefault.opId())),
+            "nested owner children run once in declaration order before the caller default");
 
         // A nested decode failure returns null end-to-end.
         Value nestedFailure = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"home\":{\"alien\":1}}")),
-            List.of(nameDefault.opId()), defaultOps, layouts, FixtureJson.parser(), seam,
+            List.of(nameDefault.opId()), defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), seam,
             new ScriptedBodyRunner(new ArrayList<>(), produced, null));
         check(nestedFailure instanceof Value.Null,
             "a nested extra-key failure returns null end-to-end");
@@ -1474,7 +711,7 @@ public class JsonClassExecutorTest {
         };
         Value nestedDefaultFailure = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("{\"home\":{}}")), List.of(nameDefault.opId()),
-            defaultOps, layouts, FixtureJson.parser(), failingSeam, runner);
+            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), failingSeam, runner);
         check(nestedDefaultFailure instanceof Value.Null,
             "a failing nested-factory child returns null end-to-end (K-D8 step 6)");
         check(failingLog.equals(List.of("nested-default " + cityDefault.opId())),
@@ -1487,7 +724,7 @@ public class JsonClassExecutorTest {
         };
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(op,
                 Map.of(jsonId, Value.string("{\"home\":{}}")),
-                List.of(nameDefault.opId()), defaultOps, layouts, FixtureJson.parser(),
+                List.of(nameDefault.opId()), defaultOps, layouts, JsonClassAlgorithmAdapter.parser(),
                 defectiveSeam, new ScriptedBodyRunner(new ArrayList<>(), produced, null)),
             "a nested-factory producer Defect fails closed (never language null)");
     }
@@ -1630,7 +867,7 @@ public class JsonClassExecutorTest {
             "age", new Value.Int(42),
             "note", Value.Null.INSTANCE));
         Outcome<Value> outcome = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, instance), layouts, FixtureJson.stringifier(),
+            Map.of(classId, instance), layouts, JsonClassAlgorithmAdapter.stringifier(),
             nextOrigin(null));
         check(outcome instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
@@ -1645,7 +882,7 @@ public class JsonClassExecutorTest {
             "name", Value.string("n"),
             "age", new Value.Int(1)));
         Outcome<Value> skipped = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, missingNote), layouts, FixtureJson.stringifier(),
+            Map.of(classId, missingNote), layouts, JsonClassAlgorithmAdapter.stringifier(),
             nextOrigin(null));
         check(skipped instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
@@ -1654,7 +891,7 @@ public class JsonClassExecutorTest {
 
         // Determinism: repeated executions produce identical bytes.
         Outcome<Value> again = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, instance), layouts, FixtureJson.stringifier(),
+            Map.of(classId, instance), layouts, JsonClassAlgorithmAdapter.stringifier(),
             nextOrigin(null));
         check(again instanceof Outcome.Success<Value> success
                 && carrier((Value.String) success.value()).equals(
@@ -1728,7 +965,7 @@ public class JsonClassExecutorTest {
             "tags", new Value.Array(SemanticArray.of(new Value.Int(0), Value.string("x"))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> arrayFailure = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, badArray), layouts, FixtureJson.stringifier(), callOrigin);
+            Map.of(classId, badArray), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(arrayFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
                     "value at tags[1] is not JSON serializable: string"),
@@ -1744,18 +981,6 @@ public class JsonClassExecutorTest {
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
             "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
             "data", new Value.Table(badData)));
-        Outcome<Value> tableFailure = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, badTable), layouts, FixtureJson.stringifier(), callOrigin);
-        check(tableFailure instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().message().equals(
-                    "value at data.k is not JSON serializable: function"),
-            "a table-key failure pins the f.k path with the function token");
-
-        // The production delegate over the same walk: the adapter maps
-        // the unsupported table-content carriers to E8's projections,
-        // so the generated C$toJson production walk reports the pinned
-        // failure at the call origin (never an uncaught producer
-        // throw) — function, class, and invalid-scalar-string carriers.
         Outcome<Value> productionTableFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, badTable), layouts, JsonClassAlgorithmAdapter.stringifier(),
             callOrigin);
@@ -1936,7 +1161,7 @@ public class JsonClassExecutorTest {
             "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> deepPath = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, badNestedField), layouts, FixtureJson.stringifier(),
+            Map.of(classId, badNestedField), layouts, JsonClassAlgorithmAdapter.stringifier(),
             callOrigin);
         check(deepPath instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
@@ -1952,7 +1177,7 @@ public class JsonClassExecutorTest {
             "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> firstWins = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, twoFailures), layouts, FixtureJson.stringifier(), callOrigin);
+            Map.of(classId, twoFailures), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(firstWins instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
                     "value at age is not JSON serializable: string"),
@@ -1962,7 +1187,7 @@ public class JsonClassExecutorTest {
         Value.Class foreignRoot = instanceOf(layoutOf(OTHER, field("x", INT, true)),
             Map.of("x", new Value.Int(1)));
         Outcome<Value> rootFailure = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, foreignRoot), layouts, FixtureJson.stringifier(), callOrigin);
+            Map.of(classId, foreignRoot), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(rootFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
                     "value at  is not JSON serializable: @" + MOD.path()
@@ -1974,7 +1199,7 @@ public class JsonClassExecutorTest {
 
         // A non-class root: actual number.
         Outcome<Value> scalarRoot = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, new Value.Number(3.5)), layouts, FixtureJson.stringifier(),
+            Map.of(classId, new Value.Number(3.5)), layouts, JsonClassAlgorithmAdapter.stringifier(),
             callOrigin);
         check(scalarRoot instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
@@ -1989,7 +1214,7 @@ public class JsonClassExecutorTest {
             Map.of("x", new Value.Number(Double.NaN)));
         Outcome<Value> nanFailure = ClassOpsExecutor.executeJsonToClass(nanOp,
             Map.of(nanClassId, nanField), Map.of(POINT, nanLayout),
-            FixtureJson.stringifier(), callOrigin);
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(nanFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
                     "value at x is not JSON serializable: number"),
@@ -2002,7 +1227,7 @@ public class JsonClassExecutorTest {
             "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> missingFailure = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, missingRequired), layouts, FixtureJson.stringifier(),
+            Map.of(classId, missingRequired), layouts, JsonClassAlgorithmAdapter.stringifier(),
             callOrigin);
         check(missingFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
@@ -2017,7 +1242,7 @@ public class JsonClassExecutorTest {
             "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> nullFailure = ClassOpsExecutor.executeJsonToClass(op,
-            Map.of(classId, nullRequired), layouts, FixtureJson.stringifier(), callOrigin);
+            Map.of(classId, nullRequired), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(nullFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
                     "value at name is not JSON serializable: null"),
@@ -2054,7 +1279,7 @@ public class JsonClassExecutorTest {
         SemanticOp sharedOp = jsonToOp(twoFields, sharedClassId);
         Outcome<Value> sharedOutcome = ClassOpsExecutor.executeJsonToClass(sharedOp,
             Map.of(sharedClassId, shared), Map.of(POINT, twoFields, INNER, node),
-            FixtureJson.stringifier(), nextOrigin(null));
+            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
         check(sharedOutcome instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
                 && carrier(text).equals("{\"a\":{},\"b\":{}}"),
@@ -2072,7 +1297,7 @@ public class JsonClassExecutorTest {
         SemanticOp tableCycleOp = jsonToOp(withTable, tableClassId);
         Outcome<Value> tableCycleFailure = ClassOpsExecutor.executeJsonToClass(
             tableCycleOp, Map.of(tableClassId, tableCycle), Map.of(POINT, withTable),
-            FixtureJson.stringifier(), nextOrigin(null));
+            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
         check(tableCycleFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
                     "cyclic value cannot be encoded as JSON")
@@ -2109,7 +1334,7 @@ public class JsonClassExecutorTest {
         }
         SourceOrigin depthCallOrigin = nextOrigin(null);
         Outcome<Value> overflow = ClassOpsExecutor.executeJsonToClass(deepOp,
-            Map.of(deepClassId, deepInstance), layouts, FixtureJson.stringifier(),
+            Map.of(deepClassId, deepInstance), layouts, JsonClassAlgorithmAdapter.stringifier(),
             depthCallOrigin);
         String depthOverflowPath = "next" + ".next".repeat(512);
         check(overflow instanceof Outcome.Failure<Value> failure
@@ -2130,7 +1355,7 @@ public class JsonClassExecutorTest {
                 List.of(new FieldState.Present(boundedInstance)));
         }
         Outcome<Value> bounded = ClassOpsExecutor.executeJsonToClass(deepOp,
-            Map.of(deepClassId, boundedInstance), layouts, FixtureJson.stringifier(),
+            Map.of(deepClassId, boundedInstance), layouts, JsonClassAlgorithmAdapter.stringifier(),
             nextOrigin(null));
         check(bounded instanceof Outcome.Success<Value>,
             "a 512-deep class nesting serializes (the bound is inclusive)");
@@ -2151,7 +1376,7 @@ public class JsonClassExecutorTest {
         SourceOrigin tableDepthOrigin = nextOrigin(null);
         Outcome<Value> tableOverflow = ClassOpsExecutor.executeJsonToClass(deepTableOp,
             Map.of(deepTableClassId, deepTable), Map.of(POINT, tableLayout),
-            FixtureJson.stringifier(), tableDepthOrigin);
+            JsonClassAlgorithmAdapter.stringifier(), tableDepthOrigin);
         check(tableOverflow instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
@@ -2183,7 +1408,7 @@ public class JsonClassExecutorTest {
         SemanticOp boundedTableOp = jsonToOp(tableLayout, boundedTableClassId);
         Outcome<Value> tableBounded = ClassOpsExecutor.executeJsonToClass(boundedTableOp,
             Map.of(boundedTableClassId, boundedTable), Map.of(POINT, tableLayout),
-            FixtureJson.stringifier(), nextOrigin(null));
+            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
         check(tableBounded instanceof Outcome.Success<Value>,
             "a 512-deep table subtree serializes (the bound is inclusive)");
 
@@ -2203,7 +1428,7 @@ public class JsonClassExecutorTest {
         SourceOrigin mixedDepthOrigin = nextOrigin(null);
         Outcome<Value> mixedOverflow = ClassOpsExecutor.executeJsonToClass(deepMixedOp,
             Map.of(deepMixedClassId, deepMixed), Map.of(POINT, tableLayout),
-            FixtureJson.stringifier(), mixedDepthOrigin);
+            JsonClassAlgorithmAdapter.stringifier(), mixedDepthOrigin);
         check(mixedOverflow instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
@@ -2251,7 +1476,7 @@ public class JsonClassExecutorTest {
                 + "supplied call origin");
         Outcome<Value> earlierPositionFixture = ClassOpsExecutor.executeJsonToClass(
             shallowFailureOp, Map.of(shallowFailureClassId, shallowFailure),
-            Map.of(POINT, tableLayout), FixtureJson.stringifier(),
+            Map.of(POINT, tableLayout), JsonClassAlgorithmAdapter.stringifier(),
             nextOrigin(null));
         check(earlierPositionFixture instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
@@ -2736,7 +1961,7 @@ public class JsonClassExecutorTest {
         Value decoded = ClassOpsExecutor.executeJsonFromClass(fromOp,
             Map.of(fromId, Value.string("{\"age\":42}")),
             List.of(nameDefault.opId(), ageDefault.opId(), tagsDefault.opId()),
-            defaultOps, layouts, FixtureJson.parser(), missingFactorySeam(),
+            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), produced, null));
         check(decoded instanceof Value.Class, "the fromJson walk publishes an instance");
         if (!(decoded instanceof Value.Class instance)) {
@@ -2745,7 +1970,7 @@ public class JsonClassExecutorTest {
         ValueId toId = nextValue();
         SemanticOp toOp = jsonToOp(point, toId);
         Outcome<Value> roundtrip = ClassOpsExecutor.executeJsonToClass(toOp,
-            Map.of(toId, instance), layouts, FixtureJson.stringifier(), nextOrigin(null));
+            Map.of(toId, instance), layouts, JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
         check(roundtrip instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
                 && carrier(text).equals(
@@ -2762,7 +1987,7 @@ public class JsonClassExecutorTest {
                         DefaultOwner.LOCAL, List.of(), null, List.of()),
                     nextValue(), new RuntimeDescriptor.Class(POINT),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), List.of(), Map.of(), Map.of(), FixtureJson.parser(),
+                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
                 missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
                     null)),
             "a non-JSON_FROM_CLASS op kind");
@@ -2772,26 +1997,26 @@ public class JsonClassExecutorTest {
                     nextValue(), new RuntimeDescriptor.Nullable(new RuntimeDescriptor.Class(
                         POINT)),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), List.of(), Map.of(), Map.of(), FixtureJson.parser(),
+                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
                 missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
                     null)),
             "a non-JSON_FROM_NULL policy");
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict,
-                Map.of(), List.of(), Map.of(), Map.of(), FixtureJson.parser(),
+                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
                 missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
                     null)),
             "an unresolvable jsonString operand");
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict,
                 Map.of(fromStrict.payload() instanceof KindPayload.JsonFromClassPayload p
                     ? p.jsonString() : nextValue(), new Value.Int(3)),
-                List.of(), Map.of(), Map.of(), FixtureJson.parser(), missingFactorySeam(),
+                List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
                 new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null)),
             "a wrong-kind jsonString operand");
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict,
                 Map.of(fromStrict.payload() instanceof KindPayload.JsonFromClassPayload p
                     ? p.jsonString() : nextValue(), Value.string("{}")),
                 List.of(), Map.of(), Map.of(),
-                FixtureJson.parser(), missingFactorySeam(),
+                JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
                 new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null)),
             "an unresolvable layout resolution (empty context)");
         // A duplicate default child is a producer defect.
@@ -2800,7 +2025,7 @@ public class JsonClassExecutorTest {
                 Map.of(fromOp.payload() instanceof KindPayload.JsonFromClassPayload p
                     ? p.jsonString() : nextValue(), Value.string("{}")),
                 List.of(dupDefault.opId(), dupDefault.opId()),
-                Map.of(dupDefault.opId(), dupDefault), layouts, FixtureJson.parser(),
+                Map.of(dupDefault.opId(), dupDefault), layouts, JsonClassAlgorithmAdapter.parser(),
                 missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
                     null)),
             "duplicate CLASS_DEFAULT children");
@@ -2813,52 +2038,52 @@ public class JsonClassExecutorTest {
                 jsonFromOp(optionalNote, nextValue()),
                 Map.of(), List.of(optionalDefault.opId()),
                 Map.of(optionalDefault.opId(), optionalDefault),
-                Map.of(POINT, optionalNote), FixtureJson.parser(), missingFactorySeam(),
+                Map.of(POINT, optionalNote), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
                 new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null)),
             "an optional field's CLASS_DEFAULT child");
         // The toJson operand resolution and layout resolution fail closed.
         ValueId toStrictValue = nextValue();
         expectDefect(() -> ClassOpsExecutor.executeJsonToClass(
                 jsonToOp(strict, toStrictValue),
-                Map.of(), Map.of(POINT, strict), FixtureJson.stringifier(),
+                Map.of(), Map.of(POINT, strict), JsonClassAlgorithmAdapter.stringifier(),
                 nextOrigin(null)),
             "an unresolvable classValue operand");
         expectDefect(() -> ClassOpsExecutor.executeJsonToClass(
                 jsonToOp(strict, toStrictValue),
                 Map.of(toStrictValue, new Value.Int(3)),
-                Map.of(), FixtureJson.stringifier(), nextOrigin(null)),
+                Map.of(), JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null)),
             "an unresolvable toJson layout resolution (empty context)");
         expectDefect(() -> ClassOpsExecutor.executeJsonToClass(
                 op(SemanticOpKind.JSON_TO_CLASS,
                     new KindPayload.JsonToClassPayload(nextValue(), strict), nextValue(),
                     RuntimeDescriptor.String.INSTANCE, FailurePolicyId.JSON_FROM_NULL,
                     null),
-                Map.of(), Map.of(POINT, strict), FixtureJson.stringifier(),
+                Map.of(), Map.of(POINT, strict), JsonClassAlgorithmAdapter.stringifier(),
                 nextOrigin(null)),
             "a non-JSON_TO_ERROR policy");
 
         // Null-argument NPEs.
         SemanticOp fromNpe = jsonFromOp(strict, nextValue());
         expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(null,
-                Map.of(), List.of(), Map.of(), Map.of(), FixtureJson.parser(),
+                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
                 missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
                     null)),
             "a null JSON_FROM_CLASS op");
         expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(fromNpe,
-                null, List.of(), Map.of(), Map.of(), FixtureJson.parser(),
+                null, List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
                 missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
                     null)),
             "null priorValues");
         expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(fromNpe,
-                Map.of(), null, Map.of(), Map.of(), FixtureJson.parser(),
+                Map.of(), null, Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
                 missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
                     null)),
             "null defaultChildIds");
         expectNpe(() -> ClassOpsExecutor.executeJsonToClass(null,
-                Map.of(), Map.of(), FixtureJson.stringifier(), nextOrigin(null)),
+                Map.of(), Map.of(), JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null)),
             "a null JSON_TO_CLASS op");
         expectNpe(() -> ClassOpsExecutor.executeJsonToClass(
-                jsonToOp(strict, nextValue()), Map.of(), Map.of(), FixtureJson.stringifier(),
+                jsonToOp(strict, nextValue()), Map.of(), Map.of(), JsonClassAlgorithmAdapter.stringifier(),
                 null),
             "a null call origin");
     }
@@ -2915,7 +2140,7 @@ public class JsonClassExecutorTest {
     }
 
     private static void runAll() {
-        testFixtureRowsAndAdapterParity();
+        testAlgorithmObservations();
         testFromJsonTopLevelGate();
         testFromJsonFailures();
         testFromJsonNestedFactory();
