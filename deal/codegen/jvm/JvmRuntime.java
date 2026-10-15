@@ -3,6 +3,7 @@ package deal.codegen.jvm;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.SharedStdlibSemantics;
 import deal.semantic.ir.ActualKind;
+import deal.semantic.ir.JsonNumberClassifier;
 import deal.semantic.ir.JsonScan;
 
 import java.io.PrintStream;
@@ -2859,6 +2860,7 @@ public final class JvmRuntime {
     private static final String REASON_MISSING_COMMA = "missing comma";
     private static final String REASON_TRAILING_CONTENT = "trailing content";
     private static final String REASON_UNEXPECTED_END = "unexpected end of input";
+    private static final String REASON_DUPLICATE_KEY = "duplicate key";
 
     /** The internal parse failure: the defect class and its 1-based UTF-8 byte offset. */
     private static final class JsonParseFailure extends RuntimeException {
@@ -2878,10 +2880,13 @@ public final class JvmRuntime {
     /**
      * The RFC-8259 recursive-descent reader over the input's code points,
      * tracking the 1-based UTF-8 byte offset of the current scan position:
-     * object order follows text, duplicate keys keep the last value and
-     * the first position, a signed32 integer lexical form becomes a
-     * {@link Long} ({@code -0} normalized to {@code 0}) and every other
-     * numeric form becomes a {@link Double}.
+     * object order follows text, a member key whose decoded scalar text
+     * equals an earlier member key of the same object is a syntax defect
+     * ({@code duplicate key}) at the second key's opening quote, and the
+     * exact decimal classification ({@link JsonNumberClassifier}) makes a
+     * numeric lexeme a {@link Long} exactly when its mathematical value is
+     * integral and inside signed32 ({@code -0}/{@code -0.0} normalized to
+     * {@code 0}); every other numeric lexeme becomes a {@link Double}.
      */
     private static final class JsonReader extends JsonScan.CodePointCursor {
 
@@ -2930,6 +2935,7 @@ public final class JvmRuntime {
         Table parseObject() {
             advance(); // '{'
             Table table = new Table();
+            java.util.Set<String> decodedKeys = new java.util.HashSet<>();
             skipWs();
             if (!atEnd() && peek() == '}') {
                 advance();
@@ -2943,7 +2949,15 @@ public final class JvmRuntime {
                 if (peek() != '"') {
                     throw failure(REASON_MISSING_KEY);
                 }
+                // The duplicate-key defect's position is the second key's
+                // opening quote (one-based UTF-8 byte offset); decoded
+                // equality makes an escaped spelling of the same key a
+                // duplicate too.
+                long keyOffset = offsetOfCurrent();
                 String key = parseString();
+                if (!decodedKeys.add(key)) {
+                    throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
+                }
                 skipWs();
                 if (atEnd() || peek() != ':') {
                     throw failure(REASON_MISSING_COLON);
@@ -2951,9 +2965,6 @@ public final class JvmRuntime {
                 advance(); // ':'
                 skipWs();
                 Object value = parseValue();
-                // Duplicate keys keep the last value and the first
-                // position: LinkedHashMap.put replaces in place and
-                // appends only new keys (the Table order contract).
                 table.write(key, value);
                 skipWs();
                 if (atEnd()) {
@@ -3010,13 +3021,11 @@ public final class JvmRuntime {
 
         Object parseNumber() {
             JsonScan.CodePointCursor.NumberScan scan = parseNumberText();
-            if (scan.integerForm()) {
-                Integer exact = exactInt32OrNull(scan);
-                if (exact != null) {
-                    return Long.valueOf(exact.longValue());
-                }
+            Integer exact = JsonNumberClassifier.exactInt32OrNull(scan.text());
+            if (exact != null) {
+                return Long.valueOf(exact.longValue());
             }
-            return Double.valueOf(Double.parseDouble(scan.text()));
+            return Double.valueOf(JsonNumberClassifier.toDouble(scan.text()));
         }
     }
 
@@ -3095,11 +3104,21 @@ public final class JvmRuntime {
         return deal.semantic.ir.FailureProjections.CarrierKind.TABLE;
     }
 
-    /** Serializes one table (object) with cycle detection and first-insertion order. */
+    /**
+     * The walk family's closed cycle arm: a path-local container
+     * re-entry renders through the arm at the op boundary with no
+     * parameters and no expected/actual fields.
+     */
+    private static StdlibFailure jsonCycleFailure() {
+        return new StdlibFailure(deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE,
+            java.util.Map.of(), null, null);
+    }
+
+    /** Serializes one table (object) with path-local cycle detection and first-insertion order. */
     private static void stringifyTable(StringBuilder out, Table table,
                                        java.util.Set<Object> path) {
         if (!path.add(table)) {
-            throw jsonEncodingFailure(table);
+            throw jsonCycleFailure();
         }
         out.append('{');
         List<String> keys = new ArrayList<>(table.entries.keySet());
@@ -3116,13 +3135,11 @@ public final class JvmRuntime {
         path.remove(table);
     }
 
-    /** Serializes one array with cycle detection and index order. */
+    /** Serializes one array with path-local cycle detection and index order. */
     private static void stringifyArray(StringBuilder out, Array array,
                                        java.util.Set<Object> path) {
         if (!path.add(array)) {
-            // An array carrier is a table-carried value on the carrier-kind
-            // projection.
-            throw jsonEncodingFailure(array);
+            throw jsonCycleFailure();
         }
         out.append('[');
         for (int i = 0; i < array.elements.size(); i++) {
@@ -3811,8 +3828,21 @@ public final class JvmRuntime {
      */
     public static String jsonText(Object value) {
         StringBuilder out = new StringBuilder();
-        stringifyValue(out, value, java.util.Collections.newSetFromMap(
-            new IdentityHashMap<>()));
+        try {
+            stringifyValue(out, value, java.util.Collections.newSetFromMap(
+                new IdentityHashMap<>()));
+        } catch (StdlibFailure failure) {
+            // The host envelope renders the closed arm's own text (never
+            // the arm id): an arm-carried failure renders through the
+            // authority, a plain composed failure keeps its message.
+            if (failure.armId != null) {
+                throw new RuntimeException(deal.semantic.ir.FailureContractRegistry
+                    .render(failure.armId, failure.parameters, failure.expected,
+                        failure.actual, null)
+                    .message());
+            }
+            throw failure;
+        }
         return out.toString();
     }
 }

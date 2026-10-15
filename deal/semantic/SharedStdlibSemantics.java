@@ -8,6 +8,7 @@ import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailureProjections;
+import deal.semantic.ir.JsonNumberClassifier;
 import deal.semantic.ir.JsonScan;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.SemanticArray;
@@ -24,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -996,6 +998,13 @@ public final class SharedStdlibSemantics {
     public static final String REASON_TRAILING_CONTENT = "trailing content";
     /** The defect class: the end of input where a value was required. */
     public static final String REASON_UNEXPECTED_END = "unexpected end of input";
+    /**
+     * The defect class: a member key whose decoded scalar text equals an
+     * earlier member key of the same object (an escaped spelling of the
+     * same decoded key included). The reported position is the second
+     * key's opening quote.
+     */
+    public static final String REASON_DUPLICATE_KEY = "duplicate key";
 
     /**
      * The {@code STDLIB_CALL(JSON_STRINGIFY)} rejection's expected text —
@@ -1025,6 +1034,16 @@ public final class SharedStdlibSemantics {
     }
 
     /**
+     * The internal stringify cycle failure: a path-local container
+     * re-entry, selecting the walk family's closed cycle arm (no
+     * parameters, no expected/actual).
+     */
+    private static final class JsonStringifyCycle extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+    }
+
+    /**
      * The internal stringify failure: the first declaration-order path and
      * the failing value's carrier kind (the arm's actual projection).
      */
@@ -1045,12 +1064,14 @@ public final class SharedStdlibSemantics {
 
     /**
      * {@code JSON_PARSE}: RFC-8259 scalar-valid parse of the (already
-     * scalar-valid) input; object order follows text; duplicate keys
-     * keep the last value and the first position; a signed32 integer
-     * lexical form becomes {@link Value.Int} ({@code -0} normalized to
-     * {@code 0}) and every other numeric form becomes
-     * {@link Value.Number}; a syntax defect fails with policy
-     * {@code JSON_PARSE_SYNTAX} — E8001
+     * scalar-valid) input; object order follows text; a member key whose
+     * decoded scalar text equals an earlier member key of the same object
+     * is a syntax defect ({@code duplicate key}) at the second key's
+     * opening quote; a numeric lexeme whose exact mathematical decimal
+     * value is integral and inside signed32 becomes {@link Value.Int}
+     * ({@code -0}/{@code -0.0} normalized to {@code 0}) and every other
+     * numeric lexeme becomes {@link Value.Number}; a syntax defect fails
+     * with policy {@code JSON_PARSE_SYNTAX} — E8001
      * {@code JSON parse error at position {oneBasedByteOffset}: {reason}}
      * with metadata {@code {oneBasedByteOffset}} (the defect's 1-based
      * UTF-8 byte offset) and {@code {reason}} (one of the
@@ -1098,15 +1119,20 @@ public final class SharedStdlibSemantics {
      * named short escapes {@code \b \f \n \r \t} or {@code \\u00XX},
      * quote, backslash; surrogate pairs emitted as raw scalar UTF-8);
      * shortest round-trippable decimal number formatting
-     * ({@code Double.toString}); the first failure in declaration order
-     * fails through the {@code JSON_STRINGIFY_UNSUPPORTED} arm — E8001
+     * ({@code Double.toString}); the first unsupported value in
+     * declaration order fails through the
+     * {@code JSON_STRINGIFY_UNSUPPORTED} arm — E8001
      * {@code unsupported type for JSON encoding: {actual}} with the
      * arm's own pinned expected text and actual = the failing value's
      * carrier-kind projection ({@code nil}, {@code table},
      * {@code bytes}, {@code function}, {@code number}, {@code string}),
      * origin = the call origin. The walker's field path stays internal
-     * and never surfaces. Unsupported values, cycles, and nonfinite
-     * numbers fail here; acyclic finite data never fails.
+     * and never surfaces. Unsupported values and nonfinite numbers fail
+     * through that arm; a path-local container re-entry (a true cycle)
+     * fails through the walk family's closed cycle arm — E8001
+     * {@code cyclic value cannot be encoded as JSON} with no parameters
+     * and no expected/actual; acyclic finite data never fails, shared
+     * acyclic children are duplicated rather than rejected.
      *
      * <p>{@code {fieldPath}} spelling (owned here): a dot-separated
      * pre-order traversal from the root value — table fields append the
@@ -1125,6 +1151,12 @@ public final class SharedStdlibSemantics {
         Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
             stringifyTable(out, table, "", path);
+        } catch (JsonStringifyCycle cycle) {
+            // The walk family's closed cycle arm: the needle's own fact
+            // selects the arm at the call origin, with no parameters and
+            // no expected/actual fields.
+            return failOf(FailurePolicyId.JSON_TO_ERROR, 2, null, null,
+                new LinkedHashMap<>(), origin);
         } catch (JsonStringifyFailure stringifyFailure) {
             // The STDLIB_CALL(JSON_STRINGIFY) rejection: the
             // JSON_STRINGIFY_UNSUPPORTED arm's own render — its pinned
@@ -1142,12 +1174,11 @@ public final class SharedStdlibSemantics {
         return new Outcome.Success<>(Value.string(out.toString()));
     }
 
-    /** Serializes one table (object) with cycle detection and first-insertion order. */
+    /** Serializes one table (object) with path-local cycle detection and first-insertion order. */
     private static void stringifyTable(StringBuilder out, SemanticTable<Value> table,
                                        String fieldPath, Set<Object> path) {
         if (!path.add(table)) {
-            throw new JsonStringifyFailure(fieldPath,
-                FailureProjections.CarrierKind.TABLE);
+            throw new JsonStringifyCycle();
         }
         out.append('{');
         List<String> keys = table.keys();
@@ -1175,14 +1206,11 @@ public final class SharedStdlibSemantics {
         path.remove(table);
     }
 
-    /** Serializes one array with cycle detection and index order. */
+    /** Serializes one array with path-local cycle detection and index order. */
     private static void stringifyArray(StringBuilder out, SemanticArray<Value> elements,
                                        String fieldPath, Set<Object> path) {
         if (!path.add(elements)) {
-            // An array carrier is a table-carried value on the carrier-kind
-            // projection (the unchanged runtimes' Lua type() shape).
-            throw new JsonStringifyFailure(fieldPath,
-                FailureProjections.CarrierKind.TABLE);
+            throw new JsonStringifyCycle();
         }
         out.append('[');
         for (int i = 0; i < elements.size(); i++) {
@@ -1297,6 +1325,7 @@ public final class SharedStdlibSemantics {
         Value parseObject() {
             advance(); // '{'
             SemanticTable<Value> table = new SemanticTable<>();
+            Set<String> decodedKeys = new HashSet<>();
             skipWs();
             if (!atEnd() && peek() == '}') {
                 advance();
@@ -1310,7 +1339,15 @@ public final class SharedStdlibSemantics {
                 if (peek() != '"') {
                     throw failure(REASON_MISSING_KEY);
                 }
+                // The duplicate-key defect's position is the second key's
+                // opening quote (one-based UTF-8 byte offset); decoded
+                // equality makes an escaped spelling of the same key a
+                // duplicate too.
+                long keyOffset = offsetOfCurrent();
                 String key = parseString();
+                if (!decodedKeys.add(key)) {
+                    throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
+                }
                 skipWs();
                 if (atEnd() || peek() != ':') {
                     throw failure(REASON_MISSING_COLON);
@@ -1318,9 +1355,6 @@ public final class SharedStdlibSemantics {
                 advance(); // ':'
                 skipWs();
                 Value value = parseValue();
-                // Duplicate keys keep the last value and the first
-                // position: put replaces an existing slot in place and
-                // appends only new keys (SemanticTable order contract).
                 table.put(key, value);
                 skipWs();
                 if (atEnd()) {
@@ -1371,18 +1405,16 @@ public final class SharedStdlibSemantics {
         }
 
         Value parseNumber() {
-            // The signed32 integer lexical form: RFC-8259 integer grammar
-            // with the leading-zero rules (already enforced), mathematically
-            // within [-2147483648, 2147483647]; -0 normalizes to 0.
-            // Everything else is a Number.
+            // The exact decimal classification (DEAL v1.3): the lexeme
+            // denotes an Int exactly when its mathematical value is
+            // integral and inside signed32; every other lexeme denotes
+            // the binary64 value of the standard conversion.
             JsonScan.CodePointCursor.NumberScan scan = parseNumberText();
-            if (scan.integerForm()) {
-                Integer exact = exactInt32OrNull(scan);
-                if (exact != null) {
-                    return new Value.Int(exact);
-                }
+            Integer exact = JsonNumberClassifier.exactInt32OrNull(scan.text());
+            if (exact != null) {
+                return new Value.Int(exact);
             }
-            return new Value.Number(CanonicalJson.decodeDecimal(scan.text()));
+            return new Value.Number(JsonNumberClassifier.toDouble(scan.text()));
         }
     }
 

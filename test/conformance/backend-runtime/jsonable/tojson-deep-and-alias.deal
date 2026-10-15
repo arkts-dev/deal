@@ -1,0 +1,36 @@
+// @spec: Classes — @jsonable toJson
+// @description: @jsonable toJson serializes a finite 600-level table chain (no fixed depth cap) and duplicates a shared acyclic child (an alias is not a cycle) (v1.3)
+// @expected: runtime-ok
+// @features: jsonable, toJson, deep, alias, v1.3
+
+import * as str from "std/string";
+
+// @jsonable
+export class Holder {
+  data: table = {};
+}
+
+export function test_tojson_deep_and_alias(): null {
+  let h: Holder = { data: {} };
+  let cur: table = h.data;
+  for (let i: int = 0; i < 600; i = i + 1) {
+    let next: table = {};
+    cur.next = next;
+    cur = next;
+  }
+  let shared: table = { v: 1 };
+  h.data.aliasA = shared;
+  h.data.aliasB = shared;
+  let text: string = Holder$toJson(h);
+  if (!str.contains(text, "\"aliasA\":{\"v\":1},\"aliasB\":{\"v\":1}")) {
+    throw { code: "TEST_FAIL", message: "the shared acyclic child must serialize twice" };
+  }
+  if (!str.contains(text, "\"v\":1")) {
+    throw { code: "TEST_FAIL", message: "the shared child value must be present" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

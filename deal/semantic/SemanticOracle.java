@@ -6107,12 +6107,21 @@ public final class SemanticOracle {
          * The oracle runtime value → the closed stdlib carrier
          * ({@link SharedStdlibSemantics.Value}): the same closed value
          * view the oracle heap realizes, converted recursively for table
-         * and array members (JSON data shapes). Values outside the
-         * boundary-admitted set fail closed — the parameter boundaries
-         * already passed, so such a carrier is a producer defect, never
-         * a DEAL projection.
+         * and array members (JSON data shapes) with path-local identity
+         * preservation — a cyclic oracle graph maps to a cyclic carrier
+         * graph, so the shared algorithm's own cycle detection observes
+         * the re-entry instead of the conversion recursing forever.
+         * Values outside the boundary-admitted set fail closed — the
+         * parameter boundaries already passed, so such a carrier is a
+         * producer defect, never a DEAL projection.
          */
         private SharedStdlibSemantics.Value stdlibCarrierOf(Value value) {
+            return stdlibCarrierOf(value, new IdentityHashMap<>());
+        }
+
+        /** One conversion with the identity memo of the active graph. */
+        private SharedStdlibSemantics.Value stdlibCarrierOf(
+                Value value, IdentityHashMap<Value, SharedStdlibSemantics.Value> memo) {
             return switch (value) {
                 case Value.NullValue ignored ->
                     SharedStdlibSemantics.Value.Null.INSTANCE;
@@ -6134,9 +6143,38 @@ public final class SemanticOracle {
                     new SharedStdlibSemantics.Value.Number(num.value());
                 case Value.StrValue str ->
                     SharedStdlibSemantics.Value.string(str.value());
-                case Value.TableValue table -> new SharedStdlibSemantics.Value.Table(
-                    stdlibTableCarrierOf(table));
-                case Value.ArrayValue array -> stdlibArrayCarrierOf(array);
+                case Value.TableValue table -> {
+                    SharedStdlibSemantics.Value mapped = memo.get(table);
+                    if (mapped != null) {
+                        yield mapped;
+                    }
+                    SemanticTable<SharedStdlibSemantics.Value> carrier =
+                        new SemanticTable<>();
+                    SharedStdlibSemantics.Value.Table registered =
+                        new SharedStdlibSemantics.Value.Table(carrier);
+                    memo.put(table, registered);
+                    for (Map.Entry<String, Value> entry : table.entries().entrySet()) {
+                        carrier.put(entry.getKey(),
+                            stdlibCarrierOf(entry.getValue(), memo));
+                    }
+                    yield registered;
+                }
+                case Value.ArrayValue array -> {
+                    SharedStdlibSemantics.Value mapped = memo.get(array);
+                    if (mapped != null) {
+                        yield mapped;
+                    }
+                    List<SharedStdlibSemantics.Value> elements = new ArrayList<>();
+                    SharedStdlibSemantics.Value.Array registered =
+                        new SharedStdlibSemantics.Value.Array(
+                            deal.semantic.ir.SemanticArray.live(
+                                elements::size, elements::get));
+                    memo.put(array, registered);
+                    for (Value element : array.elements()) {
+                        elements.add(stdlibCarrierOf(element, memo));
+                    }
+                    yield registered;
+                }
                 case Value.FuncValue ignored ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
                 case Value.AdapterValue ignored ->
@@ -6159,27 +6197,6 @@ public final class SemanticOracle {
                 case Value.SlotValue ignored -> throw new IllegalStateException(
                     "a slot value is never a stdlib argument carrier");
             };
-        }
-
-        /** One oracle table → the closed stdlib table carrier (first-insertion order). */
-        private SemanticTable<SharedStdlibSemantics.Value> stdlibTableCarrierOf(
-                Value.TableValue table) {
-            SemanticTable<SharedStdlibSemantics.Value> carrier = new SemanticTable<>();
-            for (Map.Entry<String, Value> entry : table.entries().entrySet()) {
-                carrier.put(entry.getKey(), stdlibCarrierOf(entry.getValue()));
-            }
-            return carrier;
-        }
-
-        /** One oracle array → the closed stdlib array carrier (index order). */
-        private SharedStdlibSemantics.Value.Array stdlibArrayCarrierOf(
-                Value.ArrayValue array) {
-            List<SharedStdlibSemantics.Value> elements = new ArrayList<>();
-            for (Value element : array.elements()) {
-                elements.add(stdlibCarrierOf(element));
-            }
-            return (SharedStdlibSemantics.Value.Array)
-                SharedStdlibSemantics.Value.array(elements);
         }
 
         /**

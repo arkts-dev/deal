@@ -1537,11 +1537,12 @@ public class BytesCoverageTest {
 
     /**
      * The flat case (ISSUE-0768): a {@code number[]} class field decoded
-     * from {@code [1.0]} carries its slot's recorded number mark, so the
-     * same array admitted to a {@code string[]} boundary projects the
-     * number actual token — the oracle's retained NumValue and the JVM's
-     * retained Double alike — never the int token an integral bare Lua
-     * number suggests.
+     * from {@code [2147483648.0]} carries its slot's recorded number mark
+     * (the exact v1.3 classification: an integral mathematical value
+     * outside signed32 is the number variant), so the same array admitted
+     * to a {@code string[]} boundary projects the number actual token —
+     * the oracle's retained NumValue and the JVM's retained Double alike
+     * — never the int token an integral bare Lua number suggests.
      */
     private static final String INTEGRAL_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
@@ -1550,7 +1551,7 @@ public class BytesCoverageTest {
         }
 
         export function main(): null {
-          let d: Doc | null = Doc$fromJson("{\\"values\\":[1.0]}");
+          let d: Doc | null = Doc$fromJson("{\\"values\\":[2147483648.0]}");
           if (d !== null) {
             let holder: table = { xs: d.values };
             let ys: string[] = holder.xs;
@@ -1563,9 +1564,9 @@ public class BytesCoverageTest {
     /**
      * The nested case (ISSUE-0768): a decoded nested array (the empty
      * inner array admitted at the {@code string[][]} element position)
-     * precedes the integral number-form element, so the array recursion
-     * keeps the number variant at depth and the outer element arm renders
-     * the number token at its own index.
+     * precedes the integral out-of-range number-form element, so the
+     * array recursion keeps the number variant at depth and the outer
+     * element arm renders the number token at its own index.
      */
     private static final String NESTED_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
@@ -1574,7 +1575,7 @@ public class BytesCoverageTest {
         }
 
         export function main(): null {
-          let d: Nest | null = Nest$fromJson("{\\"values\\":{\\"xs\\":[[],1.0]}}");
+          let d: Nest | null = Nest$fromJson("{\\"values\\":{\\"xs\\":[[],2147483648.0]}}");
           if (d !== null) {
             let ys: string[][] = d.values.xs;
             return null;
@@ -1584,10 +1585,11 @@ public class BytesCoverageTest {
         """;
 
     /**
-     * The inner nested-array case (ISSUE-0768): the integral number-form
-     * element is the only element of an inner array; the boundary applies
-     * to that inner array at the outer index read, so the same recorded
-     * number mark projects the number token through the recursion.
+     * The inner nested-array case (ISSUE-0768): the integral out-of-range
+     * number-form element is the only element of an inner array; the
+     * boundary applies to that inner array at the outer index read, so
+     * the same recorded number mark projects the number token through
+     * the recursion.
      */
     private static final String NESTED_INNER_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
@@ -1596,7 +1598,7 @@ public class BytesCoverageTest {
         }
 
         export function main(): null {
-          let d: Deep | null = Deep$fromJson("{\\"values\\":[[1.0]]}");
+          let d: Deep | null = Deep$fromJson("{\\"values\\":[[2147483648.0]]}");
           if (d !== null) {
             let holder: table = { xs: d.values[0] };
             let ys: string[] = holder.xs;

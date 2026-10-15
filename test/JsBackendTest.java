@@ -4859,15 +4859,26 @@ public class JsBackendTest {
               if (prs !== "{\\"__proto__\\":\\"x\\"}") { return 0; }
               let u: User = { name: "Ada" };
               let g: table = { u: u };
-              let gs: string = json.stringify(g);
-              if (gs !== "{\\"u\\":{\\"__kind\\":\\"class\\",\\"__classname\\":\\"@Main/User\\",\\"name\\":\\"Ada\\"}}") { return 0; }
+              // A class instance inside table content is not JSON-shaped:
+              // the walk rejects it with the closed unsupported-type arm
+              // (class values are never implicitly table arguments).
+              let rejected: boolean = false;
+              try {
+                let gs: string = json.stringify(g);
+              } catch (e) {
+                if (e.code === "E8001" && e.message === "unsupported type for JSON encoding: table") {
+                  rejected = true;
+                }
+              }
+              if (!rejected) { return 0; }
               return 1;
             }
             """, "json-roundtrip");
         check(run.exitCode() == 0 && run.output().equals("1"),
             "parse(\"null\")/parse(\"[1,2]\") cross the table boundary and "
-                + "round-trip; __proto__-keyed tables and class instances "
-                + "encode per the reference: " + run.output());
+                + "round-trip; a __proto__-keyed table round-trips and a class "
+                + "instance inside table content is rejected by the closed "
+                + "unsupported-type arm: " + run.output());
     }
 
     private static void testJsonStoredFunctionE8001() throws Exception {

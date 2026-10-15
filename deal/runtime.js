@@ -12,17 +12,18 @@
 
 // ===== Host-global capture (js-backend-runtime-artifact D10) =====
 // The only module-scope bindings of the host globals the runtime owns.
-// Every later runtime use of process, console, Math, JSON, Map, Array,
+// Every later runtime use of process, console, Math, Map, Array,
 // Uint8Array, or undefined is confined to these captures; generated code
 // spells none of them bare (js-backend-architecture D2). Object and
 // String are not in the capture list and may be spelled bare inside this
-// trusted file. $Uint8Array joins the list with the v1.2 bytes carrier
+// trusted file. The native JSON object is not captured: the conforming
+// scanner and the canonical text encoder are the runtime's own (DEAL v1.3
+// exact JSON). $Uint8Array joins the list with the v1.2 bytes carrier
 // (js-v12-int32-bytes D3): the constructor is captured at runtime load,
 // so no generated module ever spells the host-global Uint8Array.
 const $process = process;
 const $console = console;
 const $Math = Math;
-const $JSON = JSON;
 const $Map = Map;
 const $Array = Array;
 const $Uint8Array = Uint8Array;
@@ -59,10 +60,10 @@ class $DEALError extends Error {
 const $MISSING = {};
 
 // ===== Runtime-private JSON shape marks (js-backend-runtime-artifact D2) =====
-// Unspoofable WeakSets consulted only by the D9 JSON conversion
-// (jsonParseValue/jsonEncodeValue — the std/json module and the
-// @jsonable walkers' table branches). Never exported; no $rt member
-// exposes them.
+// Unspoofable WeakSets consulted only by the exact JSON members
+// (jsonParseText/jsonParseValue/jsonStringifyText — the std/json module
+// and the @jsonable walkers' table branches). Never exported; no $rt
+// member exposes them.
 const $jsonArrayTables = new WeakSet();
 const $jsonNullTables = new WeakSet();
 
@@ -398,12 +399,15 @@ function $isPlainObject($v) {
   return $proto === Object.prototype || $proto === null;
 }
 
-// ===== D9 JSON conversion (js-backend-runtime D9) =====
-// The two conversion walks std/json and the @jsonable runtime walkers
-// share (js-v12-jsonable-completion D2/D4): jsonParseValue converts a
-// native $JSON.parse result into the runtime's marked-Map table shape,
-// and jsonEncodeValue runs the encode-side validation/conversion walk
-// with the cycle check. Both live here because the walkers depend on
+// ===== Exact JSON (DEAL v1.3) — scanner, classification, marks, text
+// encoder, and shape conversion =====
+// The members std/json and the @jsonable runtime walkers share:
+// jsonParseText is the conforming RFC-8259 scanner (exact decimal
+// classification, decoded-key duplicates, the shared reason texts and
+// the 1-based UTF-8 byte offset), jsonParseValue converts a scanned
+// native document into the runtime's marked-Map table shape, and
+// jsonStringifyText is the finite-acyclic text encoder with the closed
+// unsupported/cycle arms. They live here because the walkers depend on
 // them through $rt and std/json depends on the runtime (the reverse
 // dependency is forbidden — js-backend-runtime D9). The walks are pure:
 // fresh Maps/Arrays/objects only, no input mutation.
@@ -461,7 +465,9 @@ function $fromJsonConvert($value, $file, $line, $column) {
   if ($Array.isArray($value)) {
     const $t = $rt.makeTable({});
     for (let $i = 0; $i < $value.length; $i++) {
-      $t.set(String($i + 1), $fromJsonConvert($value[$i], $file, $line, $column));
+      const $key = String($i + 1);
+      $t.set($key, $fromJsonConvert($value[$i], $file, $line, $column));
+      if ($isNumberVariant($value, String($i))) $markNumberVariant($t, $key);
     }
     return $rt.markJsonArrayTable($t);
   }
@@ -472,33 +478,12 @@ function $fromJsonConvert($value, $file, $line, $column) {
       const $key = $keys[$i];
       $scanSurrogates($key, $file, $line, $column);
       $t.set($key, $fromJsonConvert($value[$key], $file, $line, $column));
+      if ($isNumberVariant($value, $key)) $markNumberVariant($t, $key);
     }
     return $t;
   }
   // number / boolean scalars pass through.
   return $value;
-}
-
-// $scanStringValidity: the encode-side scalar-validity scan — the same
-// surrogate-pair unit walk with the encode needle "cannot encode invalid
-// UTF-8 as JSON" (the mirror of encode_value's escape-side utf8_valid
-// rejection, lua-std-json-unicode-conformance D6). Defensive for string
-// values — conforming DEAL programs cannot construct such a leaf (every
-// string crossed a checkString boundary) — and the pinned reference
-// behavior for object-form keys.
-function $scanStringValidity($s, $file, $line, $column) {
-  for (let $i = 0; $i < $s.length; $i++) {
-    const $c = $s.charCodeAt($i);
-    if ($c >= 0xd800 && $c <= 0xdbff) {
-      const $next = $i + 1 < $s.length ? $s.charCodeAt($i + 1) : -1;
-      if ($next < 0xdc00 || $next > 0xdfff) {
-        $rt.fail("E8001", "cannot encode invalid UTF-8 as JSON", $file, $line, $column);
-      }
-      $i++; // skip the low surrogate of a valid pair
-    } else if ($c >= 0xdc00 && $c <= 0xdfff) {
-      $rt.fail("E8001", "cannot encode invalid UTF-8 as JSON", $file, $line, $column);
-    }
-  }
 }
 
 // $arrayFormIndex: the array-form key predicate — returns the integer
@@ -526,90 +511,693 @@ function $arrayFormIndex($key) {
   return $n;
 }
 
-// $encodeConvert: the validation/conversion walk mirroring std/json.lua's
-// encode_value. $path is the cycle-check stack: the Maps, Arrays, and
-// class instances currently being walked (push before recursing, pop
-// after — the finally arms), so a value already on the path raises E8001
-// with the walk's cyclic message ($cyclic — the std/json needle by
-// default, the @jsonable toJson needle when that entry point installs
-// it) while shared (non-cyclic) subgraphs serialize by duplication.
-// Steps 1-9:
-//   1. null -> JSON null;
-//   2. string -> $scanStringValidity first, then pass through (escaped
-//      later by native $JSON.stringify);
-//   3. boolean -> pass through;
-//   4. number -> NaN/±Infinity E8001 arms, otherwise pass through
-//      (native shortest round-trip formatting);
-//   5. Map -> null-marked first (the mark always wins, checked before
-//      any shape walk); array-marked -> the JSON array form exactly when
-//      every key is an integer-string matching ^[1-9][0-9]*$ and the
-//      maximum index is > 0 — elements 1..max in order, a missing index
-//      (a get that is $undefined) serializing as null — else the object
-//      form with the keys as-is (the mixed-key fallback); plain Map ->
-//      the object form: a fresh {} whose entries are written via
-//      $rt.setProp (never a bare key: value assignment — a __proto__ key
-//      becomes an own property and serializes). Object-form key validity
-//      (both object-form arms): every string key crosses
-//      $scanStringValidity before its entry is written; array-form keys
-//      are integer strings and cannot carry surrogates, so the scan is
-//      vacuous there;
-//   6. Array -> element-wise recursion, a nil-equivalent element (the
-//      array-delete write) serializing as null, the result a fresh
-//      Array;
-//   7. class instance -> a fresh object of the instance's own properties
-//      with every entry written via $rt.setProp: the tags under the
-//      reference key spellings, then the declared fields keyed as-is —
-//      the walk enumerates Object.keys and excludes the instance's own
-//      runtime tag properties "$kind"/"$classname" first, skips any
-//      remaining field key equal to __kind/__classname (the tag-clobber
-//      skip), omits a $rt.MISSING-valued absent optional, encodes a null
-//      field as JSON null, and writes a declared __proto__ field via
-//      $rt.setProp as an ordinary key; field keys are ASCII grammar
-//      identifiers and the tag keys are fixed spellings, so no key scan
-//      is needed in this arm;
-//   8. bytes (a $Uint8Array value) -> E8001 "unsupported type for
-//      JSON encoding: bytes" — the explicit bytes arm (js-v12-int32-bytes
-//      D3); $rt.isBytes is the single detection seam, never a bare
-//      Uint8Array spelling;
-//   9. wrapper ($kind === "function") -> E8001 "unsupported type for
-//      JSON encoding: function";
-//  10. a standalone $rt.MISSING, $undefined, or any other object ->
-//      E8001 "unsupported type for JSON encoding".
-function $encodeConvert($v, $path, $file, $line, $column, $cyclic) {
-  if ($v === null) {
+// ===== Exact JSON number classification, the RFC-8259 scanner, and the
+// container number-variant marks (DEAL v1.3 JSON number classification).
+// The scanner is the JS realization of the shared rule: a numeric lexeme
+// denotes the signed32 integer exactly when its exact mathematical
+// decimal value is integral and inside [-2147483648, 2147483647]; every
+// other lexeme denotes the binary64 value of the standard conversion.
+// Decoded documents keep the per-slot variant in the module-private
+// container marks, because JS numbers cannot carry it themselves; the
+// encode walks and the class decode consult the marks, so an integral
+// token written in fraction/exponent form is the int the specification
+// names and a fractional token that rounds to an integral double is
+// never admitted at an int position.
+
+// $jsonNumberMarks: container -> $Map(key -> true) for every slot that
+// holds the number variant. Keyed by native parsed containers and by the
+// converted marked-Map tables; never exported (like the shape marks).
+const $jsonNumberMarks = new WeakMap();
+
+function $markNumberVariant($container, $key) {
+  let $marks = $jsonNumberMarks.get($container);
+  if ($marks === $undefined) {
+    $marks = new $Map();
+    $jsonNumberMarks.set($container, $marks);
+  }
+  $marks.set($key, true);
+}
+
+function $isNumberVariant($container, $key) {
+  const $marks = $jsonNumberMarks.get($container);
+  return $marks !== $undefined && $marks.has($key);
+}
+
+// $isValidScalars: true when $s contains no unpaired surrogate unit (every
+// JS string the parser produces is scalar-valid by construction, so this
+// is the boundary predicate of hand-supplied strings).
+function $isValidScalars($s) {
+  for (let $i = 0; $i < $s.length; $i++) {
+    const $c = $s.charCodeAt($i);
+    if ($c >= 0xd800 && $c <= 0xdbff) {
+      const $next = $i + 1 < $s.length ? $s.charCodeAt($i + 1) : -1;
+      if ($next < 0xdc00 || $next > 0xdfff) {
+        return false;
+      }
+      $i++;
+    } else if ($c >= 0xdc00 && $c <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// $jsonUtf8Length: the UTF-8 byte length of one Unicode scalar value.
+function $jsonUtf8Length($cp) {
+  return $cp < 0x80 ? 1 : $cp < 0x800 ? 2 : $cp < 0x10000 ? 3 : 4;
+}
+
+// $jsonIntOrNil: the exact signed32 value of one grammar-valid RFC-8259
+// numeric lexeme, or null when the mathematical value is fractional or
+// outside signed32. Zero classifies immediately; the fractional scale is
+// cancelled by the coefficient's trailing zeroes; the exponent text is
+// processed with bounded magnitude comparisons (a long exponent
+// saturates), so no machine overflow and no input cap can change the
+// decision, and -0/-0.0 normalize to the int 0.
+function $jsonIntOrNil($text) {
+  let $i = 0;
+  let $neg = false;
+  if ($text.charCodeAt(0) === 0x2d) {
+    $neg = true;
+    $i = 1;
+  }
+  const $intStart = $i;
+  while ($i < $text.length) {
+    const $c = $text.charCodeAt($i);
+    if ($c < 0x30 || $c > 0x39) break;
+    $i++;
+  }
+  const $intEnd = $i;
+  let $fracStart = -1;
+  let $fracEnd = -1;
+  if ($i < $text.length && $text.charCodeAt($i) === 0x2e) {
+    $i++;
+    $fracStart = $i;
+    while ($i < $text.length) {
+      const $c = $text.charCodeAt($i);
+      if ($c < 0x30 || $c > 0x39) break;
+      $i++;
+    }
+    $fracEnd = $i;
+  }
+  let $expo = 0;
+  let $expNeg = false;
+  if ($i < $text.length) {
+    const $e = $text.charCodeAt($i);
+    if ($e === 0x65 || $e === 0x45) {
+      $i++;
+      const $c = $text.charCodeAt($i);
+      if ($c === 0x2b || $c === 0x2d) {
+        $expNeg = $c === 0x2d;
+        $i++;
+      }
+      if ($text.length - $i > 18) {
+        $expo = 1e18;
+      } else {
+        $expo = Number($text.slice($i));
+      }
+    }
+  }
+  let $digits = $text.slice($intStart, $intEnd);
+  if ($fracStart >= 0) {
+    $digits = $digits + $text.slice($fracStart, $fracEnd);
+  }
+  let $first = 0;
+  while ($first < $digits.length && $digits.charCodeAt($first) === 0x30) {
+    $first++;
+  }
+  if ($first === $digits.length) {
+    return 0;
+  }
+  let $trailing = 0;
+  while ($digits.charCodeAt($digits.length - 1 - $trailing) === 0x30) {
+    $trailing++;
+  }
+  const $significant = $digits.slice($first, $digits.length - $trailing);
+  const $fracLen = $fracStart >= 0 ? $fracEnd - $fracStart : 0;
+  const $effective = ($expNeg ? -$expo : $expo) - $fracLen + $trailing;
+  if ($effective < 0) {
     return null;
   }
-  const $type = typeof $v;
-  if ($type === "string") {
-    $scanStringValidity($v, $file, $line, $column);
-    return $v;
+  if ($significant.length + $effective > 10) {
+    return null;
   }
+  let $value = Number($significant + "0".repeat($effective));
+  if ($neg) {
+    $value = -$value;
+  }
+  const $limit = $neg ? 2147483648 : 2147483647;
+  if ($value > $limit) {
+    return null;
+  }
+  return $value;
+}
+
+// $parseJsonText: the conforming RFC-8259 scanner over the code points of
+// one scalar-valid string. It builds native null/boolean/number/string +
+// null-prototype-object + Array documents and records every number-variant
+// slot in the container marks; a syntax defect — decoded-key duplicates
+// included, positioned at the second key's opening quote — raises the
+// E8001 parse failure with the shared reason texts and the 1-based UTF-8
+// byte offset. There is no fixed nesting bound.
+function $parseJsonText($text, $file, $line, $column) {
+  let $pos = 0;
+  let $bytes = 0;
+  const $fail = function ($reason, $offset) {
+    const $at = $offset === $undefined ? $bytes + 1 : $offset;
+    $rt.fail("E8001", "JSON parse error at position " + $at + ": " + $reason,
+      $file, $line, $column);
+  };
+  const $atEnd = function () {
+    return $pos >= $text.length;
+  };
+  const $peek = function () {
+    return $pos < $text.length ? $text.codePointAt($pos) : -1;
+  };
+  const $advance = function () {
+    const $cp = $text.codePointAt($pos);
+    $pos += $cp > 0xffff ? 2 : 1;
+    $bytes += $jsonUtf8Length($cp);
+    return $cp;
+  };
+  const $skipWs = function () {
+    while ($pos < $text.length) {
+      const $c = $text.charCodeAt($pos);
+      if ($c === 0x20 || $c === 0x09 || $c === 0x0a || $c === 0x0d) {
+        $pos++;
+        $bytes++;
+      } else {
+        break;
+      }
+    }
+  };
+  const $parseHex4 = function () {
+    let $value = 0;
+    for (let $k = 0; $k < 4; $k++) {
+      if ($atEnd()) $fail("invalid escape");
+      const $c = $peek();
+      let $d;
+      if ($c >= 0x30 && $c <= 0x39) $d = $c - 0x30;
+      else if ($c >= 0x61 && $c <= 0x66) $d = $c - 0x57;
+      else if ($c >= 0x41 && $c <= 0x46) $d = $c - 0x37;
+      else $d = -1;
+      if ($d < 0) $fail("invalid escape");
+      $advance();
+      $value = $value * 16 + $d;
+    }
+    return $value;
+  };
+  const $parseString = function () {
+    $advance();
+    const $out = [];
+    while (true) {
+      if ($atEnd()) $fail("unterminated string");
+      const $c = $peek();
+      if ($c === 0x22) {
+        $advance();
+        return $out.join("");
+      }
+      if ($c === 0x5c) {
+        $advance();
+        if ($atEnd()) $fail("unterminated string");
+        const $e = $peek();
+        if ($e === 0x22) {
+          $advance();
+          $out.push("\"");
+        } else if ($e === 0x5c) {
+          $advance();
+          $out.push("\\");
+        } else if ($e === 0x2f) {
+          $advance();
+          $out.push("/");
+        } else if ($e === 0x62) {
+          $advance();
+          $out.push("\b");
+        } else if ($e === 0x66) {
+          $advance();
+          $out.push("\f");
+        } else if ($e === 0x6e) {
+          $advance();
+          $out.push("\n");
+        } else if ($e === 0x72) {
+          $advance();
+          $out.push("\r");
+        } else if ($e === 0x74) {
+          $advance();
+          $out.push("\t");
+        } else if ($e === 0x75) {
+          $advance();
+          let $cp = $parseHex4();
+          if ($cp >= 0xd800 && $cp <= 0xdbff) {
+            if ($atEnd() || $peek() !== 0x5c) $fail("unpaired surrogate escape");
+            $advance();
+            if ($atEnd() || $peek() !== 0x75) $fail("unpaired surrogate escape");
+            $advance();
+            const $lo = $parseHex4();
+            if ($lo < 0xdc00 || $lo > 0xdfff) $fail("unpaired surrogate escape");
+            $cp = 0x10000 + ($cp - 0xd800) * 0x400 + ($lo - 0xdc00);
+          } else if ($cp >= 0xdc00 && $cp <= 0xdfff) {
+            $fail("unpaired surrogate escape");
+          }
+          $out.push(String.fromCodePoint($cp));
+        } else {
+          $fail("invalid escape");
+        }
+      } else if ($c < 0x20) {
+        $fail("unexpected character");
+      } else if ($c >= 0xd800 && $c <= 0xdfff) {
+        if ($c <= 0xdbff && $pos + 1 < $text.length) {
+          const $next = $text.charCodeAt($pos + 1);
+          if ($next >= 0xdc00 && $next <= 0xdfff) {
+            $out.push($text.slice($pos, $pos + 2));
+            $pos += 2;
+            $bytes += 4;
+            continue;
+          }
+        }
+        $fail("unpaired surrogate escape");
+      } else {
+        $advance();
+        $out.push(String.fromCodePoint($c));
+      }
+    }
+  };
+  const $parseLiteral = function ($word, $value) {
+    for (let $k = 0; $k < $word.length; $k++) {
+      if ($atEnd()) $fail("unexpected end of input");
+      if ($peek() !== $word.charCodeAt($k)) $fail("unexpected character");
+      $advance();
+    }
+    return $value;
+  };
+  const $parseNumber = function () {
+    const $start = $pos;
+    if (!$atEnd() && $peek() === 0x2d) $advance();
+    if ($atEnd()) $fail("invalid number");
+    let $c = $peek();
+    if ($c < 0x30 || $c > 0x39) $fail("invalid number");
+    if ($c === 0x30) {
+      $advance();
+      if (!$atEnd() && $peek() >= 0x30 && $peek() <= 0x39) $fail("leading zero");
+    } else {
+      $advance();
+      while (!$atEnd() && $peek() >= 0x30 && $peek() <= 0x39) $advance();
+    }
+    if (!$atEnd() && $peek() === 0x2e) {
+      $advance();
+      if ($atEnd() || $peek() < 0x30 || $peek() > 0x39) $fail("invalid number");
+      while (!$atEnd() && $peek() >= 0x30 && $peek() <= 0x39) $advance();
+    }
+    if (!$atEnd() && ($peek() === 0x65 || $peek() === 0x45)) {
+      $advance();
+      if (!$atEnd() && ($peek() === 0x2b || $peek() === 0x2d)) $advance();
+      if ($atEnd() || $peek() < 0x30 || $peek() > 0x39) $fail("invalid number");
+      while (!$atEnd() && $peek() >= 0x30 && $peek() <= 0x39) $advance();
+    }
+    const $lexeme = $text.slice($start, $pos);
+    const $exact = $jsonIntOrNil($lexeme);
+    if ($exact !== null) {
+      return { value: $exact, variant: false };
+    }
+    return { value: Number($lexeme), variant: true };
+  };
+  // $parseValue: one value plus its own scalar number variant (false for
+  // every container and non-number leaf), so a member mark never observes
+  // a nested member's variant.
+  const $parseValue = function () {
+    if ($atEnd()) $fail("unexpected end of input");
+    const $c = $peek();
+    if ($c === 0x7b) return { value: $parseObject(), variant: false };
+    if ($c === 0x5b) return { value: $parseArray(), variant: false };
+    if ($c === 0x22) return { value: $parseString(), variant: false };
+    if ($c === 0x74) return { value: $parseLiteral("true", true), variant: false };
+    if ($c === 0x66) return { value: $parseLiteral("false", false), variant: false };
+    if ($c === 0x6e) return { value: $parseLiteral("null", null), variant: false };
+    if ($c === 0x2d || ($c >= 0x30 && $c <= 0x39)) return $parseNumber();
+    $fail("unexpected character");
+  };
+  const $parseObject = function () {
+    $advance();
+    const $obj = Object.create(null);
+    const $seen = new $Map();
+    $skipWs();
+    if (!$atEnd() && $peek() === 0x7d) {
+      $advance();
+      return $obj;
+    }
+    while (true) {
+      $skipWs();
+      if ($atEnd()) $fail("unexpected end of input");
+      if ($peek() !== 0x22) $fail("missing key");
+      const $keyOffset = $bytes + 1;
+      const $key = $parseString();
+      if ($seen.has($key)) $fail("duplicate key", $keyOffset);
+      $seen.set($key, true);
+      $skipWs();
+      if ($atEnd() || $peek() !== 0x3a) $fail("missing colon");
+      $advance();
+      $skipWs();
+      const $member = $parseValue();
+      $obj[$key] = $member.value;
+      if ($member.variant) $markNumberVariant($obj, $key);
+      $skipWs();
+      if ($atEnd()) $fail("unterminated object");
+      const $c = $peek();
+      if ($c === 0x2c) {
+        $advance();
+        continue;
+      }
+      if ($c === 0x7d) {
+        $advance();
+        return $obj;
+      }
+      $fail("missing comma");
+    }
+  };
+  const $parseArray = function () {
+    $advance();
+    const $arr = [];
+    $skipWs();
+    if (!$atEnd() && $peek() === 0x5d) {
+      $advance();
+      return $arr;
+    }
+    while (true) {
+      $skipWs();
+      if ($atEnd()) $fail("unexpected end of input");
+      const $member = $parseValue();
+      const $index = $arr.length;
+      $arr.push($member.value);
+      if ($member.variant) $markNumberVariant($arr, String($index));
+      $skipWs();
+      if ($atEnd()) $fail("unterminated array");
+      const $c = $peek();
+      if ($c === 0x2c) {
+        $advance();
+        continue;
+      }
+      if ($c === 0x5d) {
+        $advance();
+        return $arr;
+      }
+      $fail("missing comma");
+    }
+  };
+  $skipWs();
+  const $parsed = $parseValue();
+  $skipWs();
+  if (!$atEnd()) $fail("trailing content");
+  return $parsed.value;
+}
+
+// ===== The canonical decimal number text (the same spelling the Lua and
+// JVM realizations produce: shortest round-trippable digits, always one
+// fractional digit, E-notation outside [1e-3, 1e7)) =====
+
+function $decimalParts($rep) {
+  const $eIndex = $rep.indexOf("e");
+  let $mant;
+  let $exp;
+  if ($eIndex >= 0) {
+    $mant = $rep.slice(0, $eIndex);
+    $exp = Number($rep.slice($eIndex + 1));
+  } else {
+    $mant = $rep;
+    $exp = 0;
+  }
+  const $point = $mant.indexOf(".");
+  const $intLen = $point >= 0 ? $point : $mant.length;
+  let $digits = $mant.split(".").join("");
+  $exp = $exp - ($digits.length - $intLen);
+  let $first = 0;
+  while ($first < $digits.length && $digits.charCodeAt($first) === 0x30) {
+    $first++;
+  }
+  $digits = $digits.slice($first);
+  if ($digits === "") $digits = "0";
+  return { digits: $digits, expo: $exp };
+}
+
+function $sfBump($digits, $up) {
+  const $n = $digits.length;
+  const $d = [];
+  for (let $i = 0; $i < $n; $i++) {
+    $d.push(Number($digits.charAt($i)));
+  }
+  if ($up) {
+    let $i = $n - 1;
+    while ($i >= 0 && $d[$i] === 9) {
+      $d[$i] = 0;
+      $i--;
+    }
+    if ($i < 0) return "1";
+    $d[$i] = $d[$i] + 1;
+  } else {
+    let $i = $n - 1;
+    while ($i >= 0 && $d[$i] === 0) {
+      $d[$i] = 9;
+      $i--;
+    }
+    if ($i < 0) return "9";
+    $d[$i] = $d[$i] - 1;
+  }
+  return $d.join("");
+}
+
+function $sfDec($digits, $expo) {
+  if ($digits.length === 1) return $digits + "e" + $expo;
+  return $digits.slice(0, 1) + "." + $digits.slice(1)
+    + "e" + ($expo + $digits.length - 1);
+}
+
+function $sfExpDigits($v) {
+  const $eIndex = $v.toExponential(40).indexOf("e");
+  return $v.toExponential(40).slice(0, $eIndex).split(".").join("");
+}
+
+function $sfDigits($v, $n) {
+  const $rep = $v.toPrecision($n);
+  const $parts = $decimalParts($rep);
+  let $digits = $parts.digits;
+  let $expo = $parts.expo;
+  const $pad = $n - $digits.length;
+  if ($pad > 0) {
+    $digits = $digits + "0".repeat($pad);
+    $expo = $expo - $pad;
+  }
+  if (Number($sfDec($digits, $expo)) !== $v) {
+    const $upDigits = $sfBump($digits, true);
+    if (Number($sfDec($upDigits, $expo)) === $v) {
+      return { digits: $upDigits, expo: $expo };
+    }
+    const $downDigits = $sfBump($digits, false);
+    if (Number($sfDec($downDigits, $expo)) === $v) {
+      return { digits: $downDigits, expo: $expo };
+    }
+    return null;
+  }
+  const $exp = $sfExpDigits($v);
+  const $downDigits = $sfBump($digits, false);
+  let $downMid = $downDigits + "5";
+  let $lead = 0;
+  while ($lead < $downMid.length && $downMid.charCodeAt($lead) === 0x30) $lead++;
+  $downMid = $downMid.slice($lead);
+  if ($exp.slice(0, $downMid.length) === $downMid
+      && $exp.slice($downMid.length).split("0").join("") === ""
+      && Number($sfDec($downDigits, $expo)) === $v) {
+    if (Number($downDigits.charAt($downDigits.length - 1)) % 2 === 0) {
+      return { digits: $downDigits, expo: $expo };
+    }
+    return { digits: $digits, expo: $expo };
+  }
+  const $upDigits = $sfBump($digits, true);
+  const $upMid = $digits + "5";
+  if ($exp.slice(0, $upMid.length) === $upMid
+      && $exp.slice($upMid.length).split("0").join("") === ""
+      && Number($sfDec($upDigits, $expo)) === $v) {
+    if (Number($upDigits.charAt($upDigits.length - 1)) % 2 === 0) {
+      return { digits: $upDigits, expo: $expo };
+    }
+    return { digits: $digits, expo: $expo };
+  }
+  return { digits: $digits, expo: $expo };
+}
+
+// $numText: the canonical decimal text of one finite binary64 value, or
+// null for a nonfinite one.
+function $numText($v) {
+  if ($v !== $v || $v === Infinity || $v === -Infinity) {
+    return null;
+  }
+  let $neg = false;
+  let $a = $v;
+  if ($a < 0 || ($a === 0 && 1 / $a < 0)) {
+    $neg = true;
+    $a = -$a;
+  }
+  if ($a === 0) {
+    return $neg ? "-0.0" : "0.0";
+  }
+  let $digits = null;
+  let $expo = 0;
+  for (let $n = 1; $n <= 17; $n++) {
+    const $candidate = $sfDigits($a, $n);
+    if ($candidate !== null) {
+      $digits = $candidate.digits;
+      $expo = $candidate.expo;
+      break;
+    }
+  }
+  if ($digits === null) {
+    const $parts = $decimalParts($a.toExponential(16));
+    $digits = $parts.digits;
+    $expo = $parts.expo;
+  }
+  let $first = 0;
+  while ($first < $digits.length && $digits.charCodeAt($first) === 0x30) $first++;
+  $digits = $digits.slice($first);
+  if ($digits === "") $digits = "0";
+  const $k = $expo + $digits.length - 1;
+  while ($digits.length > 1 && $digits.charCodeAt($digits.length - 1) === 0x30) {
+    $digits = $digits.slice(0, $digits.length - 1);
+  }
+  let $text;
+  if ($k >= -3 && $k <= 6) {
+    if ($k >= 0) {
+      if ($digits.length <= $k + 1) {
+        $text = $digits + "0".repeat($k + 1 - $digits.length) + ".0";
+      } else {
+        $text = $digits.slice(0, $k + 1) + "." + $digits.slice($k + 1);
+      }
+    } else {
+      $text = "0." + "0".repeat(-$k - 1) + $digits;
+    }
+  } else {
+    const $tail = $digits.slice(0, 1) + "."
+      + ($digits.length > 1 ? $digits.slice(1) : "0");
+    $text = $tail + "E" + $k;
+  }
+  return $neg ? "-" + $text : $text;
+}
+
+// ===== The shared JSON text encoder (the std/json and class-walk rows) =====
+
+// $carrierToken: the closed std/json carrier-kind projection of a value
+// (the pinned actual vocabulary).
+function $carrierToken($v) {
+  if ($v === $undefined || $v === $MISSING) return "nil";
+  if ($v === null) return "table";
+  if (typeof $v === "boolean") return "boolean";
+  if (typeof $v === "number") return "number";
+  if (typeof $v === "string") return "string";
+  if ($rt.isBytes($v)) return "bytes";
+  if (typeof $v === "function" || $v.$kind === "function") return "function";
+  return "table";
+}
+
+// $walkToken: the typed-boundary projection of one failing walk value
+// (the walk arm's actual): an integral finite number is the int carrier,
+// every other number the number carrier, an invalid scalar sequence
+// invalid-unicode, and a class instance its carried canonical atom.
+function $walkToken($v) {
+  if ($v === $undefined || $v === $MISSING) return "nil";
+  if ($v === null) return "null";
+  if (typeof $v === "boolean") return "boolean";
+  if (typeof $v === "number") {
+    if ($v === $v && $v !== Infinity && $v !== -Infinity && $v % 1 === 0) {
+      return "int";
+    }
+    return "number";
+  }
+  if (typeof $v === "string") {
+    return $isValidScalars($v) ? "string" : "invalid-unicode";
+  }
+  if ($rt.isBytes($v)) return "bytes";
+  if (typeof $v === "function" || $v.$kind === "function") return "function";
+  if ($Array.isArray($v)) return "array";
+  if ($v.$kind === "class") {
+    return typeof $v.$classname === "string" ? $v.$classname : "table";
+  }
+  return "table";
+}
+
+// $jsonEscapeText: RFC-8259 string escaping (quote and backslash escaped,
+// the named short escapes, every other control scalar as a lowercase
+// four-hex-digit escape, every other scalar raw).
+function $jsonEscapeText($s) {
+  let $out = "\"";
+  for (let $i = 0; $i < $s.length; $i++) {
+    const $c = $s.charCodeAt($i);
+    if ($c === 0x22) $out += "\\\"";
+    else if ($c === 0x5c) $out += "\\\\";
+    else if ($c === 0x08) $out += "\\b";
+    else if ($c === 0x0c) $out += "\\f";
+    else if ($c === 0x0a) $out += "\\n";
+    else if ($c === 0x0d) $out += "\\r";
+    else if ($c === 0x09) $out += "\\t";
+    else if ($c < 0x20) {
+      const $hex = $c.toString(16);
+      $out += "\\u" + "0".repeat(4 - $hex.length) + $hex;
+    } else {
+      $out += $s.charAt($i);
+    }
+  }
+  return $out + "\"";
+}
+
+// $encodeJsonText: the shared finite-acyclic JSON text walk. $typed is
+// false for the std/json row (carrier-kind failures through
+// JSON_STRINGIFY_UNSUPPORTED) and true for the class-walk row
+// (typed-boundary failures through JSON_TO_WALK at the pinned position).
+// $active is the path-local container stack; a re-entry is the closed
+// cycle arm. $variant marks one scalar number slot whose token carried
+// the number variant (the container marks), which therefore spells
+// through the canonical decimal text; an int-variant or unmarked slot
+// keeps the integer/default spelling.
+function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $variant) {
+  const $unsupported = function () {
+    if ($typed) {
+      const $token = $walkToken($v);
+      $rt.fail("E8001", "value at " + $path + " is not JSON serializable: "
+        + $token, $file, $line, $column, $undefined, $token);
+    }
+    const $token = $carrierToken($v);
+    $rt.fail("E8001", "unsupported type for JSON encoding: " + $token,
+      $file, $line, $column, "string, number, boolean, or table", $token);
+  };
+  if ($v === null) {
+    return "null";
+  }
+  const $type = typeof $v;
   if ($type === "boolean") {
-    return $v;
+    return $v ? "true" : "false";
   }
   if ($type === "number") {
-    if ($v !== $v) {
-      $rt.fail("E8001", "cannot encode NaN as JSON", $file, $line, $column);
+    if ($v !== $v || $v === Infinity || $v === -Infinity) {
+      $unsupported();
     }
-    // ±Infinity without the bare host-global spelling: every finite IEEE
-    // double has magnitude <= 1.7976931348623157e308 (Double.MAX_VALUE),
-    // so a larger magnitude is exactly ±Infinity.
-    if ($v > 1.7976931348623157e308 || $v < -1.7976931348623157e308) {
-      $rt.fail("E8001", "cannot encode Infinity as JSON", $file, $line, $column);
+    if ($variant === true) {
+      const $text = $numText($v);
+      return $text === null ? $unsupported() : $text;
     }
-    return $v;
+    return String($v);
+  }
+  if ($type === "string") {
+    if (!$isValidScalars($v)) $unsupported();
+    return $jsonEscapeText($v);
+  }
+  if ($rt.isBytes($v) || $type === "function"
+      || ($type === "object" && $v.$kind === "function")) {
+    $unsupported();
+  }
+  if ($v instanceof $Map && $rt.isJsonNullTable($v)) {
+    return "null";
   }
   if ($v instanceof $Map) {
-    // Null-marked first: the mark always wins, checked before any shape
-    // walk — a null-marked Map serializes as null and never recurses, so
-    // it can never false-positive the cycle check.
-    if ($rt.isJsonNullTable($v)) {
-      return null;
+    if ($active.includes($v)) {
+      $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
     }
-    if ($path.includes($v)) {
-      $rt.fail("E8001", $cyclic, $file, $line, $column);
-    }
-    $path.push($v);
+    $active.push($v);
     try {
       if ($rt.isJsonArrayTable($v)) {
         let $max = 0;
@@ -620,88 +1208,73 @@ function $encodeConvert($v, $path, $file, $line, $column, $cyclic) {
             $arrayForm = false;
             break;
           }
-          if ($index > $max) {
-            $max = $index;
-          }
+          if ($index > $max) $max = $index;
         }
-        if ($arrayForm && $max > 0) {
-          const $arr = [];
+        if ($arrayForm) {
+          const $parts = [];
           for (let $i = 1; $i <= $max; $i++) {
-            const $element = $v.get(String($i));
-            $arr.push($element === $undefined ? null : $encodeConvert($element, $path, $file, $line, $column, $cyclic));
+            const $key = String($i);
+            const $element = $v.get($key);
+            const $elementPath = $path === "" ? "[" + ($i - 1) + "]"
+              : $path + "[" + ($i - 1) + "]";
+            if ($element === $undefined) {
+              $parts.push("null");
+            } else {
+              $parts.push($encodeJsonText($element, $active, $file, $line, $column,
+                $typed, $elementPath, $isNumberVariant($v, $key)));
+            }
           }
-          return $arr;
+          return "[" + $parts.join(",") + "]";
         }
       }
-      const $obj = {};
+      const $parts = [];
       for (const $key of $v.keys()) {
-        if (typeof $key === "string") {
-          $scanStringValidity($key, $file, $line, $column);
+        if (typeof $key !== "string" || !$isValidScalars($key)) {
+          // An invalid scalar sequence is still a string carrier on the
+          // carrier-kind projection (and invalid-unicode on the typed
+          // one).
+          if ($typed) {
+            $rt.fail("E8001", "value at " + $path
+              + " is not JSON serializable: invalid-unicode",
+              $file, $line, $column, $undefined, "invalid-unicode");
+          }
+          $rt.fail("E8001", "unsupported type for JSON encoding: string",
+            $file, $line, $column, "string, number, boolean, or table", "string");
         }
-        $rt.setProp($obj, $key, $encodeConvert($v.get($key), $path, $file, $line, $column, $cyclic));
+        const $element = $v.get($key);
+        const $elementPath = $path === "" ? $key : $path + "." + $key;
+        $parts.push($jsonEscapeText($key) + ":"
+          + $encodeJsonText($element, $active, $file, $line, $column, $typed,
+            $elementPath, $isNumberVariant($v, $key)));
       }
-      return $obj;
+      return "{" + $parts.join(",") + "}";
     } finally {
-      $path.pop();
+      $active.pop();
     }
   }
   if ($Array.isArray($v)) {
-    if ($path.includes($v)) {
-      $rt.fail("E8001", $cyclic, $file, $line, $column);
+    if ($active.includes($v)) {
+      $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
     }
-    $path.push($v);
+    $active.push($v);
     try {
-      const $arr = [];
+      const $parts = [];
       for (let $i = 0; $i < $v.length; $i++) {
         const $element = $v[$i];
-        $arr.push($element === $undefined ? null : $encodeConvert($element, $path, $file, $line, $column, $cyclic));
+        const $elementPath = $path === "" ? "[" + $i + "]" : $path + "[" + $i + "]";
+        if ($element === $undefined) {
+          $parts.push("null");
+        } else {
+          $parts.push($encodeJsonText($element, $active, $file, $line, $column,
+            $typed, $elementPath, $isNumberVariant($v, String($i))));
+        }
       }
-      return $arr;
+      return "[" + $parts.join(",") + "]";
     } finally {
-      $path.pop();
+      $active.pop();
     }
   }
-  if ($type === "object" && $v.$kind === "class") {
-    if ($path.includes($v)) {
-      $rt.fail("E8001", $cyclic, $file, $line, $column);
-    }
-    $path.push($v);
-    try {
-      const $obj = {};
-      $rt.setProp($obj, "__kind", "class");
-      $rt.setProp($obj, "__classname", $v.$classname);
-      const $keys = Object.keys($v);
-      for (let $i = 0; $i < $keys.length; $i++) {
-        const $key = $keys[$i];
-        if ($key === "$kind" || $key === "$classname") {
-          continue; // field-walk exclusion: the instance's runtime tag properties
-        }
-        if ($key === "__kind" || $key === "__classname") {
-          continue; // tag-clobber skip: the mapped tag value is emitted once
-        }
-        const $value = $v[$key];
-        if ($value === $rt.MISSING) {
-          continue; // absent optional omitted
-        }
-        $rt.setProp($obj, $key, $encodeConvert($value, $path, $file, $line, $column, $cyclic));
-      }
-      return $obj;
-    } finally {
-      $path.pop();
-    }
-  }
-  // The explicit bytes arm (js-v12-int32-bytes D3): a bytes value
-  // reaching the walk — via a table field, a nested array, or a class
-  // instance field — raises the pinned unsupported-type needle with the
-  // "bytes" kind text. $rt.isBytes is the single detection seam; the
-  // runtime's $Uint8Array capture stays module-private.
-  if ($rt.isBytes($v)) {
-    $rt.fail("E8001", "unsupported type for JSON encoding: bytes", $file, $line, $column, "string, number, boolean, or table", "bytes");
-  }
-  if ($type === "object" && $v.$kind === "function") {
-    $rt.fail("E8001", "unsupported type for JSON encoding: function", $file, $line, $column, "string, number, boolean, or table", "function");
-  }
-  $rt.fail("E8001", "unsupported type for JSON encoding: " + $luaKindOf($v), $file, $line, $column, "string, number, boolean, or table", $luaKindOf($v));
+  $unsupported();
 }
 
 // ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====
@@ -798,7 +1371,8 @@ function $jsonFromDocument($identity, $doc, $fields, $defaultsThunk, $file, $lin
       continue; // a field absent from the document is omitted
     }
     $provided.set($entry.name,
-      $jsonFromValue($entry, $doc[$entry.name], $file, $line, $column));
+      $jsonFromValue($entry, $doc[$entry.name], $file, $line, $column,
+        $isNumberVariant($doc, $entry.name)));
   }
   // Omitted required defaults (D2 step 6): the thunk runs once per
   // construction, only after every provided value decoded. A thunk
@@ -867,7 +1441,7 @@ function $jsonFromDocument($identity, $doc, $fields, $defaultsThunk, $file, $lin
 // decode with the nested fields; array entries decode element-wise via
 // element; table entries accept only a JSON object and convert it to
 // the D9 Map shape (nested arrays as the array-marked Maps).
-function $jsonFromValue($entry, $raw, $file, $line, $column) {
+function $jsonFromValue($entry, $raw, $file, $line, $column, $numberVariant) {
   if ($raw === null) {
     if ($entry.nullable || $entry.jtype === "null") {
       return null;
@@ -886,6 +1460,13 @@ function $jsonFromValue($entry, $raw, $file, $line, $column) {
     case "string":
       return $rt.checkString($raw, $file, $line, $column);
     case "int":
+      // The exact decimal classification admits the int position only
+      // for an int-variant token: a fractional token that rounds to an
+      // integral double keeps the number variant and rejects here.
+      if ($numberVariant === true) {
+        $rt.fail("E8001", "expected int, got number", $file, $line, $column,
+          "int", "number");
+      }
       return $rt.checkInt($raw, $file, $line, $column);
     case "number":
       return $rt.checkNumber($raw, $file, $line, $column);
@@ -911,7 +1492,8 @@ function $jsonFromValue($entry, $raw, $file, $line, $column) {
       }
       const $arr = [];
       for (let $i = 0; $i < $raw.length; $i++) {
-        $arr.push($jsonFromValue($entry.element, $raw[$i], $file, $line, $column));
+        $arr.push($jsonFromValue($entry.element, $raw[$i], $file, $line, $column,
+          $isNumberVariant($raw, String($i))));
       }
       return $arr;
     default:
@@ -920,16 +1502,17 @@ function $jsonFromValue($entry, $raw, $file, $line, $column) {
 }
 
 // $jsonToDocument: serialize the declared fields of a tagged class
-// instance into a JSON-compatible object in declaration order. Absent
-// optionals ($rt.MISSING) are omitted (the three-state roundtrip);
-// present nulls serialize as JSON null; a missing required field is
-// E8001. The shared $path stack keeps nested class/array/table graphs
-// cycle-checked end to end.
-function $jsonToDocument($identity, $v, $fields, $path, $file, $line, $column) {
+// instance into its JSON text in declaration order. Absent optionals
+// ($rt.MISSING) are omitted (the three-state roundtrip); present nulls
+// serialize as JSON null; a missing required field fails through the
+// walk arm. The shared $path stack keeps nested class/array/table graphs
+// cycle-checked end to end. $fieldPath is the pinned walk position
+// spelling (the root has the empty path).
+function $jsonToDocument($identity, $v, $fields, $path, $fieldPath, $file, $line, $column) {
   if (!$Array.isArray($fields)) {
     $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
   }
-  const $out = {};
+  const $parts = [];
   for (let $i = 0; $i < $fields.length; $i++) {
     const $entry = $fields[$i];
     if ($entry === null || typeof $entry !== "object" || typeof $entry.name !== "string") {
@@ -940,82 +1523,103 @@ function $jsonToDocument($identity, $v, $fields, $path, $file, $line, $column) {
       if ($entry.optional) {
         continue; // missing optional: omit the key
       }
-      $rt.fail("E8001", "missing required field '" + $name + "'", $file, $line, $column);
+      const $token = "nil";
+      $rt.fail("E8001", "value at " + $fieldPathFor($fieldPath, $name)
+        + " is not JSON serializable: " + $token, $file, $line, $column,
+        $undefined, $token);
     }
     const $value = $v[$name];
     if ($value === $MISSING) {
       continue; // absent optional: omitted (three-state roundtrip)
     }
-    $rt.setProp($out, $name, $jsonToValue($entry, $value, $path, $file, $line, $column));
+    $parts.push($jsonEscapeText($name) + ":"
+      + $jsonToValue($entry, $value, $path, $fieldPathFor($fieldPath, $name),
+        $file, $line, $column));
   }
-  return $out;
+  return "{" + $parts.join(",") + "}";
 }
 
-// $jsonToValue: encode one field/element value per its descriptor. Every
-// failure raises E8001/E8004 through the fail spine with the forwarded
-// location: explicit null on a non-nullable entry, primitive kind
-// mismatches, NaN/±Infinity, unpaired surrogates, missing required
-// fields, identity mismatches, cycles, non-JSON-shaped table graphs, and
-// stored function values (the D9 needles).
-function $jsonToValue($entry, $value, $path, $file, $line, $column) {
+// $fieldPathFor: the pinned walk position spelling (a dot-joined path).
+function $fieldPathFor($base, $name) {
+  return $base === "" ? $name : $base + "." + $name;
+}
+
+// $jsonToValue: encode one declared field/element value into its JSON
+// text. Every failure is the closed walk arm (E8001 "value at
+// {fieldPath} is not JSON serializable: {actual}") through the fail
+// spine with the forwarded location, except the int32 range gate
+// (E8004). Table fields walk the shared finite-acyclic JSON text
+// encoder with the typed-boundary projection.
+function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) {
+  const $walkFail = function () {
+    const $token = $walkToken($value);
+    $rt.fail("E8001", "value at " + $fieldPath + " is not JSON serializable: "
+      + $token, $file, $line, $column, $undefined, $token);
+  };
   if ($value === null) {
     if ($entry.nullable || $entry.jtype === "null") {
-      return null;
+      return "null";
     }
-    const $what = typeof $entry.name === "string" ? "field '" + $entry.name + "'" : "array element";
-    $rt.fail("E8001", "explicit null on non-nullable " + $what, $file, $line, $column);
+    $walkFail();
   }
   switch ($entry.jtype) {
     case "null":
-      $rt.fail("E8001", "expected null", $file, $line, $column, "null", $kindOf($value));
+      // Only language null encodes (handled above).
+      $walkFail();
     case "boolean":
       if (typeof $value !== "boolean") {
-        $rt.fail("E8001", "expected boolean", $file, $line, $column, "boolean", $kindOf($value));
+        $walkFail();
       }
-      return $value;
+      return $value ? "true" : "false";
     case "string":
-      return $rt.checkString($value, $file, $line, $column);
+      if (typeof $value !== "string" || !$isValidScalars($value)) {
+        $walkFail();
+      }
+      return $jsonEscapeText($value);
     case "int":
-      return $rt.checkInt($value, $file, $line, $column);
+      if (typeof $value !== "number" || $value !== $value
+          || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308
+          || $value % 1 !== 0) {
+        $walkFail();
+      }
+      // The signed32 range gate keeps its own E8004 projection.
+      return String($rt.checkInt($value, $file, $line, $column));
     case "number":
-      if (typeof $value !== "number") {
-        $rt.fail("E8001", "expected number", $file, $line, $column, "number", $kindOf($value));
+      if (typeof $value !== "number" || $value !== $value
+          || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308) {
+        $walkFail();
       }
-      if ($value !== $value) {
-        $rt.fail("E8001", "cannot encode NaN as JSON", $file, $line, $column);
-      }
-      if ($value > 1.7976931348623157e308 || $value < -1.7976931348623157e308) {
-        $rt.fail("E8001", "cannot encode Infinity as JSON", $file, $line, $column);
-      }
-      return $value;
+      return $numText($value);
     case "table":
-      // The pinned @jsonable needle for a cyclic datum (the reference's
-      // _json_table_shape reason arm, deal/runtime.lua:2309): the shared
-      // encode walk raises the walk's default std/json needle, so the
-      // jsonable entry installs its own message here.
-      return $rt.jsonEncodeValue($value, $path, $file, $line, $column, "cyclic value cannot be encoded as JSON");
+      // The declared table row walks the JSON-shaped content only: a
+      // class instance, a stored function, bytes, an absent marker, an
+      // invalid scalar, or a nonfinite leaf fails the walk arm at its
+      // position.
+      return $encodeJsonText($value, $path, $file, $line, $column, true,
+        $fieldPath, false);
     case "class":
       if (typeof $value !== "object" || $value === null || $value.$kind !== "class") {
-        $rt.fail("E8001", "expected class instance", $file, $line, $column, "class", $kindOf($value));
+        $walkFail();
       }
       if (typeof $entry.className !== "string" || !$Array.isArray($entry.fields)) {
         $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
       }
       if ($value.$classname !== $entry.className) {
-        $rt.fail("E8001", "expected instance of " + $entry.className + ", got " + $value.$classname, $file, $line, $column, $entry.className, $value.$classname);
+        $walkFail();
       }
       if ($path.includes($value)) {
         $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
       }
       $path.push($value);
       try {
-        return $jsonToDocument($entry.className, $value, $entry.fields, $path, $file, $line, $column);
+        return $jsonToDocument($entry.className, $value, $entry.fields, $path,
+          $fieldPath, $file, $line, $column);
       } finally {
         $path.pop();
       }
     case "array":
       if (!$Array.isArray($value)) {
-        $rt.fail("E8001", "expected array", $file, $line, $column, "array", $kindOf($value));
+        $walkFail();
       }
       if ($entry.element === null || typeof $entry.element !== "object") {
         $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
@@ -1025,12 +1629,18 @@ function $jsonToValue($entry, $value, $path, $file, $line, $column) {
       }
       $path.push($value);
       try {
-        const $arr = [];
+        const $parts = [];
         for (let $i = 0; $i < $value.length; $i++) {
           const $element = $value[$i];
-          $arr.push($element === $undefined ? null : $jsonToValue($entry.element, $element, $path, $file, $line, $column));
+          const $elementPath = $fieldPath + "[" + $i + "]";
+          if ($element === $undefined) {
+            $parts.push("null");
+            continue;
+          }
+          $parts.push($jsonToValue($entry.element, $element, $path, $elementPath,
+            $file, $line, $column));
         }
-        return $arr;
+        return "[" + $parts.join(",") + "]";
       } finally {
         $path.pop();
       }
@@ -1135,34 +1745,36 @@ const $rt = {
     return $jsonNullTables.has(v);
   },
 
-  // ===== D9 JSON conversion members (js-backend-runtime D9) =====
+  // ===== Exact JSON members (DEAL v1.3 JSON number classification) =====
 
-  // jsonParseValue: the decode-side conversion of one native
-  // $JSON.parse result into the marked-Map table shape — the shared
-  // walk behind std/json.parse and the @jsonable walkers' table-field
-  // decode (js-v12-jsonable-completion D2/D4). Pure: fresh Maps only,
-  // no input mutation.
+  // jsonParseText: the conforming RFC-8259 scanner over one string — the
+  // decode open of std/json.parse and the @jsonable fromJson walkers. It
+  // rejects every syntax defect (a decoded-key duplicate at the second
+  // key's opening quote included) with the shared E8001 "JSON parse error
+  // at position N: reason" projection, classifies every numeric lexeme
+  // exactly before binary64 rounding, and records the per-slot variant
+  // marks. No fixed nesting bound.
+  jsonParseText: function $jsonParseText(text, file, line, column) {
+    return $parseJsonText(text, file, line, column);
+  },
+
+  // jsonParseValue: the decode-side conversion of one scanned native
+  // document into the marked-Map table shape — the shared walk behind
+  // std/json.parse and the @jsonable walkers' table-field decode
+  // (js-v12-jsonable-completion D2/D4). Pure: fresh Maps only, no input
+  // mutation; the container number-variant marks are copied.
   jsonParseValue: function $jsonParseValue(v, file, line, column) {
     return $fromJsonConvert(v, file, line, column);
   },
 
-  // jsonEncodeValue: the encode-side validation/conversion walk with
-  // the shared cycle-check path — the walk behind std/json.stringify
-  // and the @jsonable walkers' table-field encode (D2/D4). Raises
-  // E8001 for NaN/±Infinity, unpaired surrogates, cyclic graphs,
-  // function values, and any other non-JSON-shaped value. Pure: fresh
-  // objects/arrays only, no input mutation.
-  //
-  // The optional sixth argument is the walk's cyclic-graph message: the
-  // std/json needle by default ("circular reference in JSON encoding",
-  // the landed std/json message pinned by the stdlib suite), the pinned
-  // @jsonable toJson needle ("cyclic value cannot be encoded as JSON",
-  // the corpus sidecar / deal/runtime.lua:2309 form) when the jsonable
-  // walkers install it.
-  jsonEncodeValue: function $jsonEncodeValue(v, path, file, line, column, cyclic) {
-    return $encodeConvert(v, path, file, line, column,
-      cyclic === $undefined
-        ? "circular reference in JSON encoding" : cyclic);
+  // jsonStringifyText: the std/json encode row — finite acyclic
+  // JSON-shaped data only; unsupported carriers and nonfinite numbers
+  // raise the closed JSON_STRINGIFY_UNSUPPORTED E8001 and a path-local
+  // container re-entry raises the closed cycle arm. Pure and
+  // non-mutating.
+  jsonStringifyText: function $jsonStringifyText(v, path, file, line, column) {
+    return $encodeJsonText(v, $Array.isArray(path) ? path : [], file, line, column,
+      false, "", false);
   },
 
   // ===== Error spine members (js-backend-runtime-artifact D8) =====
@@ -1870,7 +2482,7 @@ const $rt = {
     }
     let $doc;
     try {
-      $doc = $JSON.parse(s);
+      $doc = $parseJsonText(s, file, line, column);
     } catch ($e) {
       return null;
     }
@@ -1899,7 +2511,7 @@ const $rt = {
       $rt.fail("E8001", "expected instance of " + identity + ", got " + v.$classname, file, line, column, identity, v.$classname);
     }
     const $path = [v];
-    return $JSON.stringify($jsonToDocument(identity, v, fields, $path, file, line, column));
+    return $jsonToDocument(identity, v, fields, $path, "", file, line, column);
   },
 
   // ===== Wrapper factory and conversion intrinsics

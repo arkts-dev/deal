@@ -27,8 +27,6 @@ public final class JvmJson {
         }
     };
 
-    public static final int MAX_DEPTH = 512;
-
     /** One field of a class plan: name, descriptor, optionality, default child. */
     public static final class Field {
         public final String name;
@@ -136,7 +134,7 @@ public final class JvmJson {
         }
 
         Object parseDocument() {
-            Object value = parseValue(0);
+            Object value = parseValue();
             if (value == FAIL) {
                 return SYNTAX;
             }
@@ -160,10 +158,7 @@ public final class JvmJson {
             }
         }
 
-        private Object parseValue(int depth) {
-            if (depth > MAX_DEPTH) {
-                return FAIL;
-            }
+        private Object parseValue() {
             skipWs();
             if (pos >= s.length()) {
                 return FAIL;
@@ -172,6 +167,7 @@ public final class JvmJson {
             if (c == '{') {
                 pos++;
                 JvmRuntime.Table obj = new JvmRuntime.Table();
+                java.util.Set<String> decodedKeys = new java.util.HashSet<>();
                 skipWs();
                 if (pos < s.length() && s.charAt(pos) == '}') {
                     pos++;
@@ -186,12 +182,18 @@ public final class JvmJson {
                     if (key == null) {
                         return FAIL;
                     }
+                    // A member key whose decoded scalar text equals an
+                    // earlier member key of the same object is a parse
+                    // defect (the decoded-key duplicate rule).
+                    if (!decodedKeys.add(key)) {
+                        return FAIL;
+                    }
                     skipWs();
                     if (pos >= s.length() || s.charAt(pos) != ':') {
                         return FAIL;
                     }
                     pos++;
-                    Object value = parseValue(depth + 1);
+                    Object value = parseValue();
                     if (value == FAIL) {
                         return FAIL;
                     }
@@ -219,7 +221,7 @@ public final class JvmJson {
                     return arr;
                 }
                 while (true) {
-                    Object value = parseValue(depth + 1);
+                    Object value = parseValue();
                     if (value == FAIL) {
                         return FAIL;
                     }
@@ -337,6 +339,10 @@ public final class JvmJson {
             }
         }
 
+        private static boolean isAsciiDigit(char c) {
+            return c >= '0' && c <= '9';
+        }
+
         private Object parseNumber() {
             int start = pos;
             if (pos < s.length() && s.charAt(pos) == '-') {
@@ -348,51 +354,50 @@ public final class JvmJson {
             char c = s.charAt(pos);
             if (c == '0') {
                 pos++;
-                if (pos < s.length() && Character.isDigit(s.charAt(pos))) {
+                if (pos < s.length() && isAsciiDigit(s.charAt(pos))) {
                     return FAIL;
                 }
             } else if (c >= '1' && c <= '9') {
-                while (pos < s.length() && Character.isDigit(s.charAt(pos))) {
+                while (pos < s.length() && isAsciiDigit(s.charAt(pos))) {
                     pos++;
                 }
             } else {
                 return FAIL;
             }
-            boolean integral = true;
             if (pos < s.length() && s.charAt(pos) == '.') {
-                integral = false;
                 pos++;
-                if (pos >= s.length() || !Character.isDigit(s.charAt(pos))) {
+                if (pos >= s.length() || !isAsciiDigit(s.charAt(pos))) {
                     return FAIL;
                 }
-                while (pos < s.length() && Character.isDigit(s.charAt(pos))) {
+                while (pos < s.length() && isAsciiDigit(s.charAt(pos))) {
                     pos++;
                 }
             }
             if (pos < s.length()) {
                 char e = s.charAt(pos);
                 if (e == 'e' || e == 'E') {
-                    integral = false;
                     pos++;
                     if (pos < s.length()
                             && (s.charAt(pos) == '+' || s.charAt(pos) == '-')) {
                         pos++;
                     }
-                    if (pos >= s.length() || !Character.isDigit(s.charAt(pos))) {
+                    if (pos >= s.length() || !isAsciiDigit(s.charAt(pos))) {
                         return FAIL;
                     }
-                    while (pos < s.length() && Character.isDigit(s.charAt(pos))) {
+                    while (pos < s.length() && isAsciiDigit(s.charAt(pos))) {
                         pos++;
                     }
                 }
             }
             String text = s.substring(start, pos);
             try {
-                double value = Double.parseDouble(text);
-                if (integral && value >= -2147483648d && value <= 2147483647d) {
-                    return (long) value;
+                Integer exact =
+                    deal.semantic.ir.JsonNumberClassifier.exactInt32OrNull(text);
+                if (exact != null) {
+                    return Long.valueOf(exact.longValue());
                 }
-                return value;
+                return Double.valueOf(
+                    deal.semantic.ir.JsonNumberClassifier.toDouble(text));
             } catch (NumberFormatException failure) {
                 return FAIL;
             }
@@ -485,7 +490,7 @@ public final class JvmJson {
             if (!table.keys.contains(field.name)) {
                 continue;
             }
-            Object decoded = decodeRaw(field.descriptor, table.entries.get(field.name), 0);
+            Object decoded = decodeRaw(field.descriptor, table.entries.get(field.name));
             if (decoded == FAIL) {
                 return null;
             }
@@ -565,15 +570,12 @@ public final class JvmJson {
     }
 
     /** One provided value's decode against a declared descriptor. */
-    private static Object decodeRaw(String descriptor, Object raw, int depth) {
-        if (depth > MAX_DEPTH) {
-            return FAIL;
-        }
+    private static Object decodeRaw(String descriptor, Object raw) {
         if (descriptor.startsWith("nullable:")) {
             if (raw == JNULL) {
                 return null;
             }
-            return decodeRaw(descriptor.substring("nullable:".length()), raw, depth);
+            return decodeRaw(descriptor.substring("nullable:".length()), raw);
         }
         if (descriptor.startsWith("array(")) {
             if (!(raw instanceof JvmRuntime.Array array)) {
@@ -583,7 +585,7 @@ public final class JvmJson {
                 descriptor.length() - 1);
             JvmRuntime.Array out = new JvmRuntime.Array(0);
             for (int i = 0; i < array.elements.size(); i++) {
-                Object element = decodeRaw(inner, array.elements.get(i), depth + 1);
+                Object element = decodeRaw(inner, array.elements.get(i));
                 if (element == FAIL) {
                     return FAIL;
                 }
@@ -606,7 +608,7 @@ public final class JvmJson {
             } else {
                 return FAIL;
             }
-            Object nested = decodeNestedClass(descriptor, document, depth + 1);
+            Object nested = decodeNestedClass(descriptor, document);
             return nested == null ? FAIL : nested;
         }
         switch (descriptor) {
@@ -634,7 +636,7 @@ public final class JvmJson {
             }
             case "table" -> {
                 if (raw instanceof JvmRuntime.Table) {
-                    return toLanguage(raw, 0);
+                    return toLanguage(raw);
                 }
                 if (raw instanceof JvmRuntime.Array array && array.length == 0) {
                     return new JvmRuntime.Table();
@@ -654,14 +656,11 @@ public final class JvmJson {
      * classification the oracle's Int/Number carriers keep), and the
      * JSON-null marker is mapped by the caller.
      */
-    private static Object toLanguage(Object value, int depth) {
-        if (depth > MAX_DEPTH) {
-            return null;
-        }
+    private static Object toLanguage(Object value) {
         if (value instanceof JvmRuntime.Array array) {
             JvmRuntime.Array out = new JvmRuntime.Array(0);
             for (Object element : array.elements) {
-                out.elements.add(element == JNULL ? null : toLanguage(element, depth + 1));
+                out.elements.add(element == JNULL ? null : toLanguage(element));
             }
             out.length = out.elements.size();
             return out;
@@ -673,7 +672,7 @@ public final class JvmJson {
         for (Map.Entry<String, Object> entry : table.entries.entrySet()) {
             Object element = entry.getValue();
             out.write(entry.getKey(),
-                element == JNULL ? null : toLanguage(element, depth + 1));
+                element == JNULL ? null : toLanguage(element));
         }
         return out;
     }
@@ -688,10 +687,7 @@ public final class JvmJson {
      * when no plan resolves for the declared identity.
      */
     private static Object decodeNestedClass(String classIdText,
-                                            JvmRuntime.Table table, int depth) {
-        if (depth > MAX_DEPTH) {
-            return null;
-        }
+                                            JvmRuntime.Table table) {
         Plan nested = planOf(classIdText);
         if (nested == null) {
             throw new IllegalStateException("JSON_FROM_CLASS has no plan "
@@ -710,7 +706,7 @@ public final class JvmJson {
                 continue;
             }
             Object decoded = decodeRaw(field.descriptor,
-                table.entries.get(field.name), depth);
+                table.entries.get(field.name));
             if (decoded == FAIL) {
                 return null;
             }
@@ -799,15 +795,11 @@ public final class JvmJson {
 
     /** The JSON_TO_CLASS walk: the deterministic text or a JSON_TO_ERROR projection. */
     public static String toClass(Plan plan, Object root) {
-        return encodeInstance(plan, root, "", new java.util.IdentityHashMap<>(), 0);
+        return encodeInstance(plan, root, "", new java.util.IdentityHashMap<>());
     }
 
     private static String encodeInstance(Plan plan, Object value, String path,
-                                         java.util.IdentityHashMap<Object, Boolean> visited,
-                                         int depth) {
-        if (depth > MAX_DEPTH) {
-            throw new Projection(path, actualToken(value));
-        }
+                                         java.util.IdentityHashMap<Object, Boolean> visited) {
         if (!(value instanceof JvmRuntime.ClassInstance instance)
                 || !instance.classIdText().equals(plan.classIdText)) {
             throw new Projection(path, actualToken(value));
@@ -830,7 +822,7 @@ public final class JvmJson {
                 Object fieldValue = instance.read(field.name);
                 String fieldPath = path.isEmpty() ? field.name : path + "." + field.name;
                 String encoded = encodeField(field.descriptor, fieldValue, fieldPath,
-                    visited, depth);
+                    visited);
                 if (!first) {
                     out.append(',');
                 }
@@ -846,17 +838,13 @@ public final class JvmJson {
     }
 
     private static String encodeField(String descriptor, Object value, String path,
-                                      java.util.IdentityHashMap<Object, Boolean> visited,
-                                      int depth) {
-        if (depth > MAX_DEPTH) {
-            throw new Projection(path, actualToken(value));
-        }
+                                      java.util.IdentityHashMap<Object, Boolean> visited) {
         if (descriptor.startsWith("nullable:")) {
             if (value == null) {
                 return "null";
             }
             return encodeField(descriptor.substring("nullable:".length()), value, path,
-                visited, depth);
+                visited);
         }
         if (descriptor.startsWith("array(")) {
             if (!(value instanceof JvmRuntime.Array array)) {
@@ -874,7 +862,7 @@ public final class JvmJson {
                         out.append(',');
                     }
                     out.append(encodeField(inner, array.elements.get(i),
-                        path + "[" + i + "]", visited, depth + 1));
+                        path + "[" + i + "]", visited));
                 }
                 out.append(']');
                 return out.toString();
@@ -889,7 +877,7 @@ public final class JvmJson {
                     + descriptor + " for a nested @jsonable class field "
                     + "(producer defect)");
             }
-            return encodeInstance(nested, value, path, visited, depth + 1);
+            return encodeInstance(nested, value, path, visited);
         }
         return switch (descriptor) {
             case "null" -> {
@@ -936,18 +924,14 @@ public final class JvmJson {
                 if (!(value instanceof JvmRuntime.Table table)) {
                     throw new Projection(path, actualToken(value));
                 }
-                yield encodeTable(table, path, visited, depth);
+                yield encodeTable(table, path, visited);
             }
             default -> throw new Projection(path, actualToken(value));
         };
     }
 
     private static String encodeTable(JvmRuntime.Table table, String path,
-                                      java.util.IdentityHashMap<Object, Boolean> visited,
-                                      int depth) {
-        if (depth > MAX_DEPTH) {
-            throw new Projection(path, actualToken(table));
-        }
+                                      java.util.IdentityHashMap<Object, Boolean> visited) {
         if (visited.put(table, Boolean.TRUE) != null) {
             throw Projection.cycle(path);
         }
@@ -970,7 +954,7 @@ public final class JvmJson {
                 Object element = table.entries.get(key);
                 String elementPath = path.isEmpty() ? key : path + "." + key;
                 out.append('"').append(escapedKey).append('"').append(':');
-                out.append(encodeLeaf(element, elementPath, visited, depth + 1));
+                out.append(encodeLeaf(element, elementPath, visited));
             }
             out.append('}');
             return out.toString();
@@ -981,8 +965,7 @@ public final class JvmJson {
 
     /** One table/array interior element (JSON-shaped data, first failure wins). */
     private static String encodeLeaf(Object value, String path,
-                                     java.util.IdentityHashMap<Object, Boolean> visited,
-                                     int depth) {
+                                     java.util.IdentityHashMap<Object, Boolean> visited) {
         if (value == null || value == JNULL) {
             return "null";
         }
@@ -1006,12 +989,9 @@ public final class JvmJson {
             return "\"" + escaped + "\"";
         }
         if (value instanceof JvmRuntime.Table table) {
-            return encodeTable(table, path, visited, depth);
+            return encodeTable(table, path, visited);
         }
         if (value instanceof JvmRuntime.Array array) {
-            if (depth > MAX_DEPTH) {
-                throw new Projection(path, actualToken(value));
-            }
             if (visited.put(array, Boolean.TRUE) != null) {
                 throw Projection.cycle(path);
             }
@@ -1022,7 +1002,7 @@ public final class JvmJson {
                         out.append(',');
                     }
                     out.append(encodeLeaf(array.elements.get(i), path + "[" + i + "]",
-                        visited, depth + 1));
+                        visited));
                 }
                 out.append(']');
                 return out.toString();

@@ -1722,9 +1722,7 @@ public final class ClassOpsExecutor {
 
         /**
          * Stringifies one JSON-shaped value per the E8
-         * {@code JSON_STRINGIFY} row: {@code depth} is the walk depth of
-         * {@code jsonShaped} itself (the enclosing class walk's depth for a
-         * table-typed field value), and {@code entered} is the enclosing
+         * {@code JSON_STRINGIFY} row: {@code entered} is the enclosing
          * class/declared-array walk's path-local container-identity set
          * (see {@link ClassOpsExecutor#executeJsonToClass}). The seam's own first-failure
          * walk continues that same identity discipline — it adds its own
@@ -1732,13 +1730,13 @@ public final class ClassOpsExecutor {
          * never removes an entry it did not add — so a table-subtree
          * position that re-enters a container already on the path (a
          * declared-array element position included) selects the cycle arm
-         * exactly like the emitted Lua/JVM walks. The walk selects the
-         * pinned {@link #JSON_MAX_DEPTH} bound in walk order beside every
-         * carrier/cycle failure — an earlier position's failure is never
-         * overridden by a later exceeding container.
+         * exactly like the emitted Lua/JVM walks. There is no fixed
+         * nesting-depth bound: a container is never rejected merely for
+         * its depth, only for an unsupported carrier, an invalid scalar,
+         * a nonfinite number, or a path-local re-entry.
          *
          */
-        JsonStringify stringify(Value jsonShaped, String fieldPathPrefix, int depth,
+        JsonStringify stringify(Value jsonShaped, String fieldPathPrefix,
                                Set<Object> entered);
 
         /**
@@ -1746,19 +1744,9 @@ public final class ClassOpsExecutor {
          * identity set (the direct seam callers outside the class walk).
          *
          */
-        default JsonStringify stringify(Value jsonShaped, String fieldPathPrefix,
-                                        int depth) {
-            return stringify(jsonShaped, fieldPathPrefix, depth,
-                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
-        }
-
-        /**
-         * The depth-0 stringify of one JSON-shaped value (the direct seam
-         * callers outside the class walk).
-         *
-         */
         default JsonStringify stringify(Value jsonShaped, String fieldPathPrefix) {
-            return stringify(jsonShaped, fieldPathPrefix, 0);
+            return stringify(jsonShaped, fieldPathPrefix,
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
         }
     }
 
@@ -1771,8 +1759,6 @@ public final class ClassOpsExecutor {
          */
         Value fillDefaults(ClassId classId, Set<String> providedFields);
     }
-
-    public static final int JSON_MAX_DEPTH = 512;
 
     public static Value executeJsonFromClass(
             SemanticOp op,
@@ -1839,7 +1825,7 @@ public final class ClassOpsExecutor {
         }
         try {
             return decodeFromJson(op, layout, (Value.Table) table, defaultChildIds,
-                defaultOps, layouts, nestedFactory, bodyRunner, 0);
+                defaultOps, layouts, nestedFactory, bodyRunner);
         } catch (JsonFromFailure failure) {
             // Every listed walk failure publishes language null and no
             // partial instance is visible; completed default-block
@@ -1878,7 +1864,7 @@ public final class ClassOpsExecutor {
             new java.util.IdentityHashMap<>());
         try {
             String text = encodeToJson(op, layout, operand, layouts, stringifier,
-                entered, 0, "");
+                entered, "");
             return new Outcome.Success<Value>(Value.string(text));
         } catch (JsonToFailure failure) {
             // The first declaration-order failure: the closed arm the
@@ -1959,11 +1945,7 @@ public final class ClassOpsExecutor {
             SemanticOp op, ClassLayout layout, Value.Table document,
             List<OpId> defaultChildIds, Map<OpId, SemanticOp> defaultOps,
             Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
-            BodyRunner bodyRunner, int depth) {
-        if (depth > JSON_MAX_DEPTH) {
-            throw new JsonFromFailure("walk depth exceeded " + JSON_MAX_DEPTH
-                + " (the pinned retained bound)");
-        }
+            BodyRunner bodyRunner) {
         // The pinned default-child shape, checked fail closed before the
         // walk: exactly one CLASS_DEFAULT child per required-present
         // defaulted field in declaration order (the JsonDefaultChildTable
@@ -2010,7 +1992,7 @@ public final class ClassOpsExecutor {
             Value raw = present.value();
             requireJsonShape(op, raw);
             instanceFields.put(field.name(), decodeRaw(op, field.descriptor(), raw,
-                layouts, nestedFactory, bodyRunner, depth));
+                layouts, nestedFactory, bodyRunner));
         }
 
         for (ClassLayout.FieldLayout field : layout.fields()) {
@@ -2061,11 +2043,7 @@ public final class ClassOpsExecutor {
     private static Value decodeNestedClass(
             SemanticOp op, ClassId classId, Value.Table document,
             Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
-            BodyRunner bodyRunner, int depth) {
-        if (depth > JSON_MAX_DEPTH) {
-            throw new JsonFromFailure("walk depth exceeded " + JSON_MAX_DEPTH
-                + " (the pinned retained bound)");
-        }
+            BodyRunner bodyRunner) {
         ClassLayout nested = layouts.get(classId);
         if (nested == null) {
             throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested decode of "
@@ -2092,7 +2070,7 @@ public final class ClassOpsExecutor {
             Value raw = present.value();
             requireJsonShape(op, raw);
             decoded.put(field.name(), decodeRaw(op, field.descriptor(), raw, layouts,
-                nestedFactory, bodyRunner, depth));
+                nestedFactory, bodyRunner));
         }
 
         Value filled;
@@ -2160,11 +2138,7 @@ public final class ClassOpsExecutor {
     private static Value decodeRaw(
             SemanticOp op, RuntimeDescriptor descriptor, Value raw,
             Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
-            BodyRunner bodyRunner, int depth) {
-        if (depth > JSON_MAX_DEPTH) {
-            throw new JsonFromFailure("walk depth exceeded " + JSON_MAX_DEPTH
-                + " (the pinned retained bound)");
-        }
+            BodyRunner bodyRunner) {
         return switch (descriptor) {
             case RuntimeDescriptor.Null ignored -> {
                 if (!(raw instanceof Value.Null)) {
@@ -2209,7 +2183,7 @@ public final class ClassOpsExecutor {
             }
             case RuntimeDescriptor.Table ignored -> {
                 if (raw instanceof Value.Table tableValue) {
-                    boundParsedTableContents(op, tableValue, depth);
+                    boundParsedTableContents(op, tableValue);
                     yield tableValue;
                 }
                 // The empty-array collapse: [] decodes as an empty table
@@ -2229,7 +2203,7 @@ public final class ClassOpsExecutor {
                 for (Value element : elements.array().elements()) {
                     requireJsonShape(op, element);
                     decoded.add(decodeRaw(op, arrayDescriptor.element(), element,
-                        layouts, nestedFactory, bodyRunner, depth + 1));
+                        layouts, nestedFactory, bodyRunner));
                 }
                 yield new Value.Array(SemanticArray.of(decoded));
             }
@@ -2238,7 +2212,7 @@ public final class ClassOpsExecutor {
                     yield Value.Null.INSTANCE;
                 }
                 yield decodeRaw(op, nullable.inner(), raw, layouts, nestedFactory,
-                    bodyRunner, depth);
+                    bodyRunner);
             }
             case RuntimeDescriptor.Class classDescriptor -> {
                 if (raw instanceof Value.Null) {
@@ -2248,16 +2222,14 @@ public final class ClassOpsExecutor {
                 }
                 if (raw instanceof Value.Table) {
                     yield decodeNestedClass(op, classDescriptor.classId(),
-                        (Value.Table) raw, layouts, nestedFactory, bodyRunner,
-                        depth + 1);
+                        (Value.Table) raw, layouts, nestedFactory, bodyRunner);
                 }
                 if (raw instanceof Value.Array empty && empty.array().size() == 0) {
                     // The {}/[] collapse of the nested walk's own
                     // top-level gate: [] decodes as the nested defaulted
                     // instance.
                     yield decodeNestedClass(op, classDescriptor.classId(),
-                        (Value.Table) emptyTable(), layouts, nestedFactory, bodyRunner,
-                        depth + 1);
+                        (Value.Table) emptyTable(), layouts, nestedFactory, bodyRunner);
                 }
                 throw new JsonFromFailure("expected "
                     + classDescriptor.canonicalSpecText() + ", got " + raw.actualKind());
@@ -2276,10 +2248,7 @@ public final class ClassOpsExecutor {
     private static String encodeToJson(
             SemanticOp op, ClassLayout layout, Value value,
             Map<ClassId, ClassLayout> layouts, JsonStringifier stringifier,
-            Set<Object> entered, int depth, String fieldPath) {
-        if (depth > JSON_MAX_DEPTH) {
-            throw new JsonToFailure(fieldPath, actualTokenOf(value));
-        }
+            Set<Object> entered, String fieldPath) {
         // The root identity check (K-D10 step 1): the value must be an
         // instance of exactly layout.classId — a wrong identity fails
         // with the carried canonical class atom, any other kind with its
@@ -2325,7 +2294,7 @@ public final class ClassOpsExecutor {
                 String fieldPosition = fieldPathOf(fieldPath, field.name());
 
                 String encoded = encodeField(op, field.descriptor(), fieldValue,
-                    fieldPosition, layouts, stringifier, entered, depth);
+                    fieldPosition, layouts, stringifier, entered);
                 if (!first) {
                     out.append(',');
                 }
@@ -2344,35 +2313,32 @@ public final class ClassOpsExecutor {
     private static String encodeField(
             SemanticOp op, RuntimeDescriptor descriptor, Value value, String fieldPath,
             Map<ClassId, ClassLayout> layouts, JsonStringifier stringifier,
-            Set<Object> entered, int depth) {
-        if (depth > JSON_MAX_DEPTH) {
-            throw new JsonToFailure(fieldPath, actualTokenOf(value));
-        }
+            Set<Object> entered) {
         return switch (descriptor) {
             case RuntimeDescriptor.Null ignored -> {
                 if (!(value instanceof Value.Null)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth, entered);
+                yield seamText(op, stringifier, value, fieldPath, entered);
             }
             case RuntimeDescriptor.Boolean ignored -> {
                 if (!(value instanceof Value.Bool)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth, entered);
+                yield seamText(op, stringifier, value, fieldPath, entered);
             }
             case RuntimeDescriptor.Int ignored -> {
                 if (!(value instanceof Value.Int)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth, entered);
+                yield seamText(op, stringifier, value, fieldPath, entered);
             }
             case RuntimeDescriptor.Number ignored -> {
                 if (!(value instanceof Value.Number) && !(value instanceof Value.Int)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
                 // Nonfinite numbers fail inside the seam (the E8 row).
-                yield seamText(op, stringifier, value, fieldPath, depth, entered);
+                yield seamText(op, stringifier, value, fieldPath, entered);
             }
             case RuntimeDescriptor.String ignored -> {
                 if (!(value instanceof Value.String string)) {
@@ -2383,30 +2349,30 @@ public final class ClassOpsExecutor {
                         FailureProjections.typedBoundaryToken(
                             ActualKind.INVALID_UNICODE, null));
                 }
-                yield seamText(op, stringifier, value, fieldPath, depth, entered);
+                yield seamText(op, stringifier, value, fieldPath, entered);
             }
             case RuntimeDescriptor.Table ignored -> {
                 if (!(value instanceof Value.Table)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                // The seam's own first-failure walk owns the table contents'
-                // depth bound in walk order (the pre-walk selects an earlier
+                // The seam's own first-failure walk owns the table
+                // contents' walk order (the pre-walk selects an earlier
                 // position's carrier/cycle failure first).
-                yield seamText(op, stringifier, value, fieldPath, depth, entered);
+                yield seamText(op, stringifier, value, fieldPath, entered);
             }
             case RuntimeDescriptor.Array arrayDescriptor -> {
                 if (!(value instanceof Value.Array elements)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
                 yield encodeArrayElements(op, arrayDescriptor.element(), elements,
-                    fieldPath, layouts, stringifier, entered, depth);
+                    fieldPath, layouts, stringifier, entered);
             }
             case RuntimeDescriptor.Nullable nullable -> {
                 if (value instanceof Value.Null) {
-                    yield seamText(op, stringifier, value, fieldPath, depth, entered);
+                    yield seamText(op, stringifier, value, fieldPath, entered);
                 }
                 yield encodeField(op, nullable.inner(), value, fieldPath, layouts,
-                    stringifier, entered, depth);
+                    stringifier, entered);
             }
             case RuntimeDescriptor.Class classDescriptor -> {
                 if (value instanceof Value.Null) {
@@ -2428,7 +2394,7 @@ public final class ClassOpsExecutor {
                         + "a producer defect, never executed");
                 }
                 yield encodeToJson(op, nestedLayout, nested, layouts, stringifier,
-                    entered, depth + 1, fieldPath);
+                    entered, fieldPath);
             }
             case RuntimeDescriptor.Bytes ignored -> throw new Defect(
                 "a @jsonable field never carries a bytes descriptor (the checker's "
@@ -2444,13 +2410,12 @@ public final class ClassOpsExecutor {
     private static String encodeArrayElements(
             SemanticOp op, RuntimeDescriptor elementDescriptor, Value.Array elements,
             String fieldPath, Map<ClassId, ClassLayout> layouts,
-            JsonStringifier stringifier, Set<Object> entered, int depth) {
+            JsonStringifier stringifier, Set<Object> entered) {
         // The path-local cycle check over entered array containers (the
         // same needle discipline the emitted Lua/JVM walks apply, and the
         // same identity set the table-subtree seam continues): the
         // needle's own fact selects the cycle arm (never a token
-        // comparison). The array's own depth bound was already applied at
-        // the enclosing field entry, exactly like the emitted walks.
+        // comparison).
         if (!entered.add(elements.array())) {
             throw JsonToFailure.cycle();
         }
@@ -2464,7 +2429,7 @@ public final class ClassOpsExecutor {
                 String elementPath = fieldPath + "[" + i + "]";
                 out.append(encodeField(op, elementDescriptor,
                     elements.array().elementAt(i), elementPath, layouts, stringifier,
-                    entered, depth + 1));
+                    entered));
             }
             out.append(']');
             return out.toString();
@@ -2484,9 +2449,9 @@ public final class ClassOpsExecutor {
      * Lua/JVM walks.
      */
     private static String seamText(SemanticOp op, JsonStringifier stringifier,
-                                   Value value, String fieldPath, int depth,
+                                   Value value, String fieldPath,
                                    Set<Object> entered) {
-        JsonStringify rendered = stringifier.stringify(value, fieldPath, depth, entered);
+        JsonStringify rendered = stringifier.stringify(value, fieldPath, entered);
         return switch (rendered) {
             case JsonStringify.Success success -> success.text().carrier();
             case JsonStringify.Failure failure -> throw failure.cycle()
@@ -2625,14 +2590,9 @@ public final class ClassOpsExecutor {
         }
     }
 
-    private static void boundParsedTableContents(SemanticOp op, Value value, int depth) {
+    private static void boundParsedTableContents(SemanticOp op, Value value) {
         switch (value) {
             case Value.Table table -> {
-                if (depth > JSON_MAX_DEPTH) {
-                    throw new JsonFromFailure("a table field's contents exceed the "
-                        + "pinned walk depth bound " + JSON_MAX_DEPTH
-                        + " (the retained _json_table_shape authority)");
-                }
                 for (String key : table.table().keys()) {
                     SemanticTable.Lookup<Value> lookup = table.table().get(key);
                     if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
@@ -2642,23 +2602,18 @@ public final class ClassOpsExecutor {
                             + "violation is a producer defect, never executed");
                     }
                     requireJsonShape(op, present.value());
-                    boundParsedTableContents(op, present.value(), depth + 1);
+                    boundParsedTableContents(op, present.value());
                 }
             }
             case Value.Array array -> {
-                if (depth > JSON_MAX_DEPTH) {
-                    throw new JsonFromFailure("a table field's contents exceed the "
-                        + "pinned walk depth bound " + JSON_MAX_DEPTH
-                        + " (the retained _json_table_shape authority)");
-                }
                 for (Value element : array.array().elements()) {
                     requireJsonShape(op, element);
-                    boundParsedTableContents(op, element, depth + 1);
+                    boundParsedTableContents(op, element);
                 }
             }
             default -> {
                 // JSON-shaped leaves (validated by requireJsonShape at
-                // every recursion site): no depth level consumed.
+                // every recursion site).
             }
         }
     }

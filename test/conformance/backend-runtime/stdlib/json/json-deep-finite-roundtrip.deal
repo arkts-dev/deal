@@ -1,0 +1,23 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.parse/json.stringify round-trip a finite 600-level nesting without any fixed depth cap (v1.3)
+// @expected: runtime-ok
+// @features: stdlib, json, deep, v1.3
+
+import * as json from "std/json";
+
+export function test_json_deep_finite_roundtrip(): null {
+  let text: string = "1";
+  for (let i: int = 0; i < 600; i = i + 1) {
+    text = "{\"d\":" + text + "}";
+  }
+  let parsed: table = json.parse(text);
+  let out: string = json.stringify(parsed);
+  if (out !== text) {
+    throw { code: "TEST_FAIL", message: "the 600-level nesting must round-trip" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}
