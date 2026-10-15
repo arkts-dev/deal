@@ -3294,6 +3294,167 @@ public class ProjectLoweringTest {
         }
     }
 
+    /**
+     * The combined common-admission dependency check (ISSUE-0819, T1-T4):
+     * the real project is lowered once (T1), every dependency-ordered unit
+     * and the project travel typed -> raw -> text -> raw (T2/T3), the
+     * unchanged content admits on both surfaces, and one module's membership
+     * mutation then rejects with the identical first E6005 on the typed unit,
+     * the unit text, the typed project, the project text and the composed
+     * production admission, while the dumped module text (T4) still shows the
+     * mutation.
+     */
+    private static void testCommonAdmissionMembershipParity(LoweredProject baseline) {
+        System.out.println("-- the common admission over the real transported project: "
+            + "typed/text membership parity (ISSUE-0819) --");
+        SemanticLowerer.ProjectLoweringResult result = baseline.result();
+        ExecutableLoweredProject lowered = result.project();
+        check(lowered != null, "the common-admission fixture lowers: "
+            + result.diagnostics());
+        if (lowered == null) {
+            return;
+        }
+        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+            baseline.project().index().interfaceIndexDigest(),
+            SemanticProfile.DEAL_V1_3_INT32, invocation().capabilityRegistryHash());
+
+        // T1/T2: the dependency-ordered units travel typed -> raw -> text -> raw
+        // and the unchanged content admits on both surfaces.
+        for (LoweredModuleUnit unit : lowered.modules().values()) {
+            RawUnit raw = RawUnit.fromTyped(unit);
+            String text = SemanticIrValidator.toUnitText(unit);
+            RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
+                (CanonicalJson.Obj) CanonicalJson.parse(text));
+            checkEq(raw, reparsed, unit.moduleId() + ": the unit facts round-trip "
+                + "typed -> raw -> text -> raw");
+            check(SemanticIrValidator.validate(unit, facts).isEmpty(),
+                unit.moduleId() + ": the unchanged unit admits on the typed surface");
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                unit.moduleId() + ": the unchanged unit admits on the text surface");
+        }
+        // T3: the project transport keeps the complete project and admits on
+        // both surfaces.
+        String projectText = SemanticIrValidator.toProjectText(lowered);
+        ContractSnapshotCanonicalizer.ParsedProject reparsedProject =
+            ContractSnapshotCanonicalizer.parseProject(
+                (CanonicalJson.Obj) CanonicalJson.parse(projectText));
+        checkEq(lowered.interfaceIndex(), reparsedProject.interfaceIndex(),
+            "the project transport keeps the interface index");
+        checkEq(lowered.classSeeds(), reparsedProject.classSeeds(),
+            "the project transport keeps the class registration seeds");
+        check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+            "the unchanged project admits on the typed surface");
+        check(SemanticIrValidator.validateText(projectText, facts).isEmpty(),
+            "the unchanged project admits on the text surface");
+
+        // The membership mutation: the entry module loses one inverse row
+        // while its block list keeps the op.
+        LoweredModuleUnit targetUnit = lowered.modules().get(APP);
+        check(targetUnit != null, "the entry module is in the closure");
+        if (targetUnit == null) {
+            return;
+        }
+        OpId last = null;
+        for (OpId op : targetUnit.bodyTable().opBlocks().keySet()) {
+            last = op;
+        }
+        final OpId removed = last;
+        check(removed != null, "the entry module carries membership rows");
+        if (removed == null) {
+            return;
+        }
+        Map<OpId, BlockId> inverse = new LinkedHashMap<>(targetUnit.bodyTable().opBlocks());
+        inverse.remove(removed);
+        StructuredBodyTable mutatedTable = new StructuredBodyTable(
+            targetUnit.bodyTable().blockOps(), inverse);
+        LoweredModuleUnit mutated = new LoweredModuleUnit(targetUnit.formatVersion(),
+            targetUnit.semanticProfile(), targetUnit.moduleId(), targetUnit.interfaceHash(),
+            targetUnit.loweringContextHash(), targetUnit.requiredCapabilities(),
+            targetUnit.constructCoverage(), targetUnit.classLayouts(), targetUnit.functions(),
+            targetUnit.moduleInit(), targetUnit.exportPlan(), targetUnit.functionBindings(),
+            targetUnit.ops(), mutatedTable, targetUnit.classFactories(),
+            targetUnit.jsonDefaults(), targetUnit.classBindingFacts());
+
+        String mutatedText = SemanticIrValidator.toUnitText(mutated);
+        RawUnit mutatedReparsed = ContractSnapshotCanonicalizer.parseUnit(
+            (CanonicalJson.Obj) CanonicalJson.parse(mutatedText));
+        checkEq(RawUnit.fromTyped(mutated), mutatedReparsed,
+            "the membership mutation survives typed -> raw -> text -> raw unchanged");
+        check(!mutatedReparsed.bodyTable().opBlocks().containsKey(removed)
+                && mutatedReparsed.bodyTable().blockOps().values().stream()
+                    .anyMatch(ids -> ids.contains(removed)),
+            "the transported mutation keeps the block row and drops the inverse row");
+
+        Optional<CompilerDiagnostic> typedUnit = SemanticIrValidator.validate(mutated, facts);
+        Optional<CompilerDiagnostic> textUnit =
+            SemanticIrValidator.validateText(mutatedText, facts);
+        check(typedUnit.isPresent() && "E6005".equals(typedUnit.get().code())
+                && typedUnit.get().message().contains("CONTROL_BLOCK_TREE")
+                && typedUnit.get().message().contains("no inverse membership entry"),
+            "the mutated unit rejects on the typed surface: "
+                + typedUnit.map(CompilerDiagnostic::message).orElse("admitted"));
+        check(textUnit.isPresent() && textUnit.get().message().contains("CONTROL_BLOCK_TREE")
+                && textUnit.get().message().contains("no inverse membership entry"),
+            "the mutated unit rejects on the unit text surface: "
+                + textUnit.map(CompilerDiagnostic::message).orElse("admitted"));
+        check(typedUnit.isPresent() && textUnit.isPresent()
+                && typedUnit.get().message().equals(textUnit.get().message()),
+            "the mutated unit reports the identical first failure on both surfaces");
+        if (typedUnit.isPresent() && textUnit.isPresent()) {
+            checkEq(typedUnit.get().range(), textUnit.get().range(),
+                "the mutated unit keeps the same failing range on both surfaces");
+        }
+
+        // The mutated project: both admission surfaces reject identically and
+        // expose no project record.
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>(lowered.modules());
+        modules.put(APP, mutated);
+        ExecutableLoweredProject mutatedProject = new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_3_INT32, lowered.interfaceIndex(), modules,
+            lowered.entryModule(), lowered.classSeeds());
+        Optional<CompilerDiagnostic> typedProject =
+            SemanticIrValidator.validate(mutatedProject, facts);
+        Optional<CompilerDiagnostic> textProject = SemanticIrValidator.validateText(
+            SemanticIrValidator.toProjectText(mutatedProject), facts);
+        check(typedProject.isPresent() && textProject.isPresent(),
+            "the mutated project rejects on both project surfaces");
+        check(typedProject.isPresent() && textProject.isPresent()
+                && typedProject.get().message().equals(textProject.get().message()),
+            "the mutated project reports the identical first failure on both surfaces");
+        if (typedUnit.isPresent() && typedProject.isPresent() && textProject.isPresent()) {
+            checkEq(typedUnit.get().message(), typedProject.get().message(),
+                "the unit and project admissions report the identical first failure");
+            checkEq(typedUnit.get().range(), typedProject.get().range(),
+                "the unit and project admissions keep the same failing range");
+            checkEq(typedProject.get().range(), textProject.get().range(),
+                "the typed and text project admissions keep the same failing range");
+        }
+
+        // The composed production admission (the lowering entry's own chain)
+        // rejects the same mutation with the same first failure and produces
+        // no companion view.
+        Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
+            mutatedTable, facts, mutated.classBindingFacts(), mutated.classFactories(),
+            mutated.jsonDefaults(), lowered.interfaceIndex().modules().get(APP), Map.of(),
+            lowered.classSeeds().registrations());
+        check(composed.isPresent() && typedUnit.isPresent()
+                && composed.get().message().equals(typedUnit.get().message()),
+            "the composed typed production admission rejects the mutation with the same "
+                + "first failure: " + composed.map(CompilerDiagnostic::message).orElse("admitted"));
+
+        // T4: the module dump still shows the mutation, and the unmutated dump
+        // differs from it.
+        String dumped = SemanticIrDumper.dumpModuleText(mutated);
+        RawUnit dumpedUnit = ContractSnapshotCanonicalizer.parseUnit(
+            (CanonicalJson.Obj) CanonicalJson.parse(dumped));
+        check(!dumpedUnit.bodyTable().opBlocks().containsKey(removed)
+                && dumpedUnit.bodyTable().blockOps().values().stream()
+                    .anyMatch(ids -> ids.contains(removed)),
+            "the dumped module text still shows the membership mutation");
+        check(!dumped.equals(SemanticIrDumper.dumpModuleText(targetUnit)),
+            "the dumped module text differs from the unmutated dump");
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Project Lowering Entry Tests (ISSUE-0634) ===\n");
         RealProject project = null;
@@ -3308,6 +3469,7 @@ public class ProjectLoweringTest {
             testNamespaceRegistrationFailureOrigins(baseline);
             testComposedChainOverUnifiedUnits(baseline);
             testCompleteProjectTransportAndDumpReassembly(baseline);
+            testCommonAdmissionMembershipParity(baseline);
             testInProjectClassArm();
             importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,
                 Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());

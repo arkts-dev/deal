@@ -808,14 +808,18 @@ public final class SemanticLowerer {
     }
 
     /**
-     * The first two closed gates of a produced unit (the 14-rule unit
-     * validator and the address-chain protocol, in order): empty on
-     * pass, otherwise the first E6005 as a failed {@link LoweringResult}.
+     * The first two closed gates of a produced unit (the common-admission
+     * head — the 14-rule unit validator with the dynamic/layout
+     * correlations and the plan links — and the address-chain protocol, in
+     * order): empty on pass, otherwise the first E6005 as a failed
+     * {@link LoweringResult}. The head deliberately excludes the
+     * control-flow owner: the composed per-module order runs it after the
+     * address-chain protocol (see {@link #finishLowering}), never twice.
      */
     private static Optional<LoweringResult> validateUnitGates(
             LoweredModuleUnit unit, String interfaceHash,
             String capabilityRegistryHash) {
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
@@ -967,10 +971,10 @@ public final class SemanticLowerer {
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash);
-        // E5 production-time checks (A-D1/C-D2): the closed validator,
-        // the address-chain protocol, and the block-membership table's
-        // control-flow validator, in order; the first violation is the
-        // returned E6005.
+        // E5 production-time checks (A-D1/C-D2): the common-admission
+        // head, the address-chain protocol, and the block-membership
+        // table's control-flow validator, in order; the first violation is
+        // the returned E6005.
         return finishLowering(lowerer, unit, interfaceHash, capabilityRegistryHash);
     }
 
@@ -1298,13 +1302,17 @@ public final class SemanticLowerer {
                 inProjectFactoryFacts);
         }
 
-        // (5) The project-form gate over the complete closure. The project
-        // owns the produced class registration seeds; the lowering result's
-        // seed view is exactly that record.
+        // (5) The project-form gate over the complete closure: the
+        // common-admission head of every module plus the project class
+        // facts, without re-running the per-module owners whose declared
+        // slots (address chain, control flow, bindings, class
+        // construction) the module walk already composed in order. The
+        // project owns the produced class registration seeds; the lowering
+        // result's seed view is exactly that record.
         ExecutableLoweredProject project = new ExecutableLoweredProject(
             SemanticProfile.DEAL_V1_3_INT32, interfaceIndex, units,
             checkedProject.entryModule(), seeds.seeds());
-        Optional<CompilerDiagnostic> projectGate = SemanticIrValidator.validate(
+        Optional<CompilerDiagnostic> projectGate = SemanticIrValidator.validateProjectHead(
             project, comparisonFacts);
         if (projectGate.isPresent()) {
             return projectFailureResult(List.of(projectGate.get()));
@@ -1481,6 +1489,14 @@ public final class SemanticLowerer {
             jsonDefaults, ownInterface, sharedFactories, Map.of());
     }
 
+    /**
+     * The composed per-module production admission, in the pinned order:
+     * the common-admission head ({@link SemanticIrValidator#validateUnitHead}),
+     * {@link AddressChainProtocol}, the control-flow owner over the produced
+     * block table, the bindings-production owner and the class-construction
+     * owner. Each owner runs exactly once; the returned diagnostic is the
+     * first failure of that order.
+     */
     public static Optional<CompilerDiagnostic> validateProjectUnit(
             LoweredModuleUnit unit,
             StructuredBodyTable table,
@@ -1502,7 +1518,7 @@ public final class SemanticLowerer {
         Objects.requireNonNull(declarationClasses,
             "declarationClasses must not be null");
         Optional<CompilerDiagnostic> validation =
-            SemanticIrValidator.validate(unit, facts);
+            SemanticIrValidator.validateUnitHead(unit, facts);
         if (validation.isPresent()) {
             return validation;
         }
@@ -1732,7 +1748,7 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
@@ -1789,7 +1805,7 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
@@ -1849,7 +1865,7 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
@@ -1913,7 +1929,7 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
@@ -1978,7 +1994,7 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
@@ -2043,7 +2059,7 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
@@ -2152,7 +2168,7 @@ public final class SemanticLowerer {
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {

@@ -1,8 +1,11 @@
 package deal.semantic;
 
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BlockId;
+import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
@@ -11,12 +14,17 @@ import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringFailureDetail;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.RawBinding;
+import deal.semantic.ir.RawOp;
+import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.StructuredBodyTable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +33,30 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+/**
+ * The block-tree and exit authority of {@code deal.semantic-ir/2}
+ * (C-D1/C-D2): one semantic rule set over the complete unit facts, shared
+ * by the typed record surface and the raw surface.
+ *
+ * <p>The owner consumes {@link #validate(LoweredModuleUnit,
+ * StructuredBodyTable)} (the typed production path) and {@link
+ * #validate(RawUnit)} (the complete raw facts of the common admission, so
+ * the text surface applies exactly the same predicates to the same
+ * content). Both entries build one neutral fact view — op order, payload
+ * block positions, roots, function bodies, lowered-body bindings, and the
+ * dynamic-invocation cell records — and run the same checks with the same
+ * messages, so a membership mutation cannot disappear in a typed/raw
+ * projection.</p>
+ *
+ * <p>The checks are unchanged: the exact-inverse membership of
+ * {@code bodyTable.blockOps}/{@code opBlocks}, the produced-op and unique
+ * ordered membership rules, the function/init/control/default root
+ * existence rules, the tree shape and acyclicity rules, the control
+ * ownership/exits rules, and the two exemptions the pinned contract keeps
+ * — the five module-level kinds ({@code MODULE_INIT|EXTERNAL_ENTRY|
+ * CLASS_FACTORY|CALLBACK_INVOKE|ENTRY_INVOKE}) and the invocation-owned
+ * RETURN records of a dynamic call's recorded DEAL-body cell.</p>
+ */
 public final class ControlFlowValidator {
 
     /** The block-tree/membership rule (C-D2 a). */
@@ -44,12 +76,17 @@ public final class ControlFlowValidator {
         SemanticOpKind.CLASS_FACTORY,
         SemanticOpKind.CALLBACK_INVOKE,
         SemanticOpKind.ENTRY_INVOKE);
+
     private ControlFlowValidator() {
         // Static surface; no instances.
     }
 
+    // =========================================================================
+    // Public surface
+    // =========================================================================
+
     /**
-     * Validates one unit plus its block-membership table against the
+     * Validates one typed unit plus its block-membership table against the
      * pinned block-tree and exit checks. Returns empty on
      * pass and exactly one E6005 diagnostic naming the first failing rule
      * on failure. No mutation; deterministic; linear in ops plus block
@@ -60,19 +97,46 @@ public final class ControlFlowValidator {
                                                         StructuredBodyTable table) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
-        Context context = Context.build(unit, table);
-        Optional<CompilerDiagnostic> failure = checkBlockTree(context);
+        return validate(Facts.ofTyped(unit, table));
+    }
+
+    /**
+     * Validates one complete raw unit — the shared fact model of the typed
+     * and text admission surfaces — against exactly the same block-tree and
+     * exit checks as the typed entry. The raw view extracts the payload
+     * block positions, roots, function bodies, lowered-body bindings and
+     * dynamic-invocation cell records from the transported content; a
+     * mutation a typed projection could hide reaches the same rule with the
+     * same message and range here.
+     *
+     * <p>The composed admission runs this owner after the closed rule
+     * engine, so a unit whose carried profile is outside the closed set has
+     * already failed R-ENUM/R-PROFILE: this owner then reports no control
+     * failure rather than naming a profile it cannot truthfully derive.</p>
+     *
+     */
+    public static Optional<CompilerDiagnostic> validate(RawUnit unit) {
+        Objects.requireNonNull(unit, "unit must not be null");
+        SemanticProfile profile = profileByName(unit.semanticProfile());
+        if (profile == null) {
+            return Optional.empty();
+        }
+        return validate(Facts.ofRaw(unit, profile));
+    }
+
+    private static Optional<CompilerDiagnostic> validate(Facts facts) {
+        Optional<CompilerDiagnostic> failure = checkBlockTree(facts);
         if (failure.isPresent()) {
             return failure;
         }
-        return checkExits(context);
+        return checkExits(facts);
     }
 
     // =========================================================================
     // E6005 construction (registry-owned; no hand-crafted message)
     // =========================================================================
 
-    private static Optional<CompilerDiagnostic> fail(Context ctx, String rule, String what) {
+    private static Optional<CompilerDiagnostic> fail(Facts ctx, String rule, String what) {
         return fail(ctx, rule, what, null);
     }
 
@@ -81,88 +145,304 @@ public final class ControlFlowValidator {
      * that op's own source origin as its range (never a guessed anchor); a
      * rule with no offending op keeps the canonical synthetic range.
      */
-    private static Optional<CompilerDiagnostic> fail(Context ctx, String rule, String what,
-                                                     SemanticOp op) {
+    private static Optional<CompilerDiagnostic> fail(Facts ctx, String rule, String what,
+                                                     OpView op) {
         LoweringFailureDetail detail = new LoweringFailureDetail(
-            ctx.unit.moduleId().path(),
+            ctx.modulePath,
             SemanticCapability.EVALUATION_ORDER,
             rule,
-            ctx.unit.semanticProfile(),
+            ctx.profile,
             LoweredModuleUnit.FORMAT_VERSION,
             "ControlFlowValidator " + rule + " (" + what + ")");
         return Optional.of(op == null
             ? FailureContractRegistry.e6005(detail)
-            : FailureContractRegistry.e6005(detail, op.origin().span().range()));
+            : FailureContractRegistry.e6005(detail, op.range()));
     }
 
     // =========================================================================
-    // Context: the deterministic per-pass view of unit + table
+    // The neutral fact view: typed and raw units feed these same fields
     // =========================================================================
 
-    private static final class Context {
+    /**
+     * One op's membership-relevant facts: the semantic link the tree
+     * consumes ({@code parentOpId}), the payload block positions, the
+     * retained origin range, and the exit facts (loop target, RETURN
+     * function and enclosing invocation) as closed/raw positions.
+     */
+    private record OpView(
+        OpId opId,
+        SemanticOpKind kind,
+        OpId parentOpId,
+        List<BlockId> controlPositions,
+        List<BlockId> foreignPositions,
+        DiagnosticRange range,
+        OpId loopId,
+        FunctionId returnFunction,
+        OpId enclosingInvocationOpId,
+        OpId dynamicCellOpId
+    ) {
 
-        final LoweredModuleUnit unit;
+        OpView {
+            Objects.requireNonNull(opId, "opId must not be null");
+            Objects.requireNonNull(controlPositions, "controlPositions must not be null");
+            Objects.requireNonNull(foreignPositions, "foreignPositions must not be null");
+            Objects.requireNonNull(range, "range must not be null");
+        }
+    }
+
+    /** One lowered-body binding's function identity and body block. */
+    private record BodyRef(FunctionId functionId, BlockId blockId) {
+
+        BodyRef {
+            Objects.requireNonNull(functionId, "functionId must not be null");
+            Objects.requireNonNull(blockId, "blockId must not be null");
+        }
+    }
+
+    private static final class Facts {
+
+        final String modulePath;
+        final SemanticProfile profile;
         final StructuredBodyTable table;
-        final Map<OpId, SemanticOp> unitOps;
+        final List<OpView> ops;
+        final Map<OpId, OpView> unitOps;
         final Set<BlockId> roots;
-        final Map<OpId, List<BlockId>> controlPositions;
-        final Map<OpId, List<BlockId>> foreignPositions;
+        final BlockId initBlock;
+        final Map<FunctionId, BlockId> functionBodies;
+        final List<BodyRef> loweredBodies;
         final Set<BlockId> foreignReferenced;
-        final Map<BlockId, SemanticOp> referencing;
-        final Map<BlockId, Integer> referenceCount;
-        final Map<BlockId, List<SemanticOp>> enclosingCache;
-        final Map<BlockId, BlockId> terminalCache;
+        final Map<BlockId, OpView> referencing = new LinkedHashMap<>();
+        final Map<BlockId, Integer> referenceCount = new LinkedHashMap<>();
+        final Map<BlockId, List<OpView>> enclosingCache = new LinkedHashMap<>();
+        final Map<BlockId, BlockId> terminalCache = new LinkedHashMap<>();
         final Set<OpId> callOwnedReturns;
 
-        Context(LoweredModuleUnit unit, StructuredBodyTable table, Map<OpId, SemanticOp> unitOps,
-                Set<BlockId> roots, Map<OpId, List<BlockId>> controlPositions,
-                Map<OpId, List<BlockId>> foreignPositions, Set<BlockId> foreignReferenced,
-                Map<BlockId, SemanticOp> referencing, Map<BlockId, Integer> referenceCount,
-                Map<BlockId, List<SemanticOp>> enclosingCache,
-                Map<BlockId, BlockId> terminalCache, Set<OpId> callOwnedReturns) {
-            this.unit = unit;
+        Facts(String modulePath, SemanticProfile profile, StructuredBodyTable table,
+              List<OpView> ops, Set<BlockId> roots, BlockId initBlock,
+              Map<FunctionId, BlockId> functionBodies,
+              List<BodyRef> loweredBodies, Set<BlockId> foreignReferenced) {
+            this.modulePath = modulePath;
+            this.profile = profile;
             this.table = table;
-            this.unitOps = unitOps;
-            this.roots = roots;
-            this.controlPositions = controlPositions;
-            this.foreignPositions = foreignPositions;
-            this.foreignReferenced = foreignReferenced;
-            this.referencing = referencing;
-            this.referenceCount = referenceCount;
-            this.enclosingCache = enclosingCache;
-            this.terminalCache = terminalCache;
-            this.callOwnedReturns = callOwnedReturns;
+            this.ops = List.copyOf(ops);
+            this.roots = Set.copyOf(roots);
+            this.initBlock = initBlock;
+            // The declared-function map keeps the producer order of the
+            // transported facts: the root-existence rule reports the
+            // first missing body in that order, so `Map.copyOf` (hash
+            // slot iteration) must not replace it.
+            this.functionBodies = Collections.unmodifiableMap(
+                new LinkedHashMap<>(functionBodies));
+            this.loweredBodies = List.copyOf(loweredBodies);
+            Map<OpId, OpView> byId = new LinkedHashMap<>();
+            for (OpView op : this.ops) {
+                byId.put(op.opId(), op);
+            }
+            this.unitOps = byId;
+            Set<BlockId> referenced = new LinkedHashSet<>(foreignReferenced);
+            for (OpView op : this.ops) {
+                referenced.addAll(op.foreignPositions());
+            }
+            this.foreignReferenced = referenced;
+            this.callOwnedReturns = callOwnedReturnRecords(this.unitOps);
         }
 
-        static Context build(LoweredModuleUnit unit, StructuredBodyTable table) {
-            Map<OpId, SemanticOp> unitOps = new LinkedHashMap<>();
+        static Facts ofTyped(LoweredModuleUnit unit, StructuredBodyTable table) {
+            List<OpView> ops = new ArrayList<>();
             for (SemanticOp op : unit.ops()) {
-                unitOps.put(op.opId(), op);
+                ops.add(typedView(op));
             }
             Set<BlockId> roots = new LinkedHashSet<>();
-            for (LoweredFunction function : unit.functions().values()) {
+            Map<FunctionId, BlockId> functionBodies = new LinkedHashMap<>();
+            for (Map.Entry<FunctionId, LoweredFunction> entry : unit.functions().entrySet()) {
+                LoweredFunction function = entry.getValue();
                 roots.add(function.body());
+                functionBodies.put(entry.getKey(), function.body());
             }
             roots.add(unit.moduleInit().initBlock());
-
-            Map<OpId, List<BlockId>> controlPositions = new LinkedHashMap<>();
-            Map<OpId, List<BlockId>> foreignPositions = new LinkedHashMap<>();
+            List<BodyRef> loweredBodies = new ArrayList<>();
             Set<BlockId> foreignReferenced = new LinkedHashSet<>();
-            for (SemanticOp op : unit.ops()) {
-                controlPositions.put(op.opId(), List.copyOf(controlPositionsOf(op)));
-                List<BlockId> foreign = foreignPositionsOf(op);
-                foreignPositions.put(op.opId(), List.copyOf(foreign));
-                foreignReferenced.addAll(foreign);
-            }
             for (FunctionExecutionBinding binding : unit.functionBindings().values()) {
                 if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
+                    loweredBodies.add(new BodyRef(body.functionId(), body.blockId()));
                     foreignReferenced.add(body.blockId());
                 }
             }
-            Set<OpId> callOwnedReturns = callOwnedReturnRecords(unitOps);
-            return new Context(unit, table, unitOps, roots, controlPositions, foreignPositions,
-                foreignReferenced, new LinkedHashMap<>(), new LinkedHashMap<>(),
-                new LinkedHashMap<>(), new LinkedHashMap<>(), callOwnedReturns);
+            return new Facts(unit.moduleId().path(), unit.semanticProfile(), table, ops,
+                roots, unit.moduleInit().initBlock(), functionBodies, loweredBodies,
+                foreignReferenced);
+        }
+
+        static Facts ofRaw(RawUnit unit, SemanticProfile profile) {
+            List<OpView> ops = new ArrayList<>();
+            for (RawOp op : unit.ops()) {
+                ops.add(rawView(op));
+            }
+            Set<BlockId> roots = new LinkedHashSet<>();
+            Map<FunctionId, BlockId> functionBodies = new LinkedHashMap<>();
+            for (RawUnit.RawFunction function : unit.functions()) {
+                roots.add(function.body());
+                functionBodies.put(function.key(), function.body());
+            }
+            roots.add(unit.moduleInit().initBlock());
+            List<BodyRef> loweredBodies = new ArrayList<>();
+            Set<BlockId> foreignReferenced = new LinkedHashSet<>();
+            for (RawBinding binding : unit.bindings()) {
+                if ("loweredBody".equals(binding.shape()) && binding.functionId() != null
+                        && binding.blockId() != null) {
+                    loweredBodies.add(new BodyRef(binding.functionId(), binding.blockId()));
+                    foreignReferenced.add(binding.blockId());
+                }
+            }
+            return new Facts(unit.modulePath(), profile, unit.bodyTable(), ops, roots,
+                unit.moduleInit().initBlock(), functionBodies, loweredBodies, foreignReferenced);
+        }
+
+        /** The typed op's membership-relevant facts (the existing producers' records). */
+        private static OpView typedView(SemanticOp op) {
+            OpId loopId = null;
+            FunctionId returnFunction = null;
+            OpId enclosingInvocationOpId = null;
+            switch (op.payload()) {
+                case KindPayload.BreakPayload payload -> loopId = payload.loopId();
+                case KindPayload.ContinuePayload payload -> loopId = payload.loopId();
+                case KindPayload.ReturnPayload payload -> {
+                    returnFunction = payload.function();
+                    enclosingInvocationOpId = payload.enclosingInvocationOpId();
+                }
+                default -> {
+                    // No exit positions.
+                }
+            }
+            return new OpView(op.opId(), op.kind(), op.origin().parentOpId(),
+                controlPositionsOf(op), foreignPositionsOf(op), op.origin().span().range(),
+                loopId, returnFunction, enclosingInvocationOpId, dynamicCellOf(op));
+        }
+
+        /** The dynamic invocation's recorded DEAL-body cell, or {@code null}. */
+        private static OpId dynamicCellOf(SemanticOp op) {
+            if (op.payload() instanceof KindPayload.CallPayload call
+                    && call.callee() instanceof KindPayload.CallCallee.Dynamic
+                    && call.dynamicReturnBoundary() != null) {
+                return call.dynamicReturnBoundary().dealBodyBoundaryOpId();
+            }
+            if (op.payload() instanceof KindPayload.AsyncStartPayload start
+                    && start.callee() instanceof KindPayload.CallCallee.Dynamic
+                    && start.returnBoundaryOpId() != null) {
+                return start.returnBoundaryOpId();
+            }
+            return null;
+        }
+
+        /** The raw op's membership-relevant facts (the transported closed payload mapping). */
+        private static OpView rawView(RawOp op) {
+            SemanticOpKind kind = enumByName(SemanticOpKind.class, op.kind());
+            CanonicalJson.Obj payload = op.payload();
+            List<BlockId> control = new ArrayList<>(2);
+            List<BlockId> foreign = new ArrayList<>(1);
+            OpId loopId = null;
+            FunctionId returnFunction = null;
+            OpId enclosingInvocationOpId = null;
+            if (kind == SemanticOpKind.BRANCH) {
+                addOptional(control, payload, "selectedBlock");
+                addOptional(control, payload, "alternateBlock");
+            } else if (kind == SemanticOpKind.LOOP) {
+                addOptional(control, payload, "initBlock");
+                addOptional(control, payload, "bodyBlock");
+                addOptional(control, payload, "updateBlock");
+            } else if (kind == SemanticOpKind.FOR_EACH) {
+                addOptional(control, payload, "body");
+            } else if (kind == SemanticOpKind.TRY_CATCH) {
+                addOptional(control, payload, "tryBlock");
+                addOptional(control, payload, "catchBlock");
+            } else if (kind == SemanticOpKind.BINDING_ALLOC) {
+                addOptional(foreign, payload, "scope");
+            } else if (kind == SemanticOpKind.CALL) {
+                addOptional(foreign, payload, "bodyBlock");
+            } else if (kind == SemanticOpKind.CLASS_DEFAULT) {
+                addOptional(foreign, payload, "defaultBlock");
+            } else if (kind == SemanticOpKind.FUNCTION_ADAPT) {
+                CanonicalJson.Value source = ContractSnapshotCanonicalizer
+                    .payloadValue(payload, "source");
+                if (source instanceof CanonicalJson.Obj sourceObj
+                        && "thunk".equals(ContractSnapshotCanonicalizer
+                            .optionalString(sourceObj, "type"))) {
+                    addOptional(foreign, sourceObj, "blockId");
+                }
+            } else if (kind == SemanticOpKind.MODULE_INIT) {
+                addOptional(foreign, payload, "initBlock");
+            } else if (kind == SemanticOpKind.BREAK || kind == SemanticOpKind.CONTINUE) {
+                loopId = ContractSnapshotCanonicalizer.parseOptionalOpId(payload, "loopId");
+            } else if (kind == SemanticOpKind.RETURN) {
+                returnFunction = parseFunctionId(payload, "function");
+                enclosingInvocationOpId = ContractSnapshotCanonicalizer
+                    .parseOptionalOpId(payload, "enclosingInvocationOpId");
+            }
+            return new OpView(op.opId(), kind, op.parentOpId(), control, foreign,
+                op.origin().diagnosticRange(), loopId, returnFunction,
+                enclosingInvocationOpId, dynamicCellOf(op));
+        }
+
+        /** The dynamic invocation's recorded DEAL-body cell, or {@code null}. */
+        private static OpId dynamicCellOf(RawOp op) {
+            SemanticOpKind kind = enumByName(SemanticOpKind.class, op.kind());
+            CanonicalJson.Obj payload = op.payload();
+            if (kind == SemanticOpKind.CALL && isDynamicCallee(payload)) {
+                CanonicalJson.Value boundary = ContractSnapshotCanonicalizer
+                    .payloadValue(payload, "dynamicReturnBoundary");
+                if (boundary instanceof CanonicalJson.Obj record) {
+                    return ContractSnapshotCanonicalizer.parseOptionalOpId(record,
+                        "dealBodyBoundaryOpId");
+                }
+                return null;
+            }
+            if (kind == SemanticOpKind.ASYNC_START && isDynamicCallee(payload)) {
+                return ContractSnapshotCanonicalizer.parseOptionalOpId(payload,
+                    "returnBoundaryOpId");
+            }
+            return null;
+        }
+
+        private static boolean isDynamicCallee(CanonicalJson.Obj payload) {
+            CanonicalJson.Value callee = ContractSnapshotCanonicalizer
+                .payloadValue(payload, "callee");
+            return callee instanceof CanonicalJson.Obj calleeObj
+                && "dynamic".equals(ContractSnapshotCanonicalizer
+                    .optionalString(calleeObj, "type"));
+        }
+
+        /** Parses one optional block position ({@code null} when absent or malformed). */
+        private static void addOptional(List<BlockId> blocks, CanonicalJson.Obj payload,
+                                        String key) {
+            BlockId block = parseOptionalBlockId(payload, key);
+            if (block != null) {
+                blocks.add(block);
+            }
+        }
+
+        private static BlockId parseOptionalBlockId(CanonicalJson.Obj payload, String key) {
+            CanonicalJson.Value value = ContractSnapshotCanonicalizer.payloadValue(payload, key);
+            if (!(value instanceof CanonicalJson.Obj idObj)) {
+                return null;
+            }
+            try {
+                return ContractSnapshotCanonicalizer.parseBlockId(idObj);
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+
+        private static FunctionId parseFunctionId(CanonicalJson.Obj payload, String key) {
+            CanonicalJson.Value value = ContractSnapshotCanonicalizer
+                .payloadValue(payload, key);
+            if (!(value instanceof CanonicalJson.Obj idObj)) {
+                return null;
+            }
+            try {
+                return ContractSnapshotCanonicalizer.parseFunctionId(idObj);
+            } catch (RuntimeException e) {
+                return null;
+            }
         }
 
         /**
@@ -171,15 +451,15 @@ public final class ControlFlowValidator {
          * outermost, memoized per block (linear across all queries).
          * A root or foreign-owned block has an empty list.
          */
-        List<SemanticOp> enclosingOps(BlockId block) {
-            List<SemanticOp> cached = enclosingCache.get(block);
+        List<OpView> enclosingOps(BlockId block) {
+            List<OpView> cached = enclosingCache.get(block);
             if (cached != null) {
                 return cached;
             }
             List<BlockId> path = new ArrayList<>();
             BlockId current = block;
             while (!enclosingCache.containsKey(current)) {
-                SemanticOp ref = referencing.get(current);
+                OpView ref = referencing.get(current);
                 if (ref == null) {
                     break;
                 }
@@ -190,14 +470,14 @@ public final class ControlFlowValidator {
                 }
                 current = parent;
             }
-            List<SemanticOp> acc = enclosingCache.get(current);
+            List<OpView> acc = enclosingCache.get(current);
             if (acc == null) {
                 acc = List.of();
             }
-            List<SemanticOp> result = acc;
+            List<OpView> result = acc;
             for (int i = path.size() - 1; i >= 0; i--) {
                 BlockId onPath = path.get(i);
-                List<SemanticOp> accCopy = new ArrayList<>(acc);
+                List<OpView> accCopy = new ArrayList<>(acc);
                 accCopy.add(referencing.get(onPath));
                 acc = accCopy;
                 enclosingCache.put(onPath, List.copyOf(acc));
@@ -225,7 +505,7 @@ public final class ControlFlowValidator {
             List<BlockId> path = new ArrayList<>();
             BlockId current = block;
             while (terminalCache.get(current) == null) {
-                SemanticOp ref = referencing.get(current);
+                OpView ref = referencing.get(current);
                 if (ref == null) {
                     break;
                 }
@@ -249,43 +529,28 @@ public final class ControlFlowValidator {
         }
     }
 
-    private static Set<OpId> callOwnedReturnRecords(Map<OpId, SemanticOp> unitOps) {
+    private static Set<OpId> callOwnedReturnRecords(Map<OpId, OpView> unitOps) {
         Set<OpId> records = new LinkedHashSet<>();
-        for (SemanticOp op : unitOps.values()) {
-            switch (op.payload()) {
-                case KindPayload.CallPayload call -> {
-                    if (call.callee() instanceof KindPayload.CallCallee.Dynamic
-                            && call.dynamicReturnBoundary() != null) {
-                        collectCallOwnedReturn(records, unitOps, op.opId(),
-                            call.dynamicReturnBoundary().dealBodyBoundaryOpId());
-                    }
-                }
-                case KindPayload.AsyncStartPayload start -> {
-                    if (start.callee() instanceof KindPayload.CallCallee.Dynamic) {
-                        collectCallOwnedReturn(records, unitOps, op.opId(),
-                            start.returnBoundaryOpId());
-                    }
-                }
-                default -> {
-                    // Not a dynamic invocation shape.
-                }
+        for (OpView op : unitOps.values()) {
+            if (op.dynamicCellOpId() == null) {
+                continue;
             }
+            collectCallOwnedReturn(records, unitOps, op.opId(), op.dynamicCellOpId());
         }
         return records;
     }
 
     /** Adds one dynamic invocation's recorded cell's parent RETURN record, when it matches. */
     private static void collectCallOwnedReturn(Set<OpId> records,
-                                               Map<OpId, SemanticOp> unitOps,
+                                               Map<OpId, OpView> unitOps,
                                                OpId invocationOpId, OpId cellOpId) {
-        SemanticOp cell = cellOpId == null ? null : unitOps.get(cellOpId);
-        if (cell == null || cell.origin() == null || cell.origin().parentOpId() == null) {
+        OpView cell = cellOpId == null ? null : unitOps.get(cellOpId);
+        if (cell == null || cell.parentOpId() == null) {
             return;
         }
-        SemanticOp parent = unitOps.get(cell.origin().parentOpId());
+        OpView parent = unitOps.get(cell.parentOpId());
         if (parent == null || parent.kind() != SemanticOpKind.RETURN
-                || !(parent.payload() instanceof KindPayload.ReturnPayload returned)
-                || !invocationOpId.equals(returned.enclosingInvocationOpId())) {
+                || !invocationOpId.equals(parent.enclosingInvocationOpId())) {
             return;
         }
         records.add(parent.opId());
@@ -357,7 +622,7 @@ public final class ControlFlowValidator {
     // Block tree (C-D2 a): membership + tree shape
     // =========================================================================
 
-    private static Optional<CompilerDiagnostic> checkBlockTree(Context ctx) {
+    private static Optional<CompilerDiagnostic> checkBlockTree(Facts ctx) {
         Optional<CompilerDiagnostic> failure;
 
         // Membership: every op listed in the table is a produced op of the unit.
@@ -416,34 +681,33 @@ public final class ControlFlowValidator {
         }
 
         // Root existence: unit-record blocks are blocks of the table.
-        for (LoweredFunction function : ctx.unit.functions().values()) {
-            if (!ctx.table.blockOps().containsKey(function.body())) {
-                return fail(ctx, CONTROL_BLOCK_TREE, "the body block " + function.body()
-                    + " of function " + function.functionId() + " is not a block of the table");
+        for (Map.Entry<FunctionId, BlockId> entry : ctx.functionBodies.entrySet()) {
+            if (!ctx.table.blockOps().containsKey(entry.getValue())) {
+                return fail(ctx, CONTROL_BLOCK_TREE, "the body block " + entry.getValue()
+                    + " of function " + entry.getKey() + " is not a block of the table");
             }
         }
-        if (!ctx.table.blockOps().containsKey(ctx.unit.moduleInit().initBlock())) {
+        if (!ctx.table.blockOps().containsKey(ctx.initBlock)) {
             return fail(ctx, CONTROL_BLOCK_TREE, "the module init block "
-                + ctx.unit.moduleInit().initBlock() + " is not a block of the table");
+                + ctx.initBlock + " is not a block of the table");
         }
-        for (FunctionExecutionBinding binding : ctx.unit.functionBindings().values()) {
-            if (binding instanceof FunctionExecutionBinding.LoweredBody body
-                    && !ctx.table.blockOps().containsKey(body.blockId())) {
+        for (BodyRef body : ctx.loweredBodies) {
+            if (!ctx.table.blockOps().containsKey(body.blockId())) {
                 return fail(ctx, CONTROL_BLOCK_TREE, "the body block " + body.blockId()
                     + " of binding " + body.functionId() + " is not a block of the table");
             }
         }
 
         // Payload-block existence: every payload-referenced BlockId exists.
-        for (SemanticOp op : ctx.unit.ops()) {
-            for (BlockId block : ctx.controlPositions.get(op.opId())) {
+        for (OpView op : ctx.ops) {
+            for (BlockId block : op.controlPositions()) {
                 if (!ctx.table.blockOps().containsKey(block)) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "payload of op " + op.opId()
                         + " references block " + block + " which is not a block of the table",
                         op);
                 }
             }
-            for (BlockId block : ctx.foreignPositions.get(op.opId())) {
+            for (BlockId block : op.foreignPositions()) {
                 if (!ctx.table.blockOps().containsKey(block)) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "payload of op " + op.opId()
                         + " references block " + block + " which is not a block of the table",
@@ -453,8 +717,8 @@ public final class ControlFlowValidator {
         }
 
         // Tree shape: structure-op membership, root references, double references.
-        for (SemanticOp op : ctx.unit.ops()) {
-            for (BlockId child : ctx.controlPositions.get(op.opId())) {
+        for (OpView op : ctx.ops) {
+            for (BlockId child : op.controlPositions()) {
                 if (!ctx.table.opBlocks().containsKey(op.opId())) {
                     return fail(ctx, CONTROL_BLOCK_TREE, "control structure op " + op.opId()
                         + " referencing child block " + child + " is not a member of any block",
@@ -477,7 +741,12 @@ public final class ControlFlowValidator {
             }
         }
 
-        for (SemanticOp op : ctx.unit.ops()) {
+        for (OpView op : ctx.ops) {
+            if (op.kind() == null) {
+                // R-ENUM owns an out-of-set op kind; the control owner reports
+                // no membership failure for a kind it cannot classify.
+                continue;
+            }
             if (!MODULE_LEVEL_KINDS.contains(op.kind())
                     && !ctx.callOwnedReturns.contains(op.opId())
                     && !ctx.table.opBlocks().containsKey(op.opId())) {
@@ -507,7 +776,7 @@ public final class ControlFlowValidator {
             List<BlockId> path = new ArrayList<>();
             BlockId current = start;
             while (status.getOrDefault(current, 0) == 0) {
-                SemanticOp ref = ctx.referencing.get(current);
+                OpView ref = ctx.referencing.get(current);
                 if (ref == null) {
                     // A terminal block (a root or a foreign-owned leaf): no edge.
                     status.put(current, 2);
@@ -533,13 +802,10 @@ public final class ControlFlowValidator {
     // Exits (C-D2 c): loop targets and RETURN function containment
     // =========================================================================
 
-    private static Optional<CompilerDiagnostic> checkExits(Context ctx) {
-        for (SemanticOp op : ctx.unit.ops()) {
+    private static Optional<CompilerDiagnostic> checkExits(Facts ctx) {
+        for (OpView op : ctx.ops) {
             if (op.kind() == SemanticOpKind.BREAK || op.kind() == SemanticOpKind.CONTINUE) {
-                OpId loopId = op.kind() == SemanticOpKind.BREAK
-                    ? ((KindPayload.BreakPayload) op.payload()).loopId()
-                    : ((KindPayload.ContinuePayload) op.payload()).loopId();
-                Optional<CompilerDiagnostic> failure = checkLoopTarget(ctx, op, loopId);
+                Optional<CompilerDiagnostic> failure = checkLoopTarget(ctx, op, op.loopId());
                 if (failure.isPresent()) {
                     return failure;
                 }
@@ -550,8 +816,8 @@ public final class ControlFlowValidator {
                     // function, so it has no containing function to check.
                     continue;
                 }
-                FunctionId function = ((KindPayload.ReturnPayload) op.payload()).function();
-                Optional<CompilerDiagnostic> failure = checkReturnTarget(ctx, op, function);
+                Optional<CompilerDiagnostic> failure =
+                    checkReturnTarget(ctx, op, op.returnFunction());
                 if (failure.isPresent()) {
                     return failure;
                 }
@@ -560,9 +826,9 @@ public final class ControlFlowValidator {
         return Optional.empty();
     }
 
-    private static Optional<CompilerDiagnostic> checkLoopTarget(Context ctx, SemanticOp op,
+    private static Optional<CompilerDiagnostic> checkLoopTarget(Facts ctx, OpView op,
                                                                 OpId loopId) {
-        SemanticOp target = ctx.unitOps.get(loopId);
+        OpView target = loopId == null ? null : ctx.unitOps.get(loopId);
         if (target == null || (target.kind() != SemanticOpKind.LOOP
                 && target.kind() != SemanticOpKind.FOR_EACH)) {
             return fail(ctx, CONTROL_EXIT, "transfer op " + op.opId() + " targets " + loopId
@@ -571,7 +837,7 @@ public final class ControlFlowValidator {
         BlockId block = ctx.table.opBlocks().get(op.opId());
         boolean enclosed = false;
         if (block != null) {
-            for (SemanticOp structure : ctx.enclosingOps(block)) {
+            for (OpView structure : ctx.enclosingOps(block)) {
                 if (structure.opId().equals(loopId)) {
                     enclosed = true;
                     break;
@@ -586,10 +852,18 @@ public final class ControlFlowValidator {
         return Optional.empty();
     }
 
-    private static Optional<CompilerDiagnostic> checkReturnTarget(Context ctx, SemanticOp op,
+    private static Optional<CompilerDiagnostic> checkReturnTarget(Facts ctx, OpView op,
                                                                   FunctionId function) {
-        LoweredFunction lowered = ctx.unit.functions().get(function);
-        if (lowered == null) {
+        if (function == null) {
+            // The typed ReturnPayload enforces the identity, so only raw
+            // content can carry an absent or malformed function position;
+            // this rule owns it (the lookup below is a map against the
+            // declared functions, never a null query).
+            return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId()
+                + " names no function (the payload position is absent or malformed)", op);
+        }
+        BlockId body = ctx.functionBodies.get(function);
+        if (body == null) {
             return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId() + " names function " + function
                 + ", which is not a function of the unit", op);
         }
@@ -599,11 +873,31 @@ public final class ControlFlowValidator {
                 + " is a member of no block and therefore has no containing function", op);
         }
         BlockId terminal = ctx.terminalOf(block);
-        if (!terminal.equals(lowered.body())) {
+        if (!terminal.equals(body)) {
             return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId() + " names function " + function
-                + " (body " + lowered.body() + ") but its block " + block
+                + " (body " + body + ") but its block " + block
                 + " belongs to the block tree rooted at " + terminal, op);
         }
         return Optional.empty();
+    }
+
+    // =========================================================================
+    // Small shared helpers
+    // =========================================================================
+
+    @SuppressWarnings("unchecked")
+    private static <E extends Enum<E>> E enumByName(Class<?> type, String name) {
+        if (name == null) {
+            return null;
+        }
+        try {
+            return (E) Enum.valueOf((Class<E>) type, name);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static SemanticProfile profileByName(String name) {
+        return enumByName(SemanticProfile.class, name);
     }
 }

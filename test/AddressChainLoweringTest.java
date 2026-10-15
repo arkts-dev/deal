@@ -32,10 +32,12 @@ import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
+import deal.semantic.ControlFlowValidator;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BindingId;
+import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.ClassId;
@@ -64,6 +66,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceSpan;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.ValueId;
 import deal.semantic.ir.ExternalModuleInterface;
@@ -101,10 +104,15 @@ public class AddressChainLoweringTest {
     private static final String SOURCE_ID = "test.deal";
     private static final String REGISTRY_HASH =
         CapabilityRegistry.releaseRegistry().capabilityRegistryHash();
+
+    /** The own-module interface entry of the fixed invocation facts. */
+    private static ExternalModuleInterface ownInterface() {
+        return new ExternalModuleInterface(MODULE, ExternalModuleKind.IMPLEMENTATION,
+            List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES);
+    }
+
     private static final String INTERFACE_HASH = new ProjectInterfaceIndex(
-        ProjectInterfaceIndex.FORMAT_VERSION, Map.of(MODULE,
-            new ExternalModuleInterface(MODULE, ExternalModuleKind.IMPLEMENTATION,
-                List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)))
+        ProjectInterfaceIndex.FORMAT_VERSION, Map.of(MODULE, ownInterface()))
         .interfaceIndexDigest();
 
     private static SemanticIrValidator.ComparisonFacts facts() {
@@ -1546,10 +1554,22 @@ public class AddressChainLoweringTest {
     private static LoweredModuleUnit protocolUnit(List<SemanticOp> ops) {
         LoweredModuleUnit unit = lowerer(checks(Map.of(), new SymbolTable()))
             .buildUnit(Map.of(), List.of(), INTERFACE_HASH, REGISTRY_HASH);
+        // The membership of the detached fixture ops: one block that is the
+        // plan's init block (a root of the block tree), so the protocol and
+        // rule-family fixtures exercise exactly their subject op.
+        BlockId initBlock = unit.moduleInit().initBlock();
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        List<OpId> ids = new ArrayList<>();
+        for (SemanticOp op : ops) {
+            ids.add(op.opId());
+            opBlocks.put(op.opId(), initBlock);
+        }
+        blockOps.put(initBlock, ids);
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(), unit.moduleId(),
             unit.interfaceHash(), unit.loweringContextHash(), unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(), unit.exportPlan(),
-            unit.functionBindings(), ops, unit.bodyTable(), unit.classFactories(),
+            unit.functionBindings(), ops, new StructuredBodyTable(blockOps, opBlocks), unit.classFactories(),
             unit.jsonDefaults(), unit.classBindingFacts());
     }
 
@@ -1658,6 +1678,90 @@ public class AddressChainLoweringTest {
         testNormalizedSlots();
     }
 
+    /**
+     * The composed production admission keeps the pinned per-module order:
+     * the common-admission head, then {@code AddressChainProtocol}, then the
+     * control-flow owner. A unit carrying both an address-chain defect and a
+     * block-membership defect reports the address-chain rule as its first
+     * E6005 through {@code SemanticLowerer.validateProjectUnit}, while the
+     * typed and text unit entrypoints (the head plus the control owner)
+     * report the control rule identically on both surfaces, so no surface
+     * loses the membership rule and the production order does not relocate
+     * it.
+     */
+    static void testComposedAdmissionOrder() {
+        System.out.println("-- Composed admission order: address chain before control flow --");
+        List<SemanticOp> ops = new ArrayList<>(protocolSeed(1));
+        SemanticOp chain = ops.getLast();
+        List<OpId> children = new ArrayList<>(
+            ((KindPayload.AssignPayload) chain.payload()).childOps());
+        java.util.Collections.swap(children, 0, 1);
+        ops.set(ops.size() - 1, protocolCopy(chain,
+            new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT, children),
+            chain.failurePolicy(), chain.origin()));
+        LoweredModuleUnit clean = protocolUnit(ops);
+        // The block list lists the first op twice while the inverse map keeps
+        // its single row: a control membership defect the text surface can
+        // carry (a duplicated ops-list identity rejects at transport decode
+        // instead, so it cannot exercise the composed order).
+        BlockId initBlock = clean.moduleInit().initBlock();
+        Map<BlockId, List<OpId>> blocks = new LinkedHashMap<>(clean.bodyTable().blockOps());
+        List<OpId> initOps = new ArrayList<>(blocks.get(initBlock));
+        initOps.add(initOps.getFirst());
+        blocks.put(initBlock, initOps);
+        LoweredModuleUnit unit = new LoweredModuleUnit(clean.formatVersion(),
+            clean.semanticProfile(), clean.moduleId(), clean.interfaceHash(),
+            clean.loweringContextHash(), clean.requiredCapabilities(),
+            clean.constructCoverage(), clean.classLayouts(), clean.functions(),
+            clean.moduleInit(), clean.exportPlan(), clean.functionBindings(), clean.ops(),
+            new StructuredBodyTable(blocks, clean.bodyTable().opBlocks()),
+            clean.classFactories(), clean.jsonDefaults(), clean.classBindingFacts());
+
+        // Both defects are real: the control owner rejects the membership and
+        // the address-chain owner rejects the chain, but the common-admission
+        // head admits the unit, so the composed order decides which rule is
+        // reported first.
+        checkE6005(ControlFlowValidator.validate(unit, unit.bodyTable()),
+            "CONTROL_BLOCK_TREE", "listed twice in one block");
+        Optional<CompilerDiagnostic> chainFailure = AddressChainProtocol.validate(unit);
+        checkE6005(chainFailure, "ADDRESS_CHAIN_SHAPE",
+            "the address-chain owner rejects the dual-defect unit");
+        Optional<CompilerDiagnostic> head = SemanticIrValidator.validateUnitHead(unit, facts());
+        check(head.isEmpty(),
+            "the common-admission head admits the dual-defect unit (the first failure "
+                + "belongs to a composed owner): "
+                + head.map(CompilerDiagnostic::message).orElse(""));
+
+        // The typed and text unit entrypoints: head then the control owner,
+        // with identical first failure on both surfaces.
+        Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(unit, facts());
+        Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
+            SemanticIrValidator.toUnitText(unit), facts());
+        checkE6005(typed, "CONTROL_BLOCK_TREE", "listed twice in one block");
+        checkE6005(text, "CONTROL_BLOCK_TREE", "listed twice in one block");
+        check(typed.isPresent() && text.isPresent()
+                && typed.get().message().equals(text.get().message()),
+            "the typed and text unit surfaces report the identical control first failure");
+        if (typed.isPresent() && text.isPresent()) {
+            check(typed.get().range().equals(text.get().range()),
+                "the typed and text unit surfaces keep the same failing range");
+        }
+
+        // The composed production admission runs the head, then the address
+        // chain, then the control owner: the pinned address-chain rule is the
+        // first failure, and it runs once.
+        Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(unit,
+            unit.bodyTable(), facts(), unit.classBindingFacts(), unit.classFactories(),
+            unit.jsonDefaults(), ownInterface(), Map.of());
+        checkE6005(composed, "ADDRESS_CHAIN_SHAPE",
+            "the composed production admission reports the address-chain rule");
+        check(chainFailure.isPresent() && composed.isPresent()
+                && chainFailure.get().message().equals(composed.get().message())
+                && chainFailure.get().range().equals(composed.get().range()),
+            "the composed production admission reports exactly the address-chain first "
+                + "failure: " + composed.map(CompilerDiagnostic::message).orElse("admitted"));
+    }
+
     private static void assertProtocolFailure(List<SemanticOp> ops, String rule, String detail, SourceOrigin expected) {
         LoweredModuleUnit unit = protocolUnit(ops);
         Optional<CompilerDiagnostic> failure = AddressChainProtocol.validate(unit);
@@ -1757,7 +1861,10 @@ public class AddressChainLoweringTest {
         expectProtocolException(IllegalArgumentException.class, () -> deal.semantic.ir.NormalizedSlot.tableSlot(IndexMode.ARRAY_WRITE, "k"));
         expectProtocolException(NullPointerException.class, () -> deal.semantic.ir.NormalizedSlot.tableSlot(IndexMode.TABLE_WRITE, null));
         SemanticOp normalize = protocolSeed(2).get(4);
-        check(SemanticIrValidator.validate(protocolUnit(List.of(normalize)), facts()).isEmpty(), "INDEX_NORMALIZE pure policy admitted");
+        Optional<CompilerDiagnostic> pureFailure = SemanticIrValidator.validate(
+            protocolUnit(List.of(normalize)), facts());
+        check(pureFailure.isEmpty(), "INDEX_NORMALIZE pure policy admitted: "
+            + pureFailure.map(CompilerDiagnostic::message).orElse(""));
         SemanticOp wrong = protocolCopy(normalize, normalize.payload(), FailurePolicyId.TYPE_DESCRIPTOR, normalize.origin());
         Optional<CompilerDiagnostic> failure = SemanticIrValidator.validate(protocolUnit(List.of(wrong)), facts());
         check(failure.isPresent() && failure.get().message().contains("R-POLICY-KIND"), "INDEX_NORMALIZE wrong policy rejected");
@@ -1783,6 +1890,7 @@ public class AddressChainLoweringTest {
         testE3018StringKeyGate();
         testProtocolValidationOfLoweredChains();
         testProtocolMutationMatrix();
+        testComposedAdmissionOrder();
         testModuleCorpusAndDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

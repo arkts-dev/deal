@@ -3,6 +3,7 @@ package deal.semantic.ir;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.semantic.ClassConstructionValidator;
 import deal.semantic.ClassRegistrationSeeds;
+import deal.semantic.ControlFlowValidator;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -66,18 +67,25 @@ public final class SemanticIrValidator {
     public static final String R_PROFILE = "R-PROFILE";
 
     /**
-     * The R-IDENTITY-LINK rule: a registry key that differs from the
+     * The R-IDENTITY-LINK rule: a carried link that disagrees with the
+     * record it names. It covers a registry key that differs from the
      * contained record's own identity (a class-layout map key differing
      * from its layout's {@code classId}, or a function map key differing
-     * from its record's {@code functionId}). The transport retains both
-     * identities unchanged and admission rejects the disagreement; the
-     * projection never repairs it.
+     * from its record's {@code functionId}) and the plan/publication
+     * links of the complete facts (the module-init plan versus its
+     * produced {@code MODULE_INIT} operation, its init block and its
+     * ordered resolved imports; an export-plan entry versus its actual
+     * {@code EXPORT_PUBLISH} operation, its declared descriptor and the
+     * carried own interface). The transport retains both sides unchanged
+     * and admission rejects the disagreement; the projection never
+     * selects a winner or repairs the record.
      */
     public static final String R_IDENTITY_LINK = "R-IDENTITY-LINK";
 
     /**
      * The closed rule set in the pinned order: the 14 S6 conditions
-     * followed by the transport identity-link coherence check.
+     * followed by the transport identity-link coherence check (registry
+     * identities and the plan/publication links of the complete facts).
      */
     public static final List<String> RULES = List.of(
         R_COVERAGE, R_ENUM, R_CAPABILITY, R_POLICY_KIND, R_BOUNDARY_TRIPLE,
@@ -121,6 +129,17 @@ public final class SemanticIrValidator {
      * pass and exactly one E6005 diagnostic naming the first failing rule
      * on failure. No mutation; deterministic single pass.
      *
+     * <p>The entrypoint composes the common-admission head
+     * ({@link #validateUnitHead(LoweredModuleUnit, ComparisonFacts)}) with
+     * the control-flow membership/exits owner, so the typed unit surface
+     * applies the same predicate set as the text surface
+     * ({@link #validateText(String, ComparisonFacts)}): an equivalent
+     * malformed fact yields the same first rule, message and range on
+     * both. The production composition runs the head at its pinned
+     * position instead — before {@code AddressChainProtocol}, the control
+     * owner, bindings and class construction — and never applies the
+     * control owner a second time.</p>
+     *
      * <p>Cross-unit obligations (a {@code SHARED_BODY}
      * {@code ExternalFunction} binding or an {@code externalEntryRef}
      * naming another module) are checked at project level by
@@ -133,20 +152,35 @@ public final class SemanticIrValidator {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
         RawUnit raw = RawUnit.fromTyped(unit);
-        Optional<CompilerDiagnostic> failure = validateUnit(raw, facts, Map.of());
-        if (failure.isPresent()) {
-            return failure;
+        Optional<CompilerDiagnostic> head = validateRawUnitHead(raw, facts, Map.of(), null);
+        if (head.isPresent()) {
+            return head;
         }
-        Optional<CompilerDiagnostic> dynamicForms = checkDynamicCellForms(unit, raw, facts);
-        if (dynamicForms.isPresent()) {
-            return dynamicForms;
-        }
-        return checkClassDeclarationLayout(unit, raw, facts);
+        return ControlFlowValidator.validate(raw);
+    }
+
+    /**
+     * The common-admission head of one unit on the typed record surface:
+     * the closed rule engine, the dynamic/layout correlations and the
+     * module-init/export-plan publication links over the complete raw
+     * facts, without the composed control-flow owner. This is the exact
+     * element the production composition runs at its pinned position (the
+     * common-admission head, then {@code AddressChainProtocol}, then the
+     * control owner, then bindings and class construction); the typed and
+     * text entrypoints add the control owner to it for surface parity.
+     *
+     */
+    public static Optional<CompilerDiagnostic> validateUnitHead(LoweredModuleUnit unit,
+                                                                ComparisonFacts facts) {
+        Objects.requireNonNull(unit, "unit must not be null");
+        Objects.requireNonNull(facts, "facts must not be null");
+        return validateRawUnitHead(RawUnit.fromTyped(unit), facts, Map.of(), null);
     }
 
     /**
      * Validates a complete executable project on the typed record surface:
-     * every module in dependency (map insertion) order, plus the
+     * every module in dependency (map insertion) order with the
+     * common-admission head plus the control-flow owner, plus the
      * cross-unit checks (R-EXTERNAL-ENTRY resolution across the complete
      * implementation closure). Returns empty on pass and exactly one E6005
      * naming the first failing rule on failure.
@@ -156,29 +190,52 @@ public final class SemanticIrValidator {
                                                         ComparisonFacts facts) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
+        Map<String, RawUnit> closure = projectClosure(project);
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            RawUnit raw = closure.get(unit.moduleId().path());
+            Optional<CompilerDiagnostic> failure = validateRawUnit(raw, facts, closure,
+                project.interfaceIndex().modules().get(unit.moduleId()));
+            if (failure.isPresent()) {
+                return failure;
+            }
+        }
+        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
+            List.copyOf(closure.values()), project.entryModule().path(), facts);
+    }
+
+    /**
+     * The common-admission head of a complete project on the typed record
+     * surface: the head of every module in dependency order, plus the
+     * project class facts, without the control-flow owner (which the
+     * production composition runs per module at its declared position
+     * after {@code AddressChainProtocol}).
+     *
+     */
+    public static Optional<CompilerDiagnostic> validateProjectHead(
+            ExecutableLoweredProject project, ComparisonFacts facts) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(facts, "facts must not be null");
+        Map<String, RawUnit> closure = projectClosure(project);
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            RawUnit raw = closure.get(unit.moduleId().path());
+            Optional<CompilerDiagnostic> failure = validateRawUnitHead(raw, facts, closure,
+                project.interfaceIndex().modules().get(unit.moduleId()));
+            if (failure.isPresent()) {
+                return failure;
+            }
+        }
+        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
+            List.copyOf(closure.values()), project.entryModule().path(), facts);
+    }
+
+    /** The project's modules as their complete raw facts, in dependency order. */
+    private static Map<String, RawUnit> projectClosure(ExecutableLoweredProject project) {
         Map<String, RawUnit> closure = new LinkedHashMap<>();
         for (LoweredModuleUnit unit : project.modules().values()) {
             RawUnit raw = RawUnit.fromTyped(unit);
             closure.put(raw.modulePath(), raw);
         }
-        for (RawUnit unit : closure.values()) {
-            Optional<CompilerDiagnostic> failure = validateUnit(unit, facts, closure);
-            if (failure.isPresent()) {
-                return failure;
-            }
-        }
-        // The typed-surface ties of the closed rules (the layout waiver and
-        // the dynamic DEAL-body cell's form correlation) run over the
-        // project's own typed units after the raw rule engine.
-        for (LoweredModuleUnit unit : project.modules().values()) {
-            RawUnit raw = closure.get(unit.moduleId().path());
-            Optional<CompilerDiagnostic> dynamicForms = checkDynamicCellForms(unit, raw, facts);
-            if (dynamicForms.isPresent()) {
-                return dynamicForms;
-            }
-        }
-        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
-            List.copyOf(closure.values()), project.entryModule().path(), facts);
+        return closure;
     }
 
     /**
@@ -203,7 +260,8 @@ public final class SemanticIrValidator {
             return validateProjectText(obj, facts);
         }
         if (ContractSnapshotCanonicalizer.hasKey(obj, "moduleId")) {
-            return validateUnit(ContractSnapshotCanonicalizer.parseUnit(obj), facts, Map.of());
+            return validateRawUnit(ContractSnapshotCanonicalizer.parseUnit(obj), facts,
+                Map.of(), null);
         }
         throw new SemanticIrTextDecodeException(
             "the top-level validation text must be a unit (\"moduleId\") or a project "
@@ -247,7 +305,9 @@ public final class SemanticIrValidator {
                     + "\" is not DEAL_V1_3_INT32"));
         }
         for (RawUnit unit : closure.values()) {
-            Optional<CompilerDiagnostic> failure = validateUnit(unit, facts, closure);
+            Optional<CompilerDiagnostic> failure = validateRawUnit(unit, facts, closure,
+                project.interfaceIndex().modules()
+                    .get(new ModuleId(unit.modulePath())));
             if (failure.isPresent()) {
                 return failure;
             }
@@ -319,6 +379,65 @@ public final class SemanticIrValidator {
     // =========================================================================
     // Rule engine
     // =========================================================================
+
+    /**
+     * The common admission of one complete raw unit: the common-admission
+     * head below plus the control-flow membership/exits owner over exactly
+     * the same raw facts. The typed and text entrypoints
+     * ({@link #validate(LoweredModuleUnit, ComparisonFacts)},
+     * {@link #validate(ExecutableLoweredProject, ComparisonFacts)},
+     * {@link #validateText(String, ComparisonFacts)}) compose this one
+     * admission, so an equivalent malformed fact yields the same first
+     * failure on both surfaces. The production composition runs the head
+     * ({@link #validateUnitHead}/{@link #validateProjectHead}) at its
+     * pinned position and then the control owner after
+     * {@code AddressChainProtocol}, never applying it a second time.
+     */
+    private static Optional<CompilerDiagnostic> validateRawUnit(RawUnit unit,
+                                                                ComparisonFacts facts,
+                                                                Map<String, RawUnit> closure,
+                                                                ExternalModuleInterface ownInterface) {
+        Optional<CompilerDiagnostic> failure =
+            validateRawUnitHead(unit, facts, closure, ownInterface);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        return ControlFlowValidator.validate(unit);
+    }
+
+    /**
+     * The common-admission head of one complete raw unit: the closed rule
+     * engine over the transported facts, then the applicable composed
+     * predicates that precede the address-chain protocol — the dynamic
+     * DEAL-body cell form, the layout-only class-declaration coverage and
+     * the module-init/export-plan publication links — over exactly the
+     * same facts. Both surfaces (the typed record surface through
+     * {@link RawUnit#fromTyped(LoweredModuleUnit)} and the text surface
+     * through
+     * {@link ContractSnapshotCanonicalizer#parseUnit(CanonicalJson.Obj)})
+     * feed this one composition. {@code closure} is the
+     * project module map for cross-unit resolution (empty for unit-level
+     * validation) and {@code ownInterface} is the carried own-module
+     * interface entry when a project supplies it ({@code null} standalone).
+     */
+    private static Optional<CompilerDiagnostic> validateRawUnitHead(RawUnit unit,
+                                                                    ComparisonFacts facts,
+                                                                    Map<String, RawUnit> closure,
+                                                                    ExternalModuleInterface ownInterface) {
+        Optional<CompilerDiagnostic> failure = validateUnit(unit, facts, closure);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        failure = checkDynamicCellForms(unit, facts);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        failure = checkClassDeclarationLayout(unit, facts);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        return checkPlans(unit, facts, ownInterface);
+    }
 
     /**
      * Validates one raw unit against the closed rules in the pinned
@@ -477,60 +596,100 @@ public final class SemanticIrValidator {
 
     // -- R-COVERAGE ------------------------------------------------------------
 
-    private static Optional<CompilerDiagnostic> checkClassDeclarationLayout(
-            LoweredModuleUnit unit, RawUnit raw, ComparisonFacts facts) {
-        if (!unit.constructCoverage().containsKey(ConstructKind.CLASS_DECLARATION)) {
+    /**
+     * The layout-only class-declaration coverage correlation of the
+     * complete facts (invariant 2): a unit that records the
+     * {@code CLASS_DECLARATION} construct in its coverage but produced no
+     * op of any mapped kind must still carry the class layout record that
+     * evidences the declaration. The rule runs over exactly the raw facts
+     * on both surfaces and on the unit and project paths; a transport
+     * consumer never sees the typed-only postcheck.
+     */
+    private static Optional<CompilerDiagnostic> checkClassDeclarationLayout(RawUnit unit,
+                                                                            ComparisonFacts facts) {
+        boolean recorded = false;
+        for (RawCoverage row : unit.coverage()) {
+            if (ConstructKind.CLASS_DECLARATION.name().equals(row.construct())) {
+                recorded = true;
+                break;
+            }
+        }
+        if (!recorded) {
             return Optional.empty();
         }
         Set<SemanticOpKind> mapped =
             new LinkedHashSet<>(ConstructKind.CLASS_DECLARATION.mappedOpKinds());
-        for (SemanticOp op : unit.ops()) {
-            if (mapped.contains(op.kind())) {
+        for (RawOp op : unit.ops()) {
+            SemanticOpKind kind = enumByName(SemanticOpKind.class, op.kind());
+            if (kind != null && mapped.contains(kind)) {
                 return Optional.empty();
             }
         }
         if (!unit.classLayouts().isEmpty()) {
             return Optional.empty();
         }
-        return fail(raw, facts, R_COVERAGE, SemanticCapability.FOUNDATION_VALUES,
+        return fail(unit, facts, R_COVERAGE, SemanticCapability.FOUNDATION_VALUES,
             origin(R_COVERAGE, "construct " + ConstructKind.CLASS_DECLARATION.name()
                 + " recorded in constructCoverage with no produced op of any mapped kind "
                 + "and no class layout record (a layout-only class must still have its "
                 + "layout)"));
     }
 
-    private static Optional<CompilerDiagnostic> checkDynamicCellForms(
-            LoweredModuleUnit unit, RawUnit raw, ComparisonFacts facts) {
-        Map<OpId, SemanticOp> opsById = new LinkedHashMap<>();
-        for (SemanticOp op : unit.ops()) {
+    /**
+     * The dynamic DEAL-body cell form correlation of the complete facts
+     * (invariant 2): the recorded cell structure of a Dynamic callee
+     * against the callee value's produced registration. The check runs
+     * over exactly the raw facts on both surfaces and on the unit and
+     * project paths; the form a projection could hide is the same content
+     * the text surface carries.
+     */
+    private static Optional<CompilerDiagnostic> checkDynamicCellForms(RawUnit unit,
+                                                                      ComparisonFacts facts) {
+        Map<OpId, RawOp> opsById = new LinkedHashMap<>();
+        for (RawOp op : unit.ops()) {
             opsById.put(op.opId(), op);
         }
-        for (SemanticOp op : unit.ops()) {
+        for (RawOp op : unit.ops()) {
             ValueId calleeValue;
             OpId cellOpId;
-            switch (op.payload()) {
-                case KindPayload.CallPayload call
-                        when call.callee()
-                            instanceof KindPayload.CallCallee.Dynamic dynamic
-                            && call.dynamicReturnBoundary() != null -> {
-                    calleeValue = dynamic.callee();
-                    cellOpId = call.dynamicReturnBoundary().dealBodyBoundaryOpId();
-                }
-                case KindPayload.AsyncStartPayload start
-                        when start.callee()
-                            instanceof KindPayload.CallCallee.Dynamic dynamic
-                            && start.returnBoundaryOpId() != null -> {
-                    calleeValue = dynamic.callee();
-                    cellOpId = start.returnBoundaryOpId();
-                }
-                default -> {
+            SemanticOpKind kind = enumByName(SemanticOpKind.class, op.kind());
+            if (kind == SemanticOpKind.CALL) {
+                if (!isDynamicCallee(op)) {
                     continue;
                 }
+                CanonicalJson.Value boundary = payloadValue(op.payload(),
+                    "dynamicReturnBoundary");
+                if (!(boundary instanceof CanonicalJson.Obj record)) {
+                    continue;
+                }
+                ValueId value = parseValueIdQuiet(calleeValueOf(op));
+                if (value == null) {
+                    continue; // R-ENUM owns the malformed callee identity.
+                }
+                calleeValue = value;
+                cellOpId = parseRecordOpId(record, "dealBodyBoundaryOpId");
+            } else if (kind == SemanticOpKind.ASYNC_START) {
+                if (!isDynamicCallee(op)) {
+                    continue;
+                }
+                CanonicalJson.Value ret = payloadValue(op.payload(),
+                    "returnBoundaryOpId");
+                if (!(ret instanceof CanonicalJson.Obj)) {
+                    continue;
+                }
+                ValueId value = parseValueIdQuiet(calleeValueOf(op));
+                if (value == null) {
+                    continue; // R-ENUM owns the malformed callee identity.
+                }
+                calleeValue = value;
+                cellOpId = parseOptionalOpId(op.payload(), "returnBoundaryOpId");
+            } else {
+                continue;
             }
             Optional<String> failure = dynamicCellFormFailure(unit, opsById, op, calleeValue,
                 cellOpId);
             if (failure.isPresent()) {
-                return fail(op, raw, facts, R_BOUNDARY_TRIPLE,
+                return fail(op, unit, facts, R_BOUNDARY_TRIPLE,
                     SemanticCapability.FOUNDATION_VALUES,
                     origin(R_BOUNDARY_TRIPLE, failure.get()));
             }
@@ -538,84 +697,103 @@ public final class SemanticIrValidator {
         return Optional.empty();
     }
 
+    /** The Dynamic callee identity object of a call/async-start payload, or {@code null}. */
+    private static CanonicalJson.Obj calleeValueOf(RawOp invocation) {
+        CanonicalJson.Value calleeValue = payloadValue(invocation.payload(), "callee");
+        if (!(calleeValue instanceof CanonicalJson.Obj callee)) {
+            return null;
+        }
+        CanonicalJson.Value idValue = payloadValue(callee, "callee");
+        return idValue instanceof CanonicalJson.Obj idObj ? idObj : null;
+    }
+
+    private static ValueId parseValueIdQuiet(CanonicalJson.Obj idObj) {
+        if (idObj == null) {
+            return null;
+        }
+        try {
+            return parseValueId(idObj);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /**
      * The form correlation of one dynamic invocation's recorded cell: the
      * recorded structure against the callee value's produced registration.
      */
-    private static Optional<String> dynamicCellFormFailure(LoweredModuleUnit unit,
-            Map<OpId, SemanticOp> opsById, SemanticOp invocation, ValueId calleeValue,
+    private static Optional<String> dynamicCellFormFailure(RawUnit unit,
+            Map<OpId, RawOp> opsById, RawOp invocation, ValueId calleeValue,
             OpId cellOpId) {
-        SemanticOp cell = opsById.get(cellOpId);
-        if (cell == null || cell.origin() == null || cell.origin().parentOpId() == null) {
+        RawOp cell = cellOpId == null ? null : opsById.get(cellOpId);
+        if (cell == null || cell.parentOpId() == null) {
             return Optional.empty();
         }
-        SemanticOp parent = opsById.get(cell.origin().parentOpId());
-        KindPayload.ReturnPayload returned = parent != null
-                && parent.kind() == SemanticOpKind.RETURN
-                && parent.payload() instanceof KindPayload.ReturnPayload payload
-            ? payload : null;
-        boolean calleeOwned = returned != null
-            && returned.returnBoundaryOpId() != null
-            && returned.returnBoundaryOpId().equals(cellOpId)
-            && unit.functions().containsKey(returned.function());
-        FunctionExecutionBinding registration = unit.functionBindings().get(
-            new FunctionAllocationIdentity(calleeValue.id()));
-        switch (registration) {
-            case null -> {
-                return calleeOwned ? calleeOwnedFailure(invocation, cellOpId, returned,
-                    calleeValue) : Optional.empty();
-            }
-            case FunctionExecutionBinding.DynamicFunctionValue ignored -> {
-                return calleeOwned ? calleeOwnedFailure(invocation, cellOpId, returned,
-                    calleeValue) : Optional.empty();
-            }
-            case FunctionExecutionBinding.LoweredBody body -> {
-                OpId bodyReturnCell = bodyReturnCellOf(unit, opsById, body.functionId());
-                if (bodyReturnCell == null) {
-                    // A never-returning body: no RETURN-materialized cell
-                    // exists to record, so the call-owned record stands.
-                    return Optional.empty();
-                }
-                if (!calleeOwned) {
-                    return Optional.of("the " + invocation.kind() + " op "
-                        + invocation.opId() + " records a call-owned DEAL-body cell "
-                        + cellOpId + " while its callee value " + calleeValue
-                        + " carries the same-walk loweredBody registration of function "
-                        + body.functionId().id() + ", whose own RETURN-materialized return"
-                        + " cell " + bodyReturnCell + " is the callee-owned form's recorded"
-                        + " cell");
-                }
-                if (!body.functionId().equals(returned.function())) {
-                    return Optional.of("the " + invocation.kind() + " op "
-                        + invocation.opId() + " records the return cell of function "
-                        + returned.function().id() + " while its callee value " + calleeValue
-                        + " carries the same-walk loweredBody registration of function "
-                        + body.functionId().id()
-                        + " (the recorded cell must be the callee body's own cell)");
-                }
+        RawOp parent = opsById.get(cell.parentOpId());
+        boolean parentIsReturn = parent != null
+            && enumByName(SemanticOpKind.class, parent.kind()) == SemanticOpKind.RETURN;
+        FunctionId returnedFunction = parentIsReturn
+            ? parseFunctionIdQuiet(parent.payload(), "function") : null;
+        OpId returnedBoundary = parentIsReturn
+            ? parseOptionalOpId(parent.payload(), "returnBoundaryOpId") : null;
+        boolean calleeOwned = parentIsReturn
+            && returnedBoundary != null
+            && returnedBoundary.equals(cellOpId)
+            && returnedFunction != null
+            && hasFunctionKey(unit, returnedFunction);
+        RawBinding registration = bindingForAllocation(unit, calleeValue.id());
+        String shape = registration == null ? null : registration.shape();
+        String kindName = invocation.kind();
+        if (shape == null || "dynamicFunctionValue".equals(shape)) {
+            return calleeOwned
+                ? calleeOwnedFailure(kindName, invocation.opId(), cellOpId, returnedFunction,
+                    calleeValue)
+                : Optional.empty();
+        }
+        if ("loweredBody".equals(shape)) {
+            OpId bodyReturnCell = bodyReturnCellOf(unit, opsById, registration.functionId());
+            if (bodyReturnCell == null) {
+                // A never-returning body: no RETURN-materialized cell
+                // exists to record, so the call-owned record stands.
                 return Optional.empty();
             }
-            default -> {
-                return Optional.of("the " + invocation.kind() + " op " + invocation.opId()
-                    + " resolves its callee value " + calleeValue + " to the static class "
-                    + registration.getClass().getSimpleName()
-                    + ": a Dynamic callee admits the producer rule's dynamic registration"
-                    + " or a same-walk loweredBody registration only (a statically"
-                    + " classified callee belongs to the Static/Indirect arms of the"
-                    + " closed call table)");
+            if (!calleeOwned) {
+                return Optional.of("the " + kindName + " op "
+                    + invocation.opId() + " records a call-owned DEAL-body cell "
+                    + cellOpId + " while its callee value " + calleeValue
+                    + " carries the same-walk loweredBody registration of function "
+                    + registration.functionId().id() + ", whose own RETURN-materialized return"
+                    + " cell " + bodyReturnCell + " is the callee-owned form's recorded"
+                    + " cell");
             }
+            if (!registration.functionId().equals(returnedFunction)) {
+                return Optional.of("the " + kindName + " op "
+                    + invocation.opId() + " records the return cell of function "
+                    + returnedFunction.id() + " while its callee value " + calleeValue
+                    + " carries the same-walk loweredBody registration of function "
+                    + registration.functionId().id()
+                    + " (the recorded cell must be the callee body's own cell)");
+            }
+            return Optional.empty();
         }
+        return Optional.of("the " + kindName + " op " + invocation.opId()
+            + " resolves its callee value " + calleeValue + " to the static class "
+            + bindingShapeClassName(shape)
+            + ": a Dynamic callee admits the producer rule's dynamic registration"
+            + " or a same-walk loweredBody registration only (a statically"
+            + " classified callee belongs to the Static/Indirect arms of the"
+            + " closed call table)");
     }
 
     /**
      * The call-owned-form failure of a runtime-resolved callee whose recorded
      * cell is the callee-owned structure ({@code null} when the form agrees).
      */
-    private static Optional<String> calleeOwnedFailure(SemanticOp invocation, OpId cellOpId,
-            KindPayload.ReturnPayload returned, ValueId calleeValue) {
-        return Optional.of("the " + invocation.kind() + " op " + invocation.opId()
+    private static Optional<String> calleeOwnedFailure(String kindName, OpId invocationOpId,
+            OpId cellOpId, FunctionId returnedFunction, ValueId calleeValue) {
+        return Optional.of("the " + kindName + " op " + invocationOpId
             + " records a callee-owned DEAL-body cell " + cellOpId
-            + " (parented to the RETURN of the lowered body " + returned.function()
+            + " (parented to the RETURN of the lowered body " + returnedFunction
             + ") while its callee value " + calleeValue
             + " carries no same-walk loweredBody registration: a runtime-resolved"
             + " callee records the call-owned record cell (parented to an unattached"
@@ -627,20 +805,218 @@ public final class SemanticIrValidator {
      * unit, or {@code null} for a body whose walk produced no {@code RETURN}
      * (a never-returning body).
      */
-    private static OpId bodyReturnCellOf(LoweredModuleUnit unit,
-                                         Map<OpId, SemanticOp> opsById, FunctionId function) {
-        if (!unit.functions().containsKey(function)) {
+    private static OpId bodyReturnCellOf(RawUnit unit, Map<OpId, RawOp> opsById,
+                                         FunctionId function) {
+        if (function == null || !hasFunctionKey(unit, function)) {
             return null;
         }
-        for (SemanticOp op : opsById.values()) {
-            if (op.kind() == SemanticOpKind.RETURN
-                    && op.payload() instanceof KindPayload.ReturnPayload returned
-                    && function.equals(returned.function())
-                    && returned.returnBoundaryOpId() != null) {
-                return returned.returnBoundaryOpId();
+        for (RawOp op : opsById.values()) {
+            if (enumByName(SemanticOpKind.class, op.kind()) == SemanticOpKind.RETURN
+                    && function.equals(parseFunctionIdQuiet(op.payload(), "function"))
+                    && payloadValue(op.payload(), "returnBoundaryOpId")
+                        instanceof CanonicalJson.Obj) {
+                return parseOptionalOpId(op.payload(), "returnBoundaryOpId");
             }
         }
         return null;
+    }
+
+    /** True iff the function is a registry key of the unit (the map identity). */
+    private static boolean hasFunctionKey(RawUnit unit, FunctionId function) {
+        for (RawUnit.RawFunction entry : unit.functions()) {
+            if (entry.key().equals(function)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The binding registered under the allocation identity, or {@code null}. */
+    private static RawBinding bindingForAllocation(RawUnit unit, long allocationId) {
+        for (RawBinding binding : unit.bindings()) {
+            if (binding.allocationId() == allocationId) {
+                return binding;
+            }
+        }
+        return null;
+    }
+
+    private static FunctionId parseFunctionIdQuiet(CanonicalJson.Obj payload, String key) {
+        CanonicalJson.Value value = payloadValue(payload, key);
+        if (!(value instanceof CanonicalJson.Obj idObj)) {
+            return null;
+        }
+        try {
+            return ContractSnapshotCanonicalizer.parseFunctionId(idObj);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** The typed binding variant spelling of one raw binding shape. */
+    private static String bindingShapeClassName(String shape) {
+        return switch (shape) {
+            case "adapter" -> "AdapterBinding";
+            case "hostFunction" -> "HostFunction";
+            case "hostFunctionValue" -> "HostFunctionValue";
+            case "externalFunction" -> "ExternalFunction";
+            case "intrinsicFunction" -> "IntrinsicFunction";
+            default -> shape;
+        };
+    }
+
+    /**
+     * The plan/publication links of the complete facts (invariant 5): the
+     * module-init plan agrees with every produced {@code MODULE_INIT}
+     * operation (its module, its init block and its ordered resolved
+     * imports), and every export-plan entry names its actual
+     * {@code EXPORT_PUBLISH} operation — same module, same name, same
+     * declared descriptor. Duplicate entry names reject (the export name
+     * is the entry identity), a foreign publication rejects, and an entry
+     * naming a publication the own interface does not declare rejects when
+     * a project supplies the interface entry. An empty plan stays a real,
+     * explicit empty plan.
+     */
+    private static Optional<CompilerDiagnostic> checkPlans(RawUnit unit, ComparisonFacts facts,
+                                                           ExternalModuleInterface ownInterface) {
+        Set<String> exportNames = new LinkedHashSet<>();
+        for (RawUnit.RawExportEntry entry : unit.exportPlan()) {
+            if (!exportNames.add(entry.name())) {
+                return fail(unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the export plan lists the export name \""
+                        + entry.name() + "\" more than once (the export name is the entry"
+                        + " identity)"));
+            }
+        }
+        Map<OpId, RawOp> opsById = new LinkedHashMap<>();
+        for (RawOp op : unit.ops()) {
+            opsById.put(op.opId(), op);
+        }
+        for (RawUnit.RawExportEntry entry : unit.exportPlan()) {
+            RawOp publish = opsById.get(entry.publishOpId());
+            if (publish == null) {
+                return fail(unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the export plan entry \"" + entry.name()
+                        + "\" names publishing op " + entry.publishOpId()
+                        + ", which is not a produced op of the unit"));
+            }
+            if (enumByName(SemanticOpKind.class, publish.kind())
+                    != SemanticOpKind.EXPORT_PUBLISH) {
+                return fail(publish, unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the export plan entry \"" + entry.name()
+                        + "\" names op " + entry.publishOpId() + " of kind "
+                        + publish.kind() + ", not an EXPORT_PUBLISH publication"));
+            }
+            String module = modulePathQuiet(publish.payload(), "module");
+            if (!unit.modulePath().equals(module)) {
+                return fail(publish, unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the export plan entry \"" + entry.name()
+                        + "\" names a publication of module \"" + module
+                        + "\" (a foreign publication; the unit is \"" + unit.modulePath()
+                        + "\")"));
+            }
+            String name = optionalString(publish.payload(), "name");
+            if (!entry.name().equals(name)) {
+                return fail(publish, unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the export plan entry \"" + entry.name()
+                        + "\" names a publication whose export name is \"" + name + "\""));
+            }
+            String descriptor = optionalString(publish.payload(), "descriptor");
+            if (!entry.descriptor().equals(descriptor)) {
+                return fail(publish, unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the export plan entry \"" + entry.name()
+                        + "\" declares descriptor \"" + entry.descriptor()
+                        + "\" while its publication declares \"" + descriptor + "\""));
+            }
+        }
+        if (ownInterface != null) {
+            Set<String> declared = new LinkedHashSet<>();
+            for (ExportInterface export : ownInterface.exports()) {
+                declared.add(export.name());
+            }
+            for (RawUnit.RawExportEntry entry : unit.exportPlan()) {
+                if (!declared.contains(entry.name())) {
+                    return fail(unit, facts, R_IDENTITY_LINK,
+                        SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_IDENTITY_LINK, "the export plan entry \"" + entry.name()
+                            + "\" is not a declared export of the carried module interface"));
+                }
+            }
+        }
+        for (RawOp op : unit.ops()) {
+            if (enumByName(SemanticOpKind.class, op.kind()) != SemanticOpKind.MODULE_INIT) {
+                continue;
+            }
+            String module = modulePathQuiet(op.payload(), "module");
+            if (!unit.modulePath().equals(module)) {
+                return fail(op, unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the MODULE_INIT op " + op.opId()
+                        + " names module \"" + module + "\" while the unit is \""
+                        + unit.modulePath() + "\""));
+            }
+            BlockId initBlock = parseBlockIdQuiet(op.payload(), "initBlock");
+            if (!unit.moduleInit().initBlock().equals(initBlock)) {
+                return fail(op, unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the module-init plan names init block "
+                        + unit.moduleInit().initBlock() + " while the MODULE_INIT op "
+                        + op.opId() + " runs block " + initBlock
+                        + " (the plan and its initialization operation are one fact)"));
+            }
+            List<String> planImports = new ArrayList<>();
+            for (ModuleId imported : unit.moduleInit().imports()) {
+                planImports.add(imported.path());
+            }
+            List<String> opImports = new ArrayList<>();
+            CanonicalJson.Value importsValue = payloadValue(op.payload(), "imports");
+            if (importsValue instanceof CanonicalJson.Arr rows) {
+                for (CanonicalJson.Value row : rows.items()) {
+                    opImports.add(row instanceof CanonicalJson.Obj idObj
+                        ? moduleIdPathQuiet(idObj) : null);
+                }
+            }
+            if (!planImports.equals(opImports)) {
+                return fail(op, unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the module-init plan's ordered resolved imports "
+                        + planImports + " differ from the MODULE_INIT op " + op.opId()
+                        + "'s ordered imports " + opImports));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The module path of one payload module-identity position ({@code null} when malformed). */
+    private static String modulePathQuiet(CanonicalJson.Obj payload, String key) {
+        CanonicalJson.Value value = payloadValue(payload, key);
+        return value instanceof CanonicalJson.Obj idObj ? moduleIdPathQuiet(idObj) : null;
+    }
+
+    private static String moduleIdPathQuiet(CanonicalJson.Obj idObj) {
+        try {
+            return ContractSnapshotCanonicalizer.parseModuleId(idObj).path();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static BlockId parseBlockIdQuiet(CanonicalJson.Obj payload, String key) {
+        CanonicalJson.Value value = payloadValue(payload, key);
+        if (!(value instanceof CanonicalJson.Obj idObj)) {
+            return null;
+        }
+        try {
+            return ContractSnapshotCanonicalizer.parseBlockId(idObj);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static Optional<CompilerDiagnostic> checkCoverage(RawUnit unit, ComparisonFacts facts) {
