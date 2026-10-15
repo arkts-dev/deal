@@ -66,16 +66,6 @@ const $MISSING = {};
 const $jsonArrayTables = new WeakSet();
 const $jsonNullTables = new WeakSet();
 
-// ===== Profile-gated int32 range flag (js-v12-int32-bytes D2) =====
-// $int32: the module-private signed-32 activation flag — false at load
-// (the retained LEGACY_SAFE_INT ±(2^53-1) boundary). Only the idempotent
-// $rt.setInt32Mode(true) selector sets it; no member ever resets it, so
-// activation is one-way per runtime instance. checkInt's final range arm
-// is the single consumer — one boundary gates every int helper,
-// intConvert, and the RuntimeTypeMatcher int row, which all route
-// through checkInt.
-let $int32 = false;
-
 // ===== Actual-kind mapping (js-backend-runtime-artifact D3) =====
 // $kindOf: the diagnostic "actual" string for every check — the JS mirror
 // of Lua's type() augmented with the runtime's own value forms. undefined
@@ -1256,29 +1246,16 @@ const $rt = {
     return v;
   },
 
-  // setInt32Mode: the profile selector (js-v12-int32-bytes D2). Every
-  // module emitted under the DEAL_V1_2_INT32 profile calls it with true
-  // immediately after the runtime $require (the emitter's module-shape
-  // step 3); the call is idempotent and one-way — an argument other than
-  // true leaves the flag unchanged, and no call reverts an activated
-  // flag. LEGACY_SAFE_INT emission never calls it.
-  setInt32Mode: function $setInt32Mode(enabled) {
-    if (enabled === true) {
-      $int32 = true;
-    }
-  },
-
   // checkInt: the exact check_int order (deal/runtime.lua:64-83) — the
-  // ±Infinity E8001 arm fires before the E8004 finite-range arm, so intPow
+  // ±Infinity E8001 arm fires before the E8004 finite-range arm, so an
   // overflow to Infinity is E8001 and only finite values outside the
-  // profile range are E8004 (js-v12-int32-bytes D1/D2: the final arm
-  // consults the module-private $int32 flag — ±2147483648 under the
-  // int32 profile, ±(2^53-1) under LEGACY_SAFE_INT — with the same E8004
-  // code and "int out of safe range" message). -0 normalizes to 0 (the
-  // v = v + 0 step, :72). NaN/±Infinity/non-integer carry expected "int"
-  // exactly like the reference _err calls; the E8004 range arm carries no
-  // expected/actual (nil in the reference — fields absent, the _err
-  // convention).
+  // signed-32 range are E8004. The signed-32 gate is active from runtime
+  // load: every int helper, intConvert and the RuntimeTypeMatcher int row
+  // route through checkInt, direct runtime/stdlib callers included. -0
+  // normalizes to 0 (the v = v + 0 step, :72). NaN/±Infinity/non-integer
+  // carry expected "int" exactly like the reference _err calls; the E8004
+  // range arm carries no expected/actual (nil in the reference — fields
+  // absent, the _err convention).
   checkInt: function $checkInt(v, file, line, column) {
     if (typeof v !== "number") {
       $rt.fail("E8001", "expected int", file, line, column, "int", $kindOf(v));
@@ -1293,15 +1270,8 @@ const $rt = {
     if (v % 1 !== 0) {
       $rt.fail("E8001", "expected int, got non-integer number", file, line, column, "int", "number");
     }
-    if ($int32
-        ? (v < -2147483648 || v > 2147483647)
-        : (v < -9007199254740991 || v > 9007199254740991)) {
-      // The E8004 message is the profile's pinned template (the mirror
-      // of deal/runtime.lua:99-107): the v1.2 int32 branch emits the
-      // retained "int out of safe range", the legacy branch its
-      // byte-identical landed "int out of range".
-      $rt.fail("E8004", $int32
-        ? "int out of safe range" : "int out of range", file, line, column);
+    if (v < -2147483648 || v > 2147483647) {
+      $rt.fail("E8004", "int out of safe range", file, line, column);
     }
     return v;
   },
@@ -1536,24 +1506,18 @@ const $rt = {
     return v;
   },
 
-  // ===== Int arithmetic and the floored remainder =====
+  // ===== Int arithmetic =====
   // (js-backend-runtime-artifact D5; js-backend-runtime D4 — the verbatim
   // mirror of deal/runtime.lua:478-514) Every int result flows through
   // checkInt (the D3 contract): -0 normalizes to 0, overflow to ±Infinity
   // is E8001 "expected int, got infinity" before the E8004 finite-range
-  // arm, and finite values outside the profile range are E8004
-  // (±2147483648 under $int32, ±(2^53-1) under LEGACY_SAFE_INT —
-  // js-v12-int32-bytes D1/D2). intDiv/intMod raise E8005 on a zero
-  // divisor before any division; intPow raises
-  // E8006 on a negative exponent. The truncation operations use the T1
-  // $Math capture — $Math.trunc is the math.modf truncation-toward-zero
-  // analog and $Math.floor is the floored-remainder divisor step — and
-  // every error is produced through the T2 spine (fail) with the caller's
-  // (file, line, column) forwarded. numMod is the Lua floored remainder
-  // for number % number with NO check — formula-defined and total
-  // (numMod(x, 0) is NaN, no throw). number / number stays native IEEE
-  // division in the emitter and has no runtime member. Pure functions;
-  // no mutation.
+  // arm, and finite values outside the signed-32 range are E8004.
+  // intDiv/intMod raise E8005 on a zero divisor before any division. The
+  // truncation operations use the T1 $Math capture — $Math.trunc is the
+  // math.modf truncation-toward-zero analog — and every error is produced
+  // through the T2 spine (fail) with the caller's (file, line, column)
+  // forwarded. Number arithmetic is native IEEE in the emitter and has no
+  // runtime member. Pure functions; no mutation.
 
   intAdd: function $intAdd(a, b, file, line, column) {
     return $rt.checkInt(a + b, file, line, column);
@@ -1581,47 +1545,18 @@ const $rt = {
     return $rt.checkInt($Math.trunc(a / b), file, line, column);
   },
 
-  // intMod: E8005 on a zero divisor first, then the remainder rule
-  // (deal/runtime.lua:301-327): under $int32 the truncated remainder
-  // alone is gated (spec v1.2 remainder rule — only / overflows on
-  // MIN_VALUE / -1), so -2147483648 % -1 computes 0 (signed-int32
-  // foundation I4; SharedValueSemantics.int32Mod agrees). The legacy
-  // branch (the byte-identical landed ISSUE-0321 behavior) gates the
-  // truncating quotient first: MIN_VALUE % -1 raises E8004 because the
-  // truncated quotient (2147483648) leaves the int32 range, even
-  // though the mathematical remainder (0) is representable. The
-  // quotient gate never fires under LEGACY_SAFE_INT: |q| ≤ |a| for
-  // every nonzero integer divisor, so a checked operand keeps q inside
-  // the profile range. The remainder a - q * b then passes through
-  // checkInt.
+  // intMod: E8005 on a zero divisor first, then the truncated remainder
+  // rule (deal/runtime.lua:301-327): the truncated remainder alone is
+  // gated (spec remainder rule — only / overflows on MIN_VALUE / -1), so
+  // -2147483648 % -1 computes 0 (signed-int32 foundation I4;
+  // SharedValueSemantics.int32Mod agrees). The remainder a - q * b then
+  // passes through checkInt.
   intMod: function $intMod(a, b, file, line, column) {
     if (b === 0) {
       $rt.fail("E8005", "integer division by zero", file, line, column);
     }
     const $q = $Math.trunc(a / b);
-    if ($int32) {
-      return $rt.checkInt(a - $q * b, file, line, column);
-    }
-    $rt.checkInt($q, file, line, column);
     return $rt.checkInt(a - $q * b, file, line, column);
-  },
-
-  // intPow: E8006 on a negative exponent, then checkInt of a ** b — so
-  // overflow to ±Infinity is E8001 via the checkInt order and a finite
-  // out-of-range result is E8004 (deal/runtime.lua:504-509).
-  intPow: function $intPow(a, b, file, line, column) {
-    if (b < 0) {
-      $rt.fail("E8006", "integer exponent must be non-negative", file, line, column);
-    }
-    return $rt.checkInt(a ** b, file, line, column);
-  },
-
-  // numMod: a - floor(a / b) * b — the Lua floored remainder for
-  // number % number (native JS % is truncated, so it diverges for mixed
-  // signs; the JVM emitter's truncated remainder is the precedent).
-  // No check: IEEE arithmetic on two numbers is total.
-  numMod: function $numMod(a, b) {
-    return a - $Math.floor(a / b) * b;
   },
 
   // ===== Bytes carrier and the five helpers (js-v12-int32-bytes D3/D4) =====

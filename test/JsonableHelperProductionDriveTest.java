@@ -2795,7 +2795,9 @@ public class JsonableHelperProductionDriveTest {
         injections.put("legacy profile", "// @profile: legacy-safe-int\n" + raw);
         injections.put("unknown profile", "// @profile: no-such-profile\n" + raw);
         injections.put("duplicate metadata",
-            "// @profile: deal-v1.2-int32\n// @profile: deal-v1.2-int32\n" + raw);
+            "// @profile: deal-v1.3-int32\n// @profile: deal-v1.3-int32\n" + raw);
+        injections.put("removed v1.2 profile",
+            "// @profile: deal-v1.2-int32\n" + raw);
         // The declaration after the 40-line metadata window and the
         // cross-boundary duplicate: the stripper removes profile lines
         // throughout the input, so the validation must observe every
@@ -2810,11 +2812,11 @@ public class JsonableHelperProductionDriveTest {
         injections.put("empty profile on line 41",
             profilePadding(40) + "// @profile:\n" + raw);
         injections.put("cross-boundary duplicate",
-            "// @profile: deal-v1.2-int32\n" + profilePadding(39)
+            "// @profile: deal-v1.3-int32\n" + profilePadding(39)
                 + "// @profile: legacy-safe-int\n" + raw);
-        // The canonical metadata reader (profileFromMetadata) segments
-        // source lines on \R, not only on CR/LF: a declaration after VT,
-        // FF, NEL, LS or PS is recognized by that reader, so the
+        // The canonical metadata reader (windowProfileDeclarations)
+        // segments source lines on \R, not only on CR/LF: a declaration
+        // after VT, FF, NEL, LS or PS is recognized by that reader, so the
         // whole-source validation must recognize it too — otherwise the
         // declared nonproduction profile is visible to discovery while
         // the production materialization compiles the cell as if no
@@ -2834,12 +2836,12 @@ public class JsonableHelperProductionDriveTest {
                 "// padding" + terminator + "// @profile: no-such-profile\n"
                     + raw);
             injections.put("duplicate metadata after " + name,
-                "// @profile: deal-v1.2-int32\n// padding" + terminator
-                    + "// @profile: deal-v1.2-int32\n" + raw);
-            checkEq(deal.semantic.ir.SemanticProfile.LEGACY_SAFE_INT,
-                ConformanceHarnessMetadata.profileFromMetadata(
+                "// @profile: deal-v1.3-int32\n// padding" + terminator
+                    + "// @profile: deal-v1.3-int32\n" + raw);
+            check(ConformanceHarnessMetadata.windowProfileDeclarations(
                     "// padding" + terminator
-                        + "// @profile: legacy-safe-int\n" + raw, fixturePath),
+                        + "// @profile: legacy-safe-int\n" + raw, fixturePath)
+                    .contains("legacy-safe-int"),
                 "the canonical metadata reader recognizes the legacy "
                     + "declaration after " + name + " (the premise of the "
                     + "separator control)");

@@ -140,7 +140,7 @@ public class AdapterShapeMapPayloadTest {
             return null;
         }
         return SemanticLowerer.lowerModuleShapeMapCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -972,8 +972,7 @@ public class AdapterShapeMapPayloadTest {
             registry.registerHostOrExternalImport(identity,
                 new KindPayload.MemberReadPayload(new ValueId(9001L), "g"),
                 new FunctionBindingRegistry.FunctionValueImportFacts(hostModule, null, "g",
-                    exportDescriptor),
-                null);
+                    exportDescriptor));
         check(materialization.source()
                 == FunctionBindingRegistry.FunctionValueMaterializationSource.HOST_EXPORT,
             "the seam classifies the site as a HOST_EXPORT materialization");

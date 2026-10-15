@@ -935,8 +935,8 @@ end)
 
 test("math.absInt(-2147483648) raises E8004 (2147483648 is outside int32)", function()
   local err = assert_error_code(function() mathlib.absInt.f(-2147483648) end, "E8004")
-  assert(err.message == "int out of range",
-    "expected 'int out of range', got " .. tostring(err.message))
+  assert(err.message == "int out of safe range",
+    "expected 'int out of safe range', got " .. tostring(err.message))
 end)
 
 test("math.absInt(2147483647) returns 2147483647 (int32 upper bound)", function()

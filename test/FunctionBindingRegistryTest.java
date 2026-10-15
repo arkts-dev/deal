@@ -15,10 +15,7 @@ import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
 import deal.semantic.FunctionBindingRegistry;
-import deal.semantic.ModuleRoute;
-import deal.semantic.ModuleRoutePlan;
 import deal.semantic.SemanticLowerer;
-import deal.semantic.Target;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BoundaryKind;
@@ -51,7 +48,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public class FunctionBindingRegistryTest {
 
@@ -157,7 +153,7 @@ public class FunctionBindingRegistryTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClosureCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -167,7 +163,7 @@ public class FunctionBindingRegistryTest {
             return null;
         }
         return SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -205,13 +201,6 @@ public class FunctionBindingRegistryTest {
         check(matches.size() == 1, "exactly one member-facts record for '" + name
             + "'; got " + matches.size());
         return matches.size() == 1 ? matches.get(0) : null;
-    }
-
-    /** A fixed ModuleRoutePlan with the given entries (empty shadow set, no bytes exceptions, no ABI edges). */
-    private static ModuleRoutePlan plan(Map<ModuleId, ModuleRoute> entries) {
-        String hash = "0".repeat(64);
-        return new ModuleRoutePlan(Target.LUAJIT, entries, Set.of(), Set.of(), List.of(),
-            hash, "plan-" + hash.substring(0, 16));
     }
 
     // =========================================================================
@@ -427,7 +416,7 @@ public class FunctionBindingRegistryTest {
         FunctionBindingRegistry.FunctionValueImportFacts facts =
             new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "g", NULL_FUNC);
         FunctionBindingRegistry.FunctionValueMaterialization classification =
-            registry.registerHostOrExternalImport(identity, payload, facts, null);
+            registry.registerHostOrExternalImport(identity, payload, facts);
 
         check(registry.size() == 1 && registry.containsKey(identity),
             "exactly one registration keyed by the produced allocation identity");
@@ -471,7 +460,7 @@ public class FunctionBindingRegistryTest {
         FunctionBindingRegistry.FunctionValueImportFacts facts =
             new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "pick", NULL_FUNC);
         FunctionBindingRegistry.FunctionValueMaterialization classification =
-            registry.registerHostOrExternalImport(identity, payload, facts, null);
+            registry.registerHostOrExternalImport(identity, payload, facts);
 
         check(registry.bindings().get(identity)
                 instanceof FunctionExecutionBinding.HostFunction hostBinding
@@ -487,10 +476,10 @@ public class FunctionBindingRegistryTest {
     }
 
     /**
-     * Seam (self-contained, IR level): cross-module facts plus a
-     * {@code ModuleRoutePlan} record whose callee route is shared
-     * register {@code ExternalFunction {moduleId, exportName,
-     * descriptor, SHARED_BODY}}.
+     * Seam (self-contained, IR level): cross-module facts register
+     * {@code ExternalFunction {moduleId, exportName, descriptor,
+     * SHARED_BODY}} — every module of the one validated complete
+     * implementation closure is lowered.
      */
     static void testCrossModuleSharedRouteRegistersExternalFunctionSharedBody() {
         System.out.println("-- seam: cross-module + shared route registers ExternalFunction "
@@ -503,9 +492,8 @@ public class FunctionBindingRegistryTest {
             new KindPayload.MemberReadPayload(new ValueId(12), "pick");
         FunctionBindingRegistry.FunctionValueImportFacts facts =
             new FunctionBindingRegistry.FunctionValueImportFacts(null, lib, "pick", NULL_FUNC);
-        ModuleRoutePlan plan = plan(Map.of(lib, ModuleRoute.SHARED));
         FunctionBindingRegistry.FunctionValueMaterialization classification =
-            registry.registerHostOrExternalImport(identity, payload, facts, plan);
+            registry.registerHostOrExternalImport(identity, payload, facts);
 
         check(registry.bindings().get(identity)
                 instanceof FunctionExecutionBinding.ExternalFunction external
@@ -514,42 +502,13 @@ public class FunctionBindingRegistryTest {
                 && external.descriptor().equals(NULL_FUNC)
                 && external.executionOwner() == ExternalExecutionOwner.SHARED_BODY,
             "the binding is ExternalFunction {moduleId, exportName, descriptor, SHARED_BODY} "
-                + "(the shared callee route resolves SHARED_BODY from the plan record)");
+                + "(a cross-module import always resolves SHARED_BODY)");
         check(classification.source()
                     == FunctionBindingRegistry.FunctionValueMaterializationSource.EXTERNAL_IMPORT
                 && classification.moduleId().equals(lib)
                 && classification.producingOpKind() == SemanticOpKind.MEMBER_READ,
             "the classification marks the site EXTERNAL_IMPORT with the imported module "
                 + "facts: " + classification);
-    }
-
-    /**
-     * Seam (self-contained, IR level): cross-module facts plus a
-     * retained-ABI route record register {@code ExternalFunction {…,
-     * RETAINED_ABI}}.
-     */
-    static void testCrossModuleRetainedAbiRouteRegistersExternalFunctionRetainedAbi() {
-        System.out.println("-- seam: cross-module + retained-ABI route registers "
-            + "ExternalFunction RETAINED_ABI --");
-
-        FunctionBindingRegistry registry = new FunctionBindingRegistry();
-        FunctionAllocationIdentity identity = new FunctionAllocationIdentity(31);
-        ModuleId lib = new ModuleId("lib");
-        KindPayload.ExportReadPayload payload = new KindPayload.ExportReadPayload(lib, "pick",
-            NULL_FUNC, new ValueId(31));
-        FunctionBindingRegistry.FunctionValueImportFacts facts =
-            new FunctionBindingRegistry.FunctionValueImportFacts(null, lib, "pick", NULL_FUNC);
-        ModuleRoutePlan plan = plan(Map.of(lib, ModuleRoute.LEGACY));
-        FunctionBindingRegistry.FunctionValueMaterialization classification =
-            registry.registerHostOrExternalImport(identity, payload, facts, plan);
-
-        check(registry.bindings().get(identity)
-                instanceof FunctionExecutionBinding.ExternalFunction external
-                && external.executionOwner() == ExternalExecutionOwner.RETAINED_ABI,
-            "the binding is ExternalFunction with RETAINED_ABI (the retained-ABI callee "
-                + "route resolves RETAINED_ABI from the plan record)");
-        check(classification.producingOpKind() == SemanticOpKind.EXPORT_READ,
-            "the classification's producing op kind is EXPORT_READ");
     }
 
     /**
@@ -652,8 +611,7 @@ public class FunctionBindingRegistryTest {
         check(throwsWhen(() -> registry.registerHostOrExternalImport(identity,
                     new KindPayload.MemberReadPayload(new ValueId(11), "g"),
                     new FunctionBindingRegistry.FunctionValueImportFacts(new ModuleId("host"),
-                        null, "g", NULL_FUNC),
-                    null),
+                        null, "g", NULL_FUNC)),
                 "a duplicate host-import registration is rejected"),
             "a duplicate host-import registration is rejected");
         check(throwsWhen(() -> registry.registerHostFunctionValue(identity,
@@ -675,8 +633,7 @@ public class FunctionBindingRegistryTest {
      * A function-typed materialization without its producer facts is not
      * silently skipped — the seam fails explicitly: missing facts,
      * facts without a producer module id, a non-function fact
-     * descriptor, payload/facts mismatches, a foreign payload record,
-     * and a cross-module import without a route record for the callee
+     * descriptor, payload/facts mismatches, and a foreign payload record
      * all raise.
      */
     static void testMissingOrMismatchedProducerFactsFailExplicitly() {
@@ -689,7 +646,7 @@ public class FunctionBindingRegistryTest {
             new KindPayload.MemberReadPayload(new ValueId(11), "g");
 
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
-                    new FunctionAllocationIdentity(70), member, null, null),
+                    new FunctionAllocationIdentity(70), member, null),
                 "null producer facts fail explicitly (never silently skipped)"),
             "null producer facts fail explicitly (never silently skipped)");
         check(throwsWhen(() -> new FunctionBindingRegistry.FunctionValueImportFacts(null,
@@ -699,15 +656,13 @@ public class FunctionBindingRegistryTest {
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
                     new FunctionAllocationIdentity(70), member,
                     new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "g",
-                        RuntimeDescriptor.Int.INSTANCE),
-                    null),
+                        RuntimeDescriptor.Int.INSTANCE)),
                 "a non-function fact descriptor fails explicitly"),
             "a non-function fact descriptor fails explicitly");
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
                     new FunctionAllocationIdentity(70), member,
                     new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "x",
-                        NULL_FUNC),
-                    null),
+                        NULL_FUNC)),
                 "a member-read key/facts export-name mismatch fails explicitly"),
             "a member-read key/facts export-name mismatch fails explicitly");
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
@@ -715,8 +670,7 @@ public class FunctionBindingRegistryTest {
                     new KindPayload.ExportReadPayload(lib, "pick", NULL_FUNC,
                         new ValueId(70)),
                     new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "pick",
-                        NULL_FUNC),
-                    null),
+                        NULL_FUNC)),
                 "an export-read module/facts module mismatch fails explicitly"),
             "an export-read module/facts module mismatch fails explicitly");
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
@@ -724,8 +678,7 @@ public class FunctionBindingRegistryTest {
                     new KindPayload.ExportReadPayload(host, "other", NULL_FUNC,
                         new ValueId(70)),
                     new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "pick",
-                        NULL_FUNC),
-                    null),
+                        NULL_FUNC)),
                 "an export-read name/facts export-name mismatch fails explicitly"),
             "an export-read name/facts export-name mismatch fails explicitly");
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
@@ -733,33 +686,16 @@ public class FunctionBindingRegistryTest {
                     new KindPayload.ExportReadPayload(host, "pick", INT_FUNC,
                         new ValueId(70)),
                     new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "pick",
-                        NULL_FUNC),
-                    null),
+                        NULL_FUNC)),
                 "an export-read descriptor/facts descriptor mismatch fails explicitly"),
             "an export-read descriptor/facts descriptor mismatch fails explicitly");
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
                     new FunctionAllocationIdentity(70),
                     new KindPayload.ArrayLengthPayload(new ValueId(11)),
                     new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "g",
-                        NULL_FUNC),
-                    null),
+                        NULL_FUNC)),
                 "a foreign payload record (not member-read/export-read) fails explicitly"),
             "a foreign payload record (not member-read/export-read) fails explicitly");
-        check(throwsWhen(() -> registry.registerHostOrExternalImport(
-                    new FunctionAllocationIdentity(70), member,
-                    new FunctionBindingRegistry.FunctionValueImportFacts(null, lib, "g",
-                        NULL_FUNC),
-                    plan(Map.of())),
-                "a cross-module import without a route record for the callee fails "
-                    + "explicitly"),
-            "a cross-module import without a route record for the callee fails explicitly");
-        check(throwsWhen(() -> registry.registerHostOrExternalImport(
-                    new FunctionAllocationIdentity(70), member,
-                    new FunctionBindingRegistry.FunctionValueImportFacts(null, lib, "g",
-                        NULL_FUNC),
-                    null),
-                "a cross-module import without a plan fails explicitly"),
-            "a cross-module import without a plan fails explicitly");
         check(throwsWhen(() -> registry.registerHostFunctionValue(
                     new FunctionAllocationIdentity(70),
                     new KindPayload.BoundaryPayload(BoundaryKind.DEAL_TO_HOST, NULL_FUNC,
@@ -846,7 +782,7 @@ public class FunctionBindingRegistryTest {
             return;
         }
         SemanticLowerer.ClosureCoreResult result = SemanticLowerer.lowerModuleClosureCore(
-            moduleOf(slice), SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+            moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH,
             REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
         check(result.lowering().unit() == null && result.lowering().hasErrors(),
             "the member-access slice produces no unit (fail closed)");
@@ -906,7 +842,6 @@ public class FunctionBindingRegistryTest {
         testMemberReadHostFactsRegisterHostFunction();
         testExportReadHostFactsRegisterHostFunction();
         testCrossModuleSharedRouteRegistersExternalFunctionSharedBody();
-        testCrossModuleRetainedAbiRouteRegistersExternalFunctionRetainedAbi();
         testHostToDealBoundaryFactsRegisterHostFunctionValue();
         testAdapterRegistrationSeam();
         testDuplicateKeyRejectedAtRegistrationTime();

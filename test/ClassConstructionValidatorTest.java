@@ -161,8 +161,7 @@ public class ClassConstructionValidatorTest {
     }
 
     private static PipelineSlice pipeline(CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -210,7 +209,7 @@ public class ClassConstructionValidatorTest {
             return null;
         }
         return new LoweredSlice(SemanticLowerer.lowerModuleClassCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, pipeline.coverage(), pipeline.interfaceHash(),
+            SemanticProfile.DEAL_V1_3_INT32, pipeline.coverage(), pipeline.interfaceHash(),
             REGISTRY_HASH, pipeline.ownInterface(),
             SemanticIdAllocator.over(List.of(MODULE))), pipeline.ownInterface());
     }
@@ -307,7 +306,7 @@ public class ClassConstructionValidatorTest {
             "the failure detail carries capability CLASSES");
         check(diagnostic.message().contains("module 'main'"),
             "the failure detail carries the module");
-        check(diagnostic.message().contains("semanticProfile DEAL_V1_2_INT32"),
+        check(diagnostic.message().contains("semanticProfile DEAL_V1_3_INT32"),
             "the failure detail carries the semantic profile");
         check(diagnostic.message().contains("irVersion deal.semantic-ir/2"),
             "the failure detail carries the IR version");
@@ -1320,7 +1319,7 @@ public class ClassConstructionValidatorTest {
                 + "layout, fieldBoundaries, classId)");
         Optional<CompilerDiagnostic> revalidated = SemanticIrValidator.validateText(dumpText,
             new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
-                SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH));
+                SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH));
         check(revalidated.isEmpty(),
             "the dumped class unit re-validates from the dump text: " + revalidated);
 
@@ -1994,8 +1993,8 @@ public class ClassConstructionValidatorTest {
 
     /** One raw unit carrying exactly the given raw operations. */
     private static RawUnit unitWithOps(List<RawOp> ops) {
-        return new RawUnit(MODULE.path(), SemanticProfile.DEAL_V1_2_INT32.name(),
-            "interface-digest-1", LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+        return new RawUnit(MODULE.path(), SemanticProfile.DEAL_V1_3_INT32.name(),
+            "interface-digest-1", LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
                 REGISTRY_HASH),
             List.of(), List.of(), List.of(), List.of(),
             new ModuleInitPlan(List.of(), new BlockId(0)), List.of(), List.of(), ops,

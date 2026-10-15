@@ -55,13 +55,13 @@ public class FailureContractRegistryTest {
 
         LoweringFailureDetail detail = new LoweringFailureDetail(
             "app.main", SemanticCapability.FOUNDATION_VALUES,
-            "INDEX_INTERNAL_ERROR_SENTINEL", SemanticProfile.DEAL_V1_2_INT32,
+            "INDEX_INTERNAL_ERROR_SENTINEL", SemanticProfile.DEAL_V1_3_INT32,
             "deal.semantic-ir/2", "CheckedProjectBuilder");
 
         String pinnedMessage = "Common semantic lowering failed: module 'app.main'"
             + ", capability FOUNDATION_VALUES"
             + ", validatorRule INDEX_INTERNAL_ERROR_SENTINEL"
-            + ", semanticProfile DEAL_V1_2_INT32"
+            + ", semanticProfile DEAL_V1_3_INT32"
             + ", irVersion deal.semantic-ir/2"
             + ", origin CheckedProjectBuilder";
         check(pinnedMessage.equals(FailureContractRegistry.instantiateMessage(detail)),
@@ -79,7 +79,7 @@ public class FailureContractRegistryTest {
         check(diagnostic.message().contains("app.main")
                 && diagnostic.message().contains("FOUNDATION_VALUES")
                 && diagnostic.message().contains("INDEX_INTERNAL_ERROR_SENTINEL")
-                && diagnostic.message().contains("DEAL_V1_2_INT32")
+                && diagnostic.message().contains("DEAL_V1_3_INT32")
                 && diagnostic.message().contains("deal.semantic-ir/2")
                 && diagnostic.message().contains("CheckedProjectBuilder"),
             "message carries all six detail fields");
@@ -142,7 +142,7 @@ public class FailureContractRegistryTest {
         expectThrows(NullPointerException.class,
             () -> FailureContractRegistry.e6005(new LoweringFailureDetail(
                 null, SemanticCapability.FOUNDATION_VALUES, "R-ENUM",
-                SemanticProfile.DEAL_V1_2_INT32, "deal.semantic-ir/2", "SemanticIrValidator")),
+                SemanticProfile.DEAL_V1_3_INT32, "deal.semantic-ir/2", "SemanticIrValidator")),
             "a null module field fails closed");
 
         // E6000 remains distinct: intentional retained-target rejections

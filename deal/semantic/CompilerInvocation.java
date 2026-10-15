@@ -1,6 +1,5 @@
 package deal.semantic;
 
-import deal.semantic.ir.InvocationPurpose;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 
@@ -8,60 +7,41 @@ import java.util.Objects;
 
 /**
  * The release-owned compiler invocation record (foundation F1; parent
- * D2): exactly one purpose, one project-wide semantic profile, one
- * release state, the closed capability-registry digest, and the derived
- * release-state hash.
+ * D2): one project-wide semantic profile — the sole
+ * {@code DEAL_V1_3_INT32} — one release state, the closed
+ * capability-registry digest, and the derived release-state hash.
  *
- * <p>The four selectable inputs are {@code purpose},
- * {@code semanticProfile}, {@code releaseState}, and
- * {@code capabilityRegistryHash}; {@code releaseStateHash} is a derived,
- * recorded field — computed by {@link CompilerProfileProvider} at
- * invocation resolution as {@code SHA-256(canonical JSON {releaseState,
- * capabilityRegistryHash})} through the single canonical JSON facility —
- * never a selectable input. Source and the public CLI cannot select
- * profile, purpose, or the hash; the compact constructor rejects any
- * recorded value that does not equal the recomputed derivation, so the
- * field is derived and recorded on every invocation, verbose or not.
- * The record is immutable: every component is final and there is no
- * mutator.</p>
+ * <p>The selectable inputs are {@code semanticProfile}, {@code releaseState}
+ * and {@code capabilityRegistryHash}; the profile is the single closed
+ * member and {@code releaseStateHash} is a derived, recorded field —
+ * computed by {@link CompilerProfileProvider} at invocation resolution as
+ * {@code SHA-256(canonical JSON {releaseState, capabilityRegistryHash})}
+ * through the single canonical JSON facility — never a selectable input.
+ * Source and the public CLI select neither profile, state, nor hash; the
+ * compact constructor rejects any recorded value that does not equal the
+ * recomputed derivation, so the field is derived and recorded on every
+ * invocation, verbose or not. The record is immutable: every component is
+ * final and there is no mutator.</p>
  *
- * <p>The compact constructor additionally enforces the closed A1
- * purpose×profile×release-state matrix (the same matrix
- * {@link CompilerProfileProvider} applies at resolution and
- * {@code MigrationPlanner.requireInvocationConsistent} applies as the
- * defensive planning backstop), so the matrix holds at the record too,
- * not only at the factories:</p>
- * <ul>
- *   <li>{@code PUBLIC_BUILD} — the profile must equal
- *       {@link CompilerProfileProvider#publicProfile(ReleaseState)}
- *       (strict derivation);</li>
- *   <li>{@code COMMON_SHADOW} — the profile must be
- *       {@code DEAL_V1_2_INT32} regardless of release state;</li>
- *   <li>{@code LEGACY_REGRESSION} — the profile must be
- *       {@code LEGACY_SAFE_INT} regardless of release state.</li>
- * </ul>
- *
+ * <p>There is exactly one executable semantic path. The record carries no
+ * purpose, no alternate profile and no profile-selecting route: every
+ * compiler entrypoint lowers and emits the one v1.3 production semantics
+ * for its selected backend.</p>
  */
 public record CompilerInvocation(
-    InvocationPurpose purpose,
     SemanticProfile semanticProfile,
     ReleaseState releaseState,
     String capabilityRegistryHash,
     String releaseStateHash) {
 
     /**
-     * Enforces the immutability, derived-field, and A1 matrix invariants:
-     * every component is non-null, the recorded {@code releaseStateHash}
-     * equals the recomputed pinned derivation
+     * Enforces the immutability, derived-field, and single-profile
+     * invariants: every component is non-null, the recorded
+     * {@code releaseStateHash} equals the recomputed pinned derivation
      * {@code SHA-256(canonical JSON {releaseState, capabilityRegistryHash})},
-     * and the purpose×profile combination is exactly one closed A1 matrix
-     * row ({@code PUBLIC_BUILD} derived from the release state;
-     * {@code COMMON_SHADOW} → {@code DEAL_V1_2_INT32};
-     * {@code LEGACY_REGRESSION} → {@code LEGACY_SAFE_INT}).
-     *
+     * and the profile is the single closed member.
      */
     public CompilerInvocation {
-        Objects.requireNonNull(purpose, "purpose must not be null");
         Objects.requireNonNull(semanticProfile, "semanticProfile must not be null");
         Objects.requireNonNull(releaseState, "releaseState must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
@@ -74,31 +54,6 @@ public record CompilerInvocation(
                     + "capabilityRegistryHash}): the hash is derived and recorded by "
                     + "CompilerProfileProvider at invocation resolution, never a "
                     + "selectable input");
-        }
-        switch (purpose) {
-            case PUBLIC_BUILD -> {
-                SemanticProfile derived =
-                    CompilerProfileProvider.publicProfile(releaseState);
-                if (semanticProfile != derived) {
-                    throw new IllegalArgumentException(
-                        "PUBLIC_BUILD profile must equal the release-state derivation: "
-                            + releaseState + " derives " + derived + ", got "
-                            + semanticProfile);
-                }
-            }
-            case COMMON_SHADOW -> {
-                if (semanticProfile != SemanticProfile.DEAL_V1_2_INT32) {
-                    throw new IllegalArgumentException(
-                        "COMMON_SHADOW requires DEAL_V1_2_INT32; got " + semanticProfile);
-                }
-            }
-            case LEGACY_REGRESSION -> {
-                if (semanticProfile != SemanticProfile.LEGACY_SAFE_INT) {
-                    throw new IllegalArgumentException(
-                        "LEGACY_REGRESSION requires LEGACY_SAFE_INT; got "
-                            + semanticProfile);
-                }
-            }
         }
     }
 }

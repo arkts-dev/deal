@@ -199,9 +199,8 @@ public final class ContainerClaimingSeam {
      * produces at least one op of every required family of the capability
      * — the closed {@link CapabilityRequirementCatalog} applied in
      * reverse, exactly as R-CAPABILITY consumes it. An empty-evidence row
-     * ({@code STDLIB_TIME_CONFLICT}, a routing marker only, never valid
-     * IR) is never fully evidenced — it can never be derived and can
-     * never be claimed.
+     * is never fully evidenced — it can never be derived and can never be
+     * claimed.
      *
      */
     public static boolean fullyEvidenced(List<SemanticOp> ops, SemanticCapability capability) {
@@ -210,9 +209,9 @@ public final class ContainerClaimingSeam {
         List<CapabilityRequirementCatalog.RequiredOperation> required =
             CapabilityRequirementCatalog.requiredOperations(capability);
         if (required.isEmpty()) {
-            // STDLIB_TIME_CONFLICT → {}: a routing marker only, never valid
-            // IR and never derivable (R-CAPABILITY rejects the claim on the
-            // empty evidence set — the derivation never produces it).
+            // An empty-evidence row is never valid IR and never derivable
+            // (R-CAPABILITY rejects a claim on the empty evidence set — the
+            // derivation never produces one).
             return false;
         }
         EnumSet<SemanticOpKind> produced = EnumSet.noneOf(SemanticOpKind.class);
@@ -243,8 +242,7 @@ public final class ContainerClaimingSeam {
      * holds by construction (claimed → evidenced, mechanically). A claim
      * without full evidence is impossible by this derivation: an inactive
      * row is never claimed, an under-evidenced row is never claimed, and
-     * the empty-evidence routing marker {@code STDLIB_TIME_CONFLICT} is
-     * never claimed.
+     * an empty-evidence row is never claimed.
      *
      */
     public static Set<SemanticCapability> deriveClaims(List<SemanticOp> ops,
@@ -324,7 +322,7 @@ public final class ContainerClaimingSeam {
                     if (failure == null) {
                         failure = new LoweringFailureDetail(module.path(), home,
                             OPERATION_OUTSIDE_CLAIMED_CAPABILITY,
-                            SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                            SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
                             "ContainerClaimingSeam " + OPERATION_OUTSIDE_CLAIMED_CAPABILITY
                                 + " (active home row " + home + " fully evidenced by the "
                                 + "unit and left unclaimed)");

@@ -1,21 +1,16 @@
--- Test suite for deal/runtime.lua under the DEAL_V1_2_INT32 process-wide
--- gate (signed-int32 foundation I4): sets __rt.__INT32 = true after require
--- and pins the signed32 matrix — the gate [-2147483648, 2147483647] with
--- the pinned retained template E8004 "int out of safe range", the E8001
--- variants, E8005/E8006, the int_neg gate, the pow bands (2 ** 62 -> E8004,
--- 2 ** 1024 -> E8001 infinity), int conversion, -0 normalization, and the
--- truncated remainder -2147483648 % -1 -> 0. Executed at the gate by
--- run_tests.sh (the Runtime Library Tests block, the same
--- luajit-availability guard as test_runtime.lua).
+-- Test suite for deal/runtime.lua under the sole DEAL_V1_3_INT32
+-- semantics (signed-int32 foundation I4): the signed-32 gate is active
+-- from runtime load and this suite pins the matrix — the gate
+-- [-2147483648, 2147483647] with the pinned template E8004 "int out of
+-- safe range", the E8001 variants, E8005, the int_neg gate, int
+-- conversion, -0 normalization, and the truncated remainder
+-- -2147483648 % -1 -> 0. Executed at the gate by run_tests.sh (the
+-- Runtime Library Tests block, the same luajit-availability guard as
+-- test_runtime.lua).
 -- Run with: luajit test_runtime_int32.lua
 
 package.path = "./?.lua;" .. package.path
 local __rt = require("deal.runtime")
-
--- The pinned activation seam (I4): the emitter writes this flag in the
--- module preamble under DEAL_V1_2_INT32; this suite sets it directly,
--- exactly like a generated v1.2 module does before any check runs.
-__rt.__INT32 = true
 
 local passed = 0
 local failed = 0
@@ -48,12 +43,6 @@ local function assert_error(fn, expected_code, expected_message)
   end
   return err
 end
-
--- ==================== Gate state ====================
-
-test("the int32 flag is set after require", function()
-  assert(__rt.__INT32 == true)
-end)
 
 -- ==================== check_int: the signed32 gate ====================
 
@@ -136,22 +125,6 @@ end)
 test("int_mod(-2147483648, -1) returns 0 (truncated remainder)", function()
   local r = __rt.int_mod(-2147483648, -1)
   assert(r == 0)
-end)
-
-test("int_pow(2, -1) raises E8006", function()
-  assert_error(function() __rt.int_pow(2, -1) end, "E8006", "integer exponent must be non-negative")
-end)
-
-test("int_pow(2, 62) raises E8004 (finite pow band)", function()
-  assert_error(function() __rt.int_pow(2, 62) end, "E8004", "int out of safe range")
-end)
-
-test("int_pow(2, 1024) raises E8001 infinity (NaN/infinity-first band)", function()
-  assert_error(function() __rt.int_pow(2, 1024) end, "E8001", "expected int, got infinity")
-end)
-
-test("int_pow(2, 30) returns 1073741824 (in-range pow)", function()
-  assert(__rt.int_pow(2, 30) == 1073741824)
 end)
 
 -- ==================== int conversion: the signed32 gate ====================

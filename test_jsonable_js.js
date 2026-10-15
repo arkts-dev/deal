@@ -457,7 +457,7 @@ test("jsonToJson int fields enforce the boundary (E8004 range)", function() {
   const u = rt.makeClass("User", "@m/User", () => ({ age: 0 }), null, ...LOC);
   rt.setProp(u, "age", 9007199254740992);
   assertError(() => rt.jsonToJson("@m/User", u, fields, ...LOC), "E8004",
-    "int out of range", "out-of-range int field (the legacy profile's pinned template)");
+    "int out of safe range", "out-of-range int field (the pinned template)");
 });
 
 // =========================================================================

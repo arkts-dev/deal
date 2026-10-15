@@ -142,7 +142,7 @@ public class ClosureLoweringTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClosureCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -1082,7 +1082,7 @@ public class ClosureLoweringTest {
         CheckedSlice slice = checkSlice("let h: () => null = function(): null {};");
         if (slice != null) {
             SemanticLowerer.BindingCoreResult foreign = SemanticLowerer.lowerModuleBindingCore(
-                moduleOf(slice), SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH,
                 REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(foreign != null && foreign.lowering().hasErrors()
                     && foreign.lowering().unit() == null,
@@ -1104,7 +1104,7 @@ public class ClosureLoweringTest {
         CheckedSlice updateSlice = checkSlice("for (let i: int = 0; i < 3; 1 + 1) { }\n");
         if (updateSlice != null) {
             SemanticLowerer.BindingCoreResult update = SemanticLowerer.lowerModuleBindingCore(
-                moduleOf(updateSlice), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
+                moduleOf(updateSlice), SemanticProfile.DEAL_V1_3_INT32, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(update != null && update.lowering().hasErrors()
                     && update.lowering().unit() == null,
@@ -1186,24 +1186,6 @@ public class ClosureLoweringTest {
                     "the if statement names CONSTRUCT_UNLOWERED");
             }
         }
-
-        // (d) The I3 profile guard applies to the closure entry point too.
-        CheckedSlice simple = checkSlice("let a = 1;");
-        if (simple != null) {
-            SemanticLowerer.ClosureCoreResult legacy = SemanticLowerer.lowerModuleClosureCore(
-                moduleOf(simple), SemanticProfile.LEGACY_SAFE_INT, Map.of(), INTERFACE_HASH,
-                REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
-            check(legacy != null && legacy.lowering().hasErrors()
-                    && legacy.lowering().unit() == null
-                    && legacy.bindingFacts().bindings().isEmpty()
-                    && legacy.closures().isEmpty(),
-                "a LEGACY_SAFE_INT closure request fails hard with no unit and no facts");
-            if (legacy != null && legacy.lowering().hasErrors()) {
-                check(legacy.lowering().diagnostics().get(0).message()
-                        .contains(SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
-                    "the legacy profile rejection names the pinned profile-guard rule");
-            }
-        }
     }
 
     /**
@@ -1270,7 +1252,7 @@ public class ClosureLoweringTest {
             variableSlice.checks().symbolTable().define("x",
                 new Symbol.VariableSymbol("x", Type.Error.INSTANCE, false));
             SemanticLowerer.BindingCoreResult result = SemanticLowerer.lowerModuleBindingCore(
-                moduleOf(variableSlice), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
+                moduleOf(variableSlice), SemanticProfile.DEAL_V1_3_INT32, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.lowering().hasErrors()
                     && result.lowering().unit() == null,
@@ -1368,7 +1350,7 @@ public class ClosureLoweringTest {
                 Path.of("writer.deal"), program, checks, List.of(), List.of(),
                 CheckedModuleKind.IMPLEMENTATION);
             SemanticLowerer.ClosureCoreResult result = SemanticLowerer.lowerModuleClosureCore(
-                module, SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                module, SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH,
                 REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.lowering().hasErrors()
                     && result.lowering().unit() == null,
@@ -1405,7 +1387,7 @@ public class ClosureLoweringTest {
                     new Symbol.VariableSymbol("i", Type.Error.INSTANCE, false));
                 SemanticLowerer.BindingCoreResult result =
                     SemanticLowerer.lowerModuleBindingCore(moduleOf(forLetSlice),
-                        SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                        SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH,
                         REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
                 check(result != null && result.lowering().hasErrors()
                         && result.lowering().unit() == null,
@@ -1459,7 +1441,7 @@ public class ClosureLoweringTest {
                     new Symbol.VariableSymbol("i", Type.Error.INSTANCE, false));
                 SemanticLowerer.BindingCoreResult result =
                     SemanticLowerer.lowerModuleBindingCore(moduleOf(inferredSlice),
-                        SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                        SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH,
                         REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
                 check(result != null && result.lowering().hasErrors()
                         && result.lowering().unit() == null,
@@ -1520,7 +1502,7 @@ public class ClosureLoweringTest {
                     CheckedModuleKind.IMPLEMENTATION);
                 SemanticLowerer.BindingCoreResult result =
                     SemanticLowerer.lowerModuleBindingCore(module,
-                        SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+                        SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH,
                         REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
                 check(result != null && result.lowering().hasErrors()
                         && result.lowering().unit() == null,
@@ -1551,7 +1533,7 @@ public class ClosureLoweringTest {
             throw new AssertionError("group source must check");
         }
         return SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -1728,14 +1710,6 @@ public class ClosureLoweringTest {
                 && foreign.lowering().diagnostics().get(0).code().equals("E6005")
                 && foreign.lowering().diagnostics().get(0).message().contains(SemanticLowerer.CONSTRUCT_UNLOWERED),
             "group member unsupported call fails closed");
-        CheckedSlice slice = checkSlice(source);
-        SemanticLowerer.GroupCoreResult legacy = SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
-            SemanticProfile.LEGACY_SAFE_INT, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
-            SemanticIdAllocator.over(List.of(MODULE)));
-        check(legacy.lowering().unit() == null && legacy.lowering().hasErrors()
-                && legacy.lowering().diagnostics().get(0).code().equals("E6005")
-                && legacy.lowering().diagnostics().get(0).message().contains(SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
-            "group entry rejects legacy profile");
     }
 
     public static void main(String[] args) {

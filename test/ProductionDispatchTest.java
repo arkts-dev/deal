@@ -1031,30 +1031,6 @@ public class ProductionDispatchTest {
             ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
-    private static CompilerInvocation commonShadow() {
-        return CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
-            ReleaseConfiguration.releaseCapabilityRegistry());
-    }
-
-    private static CompilerInvocation legacyRegression() {
-        return CompilerProfileProvider.resolveLegacyRegression(
-            SemanticProfile.LEGACY_SAFE_INT, ReleaseState.V1_2_ACTIVE,
-            ReleaseConfiguration.releaseCapabilityRegistry());
-    }
-
-    /** The test-only PUBLIC_BUILD record of another release state. */
-    private static CompilerInvocation publicBuildPreActivation() {
-        return CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
-            ReleaseConfiguration.releaseCapabilityRegistry());
-    }
-
-    /** The test-only PUBLIC_BUILD record of another registry digest. */
-    private static CompilerInvocation publicBuildShadowRegistry() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE,
-            CapabilityRegistry.releaseRegistry());
-    }
-
     // =========================================================================
     // The bounded real-toolchain runner (the retained release contract)
     // =========================================================================
@@ -1159,27 +1135,19 @@ public class ProductionDispatchTest {
                 ReleaseConfiguration.releaseCapabilityRegistry()),
             "the predicate's reference record is the release-state resolution");
 
-        check(!CompilationOrchestrator.isProductionInvocation(commonShadow()),
-            "the COMMON_SHADOW harness record is not the production invocation");
-        check(!CompilationOrchestrator.isProductionInvocation(
-                legacyRegression()),
-            "the LEGACY_REGRESSION harness record is not the production "
-                + "invocation");
-        check(!CompilationOrchestrator.isProductionInvocation(
-                publicBuildPreActivation()),
-            "a test-only PUBLIC_BUILD record of another release state is not "
-                + "the production invocation");
-        check(!CompilationOrchestrator.isProductionInvocation(
-                publicBuildShadowRegistry()),
-            "a test-only PUBLIC_BUILD record of another registry digest is "
-                + "not the production invocation");
-
-        check(productionInvocation().purpose()
-                == deal.semantic.ir.InvocationPurpose.PUBLIC_BUILD
-                && productionInvocation().semanticProfile()
-                    == SemanticProfile.DEAL_V1_2_INT32,
-            "the production invocation is the release-derived PUBLIC_BUILD "
-                + "record of the active release");
+        checkEq(productionInvocation(),
+            ConformanceHarnessMetadata.invocation(),
+            "the harness metadata resolves the one release-owned production "
+                + "invocation (no purpose or profile selection)");
+        checkEq(productionInvocation(),
+            CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+                CapabilityRegistry.releaseRegistry()),
+            "every resolution over the one release state and registry "
+                + "produces the same record");
+        check(productionInvocation().semanticProfile()
+                == SemanticProfile.DEAL_V1_3_INT32,
+            "the production invocation carries the single DEAL_V1_3_INT32 "
+                + "profile");
     }
 
     // =========================================================================
@@ -2335,7 +2303,7 @@ public class ProductionDispatchTest {
             String expectedMessage = "FRONTEND".equals(capability) ? originText : "Common semantic lowering failed: module '"
                 + offendingModule + "', capability " + capability
                 + ", validatorRule " + rule
-                + ", semanticProfile DEAL_V1_2_INT32, irVersion deal.semantic-ir/2"
+                + ", semanticProfile DEAL_V1_3_INT32, irVersion deal.semantic-ir/2"
                 + ", origin " + originText;
             String humanLine = offending + ":" + startLine + ":" + startColumn
                 + "-" + endLine + ":" + endColumn + ": ERROR " + expectedCode + ": "
@@ -3710,23 +3678,6 @@ public class ProductionDispatchTest {
                 "the release-owned compile publishes the one project artifact: "
                     + referenceSet.keySet());
 
-            // A delivery-equivalent record (any purpose, release state, or
-            // registry digest carrying the production profile) selects no
-            // arm: its artifact set is the release-owned set, byte for
-            // byte, and it reports no diagnostic.
-            checkDeliveryEquivalentRow(project, "COMMON_SHADOW",
-                commonShadow(), referenceSet);
-            checkDeliveryEquivalentRow(project,
-                "PUBLIC_BUILD + V1_2_ACTIVE + all-SHADOW registry digest",
-                publicBuildShadowRegistry(), referenceSet);
-
-            // A legacy-profile record fails closed at the lowering: exactly
-            // one E6005 LOWER_LEGACY_PROFILE_REJECTED, nothing staged, and a
-            // previously published set stays byte-identical.
-            checkLegacyFailClosedRow(project, "LEGACY_REGRESSION",
-                legacyRegression());
-            checkLegacyFailClosedRow(project, "PUBLIC_BUILD + PRE_ACTIVATION",
-                publicBuildPreActivation());
         }
 
         // A fail-closed input keeps the release-owned diagnostics under a
@@ -3739,7 +3690,7 @@ public class ProductionDispatchTest {
             ArmCompile releaseFail = compileWithInvocation(fail,
                 "src/main.deal", productionInvocation());
             ArmCompile shadowFail = compileWithInvocation(fail,
-                "src/main.deal", commonShadow());
+                "src/main.deal", productionInvocation());
             check(!releaseFail.success() && !shadowFail.success(),
                 "the fail-closed input fails under both records: "
                     + releaseFail.orchestrator().diagnostics() + " / "
@@ -3784,70 +3735,6 @@ public class ProductionDispatchTest {
         }
     }
 
-    private static void checkDeliveryEquivalentRow(Path project, String name,
-            CompilerInvocation invocation, Map<String, byte[]> referenceSet)
-            throws Exception {
-        deleteRecursively(project.resolve("out"));
-        ArmCompile arm = compileWithInvocation(project, "src/main.deal",
-            invocation);
-        check(arm.success(), name + ": the compile succeeds: "
-            + arm.orchestrator().diagnostics());
-        if (!arm.success()) {
-            return;
-        }
-        check(!CompilationOrchestrator.isProductionInvocation(invocation),
-            name + ": the record is not the release-owned production "
-                + "invocation");
-        checkEq(1, arm.orchestrator().semanticEmissionCount(),
-            name + ": the one production arm records one project emission");
-        check(arm.orchestrator().diagnostics().isEmpty(),
-            name + ": the compile reports no diagnostic: "
-                + arm.orchestrator().diagnostics());
-        check(treeEquals(referenceSet, snapshotTree(project.resolve("out"))),
-            name + ": the artifact set is the release-owned artifact set "
-                + "byte-for-byte");
-    }
-
-    private static void checkLegacyFailClosedRow(Path project, String name,
-            CompilerInvocation invocation) throws Exception {
-        Path out = project.resolve("out");
-        deleteRecursively(out);
-        write(project, "out/main.lua", "-- previous artifact\n");
-        write(project, "out/deal/runtime.lua", "-- previous runtime\n");
-        Map<String, byte[]> before = snapshotTree(out);
-
-        ArmCompile arm = compileWithInvocation(project, "src/main.deal",
-            invocation);
-        check(!arm.success(),
-            name + ": the legacy-profile invocation fails closed");
-        List<CompilerDiagnostic> errors = arm.orchestrator().diagnostics()
-            .stream().filter(d -> "error".equals(d.severity())).toList();
-        checkEq(1, errors.size(),
-            name + ": exactly one error diagnostic: "
-                + arm.orchestrator().diagnostics());
-        if (errors.size() == 1) {
-            check(errors.get(0).code().equals("E6005")
-                    && errors.get(0).message().contains(
-                        SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
-                name + ": the one failure is E6005 "
-                    + SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED + ": "
-                    + errors.get(0).message());
-            // The genuinely originless control (ISSUE-0750): the profile
-            // guard rejects an invocation whole, so no offending source
-            // construct exists and the E6005 keeps the canonical
-            // synthetic empty-file range — never a guessed anchor.
-            check(errors.get(0).range().origin() == RangeOrigin.SYNTHETIC
-                    && errors.get(0).range().isCanonicalSynthetic()
-                    && errors.get(0).range().file().isEmpty(),
-                name + ": the originless profile rejection keeps the canonical "
-                    + "synthetic empty-file range, got " + errors.get(0).range());
-        }
-        checkEq(0, arm.orchestrator().semanticEmissionCount(),
-            name + ": the fail-closed lowering records no project emission");
-        checkTreeIdentical(before, out,
-            name + ": the fail-closed compile stages nothing");
-    }
-
     private static List<String> diagnosticTexts(
             CompilationOrchestrator orchestrator) {
         return orchestrator.diagnostics().stream()
@@ -3856,16 +3743,16 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The dumps-enabled legacy rejection (both targets): the accepted
+     * The dumps-enabled fail-closed rejection (both targets): the accepted
      * compile stages its generated IR dump with the artifact set after
-     * the one production arm accepted it, while the legacy-profile
-     * rejection stages nothing at all — no staging transaction starts,
-     * so a staging fault installed at staging start cannot preempt the
-     * one E6005 LOWER_LEGACY_PROFILE_REJECTED.
+     * the one production arm accepted it, while a checker-valid input
+     * whose lowering fails closed stages nothing at all — no staging
+     * transaction starts, so a staging fault installed at staging start
+     * cannot preempt the one E6005 CONSTRUCT_UNLOWERED.
      */
-    private static void testLegacyRejectionStagesNothingWithDumps()
+    private static void testFailClosedStagesNothingWithDumps()
             throws Exception {
-        System.out.println("-- legacy-profile rejection with --dump-ir: the "
+        System.out.println("-- fail-closed rejection with --dump-ir: the "
             + "accepted dump stages after acceptance; the rejection stages "
             + "nothing and no staging fault can preempt it --");
 
@@ -3896,21 +3783,21 @@ public class ProductionDispatchTest {
                 } finally {
                     PublicationStager.clearPublishFault();
                 }
-                check(accepted.success(), backend
-                    + ": the dumps-enabled release-owned compile succeeds: "
-                    + accepted.orchestrator().diagnostics());
                 checkEq(1, stagingStarts[0], backend
                     + ": the accepted compile stages exactly one staging "
                     + "transaction (dump and artifact)");
-                check(artifactFiles(out).contains("main.ir.txt"), backend
+                check(accepted.success() && artifactFiles(out)
+                        .contains("main.ir.txt"), backend
                     + ": the accepted compile publishes the generated IR "
-                    + "dump: " + artifactFiles(out));
+                    + "dump: " + accepted.orchestrator().diagnostics());
 
-                // The legacy rejection with --dump-ir: exactly one E6005,
-                // zero staging starts (the pending dump is discarded), and
-                // the prior live set byte-identical. The staging fault
-                // installed at staging start never fires, so it cannot
-                // preempt the legacy diagnostic with a publish I/O error.
+                // The fail-closed rejection with --dump-ir: exactly one
+                // E6005, zero staging starts (the pending dump is
+                // discarded), and the prior live set byte-identical. The
+                // staging fault installed at staging start never fires, so
+                // it cannot preempt the fail-closed diagnostic with a
+                // publish I/O error.
+                write(project, "src/main.deal", UNREALIZED_CONSTRUCT_SOURCE);
                 Map<String, byte[]> before = snapshotTree(out);
                 stagingStarts[0] = 0;
                 PublicationStager.installPublishFault(step -> {
@@ -3918,19 +3805,18 @@ public class ProductionDispatchTest {
                             step)) {
                         stagingStarts[0]++;
                         throw new IOException(
-                            "injected staging failure (legacy probe)");
+                            "injected staging failure (fail-closed probe)");
                     }
                 });
                 ArmCompile rejected;
                 try {
                     rejected = compileWithInvocation(project, "src/main.deal",
-                        legacyRegression(), true);
+                        productionInvocation(), true);
                 } finally {
                     PublicationStager.clearPublishFault();
                 }
                 check(!rejected.success(), backend
-                    + ": the dumps-enabled legacy-profile invocation fails "
-                    + "closed");
+                    + ": the dumps-enabled fail-closed input is rejected");
                 List<CompilerDiagnostic> errors =
                     rejected.orchestrator().diagnostics().stream()
                         .filter(d -> "error".equals(d.severity())).toList();
@@ -3941,9 +3827,9 @@ public class ProductionDispatchTest {
                 if (errors.size() == 1) {
                     check(errors.get(0).code().equals("E6005")
                             && errors.get(0).message().contains(
-                                SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
+                                SemanticLowerer.CONSTRUCT_UNLOWERED),
                         backend + ": the one failure is E6005 "
-                            + SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED
+                            + SemanticLowerer.CONSTRUCT_UNLOWERED
                             + ": " + errors.get(0).message());
                 }
                 checkEq(0, rejected.orchestrator().semanticEmissionCount(),
@@ -4286,19 +4172,22 @@ public class ProductionDispatchTest {
         }
         List<Injection> injections = List.of(
             new Injection("legacy profile", "// @profile: legacy-safe-int\n"
-                + raw, "LEGACY_SAFE_INT",
-                "declares the LEGACY_SAFE_INT profile"),
+                + raw, "legacy-safe-int",
+                "non-production @profile 'legacy-safe-int'"),
             new Injection("unknown profile",
                 "// @profile: no-such-profile\n" + raw, "no-such-profile",
-                "unknown @profile 'no-such-profile'"),
+                "non-production @profile 'no-such-profile'"),
             new Injection("duplicate metadata",
-                "// @profile: deal-v1.2-int32\n// @profile: deal-v1.2-int32\n"
-                    + raw, "deal-v1.2-int32",
+                "// @profile: deal-v1.3-int32\n// @profile: deal-v1.3-int32\n"
+                    + raw, "deal-v1.3-int32",
                 "duplicate corpus classification metadata"),
+            new Injection("removed v1.2 profile",
+                "// @profile: deal-v1.2-int32\n" + raw, "deal-v1.2-int32",
+                "non-production @profile 'deal-v1.2-int32'"),
             new Injection("profile after the 40-line window",
                 "\n".repeat(40) + "// @profile: legacy-safe-int\n" + raw,
-                "LEGACY_SAFE_INT",
-                "declares the LEGACY_SAFE_INT profile"));
+                "legacy-safe-int",
+                "non-production @profile 'legacy-safe-int'"));
         Path root = Files.createTempDirectory("v12-profile-control-");
         try {
             Path snippets = root.resolve("v12-snippets");
@@ -4863,9 +4752,9 @@ public class ProductionDispatchTest {
             if (produced == null) {
                 return;
             }
-            checkEq(SemanticProfile.DEAL_V1_2_INT32,
+            checkEq(SemanticProfile.DEAL_V1_3_INT32,
                 produced.semanticProfile(),
-                "the produced project is the v1.2 profile");
+                "the produced project is the sole v1.3 profile");
             check(produced.modules().containsKey(produced.entryModule()),
                 "the produced project carries its entry module");
             check(containsReturnOp(produced),
@@ -5016,7 +4905,7 @@ public class ProductionDispatchTest {
         testSourceMapUnsafeSourcePathText();
         testSourceMapControlCharacterPaths();
         testSourceMapDirectEmissionGroups();
-        testLegacyRejectionStagesNothingWithDumps();
+        testFailClosedStagesNothingWithDumps();
         testV12SplitCaptureControls();
         testV12CornerCaseCorpusProductionDrive();
 

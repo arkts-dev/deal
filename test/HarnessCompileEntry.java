@@ -8,7 +8,6 @@ import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
 import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
-import deal.semantic.ir.SemanticProfile;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -128,12 +127,11 @@ public final class HarnessCompileEntry {
             .orElseThrow();
         Path entryFile = Path.of(entryPath).toAbsolutePath().normalize();
 
-        // The harness invocation record of this compile: COMMON_SHADOW /
-        // DEAL_V1_2_INT32, never the release-owned production record. The
-        // record selects no arm (phase 4 always runs the one production
-        // arm); it is the mirror's recorded invocation fact.
-        CompilerInvocation invocation = ConformanceHarnessMetadata.invocation(
-            SemanticProfile.DEAL_V1_2_INT32);
+        // The harness invocation record of this compile: the one
+        // release-owned production record (the sole DEAL_V1_3_INT32
+        // profile). The record selects no arm — phase 4 always runs the
+        // one production arm — and the metadata never selects semantics.
+        CompilerInvocation invocation = ConformanceHarnessMetadata.invocation();
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             located.context(), entryFile, verbose, dumpIr,

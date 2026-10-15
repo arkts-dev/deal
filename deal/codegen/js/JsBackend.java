@@ -74,7 +74,6 @@ import deal.module.RuntimeDefaultPlanLowering;
 import deal.module.ModuleIdentityResolver;
 import deal.module.StdlibModuleResolver;
 import deal.module.TypedEvaluatorIr;
-import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -236,8 +235,6 @@ public final class JsBackend {
      */
     private final Set<String> externCImports;
     private final boolean isEntry;
-
-    private final boolean int32Mode;
 
     /** Shape step 8: the export assignments collected during the
      * declaration walk in declaration order, emitted by
@@ -437,8 +434,7 @@ public final class JsBackend {
                       boolean isEntry,
                       CanonicalClassIdentityIndex identityIndex,
                       Function<String, CanonicalModuleIdentity> moduleIdentities,
-                      SourceMapGenerator sourceMapGenerator,
-                      SemanticProfile semanticProfile) {
+                      SourceMapGenerator sourceMapGenerator) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.constructedClassDecls = constructedClassDecls;
@@ -452,7 +448,6 @@ public final class JsBackend {
         this.moduleIdentities = moduleIdentities;
         this.descriptors = new CanonicalRuntimeTypeDescriptor(identityIndex);
         this.sourceMapGenerator = sourceMapGenerator;
-        this.int32Mode = semanticProfile == SemanticProfile.DEAL_V1_2_INT32;
         localScopes.add(new HashSet<>());
         localEmittedNames.add(new HashMap<>());
     }
@@ -474,22 +469,10 @@ public final class JsBackend {
                                            Map<String, HostModuleDeclarations> hostModules,
                                            boolean isEntry) {
         // Recorder-less convenience overload (js-v12-source-maps D2):
-        // mapping recording is disabled and the profile defaults to
-        // LEGACY_SAFE_INT (no selector emission); the standalone
-        // identity surface is built by the source-map variant below.
+        // mapping recording is disabled; the standalone identity surface
+        // is built by the source-map variant below.
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, isEntry,
-            SemanticProfile.LEGACY_SAFE_INT);
-    }
-
-    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
-                                           String sourcePath, String modulePath,
-                                           Map<String, String> importResolutions,
-                                           Map<String, HostModuleDeclarations> hostModules,
-                                           boolean isEntry,
-                                           SemanticProfile semanticProfile) {
-        return generate(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, isEntry, null, semanticProfile);
+            importResolutions, hostModules, isEntry, null);
     }
 
     /**
@@ -507,8 +490,7 @@ public final class JsBackend {
      * {@link Span} start (the Lua
      * {@code generateResult} optional-generator precedent) —
      * and the returned result carries the recorder so the caller
-     * serializes the sidecar after codegen. The profile defaults to
-     * {@link SemanticProfile#LEGACY_SAFE_INT} (no selector emission).
+     * serializes the sidecar after codegen.
      *
      */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
@@ -517,18 +499,6 @@ public final class JsBackend {
                                            Map<String, HostModuleDeclarations> hostModules,
                                            boolean isEntry,
                                            SourceMapGenerator sourceMap) {
-        return generate(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, isEntry, sourceMap,
-            SemanticProfile.LEGACY_SAFE_INT);
-    }
-
-    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
-                                           String sourcePath, String modulePath,
-                                           Map<String, String> importResolutions,
-                                           Map<String, HostModuleDeclarations> hostModules,
-                                           boolean isEntry,
-                                           SourceMapGenerator sourceMap,
-                                           SemanticProfile semanticProfile) {
         Map<String, CanonicalModuleIdentity> byPath = new LinkedHashMap<>();
         byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
         String effectiveModulePath = modulePath == null ? "" : modulePath;
@@ -542,8 +512,7 @@ public final class JsBackend {
             ModuleIdentityResolver.buildIndex(byPath);
         return generate(program, result, sourcePath, modulePath,
             importResolutions, hostModules, Set.<String>of(), isEntry,
-            standalone, standalone.moduleIdentityLookup(), sourceMap,
-            semanticProfile);
+            standalone, standalone.moduleIdentityLookup(), sourceMap);
     }
 
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
@@ -554,8 +523,7 @@ public final class JsBackend {
                                            boolean isEntry,
                                            CanonicalClassIdentityIndex identityIndex,
                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
-                                           SourceMapGenerator sourceMap,
-                                           SemanticProfile semanticProfile) {
+                                           SourceMapGenerator sourceMap) {
         java.util.Objects.requireNonNull(program, "program must not be null");
         java.util.Objects.requireNonNull(result, "result must not be null");
         java.util.Objects.requireNonNull(importResolutions,
@@ -570,7 +538,7 @@ public final class JsBackend {
             "moduleIdentities must not be null");
         return generate(program, result, sourcePath, modulePath,
             importResolutions, hostModules, externCImports, isEntry,
-            identityIndex, moduleIdentities, sourceMap, semanticProfile,
+            identityIndex, moduleIdentities, sourceMap,
             Map.of());
     }
 
@@ -583,12 +551,11 @@ public final class JsBackend {
                                            CanonicalClassIdentityIndex identityIndex,
                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
                                            SourceMapGenerator sourceMap,
-                                           SemanticProfile semanticProfile,
                                            Map<String, List<PlannedDefaultClass>>
                                                plansByModulePath) {
         return generate(program, result, sourcePath, modulePath,
             importResolutions, hostModules, externCImports, isEntry,
-            identityIndex, moduleIdentities, sourceMap, semanticProfile,
+            identityIndex, moduleIdentities, sourceMap,
             plansByModulePath, Map.of());
     }
 
@@ -601,7 +568,6 @@ public final class JsBackend {
                                            CanonicalClassIdentityIndex identityIndex,
                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
                                            SourceMapGenerator sourceMap,
-                                           SemanticProfile semanticProfile,
                                            Map<String, List<PlannedDefaultClass>>
                                                plansByModulePath,
                                            Map<String, Map<DiagnosticRange, String>>
@@ -618,8 +584,6 @@ public final class JsBackend {
             "identityIndex must not be null");
         java.util.Objects.requireNonNull(moduleIdentities,
             "moduleIdentities must not be null");
-        java.util.Objects.requireNonNull(semanticProfile,
-            "semanticProfile must not be null");
         java.util.Objects.requireNonNull(plansByModulePath,
             "plansByModulePath must not be null");
         java.util.Objects.requireNonNull(classLiteralProvidersByModulePath,
@@ -628,7 +592,7 @@ public final class JsBackend {
             result.constructedClassDecls(),
             sourcePath, modulePath, importResolutions, hostModules,
             externCImports, isEntry,
-            identityIndex, moduleIdentities, sourceMap, semanticProfile);
+            identityIndex, moduleIdentities, sourceMap);
         backend.plansByModulePath = Map.copyOf(plansByModulePath);
         backend.recordedClassLiteralProviders =
             Map.copyOf(classLiteralProvidersByModulePath.getOrDefault(
@@ -764,15 +728,6 @@ public final class JsBackend {
         // module, ../deal/runtime for a nested one).
         out.append("const $rt = $require(\"")
             .append(runtimeRequireSpecifier()).append("\");\n");
-        if (int32Mode) {
-            // 3b. Profile selector (js-v12-int32-bytes D2): emitted only
-            // under DEAL_V1_2_INT32, immediately after the runtime
-            // $require, in every module of the output root. The call is
-            // idempotent and one-way; the runtime keeps a module-private
-            // flag, sound because one output root shares one profile
-            // (F1) and the runtime is deployed once per root.
-            out.append("$rt.setInt32Mode(true);\n");
-        }
         out.append("\n");
         // 4. Intrinsic header seeds: int/number/bytes are first-class
         // function values with the seeded static signatures, plus the
@@ -3226,11 +3181,10 @@ public final class JsBackend {
     /**
      * Binary expressions. Checked int arithmetic routes through the
      * {@code $rt.intAdd}/{@code intSub}/{@code intMul}/{@code intDiv}/
-     * {@code intMod}/{@code intPow} members with the operator-span
-     * location (E8001/E8004/E8005/E8006 in the runtime, the check_int
-     * ±Infinity-before-range order included); {@code number % number}
-     * routes through the floored {@code $rt.numMod} while the remaining
-     * number ops stay native IEEE; string ordering compares Unicode
+     * {@code intMod} members with the operator-span
+     * location (E8001/E8004/E8005 in the runtime, the check_int
+     * ±Infinity-before-range order included); number arithmetic
+     * stays native IEEE; string ordering compares Unicode
      * scalar values via {@code $rt.strCompare}; equality and inequality
      * are native {@code ===}/{@code !==}; {@code &&}/{@code ||} are
      * native short-circuit. The two nullable special forms mirror the
@@ -3267,8 +3221,7 @@ public final class JsBackend {
                     + spanParam + ")";
                 case MOD -> "$rt.intMod(" + left + ", " + right + ", "
                     + spanParam + ")";
-                case POW -> "$rt.intPow(" + left + ", " + right + ", "
-                    + spanParam + ")";
+                case POW -> throw removedOperator(bin);
                 case EQ -> "(" + left + " === " + right + ")";
                 case NEQ -> "(" + left + " !== " + right + ")";
                 case LT -> "(" + left + " < " + right + ")";
@@ -3287,8 +3240,7 @@ public final class JsBackend {
                 case SUB -> "(" + left + " - " + right + ")";
                 case MUL -> "(" + left + " * " + right + ")";
                 case DIV -> "(" + left + " / " + right + ")";
-                case MOD -> "$rt.numMod(" + left + ", " + right + ")";
-                case POW -> "(" + left + " ** " + right + ")";
+                case MOD, POW -> throw removedOperator(bin);
                 case EQ -> "(" + left + " === " + right + ")";
                 case NEQ -> "(" + left + " !== " + right + ")";
                 case LT -> "(" + left + " < " + right + ")";
@@ -3355,11 +3307,26 @@ public final class JsBackend {
     private String opSymbolJs(BinaryOp op) {
         return switch (op) {
             case ADD -> "+"; case SUB -> "-"; case MUL -> "*";
-            case DIV -> "/"; case MOD -> "%"; case POW -> "**";
+            case DIV -> "/"; case MOD -> "%";
             case EQ -> "==="; case NEQ -> "!=="; case LT -> "<";
             case LTE -> "<="; case GT -> ">"; case GTE -> ">=";
             case AND -> "&&"; case OR -> "||";
+            case POW -> throw new IllegalStateException(
+                "exponentiation was removed from the v1.3 operator set; a POW "
+                    + "node has no emission");
         };
+    }
+
+    /**
+     * The removed-operator guard: the v1.3 operator set has no
+     * exponentiation ('**') and no number remainder, so a POW node — never
+     * produced by the v1.3 parser — has no emission and fails closed as a
+     * producer defect instead of selecting a removed algorithm.
+     */
+    private static IllegalStateException removedOperator(BinaryExpr bin) {
+        return new IllegalStateException(
+            "operator " + bin.op() + " was removed from the v1.3 operator set; "
+                + "the checked tree carries no emission for it");
     }
 
     private boolean isNullLiteral(ExpressionNode expr) {

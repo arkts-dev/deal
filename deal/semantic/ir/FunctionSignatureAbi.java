@@ -11,7 +11,7 @@ public record FunctionSignatureAbi(String wrapperEntry, String signature) {
 
     /**
      * The canonical JSON object of this ABI record (sorted keys) — the
-     * single mapping {@code TargetModuleAbi}'s canonical serialization
+     * single mapping the canonical function-signature serialization
      * uses for completed records.
      *
      */

@@ -10,7 +10,7 @@ package deal.semantic.ir;
  * exist. A {@code SHARED_BODY} target executes the callee unit's
  * {@code EXTERNAL_ENTRY} (validator R-EXTERNAL-ENTRY requires the recorded
  * entry); a {@code RETAINED_ABI} target has no common body — the invoking
- * op performs the ABI invocation through the {@code TargetModuleAbi}
+ * op performs the shared-body invocation through the callee's recorded entry
  * function entry and runs the single {@code EXTERNAL_RETURN} boundary
  * itself.</p>
  */

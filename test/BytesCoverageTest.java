@@ -542,7 +542,7 @@ public class BytesCoverageTest {
         LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
         Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
             result.project(), new SemanticIrValidator.ComparisonFacts(
-                unit.interfaceHash(), SemanticProfile.DEAL_V1_2_INT32,
+                unit.interfaceHash(), SemanticProfile.DEAL_V1_3_INT32,
                 ReleaseConfiguration.releaseCapabilityRegistry()
                     .capabilityRegistryHash()));
         check(gate.isEmpty(), fixture.what() + ": the closed schema and bindings gates "
@@ -2346,7 +2346,7 @@ public class BytesCoverageTest {
         LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
         Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
             result.project(), new SemanticIrValidator.ComparisonFacts(
-                unit.interfaceHash(), SemanticProfile.DEAL_V1_2_INT32,
+                unit.interfaceHash(), SemanticProfile.DEAL_V1_3_INT32,
                 ReleaseConfiguration.releaseCapabilityRegistry()
                     .capabilityRegistryHash()));
         check(gate.isEmpty(), spec.what() + ": the closed schema and bindings gates "

@@ -26,7 +26,7 @@ public record FieldInterface(String name, String declaredType, boolean optional,
 
     /**
      * The canonical JSON object of this field entry (sorted keys) — the
-     * single mapping the interface index and the {@code TargetModuleAbi}
+     * single mapping the interface index and the canonical layout
      * class-layout serialization both use.
      *
      */

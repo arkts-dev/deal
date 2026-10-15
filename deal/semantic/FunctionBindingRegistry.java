@@ -213,51 +213,30 @@ public final class FunctionBindingRegistry {
      * the shape-map child's import-read arm consumes) and (b) registers
      * exactly one binding keyed by the produced allocation identity:
      * {@code HostFunction} for a host-module export, or
-     * {@code ExternalFunction} for a cross-module import with the
-     * {@code executionOwner} read from the already-built
-     * {@link ModuleRoutePlan} record for the callee module (shared
-     * callee → {@code SHARED_BODY}; retained-ABI callee →
-     * {@code RETAINED_ABI}).
+     * {@code ExternalFunction} for a cross-module import — every module
+     * of the one validated complete implementation closure is lowered, so
+     * a cross-module import always resolves {@code SHARED_BODY}.
      *
      * <p>Fail closed: a payload record that is not a member-read/export-
      * read payload, facts without their producer module id, a
-     * non-function-typed fact descriptor, a payload/facts mismatch (the
-     * member-read key or the export-read module/name/descriptor
-     * disagreeing with the facts), or a cross-module import whose callee
-     * has no route record in the supplied plan raises an explicit
-     * producer-defect failure — the seam never silently skips a
-     * registration.</p>
+     * non-function-typed fact descriptor, or a payload/facts mismatch
+     * (the member-read key or the export-read module/name/descriptor
+     * disagreeing with the facts) raises an explicit producer-defect
+     * failure — the seam never silently skips a registration.</p>
      *
      */
     public FunctionValueMaterialization registerHostOrExternalImport(
             FunctionAllocationIdentity identity, KindPayload producerPayload,
-            FunctionValueImportFacts facts, ModuleRoutePlan plan) {
-        return registerHostOrExternalImportWithRoutes(identity, producerPayload, facts,
-            plan == null ? Map.of() : plan.entries());
-    }
-
-    /**
-     * The route-map variant of the host/external import materialization
-     * seam (the E7 lowering surface): identical classification and
-     * registration with the {@code executionOwner} resolved from the
-     * supplied callee-route map — one route record per callee module
-     * (shared callee → {@code SHARED_BODY}; retained-ABI callee →
-     * {@code RETAINED_ABI}).
-     *
-     */
-    public FunctionValueMaterialization registerHostOrExternalImportWithRoutes(
-            FunctionAllocationIdentity identity, KindPayload producerPayload,
-            FunctionValueImportFacts facts, Map<ModuleId, ModuleRoute> calleeRoutes) {
-        Objects.requireNonNull(calleeRoutes, "calleeRoutes must not be null");
-        registerHostOrExternalImportCore(identity, producerPayload, facts, calleeRoutes);
+            FunctionValueImportFacts facts) {
+        registerHostOrExternalImportCore(identity, producerPayload, facts);
         return materializations.get(Objects.requireNonNull(identity,
             "identity must not be null"));
     }
 
-    /** The shared registration core over the callee-route facts. */
+    /** The shared registration core. */
     private void registerHostOrExternalImportCore(
             FunctionAllocationIdentity identity, KindPayload producerPayload,
-            FunctionValueImportFacts facts, Map<ModuleId, ModuleRoute> calleeRoutes) {
+            FunctionValueImportFacts facts) {
         Objects.requireNonNull(identity, "identity must not be null");
         Objects.requireNonNull(producerPayload, "producerPayload must not be null");
         Objects.requireNonNull(facts, "facts must not be null — a function-typed "
@@ -317,21 +296,9 @@ public final class FunctionBindingRegistry {
                 FunctionValueMaterializationSource.HOST_EXPORT, facts.hostModuleId(),
                 facts.exportName(), funcDescriptor, producingKind, null);
         } else {
-            ModuleRoute calleeRoute = calleeRoutes.get(facts.importedModuleId());
-            if (calleeRoute == null) {
-                throw new IllegalStateException("the cross-module import of '"
-                    + facts.importedModuleId() + "'." + facts.exportName()
-                    + " has no route record in the supplied ModuleRoutePlan — route "
-                    + "resolution is the modules epic's and the seam consumes the resolved "
-                    + "plan record; a missing callee entry is a producer defect");
-            }
-            ExternalExecutionOwner executionOwner = switch (calleeRoute) {
-                case SHARED -> ExternalExecutionOwner.SHARED_BODY;
-                case LEGACY -> ExternalExecutionOwner.RETAINED_ABI;
-            };
             register(identity, new FunctionExecutionBinding.ExternalFunction(
                 facts.importedModuleId(), facts.exportName(), funcDescriptor,
-                executionOwner));
+                ExternalExecutionOwner.SHARED_BODY));
             classification = new FunctionValueMaterialization(identity,
                 FunctionValueMaterializationSource.EXTERNAL_IMPORT, facts.importedModuleId(),
                 facts.exportName(), funcDescriptor, producingKind, null);

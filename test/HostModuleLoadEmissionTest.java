@@ -261,9 +261,8 @@ public class HostModuleLoadEmissionTest {
     }
 
     private static CompilerInvocation harnessInvocation() {
-        return CompilerProfileProvider.resolveCommonShadow(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
-            deal.semantic.ir.ReleaseState.V1_2_ACTIVE,
+        return CompilerProfileProvider.resolve(
+            deal.semantic.ir.ReleaseState.V1_3_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
     }
 

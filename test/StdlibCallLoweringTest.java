@@ -18,15 +18,11 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.DescriptorService;
 import deal.semantic.LoweringSupport;
-import deal.semantic.ModuleRoute;
-import deal.semantic.MigrationPlanner;
 import deal.semantic.RequirementManifestResult;
-import deal.semantic.RoutePlanResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.StdlibCallRecognition;
 import deal.semantic.StdlibFunctionCatalog;
-import deal.semantic.Target;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
@@ -114,7 +110,7 @@ public class StdlibCallLoweringTest {
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 src.resolve(entryName).toAbsolutePath(), tmp.resolve("build"), false, false, false, false, Backend.LUAJIT, null,
                 List.of(src.toAbsolutePath()),
-                Path.of("std").toAbsolutePath().normalize(), null, ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+                Path.of("std").toAbsolutePath().normalize(), null, ConformanceHarnessMetadata.invocation());
             boolean ok = orchestrator.compile();
             check(ok, entryName + " compiles through phase 3 + builder: "
                 + orchestrator.diagnostics());
@@ -161,15 +157,14 @@ public class StdlibCallLoweringTest {
 
     /** The fixed common-shadow invocation of the carrier tests. */
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolveCommonShadow(SemanticProfile.DEAL_V1_2_INT32,
-            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE, CapabilityRegistry.releaseRegistry());
     }
 
     /** The validated-lowering facts of the checked project (R-PROFILE). */
     private static SemanticIrValidator.ComparisonFacts factsOf(
             CheckedProjectBuildResult checked) {
         return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_2_INT32,
+            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
     }
 
@@ -214,7 +209,7 @@ public class StdlibCallLoweringTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_2_INT32, manifest.constructCoverage(),
+            subject, SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds));
@@ -240,16 +235,14 @@ public class StdlibCallLoweringTest {
             return null;
         }
         List<ModuleId> moduleIds = new ArrayList<>();
-        Map<ModuleId, ModuleRoute> routes = new LinkedHashMap<>();
         for (CheckedModuleInput module : checked.input().modules()) {
             moduleIds.add(module.moduleId());
-            routes.put(module.moduleId(), ModuleRoute.SHARED);
         }
         return SemanticLowerer.lowerModuleFullProgramE7(subject,
-            SemanticProfile.DEAL_V1_2_INT32, manifest.constructCoverage(),
+            SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
-            SemanticIdAllocator.over(moduleIds), routes, Map.of(), Set.of());
+            SemanticIdAllocator.over(moduleIds), Map.of(), Set.of());
     }
 
     // =========================================================================
@@ -1169,12 +1162,12 @@ public class StdlibCallLoweringTest {
                 moduleIds.add(module.moduleId());
             }
             SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_2_INT32, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));
             SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_2_INT32, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));
@@ -1287,32 +1280,9 @@ public class StdlibCallLoweringTest {
                 "the std/time-importing module's manifest claims STDLIB_SEMANTICS "
                     + "(the cataloged-call arm)"
                     + (manifest == null ? " (no manifest)" : ": " + manifest.capabilities()));
-            check(manifest != null
-                    && !manifest.capabilities().contains(
-                        SemanticCapability.STDLIB_TIME_CONFLICT),
-                "no manifest claims STDLIB_TIME_CONFLICT (the superseded four-part "
-                    + "trigger is retired)"
-                    + (manifest == null ? " (no manifest)" : ": " + manifest.capabilities()));
             check(manifest != null && manifest.constructCoverage()
                     .containsKey(deal.semantic.ir.ConstructKind.STDLIB_TIME_NOW_MILLIS),
                 "the manifest records the STDLIB_TIME_NOW_MILLIS coverage row");
-            {
-                RoutePlanResult planned = MigrationPlanner.planRoutes(invocation(),
-                    CapabilityRegistry.releaseRegistry(), checked.input(), checked.index(),
-                    manifests.manifests(), Target.LUAJIT, Set.of(main.moduleId()));
-                check(planned != null && planned.diagnostics().isEmpty()
-                        && planned.plan() != null,
-                    "the route plan computes cleanly for the time module");
-                if (planned != null && planned.plan() != null) {
-                    check(planned.plan().entries().get(main.moduleId())
-                            == ModuleRoute.SHARED
-                            && planned.plan().shadowModules().contains(main.moduleId()),
-                        "the time module is no longer forced LEGACY by a conflict claim: "
-                            + "the COMMON_SHADOW request common-lowers it (recorded shadow) — "
-                            + "the retired rule 2 never fires, and the planner's "
-                            + "time-conflict reroute stays in the tree inert");
-                }
-            }
 
             // A direct forced lowering drive produces the K7 shape: one
             // STDLIB_CALL(TIME_NOW_MILLIS) with zero parameter boundaries,

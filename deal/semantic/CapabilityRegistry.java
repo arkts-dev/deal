@@ -7,33 +7,33 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * The closed capability × target registry (foundation F7) retained as an
+ * executable consistency mechanism: the ordered cross product of the
+ * closed {@link SemanticCapability} set with the {@link Target} set and
+ * its deterministic canonical-JSON digest. The registry records which
+ * capabilities exist for which targets — it selects no semantics, no
+ * promotion and no compatibility arm; the sole
+ * {@code DEAL_V1_3_INT32} profile executes every capability.
+ */
 public final class CapabilityRegistry {
 
-    public enum State {
-
-        /** Capability exists for internal shadow testing only. */
-        SHADOW,
-
-        PROMOTED
-    }
-
     /**
-     * One closed cross-product entry: {@code {capability, target, state}}.
-     * Exactly these three components — no consumer axis exists.
+     * One closed cross-product entry: {@code {capability, target}}. Exactly
+     * these two components — no consumer or state axis exists.
      */
-    public record Entry(SemanticCapability capability, Target target, State state) {
+    public record Entry(SemanticCapability capability, Target target) {
 
         public Entry {
             Objects.requireNonNull(capability, "capability must not be null");
             Objects.requireNonNull(target, "target must not be null");
-            Objects.requireNonNull(state, "state must not be null");
         }
     }
 
     /** The pinned canonical JSON shape version of the registry. */
     public static final int VERSION = 1;
 
-    /** The entry count of the closed cross product: 12 capabilities × 2 targets. */
+    /** The entry count of the closed cross product: capabilities × targets. */
     public static final int ENTRY_COUNT =
         SemanticCapability.values().length * Target.values().length;
 
@@ -52,12 +52,13 @@ public final class CapabilityRegistry {
             CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(this.canonicalJson));
     }
 
-    /** Builds the release-owned default: the full cross product, all SHADOW. */
+    /** Builds the release-owned default: the full cross product. */
     private static CapabilityRegistry buildReleaseDefault() {
         List<Entry> entries = new ArrayList<>(ENTRY_COUNT);
         for (SemanticCapability capability : SemanticCapability.values()) {
-            entries.add(new Entry(capability, Target.LUAJIT, State.SHADOW));
-            entries.add(new Entry(capability, Target.JVM, State.SHADOW));
+            for (Target target : Target.values()) {
+                entries.add(new Entry(capability, target));
+            }
         }
         return new CapabilityRegistry(entries);
     }
@@ -95,7 +96,6 @@ public final class CapabilityRegistry {
         for (Entry entry : entries) {
             entryValues.add(CanonicalJson.obj(
                 CanonicalJson.e("capability", CanonicalJson.str(entry.capability().name())),
-                CanonicalJson.e("state", CanonicalJson.str(entry.state().name())),
                 CanonicalJson.e("target", CanonicalJson.str(entry.target().name()))));
         }
         return CanonicalJson.obj(
@@ -107,24 +107,8 @@ public final class CapabilityRegistry {
         return RELEASE_DEFAULT;
     }
 
-    public CapabilityRegistry withState(
-            SemanticCapability capability, Target target, State state) {
-        Objects.requireNonNull(capability, "capability must not be null");
-        Objects.requireNonNull(target, "target must not be null");
-        Objects.requireNonNull(state, "state must not be null");
-        List<Entry> next = new ArrayList<>(ENTRY_COUNT);
-        for (Entry entry : entries) {
-            if (entry.capability() == capability && entry.target() == target) {
-                next.add(new Entry(capability, target, state));
-            } else {
-                next.add(entry);
-            }
-        }
-        return new CapabilityRegistry(next);
-    }
-
     /**
-     * The 24 ordered entries: the S4 capability order, {@code LUAJIT}
+     * The ordered entries: the S4 capability order, {@code LUAJIT}
      * before {@code JVM} within each capability. The list is immutable.
      *
      */
@@ -133,27 +117,9 @@ public final class CapabilityRegistry {
     }
 
     /**
-     * The exact capability × target state lookup (F4 rule 4 consumes this
-     * lookup for the target).
-     *
-     */
-    public State state(SemanticCapability capability, Target target) {
-        Objects.requireNonNull(capability, "capability must not be null");
-        Objects.requireNonNull(target, "target must not be null");
-        for (Entry entry : entries) {
-            if (entry.capability() == capability && entry.target() == target) {
-                return entry.state();
-            }
-        }
-        // Unreachable: the constructor enforces the closed cross product.
-        throw new IllegalArgumentException("no registry entry for " + capability
-            + " × " + target + " (the closed cross product is complete)");
-    }
-
-    /**
      * The registry's canonical JSON value, serialized through the single
      * {@link CanonicalJson} facility — {@code {version: 1, entries:
-     * [{capability, target, state}]}} with the pinned ordering.
+     * [{capability, target}]}} with the pinned ordering.
      *
      */
     public CanonicalJson.Value canonicalJson() {
@@ -162,9 +128,8 @@ public final class CapabilityRegistry {
 
     /**
      * The exact canonical JSON digest: {@code SHA-256(canonical JSON
-     * {version: 1, entries: [{capability, target, state}]})} — the
-     * invocation's {@code capabilityRegistryHash} (F1/F7), byte-identical
-     * across builds.
+     * {version: 1, entries: [{capability, target}]})} — the invocation's
+     * {@code capabilityRegistryHash} (F1/F7), byte-identical across builds.
      *
      */
     public String capabilityRegistryHash() {

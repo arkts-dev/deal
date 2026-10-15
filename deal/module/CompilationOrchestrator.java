@@ -160,12 +160,12 @@ public final class CompilationOrchestrator {
 
     /**
      * The release-owned compiler invocation resolved at compile start
-     * (foundation F1/F8): every compile carries exactly one purpose,
-     * profile, release state, and derived release-state hash. Public
-     * builds resolve PUBLIC_BUILD through
-     * {@link CompilerProfileProvider}; the verbose report prints the
-     * recorded facts but the recording location is the invocation's
-     * immutable {@code releaseStateHash} field.
+     * (foundation F1/F8): every compile carries the one
+     * {@code DEAL_V1_3_INT32} profile, the release state, and the derived
+     * release-state hash, resolved through {@link CompilerProfileProvider};
+     * the verbose report prints the recorded facts but the recording
+     * location is the invocation's immutable {@code releaseStateHash}
+     * field.
      */
     private final CompilerInvocation invocation;
 
@@ -250,8 +250,8 @@ public final class CompilationOrchestrator {
      * The IR dumps a LuaJIT/JVM compile generated in their existing
      * phase-1/3 sites, in generation order: they are held until the one
      * production arm has accepted the compile ({@link #stageIrDumps()}),
-     * so a rejected compile — including the legacy-profile rejection —
-     * stages neither a dump nor an artifact and no staging fault can
+     * so a rejected compile stages neither a dump nor an artifact and no
+     * staging fault can
      * preempt its diagnostic. The JS arm keeps its immediate phase-1/3
      * staging (the JS path is unchanged by the cutover).
      */
@@ -584,15 +584,12 @@ public final class CompilationOrchestrator {
 
     /**
      * The default release-owned invocation used by every constructor that
-     * is not given one explicitly: {@code PUBLIC_BUILD} resolved through
+     * is not given one explicitly: resolved through
      * {@link CompilerProfileProvider} from
      * {@link ReleaseConfiguration#CURRENT_RELEASE_STATE} and the release
-     * capability registry (A2 — the single release-owned selection
-     * point; the release state is {@code V1_2_ACTIVE} after the E12
-     * activation release action, so the derived public profile is
-     * {@code DEAL_V1_2_INT32} and production SHARED routing is eligible
-     * for the promoted capability × target pairs, foundation F1/F4).
-     * is the only invocation constructor — the orchestrator never
+     * capability registry (A2 — the single release-owned selection point;
+     * the profile is the sole {@code DEAL_V1_3_INT32}, foundation F1/F4).
+     * It is the only invocation constructor — the orchestrator never
      * constructs an invocation itself.
      */
     private static CompilerInvocation defaultInvocation() {
@@ -602,9 +599,9 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * The release-owned compiler invocation of this compile: exactly one
-     * purpose/profile/release state with the derived release-state hash
-     * recorded (foundation F1) — resolved before checking/lowering and
+     * The release-owned compiler invocation of this compile: the one
+     * profile along with the release state and the derived release-state
+     * hash (foundation F1) — resolved before checking/lowering and
      * recorded verbatim on every invocation, verbose or not.
      *
      */
@@ -728,7 +725,6 @@ public final class CompilationOrchestrator {
         // location is the invocation's immutable releaseStateHash field —
         // present on every invocation, verbose or not.
         if (verbose) {
-            System.out.println("Purpose: " + invocation.purpose());
             System.out.println("Semantic profile: " + invocation.semanticProfile());
             System.out.println("Release state: " + invocation.releaseState());
             System.out.println("Release-state hash: " + invocation.releaseStateHash());
@@ -881,16 +877,15 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
-            // Phase-0 parsing is profile-aware (signed-int32 foundation
-            // I1): under DEAL_V1_2_INT32 the E1036 int32 gate and the
-            // -2147483648 immediate-token special case apply; the legacy
-            // parse contract is unchanged otherwise. The lexer's
-            // directive events flow in through the events-carrying
-            // constructor (fixed-name-directive-events D1), so
-            // file-directive evaluation and declaration binding run
-            // exactly as in production.
+            // Phase-0 parsing runs the sole v1.3 parse contract: the
+            // E1036 int32 gate and the -2147483648 immediate-token
+            // special case. The lexer's directive events flow in through
+            // the events-carrying constructor
+            // (fixed-name-directive-events D1), so file-directive
+            // evaluation and declaration binding run exactly as in
+            // production.
             Parser parser = new Parser(lex.tokens(), sourcePath,
-                invocation.semanticProfile(), lex.directiveEvents());
+                lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {
@@ -1995,23 +1990,20 @@ public final class CompilationOrchestrator {
             log("  Checked: " + sourcePath + " (" + modElapsed + "ms)");
         }
 
-        // The public compile surface's null-return fall-off gate
-        // (ISSUE-0717 defect snippets 25/26): the release-owned public
-        // build rejects a : null body that can complete normally on
-        // every backend. The harness invocations keep the established
-        // implicit-null-return tolerance the composite-terminator
-        // window lowerings rely on (see NullReturnFallOff).
-        if (invocation.purpose() == deal.semantic.ir.InvocationPurpose.PUBLIC_BUILD) {
-            for (ModuleInfo info : modules.values()) {
-                if (info.isDeclarationFile || info.rawAst == null) {
-                    continue;
-                }
-                List<CompilerDiagnostic> fallOff =
-                    NullReturnFallOff.diagnostics(info.rawAst);
-                if (!fallOff.isEmpty()) {
-                    diagnostics.addAll(fallOff);
-                    hasErrors = true;
-                }
+        // The null-return fall-off gate (ISSUE-0717 defect snippets
+        // 25/26): the one compile surface rejects a : null body that can
+        // complete normally on every backend. The gate runs for every
+        // invocation — there is no alternate semantic arm that tolerates
+        // a fall-off body (see NullReturnFallOff).
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile || info.rawAst == null) {
+                continue;
+            }
+            List<CompilerDiagnostic> fallOff =
+                NullReturnFallOff.diagnostics(info.rawAst);
+            if (!fallOff.isEmpty()) {
+                diagnostics.addAll(fallOff);
+                hasErrors = true;
             }
         }
 
@@ -2035,12 +2027,9 @@ public final class CompilationOrchestrator {
             if (backend == Backend.JS) {
                 codegenAllJs();
             } else {
-                // The one production arm: a LuaJIT/JVM compile of any
-                // recorded invocation (including a harness metadata
-                // record) runs the release-owned project emission. The
-                // invocation record selects no arm; only the lowering's
-                // profile guard rejects a legacy profile. Its failure is
-                // the one E6005 LOWER_LEGACY_PROFILE_REJECTED.
+                // The one production arm: every LuaJIT/JVM compile runs
+                // the release-owned project emission. The invocation
+                // record selects no arm and carries the single profile.
                 emitProductionProject();
             }
         } catch (IOException stagingFailure) {
@@ -2337,7 +2326,6 @@ public final class CompilationOrchestrator {
                 importResolutions, hostModules, externCImports, isEntry,
                 identityIndex, identityIndex.moduleIdentityLookup(),
                 sourceMap ? new SourceMapGenerator() : null,
-                invocation.semanticProfile(),
                 completedPlansByModulePath(),
                 classLiteralProvidersByModulePath);
             // Native ranged backend list (T12): the backend emits

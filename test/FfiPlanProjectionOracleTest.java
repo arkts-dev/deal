@@ -38,7 +38,6 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
-import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.ValueId;
 import deal.test.conformance.CorpusFfi;
 import deal.test.conformance.SidecarExpectations;
@@ -127,8 +126,7 @@ public class FfiPlanProjectionOracleTest {
         String declaration = Files.readString(CONFORMANCE_ROOT
             .resolve(CorpusFfi.FFI_DIR).resolve(wiring.declarationCorpusPath()),
             StandardCharsets.UTF_8);
-        CorpusFfi.Module module = CorpusFfi.module(CONFORMANCE_ROOT, NATIVE,
-            SemanticProfile.DEAL_V1_2_INT32);
+        CorpusFfi.Module module = CorpusFfi.module(CONFORMANCE_ROOT, NATIVE);
         if (module.validationDiagnostics().stream()
                 .anyMatch(d -> "error".equals(d.severity()))
                 || module.generatedModule() == null) {

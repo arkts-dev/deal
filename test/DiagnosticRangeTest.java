@@ -35,7 +35,6 @@ import deal.module.ModuleShapeValidator;
 import deal.module.StdlibModuleResolver;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
-import deal.semantic.ir.SemanticProfile;
 import deal.source.JsonRangeLexer;
 import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
@@ -1588,10 +1587,9 @@ public class DiagnosticRangeTest {
                 .stripClassificationHeaders(raw);
             int headerLines = raw.split("\n", -1).length
                 - source.split("\n", -1).length;
-            SemanticProfile profile = ConformanceHarnessMetadata
-                .profileFromMetadata(raw, corpusPath);
+            ConformanceHarnessMetadata.validateProfileMetadata(raw, corpusPath);
             List<CompilerDiagnostic> diagnostics = frontendErrors(source,
-                corpusPath, profile, rejectingModuleResolver());
+                corpusPath, rejectingModuleResolver());
             check(diagnostics.size() == 1, name + ": exactly one error"
                 + " diagnostic, got " + diagnostics.size() + ": "
                 + diagnostics);
@@ -1710,24 +1708,20 @@ public class DiagnosticRangeTest {
     }
 
     /**
-     * The registered compile-pin execution selects the fixture's validated
-     * {@code @profile} and the corpus resolver — the same comparison the
-     * removed corpus dispatcher performed — never the legacy-safe-int
-     * default. Evidence: the pinned
-     * {@code unary-minus-string-reject} subject, mutated with the v1.2-only
-     * out-of-range int literal, still satisfies its pin verbatim under the
-     * legacy-safe-int profile (one E3007 at the pin's position), while the
-     * fixture's v1.2 profile emits E1036 instead, so the registered
-     * profile-aware drive over the mutated scratch corpus reports the
-     * compile-diagnostic mismatch. A regression of the registered
-     * comparison to the legacy default would accept the mutated pin and
-     * fail this control; the sidecar schema and the on-disk pins are
-     * unchanged.
+     * The single-profile compile-pin execution: the pinned
+     * {@code unary-minus-string-reject} subject, mutated with the removed
+     * out-of-range int literal, is rejected by the sole v1.3 parse contract
+     * with E1036 — never the pinned legacy E3007. A pin authored for the
+     * removed legacy acceptance is therefore rejected field-exact by the
+     * registered drive over the mutated scratch corpus, and there is no
+     * alternate profile that could satisfy it. The sidecar schema and the
+     * on-disk pins are unchanged.
      */
     private static void testV12CompilePinProfileDiscrimination()
             throws Exception {
-        System.out.println("-- v1.2 compile-pin execution selects the"
-            + " fixture's validated profile (not the legacy default) --");
+        System.out.println("-- the compile-pin execution runs the sole v1.3"
+            + " contract (a removed legacy literal is rejected, never"
+            + " accepted) --");
         Path corpus = Path.of("test", "conformance");
         String corpusPath = "frontend/v12-snippets/"
             + "unary-minus-string-reject.deal";
@@ -1745,69 +1739,46 @@ public class DiagnosticRangeTest {
             .stripClassificationHeaders(mutatedRaw);
         int headerLines = mutatedRaw.split("\n", -1).length
             - source.split("\n", -1).length;
-        SemanticProfile profile = ConformanceHarnessMetadata
-            .profileFromMetadata(mutatedRaw, corpusPath);
-        checkEq(SemanticProfile.DEAL_V1_2_INT32, profile,
-            "the mutated subject's validated profile is v1.2");
+        ConformanceHarnessMetadata.validateProfileMetadata(mutatedRaw,
+            corpusPath);
 
-        // The fixture's v1.2 profile rejects the forbidden literal (E1036,
-        // not the pinned E3007); the legacy-safe-int profile still yields
-        // exactly the E3007 the pin would accept verbatim.
-        List<CompilerDiagnostic> v12 = frontendErrors(
-            source, corpusPath, profile, rejectingModuleResolver());
-        check(v12.size() == 1 && "E1036".equals(v12.get(0).code()),
-            "the mutated subject emits the v1.2 out-of-range literal"
-                + " diagnostic, got " + diagnosticCodes(v12));
-        List<CompilerDiagnostic> legacy = frontendErrors(source, corpusPath,
-            SemanticProfile.LEGACY_SAFE_INT, rejectingModuleResolver());
-        check(legacy.size() == 1 && "E3007".equals(legacy.get(0).code()),
-            "the mutated subject keeps the legacy-profile E3007 diagnostic,"
-                + " got " + diagnosticCodes(legacy));
-        if (legacy.size() != 1) {
-            return;
-        }
-        CompilerDiagnostic legacyDiagnostic = legacy.get(0);
-        String pinJson = "{\n"
-            + "  \"version\": 1,\n"
-            + "  \"mode\": \"compile-error\",\n"
-            + "  \"diagnostic\": {\n"
-            + "    \"code\": \"" + legacyDiagnostic.code() + "\",\n"
-            + "    \"line\": " + (legacyDiagnostic.line() + headerLines)
-            + ",\n"
-            + "    \"column\": " + legacyDiagnostic.column() + ",\n"
-            + "    \"message\": " + jsonQuote(legacyDiagnostic.message())
-            + "\n"
-            + "  }\n"
-            + "}\n";
+        List<CompilerDiagnostic> errors = frontendErrors(
+            source, corpusPath, rejectingModuleResolver());
+        check(errors.size() == 1 && "E1036".equals(errors.get(0).code()),
+            "the mutated subject emits the v1.3 out-of-range literal"
+                + " diagnostic, got " + diagnosticCodes(errors));
+
+        // The fixture's stored pin (E3007) is legacy-satisfiable only: the
+        // sole profile rejects the mutated subject with E1036, so the pin
+        // mismatches and no profile can satisfy it.
+        String storedPin = Files.readString(corpus.resolve(
+            "frontend/v12-snippets/unary-minus-string-reject.expect.json"),
+            StandardCharsets.UTF_8);
         SidecarExpectations.CompileDiagnosticPin pin =
-            SidecarExpectations.CompileDiagnosticPin.parse(pinJson);
-        check(compilePinMismatch(corpusPath, pin, legacy,
-                headerLines).isEmpty(),
-            "the pin is legacy-satisfiable verbatim (the discrimination is"
-                + " the selected profile, not the pin)");
-        check(compilePinMismatch(corpusPath, pin, v12,
+            SidecarExpectations.CompileDiagnosticPin.parse(storedPin);
+        check(compilePinMismatch(corpusPath, pin, errors,
                 headerLines).isPresent(),
-            "the same pin is rejected under the fixture's v1.2 profile");
+            "the legacy-expectation pin is rejected under the sole profile");
 
-        Path scratch = Files.createTempDirectory("v12-pin-profile-");
+        Path scratch = Files.createTempDirectory("v13-pin-profile-");
         try {
             Path fixture = scratch.resolve(corpusPath);
             Files.createDirectories(fixture.getParent());
             Files.writeString(fixture, mutatedRaw, StandardCharsets.UTF_8);
             Files.writeString(fixture.resolveSibling(
-                "unary-minus-string-reject.expect.json"), pinJson,
+                "unary-minus-string-reject.expect.json"), storedPin,
                 StandardCharsets.UTF_8);
             List<String> mismatches = compilePinMismatches(scratch);
             checkEq(1, mismatches.size(),
-                "the registered profile-aware drive reports exactly one"
-                    + " compile-diagnostic mismatch for the mutated pin: "
+                "the registered drive reports exactly one compile-diagnostic"
+                    + " mismatch for the legacy-expectation pin: "
                     + mismatches);
             if (mismatches.size() == 1) {
                 String mismatch = mismatches.get(0);
                 check(mismatch.contains(corpusPath),
                     "the mismatch names the pinned subject: " + mismatch);
                 check(mismatch.contains("E1036"),
-                    "the mismatch carries the v1.2 E1036 diagnostic: "
+                    "the mismatch carries the v1.3 E1036 diagnostic: "
                         + mismatch);
             }
         } finally {
@@ -1864,13 +1835,12 @@ public class DiagnosticRangeTest {
             }
             SidecarExpectations.CompileDiagnosticPin pin =
                 SidecarExpectations.CompileDiagnosticPin.parse(sidecarJson);
+            ConformanceHarnessMetadata.validateProfileMetadata(
+                fixture.rawSource(), fixture.corpusPath());
             List<CompilerDiagnostic> errors = frontendErrors(fixture.source(),
                 fixture.corpusPath(),
-                ConformanceHarnessMetadata.profileFromMetadata(
-                    fixture.rawSource(), fixture.corpusPath()),
                 new CorpusModuleResolver(fixture.corpusPath(), corpus,
-                    byPath, ConformanceHarnessMetadata.profileFromMetadata(
-                        fixture.rawSource(), fixture.corpusPath())));
+                    byPath));
             Optional<String> mismatch = compilePinMismatch(
                 fixture.corpusPath(), pin, errors,
                 fixture.headerLinesStripped());
@@ -1915,11 +1885,10 @@ public class DiagnosticRangeTest {
                 - source.split("\n", -1).length;
             SidecarExpectations.CompileDiagnosticPin pin =
                 SidecarExpectations.CompileDiagnosticPin.parse(sidecarJson);
+            ConformanceHarnessMetadata.validateProfileMetadata(raw,
+                fixturePath);
             List<CompilerDiagnostic> errors = frontendErrors(source,
-                fixturePath,
-                ConformanceHarnessMetadata.profileFromMetadata(raw,
-                    fixturePath),
-                rejectingModuleResolver());
+                fixturePath, rejectingModuleResolver());
             Optional<String> mismatch = compilePinMismatch(fixturePath, pin,
                 errors, headerLines);
             mismatch.ifPresent(detail -> mismatches.add(fixturePath + ": "
@@ -2043,13 +2012,12 @@ public class DiagnosticRangeTest {
                     && pinSubjects.contains(fixture.corpusPath())) {
                 continue; // the Compile Diagnostic comparison owns the pin
             }
-            SemanticProfile profile = ConformanceHarnessMetadata
-                .profileFromMetadata(fixture.rawSource(),
-                    fixture.corpusPath());
+            ConformanceHarnessMetadata.validateProfileMetadata(
+                fixture.rawSource(), fixture.corpusPath());
             List<CompilerDiagnostic> errors = frontendErrors(fixture.source(),
-                fixture.corpusPath(), profile,
-                new CorpusModuleResolver(fixture.corpusPath(), corpus, byPath,
-                    profile));
+                fixture.corpusPath(),
+                new CorpusModuleResolver(fixture.corpusPath(), corpus,
+                    byPath));
             compiled++;
             List<String> codes = new ArrayList<>();
             for (CompilerDiagnostic error : errors) {
@@ -2091,19 +2059,16 @@ public class DiagnosticRangeTest {
         private final String fixtureCorpusPath;
         private final Path conformanceRoot;
         private final Map<String, CorpusDiscovery.Fixture> corpusByPath;
-        private final SemanticProfile profile;
         private final Map<String, Map<String, Type>> stdlibExports;
         private final List<CompilerDiagnostic> ffiDiagnostics =
             new ArrayList<>();
 
         CorpusModuleResolver(String fixtureCorpusPath, Path conformanceRoot,
-                Map<String, CorpusDiscovery.Fixture> corpusByPath,
-                SemanticProfile profile) {
+                Map<String, CorpusDiscovery.Fixture> corpusByPath) {
             this.fixtureCorpusPath = fixtureCorpusPath;
             this.conformanceRoot = conformanceRoot.toAbsolutePath()
                 .normalize();
             this.corpusByPath = corpusByPath;
-            this.profile = profile;
             this.stdlibExports = StdlibModuleResolver.stdlibExports(
                 Path.of("std").toAbsolutePath().normalize().toString());
         }
@@ -2129,7 +2094,7 @@ public class DiagnosticRangeTest {
             }
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 CorpusFfi.Module ffiModule = CorpusFfi.module(conformanceRoot,
-                    modulePath, profile);
+                    modulePath);
                 for (CompilerDiagnostic diagnostic
                         : ffiModule.validationDiagnostics()) {
                     if ("error".equals(diagnostic.severity())) {
@@ -2172,7 +2137,7 @@ public class DiagnosticRangeTest {
                 return null;
             }
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
-                return CorpusFfi.module(conformanceRoot, modulePath, profile)
+                return CorpusFfi.module(conformanceRoot, modulePath)
                     .classSymbols().get(className);
             }
             CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
@@ -2210,7 +2175,7 @@ public class DiagnosticRangeTest {
                 CanonicalModuleIdentity declaringModule, String functionName,
                 String importingModule) throws ModuleNotFoundException {
             if (CorpusFfi.declaresFunction(conformanceRoot, declaringModule,
-                    functionName, profile)) {
+                    functionName)) {
                 return true;
             }
             for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
@@ -2241,7 +2206,7 @@ public class DiagnosticRangeTest {
             }
             if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return CorpusFfi.resolveTypeNode(typeNode,
-                    CorpusFfi.module(conformanceRoot, modulePath, profile)
+                    CorpusFfi.module(conformanceRoot, modulePath)
                         .classSymbols());
             }
             CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
@@ -2258,12 +2223,12 @@ public class DiagnosticRangeTest {
             }
         }
 
-        /** Parses a discovered corpus module under the case profile. */
+        /** Parses a discovered corpus module under the sole parse contract. */
         private ParseResult parse(CorpusDiscovery.Fixture fixture) {
             LexResult lex = new Lexer(fixture.source(), fixture.corpusPath())
                 .tokenize();
             Parser parser = new Parser(lex.tokens(), fixture.corpusPath(),
-                profile, lex.directiveEvents());
+                lex.directiveEvents());
             return parser.parse();
         }
 
@@ -2373,15 +2338,14 @@ public class DiagnosticRangeTest {
      */
     @SuppressWarnings("deprecation")
     private static List<CompilerDiagnostic> frontendErrors(String source,
-            String filename, SemanticProfile profile,
-            ModuleResolver resolver) {
+            String filename, ModuleResolver resolver) {
         List<CompilerDiagnostic> errors = new ArrayList<>();
         LexResult lex = new Lexer(source, filename).tokenize();
         collectErrors(lex.diagnostics(), errors);
         if (lex.hasErrors()) {
             return errors;
         }
-        Parser parser = new Parser(lex.tokens(), filename, profile,
+        Parser parser = new Parser(lex.tokens(), filename,
             lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         collectErrors(parseResult.diagnostics(), errors);

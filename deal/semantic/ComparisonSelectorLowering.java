@@ -421,7 +421,7 @@ public final class ComparisonSelectorLowering {
      * {@link #payloadOf(BinaryOp, Type, Type)} or
      * {@link #produce} — {@code module}, {@code capability
      * EVALUATION_ORDER}, {@code validatorRule COMPARISON_SELECTOR},
-     * {@code semanticProfile DEAL_V1_2_INT32}, {@code irVersion
+     * {@code semanticProfile DEAL_V1_3_INT32}, {@code irVersion
      * deal.semantic-ir/2}, and the {@code ComparisonSelectorLowering}
      * origin. The unit-production seam converts the returned detail into
      * the E6005 diagnostic through
@@ -436,7 +436,7 @@ public final class ComparisonSelectorLowering {
             module.path(),
             SemanticCapability.EVALUATION_ORDER,
             COMPARISON_SELECTOR,
-            SemanticProfile.DEAL_V1_2_INT32,
+            SemanticProfile.DEAL_V1_3_INT32,
             LoweredModuleUnit.FORMAT_VERSION,
             "ComparisonSelectorLowering " + COMPARISON_SELECTOR
                 + " (" + defect.getMessage() + ")");

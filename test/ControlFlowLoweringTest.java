@@ -151,8 +151,7 @@ public class ControlFlowLoweringTest {
     /** The foundation detector's recorded coverage rows for the slice. */
     private static Map<ConstructKind, List<SemanticOpKind>> detectedCoverage(
             CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -181,7 +180,7 @@ public class ControlFlowLoweringTest {
 
     private static SemanticLowerer.LoweringResult lower(CheckedSlice slice,
             Map<ConstructKind, List<SemanticOpKind>> coverage) {
-        return SemanticLowerer.lowerModule(moduleOf(slice), SemanticProfile.DEAL_V1_2_INT32,
+        return SemanticLowerer.lowerModule(moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32,
             coverage, INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -1601,7 +1600,7 @@ public class ControlFlowLoweringTest {
             rule + " is named as the validator rule; got \"" + d.message() + "\"");
         check(d.message().startsWith("Common semantic lowering failed")
                 && d.message().contains("module 'main'")
-                && d.message().contains("semanticProfile DEAL_V1_2_INT32")
+                && d.message().contains("semanticProfile DEAL_V1_3_INT32")
                 && d.message().contains("irVersion deal.semantic-ir/2")
                 && d.diagnosticCode().phase() == DiagnosticCode.Phase.BACKEND_LOWERING,
             rule + " full diagnostic projection fields");

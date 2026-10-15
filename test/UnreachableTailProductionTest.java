@@ -208,8 +208,7 @@ public class UnreachableTailProductionTest {
     }
 
     private static SemanticLowerer.LoweringResult lowerBattery(CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseConfiguration.CURRENT_RELEASE_STATE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
             CapabilityRegistry.releaseRegistry());
         CheckedModuleInput input = new CheckedModuleInput(MODULE, SOURCE_ID,
             Path.of(SOURCE_ID), slice.program(), slice.checks(), List.of(), List.of(),
@@ -239,7 +238,7 @@ public class UnreachableTailProductionTest {
         Map<ConstructKind, List<SemanticOpKind>> coverage =
             manifests.manifests().get(0).constructCoverage();
         SemanticLowerer.LoweringResult lowering =
-            SemanticLowerer.lowerModuleFullProgram(input, SemanticProfile.DEAL_V1_2_INT32,
+            SemanticLowerer.lowerModuleFullProgram(input, SemanticProfile.DEAL_V1_3_INT32,
                 coverage, INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
         // A clean result is the full lowering stack's acceptance: the

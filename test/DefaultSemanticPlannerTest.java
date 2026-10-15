@@ -9,7 +9,6 @@ import deal.module.PlannedDefaultClass;
 import deal.module.ResolvedDefaultExpression;
 import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
-import deal.semantic.ir.SemanticProfile;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -57,8 +56,7 @@ public class DefaultSemanticPlannerTest {
     }
 
     private static CompilerInvocation invocation() {
-        return ConformanceHarnessMetadata.invocation(
-            SemanticProfile.DEAL_V1_2_INT32);
+        return ConformanceHarnessMetadata.invocation();
     }
 
     /** One in-process production compile over a scratch project. */

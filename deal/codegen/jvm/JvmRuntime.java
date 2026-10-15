@@ -2435,25 +2435,6 @@ public final class JvmRuntime {
                 return int32Result(longOf(l) % divisor, opKey, digest, parent, origin,
                     "BINARY");
             }
-            case "INT32_POW" -> {
-                long exponent = longOf(r);
-                if (exponent < 0) {
-                    raiseArm(deal.semantic.ir.FailureArmId.INT32_NEGATIVE_EXPONENT,
-                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
-                        "BINARY");
-                }
-                long result = 1;
-                try {
-                    for (long i = 0; i < exponent; i++) {
-                        result = Math.multiplyExact(result, longOf(l));
-                    }
-                } catch (ArithmeticException overflow) {
-                    raiseArm(deal.semantic.ir.FailureArmId.INT32_RANGE,
-                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
-                        "BINARY");
-                }
-                return int32Result(result, opKey, digest, parent, origin, "BINARY");
-            }
             case "NUMBER_ADD" -> {
                 return ((Number) l).doubleValue() + ((Number) r).doubleValue();
             }
@@ -2465,14 +2446,6 @@ public final class JvmRuntime {
             }
             case "NUMBER_DIV_IEEE" -> {
                 return ((Number) l).doubleValue() / ((Number) r).doubleValue();
-            }
-            case "NUMBER_MOD_FLOOR" -> {
-                double a = ((Number) l).doubleValue();
-                double b = ((Number) r).doubleValue();
-                return a - Math.floor(a / b) * b;
-            }
-            case "NUMBER_POW_IEEE" -> {
-                return Math.pow(((Number) l).doubleValue(), ((Number) r).doubleValue());
             }
             default -> {
                 return 0L;

@@ -31,7 +31,7 @@ public final class SemanticIrValidator {
 
     /** The R-CAPABILITY rule: a claimed capability without a required operation
      *  (an empty S4 evidence set is unsatisfiable by construction and is
-     *  rejected — {@code STDLIB_TIME_CONFLICT}, never valid IR). */
+     *  rejected — an empty-evidence capability is never valid IR). */
     public static final String R_CAPABILITY = "R-CAPABILITY";
 
     /** The R-POLICY-KIND rule: a failure policy not allowed for its selector/kind. */
@@ -86,7 +86,7 @@ public final class SemanticIrValidator {
         R_IDENTITY_LINK);
 
     /** The only admitted unit profile name (S1). */
-    public static final String ADMITTED_PROFILE = "DEAL_V1_2_INT32";
+    public static final String ADMITTED_PROFILE = "DEAL_V1_3_INT32";
 
     // =========================================================================
     // Comparison facts (validator contract Input)
@@ -244,7 +244,7 @@ public final class SemanticIrValidator {
             return fail(closure.get(project.entryModule()), facts, R_PROFILE,
                 SemanticCapability.FOUNDATION_VALUES,
                 origin(R_PROFILE, "project semanticProfile \"" + project.semanticProfile()
-                    + "\" is not DEAL_V1_2_INT32"));
+                    + "\" is not DEAL_V1_3_INT32"));
         }
         for (RawUnit unit : closure.values()) {
             Optional<CompilerDiagnostic> failure = validateUnit(unit, facts, closure);
@@ -1265,8 +1265,7 @@ public final class SemanticIrValidator {
             if (required.isEmpty()) {
                 // An empty S4 evidence set is unsatisfiable by construction:
                 // the unit can never contain a required operation, so the
-                // claim is rejected — STDLIB_TIME_CONFLICT is a routing
-                // marker only and is never valid IR (S4).
+                // claim is rejected (S4).
                 return fail(unit, facts, R_CAPABILITY, capability,
                     origin(R_CAPABILITY, "claimed capability " + capabilityName
                         + " without a required operation (the S4 catalog defines no "
@@ -1424,9 +1423,8 @@ public final class SemanticIrValidator {
      * The closed selector→policy table for {@code BINARY} (parent
      * "selector→policy is fixed"): {@code INT32_ADD/SUB/MUL} →
      * {@code INT32_RESULT}; {@code INT32_DIV_TRUNC/MOD_TRUNC} →
-     * {@code INT32_DIVISOR_THEN_RESULT}; {@code INT32_POW} →
-     * {@code INT32_EXPONENT_THEN_RESULT}; every {@code NUMBER_*} arithmetic
-     * incl. {@code NUMBER_POW_IEEE} and every {@code INT32_*}/{@code NUMBER_*}
+     * {@code INT32_DIVISOR_THEN_RESULT}; every {@code NUMBER_}* arithmetic
+     * and every {@code INT32_*}/{@code NUMBER_*}
      * comparison → {@code NO_DEAL_FAILURE}. This method is the single
      * source of the assignment: the value-semantics primitive's row
      * projection and the lowerer's policy stamping read this table (never
@@ -1437,9 +1435,8 @@ public final class SemanticIrValidator {
         return switch (selector) {
             case INT32_ADD, INT32_SUB, INT32_MUL -> FailurePolicyId.INT32_RESULT;
             case INT32_DIV_TRUNC, INT32_MOD_TRUNC -> FailurePolicyId.INT32_DIVISOR_THEN_RESULT;
-            case INT32_POW -> FailurePolicyId.INT32_EXPONENT_THEN_RESULT;
-            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_MOD_FLOOR,
-                 NUMBER_POW_IEEE, INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
+            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE,
+                 INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
                  BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
@@ -3567,7 +3564,7 @@ public final class SemanticIrValidator {
         if (!ADMITTED_PROFILE.equals(unit.semanticProfile())) {
             return fail(unit, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_PROFILE, "semanticProfile \"" + unit.semanticProfile()
-                    + "\" is not DEAL_V1_2_INT32"));
+                    + "\" is not DEAL_V1_3_INT32"));
         }
         if (!facts.interfaceIndexDigest().equals(unit.interfaceHash())) {
             return fail(unit, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,

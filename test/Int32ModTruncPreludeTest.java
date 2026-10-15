@@ -406,7 +406,7 @@ public final class Int32ModTruncPreludeTest {
     private static String modArm(String chunk) {
         int start = chunk.indexOf("if selector == \"INT32_MOD_TRUNC\" then");
         check(start >= 0, "the emitted prelude carries the INT32_MOD_TRUNC arm");
-        int end = chunk.indexOf("if selector == \"INT32_POW\" then", start);
+        int end = chunk.indexOf("if selector == \"NUMBER_ADD\" then", start);
         check(end > start, "the emitted prelude's INT32_MOD_TRUNC arm is closed");
         return start < 0 || end <= start ? null : chunk.substring(start, end);
     }

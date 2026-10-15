@@ -142,7 +142,7 @@ public class ContainerLoweringArmsTest {
 
     private static SemanticIrValidator.ComparisonFacts facts() {
         return new SemanticIrValidator.ComparisonFacts(INTERFACE_HASH,
-            SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
     }
 
     private static SemanticLowerer.ModuleLowerer lowerer(CheckResult checks) {
@@ -181,6 +181,21 @@ public class ContainerLoweringArmsTest {
             return null;
         }
         return new CheckedSlice(parse.program(), result);
+    }
+
+    /**
+     * The checked facts of a hand-built producer-defect node: the parsed
+     * slice's facts plus the node's checked type, so the lowering reaches
+     * the node's own arm instead of the missing-checked-fact guard.
+     */
+    private static CheckResult withCheckedType(CheckResult checks,
+            ExpressionNode node) {
+        Map<ExpressionNode, Type> typeMap =
+            new java.util.IdentityHashMap<>(checks.typeMap());
+        typeMap.put(node, deal.types.Type.Int.INSTANCE);
+        return new CheckResult(typeMap, checks.symbolTable(), checks.scopeMap(),
+            checks.diagnostics(), checks.classScopes(),
+            checks.constructedClassDecls());
     }
 
     private static CheckedModuleInput moduleOf(CheckedSlice slice) {
@@ -476,8 +491,8 @@ public class ContainerLoweringArmsTest {
             what + " detail capability SIGNED_INT32");
         check(SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE.equals(detail.validatorRule()),
             what + " detail validatorRule INT32_LITERAL_OUT_OF_RANGE");
-        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32,
-            what + " detail semanticProfile DEAL_V1_2_INT32");
+        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_3_INT32,
+            what + " detail semanticProfile DEAL_V1_3_INT32");
         check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
             what + " detail irVersion deal.semantic-ir/2");
         check(("SemanticLowerer " + SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE + " ("
@@ -549,20 +564,25 @@ public class ContainerLoweringArmsTest {
             checkIntLiteralRangeDetail("int literal " + value, defect);
         }
 
+        // The hand-built producer-defect shapes: the v1.3 parse contract
+        // admits 2147483648 only as the immediate operand of unary '-', so
+        // an out-of-range IntLiteral can only arrive from a hand-built
+        // tree. The CONST arm fails closed on it — never a truncation.
         CheckedSlice slice = checkSlice("""
             function f(): null {
-              let n = 2147483648;
+              let n = 1;
               return null;
             }
             """);
         if (slice != null) {
-            LiteralExpr literal = first(slice.program(), LiteralExpr.class);
-            check(literal != null
-                    && literal.value() instanceof LiteralValue.IntLiteral intLit
-                    && intLit.value() == 2147483648L,
-                "the checked slice carries the checker-valid IntLiteral 2147483648");
-            if (literal != null) {
-                SemanticLowerer.ModuleLowerer lowerer = lowerer(slice.checks());
+            LiteralExpr parsed = first(slice.program(), LiteralExpr.class);
+            check(parsed != null,
+                "the control slice carries its literal");
+            if (parsed != null) {
+                LiteralExpr literal = new LiteralExpr(parsed.span(),
+                    new LiteralValue.IntLiteral(2147483648L));
+                SemanticLowerer.ModuleLowerer lowerer =
+                    lowerer(withCheckedType(slice.checks(), literal));
                 RuntimeException defect = null;
                 try {
                     lowerer.lowerExpression(literal);
@@ -570,15 +590,18 @@ public class ContainerLoweringArmsTest {
                     defect = raised;
                 }
                 check(defect != null,
-                    "the checker-valid literal 2147483648 raises the range defect at the "
+                    "the hand-built literal 2147483648 raises the range defect at the "
                         + "CONST arm (never ScalarValue.Int(-2147483648))");
                 check(lowerer.ops().isEmpty(),
                     "the out-of-range literal produced no CONST op (no corrupted scalar "
                         + "enters the contract digest)");
-                checkIntLiteralRangeDetail("checker-valid 2147483648", defect);
+                checkIntLiteralRangeDetail("hand-built 2147483648", defect);
             }
         }
 
+        // The immediate-minus special case: -2147483648 parses as the
+        // single in-range literal -2147483648 (never a NEG over an
+        // out-of-range operand) and lowers to its CONST.
         CheckedSlice negated = checkSlice("""
             function f(): null {
               let n = -2147483648;
@@ -586,33 +609,47 @@ public class ContainerLoweringArmsTest {
             }
             """);
         if (negated != null) {
-            UnaryExpr negation = first(negated.program(), UnaryExpr.class);
-            check(negation != null,
-                "-2147483648 parses as a unary negation of the IntLiteral 2147483648");
-            if (negation != null) {
-                check(negation.expr() instanceof LiteralExpr operand
-                        && operand.value() instanceof LiteralValue.IntLiteral intLit
-                        && intLit.value() == 2147483648L,
-                    "the negation operand is the IntLiteral 2147483648 (the pinned "
-                        + "NEG(IntLiteral 2147483648) spelling)");
+            LiteralExpr combined = first(negated.program(), LiteralExpr.class);
+            check(combined != null
+                    && combined.value() instanceof LiteralValue.IntLiteral intLit
+                    && intLit.value() == -2147483648L,
+                "-2147483648 parses as the combined in-range IntLiteral -2147483648");
+            check(first(negated.program(), UnaryExpr.class) == null,
+                "the immediate-minus special case produces no unary negation node");
+            if (combined != null) {
                 SemanticLowerer.ModuleLowerer lowerer = lowerer(negated.checks());
-                RuntimeException defect = null;
-                try {
-                    lowerer.lowerExpression(negation);
-                } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
-                    defect = raised;
-                }
-                check(defect != null,
-                    "the unary negation routes its operand through the I3 UNARY arm and "
-                        + "the CONST arm fails closed on the out-of-range operand "
-                        + "(IntLiteralOutOfRange — never a truncation)");
-                check(lowerer.ops().isEmpty(),
-                    "the negation produced no ops (no CONST for its out-of-range operand)");
-                if (defect != null) {
-                    check(((SemanticLowerer.IntLiteralOutOfRange) defect).value()
-                            == 2147483648L,
-                        "the defect carries the out-of-range literal value");
-                }
+                lowerer.lowerExpression(combined);
+                check(lowerer.ops().size() == 1
+                        && lowerer.ops().get(0).kind()
+                            == deal.semantic.ir.SemanticOpKind.CONST,
+                    "the combined literal lowers to one CONST op: "
+                        + lowerer.ops().size());
+            }
+
+            // A hand-built NEG(IntLiteral 2147483648) still fails closed:
+            // the UNARY arm routes its operand through the CONST arm.
+            LiteralExpr operand = new LiteralExpr(combined.span(),
+                new LiteralValue.IntLiteral(2147483648L));
+            UnaryExpr negation = new UnaryExpr(combined.span(),
+                deal.ast.UnaryOp.NEG, operand);
+            CheckResult synthetic = withCheckedType(negated.checks(), operand);
+            synthetic = withCheckedType(synthetic, negation);
+            SemanticLowerer.ModuleLowerer lowerer = lowerer(synthetic);
+            RuntimeException defect = null;
+            try {
+                lowerer.lowerExpression(negation);
+            } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
+                defect = raised;
+            }
+            check(defect != null,
+                "the hand-built negation routes its out-of-range operand through the "
+                    + "CONST arm (IntLiteralOutOfRange — never a truncation)");
+            check(lowerer.ops().isEmpty(),
+                "the negation produced no ops (no CONST for its out-of-range operand)");
+            if (defect != null) {
+                check(((SemanticLowerer.IntLiteralOutOfRange) defect).value()
+                        == 2147483648L,
+                    "the defect carries the out-of-range literal value");
             }
         }
     }
@@ -1464,8 +1501,8 @@ public class ContainerLoweringArmsTest {
             what + " detail capability CONTAINERS_AND_STRINGS");
         check(SemanticLowerer.CONSTRUCT_UNLOWERED.equals(detail.validatorRule()),
             what + " detail validatorRule CONSTRUCT_UNLOWERED");
-        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32,
-            what + " detail semanticProfile DEAL_V1_2_INT32");
+        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_3_INT32,
+            what + " detail semanticProfile DEAL_V1_3_INT32");
         check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
             what + " detail irVersion deal.semantic-ir/2");
         check(("SemanticLowerer " + SemanticLowerer.CONSTRUCT_UNLOWERED + " ("
@@ -1508,7 +1545,7 @@ public class ContainerLoweringArmsTest {
             // The module-level seam: exactly the pinned LoweringFailureDetail,
             // no unit, never a reroute.
             SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(
-                moduleOf(indexRead), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
+                moduleOf(indexRead), SemanticProfile.DEAL_V1_3_INT32, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.hasErrors() && result.unit() == null,
@@ -2250,7 +2287,7 @@ public class ContainerLoweringArmsTest {
             ConstructKind.IF_WHILE_FOR_FOR_OF, ConstructKind.IF_WHILE_FOR_FOR_OF.mappedOpKinds());
 
         SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
             "the positionable spine lowers to a validated unit: " + (first == null ? "null"
@@ -2295,7 +2332,7 @@ public class ContainerLoweringArmsTest {
 
         // Determinism: a fresh lowering produces byte-identical dumps.
         SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors(),
             "the repeated lowering validates again");
@@ -2313,7 +2350,7 @@ public class ContainerLoweringArmsTest {
             new LinkedHashMap<>(coverage);
         overCoverage.put(ConstructKind.CALL, ConstructKind.CALL.mappedOpKinds());
         SemanticLowerer.LoweringResult uncovered = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, overCoverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, overCoverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(uncovered != null && uncovered.hasErrors() && uncovered.unit() == null,
             "a recorded CALL row without a produced op fails hard with no unit");

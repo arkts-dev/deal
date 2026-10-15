@@ -193,8 +193,7 @@ public class PublicationStagerTest {
             false, dumpIr, sourceMap, sourceMap, backend,
             (Map<String, String>) null,
             List.of(srcDir.toAbsolutePath().normalize()), null, null,
-            ConformanceHarnessMetadata.invocation(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32));
+            ConformanceHarnessMetadata.invocation());
         if (capturedErr != null) {
             PrintStream originalErr = System.err;
             ByteArrayOutputStream captured = new ByteArrayOutputStream();

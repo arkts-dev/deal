@@ -61,12 +61,6 @@ public final class FailureContractRegistry {
                 ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
                 "zero divisor first, then INT32_RESULT; -2147483648 / -1 is E8004"));
 
-        rows.put(FailurePolicyId.INT32_EXPONENT_THEN_RESULT,
-            makeRow(FailurePolicyId.INT32_EXPONENT_THEN_RESULT, DiagnosticCode.E8006,
-                List.of("integer exponent must be non-negative"), List.of(),
-                ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
-                "negative exponent first, then INT32_RESULT"));
-
         rows.put(FailurePolicyId.INT_CONVERSION, makeRow(FailurePolicyId.INT_CONVERSION,
             DiagnosticCode.E8001,
             List.of("cannot convert null to int", "expected int, got NaN",
@@ -343,11 +337,6 @@ public final class FailureContractRegistry {
             FailurePolicyId.INT32_DIVISOR_THEN_RESULT, 0,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.OPERATION_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.INT32_NEGATIVE_EXPONENT,
-            FailurePolicyId.INT32_EXPONENT_THEN_RESULT, 0,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.OPERATION_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-
         declared.add(arm(FailureArmId.INT_CONVERSION_NULL, FailurePolicyId.INT_CONVERSION, 0,
             FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
             FailureArm.ActualProjection.TYPED_BOUNDARY,
@@ -1635,8 +1624,6 @@ public final class FailureContractRegistry {
                 + "capability catalog");
         items.put("missing boundary realization",
             "the construct epics' boundary production (ISSUE-0233..0236) per parent D7");
-        items.put("ABI mismatch after compatibility was claimed",
-            "TargetAbiValidator at stage time");
         return Collections.unmodifiableMap(items);
     }
 

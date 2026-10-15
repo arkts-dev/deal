@@ -61,7 +61,6 @@ import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 import deal.semantic.ir.ReleaseState;
-import deal.semantic.ir.SemanticProfile;
 import deal.test.conformance.JvmCompilation;
 import deal.types.Type;
 
@@ -419,8 +418,7 @@ public class ProductionProjectEmissionTest {
      * ProductionProjectEmission with.
      */
     private static CompilerInvocation fixtureInvocation() {
-        return CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 

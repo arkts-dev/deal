@@ -30,7 +30,6 @@ import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
-import deal.semantic.ir.SemanticProfile;
 import deal.test.conformance.JvmCompilation;
 
 import java.io.ByteArrayInputStream;
@@ -168,8 +167,7 @@ public class FailClosedGuardRetargetingTest {
     }
 
     private static CompilerInvocation harnessInvocation() {
-        return CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 

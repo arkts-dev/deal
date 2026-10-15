@@ -35,7 +35,6 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.ir.ReleaseState;
-import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -138,7 +137,7 @@ public class JsBackendTest {
             testHostAbiOrchestratorNode();
             testSourceMapSidecarsEmitted();
             testIntArithmeticEdgeCodes();
-            testInt32ProfileSelectorEmission();
+            testInt32RuntimeGateEmission();
             testInt32OrchestratorPlumb();
             testInt32MatrixNode();
             testBytesEmissionPins();
@@ -405,8 +404,7 @@ public class JsBackendTest {
         return JsBackend.generate(f.program(), f.checkResult(),
             "jstest-" + name + ".deal", modulePath, importResolutions,
             hostModules, externCImports, isEntry, index,
-            index.moduleIdentityLookup(), null,
-            SemanticProfile.LEGACY_SAFE_INT);
+            index.moduleIdentityLookup(), null);
     }
 
     /** The adapter-shape generation call over the unshaped frontend
@@ -426,16 +424,11 @@ public class JsBackendTest {
                               JsBackend.JsCodegenResult emission) {}
 
     private static PreparedJs prepareJs(String source, String name) {
-        return prepareJs(source, name, SemanticProfile.LEGACY_SAFE_INT);
-    }
-
-    private static PreparedJs prepareJs(String source, String name,
-                                         SemanticProfile profile) {
         String filename = "jstest-" + name + ".deal";
         Frontend f = compileFrontend(source, filename);
         JsBackend.JsCodegenResult res = f.program() == null ? null
             : JsBackend.generate(f.program(), f.checkResult(), filename,
-                "Main", Map.of(), Map.of(), false, profile);
+                "Main", Map.of(), Map.of(), false);
         return new PreparedJs(f, res);
     }
 
@@ -490,30 +483,13 @@ public class JsBackendTest {
      */
     private static NodeResult runDealNode(String source, String name)
             throws Exception {
-        // The retained legacy authority: the default LEGACY_SAFE_INT
-        // profile (no setInt32Mode emission, the ±(2^53-1) range).
-        return runDealNodeProfile(source, name, SemanticProfile.LEGACY_SAFE_INT);
-    }
-
-    /**
-     * The full JS chain under the real node binary with an explicit
-     * project-wide semantic profile: frontend → codegen (the profile
-     * plumbed into {@link JsBackend#generate}) → deployment → the
-     * conformance runner → node execution. Under DEAL_V1_2_INT32 the
-     * emitted artifact calls {@code $rt.setInt32Mode(true)} immediately
-     * after the runtime require, activating the signed-32 range before
-     * the runner invokes the export.
-     */
-    private static NodeResult runDealNodeProfile(String source, String name,
-                                                 SemanticProfile profile)
-            throws Exception {
         Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
         if (!f.errors().isEmpty()) {
             throw new RuntimeException("frontend errors: " + f.errors());
         }
         JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), false, profile);
+            Map.of(), Map.of(), false);
         return runDealArtifact(new PreparedJs(f, res));
     }
 
@@ -571,7 +547,7 @@ public class JsBackendTest {
         }
         JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), false, SemanticProfile.LEGACY_SAFE_INT);
+            Map.of(), Map.of(), false);
         if (res.hasErrors()) {
             throw new RuntimeException("codegen errors: " + res.diagnostics());
         }
@@ -594,7 +570,7 @@ public class JsBackendTest {
         }
         JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), true, SemanticProfile.LEGACY_SAFE_INT);
+            Map.of(), Map.of(), true);
         boolean e6004 = res.diagnostics().stream()
             .anyMatch(d -> "E6004".equals(d.code()));
         if (!e6004) {
@@ -660,7 +636,7 @@ public class JsBackendTest {
         }
         JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), false, SemanticProfile.LEGACY_SAFE_INT);
+            Map.of(), Map.of(), false);
         if (res.hasErrors()) {
             throw new RuntimeException("codegen errors: " + res.diagnostics());
         }
@@ -700,7 +676,7 @@ public class JsBackendTest {
      * {@code console.log("async-extended-argument-order")} output retained —
      * is published through the public {@code deal compile} entry under the
      * v1.2 manifest (the emitted artifact carries the
-     * {@code DEAL_V1_2_INT32} selector), and a real node process then
+     * {@code DEAL_V1_3_INT32} selector), and a real node process then
      * requires the published artifact and invokes the export through the
      * production host ABI {@code $rt.invokeAsyncExport}. The subject's own
      * output is the only stdout write, so the node transcript is the
@@ -734,8 +710,8 @@ public class JsBackendTest {
               return null;
             }
             """, "production-arity-order", "run", "null");
-        check(run.v12Profile(), "the published artifact carries the"
-            + " DEAL_V1_2_INT32 selector (the real v1.2 compilation)");
+        check(run.v12Profile(), "the published artifact runs the signed-32"
+            + " gate from runtime load (no profile selector needed)");
         check(run.exitCode() == 0, "the published subject's host process"
             + " exits 0: exit=" + run.exitCode() + " stderr=<" + run.stderr()
             + ">");
@@ -754,7 +730,7 @@ public class JsBackendTest {
      * public JS surface: the two-module project (the entry imports the
      * companion module) is published through the public {@code deal
      * compile} entry under the v1.2 manifest — the emitted artifact
-     * carries the {@code DEAL_V1_2_INT32} selector — and a real node
+     * carries the {@code DEAL_V1_3_INT32} selector — and a real node
      * process then requires the published entry and invokes the exported
      * wrappers exactly as the package's exported-wrapper host does:
      * {@code main} first, then the throwing exported {@code run} under
@@ -803,10 +779,10 @@ public class JsBackendTest {
             if (!Files.isRegularFile(artifact)) {
                 return;
             }
-            boolean v12Profile = Files.readString(artifact,
-                StandardCharsets.UTF_8).contains("$rt.setInt32Mode(true)");
-            check(v12Profile, "the published artifact carries the"
-                + " DEAL_V1_2_INT32 selector (the real v1.2 compilation)");
+            boolean v12Profile = !Files.readString(artifact,
+                StandardCharsets.UTF_8).contains("setInt32Mode");
+            check(v12Profile, "the published artifact carries no profile"
+                + " selector (the signed-32 gate is active from load)");
             Files.writeString(out.resolve("companion_host.js"),
                 COMPANION_DIRECT_HOST_SOURCE, StandardCharsets.UTF_8);
             ProductionNodeRun run = runNodeSplit(out, "companion_host.js",
@@ -1182,8 +1158,8 @@ public class JsBackendTest {
                 throw new RuntimeException("the public compile published no"
                     + " entry artifact for " + name + ": " + artifact);
             }
-            boolean v12Profile = Files.readString(artifact,
-                StandardCharsets.UTF_8).contains("$rt.setInt32Mode(true)");
+            boolean v12Profile = !Files.readString(artifact,
+                StandardCharsets.UTF_8).contains("setInt32Mode");
             Files.writeString(out.resolve("invoker_runner.js"),
                 PRODUCTION_INVOKER_RUNNER_SOURCE
                     .replace("EXPORT_NAME", exportName)
@@ -2723,8 +2699,7 @@ public class JsBackendTest {
             cf.checkResult(), "jstest-host-abi-class.deal", "Main",
             Map.of(), Map.of("./hostmod",
                 new HostModuleDeclarations(declExports, declFields)),
-            Set.of(), false, index, index.moduleIdentityLookup(), null,
-            SemanticProfile.LEGACY_SAFE_INT);
+            Set.of(), false, index, index.moduleIdentityLookup(), null);
         check(cls != null && !cls.hasErrors(),
             "the host class declared map generates clean: "
                 + (cls == null ? "<null>" : cls.diagnostics()));
@@ -2959,10 +2934,9 @@ public class JsBackendTest {
             "export function test(): int { return int(1.0e300); }",
             "int-finite-range");
         check(range.exitCode() == 1 && range.output().contains("DEAL_ERROR_CODE: E8004")
-                && range.output().contains("int out of range"),
-            "finite out-of-range under the legacy profile → E8004 "
-                + "'int out of range' (the legacy branch's pinned "
-                + "template), exit 1: " + range.output());
+                && range.output().contains("int out of safe range"),
+            "finite out-of-range → E8004 'int out of safe range' (the "
+                + "pinned template), exit 1: " + range.output());
 
         NodeResult divz = runDealNode(
             "export function test(): int { return 5 / 0; }",
@@ -2976,11 +2950,13 @@ public class JsBackendTest {
         check(negativePower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
             "removed negative power syntax rejects before emission");
 
-        NodeResult boundary = runDealNode(
+        Frontend removedSafeMax = compileFrontend(
             "export function test(): int { return 9007199254740991; }",
-            "int-safe-max");
-        check(boundary.exitCode() == 0 && boundary.output().equals("9007199254740991"),
-            "the ±(2^53-1) safe-range boundary passes: " + boundary.output());
+            "int-safe-max.deal");
+        check(removedSafeMax.errors().stream()
+                .anyMatch(d -> d.code().equals("E1036")),
+            "a literal beyond the signed-32 range rejects before emission "
+                + "(the legacy ±(2^53-1) range is gone)");
 
         NodeResult trunc = runDealNode(
             "export function test(): int { return -7 % 3; }",
@@ -2989,48 +2965,31 @@ public class JsBackendTest {
             "int % int is truncated (-7 % 3 === -1): " + trunc.output());
     }
 
-    private static void testInt32ProfileSelectorEmission() throws Exception {
-        System.out.println("-- Emission pins: $rt.setInt32Mode(true) profile selector --");
+    private static void testInt32RuntimeGateEmission() throws Exception {
+        System.out.println("-- Emission pins: the signed-32 gate is on from"
+            + " runtime load (no profile selector) --");
 
         String source = "export function test(): int { return 2147483647 + 1; }";
         Frontend f = compileFrontend(source, "jstest-int32-selector.deal");
         if (f.program() == null) {
-            fail("int32 selector frontend failed: " + f.errors());
+            fail("int32 gate frontend failed: " + f.errors());
             return;
         }
 
-        // DEAL_V1_2_INT32: the selector lands immediately after the
-        // runtime $require line.
-        JsBackend.JsCodegenResult int32 = JsBackend.generate(f.program(),
+        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-int32-selector.deal", "Main",
-            Map.of(), Map.of(), false, SemanticProfile.DEAL_V1_2_INT32);
-        check(!int32.hasErrors(),
-            "DEAL_V1_2_INT32 generation clean: " + int32.diagnostics());
-        String int32Source = int32.source();
-        check(int32Source.contains(
-                "const $rt = $require(\"./deal/runtime\");\n"
-                    + "$rt.setInt32Mode(true);\n"),
-            "DEAL_V1_2_INT32 emits $rt.setInt32Mode(true) immediately after "
-                + "the runtime $require");
-
-        // The legacy profile: no selector anywhere in the artifact, and
-        // the header is byte-identical to the int32 header minus the
-        // selector line (the selector is the only emission delta).
-        JsBackend.JsCodegenResult legacy = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-int32-selector.deal", "Main",
-            Map.of(), Map.of(), false); // default: LEGACY_SAFE_INT
-        check(!legacy.hasErrors(),
-            "LEGACY_SAFE_INT generation clean: " + legacy.diagnostics());
-        check(!legacy.source().contains("setInt32Mode"),
-            "LEGACY_SAFE_INT emits no selector");
-        check(legacy.source().equals(int32Source.replace(
-                "\n$rt.setInt32Mode(true);", "")),
-            "the selector line is the only artifact delta between the "
-                + "profiles (retained ±(2^53-1) emission unchanged)");
+            Map.of(), Map.of(), false);
+        check(!res.hasErrors(),
+            "the sole-profile generation is clean: " + res.diagnostics());
+        check(!res.source().contains("setInt32Mode"),
+            "the emitted module carries no profile selector");
+        check(res.source().contains("$rt.checkInt("),
+            "the emitted module carries the checkInt boundary text");
     }
 
     private static void testInt32OrchestratorPlumb() throws Exception {
-        System.out.println("-- Orchestrator plumb: invocation.semanticProfile() → selector in every module --");
+        System.out.println("-- Orchestrator plumb: the one invocation runs the"
+            + " signed-32 gate from runtime load in every module --");
 
         writeFile("js_int32_proj/deal.json",
             "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
@@ -3049,7 +3008,6 @@ public class JsBackendTest {
         List<Path> roots = List.of(tmpDir.resolve("js_int32_proj/src")
             .toAbsolutePath());
 
-        // The strict v1.2 schema accepts backend "js".
         StrictManifestParser.StrictManifestParseResult strictJs =
             StrictManifestParser.parse("deal.json",
                 "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
@@ -3061,16 +3019,16 @@ public class JsBackendTest {
                 "int32 plumb strict manifest publishes backend js");
         }
 
-        CompilerInvocation int32Invocation = CompilerProfileProvider.resolve(
-            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseState.V1_3_ACTIVE, CapabilityRegistry.releaseRegistry());
 
         CompilationOrchestrator active = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
             Path.of(".").toAbsolutePath().normalize(), null,
-            int32Invocation);
+            invocation);
         boolean activeOk = active.compile();
-        check(activeOk, "int32-profile JS orchestrator compile succeeds: "
+        check(activeOk, "JS orchestrator compile succeeds: "
             + active.diagnostics());
         if (activeOk) {
             for (String artifactName : List.of("app/main.js", "app/lib.js")) {
@@ -3079,14 +3037,17 @@ public class JsBackendTest {
                     "orchestrator wrote " + artifactName);
                 if (Files.exists(artifact)) {
                     String js = Files.readString(artifact);
-                    check(js.contains("$rt.setInt32Mode(true);"),
-                        artifactName + " emits the selector under "
-                            + "DEAL_V1_2_INT32");
+                    check(!js.contains("setInt32Mode"),
+                        artifactName + " carries no profile selector (the "
+                            + "runtime gate is on from load)");
+                    check(js.contains("$require(\"")
+                            && js.contains("deal/runtime\")"),
+                        artifactName + " requires the deployed runtime");
                 }
             }
         }
 
-        // The default invocation plumbs the int32 mode.
+        // The default invocation is the same record.
         Path defaultOutputDir = tmpDir.resolve("js_int32_proj/build/js_default");
         CompilationOrchestrator defaultOrchestrator = new CompilationOrchestrator(
             entryFile, defaultOutputDir, false, false, false, Backend.JS,
@@ -3101,9 +3062,8 @@ public class JsBackendTest {
                 check(Files.exists(artifact),
                     "default orchestrator wrote " + artifactName);
                 if (Files.exists(artifact)) {
-                    check(Files.readString(artifact).contains("setInt32Mode"),
-                        artifactName + " emits the int32 selector under the "
-                            + "default post-flip invocation");
+                    check(!Files.readString(artifact).contains("setInt32Mode"),
+                        artifactName + " emits no profile selector");
                 }
             }
         }
@@ -3111,7 +3071,7 @@ public class JsBackendTest {
     }
 
     private static void testInt32MatrixNode() throws Exception {
-        System.out.println("-- Node: signed-int32 matrix under DEAL_V1_2_INT32 --");
+        System.out.println("-- Node: signed-int32 matrix under DEAL_V1_3_INT32 --");
         if (!nodeAvailable) { skipNode("signed-int32 matrix"); return; }
 
         String[][] rows = {
@@ -3140,8 +3100,9 @@ public class JsBackendTest {
                     row[0] + ": removed power syntax rejects before emission");
                 continue;
             }
-            NodeResult result = runDealNodeProfile("export function test(): int { " + row[1] + " }",
-                "int32-" + row[0], SemanticProfile.DEAL_V1_2_INT32);
+            NodeResult result = runDealNode(
+                "export function test(): int { " + row[1] + " }",
+                "int32-" + row[0]);
             boolean failure = row[2].startsWith("E");
             check(result.exitCode() == (failure ? 1 : 0)
                     && (failure ? result.output().contains("DEAL_ERROR_CODE: " + row[2])
@@ -3152,7 +3113,7 @@ public class JsBackendTest {
 
         PreparedJs fractional = prepareJs(
             "export function test(): int { return int(3.5); }",
-            "int32-conv-frac", SemanticProfile.DEAL_V1_2_INT32);
+            "int32-conv-frac");
         NodeResult convFrac = runDealArtifact(fractional);
         check(convFrac.exitCode() == 1
                 && convFrac.output().contains("DEAL_ERROR_CODE: E8001")
@@ -3160,12 +3121,11 @@ public class JsBackendTest {
                     "expected int, got non-integer number"),
             "int(3.5) → E8001 non-integer, exit 1: " + convFrac.output());
 
-        // The nil-equivalent conversion arm through the activated runtime
-        // (the pinned message; only emitter mis-emission reaches it).
+        // The nil-equivalent conversion arm through the runtime (the
+        // pinned message; only emitter mis-emission reaches it).
         NodeResult convNull = runRuntimeProbe("int32-conv-null",
             "\"use strict\";\n"
                 + "const $rt = require(\"./deal/runtime\");\n"
-                + "$rt.setInt32Mode(true);\n"
                 + "try {\n"
                 + "  $rt.intConvert(null, \"probe.js\", 1, 1);\n"
                 + "  console.log(\"FAIL: no throw\");\n"
@@ -3182,10 +3142,10 @@ public class JsBackendTest {
                 + "int32 profile: " + convNull.output());
 
         // -0 normalizes to 0.
-        NodeResult negZero = runDealNodeProfile(
+        NodeResult negZero = runDealNode(
             "export function test(): int { let z: int = -0; "
                 + "if (z === 0) { return 1; } return 0; }",
-            "int32-neg-zero", SemanticProfile.DEAL_V1_2_INT32);
+            "int32-neg-zero");
         check(negZero.exitCode() == 0 && negZero.output().equals("1"),
             "-0 normalizes to 0 (-0 === 0): " + negZero.output());
 
@@ -3200,9 +3160,9 @@ public class JsBackendTest {
         JsBackend.JsCodegenResult canonicalRes = fractional.emission();
         check(!canonicalRes.hasErrors(),
             "int32 canonical generation clean: " + canonicalRes.diagnostics());
-        check(canonicalRes.source().contains("$rt.setInt32Mode(true);"),
-            "the int32 artifact carries the selector (the matrix runs "
-                + "through the activated range gate)");
+        check(!canonicalRes.source().contains("setInt32Mode"),
+            "the artifact carries no selector (the runtime signed-32 gate "
+                + "is active from load)");
         check(canonicalRes.source().contains("$rt.checkInt("),
             "the int32 artifact carries the checkInt boundary text (T3's "
                 + "parameterized range gate)");
@@ -3211,24 +3171,6 @@ public class JsBackendTest {
             "the int32 artifact carries the canonical (number)->int "
                 + "wrapper seed (T1's canonical descriptors)");
 
-        // Legacy authority: under LEGACY_SAFE_INT the same sources keep
-        // the retained ±(2^53-1) behavior and no selector is emitted.
-        NodeResult legacyOver = runDealNodeProfile(
-            "export function test(): int { return 2147483647 + 1; }",
-            "legacy-add-over", SemanticProfile.LEGACY_SAFE_INT);
-        check(legacyOver.exitCode() == 0
-                && legacyOver.output().equals("2147483648"),
-            "under LEGACY_SAFE_INT 2147483647 + 1 stays inside the "
-                + "retained ±(2^53-1) range (2147483648): "
-                + legacyOver.output());
-
-        NodeResult legacyMax = runDealNodeProfile(
-            "export function test(): int { return 9007199254740991; }",
-            "legacy-safe-max", SemanticProfile.LEGACY_SAFE_INT);
-        check(legacyMax.exitCode() == 0
-                && legacyMax.output().equals("9007199254740991"),
-            "the ±(2^53-1) safe-range boundary passes under "
-                + "LEGACY_SAFE_INT: " + legacyMax.output());
     }
 
     private static void testBytesEmissionPins() {
@@ -3461,18 +3403,14 @@ public class JsBackendTest {
             "byte write evaluates receiver, index, then RHS in order "
                 + "(log 'riv'), exit 0: " + order.output());
 
-        // Allocation length above the signed-int32 logical-length bound
-        // raises E8012 (under LEGACY_SAFE_INT the value itself is
-        // representable, so the length gate is the failing arm).
-        NodeResult tooLong = runDealNode(
+        // An allocation length above the signed-int32 logical-length
+        // bound is unrepresentable under the sole profile: the literal
+        // rejects at admission (E1036) before any allocation.
+        Frontend tooLong = compileFrontend(
             "export function test(): int { let b: bytes = bytes(2147483648); "
-                + "return 0; }",
-            "bytes-too-long");
-        check(tooLong.exitCode() == 1
-                && tooLong.output().contains("DEAL_ERROR_CODE: E8012")
-                && tooLong.output().contains("bytes length out of bounds"),
-            "bytes(2147483648) raises E8012 (the signed-int32 "
-                + "logical-length bound): " + tooLong.output());
+                + "return 0; }", "bytes-too-long.deal");
+        check(tooLong.errors().stream().anyMatch(d -> d.code().equals("E1036")),
+            "bytes(2147483648) rejects before emission: " + tooLong.errors());
 
         NodeResult negLen = runDealNode(
             "export function test(): int { let b: bytes = bytes(-1); "
@@ -4459,14 +4397,13 @@ public class JsBackendTest {
                 $fail = "e8010-msg:" + e.$dealCode + ":" + e.message;
               }
             }
-            // E8004 pinned legacy safe-range message routes through checkInt
-            // (the suite's direct probe runs outside any emitted module, so
-            // the runtime keeps the legacy profile's template).
+            // E8004 pinned message routes through checkInt (the runtime's
+            // signed-32 gate is active from load).
             try {
               $rt.checkType("int", 2 ** 60, "probe.js", 1, 1);
               $fail = "e8004";
             } catch (e) {
-              if (e.$dealCode !== "E8004" || e.message !== "int out of range") {
+              if (e.$dealCode !== "E8004" || e.message !== "int out of safe range") {
                 $fail = "e8004-msg:" + e.$dealCode + ":" + e.message;
               }
             }

@@ -782,8 +782,7 @@ public class DirectiveTest {
         if (located.context() == null) {
             return null;
         }
-        CompilerInvocation invocation = ConformanceHarnessMetadata.invocation(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32);
+        CompilerInvocation invocation = ConformanceHarnessMetadata.invocation();
         return new CompilationOrchestrator(located.context(),
             entry.toAbsolutePath().normalize(), false, false, false, false,
             null, invocation);

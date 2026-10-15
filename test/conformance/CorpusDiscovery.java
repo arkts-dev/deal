@@ -236,7 +236,10 @@ public final class CorpusDiscovery {
                 issue = line.substring("// @issue:".length()).trim();
             }
         }
-        ConformanceHarnessMetadata.profileFromMetadata(raw, corpusPath);
+        // Classification discovery is profile-free: the sole-production
+        // profile validation is the materialization gate
+        // ({@code ConformanceHarnessMetadata.productionCorpusSource}),
+        // which rejects a non-production declaration before any compile.
         String source = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
         int headerLinesStripped =
             raw.split("\n", -1).length - source.split("\n", -1).length;

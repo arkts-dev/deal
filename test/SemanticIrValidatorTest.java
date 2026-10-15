@@ -114,9 +114,9 @@ public class SemanticIrValidatorTest {
     private static final String IFACE = "interface-digest-1";
     private static final String REGISTRY = "capability-registry-hash-1";
     private static final SemanticIrValidator.ComparisonFacts FACTS =
-        new SemanticIrValidator.ComparisonFacts(IFACE, SemanticProfile.DEAL_V1_2_INT32, REGISTRY);
+        new SemanticIrValidator.ComparisonFacts(IFACE, SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
     private static final String LCH =
-        LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY);
+        LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
 
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
     private static final RuntimeDescriptor BOOL = RuntimeDescriptor.Boolean.INSTANCE;
@@ -183,7 +183,7 @@ public class SemanticIrValidatorTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings,
             List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_2_INT32, new ModuleId(module), IFACE, LCH, caps, coverage,
+            SemanticProfile.DEAL_V1_3_INT32, new ModuleId(module), IFACE, LCH, caps, coverage,
             Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
             bindings, ops, new StructuredBodyTable(Map.of(), Map.of()),
             new ClassFactoryRegistry(Map.of()),
@@ -220,7 +220,7 @@ public class SemanticIrValidatorTest {
     private static SemanticIrValidator.ComparisonFacts projectFacts(
             ProjectInterfaceIndex index) {
         return new SemanticIrValidator.ComparisonFacts(index.interfaceIndexDigest(),
-            SemanticProfile.DEAL_V1_2_INT32, REGISTRY);
+            SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
     }
 
     private static void assertPass(Optional<CompilerDiagnostic> diagnostic, String what) {
@@ -402,7 +402,6 @@ public class SemanticIrValidatorTest {
         Map<BinarySelector, FailurePolicyId> binary = Map.of(
             BinarySelector.INT32_ADD, FailurePolicyId.INT32_RESULT,
             BinarySelector.INT32_DIV_TRUNC, FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
-            BinarySelector.INT32_POW, FailurePolicyId.INT32_EXPONENT_THEN_RESULT,
             BinarySelector.NUMBER_ADD, FailurePolicyId.NO_DEAL_FAILURE,
             BinarySelector.NULLABLE_EQ, FailurePolicyId.NO_DEAL_FAILURE);
         for (var entry : binary.entrySet()) {
@@ -534,7 +533,7 @@ public class SemanticIrValidatorTest {
                     MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
                         List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
             ExecutableLoweredProject project = new ExecutableLoweredProject(
-                SemanticProfile.DEAL_V1_2_INT32, index,
+                SemanticProfile.DEAL_V1_3_INT32, index,
                 new LinkedHashMap<>() {{
                     put(MOD, caller);
                     put(MOD_B, callee);
@@ -604,7 +603,7 @@ public class SemanticIrValidatorTest {
         // R-PROFILE: interfaceHash mismatch.
         assertE6005(SemanticIrValidator.validate(
                 new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-                    SemanticProfile.DEAL_V1_2_INT32, MOD, "wrong-interface-digest", LCH, Set.of(),
+                    SemanticProfile.DEAL_V1_3_INT32, MOD, "wrong-interface-digest", LCH, Set.of(),
                     Map.of(), Map.of(), Map.of(),
                     new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
                     List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
@@ -615,12 +614,12 @@ public class SemanticIrValidatorTest {
         // R-PROFILE: loweringContextHash computed by T3's helper for a
         // different profile/registry-hash pair.
         {
-            String wrongHash = LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+            String wrongHash = LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
                 "different-registry-hash");
             check(!wrongHash.equals(LCH), "the foreign-pair hash differs (T3 precondition)");
             assertE6005(SemanticIrValidator.validate(
                     new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-                        SemanticProfile.DEAL_V1_2_INT32, MOD, IFACE, wrongHash, Set.of(),
+                        SemanticProfile.DEAL_V1_3_INT32, MOD, IFACE, wrongHash, Set.of(),
                         Map.of(), Map.of(), Map.of(),
                         new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
                         Map.of(), List.of(constOp()),
@@ -713,9 +712,20 @@ public class SemanticIrValidatorTest {
         {
             LoweredModuleUnit base = unit(List.of(constOp()));
             String text = substituteUnitLeaf(SemanticIrValidator.toUnitText(base),
-                "semanticProfile", "DEAL_V1_2_INT32", "LEGACY_SAFE_INT");
+                "semanticProfile", "DEAL_V1_3_INT32", "LEGACY_SAFE_INT");
             assertE6005(SemanticIrValidator.validateText(text, FACTS),
                 "R-PROFILE", "LEGACY_SAFE_INT");
+        }
+
+        // R-PROFILE: the removed v1.2 profile name is rejected in an
+        // otherwise valid unit — persisted older executable data is never
+        // interpreted with an alias profile.
+        {
+            LoweredModuleUnit base = unit(List.of(constOp()));
+            String text = substituteUnitLeaf(SemanticIrValidator.toUnitText(base),
+                "semanticProfile", "DEAL_V1_3_INT32", "DEAL_V1_2_INT32");
+            assertE6005(SemanticIrValidator.validateText(text, FACTS),
+                "R-PROFILE", "DEAL_V1_2_INT32");
         }
 
         // R-PROFILE: cross-unit profile mismatch through project-level
@@ -731,7 +741,7 @@ public class SemanticIrValidatorTest {
             LoweredModuleUnit unitB = withInterfaceHash(unit("mod.b", Set.of(), Map.of(),
                 Map.of(), List.of(constOp())), index.interfaceIndexDigest());
             ExecutableLoweredProject project = new ExecutableLoweredProject(
-                SemanticProfile.DEAL_V1_2_INT32, index,
+                SemanticProfile.DEAL_V1_3_INT32, index,
                 new LinkedHashMap<>() {{
                     put(MOD, unitA);
                     put(MOD_B, unitB);
@@ -739,9 +749,14 @@ public class SemanticIrValidatorTest {
             assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
                 "project injection base");
             String text = substituteProjectUnitLeaf(SemanticIrValidator.toProjectText(project),
-                1, "semanticProfile", "DEAL_V1_2_INT32", "LEGACY_SAFE_INT");
+                1, "semanticProfile", "DEAL_V1_3_INT32", "LEGACY_SAFE_INT");
             assertE6005(SemanticIrValidator.validateText(text, projectFacts(index)),
                 "R-PROFILE", "LEGACY_SAFE_INT");
+            String removed = substituteProjectUnitLeaf(
+                SemanticIrValidator.toProjectText(project), 1,
+                "semanticProfile", "DEAL_V1_3_INT32", "DEAL_V1_2_INT32");
+            assertE6005(SemanticIrValidator.validateText(removed, projectFacts(index)),
+                "R-PROFILE", "DEAL_V1_2_INT32");
         }
 
         // Transport-level decode failures are never E6005 and never a rule.
@@ -903,7 +918,7 @@ public class SemanticIrValidatorTest {
         {
             LoweredModuleUnit base = unit(List.of(constOp()));
             String text = substituteUnitLeaf(SemanticIrValidator.toUnitText(base),
-                "semanticProfile", "DEAL_V1_2_INT32", "LEGACY_SAFE_INT");
+                "semanticProfile", "DEAL_V1_3_INT32", "LEGACY_SAFE_INT");
             Optional<CompilerDiagnostic> first = SemanticIrValidator.validateText(text, FACTS);
             Optional<CompilerDiagnostic> second = SemanticIrValidator.validateText(text, FACTS);
             check(first.isPresent() && first.get().message().equals(second.get().message()),
@@ -1068,13 +1083,17 @@ public class SemanticIrValidatorTest {
         checkEq(REAL_SPAN.range(), twoOps.ops().get(1).origin().diagnosticRange(),
             "the retained origin metadata stays independent of the parent link");
 
-        // Aggregate failures identify no operation and stay originless.
-        LoweredModuleUnit aggregate = unit("mod.a",
-            Set.of(SemanticCapability.STDLIB_TIME_CONFLICT), Map.of(), Map.of(),
+        // Aggregate failures identify no operation and stay originless: a
+        // removed capability name in the closed position is an R-ENUM
+        // aggregate failure with the canonical synthetic range.
+        LoweredModuleUnit aggregateBase = unit("mod.a",
+            Set.of(SemanticCapability.FOUNDATION_VALUES), Map.of(), Map.of(),
             List.of(withOrigin(constOp(), userOrigin("test.deal", null))));
+        String aggregateText = SemanticIrValidator.toUnitText(aggregateBase)
+            .replace("\"FOUNDATION_VALUES\"", "\"STDLIB_TIME_CONFLICT\"");
         Optional<CompilerDiagnostic> aggregateFailure =
-            SemanticIrValidator.validate(aggregate, FACTS);
-        assertE6005(aggregateFailure, "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+            SemanticIrValidator.validateText(aggregateText, FACTS);
+        assertE6005(aggregateFailure, "R-ENUM", "STDLIB_TIME_CONFLICT");
         check(aggregateFailure.isPresent()
                 && aggregateFailure.get().range().isCanonicalSynthetic()
                 && "".equals(aggregateFailure.get().range().file()),
@@ -1102,33 +1121,39 @@ public class SemanticIrValidatorTest {
             "R-POLICY-KIND", "TIME_NOW_MILLIS", "INFRASTRUCTURE_ONLY");
 
         {
+            // A claim without evidence: the typed and text surfaces report
+            // the identical R-CAPABILITY rejection, originless.
             LoweredModuleUnit forged = unit("mod.a",
-                Set.of(SemanticCapability.STDLIB_TIME_CONFLICT),
+                Set.of(SemanticCapability.SIGNED_INT32),
                 Map.of(), Map.of(), List.of());
             Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(forged, FACTS);
-            assertE6005(typed, "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
-            System.out.println("    observed STDLIB_TIME_CONFLICT rejection (typed): "
-                + typed.get().message());
+            assertE6005(typed, "R-CAPABILITY", "SIGNED_INT32");
             Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
                 SemanticIrValidator.toUnitText(forged), FACTS);
-            assertE6005(text, "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+            assertE6005(text, "R-CAPABILITY", "SIGNED_INT32");
             check(typed.get().message().equals(text.get().message()),
-                "both surfaces report the identical R-CAPABILITY rejection for the forged "
-                    + "STDLIB_TIME_CONFLICT claim");
+                "both surfaces report the identical R-CAPABILITY rejection for the "
+                    + "evidence-less SIGNED_INT32 claim");
             checkEq(DiagnosticRange.synthetic(""), typed.get().range(),
-                "the typed conflict claim has no source attribution");
+                "the typed capability claim has no source attribution");
             checkEq(typed.get().range(), text.get().range(),
-                "the text conflict claim keeps the same originless range");
+                "the text capability claim keeps the same originless range");
+
+            // The removed routing-marker capability name is rejected at the
+            // closed position (R-ENUM), never admitted.
+            String removedName = SemanticIrValidator.toUnitText(forged)
+                .replace("\"SIGNED_INT32\"", "\"STDLIB_TIME_CONFLICT\"");
+            assertE6005(SemanticIrValidator.validateText(removedName, FACTS),
+                "R-ENUM", "STDLIB_TIME_CONFLICT");
         }
 
-        // Fact 2 — no produced op set can satisfy the claim: a unit that
-        // fully satisfies its other claims still fails on the
-        // empty-evidence claim, so no lowering path admits a
-        // conflict-claiming module.
+        // Fact 2 — no produced op set can satisfy the removed
+        // routing-marker claim: the position is closed, so a unit that
+        // fully satisfies its other claims still fails at the claim name
+        // and no lowering path admits a conflict-claiming module.
         {
-            LoweredModuleUnit forged = unit("mod.a",
-                Set.of(SemanticCapability.FOUNDATION_VALUES,
-                    SemanticCapability.STDLIB_TIME_CONFLICT),
+            LoweredModuleUnit completed = unit("mod.a",
+                Set.of(SemanticCapability.FOUNDATION_VALUES),
                 Map.of(), Map.of(), List.of(
                     constOp(),
                     op(SemanticOpKind.UNARY,
@@ -1140,11 +1165,15 @@ public class SemanticIrValidatorTest {
                     op(SemanticOpKind.STRING_CONCAT,
                         new KindPayload.StringConcatPayload(List.of(nextValue())),
                         nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null)));
-            assertE6005(SemanticIrValidator.validate(forged, FACTS),
-                "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
-            assertE6005(SemanticIrValidator.validateText(
-                    SemanticIrValidator.toUnitText(forged), FACTS),
-                "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+            check(SemanticIrValidator.validate(completed, FACTS).isEmpty(),
+                "the fully-evidenced base unit passes R-CAPABILITY: "
+                    + SemanticIrValidator.validate(completed, FACTS).map(
+                        CompilerDiagnostic::message).orElse("no failure"));
+            String forgedText = SemanticIrValidator.toUnitText(completed)
+                .replace("\"FOUNDATION_VALUES\"",
+                    "\"FOUNDATION_VALUES\",\"STDLIB_TIME_CONFLICT\"");
+            assertE6005(SemanticIrValidator.validateText(forgedText, FACTS),
+                "R-ENUM", "STDLIB_TIME_CONFLICT");
         }
     }
 
@@ -1168,7 +1197,7 @@ public class SemanticIrValidatorTest {
             JsonDefaultChildTable jsonDefaults,
             ClassBindingFacts classBindingFacts) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_2_INT32, MOD, IFACE, LCH, Set.of(), Map.of(),
+            SemanticProfile.DEAL_V1_3_INT32, MOD, IFACE, LCH, Set.of(), Map.of(),
             classLayouts, functions, moduleInit, exportPlan, bindings, ops, bodyTable,
             classFactories, jsonDefaults, classBindingFacts);
     }
@@ -1772,7 +1801,7 @@ public class SemanticIrValidatorTest {
             unit("mod.b", Set.of(), Map.of(), Map.of(), List.of(constOp())),
             index.interfaceIndexDigest()));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
+            SemanticProfile.DEAL_V1_3_INT32, index, modules, MOD,
             ClassRegistrationSeeds.builtinErrorOnly());
         assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
             "the project transport fixture");
@@ -1791,7 +1820,7 @@ public class SemanticIrValidatorTest {
             ContractSnapshotCanonicalizer.parseProject(parseObj(text));
         checkEq("deal.semantic-ir/2", parsed.formatVersion(),
             "the parsed project keeps the /2 envelope");
-        checkEq("DEAL_V1_2_INT32", parsed.semanticProfile(),
+        checkEq("DEAL_V1_3_INT32", parsed.semanticProfile(),
             "the parsed project keeps the profile as supplied");
         checkEq("mod.a", parsed.entryModule(), "the parsed project keeps the entry module");
         checkEq(List.of("mod.a", "mod.b"), parsed.modulePaths(),
@@ -1845,7 +1874,7 @@ public class SemanticIrValidatorTest {
         // Mandatory empties: the empty seed set and the empty index entry
         // lists stay present and empty, distinct from absent.
         ExecutableLoweredProject emptySeeds = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD,
+            SemanticProfile.DEAL_V1_3_INT32, index, modules, MOD,
             new ClassRegistrationSeeds(Map.of()));
         String emptyText = SemanticIrValidator.toProjectText(emptySeeds);
         check(emptyText.contains("\"classSeeds\":[]"),
@@ -1870,7 +1899,7 @@ public class SemanticIrValidatorTest {
                 new ClassLayout(new ClassId("mod.a", "Point"), List.of()),
                 DefaultOwner.LOCAL)));
         ExecutableLoweredProject detachedProject = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD, detachedSeeds);
+            SemanticProfile.DEAL_V1_3_INT32, index, modules, MOD, detachedSeeds);
         String detachedText = SemanticIrValidator.toProjectText(detachedProject);
         check(detachedText.contains("\"key\":{\"modulePath\":\"mod.a\",\"name\":\"Other\"")
                 && detachedText.contains("\"layout\":{\"classId\":{\"modulePath\":\"mod.a\","

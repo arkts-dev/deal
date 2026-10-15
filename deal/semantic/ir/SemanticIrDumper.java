@@ -62,7 +62,7 @@ import deal.semantic.ClassConstructionValidator;
  *   "moduleInit": { "imports": [<module>, ...], "initBlock": <block> },
  *   "ops": [ <op>, ... ],                       // produced operations in source order
  *   "requiredCapabilities": [name, ...],
- *   "semanticProfile": "DEAL_V1_2_INT32"
+ *   "semanticProfile": "DEAL_V1_3_INT32"
  * }
  * }</pre>
  *
@@ -72,7 +72,7 @@ import deal.semantic.ClassConstructionValidator;
  * {
  *   "entryModule": "<module path>",
  *   "formatVersion": "deal.semantic-ir/2",
- *   "semanticProfile": "DEAL_V1_2_INT32",
+ *   "semanticProfile": "DEAL_V1_3_INT32",
  *   "interfaceIndex": { "formatVersion": "deal.semantic-interface/1", "modules": [ ... ] },
  *   "classSeeds": [ { "key": <class>, "layout": {classId, fields: [ ... ]}, "owner": name }, ... ],
  *   "modules": [ "<module path>", ... ]        // dependency order (project record order)

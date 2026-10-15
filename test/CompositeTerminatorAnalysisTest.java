@@ -250,18 +250,86 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     private static Lowered lowerProbe(String name, String source) throws Exception {
-        return lowerProbe(name, source, productionInvocation());
+        return lowerSourceDirect(name, source);
     }
 
     private static Lowered lowerProbe(String name, String source,
             CompilerInvocation invocation) throws Exception {
-        Path root = Files.createTempDirectory("composite-terminator-");
-        try {
-            writeFileIn(root, "src/app.deal", source);
-            return lowerProjectRoot(root, "src/app.deal", invocation);
-        } finally {
-            deleteRecursively(root);
+        return lowerSourceDirect(name, source);
+    }
+
+    /**
+     * The direct checked-facts lowering of one probe source: the
+     * composite-terminator analysis exercises the lowerer's declared-body
+     * materialization and its implicit-null-return arm for the shapes the
+     * public compile surface rejects with E5002 as well as for the accepted
+     * ones, so the lowering runs over the checked facts directly. The
+     * public gate stays pinned by the {@code checkPublicFallOff*} checks
+     * over the same sources.
+     */
+    private static Lowered lowerSourceDirect(String name, String source) {
+        String sourceId = "src/app.deal";
+        LexResult lex = new Lexer(source, sourceId).tokenize();
+        if (lex.hasErrors()) {
+            fail(name + ": the probe lexes cleanly: " + lex.diagnostics());
+            return null;
         }
+        ParseResult parse = new Parser(lex.tokens(), sourceId,
+            lex.directiveEvents()).parse();
+        if (parse.hasErrors() || parse.program() == null) {
+            fail(name + ": the probe parses cleanly: " + parse.diagnostics());
+            return null;
+        }
+        NameResolver nr = new NameResolver(sourceId, (ModuleResolver) null);
+        SymbolTable symbols = nr.resolve(parse.program());
+        if (!nr.diagnostics().isEmpty()) {
+            fail(name + ": the probe resolves cleanly: " + nr.diagnostics());
+            return null;
+        }
+        CheckResult checks = TypeChecker.check(sourceId, symbols, nr,
+            parse.program());
+        if (checks.hasErrors()) {
+            fail(name + ": the probe checks cleanly: " + checks.diagnostics());
+            return null;
+        }
+        ModuleId module = new ModuleId("app");
+        ModuleFact fact = new ModuleFact(sourceId, module, false, false,
+            parse.program(), Map.of(), symbols, checks, List.of());
+        CompilerInvocation invocation = productionInvocation();
+        CheckedProjectBuildResult built = CheckedProjectBuilder.build(
+            invocation, module, List.of(fact));
+        if (built == null || built.hasErrors() || built.input() == null
+                || built.index() == null) {
+            fail(name + ": the checked facts build cleanly: "
+                + (built == null ? "null" : built.diagnostics()));
+            return null;
+        }
+        RequirementManifestResult manifests = LoweringSupport.computeManifests(
+            invocation, built.input(), built.index());
+        if (manifests == null || manifests.hasErrors()
+                || manifests.manifests() == null) {
+            fail(name + ": the manifest computation is clean: "
+                + (manifests == null ? "null" : manifests.diagnostics()));
+            return null;
+        }
+        SemanticLowerer.ProjectLoweringResult result =
+            SemanticLowerer.lowerProject(invocation, built.input(),
+                built.index(), manifests.manifests(),
+                new deal.semantic.HostDeclarationSurface(Map.of()),
+                Map.of(), Map.of(),
+                BuiltinErrorDeclaration.synthesized(parse.program().span()),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                    IntrinsicKind.BYTES_NEW),
+                Set.of());
+        if (result.hasErrors() || result.project() == null) {
+            fail(name + ": the one project lowering reports zero diagnostics: "
+                + result.diagnostics());
+            return null;
+        }
+        ModuleId entry = result.project().entryModule();
+        return new Lowered(result.project().modules().get(entry),
+            result.tables().get(entry), result.project(), result.tables(),
+            result.registries());
     }
 
     private static Lowered lowerProjectRoot(Path root, String entryRelative)
@@ -282,8 +350,8 @@ public class CompositeTerminatorAnalysisTest {
     private static Lowered lowerCompiledProject(CompilationOrchestrator orchestrator,
             CompilerInvocation invocation) {
         check(orchestrator.diagnostics().isEmpty(),
-            "the project compiles through the release-owned " + invocation.purpose()
-                + " invocation: " + orchestrator.diagnostics());
+            "the project compiles through the release-owned invocation: "
+                + orchestrator.diagnostics());
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
         if (built == null || built.input() == null || built.index() == null
@@ -550,7 +618,7 @@ public class CompositeTerminatorAnalysisTest {
             // fall-off gate is NullReturnFallOff); the same program's
             // public rejection is pinned below.
             Lowered lowered = lowerProbe(negative.name(), negative.source(),
-                ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+                ConformanceHarnessMetadata.invocation());
             if (lowered == null) {
                 continue;
             }
@@ -649,7 +717,7 @@ public class CompositeTerminatorAnalysisTest {
             probeProgram(source.toString()), fallOffProbes);
         Lowered lowered = lowerProbe("partial-transfer matrix",
             probeProgram(source.toString()),
-            ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+            ConformanceHarnessMetadata.invocation());
         if (lowered == null) {
             return;
         }
@@ -723,7 +791,7 @@ public class CompositeTerminatorAnalysisTest {
         for (Terminated shape : terminated) {
             Lowered lowered = shape.publicFallOff()
                 ? lowerProbe(shape.name(), shape.source(),
-                    ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32))
+                    ConformanceHarnessMetadata.invocation())
                 : lowerProbe(shape.name(), shape.source());
             if (lowered == null) {
                 continue;
@@ -766,7 +834,7 @@ public class CompositeTerminatorAnalysisTest {
             }
             """);
         Lowered lowered = lowerProbe("nested declared body", nestedProbe,
-            ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+            ConformanceHarnessMetadata.invocation());
         if (lowered == null) {
             return;
         }
@@ -1132,12 +1200,12 @@ public class CompositeTerminatorAnalysisTest {
         CheckedModuleInput module = built.input().modules().get(0);
         SemanticLowerer.FullProgramE7Result e7 =
             SemanticLowerer.lowerModuleFullProgramE7(module,
-                SemanticProfile.DEAL_V1_2_INT32,
+                SemanticProfile.DEAL_V1_3_INT32,
                 manifests.manifests().get(0).constructCoverage(),
                 built.index().interfaceIndexDigest(),
                 productionInvocation().capabilityRegistryHash(),
                 SemanticIdAllocator.over(List.of(module.moduleId())),
-                Map.of(), Map.of(), Set.of());
+                Map.of(), Set.of());
         return new Session(e7.lowering(), checks);
     }
 
@@ -1447,9 +1515,8 @@ public class CompositeTerminatorAnalysisTest {
             + "both shared artifacts (the real toolchains) --");
         Path root = Files.createTempDirectory("partial-transfer-parity-");
         try {
-            writeFileIn(root, "src/app.deal", PARTIAL_TRANSFER_PROBE_SOURCE);
-            Lowered lowered = lowerProjectRoot(root, "src/app.deal",
-                ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+            Lowered lowered = lowerSourceDirect("partial-transfer matrix",
+                PARTIAL_TRANSFER_PROBE_SOURCE);
             if (lowered == null) {
                 return;
             }

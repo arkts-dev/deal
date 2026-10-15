@@ -1302,7 +1302,6 @@ public class BoundaryExecutorTest {
             FailurePolicyId.NO_DEAL_FAILURE,
             FailurePolicyId.INT32_RESULT,
             FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
-            FailurePolicyId.INT32_EXPONENT_THEN_RESULT,
             FailurePolicyId.INT_CONVERSION,
             FailurePolicyId.NUMBER_CONVERSION,
             FailurePolicyId.ASYNC_OPERATION_HANDLE,

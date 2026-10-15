@@ -12,21 +12,20 @@ import java.util.Objects;
  *
  * <pre>{@code
  * ExecutableLoweredProject {
- *   semanticProfile: DEAL_V1_2_INT32,
+ *   semanticProfile: DEAL_V1_3_INT32,
  *   interfaceIndex, modules: Map<ModuleId, LoweredModuleUnit>,   // complete implementation closure
  *   entryModule, classSeeds
  * }
  * }</pre>
  *
- * <p>The project admits only {@code DEAL_V1_2_INT32} — no constructor path
- * admits any other value; {@code LEGACY_SAFE_INT} is never lowered. The
+ * <p>The project carries the single {@code DEAL_V1_3_INT32} profile — no
+ * constructor path admits any other value. The
  * modules map is the complete implementation closure in dependency order
  * (insertion order is preserved, so repeated dumps are byte-identical);
  * every semantic ID is globally unique within the project
- * (validator-checked, including cross-unit {@code OpId} module tags). A
- * legacy implementation dependency never appears as executable common IR —
- * it is represented to shared dependants by {@link ExternalModuleInterface}
- * plus the target ABI record (foundation F5/F6).</p>
+ * (validator-checked, including cross-unit {@code OpId} module tags). Every
+ * implementation dependency of the complete closure is lowered; no legacy
+ * ABI record exists.</p>
  *
  * <p>{@code classSeeds} is the project's class registration seed set: the
  * compiler-owned builtin {@code Error} entry plus one declaration class
@@ -53,11 +52,6 @@ public record ExecutableLoweredProject(
                                     ModuleId entryModule,
                                     ClassRegistrationSeeds classSeeds) {
         this.semanticProfile = Objects.requireNonNull(semanticProfile, "semanticProfile must not be null");
-        if (semanticProfile != SemanticProfile.DEAL_V1_2_INT32) {
-            throw new IllegalArgumentException(
-                "ExecutableLoweredProject admits only DEAL_V1_2_INT32; got " + semanticProfile
-                    + " (LEGACY_SAFE_INT is never lowered)");
-        }
         this.interfaceIndex = Objects.requireNonNull(interfaceIndex, "interfaceIndex must not be null");
         Objects.requireNonNull(modules, "modules must not be null");
         this.modules = Collections.unmodifiableMap(new LinkedHashMap<>(modules));

@@ -7357,7 +7357,7 @@ public class CanonicalProjectionParityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash",
                 "context", Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(),
                     new deal.semantic.ir.BlockId(0)),
@@ -7376,7 +7376,7 @@ public class CanonicalProjectionParityTest {
                 deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
                 List.of(), deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
         tables.put(entry, new StructuredBodyTable(
@@ -7592,7 +7592,6 @@ public class CanonicalProjectionParityTest {
             Files.copy(Path.of("deal", "runtime.lua"), runtime);
             Files.writeString(workspace.resolve("probe.lua"), """
                 local rt = require("deal.runtime")
-                rt.__INT32 = true
                 local function row(label, desc, value)
                   local ok, err = pcall(rt.check_type, desc, value)
                   print("CELL|" .. label .. "|" .. (ok and "PASS"
@@ -7774,9 +7773,8 @@ public class CanonicalProjectionParityTest {
      * plus the full-program lowering with the closed validators.
      */
     private static Seed lowerSeed(String source, String what) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
-            deal.semantic.ir.ReleaseState.V1_2_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            deal.semantic.ir.ReleaseState.V1_3_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
         CheckedSeed seed = checkedSeed(source, what, invocation);
         if (seed == null) {
@@ -7786,7 +7784,7 @@ public class CanonicalProjectionParityTest {
             .capabilityRegistryHash();
         ProjectInterfaceIndex index = seed.built().index();
         SemanticLowerer.LoweringResult lowering = SemanticLowerer.lowerModuleFullProgram(
-            seed.input(), deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32,
+            seed.input(), deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32,
             seed.manifests().manifests().get(0).constructCoverage(),
             index.interfaceIndexDigest(), registryHash,
             deal.semantic.ir.SemanticIdAllocator.over(List.of(MATRIX_MODULE)));

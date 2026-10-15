@@ -514,7 +514,7 @@ public record ClassRegistrationSeeds(
                                       String detail) {
         LoweringFailureDetail lowering = new LoweringFailureDetail(
             moduleId.path(), SemanticCapability.CLASSES, rule,
-            SemanticProfile.DEAL_V1_2_INT32,
+            SemanticProfile.DEAL_V1_3_INT32,
             LoweredModuleUnit.FORMAT_VERSION,
             "ClassRegistrationSeeds " + rule + " (" + detail + ")");
         return new Production(null,

@@ -114,9 +114,9 @@ public class CanonicalJsonTest {
     private static final String PINNED_SNAPSHOT_DIGEST_GOLDEN =
         "810fcc608b7e27fa3dd23ec391e0d38aee56bf5e4ad0f7ef2f32fb91538545fb";
 
-    /** Stored golden: {@code LoweringContextHash.of(DEAL_V1_2_INT32, REGISTRY_HASH)}. */
+    /** Stored golden: {@code LoweringContextHash.of(DEAL_V1_3_INT32, REGISTRY_HASH)}. */
     private static final String PINNED_LOWERING_CONTEXT_GOLDEN =
-        "808a9dc895a8a443f4cd972b16313c888169f5ea54051866c6a9a527adfb0b80";
+        "5743ebc9bec4507a4468c1a9433ca2c7ddb57cf86cc427a09b50f1466cfd4d7f";
 
     // =========================================================================
     // Fixtures
@@ -750,7 +750,7 @@ public class CanonicalJsonTest {
     static void testLoweringContextHash() {
         System.out.println("-- Lowering context hash (pinned formula) --");
 
-        String hash = LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH);
+        String hash = LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
         check(PINNED_LOWERING_CONTEXT_GOLDEN.equals(hash),
             "the lowering-context hash equals the stored golden; got " + hash);
         check(hash.length() == 64 && hash.matches("[0-9a-f]{64}"),
@@ -760,29 +760,23 @@ public class CanonicalJsonTest {
         // order with the profile as its enum name and the registry hash
         // verbatim.
         String expected = "{\"capabilityRegistryHash\":\"" + REGISTRY_HASH
-            + "\",\"semanticProfile\":\"DEAL_V1_2_INT32\"}";
+            + "\",\"semanticProfile\":\"DEAL_V1_3_INT32\"}";
         CanonicalJson.Value json = CanonicalJson.obj(
             CanonicalJson.e("semanticProfile",
-                CanonicalJson.str(SemanticProfile.DEAL_V1_2_INT32.name())),
+                CanonicalJson.str(SemanticProfile.DEAL_V1_3_INT32.name())),
             CanonicalJson.e("capabilityRegistryHash", CanonicalJson.str(REGISTRY_HASH)));
         check(expected.equals(CanonicalJson.serializeText(json)),
             "the digest input serializes as " + expected);
         check(hash.equals(CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(json))),
             "the helper computes SHA-256 of exactly that canonical JSON");
 
-        // T1 confusion guard: a legacy-profile input cannot be confused with
-        // the v1.2 one (the enum names differ, so the digests differ).
-        String legacy = LoweringContextHash.of(SemanticProfile.LEGACY_SAFE_INT, REGISTRY_HASH);
-        check(!legacy.equals(hash),
-            "a LEGACY_SAFE_INT lowering-context hash differs from the DEAL_V1_2_INT32 one");
-
         // Same input, different registry hash → different digest.
-        check(!hash.equals(LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+        check(!hash.equals(LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
                 REGISTRY_HASH.replace('a', 'b'))),
             "changing the capability-registry hash changes the digest");
 
         // The LoweringContext record overload (T2's pinned input domain).
-        LoweringContext context = new LoweringContext(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH);
+        LoweringContext context = new LoweringContext(SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
         check(hash.equals(LoweringContextHash.of(context)),
             "the LoweringContext overload computes the same digest");
     }
@@ -924,7 +918,7 @@ public class CanonicalJsonTest {
             System.out.println("DOC=" + CanonicalJson.serializeText(compositeDocument()));
             System.out.println("SNAP_DIGEST=" + ContractSnapshotCanonicalizer.digest(pinnedSnapshot()));
             System.out.println("LCH=" + LoweringContextHash.of(
-                SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH));
+                SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH));
             System.out.println("SNAP_TEXT=" + ContractSnapshotCanonicalizer.serializeText(
                 pinnedSnapshot()));
             return;

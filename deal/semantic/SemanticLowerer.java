@@ -150,19 +150,6 @@ public final class SemanticLowerer {
     public static final String INT32_LITERAL_OUT_OF_RANGE = "INT32_LITERAL_OUT_OF_RANGE";
 
     /**
-     * The fact-defect identifier of the E6005 profile guard (I3): a
-     * lowering request whose invocation profile is not
-     * {@code DEAL_V1_2_INT32} is rejected before any op is built —
-     * {@code LEGACY_SAFE_INT} is inspectable for routing/regression but
-     * never lowered (the validator's R-PROFILE and
-     * {@link LoweredModuleUnit}'s constructor guard are the backstops).
-     * The detail carries the offending profile, capability
-     * {@code FOUNDATION_VALUES}, and the {@code SemanticLowerer} origin.
-     */
-    public static final String LOWER_LEGACY_PROFILE_REJECTED =
-        "LOWER_LEGACY_PROFILE_REJECTED";
-
-    /**
      * The pinned canonical realization id of every lowerer-created
      * boundary child (D3): {@code RuntimeValidation("runtime-validation")}
      * — a pinned constant inside the contract digest, so units and dumps
@@ -770,26 +757,26 @@ public final class SemanticLowerer {
         if (defect instanceof ConstructUnlowered unlowered) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CONTAINERS_AND_STRINGS, CONSTRUCT_UNLOWERED,
-                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + CONSTRUCT_UNLOWERED + " (" + unlowered.construct() + ")");
         }
         if (defect instanceof IntLiteralOutOfRange outOfRange) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.SIGNED_INT32, INT32_LITERAL_OUT_OF_RANGE,
-                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + INT32_LITERAL_OUT_OF_RANGE + " ("
                     + outOfRange.getMessage() + ")");
         }
         if (defect instanceof ClassDefaultCapture capture) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CLASSES, CLASS_DEFAULT_CAPTURE,
-                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + CLASS_DEFAULT_CAPTURE + " (" + capture.getMessage() + ")");
         }
         if (defect instanceof RetainedAbiDeferred deferred) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CLASSES, RETAINED_ABI_DEFERRED,
-                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + RETAINED_ABI_DEFERRED + " (class "
                     + deferred.classId() + " — the RETAINED_ABI derivation is E10's)");
         }
@@ -821,18 +808,6 @@ public final class SemanticLowerer {
     }
 
     /**
-     * The I3 profile guard's rejection result: a non-DEAL_V1_2_INT32
-     * lowering request produces no unit and no partial session state.
-     */
-    private static LoweringResult legacyProfileRejection(
-            CheckedModuleInput module, SemanticProfile profile) {
-        return new LoweringResult(null, null, List.of(FailureContractRegistry.e6005(
-            new LoweringFailureDetail(module.moduleId().path(),
-                SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer"))));
-    }
-
-    /**
      * The first two closed gates of a produced unit (the 14-rule unit
      * validator and the address-chain protocol, in order): empty on
      * pass, otherwise the first E6005 as a failed {@link LoweringResult}.
@@ -842,7 +817,7 @@ public final class SemanticLowerer {
             String capabilityRegistryHash) {
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return Optional.of(new LoweringResult(null, null, List.of(validation.get())));
         }
@@ -975,12 +950,6 @@ public final class SemanticLowerer {
                                              SemanticIdAllocator allocator) {
         requireLoweringInputs(module, profile, constructCoverage, interfaceHash,
             capabilityRegistryHash, allocator);
-        // I3 profile guard: the rejection runs before any op is built and
-        // before any id is allocated — a LEGACY_SAFE_INT lowering request
-        // produces no unit and no partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return legacyProfileRejection(module, profile);
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator);
         try {
@@ -1015,12 +984,6 @@ public final class SemanticLowerer {
                                                            SemanticIdAllocator allocator) {
         requireLoweringInputs(module, profile, constructCoverage, interfaceHash,
             capabilityRegistryHash, allocator);
-        // I3 profile guard: identical to lowerModule — a non-DEAL_V1_2_INT32
-        // lowering request produces no unit and no partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new BindingCoreResult(legacyProfileRejection(module, profile),
-                BindingCoreFacts.empty());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, module.ast().span());
         try {
@@ -1065,9 +1028,6 @@ public final class SemanticLowerer {
                                                         SemanticIdAllocator allocator) {
         requireLoweringInputs(module, profile, constructCoverage, interfaceHash,
             capabilityRegistryHash, allocator);
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return legacyProfileRejection(module, profile);
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, module.ast().span(), true);
         lowerer.setModuleImports(module.imports());
@@ -1103,22 +1063,17 @@ public final class SemanticLowerer {
             SemanticProfile profile,
             Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
             String interfaceHash, String capabilityRegistryHash,
-            SemanticIdAllocator allocator, Map<ModuleId, ModuleRoute> calleeRoutes,
+            SemanticIdAllocator allocator,
             Map<ModuleId, Map<String, OpId>> calleeExternalEntries,
             Set<String> callbackExports) {
         requireLoweringInputs(module, profile, constructCoverage, interfaceHash,
             capabilityRegistryHash, allocator);
-        Objects.requireNonNull(calleeRoutes, "calleeRoutes must not be null");
         Objects.requireNonNull(calleeExternalEntries, "calleeExternalEntries must not be null");
         Objects.requireNonNull(callbackExports, "callbackExports must not be null");
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new FullProgramE7Result(legacyProfileRejection(module, profile),
-                Map.of(), Map.of());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, module.ast().span(), true);
         lowerer.setModuleImports(module.imports());
-        lowerer.setE7Facts(module.exports(), calleeRoutes, calleeExternalEntries,
+        lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
             lowerer.seedIntrinsicBindings();
@@ -1187,19 +1142,11 @@ public final class SemanticLowerer {
         Objects.requireNonNull(conversionIntrinsics,
             "conversionIntrinsics must not be null");
         Objects.requireNonNull(callbackExports, "callbackExports must not be null");
-
-        // (1) The profile guard: before any id is allocated and before any
-        // op is built. A non-DEAL_V1_2_INT32 invocation fails closed here.
-        if (invocation.semanticProfile() != SemanticProfile.DEAL_V1_2_INT32) {
-            return projectFailure(checkedProject.entryModule(),
-                SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                invocation.semanticProfile(), "SemanticLowerer.lowerProject");
-        }
         String interfaceHash = interfaceIndex.interfaceIndexDigest();
         String capabilityRegistryHash = invocation.capabilityRegistryHash();
         SemanticIrValidator.ComparisonFacts comparisonFacts =
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash);
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash);
 
         // (2) The declaration-fact agreement: every declaration import of
         // the closure is covered by the surface (a declaration module's
@@ -1290,10 +1237,6 @@ public final class SemanticLowerer {
                     + " closure with its entry module)");
         }
         SemanticIdAllocator allocator = SemanticIdAllocator.over(closureOrder);
-        Map<ModuleId, ModuleRoute> closureRoutes = new LinkedHashMap<>();
-        for (ModuleId module : closureOrder) {
-            closureRoutes.put(module, ModuleRoute.SHARED);
-        }
 
         Map<ModuleId, LoweredModuleUnit> units = new LinkedHashMap<>();
         Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
@@ -1333,7 +1276,7 @@ public final class SemanticLowerer {
                         + " entry (the index covers every module of the closure)");
             }
             LoweredProjectModule lowered = lowerProjectModule(module, manifest,
-                interfaceHash, capabilityRegistryHash, allocator, closureRoutes,
+                interfaceHash, capabilityRegistryHash, allocator,
                 calleeExternalEntries, callbackExports, seeds.seeds(),
                 conversionIntrinsics, ownInterface, comparisonFacts,
                 inProjectFactoryFacts, declaredParameterAnnotations);
@@ -1359,7 +1302,7 @@ public final class SemanticLowerer {
         // owns the produced class registration seeds; the lowering result's
         // seed view is exactly that record.
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, interfaceIndex, units,
+            SemanticProfile.DEAL_V1_3_INT32, interfaceIndex, units,
             checkedProject.entryModule(), seeds.seeds());
         Optional<CompilerDiagnostic> projectGate = SemanticIrValidator.validate(
             project, comparisonFacts);
@@ -1438,7 +1381,6 @@ public final class SemanticLowerer {
             String interfaceHash,
             String capabilityRegistryHash,
             SemanticIdAllocator allocator,
-            Map<ModuleId, ModuleRoute> closureRoutes,
             Map<ModuleId, Map<String, OpId>> calleeExternalEntries,
             Set<String> callbackExports,
             ClassRegistrationSeeds seeds,
@@ -1455,7 +1397,7 @@ public final class SemanticLowerer {
         lowerer.setModuleImports(module.imports());
         lowerer.setRegistrationSeeds(seeds);
         lowerer.setDeclaredConversionIntrinsics(conversionIntrinsics);
-        lowerer.setE7Facts(module.exports(), closureRoutes, calleeExternalEntries,
+        lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
             lowerer.lowerProjectModule(module.ast().statements());
@@ -1765,17 +1707,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
-        // I3 profile guard: identical to lowerModuleBindingCore — a
-        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
-        // partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new ClosureCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    new LoweringFailureDetail(module.moduleId().path(),
-                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                BindingCoreFacts.empty(), List.of());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, module.ast().span());
         try {
@@ -1803,7 +1734,7 @@ public final class SemanticLowerer {
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ClosureCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -1833,17 +1764,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
-        // I3 profile guard: identical to lowerModuleClosureCore — a
-        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
-        // partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new GroupCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    new LoweringFailureDetail(module.moduleId().path(),
-                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                BindingCoreFacts.empty(), List.of(), List.of());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, module.ast().span());
         try {
@@ -1871,7 +1791,7 @@ public final class SemanticLowerer {
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new GroupCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -1900,18 +1820,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
-        // I3 profile guard: identical to lowerModuleGroupCore — a
-        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
-        // partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new ImmutabilityCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    new LoweringFailureDetail(module.moduleId().path(),
-                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                BindingCoreFacts.empty(), List.of(), List.of(),
-                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, true, module.ast().span());
         try {
@@ -1943,7 +1851,7 @@ public final class SemanticLowerer {
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ImmutabilityCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -1976,19 +1884,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
-        // I3 profile guard: identical to lowerModuleImmutabilityCore — a
-        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
-        // partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new CreationRuleCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    new LoweringFailureDetail(module.moduleId().path(),
-                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                BindingCoreFacts.empty(), List.of(), List.of(),
-                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty(),
-                AdapterCreationRule.CreationRuleFacts.empty());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, true, true, module.ast().span());
         try {
@@ -2020,7 +1915,7 @@ public final class SemanticLowerer {
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new CreationRuleCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -2053,19 +1948,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
-        // I3 profile guard: identical to lowerModuleCreationRuleCore — a
-        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
-        // partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new ShapeMapCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    new LoweringFailureDetail(module.moduleId().path(),
-                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                BindingCoreFacts.empty(), List.of(), List.of(),
-                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty(),
-                AdapterCreationRule.CreationRuleFacts.empty(), ShapeMapFacts.empty());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, true, true, true,
             module.ast().span());
@@ -2098,7 +1980,7 @@ public final class SemanticLowerer {
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ShapeMapCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -2131,19 +2013,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
-        // I3 profile guard: identical to lowerModuleShapeMapCore — a
-        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
-        // partial session state.
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new ValidationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    new LoweringFailureDetail(module.moduleId().path(),
-                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                BindingCoreFacts.empty(), List.of(), List.of(),
-                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty(),
-                AdapterCreationRule.CreationRuleFacts.empty(), ShapeMapFacts.empty());
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, true, true, true,
             module.ast().span());
@@ -2176,7 +2045,7 @@ public final class SemanticLowerer {
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ValidationCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -2242,15 +2111,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(ownInterface, "ownInterface must not be null");
         Objects.requireNonNull(sharedFactories, "sharedFactories must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
-        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
-                List.of(FailureContractRegistry.e6005(
-                    new LoweringFailureDetail(module.moduleId().path(),
-                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
-                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
-                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
-        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), false, true, ownInterface, sharedFactories);
@@ -2294,7 +2154,7 @@ public final class SemanticLowerer {
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -2706,7 +2566,6 @@ public final class SemanticLowerer {
         /** The module's checked export facts (the E7 entry/callback surface). */
         private List<ExportInterface> moduleExports = List.of();
         /** The callee-module route facts (execution-owner resolution). */
-        private Map<ModuleId, ModuleRoute> calleeRoutes = Map.of();
         /** The callee modules' recorded {@code EXTERNAL_ENTRY} op ids by export name. */
         private Map<ModuleId, Map<String, OpId>> calleeExternalEntries = Map.of();
         /** The exported function names the scenario invokes as callbacks. */
@@ -8083,10 +7942,10 @@ public final class SemanticLowerer {
             this.producedClassBindingFacts = computePinnedWriteFacts();
             return new LoweredModuleUnit(
                 LoweredModuleUnit.FORMAT_VERSION,
-                SemanticProfile.DEAL_V1_2_INT32,
+                SemanticProfile.DEAL_V1_3_INT32,
                 module,
                 interfaceHash,
-                LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+                LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
                     capabilityRegistryHash),
                 claims,
                 coverage,
@@ -8260,8 +8119,7 @@ public final class SemanticLowerer {
                 new KindPayload.ExportReadPayload(stdlibModule, field,
                     exportDescriptor, exportValue),
                 new FunctionBindingRegistry.FunctionValueImportFacts(
-                    stdlibModule, null, field, exportDescriptor),
-                (ModuleRoutePlan) null);
+                    stdlibModule, null, field, exportDescriptor));
             // The argument operands complete left-to-right before the
             // STDLIB_CALL START (parent D13 step 1); their descriptors
             // are the catalog entry's declared parameter descriptors in
@@ -9446,20 +9304,10 @@ public final class SemanticLowerer {
                     case HOST, STDLIB -> new FunctionBindingRegistry
                         .FunctionValueImportFacts(importFact.resolvedModuleId(), null,
                             access.field(), functionDescriptor);
-                    case IMPLEMENTATION -> {
-                        if (!calleeRoutes.containsKey(importFact.resolvedModuleId())) {
-                            throw new ConstructUnlowered("compiled import member read '"
-                                + alias.name() + "." + access.field()
-                                + "' has no callee-route record for module '"
-                                + importFact.resolvedModuleId().path()
-                                + "' (the realized drive installs the session's "
-                                + "resolved import facts and callee-route facts; a "
-                                + "route-less carrier session fails closed)", access.span());
-                        }
-                        yield new FunctionBindingRegistry.FunctionValueImportFacts(null,
+                    case IMPLEMENTATION -> new FunctionBindingRegistry
+                        .FunctionValueImportFacts(null,
                             importFact.resolvedModuleId(), access.field(),
                             functionDescriptor);
-                    }
                     default -> throw new ConstructUnlowered("import kind "
                         + importFact.kind() + " has no import-member registration arm",
                             access.span());
@@ -9483,9 +9331,8 @@ public final class SemanticLowerer {
                 // registration (R3).
                 return new ImportMaterialization(null, descriptor, exportValue);
             }
-            registry.registerHostOrExternalImportWithRoutes(
-                new FunctionAllocationIdentity(exportValue.id()), exportPayload, facts,
-                calleeRoutes);
+            registry.registerHostOrExternalImport(
+                new FunctionAllocationIdentity(exportValue.id()), exportPayload, facts);
             FunctionExecutionBinding binding = registry.bindings().get(
                 new FunctionAllocationIdentity(exportValue.id()));
             if (binding == null) {
@@ -10707,11 +10554,11 @@ public final class SemanticLowerer {
 
         /**
          * Installs the E7 call-machine facts and activates the E7
-         * surface: the module's checked exports, the callee-module route
-         * facts, the callee modules' recorded {@code EXTERNAL_ENTRY} op
-         * ids, and the exported callback function names.
+         * surface: the module's checked exports, the callee modules'
+         * recorded {@code EXTERNAL_ENTRY} op ids, and the exported
+         * callback function names.
          */
-        void setE7Facts(List<ExportInterface> exports, Map<ModuleId, ModuleRoute> routes,
+        void setE7Facts(List<ExportInterface> exports,
                         Map<ModuleId, Map<String, OpId>> calleeEntries,
                         Set<String> callbacks) {
             if (!fullProgram) {
@@ -10720,7 +10567,6 @@ public final class SemanticLowerer {
             }
             this.e7Calls = true;
             this.moduleExports = List.copyOf(exports);
-            this.calleeRoutes = Map.copyOf(routes);
             this.calleeExternalEntries = Map.copyOf(calleeEntries);
             this.callbackExports = Set.copyOf(callbacks);
         }
@@ -12597,8 +12443,8 @@ public final class SemanticLowerer {
         /**
          * {@code BINARY} — the I3 int32/number arithmetic arm: exactly one
          * closed selector from the operator plus the checked operand type
-         * ({@code INT32_ADD/SUB/MUL/DIV_TRUNC/MOD_TRUNC/POW} over int;
-         * {@code NUMBER_ADD/SUB/MUL/DIV_IEEE/MOD_FLOOR/POW_IEEE} over
+         * ({@code INT32_ADD/SUB/MUL/DIV_TRUNC/MOD_TRUNC} over int;
+         * {@code NUMBER_ADD/SUB/MUL/DIV_IEEE} over
          * number), operands in source order (left then right), the policy
          * stamped from the single closed {@code binaryPolicy} table (never
          * a copy), and the result descriptor from the checked result type.
@@ -12619,7 +12465,6 @@ public final class SemanticLowerer {
                     case MUL -> BinarySelector.INT32_MUL;
                     case DIV -> BinarySelector.INT32_DIV_TRUNC;
                     case MOD -> BinarySelector.INT32_MOD_TRUNC;
-                    case POW -> BinarySelector.INT32_POW;
                     default -> throw new ConstructUnlowered("arithmetic operator "
                         + binary.op() + " outside the I3 int32 rows (producer defect)",
                             binary.span());
@@ -12630,8 +12475,6 @@ public final class SemanticLowerer {
                     case SUB -> BinarySelector.NUMBER_SUB;
                     case MUL -> BinarySelector.NUMBER_MUL;
                     case DIV -> BinarySelector.NUMBER_DIV_IEEE;
-                    case MOD -> BinarySelector.NUMBER_MOD_FLOOR;
-                    case POW -> BinarySelector.NUMBER_POW_IEEE;
                     default -> throw new ConstructUnlowered("arithmetic operator "
                         + binary.op() + " outside the I3 number rows (producer defect)",
                             binary.span());

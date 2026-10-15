@@ -76,7 +76,7 @@ public class LoweringSupportTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -246,11 +246,6 @@ public class LoweringSupportTest {
         return null;
     }
 
-    private static boolean noConflictClaim(SemanticRequirementManifest manifest) {
-        return manifest != null
-            && !manifest.capabilities().contains(SemanticCapability.STDLIB_TIME_CONFLICT);
-    }
-
     /**
      * The K7 cataloged-call claim: {@code STDLIB_SEMANTICS} is carried by a
      * module whose checked source contains a cataloged stdlib call (the
@@ -320,10 +315,10 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "main"))
+            check((manifestOf(result, "main") != null)
                     && claimsStdlibSemantics(manifestOf(result, "main")),
                 "a direct time.nowMillis() call claims STDLIB_SEMANTICS through the "
-                    + "landed cataloged-call arm and never STDLIB_TIME_CONFLICT (K7)");
+                    + "landed cataloged-call arm and no removed routing marker (K7)");
             check(!manifestOf(result, "main").capabilities().isEmpty()
                     && manifestOf(result, "main").capabilities()
                         .contains(SemanticCapability.FOUNDATION_VALUES),
@@ -351,9 +346,9 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "main")),
+            check((manifestOf(result, "main") != null),
                 "let f: () => int = time.nowMillis; f(); carries no "
-                    + "STDLIB_TIME_CONFLICT claim — the value-position read claims nothing "
+                    + "time-conflict routing-marker claim — the value-position read claims nothing "
                     + "from the read (D3) and the retired trigger never fires");
         } finally {
             deleteRecursively(tmp);
@@ -383,9 +378,9 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "main")),
+            check((manifestOf(result, "main") != null),
                 "let t = time; let g: () => int = t.nowMillis; g(); carries no "
-                    + "STDLIB_TIME_CONFLICT claim — the table-typed escape is the K15 "
+                    + "time-conflict routing-marker claim — the table-typed escape is the K15 "
                     + "namespace-value slice, never a reroute claim");
         } finally {
             deleteRecursively(tmp);
@@ -414,9 +409,9 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "main")),
+            check((manifestOf(result, "main") != null),
                 "a table-typed parameter passthrough returning p.nowMillis carries no "
-                    + "STDLIB_TIME_CONFLICT claim");
+                    + "time-conflict routing-marker claim");
         } finally {
             deleteRecursively(tmp);
         }
@@ -455,8 +450,8 @@ public class LoweringSupportTest {
             check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "module A exporting the live stdlib table claims nothing — A contains no "
                     + "nowMillis member access");
-            check(noConflictClaim(manifestOf(result, "main")),
-                "the cross-module table escape carries no STDLIB_TIME_CONFLICT claim: "
+            check((manifestOf(result, "main") != null),
+                "the cross-module table escape carries no time-conflict routing-marker claim: "
                     + "the access site's shape is the K15 namespace-value slice and no "
                     + "closure propagation exists");
         } finally {
@@ -501,8 +496,8 @@ public class LoweringSupportTest {
                 "the std/time importer A claims nothing (no member access)");
             check(claimsFoundationAndModules(manifestOf(result, "b")),
                 "the non-accessing intermediate B claims nothing (no member access)");
-            check(noConflictClaim(manifestOf(result, "main")),
-                "C carries no STDLIB_TIME_CONFLICT claim through the intermediate B: "
+            check((manifestOf(result, "main") != null),
+                "C carries no time-conflict routing-marker claim through the intermediate B: "
                     + "the closure propagation is retired (K7)");
         } finally {
             deleteRecursively(tmp);
@@ -540,11 +535,11 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "a")),
-                "module A exporting the locked wrapper carries no STDLIB_TIME_CONFLICT "
+            check((manifestOf(result, "a") != null),
+                "module A exporting the locked wrapper carries no routing-marker "
                     + "claim (the retired Arm A trigger never fires)");
-            check(noConflictClaim(manifestOf(result, "main")),
-                "module B carries no STDLIB_TIME_CONFLICT claim either: B contains no "
+            check((manifestOf(result, "main") != null),
+                "module B carries no time-conflict routing-marker claim either: B contains no "
                     + "nowMillis member access, and no cross-module propagation exists");
         } finally {
             deleteRecursively(tmp);
@@ -583,13 +578,13 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "a")),
-                "the access origin A carries no STDLIB_TIME_CONFLICT claim");
-            check(noConflictClaim(manifestOf(result, "b")),
-                "the re-exporting intermediate B carries no STDLIB_TIME_CONFLICT claim "
+            check((manifestOf(result, "a") != null),
+                "the access origin A carries no time-conflict routing-marker claim");
+            check((manifestOf(result, "b") != null),
+                "the re-exporting intermediate B carries no time-conflict routing-marker claim "
                     + "(the propagation arm is retired)");
-            check(noConflictClaim(manifestOf(result, "main")),
-                "C carries no STDLIB_TIME_CONFLICT claim through the intermediate B");
+            check((manifestOf(result, "main") != null),
+                "C carries no time-conflict routing-marker claim through the intermediate B");
         } finally {
             deleteRecursively(tmp);
         }
@@ -617,7 +612,7 @@ public class LoweringSupportTest {
             }
             check(claimsFoundationAndModules(manifestOf(result, "main")),
                 "a module importing std/time without any member access of nowMillis does "
-                    + "not claim STDLIB_TIME_CONFLICT");
+                    + "not claim the removed routing marker");
         } finally {
             deleteRecursively(tmp);
         }
@@ -647,7 +642,7 @@ public class LoweringSupportTest {
             if (triggers == null || other == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(triggers, "main"))
+            check((manifestOf(triggers, "main") != null)
                     && claimsStdlibSemantics(manifestOf(triggers, "main")),
                 "an alias bound to std/time claims STDLIB_SEMANTICS through the cataloged "
                     + "call and never the retired conflict marker");
@@ -660,7 +655,7 @@ public class LoweringSupportTest {
                     + "SIGNED_INT32 + MODULES (its return 0 int literal is CONST(Int) "
                     + "— the I3 derivation row claims at the construct kind, never the "
                     + "magnitude; the imported-by arm adds MODULES) "
-                    + "and never STDLIB_TIME_CONFLICT");
+                    + "and never the removed routing marker");
         } finally {
             deleteRecursively(tmp);
         }
@@ -694,9 +689,9 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "main")),
+            check((manifestOf(result, "main") != null),
                 "a std/time importer reading an unrelated table's nowMillis field carries "
-                    + "no STDLIB_TIME_CONFLICT claim (the retired Arm B over-claim never "
+                    + "no time-conflict routing-marker claim (the retired Arm B over-claim never "
                     + "fires; the read shape is the K15 namespace-value slice)");
         } finally {
             deleteRecursively(tmp);
@@ -732,9 +727,9 @@ public class LoweringSupportTest {
             }
             check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "the std/time importer A exporting an unrelated table claims nothing");
-            check(noConflictClaim(manifestOf(result, "main")),
+            check((manifestOf(result, "main") != null),
                 "a module in the transitive closure reading an unrelated table's "
-                    + "nowMillis field carries no STDLIB_TIME_CONFLICT claim (the "
+                    + "nowMillis field carries no time-conflict routing-marker claim (the "
                     + "retired Arm C over-claim never fires)");
         } finally {
             deleteRecursively(tmp);
@@ -765,9 +760,9 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(noConflictClaim(manifestOf(result, "main")),
+            check((manifestOf(result, "main") != null),
                 "a module importing a nowMillis-using module carries no "
-                    + "STDLIB_TIME_CONFLICT claim even when it never invokes the wrapper "
+                    + "time-conflict routing-marker claim even when it never invokes the wrapper "
                     + "(the retired Arm D propagation never fires)");
         } finally {
             deleteRecursively(tmp);
@@ -1109,7 +1104,7 @@ public class LoweringSupportTest {
             check(manifest.constructCoverage()
                     .containsKey(ConstructKind.STDLIB_TIME_NOW_MILLIS),
                 "the std/time.nowMillis coverage row is recorded like every other row");
-            check(noConflictClaim(manifest) && claimsStdlibSemantics(manifest),
+            check((manifest != null) && claimsStdlibSemantics(manifest),
                 "the coverage fixture (time.nowMillis() present) claims "
                     + "STDLIB_SEMANTICS through the cataloged call, never the retired "
                     + "conflict marker");
@@ -1134,10 +1129,10 @@ public class LoweringSupportTest {
         // start (S1) — the validator's pinned R-COVERAGE fact.
         LoweredModuleUnit unit = new LoweredModuleUnit(
             LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_2_INT32,
+            SemanticProfile.DEAL_V1_3_INT32,
             manifest.moduleId(),
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
                 invocation().capabilityRegistryHash()),
             manifest.capabilities(),
             manifest.constructCoverage(),
@@ -1222,7 +1217,7 @@ public class LoweringSupportTest {
                 && message.contains("capability FOUNDATION_VALUES")
                 && message.contains("validatorRule "
                     + LoweringSupport.MANIFEST_INTERNAL_ERROR_SENTINEL)
-                && message.contains("semanticProfile LEGACY_SAFE_INT")
+                && message.contains("semanticProfile DEAL_V1_3_INT32")
                 && message.contains("irVersion " + LoweredModuleUnit.FORMAT_VERSION)
                 && message.contains("origin LoweringSupport "
                     + LoweringSupport.MANIFEST_INTERNAL_ERROR_SENTINEL),
@@ -1238,7 +1233,7 @@ public class LoweringSupportTest {
         // implementation-module manifest (F3).
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
-                EnumSet.of(SemanticCapability.STDLIB_TIME_CONFLICT), Map.of(), false);
+                EnumSet.of(SemanticCapability.SIGNED_INT32), Map.of(), false);
             fail("a manifest without FOUNDATION_VALUES must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "a manifest without FOUNDATION_VALUES is rejected at construction");
@@ -1408,9 +1403,9 @@ public class LoweringSupportTest {
                         .allMatch(e -> e.getValue().equals(e.getKey().mappedOpKinds()))),
             "every manifest carries only closed T1 capabilities (FOUNDATION_VALUES "
                 + "included) and verbatim T2 coverage rows");
-        check(noConflictClaim(manifestOf(manifests, "a"))
-                && noConflictClaim(manifestOf(manifests, "main")),
-            "the wrapper scenario carries no STDLIB_TIME_CONFLICT claim in either "
+        check((manifestOf(manifests, "a") != null)
+                && (manifestOf(manifests, "main") != null),
+            "the wrapper scenario carries no time-conflict routing-marker claim in either "
                 + "module (the retired access/propagation arms never fire)");
     }
 

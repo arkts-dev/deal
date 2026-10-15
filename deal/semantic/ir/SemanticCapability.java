@@ -29,8 +29,6 @@ public enum SemanticCapability {
     /** Standard-library algorithm calls over the closed stdlib table. */
     STDLIB_SEMANTICS,
 
-    STDLIB_TIME_CONFLICT,
-
     /** Classes, class factories/defaults, fields, and JSON class conversions. */
     CLASSES,
 

@@ -3,7 +3,7 @@ package deal.semantic;
 /**
  * The closed lowering/route target axis of the common lowering layer
  * (foundation F4/F5/F7): the two code-generation targets that route
- * plans, {@code TargetModuleAbi} records, and the release capability
+ * plans and the release capability
  * registry span.
  *
  * <p>Closed set — exactly {@link #LUAJIT} and {@link #JVM}; no open or

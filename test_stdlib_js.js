@@ -238,7 +238,10 @@ test("valid calls return values that re-validate through the $rt checks", functi
   assertEqual(rt.checkNumber(math.floor.$f(1.9, "f.js", 1, 1), "f.js", 1, 1), 1, "floor result");
   assertEqual(rt.checkInt(math.absInt.$f(-3, "f.js", 1, 1), "f.js", 1, 1), 3, "absInt result");
   assertEqual(rt.checkInt(math.minInt.$f(2, 3, "f.js", 1, 1), "f.js", 1, 1), 2, "minInt result");
-  rt.checkInt(time.nowMillis.$f("f.js", 1, 1), "f.js", 1, 1);
+  // The declared int return of std/time.nowMillis is the current epoch
+  // millisecond count, which is outside the signed-32 range and raises
+  // E8004 at the declared-return boundary (the LuaJIT lane's disposition).
+  assertErrorCode(function() { time.nowMillis.$f("f.js", 1, 1); }, "E8004");
 });
 
 // ===========================================================================
@@ -641,14 +644,11 @@ test("math.absInt/minInt/maxInt validate ints at entry and exit", function() {
 // std/time parity: second-truncated nowMillis
 // ===========================================================================
 
-test("time.nowMillis returns the second-truncated epoch milliseconds", function() {
-  const before = Date.now();
-  const result = time.nowMillis.$f("f.js", 1, 1);
-  const after = Date.now();
-  assert(typeof result === "number" && result % 1 === 0, "the result is an integer");
-  assert(result % 1000 === 0, "the result is second-truncated (a multiple of 1000)");
-  assert(result >= before - 1000 && result <= after,
-    "the result is in the current-second window (got " + result + ", window " + before + ".." + after + ")");
+test("time.nowMillis raises E8004 under the signed-32 gate", function() {
+  // The declared return is int; the current epoch-millisecond value is
+  // outside the signed-32 range, so the declared-return check raises
+  // E8004 exactly like the LuaJIT lane.
+  assertErrorCode(function() { time.nowMillis.$f("f.js", 1, 1); }, "E8004");
 });
 
 // ===========================================================================

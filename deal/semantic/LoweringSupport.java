@@ -310,8 +310,8 @@ public final class LoweringSupport {
         // The never-called arm (post-walk): a non-exported declared
         // function with zero source call sites cannot lower under the
         // statically-resolved call machine (its single return boundary
-        // must name an existing invocation) — the module claims CALLS so
-        // F4 rule 4 reroutes it LEGACY at plan time. The called-symbol
+        // must name an existing invocation) — the module claims CALLS.
+        // The called-symbol
         // set is collected over the whole statement walk before this
         // check runs, so the result is declaration-order-independent:
         // a main-first module calling a later-declared helper counts the
@@ -672,8 +672,9 @@ public final class LoweringSupport {
                 // CLASS_NEW construction — the builtin Error literal of a
                 // throw statement has no declaring declaration in the
                 // module, so the literal position claims CLASSES itself
-                // (the declaration arm never sees it; an over-claim only
-                // forces LEGACY, never E6005). The nullable wrapper is
+                // (the declaration arm never sees it; the claim is a
+                // consistency fact, never an arm selector). The nullable
+                // wrapper is
                 // included defensively (a nullable-class literal position).
                 if (type instanceof Type.Class
                         || (type instanceof Type.Nullable nullable

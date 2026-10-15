@@ -8095,11 +8095,9 @@ end
 """;
 
     private static final String HOST_BOUNDARY_PRELUDE = """
--- The production chunk is the v1.2 profile: the deployed runtime's int32
--- gate uses the pinned v1.2 template ("int out of safe range") for the
--- host cells' int rows, exactly like the emitted boundary checks' own
--- gate. The flag is process-wide and idempotent.
-__rt.__INT32 = true
+-- The deployed runtime's signed-32 gate is active from load and uses the
+-- pinned template ("int out of safe range") for the host cells' int rows,
+-- exactly like the emitted boundary checks' own gate.
 -- The actual-kind token of one host-crossing value (the pinned E8010
 -- projections' {actual}): the runtime carrier's own kind, never the Lua
 -- table spelling of a DEAL function or number carrier.
@@ -10446,23 +10444,10 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
     if q < 0 then t = -t end
     return rng(l - t * r)
   end
-  if selector == "INT32_POW" then
-    if r < 0 then
-      local e = __arm("INT32_NEGATIVE_EXPONENT", nil, origin,
-        nil, nil)
-      __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    local result = 1
-    for _ = 1, r do result = result * l end
-    return rng(result)
-  end
   if selector == "NUMBER_ADD" then return l + r end
   if selector == "NUMBER_SUB" then return l - r end
   if selector == "NUMBER_MUL" then return l * r end
   if selector == "NUMBER_DIV_IEEE" then return l / r end
-  if selector == "NUMBER_MOD_FLOOR" then return l - math.floor(l / r) * r end
-  if selector == "NUMBER_POW_IEEE" then return l ^ r end
   return 0
 end
 local function __intConv(v, evKind, kind, opKey, digest, parent, origin)

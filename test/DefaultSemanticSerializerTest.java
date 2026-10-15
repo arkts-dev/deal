@@ -36,9 +36,6 @@ import deal.parser.Parser;
 import deal.project.ProjectDeploymentIdentity;
 import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
-import deal.semantic.ir.SemanticProfile;
-import deal.semantic.CompilerProfileProvider;
-import deal.semantic.ReleaseConfiguration;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -89,8 +86,7 @@ public class DefaultSemanticSerializerTest {
     }
 
     private static CompilerInvocation invocation() {
-        return ConformanceHarnessMetadata.invocation(
-            SemanticProfile.DEAL_V1_2_INT32);
+        return ConformanceHarnessMetadata.invocation();
     }
 
     /** One in-process production compile over a scratch project; a

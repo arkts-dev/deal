@@ -47,7 +47,6 @@ import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
-import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SemanticValue;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.StructuredBodyTable;
@@ -196,7 +195,7 @@ public class CrossModuleCallRealizationTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry, output, false, false, false, false, Backend.LUAJIT, Map.of(),
             List.of(moduleRoot.toAbsolutePath()), null, null,
-            ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+            ConformanceHarnessMetadata.invocation());
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
@@ -261,7 +260,7 @@ public class CrossModuleCallRealizationTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry, output, false, false, false, false, Backend.LUAJIT, Map.of(),
             List.of(moduleRoot.toAbsolutePath()), null, null,
-            ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+            ConformanceHarnessMetadata.invocation());
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
@@ -301,7 +300,7 @@ public class CrossModuleCallRealizationTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry, output, false, false, false, false, Backend.LUAJIT, Map.of(),
             List.of(moduleRoot.toAbsolutePath()), null, null,
-            ConformanceHarnessMetadata.invocation(SemanticProfile.DEAL_V1_2_INT32));
+            ConformanceHarnessMetadata.invocation());
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();

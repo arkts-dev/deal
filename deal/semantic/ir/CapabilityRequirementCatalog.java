@@ -24,7 +24,6 @@ import java.util.Objects;
  *   <li>{@code BINDINGS} → {@code {BINDING_ALLOC, BINDING_INIT, BINDING_LOAD, BINDING_STORE, RECURSIVE_GROUP_INIT, CLOSURE_NEW}}</li>
  *   <li>{@code CALLS} → {@code {CALL, CALLBACK_INVOKE, EXTERNAL_ENTRY, ASYNC_START, AWAIT, RETURN, ENTRY_INVOKE, FUNCTION_ADAPT}}</li>
  *   <li>{@code STDLIB_SEMANTICS} → {@code {STDLIB_CALL}}</li>
- *   <li>{@code STDLIB_TIME_CONFLICT} → {@code {}} (never valid IR — a routing marker only)</li>
  *   <li>{@code CLASSES} → {@code {CLASS_NEW, CLASS_FACTORY, CLASS_DEFAULT, FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS}}</li>
  *   <li>{@code MODULES} → {@code {MODULE_INIT, MODULE_IMPORT, EXPORT_READ, EXPORT_PUBLISH}}</li>
  * </ul>
@@ -119,9 +118,6 @@ public final class CapabilityRequirementCatalog {
 
         catalog.put(SemanticCapability.STDLIB_SEMANTICS, List.of(
             RequiredOperation.of("STDLIB_CALL", SemanticOpKind.STDLIB_CALL)));
-
-        // STDLIB_TIME_CONFLICT → {}: never valid IR — a routing marker only.
-        catalog.put(SemanticCapability.STDLIB_TIME_CONFLICT, List.of());
 
         catalog.put(SemanticCapability.CLASSES, List.of(
             RequiredOperation.of("CLASS_NEW", SemanticOpKind.CLASS_NEW),

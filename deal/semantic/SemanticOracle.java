@@ -1977,7 +1977,7 @@ public final class SemanticOracle {
                 ? new ComparisonOperandView.Number(numberUse(value)) : viewOf(value);
         }
 
-        /** The closed int32/number arithmetic rows (E8004/E8005/E8006 projections). */
+        /** The closed int32/number arithmetic rows (E8004/E8005 projections). */
         private Value arithmetic(SemanticOp op, deal.semantic.ir.BinarySelector selector,
                                  Value left, Value right) {
             return switch (selector) {
@@ -2004,34 +2004,10 @@ public final class SemanticOracle {
                     }
                     yield int32Result(op, integerUse(left) % divisor);
                 }
-                case INT32_POW -> {
-                    long exponent = integerUse(right);
-                    if (exponent < 0) {
-                        throw registryFailure(op, FailurePolicyId.INT32_EXPONENT_THEN_RESULT,
-                            null, null);
-                    }
-                    long base = integerUse(left);
-                    long result = 1;
-                    try {
-                        for (long i = 0; i < exponent; i++) {
-                            result = Math.multiplyExact(result, base);
-                        }
-                    } catch (ArithmeticException overflow) {
-                        throw registryFailure(op, FailurePolicyId.INT32_RESULT, null, null);
-                    }
-                    yield int32Result(op, result);
-                }
                 case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 case NUMBER_SUB -> new Value.NumValue(numberUse(left) - numberUse(right));
                 case NUMBER_MUL -> new Value.NumValue(numberUse(left) * numberUse(right));
                 case NUMBER_DIV_IEEE -> new Value.NumValue(numberUse(left) / numberUse(right));
-                case NUMBER_MOD_FLOOR -> {
-                    double a = numberUse(left);
-                    double b = numberUse(right);
-                    yield new Value.NumValue(a - Math.floor(a / b) * b);
-                }
-                case NUMBER_POW_IEEE -> new Value.NumValue(
-                    Math.pow(numberUse(left), numberUse(right)));
                 default -> throw new IllegalStateException(
                     "selector " + selector + " is not an arithmetic row");
             };

@@ -10,7 +10,6 @@ import deal.lexer.CompilerDirective;
 import deal.lexer.DirectiveName;
 import deal.lexer.TemplateScanner;
 import deal.lexer.Token;
-import deal.semantic.ir.SemanticProfile;
 import deal.source.ScalarSourceCursor;
 
 import java.util.ArrayList;
@@ -21,7 +20,6 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -53,7 +51,6 @@ public final class Parser {
 
     private final List<Token> tokens;
     private final String file;
-    private final SemanticProfile profile;
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The input list's EOF token, or null when the list has none. */
     private final Token inputEofToken;
@@ -86,59 +83,30 @@ public final class Parser {
     // -----------------------------------------------------------------------
 
     /**
-     * The legacy parse contract (signed-int32 foundation I1): accepts
-     * {@code INT_LITERAL} values up to 2^63-1 and raises E1036 only for
-     * values beyond {@code Long.parseLong}'s range. This constructor is
-     * pinned as the {@link SemanticProfile#LEGACY_SAFE_INT} parse
-     * contract: no v1.2 int32 gate and no {@code -2147483648}
-     * immediate-token special case apply.
-     */
-    /**
      * The no-events constructor (fixed-name-directive-events D1/D10.7):
      * pinned as the defensive form used by the template sub-parser,
      * defensive/test callers, and the JVM harness runner parse (D8 item
      * 2c) — no file-directive evaluation or binding runs.
      */
     public Parser(List<Token> tokens, String file) {
-        this(tokens, file, SemanticProfile.LEGACY_SAFE_INT, List.of());
-    }
-
-    /**
-     * The profile-aware constructor (signed-int32 foundation I1). Under
-     * {@link SemanticProfile#LEGACY_SAFE_INT} it behaves exactly like
-     * {@link #Parser(List, String)}. Under
-     * {@link SemanticProfile#DEAL_V1_2_INT32} it applies the v1.2 parse
-     * contract: every {@code INT_LITERAL} outside
-     * {@code [-2147483648, 2147483647]} raises E1036, with the sole
-     * exception that the decimal token {@code 2147483648} is permitted
-     * as the immediate operand of unary {@code -}, where both tokens
-     * combine into the in-range literal {@code -2147483648}
-     * ({@code docs/spec-v1.2.md:87-98}).
-     */
-    public Parser(List<Token> tokens, String file, SemanticProfile profile) {
-        this(tokens, file, profile, List.of());
+        this(tokens, file, List.of());
     }
 
     /**
      * The events-carrying constructor
      * (fixed-name-directive-events D1): the production shape — the
      * lexer's {@code directiveEvents} flow in, file-directive evaluation
-     * and declaration binding run exactly as in production.
+     * and declaration binding run exactly as in production. The parse
+     * contract is the sole v1.3 contract: every {@code INT_LITERAL}
+     * outside {@code [-2147483648, 2147483647]} raises E1036, with the
+     * sole exception that the decimal token {@code 2147483648} is
+     * permitted as the immediate operand of unary {@code -}, where both
+     * tokens combine into the in-range literal {@code -2147483648}.
      */
     public Parser(List<Token> tokens, String file,
                   List<CompilerDirective> directiveEvents) {
-        this(tokens, file, SemanticProfile.LEGACY_SAFE_INT, directiveEvents);
-    }
-
-    /**
-     * The profile-aware events-carrying constructor: the profile-aware
-     * parse contract plus the production directive evaluation/binding.
-     */
-    public Parser(List<Token> tokens, String file, SemanticProfile profile,
-                  List<CompilerDirective> directiveEvents) {
         this.tokens = List.copyOf(tokens);
         this.file = file;
-        this.profile = Objects.requireNonNull(profile, "profile must not be null");
         this.pos = 0;
         this.inputEofToken = findEofToken(this.tokens);
         if (directiveEvents != null) {
@@ -1291,15 +1259,12 @@ public final class Parser {
 
         if (match(TokenType.MINUS)) {
             Token minus = previous();
-            // I1 immediate-token special case (DEAL_V1_2_INT32 only):
-            // "-" immediately followed by the INT_LITERAL token
-            // 2147483648 combines into the in-range literal
-            // -2147483648 with the combined span and no error. Any other
-            // position for 2147483648 (parenthesized, bare, or otherwise)
-            // reaches parsePrimary and raises E1036. The legacy profile
-            // keeps the historical UnaryExpr(NEG, IntLiteral) shape.
-            if (profile == SemanticProfile.DEAL_V1_2_INT32
-                    && peek().type() == TokenType.INT_LITERAL
+            // The immediate-token special case: "-" immediately followed
+            // by the INT_LITERAL token 2147483648 combines into the
+            // in-range literal -2147483648 with the combined span and no
+            // error. Any other position for 2147483648 (parenthesized,
+            // bare, or otherwise) reaches parsePrimary and raises E1036.
+            if (peek().type() == TokenType.INT_LITERAL
                     && peek().lexeme().equals("2147483648")) {
                 Token intToken = advance();
                 Span sp = spanBetween(minus, intToken);
@@ -1399,14 +1364,12 @@ public final class Parser {
                     parseOverflow = true;
                     value = 0;
                 }
-                // Legacy contract: E1036 only when the value exceeds
-                // Long.parseLong's range. v1.2 contract (I1): any value
-                // above the signed32 maximum raises E1036 at the token
-                // with the existing template and error-recovery shape
-                // (record the diagnostic, continue with value 0).
-                if (parseOverflow
-                        || (profile == SemanticProfile.DEAL_V1_2_INT32
-                            && value > 2147483647L)) {
+                // Any value above the signed32 maximum raises E1036 at
+                // the token with the existing template and error-recovery
+                // shape (record the diagnostic, continue with value 0);
+                // a value beyond Long.parseLong's range raises the same
+                // diagnostic.
+                if (parseOverflow || value > 2147483647L) {
                     error(DiagnosticCode.E1036,
                         "Integer literal out of range: " + previous().lexeme(),
                         previous());
@@ -1736,17 +1699,16 @@ public final class Parser {
             return placeholderLiteral(map);
         }
 
-        // 5. Parse expression with a sub-parser carrying the same
-        //    semantic profile (I1): the int32 E1036 gate and the
-        //    -2147483648 immediate-token rule apply inside template
-        //    interpolations exactly as everywhere else; the legacy
-        //    profile keeps the historical contract verbatim.
+        // 5. Parse expression with a sub-parser under the same parse
+        //    contract: the int32 E1036 gate and the -2147483648
+        //    immediate-token rule apply inside template interpolations
+        //    exactly as everywhere else.
         //    parseExpression() is private but accessible — Java JLS section 6.6.1
         //    D10.7: the sub-parser is constructed with NO directive
         //    events — sub-events hoist to the enclosing parser instead of
         //    being re-evaluated here; the seen-sets are shared with the
         //    parent events (D10.5) so nested duplicate checks see them.
-        Parser subParser = new Parser(adjusted, file, profile, List.of());
+        Parser subParser = new Parser(adjusted, file, List.of());
         subParser.evaluator.adoptSeenState(evaluator);
         ExpressionNode expr = subParser.parseExpression();
 

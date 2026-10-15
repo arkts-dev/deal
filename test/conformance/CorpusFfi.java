@@ -34,7 +34,6 @@ import deal.project.ProjectDeploymentIdentity;
 import deal.project.ProtectedPathOps;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.SemanticIrTextDecodeException;
-import deal.semantic.ir.SemanticProfile;
 import deal.test.ConformanceHarnessMetadata;
 import deal.types.Type;
 import deal.types.Types;
@@ -388,9 +387,7 @@ public final class CorpusFfi {
      * (canonical external identities — the same shape the host registry
      * provides). Cached per (conformance root, raw specifier).
      */
-    public static Module module(Path conformanceRoot, String modulePath,
-            SemanticProfile profile) {
-        Objects.requireNonNull(profile, "profile must not be null");
+    public static Module module(Path conformanceRoot, String modulePath) {
         Wiring wiring = wiringFor(conformanceRoot, modulePath);
         if (wiring == null) {
             throw new IllegalArgumentException(
@@ -403,8 +400,7 @@ public final class CorpusFfi {
                 return cached;
             }
         }
-        Module compiled = compileDeclaration(conformanceRoot, wiring,
-            profile);
+        Module compiled = compileDeclaration(conformanceRoot, wiring);
         synchronized (MODULE_CACHE) {
             MODULE_CACHE.putIfAbsent(key, compiled);
             return MODULE_CACHE.get(key);
@@ -412,7 +408,7 @@ public final class CorpusFfi {
     }
 
     private static Module compileDeclaration(Path conformanceRoot,
-            Wiring wiring, SemanticProfile profile) {
+            Wiring wiring) {
         // The declaration path is manifest-relative: resolved against
         // the FFI directory that carries the corpus deal.json.
         Path declaration = conformanceRoot.resolve(FFI_DIR)
@@ -433,7 +429,7 @@ public final class CorpusFfi {
         if (lex.hasErrors()) {
             return new Module(Map.of(), Map.of(), lex.diagnostics(), null);
         }
-        Parser parser = new Parser(lex.tokens(), filename, profile,
+        Parser parser = new Parser(lex.tokens(), filename,
             lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         if (parseResult.hasErrors()) {
@@ -643,8 +639,7 @@ public final class CorpusFfi {
      * {@code isFunctionExportedFromModule} host-registry surface).
      */
     public static boolean declaresFunction(Path conformanceRoot,
-            CanonicalModuleIdentity declaringModule, String functionName,
-            SemanticProfile profile) {
+            CanonicalModuleIdentity declaringModule, String functionName) {
         if (!(declaringModule
                 instanceof CanonicalModuleIdentity.ExternalModule ext)) {
             return false;
@@ -654,7 +649,7 @@ public final class CorpusFfi {
         if (wiring == null) {
             return false;
         }
-        return module(conformanceRoot, ext.rawImportSpecifier(), profile)
+        return module(conformanceRoot, ext.rawImportSpecifier())
             .exports().containsKey(functionName);
     }
 
@@ -663,8 +658,7 @@ public final class CorpusFfi {
      * null (the {@code resolveClassSymbol} host-registry surface).
      */
     public static Symbol.ClassSymbol classSymbol(Path conformanceRoot,
-            CanonicalModuleIdentity declaringModule, String className,
-            SemanticProfile profile) {
+            CanonicalModuleIdentity declaringModule, String className) {
         if (!(declaringModule
                 instanceof CanonicalModuleIdentity.ExternalModule ext)) {
             return null;
@@ -674,7 +668,7 @@ public final class CorpusFfi {
         if (wiring == null) {
             return null;
         }
-        return module(conformanceRoot, ext.rawImportSpecifier(), profile)
+        return module(conformanceRoot, ext.rawImportSpecifier())
             .classSymbols().get(className);
     }
 }

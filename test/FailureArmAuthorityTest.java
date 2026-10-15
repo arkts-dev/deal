@@ -371,7 +371,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arms");
         deal.semantic.ir.LoweredModuleUnit unit = new deal.semantic.ir.LoweredModuleUnit(
             deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash", "context",
+            deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash", "context",
             java.util.Set.of(), Map.of(), Map.of(), Map.of(),
             new deal.semantic.ir.ModuleInitPlan(List.of(),
                 new deal.semantic.ir.BlockId(0)),
@@ -392,7 +392,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index, modules, entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
             new LinkedHashMap<>();
@@ -2036,10 +2036,6 @@ public class FailureArmAuthorityTest {
             "the arithmetic range cell",
             () -> deal.codegen.jvm.JvmRuntime.arith("INT32_ADD", 2147483647L, 1L,
                 "op", "digest", "parent", origin));
-        checkJvmArm(FailureArmId.INT32_RANGE, Map.of(), null, null, origin,
-            "the exponent-overflow cell",
-            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_POW", 2L, 100L,
-                "op", "digest", "parent", origin));
         checkJvmArm(FailureArmId.INT32_DIVISION_BY_ZERO, Map.of(), null, null, origin,
             "the division-by-zero cell",
             () -> deal.codegen.jvm.JvmRuntime.arith("INT32_DIV_TRUNC", 1L, 0L,
@@ -2047,10 +2043,6 @@ public class FailureArmAuthorityTest {
         checkJvmArm(FailureArmId.INT32_DIVISION_BY_ZERO, Map.of(), null, null, origin,
             "the modulo-by-zero cell",
             () -> deal.codegen.jvm.JvmRuntime.arith("INT32_MOD_TRUNC", 1L, 0L,
-                "op", "digest", "parent", origin));
-        checkJvmArm(FailureArmId.INT32_NEGATIVE_EXPONENT, Map.of(), null, null, origin,
-            "the negative-exponent cell",
-            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_POW", 2L, -1L,
                 "op", "digest", "parent", origin));
         checkJvmArm(FailureArmId.INT32_RANGE, Map.of(), null, null, origin,
             "the MATH_ABS_INT range cell",
@@ -2166,7 +2158,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, module, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, module, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -4626,7 +4618,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(WALK_ID, walkLayout()),
                 Map.of(), new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 new deal.semantic.ir.ExportPlan(List.of()), Map.of(), ops,
@@ -4645,7 +4637,7 @@ public class FailureArmAuthorityTest {
                     List.of(), List.of(),
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         return new deal.semantic.ir.ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
     }
 
@@ -5789,7 +5781,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), layouts, Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -5805,7 +5797,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_2_INT32, index,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index,
                 Map.of(entry, unit), entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         return new DispatchUnit(project, Map.of(entry, table), json.origin());

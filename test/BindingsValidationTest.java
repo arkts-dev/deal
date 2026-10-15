@@ -140,7 +140,7 @@ public class BindingsValidationTest {
             return null;
         }
         return SemanticLowerer.lowerModuleValidationCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -211,7 +211,7 @@ public class BindingsValidationTest {
     private static final String IFACE = "interface-digest-1";
     private static final String REGISTRY = "capability-registry-hash-1";
     private static final String LCH =
-        LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY);
+        LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
 
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
     private static final RuntimeDescriptor.Func SIG0 =
@@ -814,7 +814,7 @@ public class BindingsValidationTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
             List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_2_INT32, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
+            SemanticProfile.DEAL_V1_3_INT32, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
             functions, new ModuleInitPlan(List.of(), INIT_BLOCK), ExportPlan.empty(), registry,
             ops, new StructuredBodyTable(Map.of(), Map.of()),
             new ClassFactoryRegistry(Map.of()),

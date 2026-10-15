@@ -14,7 +14,6 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.ir.ReleaseState;
-import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 
 import java.io.*;
@@ -32,8 +31,7 @@ import java.util.regex.Pattern;
 public class JsConformanceTest {
 
     private static final CompilerInvocation LANE_INVOCATION =
-        CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+        CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
             ReleaseConfiguration.releaseCapabilityRegistry());
 
     // =========================================================================
@@ -717,8 +715,7 @@ public class JsConformanceTest {
                         && deal.test.conformance.CorpusFfi.isFfiImport(
                             conformanceRoot, imp.modulePath())) {
                     all.addAll(deal.test.conformance.CorpusFfi.module(
-                        conformanceRoot, imp.modulePath(),
-                        LANE_INVOCATION.semanticProfile())
+                        conformanceRoot, imp.modulePath())
                         .validationDiagnostics());
                 }
             }
@@ -765,8 +762,7 @@ public class JsConformanceTest {
             if (deal.test.conformance.CorpusFfi.isFfiImport(
                     conformanceRoot, modulePath)) {
                 return deal.test.conformance.CorpusFfi.module(
-                    conformanceRoot, modulePath,
-                    LANE_INVOCATION.semanticProfile()).exports();
+                    conformanceRoot, modulePath).exports();
             }
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
@@ -1210,13 +1206,12 @@ public class JsConformanceTest {
      * checking, and per-module JsBackend codegen into
      * {@code outputRoot}, with the repository root as the stdlib
      * directory (the JsE2eTest production-pipeline pattern). The
-     * explicit {@link #LANE_INVOCATION}
-     * ({@code COMMON_SHADOW + DEAL_V1_2_INT32}) drives the
-     * compilation, so the emitted artifacts carry the
-     * {@code $rt.setInt32Mode(true)} selector and the shared
-     * stdlib-edge time fixture raises E8004 at the retained
-     * {@code nowMillis} exit check. Stdout/stderr is captured so
-     * per-test output stays clean.
+     * explicit {@link #LANE_INVOCATION} (the sole
+     * {@code DEAL_V1_3_INT32} release invocation) drives the
+     * compilation, so the emitted artifacts run the signed-32 gate from
+     * runtime load and the shared stdlib-edge time fixture raises E8004
+     * at the retained {@code nowMillis} exit check. Stdout/stderr is
+     * captured so per-test output stays clean.
      */
     private static OrchestratorRun runOrchestrator(Path projectRoot,
             Path entryFile, Path outputRoot,

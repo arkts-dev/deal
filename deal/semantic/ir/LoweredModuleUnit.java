@@ -15,7 +15,7 @@ import java.util.Set;
  * <pre>{@code
  * LoweredModuleUnit {
  *   formatVersion: "deal.semantic-ir/2",
- *   semanticProfile: DEAL_V1_2_INT32,           // the only admitted value
+ *   semanticProfile: DEAL_V1_3_INT32,           // the only admitted value
  *   moduleId, interfaceHash, loweringContextHash,
  *   requiredCapabilities,
  *   constructCoverage: Map<ConstructKind, [SemanticOpKind]>,   // enum-keyed; recorded at lowering start
@@ -35,8 +35,7 @@ import java.util.Set;
  * producer from the module's manifest reachable-construct rows and is
  * consumed by R-COVERAGE; the {@code std/time.nowMillis} row is an
  * ordinary key since K7 (its produced {@code STDLIB_CALL}/boundary ops
- * evidence it), and a module whose manifest claims
- * {@code STDLIB_TIME_CONFLICT} is never lowered at all.</p>
+ * evidence it).</p>
  *
  * <p>The unit is the single owner of the structural companions the
  * transport and the composed admission need: {@link #bodyTable()} (both
@@ -108,11 +107,6 @@ public record LoweredModuleUnit(
                 "formatVersion must be \"" + FORMAT_VERSION + "\", got \"" + formatVersion + "\"");
         }
         this.semanticProfile = Objects.requireNonNull(semanticProfile, "semanticProfile must not be null");
-        if (semanticProfile != SemanticProfile.DEAL_V1_2_INT32) {
-            throw new IllegalArgumentException(
-                "LoweredModuleUnit admits only DEAL_V1_2_INT32; got " + semanticProfile
-                    + " (LEGACY_SAFE_INT is never lowered)");
-        }
         this.moduleId = Objects.requireNonNull(moduleId, "moduleId must not be null");
         this.interfaceHash = Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         this.loweringContextHash = Objects.requireNonNull(loweringContextHash, "loweringContextHash must not be null");

@@ -3,13 +3,7 @@ package deal.test;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
-import deal.semantic.ir.ReleaseState;
-import deal.semantic.ir.SemanticProfile;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,40 +18,63 @@ public final class ConformanceHarnessMetadata {
         "// @spec:", "// @description:", "// @expected:",
         "// @features:", "// @issue:", "// @profile:");
 
+    /**
+     * The sole corpus profile declaration the production materialization
+     * admits. The value is validated, never selected: the compiler has one
+     * executable profile and the metadata selects no semantic arm.
+     */
+    public static final String PRODUCTION_PROFILE_DECLARATION =
+        "deal-v1.3-int32";
+
     private ConformanceHarnessMetadata() { }
 
-    public static SemanticProfile profileFromMetadata(String rawSource,
+    /**
+     * The canonical 40-line metadata-window reader: the {@code // @profile:}
+     * values it recognizes, in source order, segmenting the source on
+     * {@code \R} (LF, CRLF, CR, VT, FF, NEL, LS and PS) exactly like the
+     * concrete harnesses' metadata readers. The reader returns the raw
+     * declared values; no caller obtains a semantic profile selection from
+     * it, and {@link #validateProfileMetadata} is the admission check.
+     */
+    public static List<String> windowProfileDeclarations(String rawSource,
             String locator) {
-        SemanticProfile profile = SemanticProfile.DEAL_V1_2_INT32;
-        boolean found = false;
+        List<String> declared = new ArrayList<>();
         String[] lines = rawSource.split("\\R", -1);
         for (int i = 0; i < Math.min(lines.length, 40); i++) {
             String line = lines[i].trim();
             if (!line.startsWith("// @profile:")) {
                 continue;
             }
-            if (found) {
-                throw new IllegalArgumentException(locator
-                    + ": duplicate @profile metadata");
-            }
-            found = true;
-            String value = line.substring("// @profile:".length()).trim();
-            profile = switch (value) {
-                case "legacy-safe-int" -> SemanticProfile.LEGACY_SAFE_INT;
-                case "deal-v1.2-int32" -> SemanticProfile.DEAL_V1_2_INT32;
-                default -> throw new IllegalArgumentException(locator
-                    + ": unknown @profile '" + value + "'");
-            };
+            declared.add(line.substring("// @profile:".length()).trim());
         }
-        return profile;
+        return declared;
     }
 
-    public static SemanticProfile profileFromFile(Path file, String locator) {
-        try {
-            return profileFromMetadata(Files.readString(file), locator);
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot read profile metadata from "
-                + file, e);
+    /**
+     * Validates the corpus classification metadata of one fixture source:
+     * at most one {@code // @profile:} declaration and exactly the sole
+     * {@link #PRODUCTION_PROFILE_DECLARATION}. Any other declared value —
+     * a legacy/v1.2 profile or an unknown one — and duplicate metadata are
+     * rejected; the metadata never selects semantics.
+     */
+    public static void validateProfileMetadata(String rawSource,
+            String locator) {
+        validateDeclarations(profileDeclarations(rawSource), locator);
+    }
+
+    private static void validateDeclarations(List<String> declared,
+            String locator) {
+        if (declared.size() > 1) {
+            throw new IllegalArgumentException(locator
+                + ": duplicate @profile metadata: " + declared.size()
+                + " declarations (" + String.join(", ", declared) + ")");
+        }
+        if (declared.size() == 1
+                && !PRODUCTION_PROFILE_DECLARATION.equals(declared.get(0))) {
+            throw new IllegalArgumentException(locator
+                + ": non-production @profile '" + declared.get(0)
+                + "'; the sole admitted profile is "
+                + PRODUCTION_PROFILE_DECLARATION);
         }
     }
 
@@ -100,11 +117,11 @@ public final class ConformanceHarnessMetadata {
      * metadata-selected invocation, so no compile, pass or skip happens.
      *
      * <p>The validation observes <em>every</em> {@code // @profile:}
-     * declaration of the whole source, not the 40-line metadata window
-     * of {@link #profileFromMetadata}, and it segments the source with
-     * that reader's own {@code \R} line terminators (LF, CRLF, CR, VT,
-     * FF, NEL, LS and PS). A declaration after line 40, a second
-     * declaration before it, or a declaration separated by a
+     * declaration of the whole source, not only the 40-line metadata
+     * window of {@link #windowProfileDeclarations}, and it segments the
+     * source with the canonical reader's own {@code \R} line terminators
+     * (LF, CRLF, CR, VT, FF, NEL, LS and PS). A declaration after line
+     * 40, a second declaration before it, or a declaration separated by a
      * non-CR/LF terminator would otherwise reach the metadata readers
      * while the production materialization compiled the cell without the
      * declaration.</p>
@@ -127,28 +144,17 @@ public final class ConformanceHarnessMetadata {
                 + "metadata: " + declared.size() + " @profile declarations ("
                 + String.join(", ", declared) + "); the LuaJIT/JVM "
                 + "production materialization accepts at most one "
-                + SemanticProfile.DEAL_V1_2_INT32.name() + " declaration");
+                + PRODUCTION_PROFILE_DECLARATION + " declaration");
         }
-        if (declared.size() == 1) {
-            String value = declared.get(0);
-            if ("legacy-safe-int".equals(value)) {
-                throw new HarnessInputDefectException(locator + ": "
-                    + HARNESS_DEFECT + " — the corpus input declares the "
-                    + SemanticProfile.LEGACY_SAFE_INT.name() + " profile; the "
-                    + "LuaJIT/JVM production materialization accepts only "
-                    + SemanticProfile.DEAL_V1_2_INT32.name()
-                    + " (no metadata-selected invocation; no compile, no "
-                    + "pass, no skip)");
-            }
-            if (!"deal-v1.2-int32".equals(value)) {
-                throw new HarnessInputDefectException(locator + ": "
-                    + HARNESS_DEFECT + " — the corpus input declares the "
-                    + "unknown @profile '" + value + "'; the LuaJIT/JVM "
-                    + "production materialization accepts only "
-                    + SemanticProfile.DEAL_V1_2_INT32.name()
-                    + " (no metadata-selected invocation; no compile, no "
-                    + "pass, no skip)");
-            }
+        if (declared.size() == 1
+                && !PRODUCTION_PROFILE_DECLARATION.equals(declared.get(0))) {
+            throw new HarnessInputDefectException(locator + ": "
+                + HARNESS_DEFECT + " — the corpus input declares the "
+                + "non-production @profile '" + declared.get(0)
+                + "'; the LuaJIT/JVM production materialization accepts only "
+                + PRODUCTION_PROFILE_DECLARATION
+                + " (no metadata-selected invocation; no compile, no "
+                + "pass, no skip)");
         }
         return stripClassificationHeaders(rawSource);
     }
@@ -156,7 +162,7 @@ public final class ConformanceHarnessMetadata {
     /**
      * Every {@code // @profile:} declaration of {@code source}, in source
      * order, scanned over the whole input with the canonical metadata
-     * reader's line segmentation: {@link #profileFromMetadata} splits on
+     * reader's line segmentation: {@link #windowProfileDeclarations} splits on
      * {@code \R} (LF, CRLF, CR, VT, FF, NEL, LS and PS), and this scan
      * uses the identical segmentation, so the result is a superset of the
      * declarations that reader can recognize (within its 40-line window,
@@ -175,19 +181,15 @@ public final class ConformanceHarnessMetadata {
         return values;
     }
 
-    public static CompilerInvocation invocation(SemanticProfile profile) {
-        if (profile == SemanticProfile.LEGACY_SAFE_INT) {
-            return CompilerProfileProvider.resolveLegacyRegression(profile,
-                ReleaseState.PRE_ACTIVATION,
-                ReleaseConfiguration.releaseCapabilityRegistry());
-        }
-        if (profile == SemanticProfile.DEAL_V1_2_INT32) {
-            return CompilerProfileProvider.resolveCommonShadow(profile,
-                ReleaseState.PRE_ACTIVATION,
-                ReleaseConfiguration.releaseCapabilityRegistry());
-        }
-        throw new IllegalArgumentException("unsupported semantic profile "
-            + profile);
+    /**
+     * The harness invocation record: the one release-owned production
+     * invocation. Metadata cannot select alternate semantics, so the
+     * harnesses compile the same record the public compiler resolves.
+     */
+    public static CompilerInvocation invocation() {
+        return CompilerProfileProvider.resolve(
+            ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
     /**

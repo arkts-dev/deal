@@ -470,18 +470,6 @@ test("int_mod(1, 0) errors with E8005", function()
   assert_error(function() __rt.int_mod(1, 0) end, "E8005")
 end)
 
-test("int_pow(2, 3) returns 8", function()
-  assert(__rt.int_pow(2, 3) == 8)
-end)
-
-test("int_pow(2, 0) returns 1", function()
-  assert(__rt.int_pow(2, 0) == 1)
-end)
-
-test("int_pow(2, -1) errors with E8006", function()
-  assert_error(function() __rt.int_pow(2, -1) end, "E8006")
-end)
-
 test("int arithmetic overflow errors with E8004", function()
   assert_error(function() __rt.int_add(2147483647, 1) end, "E8004")
 end)
@@ -506,16 +494,12 @@ test("int_mul(65536, 65536) errors with E8004 (int32 overflow)", function()
   assert_error(function() __rt.int_mul(65536, 65536) end, "E8004")
 end)
 
-test("int_pow(2, 31) errors with E8004 (int32 overflow)", function()
-  assert_error(function() __rt.int_pow(2, 31) end, "E8004")
-end)
-
 test("int_div(-2147483648, -1) errors with E8004 (MIN / -1)", function()
   assert_error(function() __rt.int_div(-2147483648, -1) end, "E8004")
 end)
 
-test("int_mod(-2147483648, -1) errors with E8004 (MIN % -1)", function()
-  assert_error(function() __rt.int_mod(-2147483648, -1) end, "E8004")
+test("int_mod(-2147483648, -1) returns 0 (truncated remainder)", function()
+  assert(__rt.int_mod(-2147483648, -1) == 0)
 end)
 
 test("int_div(5, 0) errors with E8005", function()
@@ -1464,12 +1448,6 @@ test("error() from int_div by zero produces E8005", function()
   local ok, err = pcall(function() __rt.int_div(1, 0) end)
   assert(ok == false)
   assert(err.code == "E8005")
-end)
-
-test("error() from int_pow negative exponent produces E8006", function()
-  local ok, err = pcall(function() __rt.int_pow(2, -1) end)
-  assert(ok == false)
-  assert(err.code == "E8006")
 end)
 
 test("error() from class_ extra field produces E8007", function()

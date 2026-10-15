@@ -188,8 +188,7 @@ public class DynamicFunctionValueGateTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -245,7 +244,7 @@ public class DynamicFunctionValueGateTest {
         lowerer.setDeclaredConversionIntrinsics(
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW));
-        lowerer.setE7Facts(fixture.module().exports(), Map.of(), Map.of(), Set.of());
+        lowerer.setE7Facts(fixture.module().exports(), Map.of(), Set.of());
         try {
             lowerer.lowerProjectModule(fixture.module().ast().statements());
         } catch (RuntimeException defect) {
@@ -432,8 +431,8 @@ public class DynamicFunctionValueGateTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
             Map<FunctionId, LoweredFunction> functions, List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_2_INT32, MODULE, INTERFACE_HASH,
-            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH),
+            SemanticProfile.DEAL_V1_3_INT32, MODULE, INTERFACE_HASH,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH),
             Set.of(), Map.of(), Map.of(), functions,
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), registry, ops,
             new StructuredBodyTable(Map.of(), Map.of()),
@@ -459,7 +458,7 @@ public class DynamicFunctionValueGateTest {
 
     private static SemanticIrValidator.ComparisonFacts facts(LoweredModuleUnit unit) {
         return new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
-            SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
     }
 
     private static void assertBindingsPass(Optional<CompilerDiagnostic> failure, String what) {
