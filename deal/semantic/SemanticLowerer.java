@@ -11797,8 +11797,8 @@ public final class SemanticLowerer {
             if (type instanceof Type.Class classType) {
                 if (!classCore) {
                     throw new ConstructUnlowered("class-typed object literal "
-                        + DescriptorService.semanticModulePath(classType.identity())
-                        + "/" + classType.name()
+                        + new ClassId(DescriptorService.semanticModulePath(
+                            classType.identity()), classType.name()).text()
                         + " (class construction and CLASS_NEW are E9's)", literal.span());
                 }
                 return lowerClassLiteral(literal, slot);
@@ -11967,8 +11967,9 @@ public final class SemanticLowerer {
             if (objectType instanceof Type.Class classType) {
                 if (!classCore) {
                     throw new ConstructUnlowered("class member access "
-                        + DescriptorService.semanticModulePath(classType.identity())
-                        + "/" + classType.name() + "." + access.field()
+                        + new ClassId(DescriptorService.semanticModulePath(
+                            classType.identity()), classType.name()).text()
+                        + "." + access.field()
                         + " (FIELD_READ is E9's)", access.span());
                 }
                 return lowerFieldRead(access, classType, slot);
@@ -12891,9 +12892,9 @@ public final class SemanticLowerer {
             return switch (type) {
                 case Type.Array array -> "[" + typeName(array.element()) + "]";
                 case Type.Nullable nullable -> "?" + typeName(nullable.inner());
-                case Type.Class classType -> "@"
-                    + DescriptorService.semanticModulePath(classType.identity())
-                    + "/" + classType.name();
+                case Type.Class classType -> new ClassId(
+                    DescriptorService.semanticModulePath(classType.identity()),
+                    classType.name()).text();
                 case Type.Func func -> "function";
                 default -> String.valueOf(type);
             };

@@ -1917,7 +1917,7 @@ public class ProjectLoweringTest {
                 return;
             }
             checkEq(ClassId.ERROR, ((KindPayload.ClassNewPayload) classNew.payload())
-                    .classId(), "the CLASS_NEW classId is the builtin @/Error");
+                    .classId(), "the CLASS_NEW classId is the builtin Error class");
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) classNew.payload();
             checkEq(DefaultOwner.BUILTIN_DEFAULTS, payload.defaultOwner(),

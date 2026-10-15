@@ -246,7 +246,7 @@ public final class JvmRuntime {
 
         @Override
         public String classIdText() {
-            return "@/Error";
+            return deal.semantic.ir.ClassId.ERROR.text();
         }
 
         @Override
@@ -936,7 +936,8 @@ public final class JvmRuntime {
         if (desc.startsWith("function(")) {
             return "function";
         }
-        if (desc.startsWith("@")) {
+        if (desc.startsWith("@")
+                || deal.semantic.ir.ClassId.ERROR.text().equals(desc)) {
             return "class instance";
         }
         return desc;
@@ -1042,7 +1043,8 @@ public final class JvmRuntime {
         if (desc.startsWith("nullable(")) {
             return kindTokenOf(desc.substring(9, desc.length() - 1));
         }
-        if (desc.startsWith("@")) {
+        if (desc.startsWith("@")
+                || deal.semantic.ir.ClassId.ERROR.text().equals(desc)) {
             return "class";
         }
         if (desc.startsWith("array(")) {
@@ -1138,7 +1140,7 @@ public final class JvmRuntime {
         if (v instanceof ClassInstance instance) {
             // A class instance — the builtin Error carrier included —
             // projects its carried canonical class atom (the Error
-            // carrier's classIdText is {@code @/Error}); the
+            // carrier's classIdText is the builtin atom {@code Error}); the
             // {@code class:<ClassId>} IR/trace spelling never appears in
             // the DEAL-visible projection.
             return instance.classIdText();
@@ -1559,15 +1561,17 @@ public final class JvmRuntime {
             throw arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
                 java.util.Map.of("kind", "bytes"), "-", "bytes", actual);
         }
-        if (desc.startsWith("@")) {
-            if ("@/Error".equals(desc)) {
-                // The builtin Error class (the err carrier): an Error
-                // value passes unchanged.
-                if (v instanceof ErrorValue) {
-                    return v;
-                }
-                throw classFailure(desc, v, actual, completion);
+        if (deal.semantic.ir.ClassId.ERROR.text().equals(desc)) {
+            // The builtin Error class (the err carrier): an Error value
+            // passes unchanged. The canonical builtin atom is exactly
+            // "Error" (the one class text without the leading '@'); the
+            // superseded v1.2 spellings never reach this arm.
+            if (v instanceof ErrorValue) {
+                return v;
             }
+            throw classFailure(desc, v, actual, completion);
+        }
+        if (desc.startsWith("@")) {
             // A nominal class descriptor (E5): the canonical
             // @modulePath/ClassName identity text — the instance must
             // carry the identical tag.

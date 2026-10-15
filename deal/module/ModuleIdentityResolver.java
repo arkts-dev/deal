@@ -656,11 +656,11 @@ public final class ModuleIdentityResolver {
                             "no pinned descriptor-text projection for builtin "
                                 + "class '" + identity.className()
                                 + "' (only the intrinsic Error class has the "
-                                + "pinned @$builtin/Error projection; a "
+                                + "pinned 'Error' projection; a "
                                 + "required other builtin identity is "
                                 + "unrepresentable)");
                     }
-                    yield "@$builtin/Error";
+                    yield ModuleIdentityAssembly.INTRINSIC_ERROR_DESCRIPTOR_TEXT;
                 }
                 case CanonicalModuleIdentity.ExternalModule ext -> {
                     if (!"$external".equals(firstComponent(ext.rawImportSpecifier()))) {

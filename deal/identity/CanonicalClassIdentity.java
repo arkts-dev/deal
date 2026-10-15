@@ -27,7 +27,7 @@ import java.util.Objects;
  * {@code Error} class is constructed as
  * {@code new CanonicalClassIdentity(CanonicalModuleIdentity.BuiltinModule.INSTANCE,
  * "Error")}. The carrier pins only the constructible shape; the index
- * registration and the {@code @$builtin/Error} descriptor-text projection
+ * registration and the bare {@code Error} descriptor-text projection
  * are owned by the module-identity layer.</p>
  *
  */

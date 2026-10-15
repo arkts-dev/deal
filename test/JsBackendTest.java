@@ -1417,14 +1417,13 @@ public class JsBackendTest {
             + "[\"message\"]: \"\" });"),
             "the header-synthesized $ErrorDefaults thunk");
         check(js.contains("const Error$new = (provided, $file, $line, $column) => "
-            + "$rt.makeClass(\"Error\", \"@$builtin/Error\", $ErrorDefaults, provided, "
+            + "$rt.makeClass(\"Error\", \"Error\", $ErrorDefaults, provided, "
             + "$file, $line, $column);"),
-            "the header-synthesized Error$new closure (canonical identity "
-                + "@$builtin/Error)");
+            "the header-synthesized Error$new closure (the canonical builtin atom \"Error\")");
         check(js.contains("const Error$meta = { $kind: \"class\", "
-            + "$classname: \"@$builtin/Error\" };"),
+            + "$classname: \"Error\" };"),
             "the header-synthesized Error$meta META pair "
-                + "(canonical @$builtin/Error identity)");
+                + "(the canonical builtin atom \"Error\")");
         check(!js.contains("$rt.setProp($exports, \"$ErrorDefaults\""),
             "$ErrorDefaults stays module-private (never exported)");
         check(!js.contains("$rt.setProp($exports, \"Error$new\""),
@@ -4462,18 +4461,36 @@ public class JsBackendTest {
                 $fail = "e8004-msg:" + e.$dealCode + ":" + e.message;
               }
             }
-            // The builtin Error identity is @$builtin/Error end-to-end.
+            // The builtin Error identity is the bare Error atom end-to-end,
+            // and the superseded aliases never decode (no fallback identity).
             const $err = $rt.errorValue("E_TEST", "boom", "probe.js", 1, 1);
-            if ($err.$kind !== "class" || $err.$classname !== "@$builtin/Error") {
+            if ($err.$kind !== "class" || $err.$classname !== "Error") {
               $fail = "error-identity:" + String($err.$classname);
             }
             if ($rt.reifyError($err) !== $err) { $fail = "reify-passthrough"; }
+            if ($rt.checkType("Error", $err, "probe.js", 1, 1) !== $err) {
+              $fail = "error-boundary";
+            }
+            if ($rt.checkType("?Error", $err, "probe.js", 1, 1) !== $err) {
+              $fail = "error-nullable-boundary";
+            }
+            if ($rt.checkType("[Error]", [$err], "probe.js", 1, 1)[0] !== $err) {
+              $fail = "error-array-boundary";
+            }
+            try {
+              $rt.checkType("@/Error", $err, "probe.js", 1, 1);
+              $fail = "superseded-alias-accepted";
+            } catch (e) {
+              if (e.message !== "internal: cannot parse type descriptor: @/Error") {
+                $fail = "superseded-alias-arm:" + e.message;
+              }
+            }
             if ($fail === "") { console.log("CANONICAL-MATCHER-OK"); }
             else { console.log("FAIL: " + $fail); }
             """);
         check(run.exitCode() == 0 && run.output().equals("CANONICAL-MATCHER-OK"),
             "canonical ?/[D] acceptance over function descriptors, byte-for-byte "
-                + "class atoms, and the pinned E8003/E8010/E8004/@$builtin/Error "
+                + "class atoms, and the pinned E8003/E8010/E8004/Error-atom "
                 + "surfaces: " + run.output());
     }
 
@@ -4485,10 +4502,11 @@ public class JsBackendTest {
             "use strict";
             const $rt = require("./deal/runtime");
             let $fail = "";
-            const $legacy = ["int[]", "int|null", "table[]", "Error", "User",
-              "?Error", "Error|null", "(int)->int[]", "(int)->int|null",
+            const $legacy = ["int[]", "int|null", "table[]", "User",
+              "?User", "Errorx", "Error|null", "(int)->int[]", "(int)->int|null",
               "@Foo", "@src.models.User", "@m/c.Name", "??int", "?null",
-              "[]", "(int)int", "async[int]", "@a/", "@a//b", "int..."];
+              "[]", "(int)int", "async[int]", "@a/", "@a//b", "int...",
+              "@/Error", "@$builtin/Error"];
             for (let $i = 0; $i < $legacy.length; $i++) {
               try {
                 $rt.checkType($legacy[$i], null, "probe.js", 1, 1);
@@ -4526,10 +4544,10 @@ public class JsBackendTest {
         ModuleIdentityResolver.IdentityIndex index =
             ModuleIdentityResolver.buildIndex(byPath);
 
-        check("@$builtin/Error".equals(index.descriptorTextFor(
+        check("Error".equals(index.descriptorTextFor(
                 new CanonicalClassIdentity(
                     CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error"))),
-            "builtin Error projects @$builtin/Error");
+            "the builtin Error class projects the bare atom Error");
         check("@src/app/User".equals(index.descriptorTextFor(
                 new CanonicalClassIdentity(byPath.get("app.user"), "User"))),
             "project class projects @<rootText>/<components>/<Name>");
@@ -4584,11 +4602,11 @@ public class JsBackendTest {
                         new CanonicalClassIdentity(byPath.get("app.user"),
                             "User")))), Type.Boolean.INSTANCE))),
             "encode(Type) emits ?D function parameters");
-        check("@$builtin/Error".equals(service.encode(Types.classType("Error",
+        check("Error".equals(service.encode(Types.classType("Error",
                 new CanonicalClassIdentity(
                     CanonicalModuleIdentity.BuiltinModule.INSTANCE,
                     "Error")))),
-            "encode(Type) emits @$builtin/Error for the builtin Error type");
+            "encode(Type) emits the bare Error atom for the builtin Error type");
         check("async(bytes)->bytes".equals(service.encode(
                 new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE, true))),
             "encode(Type) emits async(bytes)->bytes");
@@ -5151,7 +5169,7 @@ public class JsBackendTest {
               if ($r.$ok !== false) $fail = "ok-signal";
               if ($r.$failure !== undefined) $fail = "failure-signal";
               if ($r.$error === null || typeof $r.$error !== "object") $fail = "error-shape";
-              if ($r.$error.$kind !== "class" || $r.$error.$classname !== "@$builtin/Error") $fail = "error-tags";
+              if ($r.$error.$kind !== "class" || $r.$error.$classname !== "Error") $fail = "error-tags";
               if ($r.$error.code !== "E8001" || $r.$error.message !== "expected null") $fail = "error-fields";
               const $rm = { main: { $kind: "function", $sig: "()->null",
                 $f: function() { $rt.fail("E8001", "main boom", "probe.js", 7, 3); } },

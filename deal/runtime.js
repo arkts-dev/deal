@@ -111,11 +111,13 @@ function $luaKindOf($v) {
 // null|boolean|int|number|string|bytes|table; "[D]" arrays; "?D"
 // nullables ("?D" and "[D]" accept ANY descriptor D, function
 // descriptors included — "?(int)->int" and "[(int)->int]" parse);
-// "async"? "(params)" "->" D functions; "@" class atoms with at least two
-// components and an identifier-shaped final component, carried verbatim
-// (byte-for-byte nominal compare). Every legacy spelling — "T[]",
-// "T|null", rest-parameter sigs, bare class names, the bare "Error"
-// atom, dotted class-name-position text, nested nullables ("??T"),
+// "async"? "(params)" "->" D functions; the builtin "Error" atom
+// (the one class identity without the leading "@"); "@" class atoms with
+// at least two components and an identifier-shaped final component,
+// carried verbatim (byte-for-byte nominal compare). Every legacy spelling
+// — "T[]", "T|null", rest-parameter sigs, bare class names other than
+// the builtin "Error" atom, "@/Error", "@$builtin/Error", dotted
+// class-name-position text, nested nullables ("??T"),
 // nullable-of-null ("?null"), empty/malformed arrays and functions,
 // invalid class atoms, trailing content — fails the parse and returns
 // null, so checkType raises the pinned defensive E8001
@@ -202,15 +204,31 @@ function $parseOne($d, $cps, $st) {
       return { $t: "primitive", $name: $name };
     }
   }
+  // The builtin Error atom: the exact token "Error" terminating at a
+  // descriptor position (end of input or a delimiter). The superseded
+  // v1.2 spellings "@/Error" and "@$builtin/Error" never parse.
+  if ($matchKeyword($cps, $st.$pos, "Error")
+      && ($st.$pos + 5 >= $cps.length
+          || !$isIdentifierByte($cps[$st.$pos + 5].$cp))) {
+    $st.$pos += 5;
+    return { $t: "class", $name: "Error" };
+  }
   // The exact async marker: "async" immediately followed by "(".
   if ($matchKeyword($cps, $st.$pos, "async")
       && $st.$pos + 5 < $cps.length && $cps[$st.$pos + 5].$cp === 0x28) {
     $st.$pos += 5;
     return $parseFunction($d, $cps, $st, true);
   }
-  // Every other spelling — bare class names ("Error" included),
+  // Every other spelling — bare class names ("Error" is the canonical
+  // builtin atom above, every other bare name stays a rejection),
   // "T[]"/"T|null" shapes, rest sigs — is unparsable.
   return null;
+}
+
+// The identifier-scalar predicate of the parser's identifier-run rule.
+function $isIdentifierByte($cp) {
+  return ($cp >= 0x41 && $cp <= 0x5A) || ($cp >= 0x61 && $cp <= 0x7A)
+      || ($cp >= 0x30 && $cp <= 0x39) || $cp === 0x5F;
 }
 
 // "[ descriptor ]".
@@ -278,8 +296,10 @@ function $parseFunction($d, $cps, $st, $isAsync) {
 // Components are maximal allowed runs; the atom ends exactly at its
 // enclosing delimiter (end of input, "]", ")", ",") and is carried
 // verbatim with the leading "@". At least one "/" and an
-// identifier-shaped final component are mandatory; no root/path boundary
-// is ever inferred and class atoms compare byte-for-byte.
+// identifier-shaped final component are mandatory; the reserved
+// "$builtin" namespace forms no class atom (the builtin Error class is
+// the bare "Error" atom); no root/path boundary is ever inferred and
+// class atoms compare byte-for-byte.
 function $parseClass($d, $cps, $st) {
   const $atomStart = $st.$pos;
   $st.$pos++; // consume '@'
@@ -298,6 +318,7 @@ function $parseClass($d, $cps, $st) {
     if ($st.$pos === $componentStart) return null; // empty component
     const $component = $slice($d, $cps, $componentStart, $st.$pos);
     if ($component === "." || $component === "..") return null;
+    if (!$hasSeparator && $component === "$builtin") return null;
     if ($st.$pos < $cps.length && $cps[$st.$pos].$cp === 0x2F) {
       $hasSeparator = true;
       $st.$pos++; // consume '/' — the next component must be non-empty
@@ -1185,7 +1206,7 @@ const $rt = {
   errorValue: function $errorValue(code, message, file, line, column) {
     const $value = {};
     $rt.setProp($value, "$kind", "class");
-    $rt.setProp($value, "$classname", "@$builtin/Error");
+    $rt.setProp($value, "$classname", "Error");
     $rt.setProp($value, "code", code);
     $rt.setProp($value, "message", message);
     if (file !== $undefined) $rt.setProp($value, "file", file);
@@ -1205,7 +1226,7 @@ const $rt = {
     if (v instanceof $DEALError) {
       return $rt.errorValue(v.code, v.message, v.file, v.line, v.column);
     }
-    if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "@$builtin/Error") {
+    if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
       return v;
     }
     return $rt.errorValue("E8001", String(v));
@@ -1343,7 +1364,8 @@ const $rt = {
   // arm (DEAL null is only JS null, D3); undefined and every other
   // non-string descriptor fail the parse step and take the cannot-parse
   // arm (String(descriptor) mirrors Lua's tostring(descriptor)). Legacy
-  // spellings ("T[]", "T|null", bare class names, the bare "Error" atom)
+  // spellings ("T[]", "T|null", bare class names other than the builtin
+  // "Error" atom, "@/Error", "@$builtin/Error")
   // are unparsable text and take the pinned E8001
   // "internal: cannot parse type descriptor: {text}" arm.
   checkType: function $checkType(descriptor, v, file, line, column) {
@@ -1406,7 +1428,7 @@ const $rt = {
       // Class branch: the $kind tag, then nominal identity — byte-for-byte
       // equality between $classname and the parsed class atom's full text
       // (deal/runtime.lua:459-468; canonical-type-system-and-runtime-descriptors
-      // D4). The builtin Error atom is @$builtin/Error.
+      // D4). The builtin Error atom is the bare "Error".
       if (v === $undefined || v === null || v.$kind !== "class") {
         $rt.fail("E8001", "expected class instance", file, line, column, "class", $kindOf(v));
       }

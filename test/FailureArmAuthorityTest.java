@@ -2451,16 +2451,17 @@ public class FailureArmAuthorityTest {
             Map.of("fieldPath", "x", "actual", "class:arm/walk/Walk"), null,
             "class:arm/walk/Walk", null),
             "the superseded class:<ClassId> spelling fails closed");
-        checkEq("@/Error", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "", "actual", "@/Error"), WALK_SPAN, null,
-                "@/Error").actual,
+        checkEq("Error", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
+                Map.of("fieldPath", "", "actual", "Error"), WALK_SPAN, null,
+                "Error").actual,
             "the JVM arm render keeps the carried canonical atom (the control)");
         // The serialized Lua renderer, under real luajit.
         renderProbes("class-spelling-probe",
             armProbe("class-spelling", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:arm/walk/Walk\"}, \"-\", nil, \"class:arm/walk/Walk\"", "false|"),
             armProbe("class-nonatom", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:not-a-canonical-atom\"}, \"-\", nil, \"class:not-a-canonical-atom\"", "false|"),
             armProbe("class-empty", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:\"}, \"-\", nil, \"class:\"", "false|"),
-            new RenderProbe("arm", "atom-control", "\"JSON_TO_WALK\", {fieldPath = \"\", actual = \"@/Error\"}, \"-\", nil, \"@/Error\"", "true|@/Error", "value.a"));
+            armProbe("class-superseded-alias", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"@$builtin/Error\"}, \"-\", nil, \"@$builtin/Error\"", "false|"),
+            new RenderProbe("arm", "atom-control", "\"JSON_TO_WALK\", {fieldPath = \"\", actual = \"Error\"}, \"-\", nil, \"Error\"", "true|Error", "value.a"));
     }
 
     // =========================================================================
@@ -2707,7 +2708,7 @@ public class FailureArmAuthorityTest {
         },
             innerProbe("arm", "identity-empty-expected", "expected instance of @src/, got @src/B", false),
             innerProbe("arm", "identity-empty-carried", "expected instance of @src/A, got @src/", false),
-            innerProbe("arm", "identity-builtin", "expected instance of @/Error, got @src/B", true),
+            innerProbe("arm", "identity-builtin", "expected instance of Error, got @src/B", true),
             innerProbe("arm", "identity-canonical", "expected instance of @src/A, got @src/B", true),
             innerProbe("template", "template-malformed", "function signature mismatch: expected function(bogus;int), got function(int;int)", false),
             innerProbe("template", "template-zero", "function signature mismatch: expected function(;int), got function(int;int)", true));
@@ -3342,9 +3343,9 @@ public class FailureArmAuthorityTest {
                 jvmClassTable(), "tags", jvmIntArray(1L))));
         // The builtin Error carrier at the walk root: the root-identity
         // failure publishes the value's carried canonical class atom
-        // (@/Error — ClassId.ERROR.text()), never the superseded
-        // class:@builtin/Error spelling (the review correction).
-        cases.add(new WalkCase("error-carrier-at-root", "JSON_TO_WALK", "", "@/Error",
+        // (Error — ClassId.ERROR.text()), never the superseded
+        // class:@builtin/Error or v1.2 @/Error spellings.
+        cases.add(new WalkCase("error-carrier-at-root", "JSON_TO_WALK", "", "Error",
             new ClassOpsExecutor.Value.Class(deal.semantic.ir.ClassId.ERROR,
                 List.of(new ClassOpsExecutor.FieldState.Present(walkString("E8001")),
                     new ClassOpsExecutor.FieldState.Present(walkString("x")))),

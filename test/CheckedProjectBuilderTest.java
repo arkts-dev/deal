@@ -437,8 +437,8 @@ public class CheckedProjectBuilderTest {
                 + "the declared-variant grammar)");
 
         // Builtin Error and module classes.
-        check("@/Error".equals(CanonicalTypeText.render(nt("Error"), context)),
-            "NamedType Error renders as @/Error");
+        check("Error".equals(CanonicalTypeText.render(nt("Error"), context)),
+            "NamedType Error renders as the bare builtin atom Error");
         check("@m/C".equals(CanonicalTypeText.render(nt("C"), context)),
             "a class declared in the module renders as @<moduleId>/<n>");
 
@@ -508,8 +508,8 @@ public class CheckedProjectBuilderTest {
                     CanonicalTypeText.render(entry.getKey(), context)),
                 "TypeNode form renders exactly '" + entry.getValue() + "'");
         }
-        check("@/Error".equals(CanonicalTypeText.render(IdentityTestFixtures.errorClassType())),
-            "the checked builtin Error class renders as @/Error");
+        check("Error".equals(CanonicalTypeText.render(IdentityTestFixtures.errorClassType())),
+            "the checked builtin Error class renders as the bare atom Error");
         check("@m/C".equals(CanonicalTypeText.render(IdentityTestFixtures.classType("C", "m"))),
             "the checked class type renders as @modulePath/Name");
         check("int[][]".equals(CanonicalTypeText.render(

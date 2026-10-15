@@ -8106,14 +8106,16 @@ local function __hostKindOf(v)
 end
 -- The carried class identity of one class value in either
 -- representation: the chunk's __c/__id carrier or the loaded runtime's
--- __kind/__classname carrier; nil for every other value. The class-value
--- carrier projection keys on this, so a class-typed crossing never
--- consults the runtime matcher's class row (which requires the runtime
--- representation the DEAL program never holds).
+-- __kind/__classname carrier, or the builtin Error atom for the DEAL
+-- error carrier (the __d-tagged Error value); nil for every other value.
+-- The class-value carrier projection keys on this, so a class-typed
+-- crossing never consults the runtime matcher's class row (which requires
+-- the runtime representation the DEAL program never holds).
 local function __hostClassIdOf(v)
   if type(v) ~= "table" then return nil end
   if v.__kind == "class" then return v.__classname end
   if v.__c then return v.__id end
+  if v.__d then return "Error" end
   return nil
 end
 -- One host parameter/return cell failure: the host arm's composite with the
@@ -8258,6 +8260,7 @@ end
 -- store is already a chunk-level local, so the helper set spends no
 -- main-chunk local (the LuaJIT 200-local bound).
 __factories.__hostDeclKind = function(desc)
+  if desc == "Error" then return "class instance" end
   if string.sub(desc, 1, 1) == "@" then return "class instance" end
   if string.sub(desc, 1, 1) == "[" then return "array" end
   if string.sub(desc, 1, 1) == "(" or string.sub(desc, 1, 9) == "async(" then
@@ -8336,7 +8339,7 @@ end
 -- the marker's table shape.
 local function __hostParamCell(desc, index, v, origin)
   v = __factories.__hostParamAdmit(desc, index, v, origin)
-  if string.sub(desc, 1, 1) == "@" then
+  if desc == "Error" or string.sub(desc, 1, 1) == "@" then
     return __hostClassCell(desc, index, v, origin, false)
   end
   local ok, checked = pcall(__rt.check_type, desc, v)
@@ -8414,7 +8417,7 @@ local function __hostReturnCell(desc, v, origin, nothing)
     return error(__arm("HOST_SYNC_RETURN_NOTHING", {expected = desc}, origin, desc,
       "nothing"), 0)
   end
-  if string.sub(desc, 1, 1) == "@" then
+  if desc == "Error" or string.sub(desc, 1, 1) == "@" then
     return __hostClassCell(desc, 0, v, origin, true)
   end
   local ok, checked = pcall(__rt.check_type, desc, v)
@@ -8508,7 +8511,7 @@ local function __hostProjectArg(desc, inner, index, v, origin)
       or string.sub(inner, 1, 9) == "async(") then
     return __hostFnArg(desc, inner, v)
   end
-  if string.sub(desc, 1, 1) == "@" then
+  if desc == "Error" or string.sub(desc, 1, 1) == "@" then
     return __hostClassProject(desc, v)
   end
   return v
@@ -9408,8 +9411,10 @@ local __descriptorPrimitives = {"null", "boolean", "int", "number", "string",
 -- decoder's own stop set; the dialect function's ';' separator also
 -- terminates a class atom in a dialect parameter list) or the end of the
 -- text. The segment must contain a '/' and its final segment must be
--- non-empty: the pinned builtin @/Error keeps its empty module path.
+-- non-empty, and the reserved $builtin namespace forms no class atom
+-- (the builtin Error class is the bare Error atom).
 local function __classAtomEnd(s, i, dialect)
+  if string.sub(s, i, i) ~= "@" then return nil end
   local j = i + 1
   while j <= #s do
     local c = string.sub(s, j, j)
@@ -9417,16 +9422,27 @@ local function __classAtomEnd(s, i, dialect)
     j = j + 1
   end
   local segment = string.sub(s, i + 1, j - 1)
-  if string.find(segment, "/", 1, true) == nil then return nil end
+  local slash = string.find(segment, "/", 1, true)
+  if slash == nil then return nil end
   if string.sub(segment, -1) == "/" then return nil end
+  if string.sub(segment, 1, slash - 1) == "$builtin" then return nil end
   return j
 end
--- A canonical class atom (@modulePath/ClassName, complete consumption): the
--- canonical decoder's class scan ends at ')' / ']' / ',' or the text's own
--- end, so a standalone operand containing a terminator leaves trailing
--- content the one decoder rejects.
+-- The builtin Error atom: the exact token followed by the text's end or one
+-- of the descriptor delimiters.
+local function __isErrorAtom(s, i, dialect)
+  if string.sub(s, i, i + 4) ~= "Error" then return false end
+  local after = string.sub(s, i + 5, i + 5)
+  if after == "" or after == ")" or after == "]" or after == "," then return true end
+  return dialect and after == ";"
+end
+-- A canonical class atom (@modulePath/ClassName or the builtin Error atom,
+-- complete consumption): the canonical decoder's class scan ends at ')' /
+-- ']' / ',' or the text's own end, so a standalone operand containing a
+-- terminator leaves trailing content the one decoder rejects.
 local function __isClassAtom(s)
-  if type(s) ~= "string" or string.sub(s, 1, 1) ~= "@" then return false end
+  if type(s) ~= "string" then return false end
+  if s == "Error" then return true end
   return __classAtomEnd(s, 1, false) == #s + 1
 end
 -- One canonical primitive: the fixed spelling followed by the end of the
@@ -9462,14 +9478,15 @@ local function __canonicalParams(s, i)
   end
 end
 -- One canonical descriptor (the one decoder's grammar:
--- null|boolean|int|number|string|table|bytes|@modulePath/ClassName|[inner]|
--- ?inner|(params)->result|async(params)->result); returns the index just past
--- it, or nil. Every nested position is parsed and the whole text must be
--- consumed, so a foreign or malformed parameter/result text is never
--- admitted.
+-- null|boolean|int|number|string|table|bytes|Error|@modulePath/ClassName|
+-- [inner]|?inner|(params)->result|async(params)->result); returns the index
+-- just past it, or nil. Every nested position is parsed and the whole text
+-- must be consumed, so a foreign or malformed parameter/result text is
+-- never admitted.
 __canonicalDesc = function(s, i)
   local c = string.sub(s, i, i)
   if c == "" then return nil end
+  if __isErrorAtom(s, i, false) then return i + 5 end
   if c == "[" then
     local inner = __canonicalDesc(s, i + 1)
     if inner == nil or string.sub(s, inner, inner) ~= "]" then return nil end
@@ -9543,6 +9560,7 @@ end
 __dialectDesc = function(s, i)
   local c = string.sub(s, i, i)
   if c == "" then return nil end
+  if __isErrorAtom(s, i, true) then return i + 5 end
   if c == "@" then return __classAtomEnd(s, i, true) end
   if string.sub(s, i, i + 5) == "array(" then
     local inner = __dialectDesc(s, i + 6)
@@ -9996,11 +10014,11 @@ local function __typedBoundaryKind(staticKind, v)
     if v.__c then return v.__id end
     -- The DEAL error carrier (the builtin Error class instance, the
     -- __d-tagged shape every failure and raise site publishes) projects
-    -- its carried canonical class atom @/Error — never the class:<ClassId>
-    -- IR/trace spelling and never the superseded class:@builtin/Error
-    -- form (the oracle's and the JVM's class instances project the same
-    -- carried canonical atom).
-    if v.__d then return "@/Error" end
+    -- its carried canonical class atom Error — never the class:<ClassId>
+    -- IR/trace spelling, the superseded v1.2 @/Error form, or the
+    -- superseded @$builtin/Error form (the oracle's and the JVM's class
+    -- instances project the same carried canonical atom).
+    if v.__d then return "Error" end
     if v.__t then return "table" end
     -- Every function-shaped carrier projects the closed function token:
     -- the __fn protocol carriers (closures, adapters, intrinsic and
@@ -10248,9 +10266,10 @@ local function __bcheck(desc, staticKind, v, csig, completion)
       return v
     end
     return fail("table")
-  elseif desc == "@/Error" then
+  elseif desc == "Error" then
     -- The builtin Error class (the err carrier): an Error table
-    -- passes unchanged.
+    -- passes unchanged. The canonical builtin atom is exactly Error
+    -- (the one class text without the leading '@').
     if type(v) == "table" and v.__d then return v end
     return failClass(desc, (type(v) == "table" and v.__c) and v.__id or nil)
   elseif desc == "bytes" then
@@ -10912,7 +10931,7 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
   end
   if v.__d then
     local out = {__kind = "class", __d = true,
-                 __classname = "@$builtin/Error"}
+                 __classname = "Error"}
     seen[v] = out
     return out
   end

@@ -3260,8 +3260,8 @@ public final class SemanticOracle {
          * view, so the next delegation converts the committed state (never
          * a stale pre-commit view). The field payload's name selects the
          * carrier field; the receiver boundary already proved the
-         * @/Error identity and the field boundary the declared string
-         * descriptor.
+         * canonical builtin Error identity and the field boundary the
+         * declared string descriptor.
          */
         private void applyErrorState(Value.ErrorValue receiver,
                                      ClassOpsExecutor.Value updated) {
@@ -3270,7 +3270,7 @@ public final class SemanticOracle {
                     || updatedClass.fields().size() != 2) {
                 throw new IllegalStateException("a builtin Error field commit"
                     + " produced " + updated + ": the pinned outcome is the updated"
-                    + " @/Error instance with its two declaration-order fields"
+                    + " Error instance with its two declaration-order fields"
                     + " (producer defect)");
             }
             Value.ErrorValue state = errorValueOf(updatedClass);

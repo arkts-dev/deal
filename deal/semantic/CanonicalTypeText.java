@@ -89,9 +89,15 @@ public final class CanonicalTypeText {
                     ? "(" + inner + ") | null"
                     : inner + " | null";
             }
-            case Type.Class cls -> "@"
-                + DescriptorService.semanticModulePath(cls.identity())
-                + "/" + cls.name();
+            case Type.Class cls -> {
+                String path = DescriptorService.semanticModulePath(cls.identity());
+                // The builtin module carries the empty module path; its only
+                // class is the intrinsic Error whose canonical text is the
+                // bare atom (the one class text without the leading '@').
+                yield path.isEmpty()
+                    ? cls.name()
+                    : "@" + path + "/" + cls.name();
+            }
             case Type.Func func -> renderFunctionForm(
                 func.paramTypes().stream().map(CanonicalTypeText::render).toList(),
                 render(func.returnType()), func.isAsync());
@@ -195,7 +201,7 @@ public final class CanonicalTypeText {
         return switch (name) {
             case "null", "boolean", "int", "number", "string", "table",
                     "bytes" -> name;
-            case "Error" -> "@/Error";
+            case "Error" -> "Error";
             default -> {
                 if (!context.declaredClasses().contains(name)) {
                     throw new Defect(

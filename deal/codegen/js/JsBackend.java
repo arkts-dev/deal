@@ -763,10 +763,10 @@ public final class JsBackend {
         }
         out.append("const $ErrorDefaults = () => ({ [\"code\"]: \"\", "
             + "[\"message\"]: \"\" });\n");
-        // The builtin Error identity is the canonical @$builtin/Error
-        // atom, produced through the compilation's descriptor service
-        // (js-v12-completion-architecture D3 — the supersession of the
-        // v1.1 bare-`Error` spelling).
+        // The builtin Error identity is the canonical Error atom,
+        // produced through the compilation's descriptor service
+        // (js-v12-completion-architecture D3; the v1.3 DescriptorV13
+        // projection).
         String $errorIdentity =
             descriptors.encode(Types.classType("Error",
                 new CanonicalClassIdentity(
@@ -778,7 +778,7 @@ public final class JsBackend {
             + "$file, $line, $column);\n");
         // The builtin-Error META pair member: `Error` as a value is
         // checker-accepted class metadata exactly like any declared
-        // class's — module-private, identity @$builtin/Error, the inline
+        // class's — module-private, identity Error, the inline
         // META shape of js-backend-emitter D4 step 7.
         out.append("const Error$meta = { $kind: \"class\", "
             + "$classname: " + jsStringLiteral($errorIdentity) + " };\n");
