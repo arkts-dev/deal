@@ -1135,15 +1135,25 @@ public final class ContractSnapshotCanonicalizer {
         return new ModuleInitPlan(imports, parseBlockId(requireObject(moduleInit, "initBlock")));
     }
 
-    /** Decodes the array-form export plan entries. */
+    /**
+     * Decodes the array-form export plan entries. The export name is the
+     * entry identity: a repeated name is a duplicate entry identity and
+     * rejects. Distinct rows keep their producer order.
+     */
     private static List<RawUnit.RawExportEntry> parseExportPlan(CanonicalJson.Obj obj) {
         CanonicalJson.Arr rows = requireArray(obj, "exportPlan");
         List<RawUnit.RawExportEntry> exportPlan = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
         for (int i = 0; i < rows.items().size(); i++) {
             String where = "exportPlan[" + i + "]";
             CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
             checkKeys(row, "name", "descriptor", "publishOpId");
-            exportPlan.add(new RawUnit.RawExportEntry(requireString(row, "name"),
+            String name = requireString(row, "name");
+            if (!names.add(name)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate exportPlan entry name \"" + name + "\" (" + where + ")");
+            }
+            exportPlan.add(new RawUnit.RawExportEntry(name,
                 requireString(row, "descriptor"),
                 parseOpId(requireObject(row, "publishOpId"))));
         }

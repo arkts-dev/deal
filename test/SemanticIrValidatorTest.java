@@ -1483,6 +1483,32 @@ public class SemanticIrValidatorTest {
             "a duplicate functions key rejects");
         expectDecodeFailure(duplicateArrayEntry(complete, "functionBindings"),
             "a duplicate functionBindings allocationId rejects");
+        // A duplicate export name is a duplicate entry identity, whether the
+        // repeated row is byte-identical or carries a different descriptor
+        // or publishing operation.
+        expectDecodeFailure(duplicateArrayEntry(complete, "exportPlan"),
+            "a duplicate exportPlan name rejects");
+        expectDecodeFailure(withEntryAt(duplicateArrayEntry(complete, "exportPlan"),
+                "descriptor", CanonicalJson.str("i32"), "exportPlan", 2),
+            "a same-name export row with a different descriptor rejects");
+        expectDecodeFailure(withEntryAt(duplicateArrayEntry(complete, "exportPlan"),
+                "publishOpId", CanonicalJson.obj(
+                    CanonicalJson.e("id", CanonicalJson.intValue(99)),
+                    CanonicalJson.e("modulePath", CanonicalJson.str("mod.a")),
+                    CanonicalJson.e("type", CanonicalJson.str("op"))),
+                "exportPlan", 2),
+            "a same-name export row with a different publishing op rejects");
+        // Distinct export rows keep their names and producer order, and an
+        // empty plan stays an explicit empty plan.
+        List<String> exportNames = new ArrayList<>();
+        for (RawUnit.RawExportEntry entry : ContractSnapshotCanonicalizer.parseUnit(
+                parseObj(complete)).exportPlan()) {
+            exportNames.add(entry.name());
+        }
+        checkEq(List.of("main", "other"), exportNames,
+            "distinct export rows decode in producer order");
+        check(ContractSnapshotCanonicalizer.parseUnit(parseObj(text)).exportPlan().isEmpty(),
+            "the empty export plan stays an explicit empty plan");
         expectDecodeFailure(serialize(withEntry(parseObj(complete), "bodyTable",
                 CanonicalJson.obj(
                     CanonicalJson.e("blockOps", CanonicalJson.arr(
