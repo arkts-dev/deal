@@ -4248,10 +4248,11 @@ public class ProductionDispatchTest {
 
             // (3) The complete distribution: both targets publish the whole
             // set — artifact, default sidecar, runtime and all six stdlib
-            // implementations.
+            // implementations, each implementation byte-matching the deployed
+            // distribution resource.
             for (String backend : List.of("luajit", "js")) {
                 String extension = backend.equals("luajit") ? "lua" : "js";
-                Path out = project.resolve("out-" + backend);
+                Path out = project.resolve("build/" + backend);
                 ProcessOutcome compiled = runCliSubprocess(project, complete,
                     emptyHome, "compile",
                     project.resolve("src/main.deal").toAbsolutePath().toString(),
@@ -4273,6 +4274,32 @@ public class ProductionDispatchTest {
                     check(published.contains(stdlibModule + "." + extension),
                         "the complete " + backend + " set carries "
                             + stdlibModule + "." + extension + ": " + published);
+                }
+                List<String> deploymentCopies = new ArrayList<>(
+                    List.of("deal/runtime." + extension));
+                for (String stdlibModule : stdlibModules) {
+                    deploymentCopies.add(stdlibModule + "." + extension);
+                }
+                for (String relative : deploymentCopies) {
+                    check(Arrays.equals(
+                            Files.readAllBytes(complete.resolve(relative)),
+                            Files.readAllBytes(out.resolve(relative))),
+                        "the published " + relative + " bytes are the deployed "
+                            + "distribution bytes");
+                }
+                if (backend.equals("luajit")) {
+                    verifyPublishedSidecar(project, out, "main.deal.map.json",
+                        "src/main.deal", "build/luajit/main.lua", "main.lua",
+                        "-- ");
+                } else {
+                    String json = Files.readString(
+                        out.resolve("main.deal.map.json"));
+                    check(json.contains("\"version\": 1")
+                            && json.contains("\"source\": \"src/main.deal\"")
+                            && json.contains(
+                                "\"generated\": \"build/js/main.js\""),
+                        "the default JavaScript sidecar keeps the spec "
+                            + "version and the project-relative paths: " + json);
                 }
             }
         } finally {
