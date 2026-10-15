@@ -13,6 +13,8 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.codegen.Backend;
 import deal.codegen.SharedEmissionFailure;
+import deal.codegen.SourceMapPaths;
+import deal.codegen.SourceMapRecorder;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.FfiEmissionInput;
 import deal.codegen.lua.LuaSemanticEmitter;
@@ -709,19 +711,21 @@ public class ProductionProjectEmissionTest {
     // 2. One lowering, one emission, one staged project artifact per target
     // =========================================================================
 
-    private record UnmappedLua(String source, String stderr, Set<String> paths) {
+    private record DefaultLuaRun(String source, String stderr, Set<String> paths) {
     }
 
-    private static UnmappedLua testOneArtifactPerTarget(Fixture fixture) throws Exception {
-        System.out.println("-- one staged project artifact per target, the LuaJIT "
-            + "deployment copies, no sidecar, byte-identical repeats --");
+    private static DefaultLuaRun testOneArtifactPerTarget(Fixture fixture) throws Exception {
+        System.out.println("-- one staged project artifact per target, one sidecar "
+            + "per constituent source, the LuaJIT deployment copies, "
+            + "byte-identical repeats --");
         Path luaOut = fixture.root().resolve("lua-out");
         Path jvmOut = fixture.root().resolve("jvm-out");
         Path luaOutRepeat = fixture.root().resolve("lua-out-repeat");
-        UnmappedLua unmapped;
+        DefaultLuaRun defaultRun;
         {
-            // LuaJIT: the chunk named for the entry module plus the unchanged
-            // runtime/stdlib deployment copies.
+            // LuaJIT: the chunk named for the entry module, the v1.3 default
+            // source-map sidecar of every constituent source, and the
+            // complete runtime/stdlib deployment copies.
             PublicationStager luaStager = PublicationStager.forRoot(luaOut);
             ProductionProjectEmission.Result luaResult;
             String firstChunk;
@@ -738,29 +742,31 @@ public class ProductionProjectEmissionTest {
                 check(luaStager.stagedSet().artifact("lib.lua").isEmpty(),
                     "no per-module sibling artifact stages");
                 check(luaStager.stagedSet().artifact("deal/runtime.lua").isPresent(),
-                    "the unchanged LuaJIT runtime deployment copy stages");
+                    "the complete LuaJIT runtime deployment copy stages");
                 check(luaStager.stagedSet().artifact("std/console.lua").isPresent(),
-                    "the unchanged stdlib deployment copies stage");
-                for (String path : luaStager.stagedSet().relativePaths()) {
-                    check(!path.endsWith(".deal.map.json"),
-                        "no source-map sidecar stages: " + path);
-                }
+                    "the complete stdlib deployment copies stage");
+                check(luaStager.stagedSet().artifact("app.deal.map.json").isPresent()
+                        && luaStager.stagedSet()
+                            .artifact("lib.deal.map.json").isPresent(),
+                    "one default source-map sidecar stages per constituent source");
                 checkEq(luaStager.stagedSet().size(),
-                    1 + luaStager.stagedSet().relativePaths().stream()
+                    3 + luaStager.stagedSet().relativePaths().stream()
                         .filter(path -> path.startsWith("std/")
                             || path.equals("deal/runtime.lua")).toList().size(),
-                    "the LuaJIT staged set is the project artifact plus the "
-                        + "deployment copies");
-                unmapped = new UnmappedLua(new String(luaStager.stagedSet()
+                    "the LuaJIT staged set is the project artifact, its two "
+                        + "sidecars, and the deployment copies");
+                defaultRun = new DefaultLuaRun(new String(luaStager.stagedSet()
                     .artifact("app.lua").orElseThrow().content(),
                     StandardCharsets.UTF_8), emission.stderr(),
                     Set.copyOf(luaStager.stagedSet().relativePaths()));
-                firstChunk = unmapped.source();
+                firstChunk = defaultRun.source();
+                luaStager.publish();
             } finally {
                 luaStager.discard();
             }
 
-            // JVM: one class source, no deployment copy and no sidecar.
+            // JVM: one class source plus its per-source sidecars; no
+            // deployment copy on this target.
             PublicationStager jvmStager = PublicationStager.forRoot(jvmOut);
             ProductionProjectEmission.Result jvmResult;
             try {
@@ -769,8 +775,11 @@ public class ProductionProjectEmissionTest {
                     "the JVM production run emits: " + jvmResult.diagnostics());
                 checkEq("App.java", jvmResult.artifactRelativePath(),
                     "the JVM artifact is the entry class named by classNameFor");
-                checkEq(Set.of("App.java"), jvmStager.stagedSet().relativePaths(),
-                    "exactly one staged artifact and nothing else on the JVM");
+                checkEq(Set.of("App.java", "app.deal.map.json",
+                        "lib.deal.map.json"),
+                    jvmStager.stagedSet().relativePaths(),
+                    "the JVM stages the one entry class and one sidecar per "
+                        + "constituent source, nothing else");
                 jvmStager.publish();
             } finally {
                 jvmStager.discard();
@@ -793,7 +802,7 @@ public class ProductionProjectEmissionTest {
                 repeatStager.discard();
             }
         }
-        return unmapped;
+        return defaultRun;
     }
 
     private static void testOneMainProbe() throws Exception {
@@ -2235,15 +2244,17 @@ public class ProductionProjectEmissionTest {
     // =========================================================================
 
     private static void testSourceMapEmission(Fixture fixture, Fixture failing,
-            UnmappedLua unmapped) throws Exception {
-        System.out.println("-- an effective --source-map emits source comments and "
-            + "one sidecar per constituent module with real generated/source "
-            + "coordinates on both targets; no flag emits neither; a failing run "
-            + "preserves the previous set byte-for-byte --");
+            DefaultLuaRun defaultRun) throws Exception {
+        System.out.println("-- the default compile emits source comments and one "
+            + "sidecar per constituent module with real generated/source "
+            + "coordinates on both targets, the accepted --source-map spelling "
+            + "is identical, and a failing run preserves the previous set "
+            + "byte-for-byte --");
 
-        // (1) LuaJIT: the artifact's source comments and each constituent
-        // module's sidecar mapping agree with the real artifact and source
-        // coordinates, and no warning text is printed anymore.
+        // (1) LuaJIT: the accepted --source-map spelling emits the v1.3
+        // default debugging artifacts — the artifact's source comments and
+        // each constituent module's sidecar mapping agree with the real
+        // artifact and source coordinates, and no warning text is printed.
         Path out = fixture.root().resolve("source-map-out");
         String lua;
         Sidecar appMap;
@@ -2254,7 +2265,7 @@ public class ProductionProjectEmissionTest {
                 String stderr = emitCapturingStderr(fixture, Backend.LUAJIT,
                     stager, true).stderr();
                 checkEq("", stderr,
-                    "the effective --source-map run prints no warning");
+                    "the accepted --source-map run prints no warning");
                 check(stager.stagedSet().artifact("app.lua").isPresent(),
                     "the source-map run stages the entry module's chunk");
                 check(stager.stagedSet().artifact("app.deal.map.json").isPresent(),
@@ -2269,6 +2280,7 @@ public class ProductionProjectEmissionTest {
                 libMap = parseSidecar(new String(stager.stagedSet()
                     .artifact("lib.deal.map.json").orElseThrow().content(),
                     StandardCharsets.UTF_8));
+                stager.publish();
             } finally {
                 stager.discard();
             }
@@ -2296,15 +2308,80 @@ public class ProductionProjectEmissionTest {
             appMap.mappings().size() + libMap.mappings().size(),
             "every recorded mapping is one emitted source comment of the chunk");
 
-        // (2) The same project without the effective flag: no warning, no
-        // sidecar, and no source comment in the artifact bytes.
-        check(unmapped.paths().stream()
-                .noneMatch(path -> path.endsWith(".deal.map.json")),
-            "a compile without the effective flag stages no sidecar");
-        checkEq("", unmapped.stderr(),
-            "a compile without the flag prints no warning");
-        checkEq(0, countSourceComments(unmapped.source(), "-- "),
-            "a compile without the flag emits no source comment");
+        // (1b) The cross-module call: the caller's sidecar maps only the
+        // caller's own source text — the recorded initiating call site for
+        // the emitted foreign annotation checks — while the provider's
+        // parameter annotations map in the provider's own sidecar. The
+        // per-row comment/coordinate agreement of
+        // verifySidecarCoordinates rejects a foreign-coordinate row.
+        Fixture cross = twoModuleFixture(SYNC_CALL_APP_SOURCE);
+        try {
+            Path crossOut = cross.root().resolve("cross-map-out");
+            PublicationStager crossStager = PublicationStager.forRoot(crossOut);
+            String chunk;
+            Sidecar crossAppMap;
+            Sidecar crossLibMap;
+            try {
+                ProductionProjectEmission.Result crossResult =
+                    emit(cross, Backend.LUAJIT, crossStager, false);
+                check(crossResult.emitted(),
+                    "the cross-module call fixture emits: "
+                        + crossResult.diagnostics());
+                chunk = new String(crossStager.stagedSet()
+                    .artifact("app.lua").orElseThrow().content(),
+                    StandardCharsets.UTF_8);
+                crossAppMap = parseSidecar(new String(crossStager.stagedSet()
+                    .artifact("app.deal.map.json").orElseThrow().content(),
+                    StandardCharsets.UTF_8));
+                crossLibMap = parseSidecar(new String(crossStager.stagedSet()
+                    .artifact("lib.deal.map.json").orElseThrow().content(),
+                    StandardCharsets.UTF_8));
+            } finally {
+                crossStager.discard();
+            }
+            verifySidecarCoordinates(crossAppMap, chunk.lines().toList(),
+                SYNC_CALL_APP_SOURCE, "-- ", "src/app.deal");
+            verifySidecarCoordinates(crossLibMap, chunk.lines().toList(),
+                LIB_SOURCE, "-- ", "src/lib.deal");
+            check(hasMappingAtSourceLine(crossAppMap, 4),
+                "the caller's sidecar maps the initiating call expression's line");
+            check(crossLibMap.mappings().stream().anyMatch(mapping ->
+                    mapping.sourceLine() == 1 && mapping.sourceColumn() == 21),
+                "the provider's sidecar maps its own parameter annotation: "
+                    + crossLibMap.mappings());
+        } finally {
+            deleteRecursively(cross.root());
+        }
+
+        // (2) The default compile (no explicit spelling) publishes the same
+        // commented artifact, runtime and stdlib bytes and its own per-source
+        // sidecars with the same real coordinates: the accepted --source-map
+        // request selects nothing, so there is no no-map compile left.
+        Path defaultOut = fixture.root().resolve("lua-out");
+        checkEq("", defaultRun.stderr(),
+            "the default compile prints no warning");
+        check(defaultRun.paths().containsAll(Set.of("app.lua",
+                "app.deal.map.json", "lib.deal.map.json",
+                "deal/runtime.lua", "std/console.lua")),
+            "the default compile stages the chunk, one sidecar per "
+                + "constituent source, the runtime and the stdlib copies: "
+                + defaultRun.paths());
+        check(countSourceComments(defaultRun.source(), "-- ") > 0,
+            "the default compile's artifact carries the source comments");
+        checkEq(snapshotWithoutMapSidecars(defaultOut),
+            snapshotWithoutMapSidecars(out),
+            "the default and explicitly requested compiles publish identical "
+                + "artifact, runtime and stdlib bytes");
+        Sidecar defaultAppMap = parseSidecar(Files.readString(
+            defaultOut.resolve("app.deal.map.json"), StandardCharsets.UTF_8));
+        Sidecar defaultLibMap = parseSidecar(Files.readString(
+            defaultOut.resolve("lib.deal.map.json"), StandardCharsets.UTF_8));
+        checkEq(appMap.mappings(), defaultAppMap.mappings(),
+            "the default entry sidecar carries the same mappings as the "
+                + "explicitly requested one");
+        checkEq(libMap.mappings(), defaultLibMap.mappings(),
+            "the default library sidecar carries the same mappings as the "
+                + "explicitly requested one");
 
         // (3) JVM: the class source carries the same source comments and the
         // two sidecars map its real generated coordinates.
@@ -2318,7 +2395,7 @@ public class ProductionProjectEmissionTest {
                 String stderr = emitCapturingStderr(fixture, Backend.JVM,
                     stager, true).stderr();
                 checkEq("", stderr,
-                    "the JVM effective --source-map run prints no warning");
+                    "the accepted --source-map JVM run prints no warning");
                 check(stager.stagedSet().artifact("App.java").isPresent(),
                     "the JVM source-map run stages the one entry class");
                 javaSource = new String(stager.stagedSet().artifact("App.java")
@@ -2504,6 +2581,20 @@ public class ProductionProjectEmissionTest {
         return snapshot;
     }
 
+    /**
+     * The published tree's artifact bytes without the sidecar JSON: a
+     * sidecar embeds its own output-root-relative generated path (the
+     * pinned project-relative spelling), so two compiles of the same
+     * project into differently named roots have byte-equal artifacts but
+     * path-bearing sidecar documents.
+     */
+    private static Map<String, String> snapshotWithoutMapSidecars(Path root)
+            throws Exception {
+        Map<String, String> snapshot = snapshotTree(root);
+        snapshot.keySet().removeIf(path -> path.endsWith(".deal.map.json"));
+        return snapshot;
+    }
+
     private static final String EMITTER_LIB = """
         export class Counter { n: int = 0; }
         export function add(a: int, b: int): int { return a + b; }
@@ -2524,6 +2615,23 @@ public class ProductionProjectEmissionTest {
     private record PublishedEmitter(Fixture fixture, SemanticLowerer.ProjectLoweringResult lowering,
             Backend backend, Path out, String source) implements AutoCloseable {
         public void close() { deleteRecursively(fixture.root()); }
+    }
+
+    /**
+     * The v1.3 default source-map recorder of one published emission: the
+     * same per-module display names the production arm builds
+     * ({@code ProductionProjectEmission#sourceMapRecorder}), so a direct
+     * public-emitter call reproduces the published artifact's source
+     * comments byte-exactly.
+     */
+    private static SourceMapRecorder productionMapRecorder(PublishedEmitter published) {
+        Map<ModuleId, String> displayNames = new LinkedHashMap<>();
+        for (CheckedModuleInput module
+                : published.fixture().checkedProject().modules()) {
+            displayNames.put(module.moduleId(), SourceMapPaths.sourceDisplay(
+                module.sourceId(), published.out()));
+        }
+        return new SourceMapRecorder(displayNames);
     }
 
     private static PublishedEmitter publishedEmitter(Backend backend, String lib, String app) throws Exception {
@@ -2669,8 +2777,10 @@ public class ProductionProjectEmissionTest {
         checkEq(List.of(LIB, app), List.copyOf(project.modules().keySet()), "closure dependency order");
         checkEq(app, project.entryModule(), "project entry identity");
         String repeated = jvm ? JvmSemanticEmitter.emitProductionProject(project, result.tables(), result.registries(),
-            "App", fixture.fixture().surface()).source() : LuaSemanticEmitter.emitProductionProject(project,
-            result.tables(), result.registries(), fixture.fixture().surface());
+            "App", fixture.fixture().surface(), productionMapRecorder(fixture)).source()
+            : LuaSemanticEmitter.emitProductionProject(project,
+                result.tables(), result.registries(), fixture.fixture().surface(),
+                (FfiEmissionInput) null, productionMapRecorder(fixture));
         checkEq(source, repeated, "production API repeats published artifact byte-identically");
         int walks = source.indexOf(jvm ? "    MODULE = \"lib\";" : "__dealMain = function()");
         int libWalk = source.indexOf(jvm ? "    MODULE = \"lib\";" : "__module = \"lib\"", walks);
@@ -2990,7 +3100,7 @@ public class ProductionProjectEmissionTest {
         try {
             fixture = twoModuleFixture(APP_SOURCE);
             testJsBackendRejection(fixture);
-            UnmappedLua unmapped = testOneArtifactPerTarget(fixture);
+            DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
             failing = adapterSourceFixture();
@@ -3012,7 +3122,7 @@ public class ProductionProjectEmissionTest {
             testForLetCounterDescriptorOrigin();
             same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
-            testSourceMapEmission(fixture, failing, unmapped);
+            testSourceMapEmission(fixture, failing, defaultRun);
             testProductionEmitterLanes();
         } finally {
             deleteRecursively(externC == null ? null : externC.root());

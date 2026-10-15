@@ -128,10 +128,11 @@ public final class ProductionProjectEmission {
      * the closure guard's whole-closure step (both HOST-kind declaration
      * kinds admitted and realized) over the closure's resolved import
      * facts, the one project lowering, the one emission (with the one
-     * source-map recorder and the project's source comments when the
-     * effective source-map flag is set), the one staged project artifact
-     * with its per-module {@code .deal.map.json} sidecars, and the
-     * unchanged LuaJIT deployment copies. The caller (the phase-4 dispatch)
+     * source-map recorder: the project's source comments and per-module
+     * {@code .deal.map.json} sidecars are the v1.3 default and the
+     * accepted {@code sourceMap} spelling selects nothing — the one staged
+     * project artifact with its per-module sidecars, and the complete
+     * LuaJIT deployment copies. The caller (the phase-4 dispatch)
      * owns the arm selection, the emission record, and the publication
      * transaction; this unit stages artifacts only.
      *
@@ -196,7 +197,8 @@ public final class ProductionProjectEmission {
         ExecutableLoweredProject project = lowering.project();
 
         // (4) The one emission per target — with the one source-map
-        // recorder of the effective source-map request — then the one
+        // recorder (the v1.3 default debugging artifacts; the accepted
+        // {@code sourceMap} spelling selects nothing) — then the one
         // staged project artifact and its per-module source-map sidecars.
         // An emitter gap is E6005 SHARED_EMITTER_COVERAGE and stages
         // nothing.
@@ -206,9 +208,8 @@ public final class ProductionProjectEmission {
         String artifactRelativePath = backend == Backend.JVM
             ? jvmClassName + ".java"
             : project.entryModule().path().replace('.', '/') + ".lua";
-        SourceMapRecorder sourceMapRecorder = sourceMap
-            ? sourceMapRecorder(checkedProject, artifactRelativePath, stager)
-            : null;
+        SourceMapRecorder sourceMapRecorder =
+            sourceMapRecorder(checkedProject, artifactRelativePath, stager);
         String artifactSource;
         if (backend == Backend.JVM) {
             JvmSemanticEmitter.EmissionResult emission;
@@ -239,16 +240,14 @@ public final class ProductionProjectEmission {
         }
         stager.stage(artifactRelativePath,
             artifactSource.getBytes(StandardCharsets.UTF_8));
-        if (sourceMapRecorder != null) {
-            stageSourceMapSidecars(project, sourceMapRecorder,
-                artifactRelativePath, stager);
-        }
+        stageSourceMapSidecars(project, sourceMapRecorder,
+            artifactRelativePath, stager);
 
-        // (5) The unchanged LuaJIT deployment copies, staged from the
+        // (5) The complete LuaJIT deployment copies, staged from the
         // resolved distribution surface after the one project artifact. A
-        // missing runtime is the pinned E6000; an absent stdlib module is
-        // skipped silently (unchanged omission semantics). The JVM target
-        // stages no deployment copy.
+        // missing runtime or a missing spec-listed stdlib implementation
+        // is missing required deployment content: the pinned E6000 with
+        // nothing published. The JVM target stages no deployment copy.
         if (backend == Backend.LUAJIT) {
             Optional<DistributionHome.ResolvedSource> runtime =
                 stager.stageRuntimeCopy(RUNTIME_LUA, distributionHome);
@@ -257,9 +256,13 @@ public final class ProductionProjectEmission {
                     List.of(runtimeLibraryMissing()), null, null);
             }
             for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-                stager.stageStdlibCopy(
-                    stdlibModule.substring("std/".length()), "lua",
-                    distributionHome);
+                String implementation = stdlibModule.substring("std/".length());
+                if (stager.stageStdlibCopy(implementation, "lua",
+                        distributionHome).isEmpty()) {
+                    return new Result(Outcome.FAILED,
+                        List.of(stdlibLibraryMissing(implementation, "lua")),
+                        null, null);
+                }
             }
         }
         return new Result(Outcome.EMITTED, List.of(), project,
@@ -267,12 +270,14 @@ public final class ProductionProjectEmission {
     }
 
     /**
-     * The one source-map recorder of a source-mapping production run: one
+     * The one source-map recorder of a production run: one
      * {@link SourceMapGenerator} per constituent module with the shared
      * project-relative display source name ({@link SourceMapPaths}, the same
      * normalization the JavaScript orchestrator arm consumes), so the emitted
      * source comments and the staged sidecars carry one file spelling and a
-     * single mapping authority owns the emission.
+     * single mapping authority owns the emission. The v1.3 default debugging
+     * artifacts always install it; the accepted {@code sourceMap} request
+     * spelling does not select a recorder-less emission.
      */
     private static SourceMapRecorder sourceMapRecorder(
             CheckedProjectInput checkedProject, String artifactRelativePath,
@@ -377,6 +382,22 @@ public final class ProductionProjectEmission {
             invocation.semanticProfile(), LoweredModuleUnit.FORMAT_VERSION,
             "ProductionProjectEmission " + SHARED_EMITTER_COVERAGE + " ("
                 + gap.getMessage() + ")"), carried);
+    }
+
+    /**
+     * The pinned missing-stdlib E6000 of the deployment copies (the same
+     * synthetic error shape as the missing-runtime diagnostic): a
+     * spec-listed stdlib implementation the resolved distribution surface
+     * does not provide is missing required deployment content, never a
+     * silent omission. Shared with the JavaScript deployment copies, so
+     * every backend reports one spelling.
+     */
+    public static CompilerDiagnostic stdlibLibraryMissing(
+            String moduleName, String extension) {
+        String path = "std/" + moduleName + "." + extension;
+        return CompilerDiagnostic.syntheticError(DiagnosticCode.E6000,
+            "Stdlib module not found: " + path, "",
+            "missing anchor: stdlib module path '" + path + "'");
     }
 
     /**

@@ -1309,9 +1309,9 @@ public class CompositeTerminatorAnalysisTest {
                 check(Files.exists(artifact), fixture.relativePath() + " (LuaJIT): "
                     + "the one project artifact stages at the entry path");
                 check(artifactFiles(out).stream()
-                        .noneMatch(name -> name.endsWith(".deal.map.json")),
-                    fixture.relativePath() + " (LuaJIT): the artifact set carries no "
-                        + "source-map sidecar");
+                        .anyMatch(name -> name.endsWith(".deal.map.json")),
+                    fixture.relativePath() + " (LuaJIT): the default artifact set "
+                        + "carries the source-map sidecar");
                 if (Files.exists(artifact)) {
                     writeFileIn(out, "fixture_driver.lua", luaDriver(fixture));
                     ProcessOutcome run = runProcess(out, Map.of("DEAL_DEFER_MAIN", "1"),

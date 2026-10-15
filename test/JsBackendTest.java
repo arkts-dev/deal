@@ -2877,7 +2877,8 @@ public class JsBackendTest {
     }
 
     private static void testSourceMapSidecarsEmitted() throws Exception {
-        System.out.println("-- Orchestrator: --source-map sidecars, warning retired --");
+        System.out.println("-- Orchestrator: default and --source-map sidecars, "
+            + "warning retired --");
 
         writeFile("src/sm_main.deal",
             "export function main(): null { return null; }\n"
@@ -2923,8 +2924,9 @@ public class JsBackendTest {
             check(json.contains("\"mappings\""), "sidecar carries mappings");
         }
 
-        // Without the effective flag, no warning fires and no sidecar is
-        // written.
+        // The default compile (no explicit spelling) fires no warning and
+        // writes the same sidecar: the v1.3 default debugging artifacts are
+        // unconditional.
         Path outputDir2 = tmpDir.resolve("build/sm_js2");
         ByteArrayOutputStream captured2 = new ByteArrayOutputStream();
         try {
@@ -2942,8 +2944,18 @@ public class JsBackendTest {
         check(!captured2.toString(StandardCharsets.UTF_8).contains("source-map"),
             "no source-map warning without the explicit flag: "
                 + captured2.toString(StandardCharsets.UTF_8));
-        check(!Files.exists(outputDir2.resolve("sm_main.deal.map.json")),
-            "no .deal.map.json sidecar without the effective flag");
+        Path defaultSidecar = outputDir2.resolve("sm_main.deal.map.json");
+        check(Files.exists(defaultSidecar),
+            "the default compile writes the .deal.map.json sidecar");
+        if (Files.exists(defaultSidecar)) {
+            String json = Files.readString(defaultSidecar);
+            check(json.contains("\"version\": 1")
+                    && json.contains("\"source\": \"src/sm_main.deal\"")
+                    && json.contains(
+                        "\"generated\": \"build/sm_js2/sm_main.js\""),
+                "the default sidecar keeps the spec version and the "
+                    + "project-relative paths: " + json);
+        }
     }
 
     // =========================================================================

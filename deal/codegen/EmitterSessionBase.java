@@ -189,11 +189,13 @@ public abstract class EmitterSessionBase {
     protected int tryDepth = 0;
     /**
      * The project-wide source-map recorder of this session, or {@code null}
-     * when the compile requested no source maps. A non-null recorder makes
+     * for a direct recorder-less emitter API call. A non-null recorder makes
      * every mapped op entry emit its source comment before the generated
      * statement group and record the generated position in the owning
      * module's mapper; a null recorder emits no comment and no mapping, so
-     * the artifact bytes stay exactly the recorder-less bytes.
+     * the artifact bytes stay exactly the recorder-less bytes. The v1.3
+     * default debugging artifacts install the recorder on every production
+     * emission, so no product compile is recorder-less.
      */
     protected SourceMapRecorder sourceMapRecorder;
     /** Output-buffer prefix already counted by {@link #currentGeneratedLine()}. */
@@ -242,9 +244,10 @@ public abstract class EmitterSessionBase {
      * ({@link #sourceCommentText}); the mapping and the sidecar keep the
      * actual source name.
      *
-     * <p>A no-op when the session carries no recorder: a compile without
-     * the effective source-map request emits exactly the bytes it emitted
-     * before source comments existed.</p>
+     * <p>A no-op when the session carries no recorder (a direct recorder-less
+     * emitter API call): that emission keeps exactly the bytes it emitted
+     * before source comments existed. Every production compile installs the
+     * recorder, so no product artifact is recorder-less.</p>
      */
     protected final void beginSourceMappedGroup(SemanticOp op, String indent) {
         if (sourceMapRecorder == null) {

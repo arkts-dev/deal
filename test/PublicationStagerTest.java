@@ -169,18 +169,37 @@ public class PublicationStagerTest {
         return siblings;
     }
 
-    /** Deep byte comparison of two tree maps (same keys, same bytes). */
+    /**
+     * Deep byte comparison of two tree maps (same keys, same bytes) apart
+     * from each sidecar's {@code generated} field: a sidecar names its own
+     * output-root-relative generated artifact (the pinned project-relative
+     * spelling), so two compiles of one project into differently named roots
+     * have path-bearing sidecar documents and byte-equal artifacts.
+     */
     private static boolean treeContentEquals(Map<String, byte[]> a,
             Map<String, byte[]> b) {
         if (!a.keySet().equals(b.keySet())) {
             return false;
         }
         for (Map.Entry<String, byte[]> entry : a.entrySet()) {
-            if (!Arrays.equals(entry.getValue(), b.get(entry.getKey()))) {
+            byte[] other = b.get(entry.getKey());
+            if (entry.getKey().endsWith(".deal.map.json")) {
+                if (!normalizedSidecarText(entry.getValue())
+                        .equals(normalizedSidecarText(other))) {
+                    return false;
+                }
+            } else if (!Arrays.equals(entry.getValue(), other)) {
                 return false;
             }
         }
         return true;
+    }
+
+    /** One sidecar document with its generated-path field text normalized. */
+    private static String normalizedSidecarText(byte[] json) {
+        return new String(json, StandardCharsets.UTF_8).replaceAll(
+            "\"generated\": \"[^\"]*\"",
+            "\"generated\": \"<artifact>\"");
     }
 
     private static boolean compileProject(Path srcDir, Path outputDir,
@@ -339,12 +358,14 @@ public class PublicationStagerTest {
                 false, false, null);
             check(first, "the fresh-root LuaJIT compile succeeds");
             Set<String> expected = new LinkedHashSet<>(List.of(
-                "main.lua", "deal/runtime.lua",
+                "main.lua", "main.deal.map.json", "lib.deal.map.json",
+                "deal/runtime.lua",
                 "std/console.lua", "std/string.lua", "std/table.lua",
                 "std/json.lua", "std/math.lua", "std/time.lua"));
             check(treePaths(out).equals(expected),
-                "the fresh root contains exactly the one project artifact and "
-                    + "the deployment copies: " + treePaths(out));
+                "the fresh root contains exactly the one project artifact, "
+                    + "its default per-source sidecars and the complete "
+                    + "deployment copies: " + treePaths(out));
 
             // Delete the lib module and plant a stale sibling artifact in
             // the live root: the whole-set swap removes the stale file with
@@ -356,8 +377,11 @@ public class PublicationStagerTest {
             boolean second = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);
             check(second, "the second compile after deleting lib succeeds");
-            check(treePaths(out).equals(expected),
-                "the stale lib.lua artifact is gone (whole-set semantics): "
+            Set<String> expectedWithoutLib = new LinkedHashSet<>(expected);
+            expectedWithoutLib.remove("lib.deal.map.json");
+            check(treePaths(out).equals(expectedWithoutLib),
+                "the stale lib.lua artifact and the deleted module's stale "
+                    + "sidecar are gone (whole-set semantics): "
                     + treePaths(out));
         } finally {
             deleteTree(base);
