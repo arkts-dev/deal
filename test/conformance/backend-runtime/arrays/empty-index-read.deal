@@ -1,0 +1,13 @@
+// @spec: Arrays — Bounds behavior
+// @description: A read of an empty array at index 0 raises E8002 at the read expression
+// @expected: runtime-error E8002
+// @features: arrays, bounds, runtime
+
+export function test_array_empty_index_read(): int {
+  let xs: int[] = [];
+  return xs[0];
+}
+
+export function main(): null {
+  return null;
+}

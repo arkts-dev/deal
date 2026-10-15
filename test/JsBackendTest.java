@@ -131,6 +131,7 @@ public class JsBackendTest {
             testOwnPropertySafeProtoEmission();
             testErrorEmissionPins();
             testArrayElementDeleteEmission();
+            testArrayReadBoundsEmission();
             testHostGlobalHygiene();
             testUnsupportedConstructsRejected();
             testHostAbiEmissionPins();
@@ -2343,6 +2344,42 @@ public class JsBackendTest {
             "no bare undefined spelling anywhere in the artifact");
     }
 
+    /**
+     * The v1.3 array-read emission pin: the IIFE binds the receiver before
+     * the checked index, enforces the strict bounds gate E8002 "array index
+     * out of bounds" for {@code < 0} and {@code >= length} at the read
+     * expression, and only then reads the element. A read that evaluated
+     * the index first or gated only the negative bound fails these exact
+     * assertions.
+     */
+    private static void testArrayReadBoundsEmission() {
+        System.out.println("-- Array-read bounds emission pin --");
+
+        JsBackend.JsCodegenResult res = generate("""
+            function receiver(xs: int[]): int[] {
+              return xs;
+            }
+            export function test(): int {
+              let xs: int[] = [1, 2, 3];
+              return receiver(xs)[1];
+            }
+            """, "readbounds");
+        check(res != null && !res.hasErrors(), "array-read bounds codegen clean: "
+            + (res == null ? "<null>" : res.diagnostics()));
+        if (res == null || res.hasErrors()) return;
+
+        String js = res.source();
+        int arrPos = js.indexOf("const $arr = ");
+        int idxPos = js.indexOf("const $idx = $rt.checkInt(");
+        check(arrPos >= 0 && idxPos > arrPos,
+            "the read binds the receiver before the checked index");
+        check(js.contains("if ($idx < 0 || $idx >= $arr.length) { "
+                + "$rt.fail(\"E8002\", \"array index out of bounds\", "),
+            "the read gates both bounds with E8002 'array index out of bounds'");
+        check(js.contains("return $arr[$idx]; })()"),
+            "the read returns the raw element only after the bounds gate");
+    }
+
     private static void testHostGlobalHygiene() {
         System.out.println("-- Host-global hygiene: $rt.undefined, never bare undefined --");
 
@@ -4217,20 +4254,38 @@ public class JsBackendTest {
               let xs: (int | null)[] = [];
               xs[0] = 1;
               let v: int | null = xs[9];
-              if (v === null) { return 1; }
-              return 0;
+              if (v === null) { return 0; }
+              return 1;
             }
             """, "nil-array");
-        check(arr.exitCode() == 0 && arr.output().equals("1"),
-            "a nullable-array out-of-bounds read yields DEAL null: " + arr.output());
+        check(arr.exitCode() == 1
+                && arr.output().contains("DEAL_ERROR_CODE: E8002")
+                && arr.output().contains("array index out of bounds"),
+            "a nullable-array out-of-bounds read rejects with E8002 (bounds "
+                + "precede the nullable element decision): " + arr.output());
+
+        NodeResult inRange = runDealNode("""
+            export function test(): int {
+              let xs: (int | null)[] = [];
+              xs[0] = 1;
+              let v: int | null = xs[0];
+              if (v !== null) {
+                if (v !== 1) { return 0; }
+                return 1;
+              }
+              return 0;
+            }
+            """, "inrange-array");
+        check(inRange.exitCode() == 0 && inRange.output().equals("1"),
+            "an in-range nullable read keeps its value: " + inRange.output());
 
         NodeResult nonNull = runDealNode(
             "export function test(): int { let xs: int[] = [1]; return xs[9]; }",
             "nil-array-nonnullable");
         check(nonNull.exitCode() == 1
-                && nonNull.output().contains("DEAL_ERROR_CODE: E8001")
-                && nonNull.output().contains("expected int"),
-            "the same read at a non-nullable target rejects with E8001: "
+                && nonNull.output().contains("DEAL_ERROR_CODE: E8002")
+                && nonNull.output().contains("array index out of bounds"),
+            "the same read at a non-nullable target rejects with E8002: "
                 + nonNull.output());
     }
 

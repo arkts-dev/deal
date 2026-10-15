@@ -2568,7 +2568,8 @@ public final class JvmSemanticEmitter {
                 .append(javaString(descriptorText(descriptor))).append(", ")
                 .append(javaString(staticKind(inner))).append(", (JvmRuntime.Array) ")
                 .append(slot(payload.container())).append(", ((long[]) ")
-                .append(slot(payload.slot())).append(")[0], ")
+                .append(slot(payload.slot())).append(")[0], ((long[]) ")
+                .append(slot(payload.slot())).append(")[1], ")
                 .append(nullable ? "true" : "false").append(", ")
                 .append(javaString(originOf(op))).append(");\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);

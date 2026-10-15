@@ -1,6 +1,6 @@
-// @spec: Arrays — Bounds and nil behavior
-// @description: Out-of-bounds array index is runtime error
-// @expected: runtime-error E8001
+// @spec: Arrays — Bounds behavior
+// @description: A past-end array read raises E8002 at the read expression
+// @expected: runtime-error E8002
 // @features: arrays, bounds
 
 export function test_oob(): int {

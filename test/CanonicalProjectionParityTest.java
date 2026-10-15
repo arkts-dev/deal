@@ -405,7 +405,10 @@ public class CanonicalProjectionParityTest {
             "test_json_stringify_function_error"),
         driver("type-system/dynamic-return-e8001",
             "test_dynamic_return_runtime_error"),
-        driver("arrays/index-negative-read", "test_array_negative_read"));
+        driver("arrays/index-negative-read", "test_array_negative_read"),
+        driver("arrays/index-read-at-length", "test_array_index_at_length"),
+        driver("arrays/empty-index-read", "test_array_empty_index_read"),
+        driver("arrays/nullable-index-oob", "test_nullable_array_index_oob"));
 
     /** The host-boundary families with a corpus pin. */
     private static final List<Case> HOST_FAMILIES = List.of(
@@ -1190,15 +1193,16 @@ public class CanonicalProjectionParityTest {
             SidecarExpectations.ErrorExpectation pin) {
         switch (spec.corpusPath()) {
             case "source-location/036-runtime-source-array-oob" -> {
-                checkEq("expected int", oracle.message(), spec.what()
-                    + ": the suffix-less kind text");
-                checkEq("int", oracle.expected(), spec.what() + ": the int token");
-                checkEq("nil", oracle.actual(), spec.what()
-                    + ": the absent marker projects nil");
+                checkEq("array index out of bounds", oracle.message(), spec.what()
+                    + ": the strict v1.3 bounds text");
+                checkEq(null, oracle.expected(), spec.what()
+                    + ": the bounds arm carries no expected token");
+                checkEq(null, oracle.actual(), spec.what()
+                    + ": the bounds arm carries no actual token");
                 checkEq(Integer.valueOf(8), oracle.line(), spec.what()
-                    + ": the declaration-owned read span");
-                checkEq(Integer.valueOf(14), oracle.column(), spec.what()
-                    + ": the declaration-owned read column");
+                    + ": the read-expression span");
+                checkEq(Integer.valueOf(20), oracle.column(), spec.what()
+                    + ": the read-expression column");
             }
             case "runtime-errors/type-mismatch-e8001" -> {
                 checkEq(Integer.valueOf(6), pin.line(), spec.what()

@@ -8,18 +8,16 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/arrays/index-oob.deal\",\"line\":8,\"column\":10,\"expected\":\"int\",\"actual\":\"nil\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8002\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/arrays/index-oob.deal\",\"line\":8,\"column\":10}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
-      "code": "E8001",
-      "message": "expected int",
+      "code": "E8002",
+      "message": "array index out of bounds",
       "sourceFile": "backend-runtime/arrays/index-oob.deal",
       "line": 8,
-      "column": 10,
-      "expected": "int",
-      "actual": "nil"
+      "column": 10
     }
   }
 }

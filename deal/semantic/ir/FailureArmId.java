@@ -40,7 +40,7 @@ public enum FailureArmId {
 
     // array cells
     ARRAY_ELEMENT_KIND,
-    ARRAY_READ_NEGATIVE_INDEX,
+    ARRAY_READ_BOUNDS,
     ARRAY_WRITE_BOUNDS,
     ARRAY_DELETE_BOUNDS,
 

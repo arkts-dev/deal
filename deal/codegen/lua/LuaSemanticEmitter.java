@@ -10531,10 +10531,10 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
                            container, slotName, nullable, wantsNumber, origin)
   local index = slotName.i
   local elem = __MISSING
-  if index < 0 then
+  if index < 0 or index >= slotName.n then
     __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom("missing", __MISSING)},
       nil, nil)
-    local e = __arm("ARRAY_READ_NEGATIVE_INDEX", nil, origin, nil, nil)
+    local e = __arm("ARRAY_READ_BOUNDS", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     __ev(opKey, "FAILURE", "INDEX_READ", digest, parent, {}, nil, __errtext(e))
     error(e, 0)

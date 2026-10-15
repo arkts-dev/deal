@@ -3883,6 +3883,201 @@ public class ProductionDispatchTest {
 
 
     // =========================================================================
+    // ISSUE-0786: the strict v1.3 array-read contract on the three
+    // production artifacts
+    // =========================================================================
+
+    /**
+     * The v1.3 ArrayReadV13 flight on the three real production artifacts:
+     * one module asserts, under its own TEST_FAIL guards, receiver-then-index
+     * single evaluation, the E8002 bounds gate at the read expression with
+     * the prior receiver/index effects retained, the empty and
+     * nullable-element bounds cases, the in-range null/missing typed results,
+     * and the unchanged append-at-length write with commit-nothing-on-failure.
+     * The compiled artifact must print exactly {@code ok} with empty stderr
+     * and exit 0 under node, luajit, and java, so a regression in any
+     * consumer fails its own assertion there, never a skipped leg.
+     */
+    private static final String ARRAY_READ_V13_SOURCE = """
+        import * as c from "std/console";
+
+        class Log {
+          seq: int[] = [];
+        }
+
+        function record(l: Log, tag: int): int {
+          l.seq[l.seq.length] = tag;
+          return tag;
+        }
+
+        function pick(l: Log, tag: int): int[] {
+          record(l, tag);
+          return [10, 20, 30];
+        }
+
+        export function main(): null {
+          // Receiver then index, once each, in-range value.
+          let l: Log = { seq: [] };
+          let v: int = pick(l, 1)[record(l, 2)];
+          if (l.seq.length !== 2) {
+            throw { code: "TEST_FAIL", message: "read must evaluate receiver and index once each" };
+          }
+          if (l.seq[0] !== 1 || l.seq[1] !== 2) {
+            throw { code: "TEST_FAIL", message: "read order must be receiver then index" };
+          }
+          if (v !== 30) {
+            throw { code: "TEST_FAIL", message: "in-range read value mismatch" };
+          }
+
+          // Bounds failure retains the prior operand effects.
+          let l2: Log = { seq: [] };
+          let boundsCode: string = "";
+          try {
+            let bad: int = pick(l2, 1)[record(l2, 2) + 4];
+            boundsCode = "NOFAIL";
+          } catch (e) {
+            boundsCode = e.code;
+          }
+          if (boundsCode !== "E8002") {
+            throw { code: "TEST_FAIL", message: "out-of-range read must raise E8002" };
+          }
+          if (l2.seq.length !== 2 || l2.seq[0] !== 1 || l2.seq[1] !== 2) {
+            throw { code: "TEST_FAIL", message: "bounds failure must retain prior effects" };
+          }
+
+          // Every element descriptor: nullable and empty arrays.
+          let nullable: (int | null)[] = [1, null, 3];
+          let nullableCode: string = "";
+          try {
+            let bad: int | null = nullable[3];
+            nullableCode = "NOFAIL";
+          } catch (e) {
+            nullableCode = e.code;
+          }
+          if (nullableCode !== "E8002") {
+            throw { code: "TEST_FAIL", message: "nullable out-of-range read must raise E8002" };
+          }
+          let empty: int[] = [];
+          let emptyCode: string = "";
+          try {
+            let bad: int = empty[0];
+            emptyCode = "NOFAIL";
+          } catch (e) {
+            emptyCode = e.code;
+          }
+          if (emptyCode !== "E8002") {
+            throw { code: "TEST_FAIL", message: "empty-array read must raise E8002" };
+          }
+
+          // In-range null and deleted slots keep their typed results.
+          if (nullable[1] !== null) {
+            throw { code: "TEST_FAIL", message: "in-range null element must stay null" };
+          }
+          let inRange: int | null = nullable[2];
+          if (inRange !== null) {
+            if (inRange !== 3) {
+              throw { code: "TEST_FAIL", message: "in-range nullable value mismatch" };
+            }
+          } else {
+            throw { code: "TEST_FAIL", message: "in-range nullable value lost" };
+          }
+          let deletedNullable: (int | null)[] = [1, 2, 3];
+          delete deletedNullable[1];
+          if (deletedNullable[1] !== null) {
+            throw { code: "TEST_FAIL", message: "in-range deleted nullable slot must read null" };
+          }
+          let plain: int[] = [7];
+          delete plain[0];
+          let deletedCode: string = "";
+          try {
+            let bad: int = plain[0];
+            deletedCode = "NOFAIL";
+          } catch (e) {
+            deletedCode = e.code;
+          }
+          if (deletedCode !== "E8001") {
+            throw { code: "TEST_FAIL", message: "in-range deleted non-nullable slot must keep E8001" };
+          }
+
+          // Writes: append at length, one commit, nothing on failure.
+          let writes: int[] = [7];
+          let alias: int[] = writes;
+          writes[writes.length] = 8;
+          if (writes.length !== 2 || alias[1] !== 8) {
+            throw { code: "TEST_FAIL", message: "append-at-length write lost" };
+          }
+          let badValue: table = { bad: "not-int" };
+          let writeCode: string = "";
+          try {
+            writes[0] = badValue.bad;
+            writeCode = "NOFAIL";
+          } catch (e) {
+            writeCode = e.code;
+          }
+          if (writeCode !== "E8001") {
+            throw { code: "TEST_FAIL", message: "failed element write must raise E8001" };
+          }
+          if (writes[0] !== 7 || writes.length !== 2) {
+            throw { code: "TEST_FAIL", message: "failed write must commit nothing" };
+          }
+
+          c.log("ok");
+          return null;
+        }
+        """;
+
+    private static void testArrayReadV13ProductionDrive() throws Exception {
+        System.out.println("-- the v1.3 array-read contract on the three "
+            + "production artifacts --");
+        for (String backend : List.of("js", "luajit", "jvm")) {
+            Path project = Files.createTempDirectory(
+                "array-read-v13-" + backend + "-");
+            try {
+                write(project, "deal.json", switch (backend) {
+                    case "js" -> DEAL_JSON_JS;
+                    case "luajit" -> DEAL_JSON_LUA;
+                    default -> DEAL_JSON_JVM;
+                });
+                write(project, "src/main.deal", ARRAY_READ_V13_SOURCE);
+                ProjectOutcome compile = productionCompile(project, "src/main.deal",
+                    "out");
+                check(compile.exitCode() == 0, "the " + backend
+                    + " v1.3 array-read compile succeeds: " + compile.stderr());
+                if (compile.exitCode() != 0) {
+                    continue;
+                }
+                Path out = project.resolve("out");
+                switch (backend) {
+                    case "js" -> checkSiblingStdout("v1.3 array read", "node",
+                        boundedRun(out, "node", "main.js"));
+                    case "luajit" -> checkSiblingStdout("v1.3 array read", "luajit",
+                        boundedRun(out, "luajit", "main.lua"));
+                    default -> checkArrayReadJvmRun(project, out);
+                }
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
+    /** The v1.3 array-read JVM leg: javac then java on the published artifact. */
+    private static void checkArrayReadJvmRun(Path project, Path out)
+            throws Exception {
+        String classpath = absoluteClasspath();
+        BoundedProcess.BoundedResult javac = boundedRun(project, "javac",
+            "--release", "25", "-proc:none", "-cp", classpath, "-d",
+            out.toString(), out.resolve("Main.java").toString());
+        check(javac.exitCode() == 0, "the v1.3 array read JVM artifact"
+            + " compiles: " + boundedOutput(javac));
+        if (javac.exitCode() != 0) {
+            return;
+        }
+        checkSiblingStdout("v1.3 array read", "java", boundedRun(out, "java",
+            "-cp", out + File.pathSeparator + classpath, "Main"));
+    }
+
+
+    // =========================================================================
     // ISSUE-0756: the v1.2 corner-case corpus production drive
     // =========================================================================
 
@@ -4907,6 +5102,7 @@ public class ProductionDispatchTest {
         testSourceMapDirectEmissionGroups();
         testFailClosedStagesNothingWithDumps();
         testV12SplitCaptureControls();
+        testArrayReadV13ProductionDrive();
         testV12CornerCaseCorpusProductionDrive();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

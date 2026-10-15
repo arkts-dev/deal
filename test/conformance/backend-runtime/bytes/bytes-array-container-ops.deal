@@ -1,5 +1,5 @@
 // @spec: Bytes — Byte indexing and buffer semantics
-// @description: The JVM bytes container layer (ISSUE-0160 step 2): bytes[] and (bytes | null)[] construct from literals, read and mutate buffers through the shared wrapper, append at i == length with identity-stable growth every alias observes, store and accept the DEAL null element in the OrNull form, and pin the plain-form past-end E8001 and the negative-index E8002 shapes (v1.2)
+// @description: The JVM bytes container layer (ISSUE-0160 step 2): bytes[] and (bytes | null)[] construct from literals, read and mutate buffers through the shared wrapper, append at i == length with identity-stable growth every alias observes, store and accept the DEAL null element in the OrNull form, and pin the strict v1.3 array-read bounds E8002 for the past-end and negative-index shapes of both element forms
 // @expected: runtime-ok
 // @features: bytes, arrays, runtime, v1.2
 
@@ -58,23 +58,27 @@ export function test_bytes_array_container_ops(): null {
   } else {
     throw { code: "TEST_FAIL", message: "(bytes | null)[] value element lost on re-read" };
   }
-  let past: bytes | null = ys[9];
-  if (past !== null) {
-    throw { code: "TEST_FAIL", message: "(bytes | null)[] past-end read must yield the DEAL null" };
-  }
-  // The plain-form element policy rejects the past-end null at the
-  // typed bytes target with E8001 (LuaJIT's check_type("bytes", nil)
-  // boundary failure shape).
+  // A past-end read of either element form is the strict v1.3 array
+  // bounds failure: E8002 at the read expression, never a language null
+  // and never the element descriptor check.
   try {
-    let z: bytes = xs[9];
-    throw { code: "TEST_FAIL", message: "expected E8001 before completing" };
+    let past: bytes | null = ys[9];
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (e) {
-    if (e.code !== "E8001") {
-      throw { code: "TEST_FAIL", message: "expected E8001, got " + e.code };
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
     }
   }
-  // A negative index raises E8002 in both element forms (LuaJIT emits
-  // the negative-index check unconditionally at the read).
+  try {
+    let z: bytes = xs[9];
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+  } catch (e) {
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    }
+  }
+  // A negative index raises E8002 in both element forms (the strict
+  // bounds check runs unconditionally at the read).
   try {
     let z: bytes = xs[-1];
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };

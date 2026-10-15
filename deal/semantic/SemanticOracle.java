@@ -3494,24 +3494,27 @@ public final class SemanticOracle {
                 case NormalizedSlot.ArraySlot array -> {
                     Value.ArrayValue target = (Value.ArrayValue) container;
                     int index = array.index();
+                    int length = readLengthOf(op, payload.slot());
                     Value read;
-                    if (index < 0) {
-                        read = Value.MissingValue.INSTANCE; // E8002 before any read
+                    if (index < 0 || index >= length) {
+                        // The cell's pinned E8002 before any storage
+                        // access or element/result validation.
+                        read = Value.MissingValue.INSTANCE;
                     } else if (index < target.elements().size()) {
                         read = target.elements().get(index);
                     } else {
                         read = Value.MissingValue.INSTANCE;
                     }
                     Value checked = runBoundaryChild(boundary, read,
-                        BoundaryContext.arrayIndex(index));
+                        BoundaryContext.arrayRead(index, length));
                     if (checked instanceof Value.MissingValue
                             && descriptor instanceof RuntimeDescriptor.Nullable) {
                         checked = Value.NullValue.INSTANCE;
                     }
-                    // A missing read publishes missing: the consuming
-                    // contextual boundary/operand decides E8001/null
-                    // (the comparison operands' missing≡null rule, the
-                    // declaration boundary's E8001 projection).
+                    // An in-range missing read publishes missing: the
+                    // consuming contextual boundary/operand decides
+                    // E8001/null (the comparison operands' missing≡null
+                    // rule, the declaration boundary's E8001 projection).
                     return publish(op, checked);
                 }
                 case NormalizedSlot.BytesSlot bytes -> {
@@ -3555,9 +3558,10 @@ public final class SemanticOracle {
         }
 
         /**
-         * The bytes read's length operand (K6 item 3): the read's own
-         * length read — the {@code INDEX_NORMALIZE} child that produced the
-         * read's slot carries the {@code ARRAY_LENGTH} result as its
+         * The read's length operand (K6 item 3 for bytes, the array-read
+         * bounds context for arrays): the read's own length read — the
+         * {@code INDEX_NORMALIZE} child that produced the read's slot
+         * carries the {@code ARRAY_LENGTH} result as its
          * {@code currentLength}, and the cell consumes exactly that value.
          * A missing normalize/length operand is a producer defect.
          */

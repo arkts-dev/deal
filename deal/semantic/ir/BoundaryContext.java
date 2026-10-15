@@ -24,9 +24,17 @@ public record BoundaryContext(
         return new BoundaryContext(oneBasedParameterIndex, null, null, null, null);
     }
 
-    /** The {@code ARRAY_READ_INDEX_THEN_DESCRIPTOR} context: the read index. */
-    public static BoundaryContext arrayIndex(int index) {
-        return new BoundaryContext(null, index, null, null, null);
+    /**
+     * The {@code ARRAY_READ_INDEX_THEN_DESCRIPTOR} context: the read index
+     * and the current logical array length at check time. Both bounds are
+     * checked ({@code index < 0} or {@code index >= length} is the pinned
+     * E8002 before any storage access or element/result validation).
+     */
+    public static BoundaryContext arrayRead(int index, int length) {
+        if (length < 0) {
+            throw new IllegalArgumentException("length must be >= 0, got " + length);
+        }
+        return new BoundaryContext(null, index, length, null, null);
     }
 
     /** The {@code ARRAY_WRITE_BOUNDS_THEN_ELEMENT}/{@code ARRAY_DELETE_BOUNDS}

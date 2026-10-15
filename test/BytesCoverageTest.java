@@ -930,24 +930,26 @@ public class BytesCoverageTest {
 
     /**
      * The missing-RHS byte write: an in-bounds byte write whose int-typed
-     * RHS is a past-end int-array read. The array read deliberately passes
-     * the absent view through to its consuming boundary, so the write's
-     * BYTE_ELEMENT_ASSIGNMENT descriptor check renders the E8001
-     * {@code expected int} row with actual {@code nil} — at the boundary's
-     * own origin (the index expression), never at a matcher-internal
-     * placeholder.
+     * RHS is the read of an in-range deleted int-array slot. The array
+     * read deliberately passes the absent in-range view through to its
+     * consuming boundary (an out-of-range read is now the read's own
+     * E8002), so the write's BYTE_ELEMENT_ASSIGNMENT descriptor check
+     * renders the E8001 {@code expected int} row with actual {@code nil} —
+     * at the boundary's own origin (the index expression), never at a
+     * matcher-internal placeholder.
      */
     private static final String MISSING_RHS_TUPLE_SOURCE = """
         export function main(): null {
           let b: bytes = bytes(1);
-          let xs: int[] = [];
-          b[0] = xs[1];
+          let xs: int[] = [1];
+          delete xs[0];
+          b[0] = xs[0];
           return null;
         }
         """;
 
     /** The raw source coordinate of the tuple fixture's write (the index expression). */
-    private static final int MISSING_RHS_LINE = 4;
+    private static final int MISSING_RHS_LINE = 5;
     private static final int MISSING_RHS_COLUMN = 3;
 
     /**
@@ -959,9 +961,10 @@ public class BytesCoverageTest {
     private static final String MISSING_RHS_STORAGE_SOURCE = """
         export function main(): null {
           let b: bytes = bytes(1);
-          let xs: int[] = [];
+          let xs: int[] = [1];
+          delete xs[0];
           try {
-            b[0] = xs[1];
+            b[0] = xs[0];
             throw { code: "TEST_FAIL", message: "the missing RHS must fail E8001" };
           } catch (e) {
             if (e.code !== "E8001" || e.message !== "expected int") {

@@ -1,5 +1,5 @@
 // @spec: Bytes — Byte indexing and buffer semantics
-// @description: Nested bytes closure (ISSUE-0160 container step): bytes[][] reads and writes at depth through the shared nested-array carriers, append growth with alias visibility at the outer level, the bytes[] | null outer null and value, the ((bytes | null)[])[] deep composition with null and real innermost elements, and the nested past-end E8001 / negative-index E8002 shapes (v1.2)
+// @description: Nested bytes closure (ISSUE-0160 container step): bytes[][] reads and writes at depth through the shared nested-array carriers, append growth with alias visibility at the outer level, the bytes[] | null outer null and value, the ((bytes | null)[])[] deep composition with null and real innermost elements, and the strict v1.3 array-read bounds E8002 for the nested past-end and negative-index shapes
 // @expected: runtime-ok
 // @features: bytes, arrays, nullable, runtime, v1.2
 
@@ -78,14 +78,15 @@ export function test_bytes_nested_arrays(): null {
   } else {
     throw { code: "TEST_FAIL", message: "deep composition value element lost" };
   }
-  // Nested past-end read: the null the outer read yields is rejected
-  // by the bytes[] element-typed boundary with E8001.
+  // Nested past-end read: the strict v1.3 array bounds failure E8002 at
+  // the read expression, never a null flowing into the element-typed
+  // boundary.
   try {
     let bad: bytes[] = m[9];
-    throw { code: "TEST_FAIL", message: "expected E8001 before completing" };
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (e) {
-    if (e.code !== "E8001") {
-      throw { code: "TEST_FAIL", message: "expected E8001, got " + e.code };
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
     }
   }
   // Nested negative index raises E8002 at the read.

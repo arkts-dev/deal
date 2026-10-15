@@ -3208,16 +3208,23 @@ public final class JvmRuntime {
     // Array read/bounds cells (shared slot-space context)
     // =========================================================================
 
-    /** The ARRAY_ELEMENT_READ cell: negative E8002 first, then the contextual decision. */
+    /**
+     * The ARRAY_ELEMENT_READ cell: the pinned E8002 bounds check
+     * ({@code index < 0} or {@code index >= length}) before any storage
+     * access, then the contextual decision. The read's own normalize-time
+     * length operand is the current logical length, so the check matches
+     * the shared bounds contract on every consumer.
+     */
     public static Object arrayRead(String opKey, String digest, String parent,
                                    String bKey, String bDigest, String bParent,
                                    String desc, String inner, Array container,
-                                   long index, boolean nullable, String origin) {
+                                   long index, long length, boolean nullable,
+                                   String origin) {
         Object elem = MISSING;
-        if (index < 0) {
+        if (index < 0 || index >= length) {
             ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
                 List.of(atom(MISSING, "missing")), null, null);
-            DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_READ_NEGATIVE_INDEX,
+            DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS,
                 java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent,
                 List.of(), null, errtext(e));
@@ -3225,7 +3232,7 @@ public final class JvmRuntime {
                 List.of(), null, errtext(e));
             throw e;
         }
-        if (index < container.length && index < container.elements.size()) {
+        if (index < container.elements.size()) {
             elem = container.elements.get((int) index);
         }
         // A present null element stays null (the slot was stored with a

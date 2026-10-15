@@ -3513,26 +3513,25 @@ public final class JsBackend {
     }
 
     /**
-     * Index expression. Array reads emit the {@code $rt.checkInt} index
-     * check, the E8002 "negative array index" fail for negative indexes,
-     * and the raw element read — an out-of-bounds read yields the
+     * Index expression. Array reads evaluate the receiver, then the index
+     * (checked) exactly once, then enforce the strict v1.3 bounds gate
+     * E8002 "array index out of bounds" for {@code $idx < 0} or
+     * {@code $idx >= $arr.length} at the read expression, and only then
+     * read the raw element — an in-range deleted/missing slot yields the
      * nil-equivalent {@code undefined}, which the contextual target check
      * decides (nullable → DEAL null via {@code $rt.checkNullable};
      * non-nullable → E8001) (js-backend-architecture D3/D6). Table
-     * reads are Map {@code .get} calls. The arrow IIFE evaluates the
-     * index (checked) before the container — the retained LuaJIT AST
-     * emitter's exact {@code emitIndex} pinned sequence: evaluate the
-     * index, run {@code checkInt}, raise E8002 for a negative index, and only
-     * then evaluate the container and read. An await-bearing
-     * container or index cannot land inside a non-async closure (node
-     * rejects {@code await} in non-async function bodies at load), so
-     * the await-bearing form keeps the operands inline inside an async
-     * arrow IIFE that the enclosing level awaits — the body re-runs the
-     * pinned sequence, so the awaited index runs and the E8002 gate
-     * fires before an await-bearing container evaluates (the reference
-     * raises E8002 before the container's side effects run), never
-     * with hoisted IIFE arguments that would evaluate the container
-     * before the gate.
+     * reads are Map {@code .get} calls. The arrow IIFE binds the receiver
+     * first so the emitted order is DEAL's strict left-to-right evaluation
+     * order (receiver then index; an earlier operand's failure suppresses
+     * the later operand), never the superseded index-first sequence. An
+     * await-bearing container or index cannot land inside a non-async
+     * closure (node rejects {@code await} in non-async function bodies at
+     * load), so the await-bearing form keeps the operands inline inside an
+     * async arrow IIFE that the enclosing level awaits — the body runs the
+     * same receiver-then-index sequence, and the E8002 gate fires before
+     * any element read, never with hoisted IIFE arguments that would
+     * evaluate an operand before its turn.
      */
     private String emitIndex(IndexExpr idx) {
         Type containerType = typeOf(idx.array());
@@ -3543,15 +3542,17 @@ public final class JsBackend {
             boolean hasAwait = containsAwait(idx.array())
                 || containsAwait(idx.index());
             if (!hasAwait) {
-                return "(() => { const $idx = $rt.checkInt(" + index + ", "
-                    + spanArgs(span) + "); if ($idx < 0) { "
-                    + "$rt.fail(\"E8002\", \"negative array index\", "
-                    + spanArgs(span) + "); } return " + arr + "[$idx]; })()";
+                return "(() => { const $arr = " + arr
+                    + "; const $idx = $rt.checkInt(" + index + ", "
+                    + spanArgs(span) + "); if ($idx < 0 || $idx >= $arr.length) { "
+                    + "$rt.fail(\"E8002\", \"array index out of bounds\", "
+                    + spanArgs(span) + "); } return $arr[$idx]; })()";
             }
-            return "(await (async () => { const $idx = $rt.checkInt("
-                + index + ", " + spanArgs(span) + "); if ($idx < 0) { "
-                + "$rt.fail(\"E8002\", \"negative array index\", "
-                + spanArgs(span) + "); } return " + arr + "[$idx]; })())";
+            return "(await (async () => { const $arr = " + arr
+                + "; const $idx = $rt.checkInt(" + index + ", "
+                + spanArgs(span) + "); if ($idx < 0 || $idx >= $arr.length) { "
+                + "$rt.fail(\"E8002\", \"array index out of bounds\", "
+                + spanArgs(span) + "); } return $arr[$idx]; })())";
         }
         if (containerType instanceof Type.Table) {
             return arr + ".get(" + index + ")";

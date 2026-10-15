@@ -85,10 +85,12 @@ public final class FailureContractRegistry {
 
         rows.put(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
             makeRow(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
-                List.of("negative array index"), List.of(),
+                List.of("array index out of bounds"), List.of(),
                 ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
-                "negative index first, then read missing and let the contextual boundary decide "
-                    + "E8001/null"));
+                "index < 0 or >= length first, then the in-range read and the contextual "
+                    + "boundary's typed-result decision (missing→null for a nullable "
+                    + "descriptor, the contextual E8001 projection otherwise); reads never "
+                    + "mutate storage"));
 
         rows.put(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
             makeRow(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, DiagnosticCode.E8002,
@@ -366,7 +368,7 @@ public final class FailureContractRegistry {
             FailureArm.ActualProjection.TYPED_BOUNDARY,
             FailureArm.OriginConvention.BOUNDARY_CELL, FailureArm.RenderScope.TOP_LEVEL,
             "oneBasedIndex", FailureArm.ParameterSource.ONE_BASED_INDEX));
-        declared.add(arm(FailureArmId.ARRAY_READ_NEGATIVE_INDEX,
+        declared.add(arm(FailureArmId.ARRAY_READ_BOUNDS,
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, 0,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.READ_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));

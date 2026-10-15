@@ -2228,13 +2228,13 @@ public class FailureArmAuthorityTest {
             "the multi-code row's value-range arm pins its own E8013");
         // The oracle's shared executor renders each reachable bounds arm.
         checkEq(null, firstDifferingField(
-            tupleOf(FailureContractRegistry.render(FailureArmId.ARRAY_READ_NEGATIVE_INDEX,
+            tupleOf(FailureContractRegistry.render(FailureArmId.ARRAY_READ_BOUNDS,
                 Map.of(), null, null, null), span),
             tupleOf(oracleFailure(BoundaryExecutor.check(
                 FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
                 RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofInt(0),
-                BoundaryContext.arrayIndex(-1)), "the negative-index read"), span)),
-            "the oracle renders ARRAY_READ_NEGATIVE_INDEX");
+                BoundaryContext.arrayRead(-1, 1)), "the out-of-range read"), span)),
+            "the oracle renders ARRAY_READ_BOUNDS");
         checkEq(null, firstDifferingField(
             tupleOf(FailureContractRegistry.render(FailureArmId.ARRAY_WRITE_BOUNDS,
                 Map.of(), null, null, null), span),

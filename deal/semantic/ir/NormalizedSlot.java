@@ -18,9 +18,12 @@ import java.util.Objects;
  *       append idiom {@code xs[xs.length] = v} normalizes to
  *       {@code append = true}). Negative and out-of-range indices are
  *       represented exactly — the computation never fails and never
- *       enforces bounds: negative/out-of-range enforcement happens only in
- *       the named boundary policies ({@code ARRAY_READ_INDEX_THEN_DESCRIPTOR},
- *       {@code ARRAY_WRITE_BOUNDS_THEN_ELEMENT},
+ *       enforces bounds: the read policy
+ *       ({@code ARRAY_READ_INDEX_THEN_DESCRIPTOR}) validates
+ *       {@code 0 <= index < currentLength} before any storage access or
+ *       element/result validation, and negative/out-of-range enforcement
+ *       for the other modes happens only in the named boundary policies
+ *       ({@code ARRAY_WRITE_BOUNDS_THEN_ELEMENT},
  *       {@code ARRAY_DELETE_BOUNDS}), never in the normalize.</li>
  *   <li>Table modes → {@link TableSlot} — {@code {key: string}}. The key is
  *       total over lowering-reachable targets: A-D10's E3018 checker gate

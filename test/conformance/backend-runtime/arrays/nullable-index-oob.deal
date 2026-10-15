@@ -1,0 +1,14 @@
+// @spec: Arrays — Bounds behavior
+// @description: A past-end read of a nullable-element array raises E8002, never a language null
+// @expected: runtime-error E8002
+// @features: arrays, bounds, nullable, runtime
+
+export function test_nullable_array_index_oob(): int {
+  let xs: (int | null)[] = [1, null, 3];
+  let v: int | null = xs[3];
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

@@ -351,14 +351,25 @@ public final class BoundaryExecutor {
         };
     }
 
-    /** ARRAY_READ_INDEX_THEN_DESCRIPTOR: negative index first, otherwise pass through. */
+    /**
+     * ARRAY_READ_INDEX_THEN_DESCRIPTOR: the pinned E8002 bounds check
+     * ({@code index < 0} or {@code index >= length}) before any storage
+     * access or element/result validation; an in-range read passes the
+     * value/missing view through to the contextual boundary.
+     */
     private static BoundaryOutcome checkArrayRead(BoundaryValueView view,
                                                   BoundaryContext context) {
         Integer index = requireContextField(context.index(), "index",
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR");
-        if (index < 0) {
+        Integer length = requireContextField(context.length(), "length",
+            "ARRAY_READ_INDEX_THEN_DESCRIPTOR");
+        if (length < 0) {
+            throw new Defect("ARRAY_READ_INDEX_THEN_DESCRIPTOR names a non-negative array "
+                + "length; got " + length);
+        }
+        if (index < 0 || index >= length) {
             return new BoundaryOutcome.Fail(FailureContractRegistry.render(
-                FailureArmId.ARRAY_READ_NEGATIVE_INDEX, new LinkedHashMap<>(), null, null,
+                FailureArmId.ARRAY_READ_BOUNDS, new LinkedHashMap<>(), null, null,
                 null));
         }
         // The read's value/missing decision is the contextual boundary's,

@@ -103,6 +103,8 @@ public class BoundaryExecutorTest {
         DescriptorService.describe(new Type.Array(new Type.Array(Type.Int.INSTANCE)));
     private static final RuntimeDescriptor NULLABLE_STRING =
         DescriptorService.describe(new Type.Nullable(Type.String.INSTANCE));
+    private static final RuntimeDescriptor NULLABLE_INT =
+        DescriptorService.describe(new Type.Nullable(Type.Int.INSTANCE));
     private static final RuntimeDescriptor.Func SYNC_INT_TO_STRING = (RuntimeDescriptor.Func)
         DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE));
     private static final RuntimeDescriptor.Func SYNC_INT_TO_INT = (RuntimeDescriptor.Func)
@@ -917,28 +919,76 @@ public class BoundaryExecutorTest {
     }
 
     static void testArrayReadCell() {
-        System.out.println("-- ARRAY_READ_INDEX_THEN_DESCRIPTOR: negative index first --");
+        System.out.println("-- ARRAY_READ_INDEX_THEN_DESCRIPTOR: strict bounds first --");
 
+        // The pinned E8002 for both bounds: index < 0 and index >= length,
+        // including the empty array (length 0), with no expected/actual and
+        // no metadata. The read view is irrelevant: an out-of-range read
+        // fails before any element/result validation even when the view
+        // holds an otherwise-admissible value.
         expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.arrayIndex(-1)),
+                BoundaryValueView.ofInt(3), BoundaryContext.arrayRead(-1, 3)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
-            "negative array index", null, null, new LinkedHashMap<>(), null,
-            "read index -1");
+            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "read index -1, length 3");
+        expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
+                BoundaryValueView.of(ActualKind.MISSING),
+                BoundaryContext.arrayRead(3, 3)),
+            FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
+            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "read index 3, length 3");
+        expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
+                BoundaryValueView.of(ActualKind.MISSING),
+                BoundaryContext.arrayRead(7, 3)),
+            FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
+            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "read index 7, length 3");
+        expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
+                BoundaryValueView.of(ActualKind.MISSING),
+                BoundaryContext.arrayRead(0, 0)),
+            FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
+            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "read index 0 of an empty array");
 
-        // Otherwise the cell passes through: the read's value/missing decision
-        // is the contextual boundary's, not this cell's.
+        // A nullable descriptor is bounds-checked identically: the
+        // out-of-range read is E8002, never a language null.
+        expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
+                NULLABLE_INT,
+                BoundaryValueView.ofInt(3), BoundaryContext.arrayRead(2, 1)),
+            FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
+            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "nullable read index 2, length 1");
+
+        // In-range reads pass through: the read's value/missing decision
+        // (including a legitimate null vs an in-range deleted slot) is the
+        // contextual boundary's, not this cell's.
         BoundaryValueView ok = BoundaryValueView.ofInt(3);
-        BoundaryOutcome zeroOutcome = checkCell(
-            FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT, ok,
-            BoundaryContext.arrayIndex(0));
-        expectPass(zeroOutcome, "read index 0");
-        check(((BoundaryOutcome.Pass) zeroOutcome).value() == ok, "read pass unchanged");
-        expectPass(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
-            ok, BoundaryContext.arrayIndex(7)), "read index 7 passes through");
+        for (int index : new int[] {0, 2}) {
+            BoundaryOutcome outcome = checkCell(
+                FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT, ok,
+                BoundaryContext.arrayRead(index, 3));
+            expectPass(outcome, "read index " + index + " of length 3");
+            check(((BoundaryOutcome.Pass) outcome).value() == ok,
+                "read pass unchanged at index " + index);
+        }
+        expectPass(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
+            NULLABLE_INT, BoundaryValueView.nullView(),
+            BoundaryContext.arrayRead(0, 1)), "nullable present null read passes");
+        expectPass(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
+            NULLABLE_INT, BoundaryValueView.of(ActualKind.MISSING),
+            BoundaryContext.arrayRead(0, 1)), "nullable deleted in-range slot passes");
 
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
                 BoundaryValueView.ofInt(3), BoundaryContext.none()),
-            "ARRAY_READ_INDEX_THEN_DESCRIPTOR without index");
+            "ARRAY_READ_INDEX_THEN_DESCRIPTOR without index/length");
+        expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
+                BoundaryValueView.ofInt(3),
+                new BoundaryContext(null, 0, null, null, null)),
+            "ARRAY_READ_INDEX_THEN_DESCRIPTOR without length");
+        expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
+                BoundaryValueView.ofInt(3),
+                new BoundaryContext(null, 0, -1, null, null)),
+            "ARRAY_READ_INDEX_THEN_DESCRIPTOR with a negative length");
     }
 
     static void testArrayWriteCell() {

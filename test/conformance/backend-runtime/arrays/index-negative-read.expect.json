@@ -8,13 +8,13 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8002\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"negative array index\",\"sourceFile\":\"backend-runtime/arrays/index-negative-read.deal\",\"line\":8,\"column\":10}\n",
+      "stdout": "DEAL_ERROR_CODE: E8002\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/arrays/index-negative-read.deal\",\"line\":8,\"column\":10}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8002",
-      "message": "negative array index",
+      "message": "array index out of bounds",
       "sourceFile": "backend-runtime/arrays/index-negative-read.deal",
       "line": 8,
       "column": 10

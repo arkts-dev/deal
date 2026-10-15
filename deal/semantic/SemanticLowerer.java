@@ -11822,17 +11822,19 @@ public final class SemanticLowerer {
         /** {@code ARRAY_LENGTH}/{@code MEMBER_READ} — the member-access dispatch. */
         /**
          * {@code INDEX_READ} (array targets) — the carrier's read arm:
-         * the container and the key complete as prior steps;
-         * {@code INDEX_NORMALIZE(ARRAY_READ)} computes the slot from the
-         * normalize-time {@code ARRAY_LENGTH} read; the
-         * {@code ARRAY_ELEMENT_READ} boundary child (policy
-         * {@code ARRAY_READ_INDEX_THEN_DESCRIPTOR}) enforces the
-         * negative-index E8002 before any storage access and passes a
-         * missing (past-end) read through to the consuming contextual
-         * boundary/operand — the comparison operands' missing≡null rule
-         * and the declaration boundary's E8001 projection decide.
-         * Table index reads stay E2's (the carrier slice lowers array
-         * index reads only).
+         * the container and the key complete as prior steps (receiver
+         * then index, each once); {@code INDEX_NORMALIZE(ARRAY_READ)}
+         * computes the slot from the normalize-time {@code ARRAY_LENGTH}
+         * read; the {@code ARRAY_ELEMENT_READ} boundary child (policy
+         * {@code ARRAY_READ_INDEX_THEN_DESCRIPTOR}) enforces the strict
+         * E8002 bounds check ({@code index < 0} or
+         * {@code index >= currentLength}) before any storage access or
+         * element/result validation, at the read expression. An in-range
+         * read passes a missing (deleted) slot through to the consuming
+         * contextual boundary/operand — the comparison operands'
+         * missing≡null rule and the declaration boundary's E8001
+         * projection decide. Table index reads stay E2's (the carrier
+         * slice lowers array index reads only).
          */
 
         private ValueId lowerBytesIndexRead(IndexExpr index, ValueId slot) {
