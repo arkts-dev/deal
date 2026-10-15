@@ -11,7 +11,10 @@ import java.util.Objects;
  * position carried as its structured id, and every descriptor position
  * carried as raw canonical text — so out-of-set names reach the
  * validator's R-ENUM check byte-intact and no non-null record component
- * of a binding variant disappears at its raw registry position.
+ * of a binding variant disappears at its raw registry position. The
+ * adapter {@code sourceRef} is a {@link RawSourceRef}: its discriminator
+ * stays raw (an unknown shape reaches the R-ENUM clause with its members
+ * intact) and its recognized shapes carry their structured members.
  *
  * <p>The variant member sets mirror
  * {@link ContractSnapshotCanonicalizer#bindingJson(FunctionExecutionBinding)}
@@ -51,7 +54,7 @@ public record RawBinding(
     FunctionId functionId,
     BlockId blockId,
     OpId adaptOpId,
-    AdaptSourceRef sourceRef
+    RawSourceRef sourceRef
 ) {
 
     public RawBinding {

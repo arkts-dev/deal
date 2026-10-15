@@ -17,6 +17,7 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.RawSourceRef;
 import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClosedSelector;
@@ -1497,6 +1498,75 @@ public class SemanticIrValidatorTest {
         expectDecodeFailure(missingBindingMember(complete, "loweredBody", "functionId"),
             "a loweredBody binding without functionId rejects");
 
+        // Every recognized semantic-ID shape (and every recognized
+        // binding/sourceRef shape) keeps its exact member set: an unknown
+        // nested member rejects at decode, and no decoded result is
+        // returned.
+        for (String shape : List.of("class", "classFactory", "function", "block",
+                "binding", "module", "op", "value", "sharedCell", "thunk",
+                "adapter", "loweredBody", "hostFunction", "hostFunctionValue",
+                "externalFunction", "intrinsicFunction", "dynamicFunctionValue")) {
+            String mutated = extraMemberOnEveryShape(complete, shape);
+            check(!mutated.equals(complete),
+                "the complete fixture carries the " + shape + " shape");
+            expectDecodeFailure(mutated,
+                "an unknown member on every recognized " + shape + " object rejects");
+        }
+        expectDecodeFailure(extraMemberAt(complete, "extra", "functions", 0, "key"),
+            "an unknown member on a function registry key rejects");
+        expectDecodeFailure(
+            extraMemberAt(complete, "extra", "classLayouts", 0, "layout", "classId"),
+            "an unknown member on a contained layout identity rejects");
+        expectDecodeFailure(extraMemberAt(complete, "extra", "functionBindings", 2,
+                "binding", "sourceRef", "capturedBindings", 0, "binding"),
+            "an unknown member on a thunk capture binding rejects");
+        expectDecodeFailure(extraMemberAt(complete, "extra", "ops", 0, "opId"),
+            "an unknown member on an op id rejects");
+        expectDecodeFailure(
+            extraMemberAt(complete, "extra", "moduleInit", "imports", 0),
+            "an unknown member on an imported module id rejects");
+        expectDecodeFailure(withoutKeyAt(complete, "name", "classLayouts", 0, "key"),
+            "a class semantic-id object without its name rejects");
+        expectDecodeFailure(withoutKeyAt(complete, "id", "functionBindings", 0,
+                "binding", "functionId"),
+            "a function semantic-id object without its id rejects");
+
+        // An imported module identity that fails the typed ModuleId
+        // precondition is the documented transport failure, not an
+        // unchecked producer exception from the constructor.
+        checkEq("mod.b", ContractSnapshotCanonicalizer.parseUnit(parseObj(complete))
+                .moduleInit().imports().get(0).path(),
+            "the valid nonempty imported module path decodes");
+        expectDecodeFailure(withEntryAt(complete, "path", CanonicalJson.str(""),
+                "moduleInit", "imports", 0),
+            "an empty imported module path rejects as a decode failure");
+
+        // The recognized token semantic-id shapes are part of the ops
+        // mapping: their exact member set and checked numeric transport
+        // apply on the unit decode path (no producer exception leaks).
+        CanonicalJson.Obj tokenCanonical = CanonicalJson.obj(
+            CanonicalJson.e("owner", CanonicalJson.str("DEAL_BODY_TASK")),
+            CanonicalJson.e("tokenId", CanonicalJson.intValue(0)),
+            CanonicalJson.e("type", CanonicalJson.str("tokenCanonical")));
+        check(ContractSnapshotCanonicalizer.parseToken(tokenCanonical)
+                instanceof AsyncTokenId.Canonical canonical && canonical.tokenId() == 0,
+            "the recognized tokenCanonical shape decodes");
+        expectDecodeFailure(withEntryAt(text, "result",
+                CanonicalJson.obj(
+                    CanonicalJson.e("extra", CanonicalJson.bool(true)),
+                    CanonicalJson.e("owner", CanonicalJson.str("DEAL_BODY_TASK")),
+                    CanonicalJson.e("tokenId", CanonicalJson.intValue(0)),
+                    CanonicalJson.e("type", CanonicalJson.str("tokenCanonical"))),
+                "ops", 0),
+            "an unknown member on a token semantic-id object rejects");
+        CanonicalJson.Obj negativeAlias = CanonicalJson.obj(
+            CanonicalJson.e("linkKind", CanonicalJson.str("EXTERNAL_LINK")),
+            CanonicalJson.e("referent", tokenCanonical),
+            CanonicalJson.e("tokenId", CanonicalJson.intValue(-1)),
+            CanonicalJson.e("type", CanonicalJson.str("tokenAlias")));
+        expectDecodeFailure(withEntryAt(text, "result", negativeAlias, "ops", 0),
+            "a negative token id rejects as a decode failure");
+
         // Malformed syntax is a transport failure, not an admission result.
         try {
             ContractSnapshotCanonicalizer.parseValidationText("{");
@@ -1576,6 +1646,123 @@ public class SemanticIrValidatorTest {
         return serialize(withEntry(root, "functionBindings", CanonicalJson.arr(items)));
     }
 
+    /**
+     * Adds one unknown framing member to every object whose {@code type}
+     * is the given recognized shape.
+     */
+    private static String extraMemberOnEveryShape(String text, String shape) {
+        return serialize(addExtraToTypedObjects(CanonicalJson.parse(text), shape));
+    }
+
+    private static CanonicalJson.Value addExtraToTypedObjects(CanonicalJson.Value value,
+            String shape) {
+        if (value instanceof CanonicalJson.Arr arr) {
+            List<CanonicalJson.Value> items = new ArrayList<>();
+            for (CanonicalJson.Value item : arr.items()) {
+                items.add(addExtraToTypedObjects(item, shape));
+            }
+            return CanonicalJson.arr(items);
+        }
+        if (value instanceof CanonicalJson.Obj obj) {
+            boolean match = at(obj, "type") instanceof CanonicalJson.Str str
+                && str.value().equals(shape);
+            List<CanonicalJson.Entry> entries = new ArrayList<>();
+            for (CanonicalJson.Entry entry : obj.entries()) {
+                entries.add(CanonicalJson.e(entry.key(),
+                    addExtraToTypedObjects(entry.value(), shape)));
+            }
+            if (match) {
+                entries.add(CanonicalJson.e("extra", CanonicalJson.bool(true)));
+            }
+            return CanonicalJson.obj(entries);
+        }
+        return value;
+    }
+
+    /** Adds one unknown framing member to the object reached by a key/index path. */
+    private static String extraMemberAt(String text, String member, Object... steps) {
+        return serialize(editNested(CanonicalJson.parse(text), 0, steps, obj -> {
+            List<CanonicalJson.Entry> entries = new ArrayList<>(obj.entries());
+            entries.add(CanonicalJson.e(member, CanonicalJson.bool(true)));
+            return CanonicalJson.obj(entries);
+        }));
+    }
+
+    /** Replaces one field of the object reached by a key/index path. */
+    private static String withEntryAt(String text, String key, CanonicalJson.Value value,
+            Object... steps) {
+        return serialize(editNested(CanonicalJson.parse(text), 0, steps,
+            obj -> withEntry(obj, key, value)));
+    }
+
+    /** Removes one field from the object reached by a key/index path. */
+    private static String withoutKeyAt(String text, String key, Object... steps) {
+        return serialize(editNested(CanonicalJson.parse(text), 0, steps,
+            obj -> withoutKey(obj, key)));
+    }
+
+    private static CanonicalJson.Value editNested(CanonicalJson.Value value, int at,
+            Object[] steps, java.util.function.UnaryOperator<CanonicalJson.Obj> edit) {
+        if (at == steps.length) {
+            return edit.apply((CanonicalJson.Obj) value);
+        }
+        Object step = steps[at];
+        if (step instanceof String key) {
+            CanonicalJson.Obj obj = (CanonicalJson.Obj) value;
+            List<CanonicalJson.Entry> entries = new ArrayList<>();
+            for (CanonicalJson.Entry entry : obj.entries()) {
+                entries.add(entry.key().equals(key)
+                    ? CanonicalJson.e(key, editNested(entry.value(), at + 1, steps, edit))
+                    : entry);
+            }
+            return CanonicalJson.obj(entries);
+        }
+        CanonicalJson.Arr arr = (CanonicalJson.Arr) value;
+        int index = (Integer) step;
+        List<CanonicalJson.Value> items = new ArrayList<>(arr.items());
+        items.set(index, editNested(items.get(index), at + 1, steps, edit));
+        return CanonicalJson.arr(items);
+    }
+
+    /**
+     * An unknown adapter sourceRef discriminator is not a decode failure:
+     * the decoder preserves the discriminator and its members, and the
+     * closed AdaptSourceRef position rejects through R-ENUM.
+     */
+    private static void testRegistrySourceRefDiscriminator() {
+        System.out.println("-- Registry sourceRef: an unknown discriminator is carried raw "
+            + "and rejected by the closed rule --");
+
+        String complete = SemanticIrValidator.toUnitText(completeTransportUnit());
+        String futureCell = complete.replace("\"type\":\"sharedCell\"",
+            "\"type\":\"futureCell\"");
+        check(!futureCell.equals(complete),
+            "the complete fixture carries the sharedCell registry sourceRef");
+
+        RawUnit decoded = ContractSnapshotCanonicalizer.parseUnit(parseObj(futureCell));
+        RawSourceRef carried = decoded.bindings().get(1).sourceRef();
+        check(carried instanceof RawSourceRef.Unknown,
+            "decode preserves the unknown sourceRef discriminator instead of rejecting it");
+        if (carried instanceof RawSourceRef.Unknown unknown) {
+            checkEq("futureCell", unknown.type(),
+                "the unknown discriminator is the carried type");
+            checkEq(3, unknown.json().entries().size(),
+                "decode preserves the unknown sourceRef members");
+        }
+        String reserialized = CanonicalJson.serializeText(
+            ContractSnapshotCanonicalizer.toJson(decoded));
+        check(reserialized.contains("\"type\":\"futureCell\"")
+                && reserialized.contains("\"generation\":2")
+                && reserialized.contains("\"binding\":{\"id\":1,\"type\":\"binding\"}"),
+            "the retained unknown sourceRef re-serializes its discriminator and members");
+        checkEq(futureCell, reserialized,
+            "the doctored unit re-serializes byte-identically (the unknown discriminator "
+                + "is never normalized or dropped)");
+
+        assertE6005(SemanticIrValidator.validateText(futureCell, FACTS),
+            "R-ENUM", "futureCell", "AdaptSourceRef");
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -1594,6 +1781,7 @@ public class SemanticIrValidatorTest {
         testCompleteTransport();
         testTransportIdentityLink();
         testTransportMandatoryEmptiesAndNegatives();
+        testRegistrySourceRefDiscriminator();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

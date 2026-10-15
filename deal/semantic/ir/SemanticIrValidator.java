@@ -694,6 +694,11 @@ public final class SemanticIrValidator {
                 origin(R_ENUM, "open value \"" + binding.captureMode()
                     + "\" in a closed CaptureMode position"));
         }
+        if (binding.sourceRef() instanceof RawSourceRef.Unknown unknown) {
+            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                origin(R_ENUM, "open value \"" + unknown.type()
+                    + "\" in a closed AdaptSourceRef position"));
+        }
         if (binding.intrinsicKind() != null
                 && enumByName(IntrinsicKind.class, binding.intrinsicKind()) == null) {
             return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,

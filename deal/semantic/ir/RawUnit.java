@@ -169,7 +169,8 @@ public record RawUnit(
                     adapter.captureMode().name(), null,
                     adapter.sourceSignature().canonicalSpecText(),
                     adapter.targetSignature().canonicalSpecText(), null, null, null, null,
-                    adapter.adaptOpId(), adapter.sourceRef());
+                    adapter.adaptOpId(),
+                    ContractSnapshotCanonicalizer.rawSourceRefOf(adapter.sourceRef()));
             case FunctionExecutionBinding.HostFunction host ->
                 new RawBinding(allocationId, "hostFunction", host.hostModuleId().path(),
                     host.exportName(), null, null, host.descriptor().canonicalSpecText(), null,

@@ -535,6 +535,48 @@ public final class ContractSnapshotCanonicalizer {
         };
     }
 
+    /**
+     * Renders one raw adapter source reference as its pinned discriminated
+     * object: the recognized shapes are emitted from their structured
+     * members, and an unknown discriminator emits its retained decoded
+     * object (members included).
+     */
+    public static CanonicalJson.Value rawSourceRefJson(RawSourceRef sourceRef) {
+        Objects.requireNonNull(sourceRef, "sourceRef must not be null");
+        return switch (sourceRef) {
+            case RawSourceRef.SharedCell s -> CanonicalJson.obj(
+                CanonicalJson.e("binding", semanticIdJson(s.binding())),
+                CanonicalJson.e("generation", idValue(s.generation(), "generation")),
+                CanonicalJson.e("type", CanonicalJson.str("sharedCell")));
+            case RawSourceRef.Thunk t -> CanonicalJson.obj(
+                CanonicalJson.e("blockId", semanticIdJson(t.blockId())),
+                CanonicalJson.e("capturedBindings", CanonicalJson.arr(
+                    t.capturedBindings().stream().map(ContractSnapshotCanonicalizer::bindingGenerationJson).toList())),
+                CanonicalJson.e("type", CanonicalJson.str("thunk")));
+            case RawSourceRef.Value v -> CanonicalJson.obj(
+                CanonicalJson.e("type", CanonicalJson.str("value")),
+                CanonicalJson.e("value", semanticIdJson(v.value())));
+            case RawSourceRef.Unknown u -> u.json();
+        };
+    }
+
+    /**
+     * Maps one typed adapter source reference onto the raw registry
+     * representation. The typed family is closed, so every typed shape is
+     * a recognized raw shape; no {@link RawSourceRef.Unknown} can be
+     * produced here.
+     */
+    public static RawSourceRef rawSourceRefOf(AdaptSourceRef sourceRef) {
+        Objects.requireNonNull(sourceRef, "sourceRef must not be null");
+        return switch (sourceRef) {
+            case AdaptSourceRef.SharedCell s ->
+                new RawSourceRef.SharedCell(s.binding(), s.generation());
+            case AdaptSourceRef.Thunk t ->
+                new RawSourceRef.Thunk(t.blockId(), t.capturedBindings());
+            case AdaptSourceRef.Value v -> new RawSourceRef.Value(v.value());
+        };
+    }
+
     /** Renders a binding generation reference. */
     public static CanonicalJson.Value bindingGenerationJson(BindingGeneration generation) {
         Objects.requireNonNull(generation, "generation must not be null");
@@ -1533,7 +1575,7 @@ public final class ContractSnapshotCanonicalizer {
             case "adapter" -> CanonicalJson.obj(
                 CanonicalJson.e("adaptOpId", semanticIdJson(binding.adaptOpId())),
                 CanonicalJson.e("captureMode", CanonicalJson.str(binding.captureMode())),
-                CanonicalJson.e("sourceRef", sourceRefJson(binding.sourceRef())),
+                CanonicalJson.e("sourceRef", rawSourceRefJson(binding.sourceRef())),
                 CanonicalJson.e("sourceSignature", CanonicalJson.str(binding.sourceSignature())),
                 CanonicalJson.e("targetSignature", CanonicalJson.str(binding.targetSignature())),
                 CanonicalJson.e("type", CanonicalJson.str("adapter")));
@@ -1573,20 +1615,20 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     /**
-     * Parses an adapter source reference: the closed family is sharedCell
-     * (binding/generation), thunk (blockId/capturedBindings) and value
-     * (value), each with its existing type discriminator. The recognized
-     * member sets are exact; an unknown discriminator is a decode
-     * failure (the closed shape tag is transport framing, not a semantic
-     * enum position).
-     *
+     * Parses an adapter source reference: the recognized family is
+     * sharedCell (binding/generation), thunk (blockId/capturedBindings)
+     * and value (value), each with its existing type discriminator and its
+     * exact member set. The discriminator itself stays raw: an unknown
+     * shape is retained with its complete decoded member set so the
+     * closed-position rule (R-ENUM) owns the rejection instead of the
+     * decoder.
      */
-    public static AdaptSourceRef parseSourceRef(CanonicalJson.Obj obj) {
+    public static RawSourceRef parseSourceRef(CanonicalJson.Obj obj) {
         String type = requireString(obj, "type");
         switch (type) {
             case "sharedCell" -> {
                 checkKeys(obj, "binding", "generation", "type");
-                return new AdaptSourceRef.SharedCell(
+                return new RawSourceRef.SharedCell(
                     parseBindingId(requireObject(obj, "binding")),
                     requireGeneration(obj, "sourceRef.sharedCell"));
             }
@@ -1603,14 +1645,15 @@ public final class ContractSnapshotCanonicalizer {
                         parseBindingId(requireObject(row, "binding")),
                         requireGeneration(row, where)));
                 }
-                return new AdaptSourceRef.Thunk(blockId, captured);
+                return new RawSourceRef.Thunk(blockId, captured);
             }
             case "value" -> {
                 checkKeys(obj, "type", "value");
-                return new AdaptSourceRef.Value(parseValueId(requireObject(obj, "value")));
+                return new RawSourceRef.Value(parseValueId(requireObject(obj, "value")));
             }
-            default -> throw new SemanticIrTextDecodeException(
-                "expected an adapter sourceRef object, got type \"" + type + "\"");
+            default -> {
+                return new RawSourceRef.Unknown(type, obj);
+            }
         }
     }
 
@@ -1638,7 +1681,7 @@ public final class ContractSnapshotCanonicalizer {
         FunctionId functionId = null;
         BlockId blockId = null;
         OpId adaptOpId = null;
-        AdaptSourceRef sourceRef = null;
+        RawSourceRef sourceRef = null;
         switch (shape) {
             case "loweredBody" -> {
                 checkKeys(binding, "blockId", "functionId", "type");
@@ -2047,9 +2090,11 @@ public final class ContractSnapshotCanonicalizer {
     /**
      * The module path carried by a module semantic-id object; every other
      * semantic-id shape is a decode failure (the projection never
-     * rewrites a foreign shape into a module id).
+     * rewrites a foreign shape into a module id). Recognized semantic-id
+     * objects keep their exact field set.
      */
     public static String modulePathOf(CanonicalJson.Obj moduleIdObj) {
+        checkKeys(moduleIdObj, "path", "type");
         String type = requireString(moduleIdObj, "type");
         if (!"module".equals(type)) {
             throw new SemanticIrTextDecodeException(
@@ -2058,13 +2103,25 @@ public final class ContractSnapshotCanonicalizer {
         return requireString(moduleIdObj, "path");
     }
 
-    /** Parses a module semantic-id object. */
+    /**
+     * Parses a module semantic-id object. A module-path precondition
+     * failure of the typed {@link ModuleId} record is translated into the
+     * transport failure contract (the typed producer preconditions stay
+     * unchanged).
+     */
     public static ModuleId parseModuleId(CanonicalJson.Obj obj) {
-        return new ModuleId(modulePathOf(obj));
+        String modulePath = modulePathOf(obj);
+        try {
+            return new ModuleId(modulePath);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "invalid module semantic-id object: " + e.getMessage());
+        }
     }
 
     /** Parses a class semantic-id object. */
     public static ClassId parseClassId(CanonicalJson.Obj obj) {
+        checkKeys(obj, "modulePath", "name", "type");
         String type = requireString(obj, "type");
         if (!"class".equals(type)) {
             throw new SemanticIrTextDecodeException(
@@ -2099,6 +2156,7 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     private static long parseNumericId(CanonicalJson.Obj obj, String expectedType) {
+        checkKeys(obj, "id", "type");
         String type = requireString(obj, "type");
         if (!expectedType.equals(type)) {
             throw new SemanticIrTextDecodeException(
@@ -2114,6 +2172,7 @@ public final class ContractSnapshotCanonicalizer {
 
     /** Parses an op semantic-id object. */
     public static OpId parseOpId(CanonicalJson.Obj obj) {
+        checkKeys(obj, "id", "modulePath", "type");
         String type = requireString(obj, "type");
         if (!"op".equals(type)) {
             throw new SemanticIrTextDecodeException(
@@ -2150,6 +2209,7 @@ public final class ContractSnapshotCanonicalizer {
 
     /** Parses a value semantic-id object. */
     public static ValueId parseValueId(CanonicalJson.Obj obj) {
+        checkKeys(obj, "id", "type");
         String type = requireString(obj, "type");
         if (!"value".equals(type)) {
             throw new SemanticIrTextDecodeException(
@@ -2165,16 +2225,37 @@ public final class ContractSnapshotCanonicalizer {
 
     /** Parses a token semantic-id object (recursive alias referents). */
     public static AsyncTokenId parseToken(CanonicalJson.Obj obj) {
-        return switch (requireString(obj, "type")) {
-            case "tokenCanonical" -> new AsyncTokenId.Canonical(requireInt(obj, "tokenId"),
-                parseTokenOwner(requireString(obj, "owner")));
-            case "tokenAlias" -> new AsyncTokenId.Alias(requireInt(obj, "tokenId"),
-                parseToken(requireObject(obj, "referent")),
-                parseLinkKind(requireString(obj, "linkKind")));
+        String type = requireString(obj, "type");
+        return switch (type) {
+            case "tokenCanonical" -> {
+                checkKeys(obj, "owner", "tokenId", "type");
+                yield new AsyncTokenId.Canonical(requireTokenId(obj),
+                    parseTokenOwner(requireString(obj, "owner")));
+            }
+            case "tokenAlias" -> {
+                checkKeys(obj, "linkKind", "referent", "tokenId", "type");
+                yield new AsyncTokenId.Alias(requireTokenId(obj),
+                    parseToken(requireObject(obj, "referent")),
+                    parseLinkKind(requireString(obj, "linkKind")));
+            }
             default -> throw new SemanticIrTextDecodeException(
-                "expected a token semantic-id object, got type \"" + requireString(obj, "type")
+                "expected a token semantic-id object, got type \"" + type
                     + "\"");
         };
+    }
+
+    /**
+     * The non-negative token id of a token semantic-id object: the typed
+     * record's precondition is checked on the transport surface so an
+     * untrusted id never leaks a producer exception.
+     */
+    private static long requireTokenId(CanonicalJson.Obj obj) {
+        int tokenId = requireInt(obj, "tokenId");
+        if (tokenId < 0) {
+            throw new SemanticIrTextDecodeException(
+                "the token semantic-id tokenId must be non-negative, got " + tokenId);
+        }
+        return tokenId;
     }
 
     private static AsyncTokenOwner parseTokenOwner(String raw) {
