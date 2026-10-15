@@ -1582,7 +1582,7 @@ public class ControlFlowLoweringTest {
         byte[] firstDump = SemanticIrDumper.dumpModule(first.unit());
         byte[] secondDump = SemanticIrDumper.dumpModule(second.unit());
         check(Arrays.equals(firstDump, secondDump) && firstDump.length > 0,
-            "two fresh lowerings produce byte-identical deal.semantic-ir/1 dumps (D8); "
+            "two fresh lowerings produce byte-identical deal.semantic-ir/2 dumps (D8); "
                 + firstDump.length + " bytes");
         check(SemanticIrDumper.dumpModuleText(first.unit())
                 .equals(SemanticIrDumper.dumpModuleText(second.unit())),

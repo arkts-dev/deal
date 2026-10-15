@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The deterministic semantic dumper of {@code deal.semantic-ir/1}
+ * The deterministic semantic dumper of {@code deal.semantic-ir/2}
  * (parent D10; schema S7): emits {@link LoweredModuleUnit} units and
  * {@link ExecutableLoweredProject} projects as canonical JSON — one
  * module at a time; a complete project is a manifest plus the module
@@ -38,12 +38,23 @@ import java.util.Objects;
  *
  * <pre>{@code
  * {
+ *   "bodyTable": { "blockOps": [ {"block": <block>, "ops": [<op>, ...]}, ... ],
+ *                  "opBlocks": [ {"op": <op>, "block": <block>}, ... ] },
+ *   "classBindingFacts": { "importAliases": [<binding>, ...], "parameters": [<binding>, ...] },
+ *   "classFactories": [ {"constructionEntry": <classFactory>, "factoryOp": <op>}, ... ],
+ *   "classLayouts": [ {"key": <class>, "layout": {classId, fields: [{name, descriptor, required, defaultOwner}, ...]}}, ... ],
  *   "constructCoverage": [ {"construct": name, "opKinds": [name, ...]}, ... ],
- *   "formatVersion": "deal.semantic-ir/1",
+ *   "exportPlan": [ {"name": str, "descriptor": str, "publishOpId": <op>}, ... ],
+ *   "formatVersion": "deal.semantic-ir/2",
  *   "functionBindings": [ {"allocationId": int, "binding": <binding>}, ... ],
+ *   "functions": [ {"key": <function>, "functionId": <function>, "descriptor": str,
+ *                   "captures": [ {"binding": <binding>, "generation": int}, ... ],
+ *                   "body": <block>, "sourceName": str|null}, ... ],
  *   "interfaceHash": hex,
+ *   "jsonDefaults": [ {"jsonFromClassOp": <op>, "classDefaultOps": [<op>, ...]}, ... ],
  *   "loweringContextHash": hex,
  *   "moduleId": "<module path>",
+ *   "moduleInit": { "imports": [<module>, ...], "initBlock": <block> },
  *   "ops": [ <op>, ... ],                       // produced operations in source order
  *   "requiredCapabilities": [name, ...],
  *   "semanticProfile": "DEAL_V1_2_INT32"
@@ -55,7 +66,7 @@ import java.util.Objects;
  * <pre>{@code
  * {
  *   "entryModule": "<module path>",
- *   "formatVersion": "deal.semantic-ir/1",
+ *   "formatVersion": "deal.semantic-ir/2",
  *   "modules": [ "<module path>", ... ],        // dependency order (project record order)
  *   "semanticProfile": "DEAL_V1_2_INT32"
  * }

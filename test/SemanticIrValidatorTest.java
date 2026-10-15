@@ -10,6 +10,7 @@ import deal.semantic.ir.AsyncStartSource;
 import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BinarySelector;
+import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
@@ -35,8 +36,14 @@ import deal.semantic.ir.InternalResultType;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.ir.ClassBindingFacts;
+import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassLayout;
+import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.JsonDefaultChildTable;
+import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.LoweringContextHash;
@@ -51,6 +58,7 @@ import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticCapability;
+import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
@@ -65,6 +73,7 @@ import deal.semantic.ir.ValueId;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -210,7 +219,7 @@ public class SemanticIrValidatorTest {
         check(byRule.length == 2 && byRule[1].startsWith(rule + ","),
             rule + " is named as the validator rule (exactly one rule per fixture); got \""
                 + message + "\"");
-        check(message.contains("deal.semantic-ir/1") && message.contains("mod"),
+        check(message.contains("deal.semantic-ir/2") && message.contains("mod"),
             rule + " message carries the detail fields");
         for (String c : contains) {
             check(message.contains(c), rule + " message contains \"" + c + "\"; got \"" + message + "\"");
@@ -1111,6 +1120,463 @@ public class SemanticIrValidatorTest {
     }
 
     // =========================================================================
+    // 8. The complete deal.semantic-ir/2 unit transport (ISSUE-0817)
+    // =========================================================================
+
+    private static final ClassId LAYOUT_CLASS = new ClassId("src", "Point");
+    private static final ClassId FOREIGN_CLASS = new ClassId("src", "Other");
+
+    /** A complete-unit builder carrying the full lowerer-owned companion set. */
+    private static LoweredModuleUnit completeUnit(
+            Map<ClassId, ClassLayout> classLayouts,
+            Map<FunctionId, LoweredFunction> functions,
+            ModuleInitPlan moduleInit,
+            ExportPlan exportPlan,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings,
+            List<SemanticOp> ops,
+            StructuredBodyTable bodyTable,
+            ClassFactoryRegistry classFactories,
+            JsonDefaultChildTable jsonDefaults,
+            ClassBindingFacts classBindingFacts) {
+        return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_2_INT32, MOD, IFACE, LCH, Set.of(), Map.of(),
+            classLayouts, functions, moduleInit, exportPlan, bindings, ops, bodyTable,
+            classFactories, jsonDefaults, classBindingFacts);
+    }
+
+    private static CanonicalJson.Value blockIdJson(long id) {
+        return CanonicalJson.obj(
+            CanonicalJson.e("id", CanonicalJson.intValue((int) id)),
+            CanonicalJson.e("type", CanonicalJson.str("block")));
+    }
+
+    /** The complete transport fixture: layouts, functions, plans and every binding variant. */
+    private static LoweredModuleUnit completeTransportUnit() {
+        FunctionId named = new FunctionId(3);
+        FunctionId anonymous = new FunctionId(4);
+        BindingId captureA = new BindingId(1);
+        BindingId captureB = new BindingId(2);
+        BlockId body = new BlockId(7);
+        BlockId anonymousBody = new BlockId(8);
+
+        Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
+        layouts.put(LAYOUT_CLASS, new ClassLayout(LAYOUT_CLASS, List.of(
+            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL),
+            new ClassLayout.FieldLayout("label", STR, false, DefaultOwner.HOST_DEFAULTS))));
+        Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
+        functions.put(named, new LoweredFunction(named, SIG_II,
+            List.of(new BindingGeneration(captureA, 0),
+                new BindingGeneration(captureB, 4)), body, "inc"));
+        functions.put(anonymous, new LoweredFunction(anonymous, SIG_II, List.of(),
+            anonymousBody, null));
+
+        ModuleInitPlan moduleInit = new ModuleInitPlan(List.of(MOD_B, MOD_B, MOD),
+            new BlockId(9));
+        ExportPlan exportPlan = new ExportPlan(List.of(
+            new ExportPlan.ExportPlanEntry("main", SIG_II, new OpId(MOD, 41)),
+            new ExportPlan.ExportPlanEntry("other", INT, new OpId(MOD, 42))));
+
+        OpId adaptOp = new OpId(MOD, 43);
+        OpId boundaryOp = new OpId(MOD, 44);
+        Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+            new LinkedHashMap<>();
+        bindings.put(new FunctionAllocationIdentity(11),
+            new FunctionExecutionBinding.LoweredBody(named, body));
+        bindings.put(new FunctionAllocationIdentity(12),
+            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.SHARED_CELL,
+                new AdaptSourceRef.SharedCell(captureA, 2), SIG_II, SIG_II_ASYNC));
+        bindings.put(new FunctionAllocationIdentity(13),
+            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.REEVALUATE_THUNK,
+                new AdaptSourceRef.Thunk(new BlockId(14),
+                    List.of(new BindingGeneration(captureB, 5))), SIG_II, SIG_II_ASYNC));
+        bindings.put(new FunctionAllocationIdentity(14),
+            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.VALUE,
+                new AdaptSourceRef.Value(new ValueId(9)), SIG_II, SIG_II_ASYNC));
+        bindings.put(new FunctionAllocationIdentity(15),
+            new FunctionExecutionBinding.HostFunction(MOD_B, "log", SIG_II));
+        bindings.put(new FunctionAllocationIdentity(16),
+            new FunctionExecutionBinding.HostFunctionValue(MOD_B, boundaryOp, SIG_II_ASYNC));
+        bindings.put(new FunctionAllocationIdentity(17),
+            new FunctionExecutionBinding.ExternalFunction(MOD_B, "helper", SIG_II,
+                ExternalExecutionOwner.RETAINED_ABI));
+        bindings.put(new FunctionAllocationIdentity(18),
+            new FunctionExecutionBinding.IntrinsicFunction(IntrinsicKind.INT_CONVERT,
+                IntrinsicKind.INT_CONVERT.declaredSignature()));
+        bindings.put(new FunctionAllocationIdentity(19),
+            new FunctionExecutionBinding.DynamicFunctionValue(boundaryOp, SIG_II_ASYNC));
+
+        // Both membership directions are transported independently: the
+        // opBlocks side is deliberately not the inverse of the blockOps
+        // side, and the transport must not rebuild either from the other.
+        StructuredBodyTable bodyTable = new StructuredBodyTable(
+            Map.of(new BlockId(15), List.of(new OpId(MOD, 51), new OpId(MOD, 52))),
+            Map.of(new OpId(MOD, 52), new BlockId(16)));
+        ClassFactoryRegistry classFactories =
+            new ClassFactoryRegistry(Map.of(new ClassFactoryId(41), new OpId(MOD, 53)));
+        JsonDefaultChildTable jsonDefaults = new JsonDefaultChildTable(
+            new LinkedHashMap<>() {{
+                put(new OpId(MOD, 54), List.of(new OpId(MOD, 55), new OpId(MOD, 56)));
+                put(new OpId(MOD, 57), List.of());
+            }});
+        ClassBindingFacts bindingFacts = new ClassBindingFacts(
+            new LinkedHashSet<>(List.of(captureA)), new LinkedHashSet<>(List.of(captureB)));
+
+        return completeUnit(layouts, functions, moduleInit, exportPlan, bindings,
+            List.of(constOp()), bodyTable, classFactories, jsonDefaults, bindingFacts);
+    }
+
+    private static void testCompleteTransport() {
+        System.out.println("-- Complete /2 transport: every unit fact and companion survives "
+            + "typed->raw->text->raw --");
+
+        LoweredModuleUnit unit = completeTransportUnit();
+        RawUnit raw = RawUnit.fromTyped(unit);
+        String text = SemanticIrValidator.toUnitText(unit);
+        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
+
+        check(text.contains("\"formatVersion\":\"deal.semantic-ir/2\""),
+            "the unit header carries deal.semantic-ir/2");
+        checkEq(raw.modulePath(), reparsed.modulePath(), "the moduleId survives");
+        checkEq(raw.semanticProfile(), reparsed.semanticProfile(),
+            "the semanticProfile is carried explicitly and verbatim");
+        checkEq(raw.interfaceHash(), reparsed.interfaceHash(), "the interfaceHash survives");
+        checkEq(raw.loweringContextHash(), reparsed.loweringContextHash(),
+            "the loweringContextHash survives");
+        checkEq(raw.requiredCapabilities(), reparsed.requiredCapabilities(),
+            "the capability set survives");
+        checkEq(raw.coverage(), reparsed.coverage(), "the construct coverage survives");
+        checkEq(raw.classLayouts(), reparsed.classLayouts(),
+            "every class-layout entry (key, contained identity, ordered fields) survives");
+        checkEq(raw.functions(), reparsed.functions(),
+            "every function entry (key, functionId, descriptor, ordered captures, body, "
+                + "sourceName) survives");
+        checkEq(raw.moduleInit(), reparsed.moduleInit(),
+            "the module-init imports (repeated entries kept) and init block survive");
+        checkEq(raw.exportPlan(), reparsed.exportPlan(),
+            "the array-form export plan survives");
+        checkEq(raw.bindings(), reparsed.bindings(),
+            "every complete binding variant survives");
+        checkEq(9, reparsed.bindings().size(),
+            "all binding variants plus the three adapter sourceRef shapes round-trip");
+        checkEq(raw.bodyTable(), reparsed.bodyTable(),
+            "both body-membership directions survive independently");
+        checkEq(raw.classFactories(), reparsed.classFactories(),
+            "the class-factory registry survives");
+        checkEq(raw.jsonDefaults(), reparsed.jsonDefaults(),
+            "the JSON-default rows survive, including the present row with no children");
+        checkEq(raw.classBindingFacts(), reparsed.classBindingFacts(),
+            "the parameter/import initialization facts survive");
+        checkEq(raw.ops(), reparsed.ops(), "the produced operations survive");
+        checkEq(text, CanonicalJson.serializeText(
+                ContractSnapshotCanonicalizer.toJson(reparsed)),
+            "re-serializing the reparsed unit is byte-stable");
+        checkEq(raw, reparsed,
+            "the complete raw unit round-trips exactly through the canonical text");
+
+        // The companion names and member spellings are pinned.
+        check(text.contains("\"classLayouts\":[{\"key\":")
+                && text.contains("\"layout\":{\"classId\":"),
+            "class-layout entries keep the separate key and the contained layout identity");
+        check(text.contains("\"exportPlan\":[{\"descriptor\":"),
+            "the export plan stays the existing array form, not an entries object");
+        check(text.contains("\"bodyTable\":{\"blockOps\":[{\"block\":")
+                && text.contains("\"opBlocks\":[{\"block\":")
+                && text.contains("\"op\":"),
+            "the body table carries both blockOps and opBlocks rows");
+        check(text.contains("\"classFactories\":[{\"constructionEntry\":")
+                && text.contains("\"factoryOp\":"),
+            "the class-factory registry keeps its companion name and entry members");
+        check(text.contains("\"classDefaultOps\":[],\"jsonFromClassOp\":{\"id\":57,"
+                + "\"modulePath\":\"mod.a\",\"type\":\"op\"}"),
+            "the JSON-default companion keeps its framing and its empty-child row");
+        check(text.contains("\"classBindingFacts\":{\"importAliases\":[")
+                && text.contains("\"parameters\":["),
+            "the parameter/import facts keep their companion name and members");
+        check(text.contains("\"sourceName\":null"),
+            "an explicit null sourceName means an anonymous function");
+        check(text.contains("\"key\":{\"id\":4,\"type\":\"function\"}")
+                && text.contains("\"functionId\":{\"id\":4,\"type\":\"function\"}"),
+            "function entries emit the separate key and functionId");
+
+        // An unknown discriminant in a raw enum position is carried raw
+        // and reaches the responsible closed rule (never a decode fallback).
+        assertE6005(SemanticIrValidator.validateText(
+                text.replace("\"defaultOwner\":\"LOCAL\"", "\"defaultOwner\":\"BOGUS\""),
+                FACTS),
+            "R-ENUM", "BOGUS");
+
+        // Complete binding variant member sets.
+        check(text.contains("\"binding\":{\"blockId\":{\"id\":7,\"type\":\"block\"},"
+                + "\"functionId\":{\"id\":3,\"type\":\"function\"},"
+                + "\"type\":\"loweredBody\"}"),
+            "the loweredBody variant carries functionId and blockId");
+        check(text.contains("\"adaptOpId\":") && text.contains("\"sourceRef\":")
+                && text.contains("\"sourceSignature\":\"")
+                && text.contains("\"targetSignature\":\""),
+            "the adapter variant carries its op, mode, sourceRef and both signatures");
+        check(text.contains("\"captureMode\":\"SHARED_CELL\"")
+                && text.contains("\"captureMode\":\"REEVALUATE_THUNK\"")
+                && text.contains("\"captureMode\":\"VALUE\""),
+            "all three adapter capture modes survive");
+        check(text.contains("\"type\":\"sharedCell\"") && text.contains("\"generation\":2")
+                && text.contains("\"capturedBindings\":") && text.contains("\"type\":\"thunk\"")
+                && text.contains("\"type\":\"value\""),
+            "all three adapter sourceRef variants survive");
+        check(text.contains("\"descriptor\":\"")
+                && text.contains("\"executionOwner\":\"RETAINED_ABI\"")
+                && text.contains("\"intrinsicKind\":\"INT_CONVERT\"")
+                && text.contains("\"materializingBoundaryOpId\":"),
+            "the host, external, intrinsic and dynamic variants carry their members");
+        check(text.contains("\"materializingBoundaryOpId\":{\"id\":44,\"modulePath\":\"mod.a\","
+                + "\"type\":\"op\"},\"type\":\"dynamicFunctionValue\"}"),
+            "the dynamic variant preserves the materializingBoundaryOpId wire name");
+
+        // Checked numeric conversion: an id outside the signed32 transport
+        // range fails encoding instead of aliasing another identity.
+        Map<FunctionAllocationIdentity, FunctionExecutionBinding> hugeBinding = Map.of(
+            new FunctionAllocationIdentity((long) Integer.MAX_VALUE + 1),
+            new FunctionExecutionBinding.HostFunction(MOD_B, "log", SIG_II));
+        RawUnit hugeRaw = RawUnit.fromTyped(completeUnit(Map.of(), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), hugeBinding,
+            List.of(), new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty()));
+        expectIllegalArgument(() -> ContractSnapshotCanonicalizer.toJson(hugeRaw),
+            "an unrepresentable allocationId fails encoding instead of narrowing");
+
+        FunctionId hugeFunction = new FunctionId((long) Integer.MAX_VALUE + 1);
+        RawUnit hugeGeneration = RawUnit.fromTyped(completeUnit(Map.of(), Map.of(
+                hugeFunction, new LoweredFunction(hugeFunction, SIG_II,
+                    List.of(new BindingGeneration(new BindingId(1),
+                        (long) Integer.MAX_VALUE + 1)), new BlockId(1), "f")),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            List.of(), new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty()));
+        expectIllegalArgument(() -> ContractSnapshotCanonicalizer.toJson(hugeGeneration),
+            "an unrepresentable capture generation fails encoding instead of narrowing");
+    }
+
+    private static void testTransportIdentityLink() {
+        System.out.println("-- Identity-link regression: key/record disagreements survive "
+            + "transport and reject on both surfaces --");
+
+        FunctionId keyFunction = new FunctionId(3);
+        FunctionId containedFunction = new FunctionId(4);
+        Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
+        layouts.put(FOREIGN_CLASS, new ClassLayout(LAYOUT_CLASS, List.of(
+            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL))));
+        Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
+        functions.put(keyFunction, new LoweredFunction(containedFunction, SIG_II, List.of(),
+            new BlockId(7), "inc"));
+        LoweredModuleUnit unit = completeUnit(layouts, functions,
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
+
+        RawUnit raw = RawUnit.fromTyped(unit);
+        checkEq(FOREIGN_CLASS, raw.classLayouts().get(0).key(),
+            "the typed layout registry key is retained as the raw key");
+        checkEq(LAYOUT_CLASS, raw.classLayouts().get(0).layout().classId(),
+            "the contained layout classId is retained separately");
+        checkEq(keyFunction, raw.functions().get(0).key(),
+            "the typed function registry key is retained as the raw key");
+        checkEq(containedFunction, raw.functions().get(0).functionId(),
+            "the contained functionId is retained separately");
+
+        String text = SemanticIrValidator.toUnitText(unit);
+        check(text.contains("\"key\":{\"modulePath\":\"src\",\"name\":\"Other\",\"type\":\"class\"}"
+                + ",\"layout\":{\"classId\":{\"modulePath\":\"src\",\"name\":\"Point\","
+                + "\"type\":\"class\"}"),
+            "both class-layout spellings are present in the transported entry pair");
+        check(text.contains("\"key\":{\"id\":3,\"type\":\"function\"},\"sourceName\":\"inc\"}"),
+            "no function entry was repaired, replaced or dropped");
+
+        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
+        checkEq(raw.classLayouts(), reparsed.classLayouts(),
+            "the layout disagreement survives typed->raw->text->raw unchanged");
+        checkEq(raw.functions(), reparsed.functions(),
+            "the function disagreement survives typed->raw->text->raw unchanged");
+        checkEq(text, CanonicalJson.serializeText(
+                ContractSnapshotCanonicalizer.toJson(reparsed)),
+            "re-serializing the disagreeing unit is byte-stable");
+
+        Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(unit, FACTS);
+        assertE6005(typed, "R-IDENTITY-LINK", "Other", "Point");
+        Optional<CompilerDiagnostic> textSurface = SemanticIrValidator.validateText(text, FACTS);
+        assertE6005(textSurface, "R-IDENTITY-LINK");
+        check(typed.isPresent() && textSurface.isPresent()
+                && typed.get().message().equals(textSurface.get().message()),
+            "both surfaces report the identical first failure for the disagreement");
+        if (typed.isPresent() && textSurface.isPresent()) {
+            checkEq(typed.get().range(), textSurface.get().range(),
+                "the disagreement failure keeps the same originless range on both surfaces");
+        }
+
+        // The function-only disagreement rejects through the same rule.
+        LoweredModuleUnit functionOnly = completeUnit(Map.of(), functions,
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
+        Optional<CompilerDiagnostic> functionFailure =
+            SemanticIrValidator.validate(functionOnly, FACTS);
+        assertE6005(functionFailure, "R-IDENTITY-LINK", "function registry key",
+            "contained functionId");
+        assertE6005(SemanticIrValidator.validateText(
+                SemanticIrValidator.toUnitText(functionOnly), FACTS),
+            "R-IDENTITY-LINK", "contained functionId");
+    }
+
+    private static void testTransportMandatoryEmptiesAndNegatives() {
+        System.out.println("-- Mandatory empties and transport negatives --");
+
+        LoweredModuleUnit empty = unit(List.of(constOp()));
+        String text = SemanticIrValidator.toUnitText(empty);
+        for (String fact : List.of("\"classLayouts\":[]", "\"functions\":[]",
+                "\"exportPlan\":[]", "\"classFactories\":[]", "\"jsonDefaults\":[]",
+                "\"moduleInit\":{\"imports\":[],\"initBlock\":{\"id\":0,\"type\":\"block\"}}",
+                "\"bodyTable\":{\"blockOps\":[],\"opBlocks\":[]}",
+                "\"classBindingFacts\":{\"importAliases\":[],\"parameters\":[]}")) {
+            check(text.contains(fact), "the mandatory empty fact " + fact + " is emitted");
+        }
+        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
+        check(reparsed.classLayouts().isEmpty() && reparsed.functions().isEmpty()
+                && reparsed.exportPlan().isEmpty()
+                && reparsed.classFactories().factories().isEmpty()
+                && reparsed.jsonDefaults().defaultChildren().isEmpty()
+                && reparsed.bodyTable().blockOps().isEmpty()
+                && reparsed.bodyTable().opBlocks().isEmpty()
+                && reparsed.classBindingFacts().parameters().isEmpty()
+                && reparsed.classBindingFacts().importAliases().isEmpty(),
+            "the present-empty facts re-decode as real empty facts");
+        checkEq(text, CanonicalJson.serializeText(
+                ContractSnapshotCanonicalizer.toJson(reparsed)),
+            "the present-empty unit re-serializes byte-identically");
+
+        // The /1 envelope is never filled or repaired.
+        expectDecodeFailure(text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/1\""),
+            "a /1 envelope rejects with SemanticIrTextDecodeException");
+        expectDecodeFailure(text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/3\""),
+            "any other envelope version rejects");
+        // An absent mandatory companion is a decode failure, never empty.
+        expectDecodeFailure(withoutKey(text, "classLayouts"),
+            "an absent classLayouts companion rejects");
+        expectDecodeFailure(withoutKey(text, "bodyTable"),
+            "an absent bodyTable companion rejects");
+        expectDecodeFailure(withoutKey(text, "classBindingFacts"),
+            "an absent classBindingFacts companion rejects");
+        // Unknown framing fields reject.
+        expectDecodeFailure(withNewEntry(text, "futureFact", CanonicalJson.str("x")),
+            "an unknown unit field rejects");
+        // A mistyped mandatory field rejects.
+        expectDecodeFailure(serialize(withEntry(parseObj(text), "classLayouts",
+                CanonicalJson.str("not-an-array"))),
+            "a mistyped mandatory companion rejects");
+        // Duplicate entry identities reject before map construction.
+        String complete = SemanticIrValidator.toUnitText(completeTransportUnit());
+        expectDecodeFailure(duplicateArrayEntry(complete, "classLayouts"),
+            "a duplicate classLayouts key rejects");
+        expectDecodeFailure(duplicateArrayEntry(complete, "functions"),
+            "a duplicate functions key rejects");
+        expectDecodeFailure(duplicateArrayEntry(complete, "functionBindings"),
+            "a duplicate functionBindings allocationId rejects");
+        expectDecodeFailure(serialize(withEntry(parseObj(complete), "bodyTable",
+                CanonicalJson.obj(
+                    CanonicalJson.e("blockOps", CanonicalJson.arr(
+                        CanonicalJson.obj(CanonicalJson.e("block", blockIdJson(1)),
+                            CanonicalJson.e("ops", CanonicalJson.arr())),
+                        CanonicalJson.obj(CanonicalJson.e("block", blockIdJson(1)),
+                            CanonicalJson.e("ops", CanonicalJson.arr())))),
+                    CanonicalJson.e("opBlocks", CanonicalJson.arr())))),
+            "a duplicate bodyTable block rejects");
+        // A recognized binding shape keeps its exact member set.
+        expectDecodeFailure(missingBindingMember(complete, "adapter", "sourceSignature"),
+            "an adapter binding without sourceSignature rejects");
+        expectDecodeFailure(missingBindingMember(complete, "loweredBody", "functionId"),
+            "a loweredBody binding without functionId rejects");
+
+        // Malformed syntax is a transport failure, not an admission result.
+        try {
+            ContractSnapshotCanonicalizer.parseValidationText("{");
+            fail("malformed syntax rejects");
+        } catch (SemanticIrTextDecodeException expected) {
+            passed++;
+        }
+    }
+
+    private static void expectDecodeFailure(String text, String message) {
+        try {
+            ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
+            fail(message + " (no decode failure)");
+        } catch (SemanticIrTextDecodeException expected) {
+            passed++;
+        } catch (RuntimeException other) {
+            fail(message + " (expected SemanticIrTextDecodeException, got " + other
+                + ")");
+        }
+    }
+
+    private static void expectIllegalArgument(Runnable action, String message) {
+        try {
+            action.run();
+            fail(message + " (no encoding failure)");
+        } catch (IllegalArgumentException expected) {
+            passed++;
+        } catch (RuntimeException other) {
+            fail(message + " (expected IllegalArgumentException, got " + other + ")");
+        }
+    }
+
+    private static CanonicalJson.Obj withoutKey(CanonicalJson.Obj obj, String key) {
+        List<CanonicalJson.Entry> entries = new ArrayList<>();
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (!entry.key().equals(key)) {
+                entries.add(entry);
+            }
+        }
+        return CanonicalJson.obj(entries);
+    }
+
+    private static String withoutKey(String text, String key) {
+        return serialize(withoutKey(parseObj(text), key));
+    }
+
+    private static String withNewEntry(String text, String key, CanonicalJson.Value value) {
+        CanonicalJson.Obj root = parseObj(text);
+        List<CanonicalJson.Entry> entries = new ArrayList<>(root.entries());
+        entries.add(CanonicalJson.e(key, value));
+        return serialize(CanonicalJson.obj(entries));
+    }
+
+    private static String duplicateArrayEntry(String text, String arrayKey) {
+        CanonicalJson.Obj root = parseObj(text);
+        CanonicalJson.Arr arr = (CanonicalJson.Arr) at(root, arrayKey);
+        List<CanonicalJson.Value> items = new ArrayList<>(arr.items());
+        items.add(items.get(0));
+        return serialize(withEntry(root, arrayKey, CanonicalJson.arr(items)));
+    }
+
+    /** The first binding of the given shape with one required member removed. */
+    private static String missingBindingMember(String text, String shape, String member) {
+        CanonicalJson.Obj root = parseObj(text);
+        CanonicalJson.Arr bindings = (CanonicalJson.Arr) at(root, "functionBindings");
+        List<CanonicalJson.Value> items = new ArrayList<>();
+        for (CanonicalJson.Value item : bindings.items()) {
+            CanonicalJson.Obj entry = (CanonicalJson.Obj) item;
+            CanonicalJson.Obj binding = (CanonicalJson.Obj) at(entry, "binding");
+            if (shape.equals(((CanonicalJson.Str) at(binding, "type")).value())) {
+                entry = withEntry(entry, "binding", withoutKey(binding, member));
+                items.add(entry);
+            } else {
+                items.add(item);
+            }
+        }
+        return serialize(withEntry(root, "functionBindings", CanonicalJson.arr(items)));
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1125,6 +1591,9 @@ public class SemanticIrValidatorTest {
         testOriginTransport();
         testDeterminism();
         testTimeAdmission();
+        testCompleteTransport();
+        testTransportIdentityLink();
+        testTransportMandatoryEmptiesAndNegatives();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

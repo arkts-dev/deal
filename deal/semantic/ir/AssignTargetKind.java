@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed assignment target-kind set of {@code deal.semantic-ir/1}
+ * The closed assignment target-kind set of {@code deal.semantic-ir/2}
  * (parent D14; schema S3). {@code ASSIGN} carries the target kind plus the
  * ordered address-chain child op list
  * {@code [containerOp?, keyOp?, valueOp, normalizeOp?, boundaryOps…, commitOp]}

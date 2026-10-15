@@ -889,7 +889,7 @@ public class FunctionBindingRegistryTest {
         String firstDump = SemanticIrDumper.dumpModuleText(first.lowering().unit());
         String secondDump = SemanticIrDumper.dumpModuleText(second.lowering().unit());
         check(firstDump.equals(secondDump),
-            "repeated lowering produces byte-identical deal.semantic-ir/1 dumps");
+            "repeated lowering produces byte-identical deal.semantic-ir/2 dumps");
         check(Arrays.equals(SemanticIrDumper.dumpModule(first.lowering().unit()),
                 SemanticIrDumper.dumpModule(second.lowering().unit())),
             "the dump bytes are identical");

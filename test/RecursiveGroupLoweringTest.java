@@ -774,7 +774,7 @@ public class RecursiveGroupLoweringTest {
         String firstDump = SemanticIrDumper.dumpModuleText(first.lowering().unit());
         String secondDump = SemanticIrDumper.dumpModuleText(second.lowering().unit());
         check(firstDump.equals(secondDump),
-            "repeated lowering produces byte-identical deal.semantic-ir/1 dumps");
+            "repeated lowering produces byte-identical deal.semantic-ir/2 dumps");
         check(first.lowering().unit().ops().size() == second.lowering().unit().ops().size(),
             "repeated lowering produces the same op count");
     }

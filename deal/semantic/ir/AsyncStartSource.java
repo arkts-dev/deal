@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed async-start source set of {@code deal.semantic-ir/1} (parent
+ * The closed async-start source set of {@code deal.semantic-ir/2} (parent
  * D13; schema S3).
  *
  * <p>Closed set — exactly {@link #DEAL_BODY}, {@link #HOST}, and

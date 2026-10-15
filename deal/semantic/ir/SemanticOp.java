@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The mandatory operation record of {@code deal.semantic-ir/1} (parent
+ * The mandatory operation record of {@code deal.semantic-ir/2} (parent
  * "Mandatory operation header and contract snapshot"; schema S2):
  *
  * <pre>{@code

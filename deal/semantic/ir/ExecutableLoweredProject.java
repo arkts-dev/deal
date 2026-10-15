@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The executable lowered project of {@code deal.semantic-ir/1} (schema S1):
+ * The executable lowered project of {@code deal.semantic-ir/2} (schema S1):
  *
  * <pre>{@code
  * ExecutableLoweredProject {

@@ -3,7 +3,7 @@ package deal.semantic.ir;
 import java.util.Objects;
 
 /**
- * The closed function execution bindings of {@code deal.semantic-ir/1}
+ * The closed function execution bindings of {@code deal.semantic-ir/2}
  * (parent "Function execution bindings"; schema S2). Every
  * function-producing allocation registers exactly one binding in its
  * unit's {@code functionBindings}, keyed by

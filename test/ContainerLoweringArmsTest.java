@@ -479,7 +479,7 @@ public class ContainerLoweringArmsTest {
         check(detail.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32,
             what + " detail semanticProfile DEAL_V1_2_INT32");
         check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
-            what + " detail irVersion deal.semantic-ir/1");
+            what + " detail irVersion deal.semantic-ir/2");
         check(("SemanticLowerer " + SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE + " ("
                 + outOfRange.getMessage() + ")").equals(detail.origin()),
             what + " detail origin is the pinned component description");
@@ -1467,7 +1467,7 @@ public class ContainerLoweringArmsTest {
         check(detail.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32,
             what + " detail semanticProfile DEAL_V1_2_INT32");
         check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
-            what + " detail irVersion deal.semantic-ir/1");
+            what + " detail irVersion deal.semantic-ir/2");
         check(("SemanticLowerer " + SemanticLowerer.CONSTRUCT_UNLOWERED + " ("
                 + unlowered.construct() + ")").equals(detail.origin()),
             what + " detail origin is the pinned component description");

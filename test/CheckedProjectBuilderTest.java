@@ -691,7 +691,7 @@ public class CheckedProjectBuilderTest {
                 + message);
         check(message.contains("semanticProfile LEGACY_SAFE_INT"),
             what + ": the payload carries the invocation profile; got " + message);
-        check(message.contains("irVersion deal.semantic-ir/1"),
+        check(message.contains("irVersion deal.semantic-ir/2"),
             what + ": the payload carries the pinned IR version; got " + message);
         check(message.contains("origin CheckedProjectBuilder INDEX_INTERNAL_ERROR_SENTINEL"),
             what + ": the payload names the builder as the origin; got " + message);
@@ -1053,7 +1053,7 @@ public class CheckedProjectBuilderTest {
                 && e6005.message().contains("capability FOUNDATION_VALUES")
                 && e6005.message().contains(
                     "validatorRule INDEX_INTERNAL_ERROR_SENTINEL")
-                && e6005.message().contains("irVersion deal.semantic-ir/1"),
+                && e6005.message().contains("irVersion deal.semantic-ir/2"),
             "the faulted build's E6005 carries the pinned payload: " + e6005.message());
 
         // T7: allocator ordering asserted through the constructionEntry

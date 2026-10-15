@@ -3,7 +3,7 @@ package deal.semantic.ir;
 import java.util.List;
 
 /**
- * The closed failure-policy set of {@code deal.semantic-ir/1} (parent
+ * The closed failure-policy set of {@code deal.semantic-ir/2} (parent
  * "Closed failure policies and canonical visible errors"; schema S3).
  *
  * <p>Closed set — exactly the 27 values below in the pinned order; no open
@@ -55,7 +55,7 @@ public enum FailurePolicyId {
 
     /**
      * The reserved policy names, invalid as {@code FailurePolicyId} values
-     * in {@code deal.semantic-ir/1}. They are not enum members.
+     * in {@code deal.semantic-ir/2}. They are not enum members.
      */
     public static final List<String> RESERVED_NAMES = List.of(
         "EXTERNAL_PARAMETER",

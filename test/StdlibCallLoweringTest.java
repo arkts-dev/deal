@@ -1049,7 +1049,9 @@ public class StdlibCallLoweringTest {
             }
             RawUnit modifiedUnit = new RawUnit(raw.modulePath(), raw.semanticProfile(),
                 raw.interfaceHash(), raw.loweringContextHash(), raw.requiredCapabilities(),
-                raw.coverage(), raw.bindings(), modified);
+                raw.coverage(), raw.classLayouts(), raw.functions(), raw.moduleInit(),
+                raw.exportPlan(), raw.bindings(), modified, raw.bodyTable(),
+                raw.classFactories(), raw.jsonDefaults(), raw.classBindingFacts());
             String modifiedText = ContractSnapshotCanonicalizer.serializeText(
                 ContractSnapshotCanonicalizer.toJson(modifiedUnit));
             Optional<CompilerDiagnostic> wrongPolicy =
@@ -1083,7 +1085,10 @@ public class StdlibCallLoweringTest {
             RawUnit opOnlyUnit = new RawUnit(opOnlyRaw.modulePath(),
                 opOnlyRaw.semanticProfile(), opOnlyRaw.interfaceHash(),
                 opOnlyRaw.loweringContextHash(), opOnlyRaw.requiredCapabilities(),
-                opOnlyRaw.coverage(), opOnlyRaw.bindings(), opOnlyModified);
+                opOnlyRaw.coverage(), opOnlyRaw.classLayouts(), opOnlyRaw.functions(),
+                opOnlyRaw.moduleInit(), opOnlyRaw.exportPlan(), opOnlyRaw.bindings(),
+                opOnlyModified, opOnlyRaw.bodyTable(), opOnlyRaw.classFactories(),
+                opOnlyRaw.jsonDefaults(), opOnlyRaw.classBindingFacts());
             Optional<CompilerDiagnostic> opOnlyFailure = SemanticIrValidator.validateText(
                 ContractSnapshotCanonicalizer.serializeText(
                     ContractSnapshotCanonicalizer.toJson(opOnlyUnit)),
@@ -1154,7 +1159,7 @@ public class StdlibCallLoweringTest {
                 return;
             }
             // Re-lowering the same module twice produces byte-identical
-            // deal.semantic-ir/1 text (fresh sessions, fresh allocators).
+            // deal.semantic-ir/2 text (fresh sessions, fresh allocators).
             CheckedModuleInput main = moduleOf(checked.input(), "lib");
             RequirementManifestResult manifests = LoweringSupport.computeManifests(
                 invocation(), checked.input(), checked.index());
@@ -1184,7 +1189,7 @@ public class StdlibCallLoweringTest {
             byte[] dump2 = SemanticIrDumper.dumpModule(second.unit());
             check(java.util.Arrays.equals(dump1, dump2),
                 "re-lowering the same module produces byte-identical "
-                    + "deal.semantic-ir/1 text");
+                    + "deal.semantic-ir/2 text");
             byte[] again = SemanticIrDumper.dumpModule(first.unit());
             check(java.util.Arrays.equals(dump1, again),
                 "repeated dumps of the same unit are byte-identical");

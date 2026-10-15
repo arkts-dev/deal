@@ -28,6 +28,7 @@ import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ClassFactoryId;
+import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
@@ -54,6 +55,7 @@ import deal.semantic.ir.NamespaceRegistration;
 import deal.semantic.ir.NamespaceRegistrations;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
+import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticIdAllocator;
@@ -1137,7 +1139,7 @@ public class ProjectLoweringTest {
             checkEq("Common semantic lowering failed: module 'app', capability"
                     + " MODULES, validatorRule NAMESPACE_REGISTRATION,"
                     + " semanticProfile DEAL_V1_2_INT32, irVersion"
-                    + " deal.semantic-ir/1, origin NamespaceRegistrations record"
+                    + " deal.semantic-ir/2, origin NamespaceRegistrations record"
                     + " (the MODULE_IMPORT completion " + utilImport.opId()
                     + " of util carries the kind COMPILED but the module's"
                     + " registration entry kind is HOST (a completion's"
@@ -2379,6 +2381,108 @@ public class ProjectLoweringTest {
         return null;
     }
 
+    /**
+     * The combined T1+T2 check (ISSUE-0817): the real ownership fixture's
+     * units round-trip every fact — the T1-owned companions (bodyTable in
+     * both directions, classFactories, jsonDefaults, classBindingFacts)
+     * and every other unit fact — through the canonical text, and repeated
+     * dumps are byte-identical.
+     */
+    private static void testCompleteUnitTransport() throws Exception {
+        System.out.println("-- the complete /2 unit transport over the real legal "
+            + "project --");
+        RealProject project = compileProject(OWNERSHIP_APP_SOURCE,
+            Map.of("src/util.deal", OWNERSHIP_UTIL_SOURCE,
+                "src/mid.deal", OWNERSHIP_MID_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the transport fixture lowers: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_2_INT32,
+                    invocation().capabilityRegistryHash());
+            boolean sawCaptures = false;
+            boolean sawImportAliases = false;
+            boolean sawClassLayout = false;
+            for (LoweredModuleUnit unit : lowered.modules().values()) {
+                RawUnit raw = RawUnit.fromTyped(unit);
+                String text = SemanticIrValidator.toUnitText(unit);
+                checkEq(SemanticIrDumper.dumpModuleText(unit), text,
+                    "the module dump of " + unit.moduleId()
+                        + " is exactly the canonical unit mapping");
+                check(text.contains("\"formatVersion\":\"deal.semantic-ir/2\""),
+                    "module " + unit.moduleId() + " carries the /2 envelope");
+                RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
+                    (CanonicalJson.Obj) CanonicalJson.parse(text));
+                checkEq(raw, reparsed,
+                    "every unit fact of module " + unit.moduleId()
+                        + " survives typed->raw->text->raw unchanged");
+                checkEq(text, CanonicalJson.serializeText(
+                        ContractSnapshotCanonicalizer.toJson(reparsed)),
+                    "the transported text of module " + unit.moduleId()
+                        + " re-serializes byte-identically");
+                // The T1-owned companions are exact views of the unit's
+                // records, and they survive the text transport exactly.
+                checkEq(unit.bodyTable(), reparsed.bodyTable(),
+                    "module " + unit.moduleId() + " keeps both membership directions");
+                checkEq(unit.classFactories(), reparsed.classFactories(),
+                    "module " + unit.moduleId() + " keeps its factory registry");
+                checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(),
+                    "module " + unit.moduleId() + " keeps its JSON-default rows");
+                checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(),
+                    "module " + unit.moduleId()
+                        + " keeps its parameter/import facts");
+                Optional<CompilerDiagnostic> readmitted =
+                    SemanticIrValidator.validateText(text, facts);
+                check(readmitted.isEmpty(),
+                    "the dumped text of module " + unit.moduleId()
+                        + " re-admits through the text surface: "
+                        + readmitted.map(CompilerDiagnostic::message).orElse(""));
+                for (RawUnit.RawFunction function : reparsed.functions()) {
+                    if (!function.captures().isEmpty()) {
+                        sawCaptures = true;
+                    }
+                }
+                if (!reparsed.classLayouts().isEmpty()) {
+                    sawClassLayout = true;
+                    for (RawUnit.RawClassLayout entry : reparsed.classLayouts()) {
+                        checkEq(entry.key(), entry.layout().classId(),
+                            "module " + unit.moduleId()
+                                + " keeps layout keys equal to the contained identities");
+                    }
+                }
+                if (!reparsed.classBindingFacts().importAliases().isEmpty()) {
+                    sawImportAliases = true;
+                }
+            }
+            check(sawClassLayout, "the class module's layout rows survive the transport");
+            check(sawCaptures,
+                "the ordinary closure captures survive the transport with their "
+                    + "generations");
+            check(sawImportAliases,
+                "the importing module's import-alias facts survive the transport");
+
+            SemanticIrDumper.ProjectDump first = SemanticIrDumper.dumpProject(lowered);
+            SemanticIrDumper.ProjectDump second = SemanticIrDumper.dumpProject(lowered);
+            check(java.util.Arrays.equals(first.manifest(), second.manifest()),
+                "repeated project manifests are byte-identical");
+            for (int i = 0; i < first.modules().size(); i++) {
+                check(java.util.Arrays.equals(first.modules().get(i).bytes(),
+                        second.modules().get(i).bytes()),
+                    "repeated dumps of module " + first.modules().get(i).moduleId()
+                        + " are byte-identical");
+            }
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Project Lowering Entry Tests (ISSUE-0634) ===\n");
         RealProject project = null;
@@ -2392,6 +2496,7 @@ public class ProjectLoweringTest {
             testUnitProjectCompanionOwnership();
             testNamespaceRegistrationFailureOrigins(baseline);
             testComposedChainOverUnifiedUnits(baseline);
+            testCompleteUnitTransport();
             testInProjectClassArm();
             importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,
                 Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());

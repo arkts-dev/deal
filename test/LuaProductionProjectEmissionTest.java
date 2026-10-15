@@ -287,7 +287,7 @@ public class LuaProductionProjectEmissionTest {
             // Exactly one chunk: one header, one prelude, one deferred main,
             // one entry-surface return.
             checkEq(1, countOccurrences(lua,
-                    "-- deal.semantic-ir/1 shared LuaJIT artifact"),
+                    "-- deal.semantic-ir/2 shared LuaJIT artifact"),
                 "the artifact carries exactly one chunk header");
             checkEq(1, countOccurrences(lua, "-- ==== shared runtime prelude ===="),
                 "the artifact carries the shared runtime prelude exactly once");

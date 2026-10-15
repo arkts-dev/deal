@@ -63,11 +63,25 @@ public final class SemanticIrValidator {
     /** The R-PROFILE rule: a profile/interface mismatch. */
     public static final String R_PROFILE = "R-PROFILE";
 
-    /** The closed 14-condition rule set in the pinned S6 enumeration order. */
+    /**
+     * The R-IDENTITY-LINK rule: a registry key that differs from the
+     * contained record's own identity (a class-layout map key differing
+     * from its layout's {@code classId}, or a function map key differing
+     * from its record's {@code functionId}). The transport retains both
+     * identities unchanged and admission rejects the disagreement; the
+     * projection never repairs it.
+     */
+    public static final String R_IDENTITY_LINK = "R-IDENTITY-LINK";
+
+    /**
+     * The closed rule set in the pinned order: the 14 S6 conditions
+     * followed by the transport identity-link coherence check.
+     */
     public static final List<String> RULES = List.of(
         R_COVERAGE, R_ENUM, R_CAPABILITY, R_POLICY_KIND, R_BOUNDARY_TRIPLE,
         R_ELIDED_PLACEMENT, R_FUNCTION_BINDING, R_EXTERNAL_ENTRY, R_ALIAS_CYCLE,
-        R_TOKEN_REUSE, R_PRIVATE_STEP, R_RESERVED_NAME, R_DIGEST, R_PROFILE);
+        R_TOKEN_REUSE, R_PRIVATE_STEP, R_RESERVED_NAME, R_DIGEST, R_PROFILE,
+        R_IDENTITY_LINK);
 
     /** The only admitted unit profile name (S1). */
     public static final String ADMITTED_PROFILE = "DEAL_V1_2_INT32";
@@ -165,11 +179,12 @@ public final class SemanticIrValidator {
     }
 
     /**
-     * Validates canonical {@code deal.semantic-ir/1} text — a serialized
+     * Validates canonical {@code deal.semantic-ir/2} text — a serialized
      * unit (the {@link #toUnitText(LoweredModuleUnit)} protocol) or a
      * serialized project ({@code {semanticProfile, entryModule, modules}})
      * — through the single parser with closed enum positions carried as
-     * raw strings, running exactly the same closed 14 rules.
+     * raw strings, running exactly the same closed rules over the same
+     * complete facts as the typed surface.
      *
      */
     public static Optional<CompilerDiagnostic> validateText(String canonicalJson, ComparisonFacts facts) {
@@ -242,9 +257,10 @@ public final class SemanticIrValidator {
     // =========================================================================
 
     /**
-     * Validates one raw unit against the closed 14 rules in the pinned
+     * Validates one raw unit against the closed rules in the pinned
      * order: the S6 rule enumeration order (outer), then op order within
-     * each rule (inner). {@code closure} is the project module map for
+     * each rule (inner), followed by the transport identity-link
+     * coherence check. {@code closure} is the project module map for
      * cross-unit resolution (empty for unit-level validation).
      */
     private static Optional<CompilerDiagnostic> validateUnit(RawUnit unit, ComparisonFacts facts,
@@ -302,7 +318,45 @@ public final class SemanticIrValidator {
         if (failure.isPresent()) {
             return failure;
         }
-        return checkProfile(unit, facts);
+        failure = checkProfile(unit, facts);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        return checkIdentityLink(unit, facts);
+    }
+
+    /**
+     * The R-IDENTITY-LINK coherence check, run over exactly the raw facts
+     * both surfaces share: every own class-layout registry key equals the
+     * contained layout's {@code classId}, and every function registry key
+     * equals the contained record's {@code functionId}. A disagreement
+     * survives transport and rejects here; it is never normalized,
+     * discarded or repaired by the projection.
+     */
+    private static Optional<CompilerDiagnostic> checkIdentityLink(RawUnit unit,
+                                                                  ComparisonFacts facts) {
+        for (RawUnit.RawClassLayout entry : unit.classLayouts()) {
+            if (!entry.key().equals(entry.layout().classId())) {
+                return fail(unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "class-layout registry key " + entry.key()
+                        + " differs from the contained layout classId "
+                        + entry.layout().classId()
+                        + " (the transport retains both identities; admission never "
+                        + "selects a winning identity or repairs the record)"));
+            }
+        }
+        for (RawUnit.RawFunction entry : unit.functions()) {
+            if (!entry.key().equals(entry.functionId())) {
+                return fail(unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "function registry key " + entry.key()
+                        + " differs from the contained functionId " + entry.functionId()
+                        + " (the transport retains both identities; admission never "
+                        + "selects a winning identity or repairs the record)"));
+            }
+        }
+        return Optional.empty();
     }
 
     private static Optional<CompilerDiagnostic> fail(RawUnit unit, ComparisonFacts facts,
@@ -584,6 +638,36 @@ public final class SemanticIrValidator {
                 return bindingFailure;
             }
         }
+        // Unit-level class/function/export descriptor and default-owner
+        // positions (the complete /2 companions).
+        for (RawUnit.RawClassLayout entry : unit.classLayouts()) {
+            for (RawUnit.RawFieldLayout field : entry.layout().fields()) {
+                if (enumByName(DefaultOwner.class, field.defaultOwner()) == null) {
+                    return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "open value \"" + field.defaultOwner()
+                            + "\" in a closed DefaultOwner position"));
+                }
+                if (parseDescriptorQuiet(field.descriptor()) == null) {
+                    return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "open value \"" + field.descriptor()
+                            + "\" in a closed descriptor position"));
+                }
+            }
+        }
+        for (RawUnit.RawFunction function : unit.functions()) {
+            if (parseDescriptorQuiet(function.descriptor()) == null) {
+                return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_ENUM, "open value \"" + function.descriptor()
+                        + "\" in a closed descriptor position"));
+            }
+        }
+        for (RawUnit.RawExportEntry entry : unit.exportPlan()) {
+            if (parseDescriptorQuiet(entry.descriptor()) == null) {
+                return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_ENUM, "open value \"" + entry.descriptor()
+                        + "\" in a closed descriptor position"));
+            }
+        }
         // Per-op closed positions in op order.
         for (RawOp op : unit.ops()) {
             Optional<CompilerDiagnostic> opFailure = checkOpEnum(unit, facts, op);
@@ -640,6 +724,12 @@ public final class SemanticIrValidator {
         if (binding.descriptor() != null && parseDescriptorQuiet(binding.descriptor()) == null) {
             return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + binding.descriptor()
+                    + "\" in a closed descriptor position"));
+        }
+        if (binding.sourceSignature() != null
+                && parseDescriptorQuiet(binding.sourceSignature()) == null) {
+            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                origin(R_ENUM, "open value \"" + binding.sourceSignature()
                     + "\" in a closed descriptor position"));
         }
         if (binding.targetSignature() != null

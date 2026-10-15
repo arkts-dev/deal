@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed delete target-kind set of {@code deal.semantic-ir/1} (parent
+ * The closed delete target-kind set of {@code deal.semantic-ir/2} (parent
  * D14; schema S3). {@code DELETE} carries the target kind plus the ordered
  * address-chain child op list
  * {@code [containerOp?, keyOp?, normalizeOp?, boundaryOp? (ARRAY_SLOT only), commitOp]}

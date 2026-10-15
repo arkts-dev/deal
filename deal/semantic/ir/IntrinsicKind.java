@@ -3,7 +3,7 @@ package deal.semantic.ir;
 import java.util.List;
 
 /**
- * The closed intrinsic-conversion set of {@code deal.semantic-ir/1}
+ * The closed intrinsic-conversion set of {@code deal.semantic-ir/2}
  * (parent closed operation table; schema S3): the two conversion
  * intrinsics {@code int} and {@code number} usable as first-class function
  * values, plus the {@code bytes} allocation intrinsic.

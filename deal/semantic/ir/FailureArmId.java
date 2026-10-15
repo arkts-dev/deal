@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed DEAL-visible failure-arm set of {@code deal.semantic-ir/1}
+ * The closed DEAL-visible failure-arm set of {@code deal.semantic-ir/2}
  * (canonical failure-projection authority P1).
  *
  * <p>Every failure arm is one member; no open or unknown fallback member

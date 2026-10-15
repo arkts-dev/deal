@@ -198,7 +198,7 @@ public class BindingsValidationTest {
                     + "per fixture); got \"" + message + "\"");
             check(message.contains("capability BINDINGS"),
                 what + " message carries capability BINDINGS");
-            check(message.contains("deal.semantic-ir/1"),
+            check(message.contains("deal.semantic-ir/2"),
                 what + " message carries the IR version");
             check(message.contains("BindingsProductionValidator " + rule),
                 what + " message carries the BindingsProductionValidator origin");
@@ -863,7 +863,7 @@ public class BindingsValidationTest {
                 + "fixture); got \"" + message + "\"");
         check(message.contains("capability BINDINGS"),
             what + " message carries capability BINDINGS");
-        check(message.contains("deal.semantic-ir/1"), what + " message carries the IR version");
+        check(message.contains("deal.semantic-ir/2"), what + " message carries the IR version");
         check(message.contains("mod.binding"), what + " message carries the module path");
         check(message.contains("BindingsProductionValidator " + rule),
             what + " message carries the BindingsProductionValidator origin");
@@ -1867,7 +1867,7 @@ public class BindingsValidationTest {
         byte[] firstDump = SemanticIrDumper.dumpModule(first.lowering().unit());
         byte[] secondDump = SemanticIrDumper.dumpModule(second.lowering().unit());
         check(Arrays.equals(firstDump, secondDump),
-            "repeated lowering produces byte-identical deal.semantic-ir/1 dumps");
+            "repeated lowering produces byte-identical deal.semantic-ir/2 dumps");
         check(first.shapeMapFacts().equals(second.shapeMapFacts()),
             "repeated lowering records identical shape-map facts");
         check(BindingsProductionValidator.deriveCellKinds(first.lowering().unit(),

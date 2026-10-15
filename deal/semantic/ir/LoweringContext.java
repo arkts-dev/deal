@@ -2,7 +2,7 @@ package deal.semantic.ir;
 
 /**
  * The pinned lowering-context digest input domain of
- * {@code deal.semantic-ir/1} (schema S1): the exact input of the pinned
+ * {@code deal.semantic-ir/2} (schema S1): the exact input of the pinned
  * formula
  *
  * <pre>{@code loweringContextHash = SHA-256(canonical JSON {semanticProfile, capabilityRegistryHash})}</pre>

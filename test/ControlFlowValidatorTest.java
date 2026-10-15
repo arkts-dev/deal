@@ -273,7 +273,7 @@ public class ControlFlowValidatorTest {
                 + message + "\"");
         check(message.contains("capability EVALUATION_ORDER"),
             rule + " message carries capability EVALUATION_ORDER");
-        check(message.contains("deal.semantic-ir/1"), rule + " message carries the IR version");
+        check(message.contains("deal.semantic-ir/2"), rule + " message carries the IR version");
         check(message.contains("mod.flow"), rule + " message carries the module path");
         check(message.contains("ControlFlowValidator " + rule),
             rule + " message carries the ControlFlowValidator origin");

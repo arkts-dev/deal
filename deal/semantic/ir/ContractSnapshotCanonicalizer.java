@@ -1,14 +1,16 @@
 package deal.semantic.ir;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 /**
  * The single operation-contract snapshot canonicalizer of
- * {@code deal.semantic-ir/1} (schema S2; foundation F8): the only
+ * {@code deal.semantic-ir/2} (schema S2; foundation F8): the only
  * production implementation that maps {@link OperationContractSnapshot}
  * records (and every schema record they embed — kind payloads, semantic
  * IDs, descriptors, scalars, bindings, realizations, adapt-source refs,
@@ -247,7 +249,7 @@ public final class ContractSnapshotCanonicalizer {
         if (version != OperationContractSnapshot.VERSION) {
             throw new SemanticIrTextDecodeException(
                 "version mismatch: expected " + OperationContractSnapshot.VERSION
-                    + " in deal.semantic-ir/1, got " + version);
+                    + " in deal.semantic-ir/2, got " + version);
         }
         String opKind = expectString(field(obj, FIELD_OP_KIND), FIELD_OP_KIND);
         String resultType = expectStringOrNull(field(obj, FIELD_RESULT_TYPE), FIELD_RESULT_TYPE);
@@ -618,9 +620,9 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     private static CanonicalJson.Int idValue(long id, String what) {
-        if (id > Integer.MAX_VALUE) {
+        if (id > Integer.MAX_VALUE || id < Integer.MIN_VALUE) {
             throw new IllegalArgumentException(
-                what + " " + id + " exceeds the canonical JSON signed32 integer range");
+                what + " " + id + " is outside the canonical JSON signed32 integer range");
         }
         return CanonicalJson.intValue((int) id);
     }
@@ -940,19 +942,26 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     /**
-     * Decodes a unit text object into the raw unit record: the pinned
-     * field names and JSON value types are mapped into
-     * {@link RawUnit}; every closed enum position (profile, capabilities,
-     * construct names, op kinds, payload leaves, bindings, tokens) is
-     * carried as a raw string — no enum conversion at parse time, so
-     * out-of-set and reserved names survive byte-intact and reach the
-     * validator's rule checks.
+     * Decodes a complete {@code deal.semantic-ir/2} unit text object into
+     * the raw unit record: the exact pinned field set and JSON value
+     * types are mapped into {@link RawUnit}; every closed enum position
+     * (profile, capabilities, construct names, op kinds, payload leaves,
+     * bindings, tokens, layout default owners) is carried as a raw string
+     * — no enum conversion at parse time, so out-of-set and reserved
+     * names survive byte-intact and reach the validator's rule checks.
+     *
+     * <p>Missing or unknown framing fields, wrong value types, a version
+     * other than {@link LoweredModuleUnit#FORMAT_VERSION} and duplicate
+     * entry identities are transport decode failures. An absent mandatory
+     * companion is never treated as an empty one; a present companion row
+     * with an empty list stays a distinct present fact.</p>
      *
      */
     public static RawUnit parseUnit(CanonicalJson.Obj obj) {
         checkKeys(obj, "formatVersion", "semanticProfile", "moduleId", "interfaceHash",
             "loweringContextHash", "requiredCapabilities", "constructCoverage",
-            "functionBindings", "ops");
+            "classLayouts", "functions", "moduleInit", "exportPlan", "functionBindings",
+            "ops", "bodyTable", "classFactories", "jsonDefaults", "classBindingFacts");
         String formatVersion = requireString(obj, "formatVersion");
         if (!LoweredModuleUnit.FORMAT_VERSION.equals(formatVersion)) {
             throw new SemanticIrTextDecodeException(
@@ -986,14 +995,139 @@ public final class ContractSnapshotCanonicalizer {
             }
             coverage.add(new RawCoverage(requireString(row, "construct"), kinds));
         }
-        List<RawBinding> bindings = new ArrayList<>();
-        for (CanonicalJson.Value item : requireArray(obj, "functionBindings").items()) {
-            if (!(item instanceof CanonicalJson.Obj entry)) {
+        List<RawUnit.RawClassLayout> classLayouts = parseClassLayouts(obj);
+        List<RawUnit.RawFunction> functions = parseFunctions(obj);
+        ModuleInitPlan moduleInit = parseModuleInit(obj);
+        List<RawUnit.RawExportEntry> exportPlan = parseExportPlan(obj);
+        List<RawBinding> bindings = parseBindings(obj);
+        List<RawOp> ops = parseOps(obj);
+        StructuredBodyTable bodyTable = parseBodyTable(obj);
+        ClassFactoryRegistry classFactories = parseClassFactories(obj);
+        JsonDefaultChildTable jsonDefaults = parseJsonDefaults(obj);
+        ClassBindingFacts classBindingFacts = parseClassBindingFacts(obj);
+        return new RawUnit(modulePath, semanticProfile, interfaceHash, loweringContextHash,
+            capabilities, coverage, classLayouts, functions, moduleInit, exportPlan,
+            bindings, ops, bodyTable, classFactories, jsonDefaults, classBindingFacts);
+    }
+
+    /** Decodes the complete class-layout registry entries (separate key and contained identity). */
+    private static List<RawUnit.RawClassLayout> parseClassLayouts(CanonicalJson.Obj obj) {
+        CanonicalJson.Arr rows = requireArray(obj, "classLayouts");
+        List<RawUnit.RawClassLayout> classLayouts = new ArrayList<>();
+        Set<ClassId> keys = new LinkedHashSet<>();
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "classLayouts[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+            checkKeys(row, "key", "layout");
+            ClassId key = parseClassId(requireObject(row, "key"));
+            if (!keys.add(key)) {
                 throw new SemanticIrTextDecodeException(
-                    "functionBindings entries must be objects, got " + jsonKindName(item));
+                    "duplicate classLayouts entry key " + key + " (" + where + ")");
             }
+            CanonicalJson.Obj layout = requireObject(row, "layout");
+            checkKeys(layout, "classId", "fields");
+            ClassId classId = parseClassId(requireObject(layout, "classId"));
+            List<RawUnit.RawFieldLayout> fields = new ArrayList<>();
+            CanonicalJson.Arr fieldRows = requireArray(layout, "fields");
+            for (int j = 0; j < fieldRows.items().size(); j++) {
+                String fieldWhere = where + ".layout.fields[" + j + "]";
+                CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j), fieldWhere);
+                checkKeys(field, "defaultOwner", "descriptor", "name", "required");
+                fields.add(new RawUnit.RawFieldLayout(requireString(field, "name"),
+                    requireString(field, "descriptor"), requireBool(field, "required"),
+                    requireString(field, "defaultOwner")));
+            }
+            classLayouts.add(new RawUnit.RawClassLayout(key,
+                new RawUnit.RawLayout(classId, fields)));
+        }
+        return classLayouts;
+    }
+
+    /** Decodes the complete function registry entries (separate key and contained identity). */
+    private static List<RawUnit.RawFunction> parseFunctions(CanonicalJson.Obj obj) {
+        CanonicalJson.Arr rows = requireArray(obj, "functions");
+        List<RawUnit.RawFunction> functions = new ArrayList<>();
+        Set<FunctionId> keys = new LinkedHashSet<>();
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "functions[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+            checkKeys(row, "key", "functionId", "descriptor", "captures", "body",
+                "sourceName");
+            FunctionId key = parseFunctionId(requireObject(row, "key"));
+            if (!keys.add(key)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate functions entry key " + key + " (" + where + ")");
+            }
+            FunctionId functionId = parseFunctionId(requireObject(row, "functionId"));
+            String descriptor = requireString(row, "descriptor");
+            List<BindingGeneration> captures = new ArrayList<>();
+            CanonicalJson.Arr captureRows = requireArray(row, "captures");
+            for (int j = 0; j < captureRows.items().size(); j++) {
+                String captureWhere = where + ".captures[" + j + "]";
+                CanonicalJson.Obj capture = requireObjectValue(captureRows.items().get(j),
+                    captureWhere);
+                checkKeys(capture, "binding", "generation");
+                captures.add(new BindingGeneration(
+                    parseBindingId(requireObject(capture, "binding")),
+                    requireGeneration(capture, captureWhere)));
+            }
+            BlockId body = parseBlockId(requireObject(row, "body"));
+            String sourceName = requireStringOrNull(entryValue(row, "sourceName"),
+                where + ".sourceName");
+            functions.add(new RawUnit.RawFunction(key, functionId, descriptor, captures, body,
+                sourceName));
+        }
+        return functions;
+    }
+
+    /** Decodes the module-init plan: ordered imports and the init block. */
+    private static ModuleInitPlan parseModuleInit(CanonicalJson.Obj obj) {
+        CanonicalJson.Obj moduleInit = requireObject(obj, "moduleInit");
+        checkKeys(moduleInit, "imports", "initBlock");
+        List<ModuleId> imports = new ArrayList<>();
+        CanonicalJson.Arr rows = requireArray(moduleInit, "imports");
+        for (int i = 0; i < rows.items().size(); i++) {
+            imports.add(parseModuleId(requireObjectValue(rows.items().get(i),
+                "moduleInit.imports[" + i + "]")));
+        }
+        return new ModuleInitPlan(imports, parseBlockId(requireObject(moduleInit, "initBlock")));
+    }
+
+    /** Decodes the array-form export plan entries. */
+    private static List<RawUnit.RawExportEntry> parseExportPlan(CanonicalJson.Obj obj) {
+        CanonicalJson.Arr rows = requireArray(obj, "exportPlan");
+        List<RawUnit.RawExportEntry> exportPlan = new ArrayList<>();
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "exportPlan[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+            checkKeys(row, "name", "descriptor", "publishOpId");
+            exportPlan.add(new RawUnit.RawExportEntry(requireString(row, "name"),
+                requireString(row, "descriptor"),
+                parseOpId(requireObject(row, "publishOpId"))));
+        }
+        return exportPlan;
+    }
+
+    /** Decodes the complete allocation/binding registry entries. */
+    private static List<RawBinding> parseBindings(CanonicalJson.Obj obj) {
+        CanonicalJson.Arr rows = requireArray(obj, "functionBindings");
+        List<RawBinding> bindings = new ArrayList<>();
+        Set<Long> allocationIds = new LinkedHashSet<>();
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "functionBindings[" + i + "]";
+            CanonicalJson.Obj entry = requireObjectValue(rows.items().get(i), where);
             checkKeys(entry, "allocationId", "binding");
             long allocationId = requireInt(entry, "allocationId");
+            if (allocationId < 0) {
+                throw new SemanticIrTextDecodeException(
+                    "the functionBindings allocationId must be non-negative, got "
+                        + allocationId + " (" + where + ")");
+            }
+            if (!allocationIds.add(allocationId)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate functionBindings allocationId " + allocationId
+                        + " (" + where + ")");
+            }
             CanonicalJson.Value bindingValue = entryValue(entry, "binding");
             if (!(bindingValue instanceof CanonicalJson.Obj binding)) {
                 throw new SemanticIrTextDecodeException(
@@ -1002,6 +1136,11 @@ public final class ContractSnapshotCanonicalizer {
             }
             bindings.add(bindingFromText(allocationId, binding));
         }
+        return bindings;
+    }
+
+    /** Decodes the produced operations in source order. */
+    private static List<RawOp> parseOps(CanonicalJson.Obj obj) {
         List<RawOp> ops = new ArrayList<>();
         for (CanonicalJson.Value item : requireArray(obj, "ops").items()) {
             if (!(item instanceof CanonicalJson.Obj op)) {
@@ -1010,8 +1149,112 @@ public final class ContractSnapshotCanonicalizer {
             }
             ops.add(opFromText(op));
         }
-        return new RawUnit(modulePath, semanticProfile, interfaceHash, loweringContextHash,
-            capabilities, coverage, bindings, ops);
+        return ops;
+    }
+
+    /** Decodes the body table: both membership directions are transported independently. */
+    private static StructuredBodyTable parseBodyTable(CanonicalJson.Obj obj) {
+        CanonicalJson.Obj bodyTable = requireObject(obj, "bodyTable");
+        checkKeys(bodyTable, "blockOps", "opBlocks");
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        CanonicalJson.Arr blockRows = requireArray(bodyTable, "blockOps");
+        for (int i = 0; i < blockRows.items().size(); i++) {
+            String where = "bodyTable.blockOps[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(blockRows.items().get(i), where);
+            checkKeys(row, "block", "ops");
+            BlockId block = parseBlockId(requireObject(row, "block"));
+            if (blockOps.containsKey(block)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate bodyTable.blockOps entry block " + block + " (" + where + ")");
+            }
+            List<OpId> ops = new ArrayList<>();
+            CanonicalJson.Arr opRows = requireArray(row, "ops");
+            for (int j = 0; j < opRows.items().size(); j++) {
+                ops.add(parseOpId(requireObjectValue(opRows.items().get(j),
+                    where + ".ops[" + j + "]")));
+            }
+            blockOps.put(block, ops);
+        }
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        CanonicalJson.Arr opRows = requireArray(bodyTable, "opBlocks");
+        for (int i = 0; i < opRows.items().size(); i++) {
+            String where = "bodyTable.opBlocks[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(opRows.items().get(i), where);
+            checkKeys(row, "op", "block");
+            OpId op = parseOpId(requireObject(row, "op"));
+            if (opBlocks.containsKey(op)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate bodyTable.opBlocks entry op " + op + " (" + where + ")");
+            }
+            opBlocks.put(op, parseBlockId(requireObject(row, "block")));
+        }
+        return new StructuredBodyTable(blockOps, opBlocks);
+    }
+
+    /** Decodes the construction-entry → CLASS_FACTORY registry. */
+    private static ClassFactoryRegistry parseClassFactories(CanonicalJson.Obj obj) {
+        CanonicalJson.Arr rows = requireArray(obj, "classFactories");
+        Map<ClassFactoryId, OpId> factories = new LinkedHashMap<>();
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "classFactories[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+            checkKeys(row, "constructionEntry", "factoryOp");
+            ClassFactoryId entry = parseClassFactoryId(requireObject(row, "constructionEntry"));
+            if (factories.containsKey(entry)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate classFactories constructionEntry " + entry
+                        + " (" + where + ")");
+            }
+            factories.put(entry, parseOpId(requireObject(row, "factoryOp")));
+        }
+        return new ClassFactoryRegistry(factories);
+    }
+
+    /** Decodes the JSON-producing op → ordered CLASS_DEFAULT children rows. */
+    private static JsonDefaultChildTable parseJsonDefaults(CanonicalJson.Obj obj) {
+        CanonicalJson.Arr rows = requireArray(obj, "jsonDefaults");
+        Map<OpId, List<OpId>> defaultChildren = new LinkedHashMap<>();
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "jsonDefaults[" + i + "]";
+            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+            checkKeys(row, "jsonFromClassOp", "classDefaultOps");
+            OpId jsonFromClassOp = parseOpId(requireObject(row, "jsonFromClassOp"));
+            if (defaultChildren.containsKey(jsonFromClassOp)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate jsonDefaults entry jsonFromClassOp " + jsonFromClassOp
+                        + " (" + where + ")");
+            }
+            List<OpId> children = new ArrayList<>();
+            CanonicalJson.Arr childRows = requireArray(row, "classDefaultOps");
+            for (int j = 0; j < childRows.items().size(); j++) {
+                children.add(parseOpId(requireObjectValue(childRows.items().get(j),
+                    where + ".classDefaultOps[" + j + "]")));
+            }
+            defaultChildren.put(jsonFromClassOp, children);
+        }
+        return new JsonDefaultChildTable(defaultChildren);
+    }
+
+    /** Decodes the parameter/import initialization facts. */
+    private static ClassBindingFacts parseClassBindingFacts(CanonicalJson.Obj obj) {
+        CanonicalJson.Obj facts = requireObject(obj, "classBindingFacts");
+        checkKeys(facts, "parameters", "importAliases");
+        return new ClassBindingFacts(parseBindingIdSet(facts, "parameters"),
+            parseBindingIdSet(facts, "importAliases"));
+    }
+
+    private static Set<BindingId> parseBindingIdSet(CanonicalJson.Obj facts, String key) {
+        Set<BindingId> ids = new LinkedHashSet<>();
+        CanonicalJson.Arr rows = requireArray(facts, key);
+        for (int i = 0; i < rows.items().size(); i++) {
+            BindingId id = parseBindingId(requireObjectValue(rows.items().get(i),
+                key + "[" + i + "]"));
+            if (!ids.add(id)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate classBindingFacts." + key + " binding " + id);
+            }
+        }
+        return ids;
     }
 
     /**
@@ -1047,7 +1290,17 @@ public final class ContractSnapshotCanonicalizer {
         return new ParsedProject(projectProfile, entryModule, modules);
     }
 
-    /** Maps a raw unit onto the single canonical JSON value model (the text surface's transport). */
+    /**
+     * Maps a raw unit onto the complete {@code deal.semantic-ir/2} canonical
+     * JSON value model (the text surface's transport): every fact the raw
+     * unit owns is emitted — header, capabilities, coverage, class-layout
+     * entries with their separate key and layout identity, function entries
+     * with their separate key and function identity, plan, bindings and
+     * operations, plus the complete unit companions. Mandatory fields are
+     * always emitted, even when empty; producer order is preserved and no
+     * evaluation-bearing array is sorted or collapsed.
+     *
+     */
     public static CanonicalJson.Value toJson(RawUnit unit) {
         List<CanonicalJson.Value> capabilities = new ArrayList<>();
         for (String capability : unit.requiredCapabilities()) {
@@ -1063,10 +1316,25 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("construct", CanonicalJson.str(row.construct())),
                 CanonicalJson.e("opKinds", CanonicalJson.arr(kinds))));
         }
+        List<CanonicalJson.Value> classLayouts = new ArrayList<>();
+        for (RawUnit.RawClassLayout entry : unit.classLayouts()) {
+            classLayouts.add(rawClassLayoutJson(entry));
+        }
+        List<CanonicalJson.Value> functions = new ArrayList<>();
+        for (RawUnit.RawFunction entry : unit.functions()) {
+            functions.add(rawFunctionJson(entry));
+        }
+        List<CanonicalJson.Value> exportPlan = new ArrayList<>();
+        for (RawUnit.RawExportEntry entry : unit.exportPlan()) {
+            exportPlan.add(CanonicalJson.obj(
+                CanonicalJson.e("descriptor", CanonicalJson.str(entry.descriptor())),
+                CanonicalJson.e("name", CanonicalJson.str(entry.name())),
+                CanonicalJson.e("publishOpId", semanticIdJson(entry.publishOpId()))));
+        }
         List<CanonicalJson.Value> bindings = new ArrayList<>();
         for (RawBinding binding : unit.bindings()) {
             bindings.add(CanonicalJson.obj(
-                CanonicalJson.e("allocationId", CanonicalJson.intValue((int) binding.allocationId())),
+                CanonicalJson.e("allocationId", idValue(binding.allocationId(), "allocationId")),
                 CanonicalJson.e("binding", bindingJson(binding))));
         }
         List<CanonicalJson.Value> ops = new ArrayList<>();
@@ -1081,8 +1349,156 @@ public final class ContractSnapshotCanonicalizer {
             CanonicalJson.e("loweringContextHash", CanonicalJson.str(unit.loweringContextHash())),
             CanonicalJson.e("requiredCapabilities", CanonicalJson.arr(capabilities)),
             CanonicalJson.e("constructCoverage", CanonicalJson.arr(coverage)),
+            CanonicalJson.e("classLayouts", CanonicalJson.arr(classLayouts)),
+            CanonicalJson.e("functions", CanonicalJson.arr(functions)),
+            CanonicalJson.e("moduleInit", moduleInitJson(unit.moduleInit())),
+            CanonicalJson.e("exportPlan", CanonicalJson.arr(exportPlan)),
             CanonicalJson.e("functionBindings", CanonicalJson.arr(bindings)),
-            CanonicalJson.e("ops", CanonicalJson.arr(ops)));
+            CanonicalJson.e("ops", CanonicalJson.arr(ops)),
+            CanonicalJson.e("bodyTable", bodyTableJson(unit.bodyTable())),
+            CanonicalJson.e("classFactories", classFactoriesJson(unit.classFactories())),
+            CanonicalJson.e("jsonDefaults", jsonDefaultsJson(unit.jsonDefaults())),
+            CanonicalJson.e("classBindingFacts", classBindingFactsJson(unit.classBindingFacts())));
+    }
+
+    /**
+     * Renders one raw class-layout registry entry: the registry {@code key}
+     * stays a separate fact from the layout's own {@code classId}, so a
+     * disagreement is transported instead of normalized away. The layout
+     * data uses the existing layout mapping: the contained identity and
+     * the ordered field rows (name, descriptor text, presence, default
+     * owner).
+     *
+     */
+    public static CanonicalJson.Value rawClassLayoutJson(RawUnit.RawClassLayout entry) {
+        Objects.requireNonNull(entry, "entry must not be null");
+        return CanonicalJson.obj(
+            CanonicalJson.e("key", semanticIdJson(entry.key())),
+            CanonicalJson.e("layout", rawLayoutJson(entry.layout())));
+    }
+
+    private static CanonicalJson.Value rawLayoutJson(RawUnit.RawLayout layout) {
+        List<CanonicalJson.Value> fields = new ArrayList<>();
+        for (RawUnit.RawFieldLayout field : layout.fields()) {
+            fields.add(CanonicalJson.obj(
+                CanonicalJson.e("defaultOwner", CanonicalJson.str(field.defaultOwner())),
+                CanonicalJson.e("descriptor", CanonicalJson.str(field.descriptor())),
+                CanonicalJson.e("name", CanonicalJson.str(field.name())),
+                CanonicalJson.e("required", CanonicalJson.bool(field.required()))));
+        }
+        return CanonicalJson.obj(
+            CanonicalJson.e("classId", semanticIdJson(layout.classId())),
+            CanonicalJson.e("fields", CanonicalJson.arr(fields)));
+    }
+
+    /**
+     * Renders one raw function registry entry: the registry {@code key}
+     * stays a separate fact from the contained {@code functionId}, so a
+     * disagreement is transported instead of derived away; the descriptor
+     * text, the ordered generation-pinned captures, the body block and
+     * the source name (explicit null for an anonymous function) complete
+     * the entry.
+     *
+     */
+    public static CanonicalJson.Value rawFunctionJson(RawUnit.RawFunction entry) {
+        Objects.requireNonNull(entry, "entry must not be null");
+        List<CanonicalJson.Value> captures = new ArrayList<>();
+        for (BindingGeneration capture : entry.captures()) {
+            captures.add(bindingGenerationJson(capture));
+        }
+        return CanonicalJson.obj(
+            CanonicalJson.e("body", semanticIdJson(entry.body())),
+            CanonicalJson.e("captures", CanonicalJson.arr(captures)),
+            CanonicalJson.e("descriptor", CanonicalJson.str(entry.descriptor())),
+            CanonicalJson.e("functionId", semanticIdJson(entry.functionId())),
+            CanonicalJson.e("key", semanticIdJson(entry.key())),
+            CanonicalJson.e("sourceName", entry.sourceName() == null
+                ? CanonicalJson.nullValue() : CanonicalJson.str(entry.sourceName())));
+    }
+
+    /** Renders the module-init plan through the existing semantic-ID mapping. */
+    private static CanonicalJson.Value moduleInitJson(ModuleInitPlan plan) {
+        Objects.requireNonNull(plan, "plan must not be null");
+        List<CanonicalJson.Value> imports = new ArrayList<>();
+        for (ModuleId module : plan.imports()) {
+            imports.add(semanticIdJson(module));
+        }
+        return CanonicalJson.obj(
+            CanonicalJson.e("imports", CanonicalJson.arr(imports)),
+            CanonicalJson.e("initBlock", semanticIdJson(plan.initBlock())));
+    }
+
+    /**
+     * Renders the body table: both membership directions are emitted from
+     * their own records and transported independently; the inverse is
+     * never rebuilt from the other direction.
+     *
+     */
+    public static CanonicalJson.Value bodyTableJson(StructuredBodyTable table) {
+        Objects.requireNonNull(table, "table must not be null");
+        List<CanonicalJson.Value> blockOps = new ArrayList<>();
+        for (Map.Entry<BlockId, List<OpId>> entry : table.blockOps().entrySet()) {
+            List<CanonicalJson.Value> ops = new ArrayList<>();
+            for (OpId op : entry.getValue()) {
+                ops.add(semanticIdJson(op));
+            }
+            blockOps.add(CanonicalJson.obj(
+                CanonicalJson.e("block", semanticIdJson(entry.getKey())),
+                CanonicalJson.e("ops", CanonicalJson.arr(ops))));
+        }
+        List<CanonicalJson.Value> opBlocks = new ArrayList<>();
+        for (Map.Entry<OpId, BlockId> entry : table.opBlocks().entrySet()) {
+            opBlocks.add(CanonicalJson.obj(
+                CanonicalJson.e("block", semanticIdJson(entry.getValue())),
+                CanonicalJson.e("op", semanticIdJson(entry.getKey()))));
+        }
+        return CanonicalJson.obj(
+            CanonicalJson.e("blockOps", CanonicalJson.arr(blockOps)),
+            CanonicalJson.e("opBlocks", CanonicalJson.arr(opBlocks)));
+    }
+
+    /** Renders the construction-entry → registered CLASS_FACTORY op registry. */
+    public static CanonicalJson.Value classFactoriesJson(ClassFactoryRegistry registry) {
+        Objects.requireNonNull(registry, "registry must not be null");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (Map.Entry<ClassFactoryId, OpId> entry : registry.factories().entrySet()) {
+            rows.add(CanonicalJson.obj(
+                CanonicalJson.e("constructionEntry", semanticIdJson(entry.getKey())),
+                CanonicalJson.e("factoryOp", semanticIdJson(entry.getValue()))));
+        }
+        return CanonicalJson.arr(rows);
+    }
+
+    /** Renders the JSON-producing op → ordered CLASS_DEFAULT child op rows. */
+    public static CanonicalJson.Value jsonDefaultsJson(JsonDefaultChildTable table) {
+        Objects.requireNonNull(table, "table must not be null");
+        List<CanonicalJson.Value> rows = new ArrayList<>();
+        for (Map.Entry<OpId, List<OpId>> entry : table.defaultChildren().entrySet()) {
+            List<CanonicalJson.Value> children = new ArrayList<>();
+            for (OpId child : entry.getValue()) {
+                children.add(semanticIdJson(child));
+            }
+            rows.add(CanonicalJson.obj(
+                CanonicalJson.e("classDefaultOps", CanonicalJson.arr(children)),
+                CanonicalJson.e("jsonFromClassOp", semanticIdJson(entry.getKey()))));
+        }
+        return CanonicalJson.arr(rows);
+    }
+
+    /** Renders the parameter/import initialization facts (insertion order). */
+    public static CanonicalJson.Value classBindingFactsJson(ClassBindingFacts facts) {
+        Objects.requireNonNull(facts, "facts must not be null");
+        return CanonicalJson.obj(
+            CanonicalJson.e("importAliases", bindingIdListJson(facts.importAliases())),
+            CanonicalJson.e("parameters", bindingIdListJson(facts.parameters())));
+    }
+
+    private static CanonicalJson.Value bindingIdListJson(Set<BindingId> ids) {
+        List<CanonicalJson.Value> items = new ArrayList<>();
+        for (BindingId id : ids) {
+            items.add(semanticIdJson(id));
+        }
+        return CanonicalJson.arr(items);
     }
 
     /** Maps an executable project onto the project text protocol value model. */
@@ -1111,9 +1527,14 @@ public final class ContractSnapshotCanonicalizer {
     private static CanonicalJson.Value bindingJson(RawBinding binding) {
         return switch (binding.shape()) {
             case "loweredBody" -> CanonicalJson.obj(
+                CanonicalJson.e("blockId", semanticIdJson(binding.blockId())),
+                CanonicalJson.e("functionId", semanticIdJson(binding.functionId())),
                 CanonicalJson.e("type", CanonicalJson.str("loweredBody")));
             case "adapter" -> CanonicalJson.obj(
+                CanonicalJson.e("adaptOpId", semanticIdJson(binding.adaptOpId())),
                 CanonicalJson.e("captureMode", CanonicalJson.str(binding.captureMode())),
+                CanonicalJson.e("sourceRef", sourceRefJson(binding.sourceRef())),
+                CanonicalJson.e("sourceSignature", CanonicalJson.str(binding.sourceSignature())),
                 CanonicalJson.e("targetSignature", CanonicalJson.str(binding.targetSignature())),
                 CanonicalJson.e("type", CanonicalJson.str("adapter")));
             case "hostFunction" -> CanonicalJson.obj(
@@ -1151,6 +1572,58 @@ public final class ContractSnapshotCanonicalizer {
         };
     }
 
+    /**
+     * Parses an adapter source reference: the closed family is sharedCell
+     * (binding/generation), thunk (blockId/capturedBindings) and value
+     * (value), each with its existing type discriminator. The recognized
+     * member sets are exact; an unknown discriminator is a decode
+     * failure (the closed shape tag is transport framing, not a semantic
+     * enum position).
+     *
+     */
+    public static AdaptSourceRef parseSourceRef(CanonicalJson.Obj obj) {
+        String type = requireString(obj, "type");
+        switch (type) {
+            case "sharedCell" -> {
+                checkKeys(obj, "binding", "generation", "type");
+                return new AdaptSourceRef.SharedCell(
+                    parseBindingId(requireObject(obj, "binding")),
+                    requireGeneration(obj, "sourceRef.sharedCell"));
+            }
+            case "thunk" -> {
+                checkKeys(obj, "blockId", "capturedBindings", "type");
+                BlockId blockId = parseBlockId(requireObject(obj, "blockId"));
+                List<BindingGeneration> captured = new ArrayList<>();
+                CanonicalJson.Arr rows = requireArray(obj, "capturedBindings");
+                for (int i = 0; i < rows.items().size(); i++) {
+                    String where = "sourceRef.thunk.capturedBindings[" + i + "]";
+                    CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
+                    checkKeys(row, "binding", "generation");
+                    captured.add(new BindingGeneration(
+                        parseBindingId(requireObject(row, "binding")),
+                        requireGeneration(row, where)));
+                }
+                return new AdaptSourceRef.Thunk(blockId, captured);
+            }
+            case "value" -> {
+                checkKeys(obj, "type", "value");
+                return new AdaptSourceRef.Value(parseValueId(requireObject(obj, "value")));
+            }
+            default -> throw new SemanticIrTextDecodeException(
+                "expected an adapter sourceRef object, got type \"" + type + "\"");
+        }
+    }
+
+    /** The non-negative generation of one generation-pinned capture position. */
+    private static long requireGeneration(CanonicalJson.Obj obj, String what) {
+        int generation = requireInt(obj, "generation");
+        if (generation < 0) {
+            throw new SemanticIrTextDecodeException(
+                "the " + what + " generation must be non-negative, got " + generation);
+        }
+        return generation;
+    }
+
     private static RawBinding bindingFromText(long allocationId, CanonicalJson.Obj binding) {
         String shape = requireString(binding, "type");
         String modulePath = null;
@@ -1158,23 +1631,38 @@ public final class ContractSnapshotCanonicalizer {
         String executionOwner = null;
         String captureMode = null;
         String descriptor = null;
+        String sourceSignature = null;
         String targetSignature = null;
         OpId materializingBoundaryOpId = null;
         String intrinsicKind = null;
+        FunctionId functionId = null;
+        BlockId blockId = null;
+        OpId adaptOpId = null;
+        AdaptSourceRef sourceRef = null;
         switch (shape) {
             case "loweredBody" -> {
-                // functionId + blockId; no enum positions the rules consult.
+                checkKeys(binding, "blockId", "functionId", "type");
+                blockId = parseBlockId(requireObject(binding, "blockId"));
+                functionId = parseFunctionId(requireObject(binding, "functionId"));
             }
             case "adapter" -> {
+                checkKeys(binding, "adaptOpId", "captureMode", "sourceRef",
+                    "sourceSignature", "targetSignature", "type");
+                adaptOpId = parseOpId(requireObject(binding, "adaptOpId"));
                 captureMode = requireString(binding, "captureMode");
+                sourceRef = parseSourceRef(requireObject(binding, "sourceRef"));
+                sourceSignature = requireString(binding, "sourceSignature");
                 targetSignature = requireString(binding, "targetSignature");
             }
             case "hostFunction" -> {
+                checkKeys(binding, "descriptor", "exportName", "hostModuleId", "type");
                 modulePath = modulePathOf(requireObject(binding, "hostModuleId"));
                 exportName = requireString(binding, "exportName");
                 descriptor = requireString(binding, "descriptor");
             }
             case "hostFunctionValue" -> {
+                checkKeys(binding, "descriptor", "hostModuleId", "materializingBoundaryOpId",
+                    "type");
                 modulePath = modulePathOf(requireObject(binding, "hostModuleId"));
                 descriptor = requireString(binding, "descriptor");
                 CanonicalJson.Value materializing = entryValue(binding, "materializingBoundaryOpId");
@@ -1187,16 +1675,20 @@ public final class ContractSnapshotCanonicalizer {
                 }
             }
             case "externalFunction" -> {
+                checkKeys(binding, "descriptor", "executionOwner", "exportName", "moduleId",
+                    "type");
                 modulePath = modulePathOf(requireObject(binding, "moduleId"));
                 exportName = requireString(binding, "exportName");
                 executionOwner = requireString(binding, "executionOwner");
                 descriptor = requireString(binding, "descriptor");
             }
             case "intrinsicFunction" -> {
+                checkKeys(binding, "descriptor", "intrinsicKind", "type");
                 descriptor = requireString(binding, "descriptor");
                 intrinsicKind = requireString(binding, "intrinsicKind");
             }
             case "dynamicFunctionValue" -> {
+                checkKeys(binding, "descriptor", "materializingBoundaryOpId", "type");
                 // The two required positions (the producing op and the
                 // materialized descriptor) are decoded as nullable raw
                 // positions: the transport never invents a value, and the
@@ -1213,8 +1705,8 @@ public final class ContractSnapshotCanonicalizer {
             }
         }
         return new RawBinding(allocationId, shape, modulePath, exportName, executionOwner,
-            captureMode, descriptor, targetSignature, materializingBoundaryOpId,
-            intrinsicKind);
+            captureMode, descriptor, sourceSignature, targetSignature,
+            materializingBoundaryOpId, intrinsicKind, functionId, blockId, adaptOpId, sourceRef);
     }
 
     private static CanonicalJson.Value opJson(RawOp op) {
@@ -1277,7 +1769,7 @@ public final class ContractSnapshotCanonicalizer {
             CanonicalJson.e("kind", origin.kind() == null
                 ? CanonicalJson.nullValue() : CanonicalJson.str(origin.kind())),
             CanonicalJson.e("anchorId", CanonicalJson.obj(
-                CanonicalJson.e("id", CanonicalJson.intValue((int) origin.anchorId())),
+                CanonicalJson.e("id", idValue(origin.anchorId(), "anchorId")),
                 CanonicalJson.e("type", CanonicalJson.str("anchor")))),
             CanonicalJson.e("parentOpId", op.parentOpId() == null
                 ? CanonicalJson.nullValue()
@@ -1492,6 +1984,14 @@ public final class ContractSnapshotCanonicalizer {
             "the \"" + what + "\" field must be a string, got " + jsonKindName(value));
     }
 
+    /** A string-or-explicit-null value or a decode failure. */
+    public static String requireStringOrNull(CanonicalJson.Value value, String what) {
+        if (value instanceof CanonicalJson.Null) {
+            return null;
+        }
+        return requireStringValue(value, what);
+    }
+
     /** The signed32 integer value of a pinned key. */
     public static int requireInt(CanonicalJson.Obj obj, String key) {
         CanonicalJson.Value value = entryValue(obj, key);
@@ -1511,6 +2011,16 @@ public final class ContractSnapshotCanonicalizer {
         }
         throw new SemanticIrTextDecodeException(
             "the \"" + key + "\" field must be an array, got " + jsonKindName(value));
+    }
+
+    /** The boolean value of a pinned key. */
+    public static boolean requireBool(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = entryValue(obj, key);
+        if (value instanceof CanonicalJson.Bool bool) {
+            return bool.value();
+        }
+        throw new SemanticIrTextDecodeException(
+            "the \"" + key + "\" field must be a boolean, got " + jsonKindName(value));
     }
 
     /** The object value of a pinned key. */
@@ -1534,9 +2044,72 @@ public final class ContractSnapshotCanonicalizer {
             CanonicalJson.e("type", CanonicalJson.str("module")));
     }
 
-    /** The module path carried by a module semantic-id object. */
+    /**
+     * The module path carried by a module semantic-id object; every other
+     * semantic-id shape is a decode failure (the projection never
+     * rewrites a foreign shape into a module id).
+     */
     public static String modulePathOf(CanonicalJson.Obj moduleIdObj) {
+        String type = requireString(moduleIdObj, "type");
+        if (!"module".equals(type)) {
+            throw new SemanticIrTextDecodeException(
+                "expected a module semantic-id object, got type \"" + type + "\"");
+        }
         return requireString(moduleIdObj, "path");
+    }
+
+    /** Parses a module semantic-id object. */
+    public static ModuleId parseModuleId(CanonicalJson.Obj obj) {
+        return new ModuleId(modulePathOf(obj));
+    }
+
+    /** Parses a class semantic-id object. */
+    public static ClassId parseClassId(CanonicalJson.Obj obj) {
+        String type = requireString(obj, "type");
+        if (!"class".equals(type)) {
+            throw new SemanticIrTextDecodeException(
+                "expected a class semantic-id object, got type \"" + type + "\"");
+        }
+        try {
+            return new ClassId(requireString(obj, "modulePath"), requireString(obj, "name"));
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "invalid class semantic-id object: " + e.getMessage());
+        }
+    }
+
+    /** Parses a function semantic-id object. */
+    public static FunctionId parseFunctionId(CanonicalJson.Obj obj) {
+        return new FunctionId(parseNumericId(obj, "function"));
+    }
+
+    /** Parses a binding semantic-id object. */
+    public static BindingId parseBindingId(CanonicalJson.Obj obj) {
+        return new BindingId(parseNumericId(obj, "binding"));
+    }
+
+    /** Parses a block semantic-id object. */
+    public static BlockId parseBlockId(CanonicalJson.Obj obj) {
+        return new BlockId(parseNumericId(obj, "block"));
+    }
+
+    /** Parses a class-factory semantic-id object. */
+    public static ClassFactoryId parseClassFactoryId(CanonicalJson.Obj obj) {
+        return new ClassFactoryId(parseNumericId(obj, "classFactory"));
+    }
+
+    private static long parseNumericId(CanonicalJson.Obj obj, String expectedType) {
+        String type = requireString(obj, "type");
+        if (!expectedType.equals(type)) {
+            throw new SemanticIrTextDecodeException(
+                "expected a " + expectedType + " semantic-id object, got type \"" + type + "\"");
+        }
+        int id = requireInt(obj, "id");
+        if (id < 0) {
+            throw new SemanticIrTextDecodeException(
+                "the " + expectedType + " semantic-id id must be non-negative, got " + id);
+        }
+        return id;
     }
 
     /** Parses an op semantic-id object. */
@@ -1546,7 +2119,11 @@ public final class ContractSnapshotCanonicalizer {
             throw new SemanticIrTextDecodeException(
                 "expected an op semantic-id object, got type \"" + type + "\"");
         }
-        return new OpId(new ModuleId(requireString(obj, "modulePath")), requireInt(obj, "id"));
+        try {
+            return new OpId(new ModuleId(requireString(obj, "modulePath")), requireInt(obj, "id"));
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException("invalid op semantic-id object: " + e.getMessage());
+        }
     }
 
     /**
@@ -1578,7 +2155,12 @@ public final class ContractSnapshotCanonicalizer {
             throw new SemanticIrTextDecodeException(
                 "expected a value semantic-id object, got type \"" + type + "\"");
         }
-        return new ValueId(requireInt(obj, "id"));
+        int id = requireInt(obj, "id");
+        if (id < 0) {
+            throw new SemanticIrTextDecodeException(
+                "the value semantic-id id must be non-negative, got " + id);
+        }
+        return new ValueId(id);
     }
 
     /** Parses a token semantic-id object (recursive alias referents). */

@@ -2,7 +2,7 @@ package deal.semantic.ir;
 
 /**
  * The sealed family of stable semantic identities of
- * {@code deal.semantic-ir/1} (parent D4; schema S1).
+ * {@code deal.semantic-ir/2} (parent D4; schema S1).
  *
  * <p>Every identity is globally unique within one
  * {@link ExecutableLoweredProject}; {@link OpId} additionally carries its

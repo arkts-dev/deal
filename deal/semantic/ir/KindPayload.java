@@ -1038,7 +1038,7 @@ public sealed interface KindPayload
      * synthetic units and the pre-addition text surface); the canonical
      * dump of the op changes by exactly this list, the closed payload
      * record set and the closed {@code SemanticOpKind} set are unchanged,
-     * and the {@code deal.semantic-ir/1} version text is unchanged.
+     * and the {@code deal.semantic-ir/2} version text is unchanged.
      *
      */
     record ModuleImportPayload(String rawSpecifier, ModuleId resolvedModule, ModuleImportKind kind,

@@ -3,7 +3,7 @@ package deal.semantic.ir;
 import java.util.List;
 
 /**
- * The closed boundary-kind set of {@code deal.semantic-ir/1} (parent
+ * The closed boundary-kind set of {@code deal.semantic-ir/2} (parent
  * "Closed boundary-assignment table (normative)"; schema S3).
  *
  * <p>Closed set — exactly the 27 values below in the pinned order; no open
@@ -52,7 +52,7 @@ public enum BoundaryKind {
 
     /**
      * The reserved boundary names, invalid as {@code BoundaryKind} values
-     * in {@code deal.semantic-ir/1}. They are not enum members.
+     * in {@code deal.semantic-ir/2}. They are not enum members.
      */
     public static final List<String> RESERVED_NAMES = List.of(
         "C_FFI_TO_DEAL",

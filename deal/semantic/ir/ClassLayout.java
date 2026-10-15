@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * A class layout of {@code deal.semantic-ir/1} (parent D16; schema S2):
+ * A class layout of {@code deal.semantic-ir/2} (parent D16; schema S2):
  * the structural field layout a {@code CLASS_NEW}/{@code CLASS_FACTORY}
  * and the {@code JSON_FROM_CLASS}/{@code JSON_TO_CLASS} conversions carry.
  * Fields are in declaration order with presence and default ownership;

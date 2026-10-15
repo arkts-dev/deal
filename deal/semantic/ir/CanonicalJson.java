@@ -14,7 +14,7 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * The single canonical JSON facility of {@code deal.semantic-ir/1}
+ * The single canonical JSON facility of {@code deal.semantic-ir/2}
  * (schema S2; foundation F8): one generic value model, one serializer, one
  * parser, and one SHA-256 helper. Every foundation component serializes
  * through this serializer and parses through this parser — no component

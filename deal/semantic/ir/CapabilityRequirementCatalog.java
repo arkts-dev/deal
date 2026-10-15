@@ -7,7 +7,7 @@ import java.util.Objects;
 
 /**
  * The closed capability-requirement catalog of
- * {@code deal.semantic-ir/1} (schema S4): maps each closed
+ * {@code deal.semantic-ir/2} (schema S4): maps each closed
  * {@link SemanticCapability} to its required-operation evidence, exactly
  * the S4 mapping, reproduced verbatim. The catalog is closed data owned
  * here, never reinterpreted; the validator consumes it for R-CAPABILITY

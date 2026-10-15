@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed control-selector set of {@code deal.semantic-ir/1} (parent
+ * The closed control-selector set of {@code deal.semantic-ir/2} (parent
  * D13; schema S3).
  *
  * <p>Closed set — exactly {@link #IF}, {@link #LOGICAL_AND},

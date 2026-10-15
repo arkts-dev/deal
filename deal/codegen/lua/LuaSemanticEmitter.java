@@ -577,7 +577,7 @@ public final class LuaSemanticEmitter {
         // -- emission ----------------------------------------------------------------
 
         String emit() {
-            out.append("-- deal.semantic-ir/1 shared LuaJIT artifact (ISSUE-0410 "
+            out.append("-- deal.semantic-ir/2 shared LuaJIT artifact (ISSUE-0410 "
                 + "decomposition tail)\n");
             // The shared run state (frames, sequence, allocation ids, the
             // async task registry and FIFO queue) is chunk-global: a

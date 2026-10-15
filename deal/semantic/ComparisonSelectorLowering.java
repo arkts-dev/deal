@@ -422,7 +422,7 @@ public final class ComparisonSelectorLowering {
      * {@link #produce} — {@code module}, {@code capability
      * EVALUATION_ORDER}, {@code validatorRule COMPARISON_SELECTOR},
      * {@code semanticProfile DEAL_V1_2_INT32}, {@code irVersion
-     * deal.semantic-ir/1}, and the {@code ComparisonSelectorLowering}
+     * deal.semantic-ir/2}, and the {@code ComparisonSelectorLowering}
      * origin. The unit-production seam converts the returned detail into
      * the E6005 diagnostic through
      * {@code FailureContractRegistry.e6005(detail)}; this producer

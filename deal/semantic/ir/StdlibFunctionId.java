@@ -28,7 +28,7 @@ public enum StdlibFunctionId implements ClosedSelector {
 
     /**
      * The reserved stdlib selector names, invalid as
-     * {@code StdlibFunctionId} values in {@code deal.semantic-ir/1}. They
+     * {@code StdlibFunctionId} values in {@code deal.semantic-ir/2}. They
      * are not enum members. The list is empty since
      * {@code TIME_NOW_MILLIS} became the 21st member (K7); the guard
      * (deny-by-default: no reserved name is ever a valid selector) stays

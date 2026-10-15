@@ -110,7 +110,7 @@ public final class TargetAbiValidator {
     }
 
     /** The pinned IR version carried by every ABI-failure detail. */
-    public static final String IR_VERSION = "deal.semantic-ir/1";
+    public static final String IR_VERSION = "deal.semantic-ir/2";
 
     /** A mixed edge (SHARED module importing a LEGACY implementation module) without an ABI record. */
     public static final String ABI_EDGE_MISSING = "ABI_EDGE_MISSING";

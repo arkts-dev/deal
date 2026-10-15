@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed iteration-mode set of {@code deal.semantic-ir/1} (parent
+ * The closed iteration-mode set of {@code deal.semantic-ir/2} (parent
  * closed operation table; schema S3).
  *
  * <p>Closed set — exactly {@link #ARRAY_VALUES} and

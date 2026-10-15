@@ -951,7 +951,7 @@ public class AdapterShapeMapPayloadTest {
      * the member-read op feed the map, the arm is the same closed
      * non-identifier arm — REEVALUATE_THUNK, no VALUE carve-out — and
      * the thunk builder wraps the IR-level member-read op over the
-     * pinned {@code deal.semantic-ir/1} schema with the import-alias
+     * pinned {@code deal.semantic-ir/2} schema with the import-alias
      * receiver pinned as a generation-pinned capture (combined with T4
      * — fails if the seam breaks).
      */
@@ -1033,7 +1033,7 @@ public class AdapterShapeMapPayloadTest {
 
     /**
      * The thunk builder's IR-level surface over the pinned
-     * {@code deal.semantic-ir/1} schema: a call-result source (a
+     * {@code deal.semantic-ir/2} schema: a call-result source (a
      * {@code CALL} op whose result is a function value — the pinned
      * {@code jvm-fv-return-function-value} shape) wraps into a
      * {@code Thunk {BlockId, capturedBindings}} with the ordered
@@ -1538,7 +1538,7 @@ public class AdapterShapeMapPayloadTest {
         byte[] firstDump = SemanticIrDumper.dumpModule(first.lowering().unit());
         byte[] secondDump = SemanticIrDumper.dumpModule(second.lowering().unit());
         check(Arrays.equals(firstDump, secondDump),
-            "repeated lowering produces byte-identical deal.semantic-ir/1 dumps");
+            "repeated lowering produces byte-identical deal.semantic-ir/2 dumps");
         check(first.shapeMapFacts().emissions().equals(second.shapeMapFacts().emissions()),
             "repeated lowering records identical emission facts");
     }

@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed capture-mode set of {@code deal.semantic-ir/1} (parent D15;
+ * The closed capture-mode set of {@code deal.semantic-ir/2} (parent D15;
  * schema S3).
  *
  * <p>Closed set — exactly {@link #VALUE}, {@link #SHARED_CELL}, and

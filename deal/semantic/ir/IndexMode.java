@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed index-mode set of {@code deal.semantic-ir/1} (parent D14;
+ * The closed index-mode set of {@code deal.semantic-ir/2} (parent D14;
  * schema S3).
  *
  * <p>Closed set — exactly {@link #ARRAY_READ}, {@link #ARRAY_WRITE},

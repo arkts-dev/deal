@@ -9,7 +9,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The closed address-chain shape authority of {@code deal.semantic-ir/1}
+ * The closed address-chain shape authority of {@code deal.semantic-ir/2}
  * (assignment-delete-address-chains A-D1/A-D3/A-D9; parent
  * common-semantic-lowering-layer D14): a static, pure, deterministic
  * production-time validation of every {@code ASSIGN}/{@code DELETE} op of
@@ -89,7 +89,7 @@ import java.util.Optional;
  * naming the module, capability {@code EVALUATION_ORDER}, the pinned rule
  * {@link #RULE_ADDRESS_CHAIN_SHAPE} or {@link #RULE_SINGLE_EVALUATION},
  * profile {@code DEAL_V1_2_INT32}, IR version
- * {@code deal.semantic-ir/1}, and the offending op origin. The foundation
+ * {@code deal.semantic-ir/2}, and the offending op origin. The foundation
  * validator's closed 14-condition rule set is unchanged: chain-shape
  * validation is a production-time check in exactly the slot the foundation
  * reserved ({@code SemanticIrValidator} javadoc — ownership cycles, bad

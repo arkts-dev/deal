@@ -293,7 +293,7 @@ public class ClassConstructionValidatorTest {
             "the failure detail carries the module");
         check(diagnostic.message().contains("semanticProfile DEAL_V1_2_INT32"),
             "the failure detail carries the semantic profile");
-        check(diagnostic.message().contains("irVersion deal.semantic-ir/1"),
+        check(diagnostic.message().contains("irVersion deal.semantic-ir/2"),
             "the failure detail carries the IR version");
         check(diagnostic.message().contains("origin ClassConstructionValidator " + rule),
             "the failure detail carries the ClassConstructionValidator origin");

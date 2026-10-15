@@ -1,7 +1,7 @@
 package deal.semantic.ir;
 
 /**
- * The closed unary selector set of {@code deal.semantic-ir/1} (parent
+ * The closed unary selector set of {@code deal.semantic-ir/2} (parent
  * "Closed selectors"; schema S3).
  *
  * <p>Closed set — exactly {@link #BOOL_NOT}, {@link #INT32_NEG}, and

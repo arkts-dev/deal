@@ -10,11 +10,11 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * The lowered module unit of {@code deal.semantic-ir/1} (schema S1):
+ * The lowered module unit of {@code deal.semantic-ir/2} (schema S1):
  *
  * <pre>{@code
  * LoweredModuleUnit {
- *   formatVersion: "deal.semantic-ir/1",
+ *   formatVersion: "deal.semantic-ir/2",
  *   semanticProfile: DEAL_V1_2_INT32,           // the only admitted value
  *   moduleId, interfaceHash, loweringContextHash,
  *   requiredCapabilities,
@@ -86,7 +86,7 @@ public record LoweredModuleUnit(
 ) {
 
     /** The pinned IR format version string. */
-    public static final String FORMAT_VERSION = "deal.semantic-ir/1";
+    public static final String FORMAT_VERSION = "deal.semantic-ir/2";
 
     public LoweredModuleUnit(String formatVersion, SemanticProfile semanticProfile,
                              ModuleId moduleId, String interfaceHash,

@@ -48,7 +48,7 @@ public record OperationContractSnapshot(
     String canonicalDigest
 ) {
 
-    /** The only admissible snapshot version of {@code deal.semantic-ir/1}. */
+    /** The only admissible snapshot version of {@code deal.semantic-ir/2}. */
     public static final int VERSION = 1;
 
     public OperationContractSnapshot(int version, SemanticOpKind opKind, OpResultType resultType,
@@ -57,7 +57,7 @@ public record OperationContractSnapshot(
                                      List<SemanticId> referencedSemanticIds, String canonicalDigest) {
         if (version != VERSION) {
             throw new IllegalArgumentException(
-                "version must be " + VERSION + " in deal.semantic-ir/1, got " + version);
+                "version must be " + VERSION + " in deal.semantic-ir/2, got " + version);
         }
         this.version = version;
         this.opKind = Objects.requireNonNull(opKind, "opKind must not be null");

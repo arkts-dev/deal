@@ -221,7 +221,7 @@ public class AddressChainProtocolTest {
                 + message + "\"");
         check(message.contains("semanticProfile DEAL_V1_2_INT32"),
             rule + " message names the semantic profile");
-        check(message.contains("irVersion deal.semantic-ir/1"),
+        check(message.contains("irVersion deal.semantic-ir/2"),
             rule + " message names the IR version");
         check(message.contains("AddressChainProtocol " + rule),
             rule + " message names the producing component");

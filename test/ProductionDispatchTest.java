@@ -3149,7 +3149,7 @@ public class ProductionDispatchTest {
             String expectedMessage = "Common semantic lowering failed: module '"
                 + offendingModule + "', capability " + capability
                 + ", validatorRule " + rule
-                + ", semanticProfile DEAL_V1_2_INT32, irVersion deal.semantic-ir/1"
+                + ", semanticProfile DEAL_V1_2_INT32, irVersion deal.semantic-ir/2"
                 + ", origin " + originText;
             String humanLine = offending + ":" + startLine + ":" + startColumn
                 + "-" + endLine + ":" + endColumn + ": ERROR E6005: "

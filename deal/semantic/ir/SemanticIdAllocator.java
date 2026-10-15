@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The single numeric semantic-id allocator of {@code deal.semantic-ir/1}
+ * The single numeric semantic-id allocator of {@code deal.semantic-ir/2}
  * (parent D10; schema S7): one allocator per project issues the numeric
  * identities of the schema's numeric {@link SemanticId} kinds —
  * {@link BlockId}, {@link FunctionId}, {@link BindingId}, {@link ValueId},
@@ -49,7 +49,7 @@ import java.util.Objects;
 public final class SemanticIdAllocator {
 
     /**
-     * The closed semantic-role order of {@code deal.semantic-ir/1}
+     * The closed semantic-role order of {@code deal.semantic-ir/2}
      * (parent D10; schema S7): allocation proceeds role by role in this
      * declaration order within one source ordinal.
      */
