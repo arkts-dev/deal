@@ -75,6 +75,7 @@ import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StdlibFunctionId;
+import deal.semantic.ControlFlowValidator;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.UnarySelector;
 import deal.semantic.ir.ValueId;
@@ -2458,6 +2459,131 @@ public class SemanticIrValidatorTest {
         }
     }
 
+    private static final OpId BATTERY_RETURN = new OpId(MOD, 52);
+    /** A RETURN's recorded invocation/boundary positions (unused by this fixture). */
+    private static final OpId BATTERY_RETURN_INVOCATION = new OpId(MOD, 90);
+    private static final OpId BATTERY_RETURN_BOUNDARY = new OpId(MOD, 91);
+
+    /** The battery unit with one function-attached RETURN naming its function. */
+    private static LoweredModuleUnit returnTargetUnit(String interfaceHash) {
+        List<SemanticOp> ops = new ArrayList<>(batteryOps());
+        ops.add(userOp(opWith(BATTERY_RETURN, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(null, BATTERY_FUNCTION,
+                BATTERY_RETURN_INVOCATION, BATTERY_RETURN_BOUNDARY),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null)));
+        return batteryUnit(interfaceHash, Map.of(), batteryLayouts(), batteryFunctions(),
+            new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK), batteryExportPlan(),
+            ops, batteryTable(List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER),
+                List.of(BATTERY_BODY_CONST, BATTERY_RETURN)));
+    }
+
+    private static int opIndexOf(LoweredModuleUnit unit, OpId opId) {
+        for (int i = 0; i < unit.ops().size(); i++) {
+            if (unit.ops().get(i).opId().equals(opId)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The index of one module document in the project text's modules array. */
+    private static int moduleIndexOf(String projectText, ModuleId module) {
+        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(parseObj(projectText), "modules");
+        for (int i = 0; i < modules.items().size(); i++) {
+            CanonicalJson.Obj unit = (CanonicalJson.Obj) modules.items().get(i);
+            if (module.path().equals(((CanonicalJson.Str) at(unit, "moduleId")).value())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The text admission of decodable malformed content must fail closed
+     * with a defined admission result: an unhandled runtime exception is
+     * not a failure contract.
+     */
+    private static Optional<CompilerDiagnostic> textAdmission(String text,
+            SemanticIrValidator.ComparisonFacts facts) {
+        try {
+            return SemanticIrValidator.validateText(text, facts);
+        } catch (RuntimeException e) {
+            fail("the text admission of decodable malformed content must fail closed, "
+                + "never throw: " + e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * The RETURN function position on the decodable text surface: the typed
+     * {@code ReturnPayload} enforces the identity, so only the raw/text
+     * surface can carry an absent or null function. Raw admission owns the
+     * rule there: the text admission must reject with the control exit rule
+     * instead of dereferencing the missing identity, and the raw facts and
+     * the project text must report the identical first failure.
+     */
+    private static void testCommonAdmissionReturnPosition() {
+        System.out.println("-- Common admission: a RETURN naming no function fails closed on "
+            + "the text surface (ISSUE-0819) --");
+        ProjectInterfaceIndex index = batteryIndex();
+        SemanticIrValidator.ComparisonFacts facts = projectFacts(index);
+        LoweredModuleUnit base = returnTargetUnit(index.interfaceIndexDigest());
+        assertPass(SemanticIrValidator.validate(base, facts),
+            "the function-attached RETURN unit (typed)");
+        String text = SemanticIrValidator.toUnitText(base);
+        assertPass(SemanticIrValidator.validateText(text, facts),
+            "the function-attached RETURN unit (unit text)");
+        ExecutableLoweredProject project = batteryProject(base, index);
+        assertPass(SemanticIrValidator.validate(project, facts),
+            "the function-attached RETURN project (typed)");
+        String projectText = SemanticIrValidator.toProjectText(project);
+        assertPass(SemanticIrValidator.validateText(projectText, facts),
+            "the function-attached RETURN project (project text)");
+        int returnIndex = opIndexOf(base, BATTERY_RETURN);
+        int projectModule = moduleIndexOf(projectText, MOD);
+        check(returnIndex >= 0 && projectModule >= 0,
+            "the fixture carries the attached RETURN (unit op " + returnIndex
+                + ", project module " + projectModule + ")");
+        if (returnIndex < 0 || projectModule < 0) {
+            return;
+        }
+
+        String nullFunction = withEntryAt(text, "function", CanonicalJson.nullValue(),
+            "ops", returnIndex, "payload");
+        String absentFunction = withoutKeyAt(text, "function", "ops", returnIndex, "payload");
+        check(!nullFunction.equals(text) && !absentFunction.equals(text)
+                && !nullFunction.equals(absentFunction),
+            "the null and absent function positions are real text mutations");
+        Optional<CompilerDiagnostic> nullFailure = textAdmission(nullFunction, facts);
+        Optional<CompilerDiagnostic> absentFailure = textAdmission(absentFunction, facts);
+        assertE6005(nullFailure, "CONTROL_EXIT", "names no function");
+        assertE6005(absentFailure, "CONTROL_EXIT", "names no function");
+        check(nullFailure.map(CompilerDiagnostic::message)
+                .equals(absentFailure.map(CompilerDiagnostic::message)),
+            "the null and absent function positions report the identical first failure");
+
+        // The raw facts behind the mutated text run the same rule with the
+        // same message and range: the control owner, not the transport, is
+        // the responsible rule for the malformed position.
+        Optional<CompilerDiagnostic> rawFailure = ControlFlowValidator.validate(
+            ContractSnapshotCanonicalizer.parseUnit(parseObj(nullFunction)));
+        check(nullFailure.isPresent() && rawFailure.isPresent()
+                && nullFailure.get().message().equals(rawFailure.get().message())
+                && nullFailure.get().range().equals(rawFailure.get().range()),
+            "the mutated raw facts report the identical first failure: "
+                + rawFailure.map(CompilerDiagnostic::message).orElse("admitted"));
+
+        // The project text path carries the same fact to the same rule.
+        String malformedProject = withEntryAt(projectText, "function",
+            CanonicalJson.nullValue(), "modules", projectModule, "ops", returnIndex, "payload");
+        Optional<CompilerDiagnostic> projectFailure = textAdmission(malformedProject, facts);
+        assertE6005(projectFailure, "CONTROL_EXIT", "names no function");
+        check(nullFailure.isPresent() && projectFailure.isPresent()
+                && nullFailure.get().message().equals(projectFailure.get().message())
+                && nullFailure.get().range().equals(projectFailure.get().range()),
+            "the project text admission reports the identical first failure");
+    }
+
     private static final OpId DYNAMIC_CALL_OP = new OpId(MOD, 60);
     private static final OpId DYNAMIC_PARAM_OP = new OpId(MOD, 61);
     private static final OpId DYNAMIC_DEAL_CELL = new OpId(MOD, 62);
@@ -2637,6 +2763,7 @@ public class SemanticIrValidatorTest {
         testProjectTransportAndMandatoryEmpties();
         testRegistrySourceRefDiscriminator(text);
         testCommonAdmissionMembershipAndPlans();
+        testCommonAdmissionReturnPosition();
         testCommonAdmissionCorrelations();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

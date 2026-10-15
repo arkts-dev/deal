@@ -848,6 +848,14 @@ public final class ControlFlowValidator {
 
     private static Optional<CompilerDiagnostic> checkReturnTarget(Facts ctx, OpView op,
                                                                   FunctionId function) {
+        if (function == null) {
+            // The typed ReturnPayload enforces the identity, so only raw
+            // content can carry an absent or malformed function position;
+            // this rule owns it (the lookup below is a map against the
+            // declared functions, never a null query).
+            return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId()
+                + " names no function (the payload position is absent or malformed)", op);
+        }
         BlockId body = ctx.functionBodies.get(function);
         if (body == null) {
             return fail(ctx, CONTROL_EXIT, "RETURN op " + op.opId() + " names function " + function
