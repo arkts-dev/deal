@@ -480,6 +480,36 @@ public class ClassConstructionValidatorTest {
             result.lowering().table(), result.registry(), result.jsonDefaults(),
             lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE);
+
+        // (f) A factory op carrying another module's tag: the registry's
+        // owning module and the operation's module tag are the provider
+        // owner (ISSUE-0821), never the class-id namespace or a basename.
+        {
+            OpId foreignId = new OpId(new ModuleId("other.module"), factory.opId().id());
+            SemanticOp foreignTagged = new SemanticOp(foreignId, factory.kind(),
+                factory.origin(), factory.result(), factory.resultType(),
+                factory.operands(), factory.operandTypes(), factory.payload(),
+                factory.failurePolicy(), factory.contract());
+            Map<ClassFactoryId, OpId> foreign = new LinkedHashMap<>(
+                result.registry().factories());
+            for (Map.Entry<ClassFactoryId, OpId> row
+                    : result.registry().factories().entrySet()) {
+                if (row.getValue().equals(factory.opId())) {
+                    foreign.put(row.getKey(), foreignId);
+                }
+            }
+            List<SemanticOp> foreignOps = new ArrayList<>(unit.ops());
+            for (int i = 0; i < foreignOps.size(); i++) {
+                if (foreignOps.get(i).opId().equals(factory.opId())) {
+                    foreignOps.set(i, foreignTagged);
+                }
+            }
+            expectE6005(ClassConstructionValidator.validate(
+                unitWithOps(unit, foreignOps),
+                result.lowering().table(), new ClassFactoryRegistry(foreign),
+                result.jsonDefaults(), lowered.ownInterface(), Map.of()),
+                ClassConstructionValidator.FACTORY_COHERENCE);
+        }
     }
 
     private static List<SemanticOp> replaceOp(LoweredModuleUnit unit, SemanticOp replacement) {

@@ -26,6 +26,8 @@ import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.OperationContractSnapshot;
 import deal.semantic.ir.RawOp;
+import deal.semantic.ir.RawBinding;
+import deal.semantic.ir.RawOrigin;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BindingId;
@@ -1336,7 +1338,11 @@ public class ProjectLoweringTest {
             for (LoweredModuleUnit unit : result.project().modules().values()) {
                 StructuredBodyTable table = result.tableOf(unit.moduleId());
                 check(table != null, "the module's produced table is carried");
-                check(SemanticIrValidator.validate(unit, facts).isEmpty(),
+                // The closed 14 rules and the composed correlations of the
+                // unit's own facts; the standalone entrypoint additionally
+                // rejects a unit that requires the project's provider context
+                // (the required foreign links of a cross-module unit).
+                check(SemanticIrValidator.validateUnitHead(unit, facts).isEmpty(),
                     "module " + unit.moduleId() + " passes the closed 14 rules");
                 check(AddressChainProtocol.validate(unit).isEmpty(),
                     "module " + unit.moduleId()
@@ -1928,6 +1934,44 @@ public class ProjectLoweringTest {
             check(failure.isEmpty(),
                 "the composed chain accepts the host construction unit: "
                     + failure.map(CompilerDiagnostic::message).orElse(""));
+
+            // ISSUE-0821: the host declaration construction requires the
+            // compilation's class registration seeds — the standalone
+            // surfaces return E6005 at the referring CLASS_NEW instead of
+            // inventing the provider context, and the complete project
+            // supplies exactly that context.
+            SemanticIrValidator.ComparisonFacts standaloneFacts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_3_INT32,
+                    invocation().capabilityRegistryHash());
+            Optional<CompilerDiagnostic> standalone =
+                SemanticIrValidator.validate(app, standaloneFacts);
+            assertMutationRule("the standalone host construction", standalone,
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                "no provider context", "defaultOwner HOST_DEFAULTS");
+            check(standalone.isPresent() && java.util.Objects.equals(
+                    RawOrigin.of(classNew.origin()).diagnosticRange(),
+                    standalone.get().range()),
+                "the standalone rejection carries the referring CLASS_NEW's own "
+                    + "origin");
+            check(SemanticIrValidator.validate(result.project(), standaloneFacts)
+                    .isEmpty(),
+                "the complete project admits the host construction");
+
+            // A supplied seed view that differs from the admitted registration
+            // rejects through E6005 before any success (the class owner's
+            // fail-closed seed fact), never by fabricating a registration.
+            Optional<CompilerDiagnostic> seedView =
+                SemanticLowerer.validateProjectUnit(app, app.bodyTable(),
+                    standaloneFacts, app.classBindingFacts(), result.registryOf(APP),
+                    app.jsonDefaults(), project.index().modules().get(APP), Map.of(),
+                    Map.of());
+            check(seedView.isPresent()
+                    && seedView.get().message().contains(
+                        ClassConstructionValidator.CONSTRUCTION_COHERENCE),
+                "a differing supplied seed view rejects through E6005: "
+                    + seedView.map(CompilerDiagnostic::message).orElse("admitted"));
         } finally {
             deleteRecursively(project.root());
         }
@@ -2012,6 +2056,17 @@ public class ProjectLoweringTest {
             check(failure.isEmpty(),
                 "the composed chain accepts the builtin Error unit: "
                     + failure.map(CompilerDiagnostic::message).orElse(""));
+
+            // ISSUE-0821: the builtin Error owner is compiler-owned, so the
+            // standalone surface admits the unit without any provider context
+            // (the boundary of the required-link rejection).
+            check(SemanticIrValidator.validate(app,
+                    new SemanticIrValidator.ComparisonFacts(
+                        project.index().interfaceIndexDigest(),
+                        SemanticProfile.DEAL_V1_3_INT32,
+                        invocation().capabilityRegistryHash())).isEmpty(),
+                "the builtin Error construction needs no provider context and "
+                    + "admits standalone");
         } finally {
             deleteRecursively(project.root());
         }
@@ -2116,6 +2171,22 @@ public class ProjectLoweringTest {
             check(failure.isEmpty(),
                 "the composed chain accepts the C-struct construction unit: "
                     + failure.map(CompilerDiagnostic::message).orElse(""));
+
+            // ISSUE-0821: the C-struct construction requires the extern-C
+            // plan seed — the standalone surfaces reject it at the referring
+            // CLASS_NEW; the complete project supplies the seed.
+            SemanticIrValidator.ComparisonFacts standaloneFacts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_3_INT32,
+                    invocation().capabilityRegistryHash());
+            assertMutationRule("the standalone C-struct construction",
+                SemanticIrValidator.validate(app, standaloneFacts),
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                "no provider context", "defaultOwner FFI_PLAN");
+            check(SemanticIrValidator.validate(result.project(), standaloneFacts)
+                    .isEmpty(),
+                "the complete project admits the C-struct construction");
         } finally {
             deleteRecursively(project.root());
         }
@@ -2289,11 +2360,12 @@ public class ProjectLoweringTest {
             }
             check("E6005".equals(failure.get().code())
                     && failure.get().message().contains(
-                        SemanticIrValidator.R_EXTERNAL_ENTRY)
-                    && failure.get().message().contains("outside the implementation "
-                        + "closure"),
-                "the missing module returns the first E6005 R-EXTERNAL-ENTRY naming "
-                    + "the closure violation; got " + failure.get().message());
+                        SemanticIrValidator.R_IDENTITY_LINK)
+                    && failure.get().message().contains("implementation provider")
+                    && failure.get().message().contains("carries no unit for it"),
+                "the missing module returns the first E6005 R-IDENTITY-LINK naming "
+                    + "the absent required implementation provider; got "
+                    + failure.get().message());
         }
     }
 
@@ -2415,7 +2487,14 @@ public class ProjectLoweringTest {
                 unit.moduleId() + ": the transported facts materialize back to the exact "
                     + "typed unit");
             Optional<CompilerDiagnostic> readmitted = SemanticIrValidator.validateText(text, facts);
-            check(readmitted.isEmpty(), unit.moduleId() + ": text re-admits: " + readmitted);
+            if (requiresProviderContext(reparsed)) {
+                check(readmitted.isPresent(),
+                    unit.moduleId() + ": a unit whose facts refer to a foreign provider"
+                        + " never admits on the standalone surface");
+            } else {
+                check(readmitted.isEmpty(), unit.moduleId() + ": text re-admits: "
+                    + readmitted.map(CompilerDiagnostic::message).orElse(""));
+            }
             sawCaptures |= reparsed.functions().stream().anyMatch(f -> !f.captures().isEmpty());
             sawClassLayout |= !reparsed.classLayouts().isEmpty();
             sawImportAliases |= !reparsed.classBindingFacts().importAliases().isEmpty();
@@ -2426,6 +2505,282 @@ public class ProjectLoweringTest {
         }
         check(sawClassLayout && sawCaptures && sawImportAliases,
             "real transport exercises layouts, closure generations and import aliases");
+    }
+
+    /**
+     * ISSUE-0821: the standalone surfaces never approve a required foreign
+     * link, the complete project admission resolves exactly those links
+     * from the supplied closure — the shared-factory join names the
+     * provider's owning module and operation tag, never the class-id
+     * namespace — the composed production admission consumes exactly the
+     * unit's owned companion records, and the project framing admission
+     * validates the module keys, index coverage and classification and the
+     * dependency order.
+     */
+    private static void testStandaloneProviderContextAndExactViews(
+            LoweredProject imported, LoweredProject baseline) throws Exception {
+        System.out.println("-- standalone vs complete admission: required foreign links, "
+            + "the provider join and the exact companion views (ISSUE-0821) --");
+        RealProject project = imported.project();
+        ExecutableLoweredProject lowered = imported.result().project();
+        check(lowered != null,
+            "the imported-class fixture lowers: " + imported.result().diagnostics());
+        if (lowered == null) {
+            return;
+        }
+        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+            project.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
+            invocation().capabilityRegistryHash());
+        LoweredModuleUnit util = lowered.modules().get(UTIL);
+        LoweredModuleUnit app = lowered.modules().get(APP);
+        check(util != null && app != null,
+            "the closure carries the class provider and the constructing entry module");
+        if (util == null || app == null) {
+            return;
+        }
+
+        // (1) The provider module's own facts are locally complete: it
+        // carries no foreign link, so the standalone surfaces admit it.
+        check(SemanticIrValidator.validate(util, facts).isEmpty(),
+            "the class provider unit carries no foreign link and admits standalone");
+        check(SemanticIrValidator.validateText(
+                SemanticIrValidator.toUnitText(util), facts).isEmpty(),
+            "the class provider unit text carries no foreign link");
+
+        // (2) The consumer's cross-module call refers to the provider
+        // module's recorded EXTERNAL_ENTRY: standalone admission returns
+        // E6005 at the referring CALL (its own retained origin), never a
+        // fabricated provider; the imported construction's owner facts are
+        // the same missing provider context.
+        boolean sharedConstruction = false;
+        SemanticOp foreignCall = null;
+        for (SemanticOp op : app.ops()) {
+            if (op.kind() == SemanticOpKind.CLASS_NEW
+                    && op.payload() instanceof KindPayload.ClassNewPayload payload
+                    && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                sharedConstruction = true;
+            }
+            if (op.kind() == SemanticOpKind.CALL
+                    && op.payload() instanceof KindPayload.CallPayload call
+                    && call.externalEntryRef() != null
+                    && call.externalEntryRef().module().equals(UTIL)) {
+                foreignCall = op;
+            }
+        }
+        check(sharedConstruction,
+            "the consumer carries the imported CLASS_NEW(SHARED_FACTORY)");
+        check(foreignCall != null,
+            "the consumer carries the cross-module CALL and its externalEntryRef");
+        if (foreignCall != null) {
+            Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(app, facts);
+            Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
+                SemanticIrValidator.toUnitText(app), facts);
+            assertMutationRule("the standalone foreign provider link", typed,
+                SemanticIrValidator.R_EXTERNAL_ENTRY, "externalEntryRef",
+                "no implementation closure");
+            check(text.isPresent() && typed.isPresent()
+                    && text.get().message().equals(typed.get().message())
+                    && text.get().range().equals(typed.get().range()),
+                "the standalone unit surfaces report the identical first failure "
+                    + "and range for the required foreign link");
+            check(typed.isPresent() && java.util.Objects.equals(
+                    RawOrigin.of(foreignCall.origin()).diagnosticRange(),
+                    typed.get().range()),
+                "the standalone rejection carries the referring CALL's own origin");
+        }
+
+        // (3) The complete project supplies the missing context: exactly those
+        // links resolve and both project surfaces admit.
+        check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+            "the complete project admits the imported construction (typed)");
+        check(SemanticIrValidator.validateText(
+                SemanticIrValidator.toProjectText(lowered), facts).isEmpty(),
+            "the complete project admits the imported construction (text)");
+
+        // (4) The exact provider join: the registry's owning module and the
+        // factory operation's module tag — the class-id namespace is @src,
+        // never the owning module 'util'.
+        ExternalModuleInterface utilInterface = project.index().modules().get(UTIL);
+        ClassInterface pointEntry = null;
+        for (ClassInterface candidate : utilInterface.classes()) {
+            if (candidate.classId().equals(POINT)) {
+                pointEntry = candidate;
+            }
+        }
+        check(pointEntry != null, "the provider's interface entry carries the class");
+        if (pointEntry != null) {
+            OpId joined = ClassFactoryRegistry.ownerFactoryOp(
+                imported.result().registries(), pointEntry.constructionEntry());
+            check(joined != null && joined.module().equals(UTIL),
+                "the shared-factory join names the owning module through the "
+                    + "registry and the operation module tag, never the class-id "
+                    + "namespace " + POINT.modulePath());
+            SemanticOp factoryOp = opOf(util, joined);
+            check(factoryOp != null && factoryOp.kind() == SemanticOpKind.CLASS_FACTORY
+                    && factoryOp.result() instanceof ValueId,
+                "the join names the owner's actual CLASS_FACTORY result");
+        }
+
+        // (5) The baseline consumer refers to another module's external
+        // function: the standalone binding surface rejects it, the complete
+        // project resolves the callee's recorded EXTERNAL_ENTRY.
+        ExecutableLoweredProject baselineLowered = baseline.result().project();
+        check(baselineLowered != null, "the baseline project lowers: "
+            + baseline.result().diagnostics());
+        if (baselineLowered == null) {
+            return;
+        }
+        SemanticIrValidator.ComparisonFacts baselineFacts =
+            new SemanticIrValidator.ComparisonFacts(
+                baseline.project().index().interfaceIndexDigest(),
+                SemanticProfile.DEAL_V1_3_INT32, invocation().capabilityRegistryHash());
+        LoweredModuleUnit baselineApp = baselineLowered.modules().get(APP);
+        check(baselineApp != null, "the baseline entry module is in the closure");
+        if (baselineApp == null) {
+            return;
+        }
+        assertMutationRule("the standalone cross-module binding",
+            SemanticIrValidator.validate(baselineApp, baselineFacts),
+            SemanticIrValidator.R_EXTERNAL_ENTRY, "outside the unit",
+            "no implementation closure");
+        check(SemanticIrValidator.validate(baselineLowered, baselineFacts).isEmpty(),
+            "the complete project resolves the cross-module binding");
+
+        // (6) The composed production admission consumes exactly the unit's
+        // owned companion records: a differing supplied view rejects through
+        // E6005 before any success, and content-equal detached copies are
+        // accepted (the owned records are consumed, never the copies).
+        ExternalModuleInterface appInterface =
+            baseline.project().index().modules().get(APP);
+        check(appInterface != null, "the entry module carries its index entry");
+        Map<ClassId, SharedFactoryFacts> noSharedFactories = Map.of();
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> seeds =
+            baselineLowered.classSeeds().registrations();
+        check(SemanticLowerer.validateProjectUnit(baselineApp,
+                baselineApp.bodyTable(), baselineFacts,
+                baselineApp.classBindingFacts(), baselineApp.classFactories(),
+                baselineApp.jsonDefaults(), appInterface, noSharedFactories, seeds)
+                .isEmpty(),
+            "the exact owned companion views admit through the composed production "
+                + "admission");
+        check(SemanticLowerer.validateProjectUnit(baselineApp,
+                new StructuredBodyTable(baselineApp.bodyTable().blockOps(),
+                    baselineApp.bodyTable().opBlocks()),
+                baselineFacts,
+                new ClassBindingFacts(baselineApp.classBindingFacts().parameters(),
+                    baselineApp.classBindingFacts().importAliases()),
+                new ClassFactoryRegistry(baselineApp.classFactories().factories()),
+                new JsonDefaultChildTable(baselineApp.jsonDefaults().defaultChildren()),
+                appInterface, noSharedFactories, seeds).isEmpty(),
+            "content-equal detached companion views admit (the unit's owned records "
+                + "are consumed)");
+
+        check(!baselineApp.bodyTable().blockOps().isEmpty(),
+            "the view fixture carries a non-empty body table");
+        Optional<CompilerDiagnostic> tableMismatch = SemanticLowerer.validateProjectUnit(
+            baselineApp, new StructuredBodyTable(Map.of(), Map.of()), baselineFacts,
+            baselineApp.classBindingFacts(), baselineApp.classFactories(),
+            baselineApp.jsonDefaults(), appInterface, noSharedFactories, seeds);
+        expectProjectAdmissionFailure(tableMismatch, SemanticLowerer.PROJECT_VIEW_MISMATCH,
+            "body table", "a differing supplied body-table view rejects through E6005");
+
+        Set<BindingId> parameters =
+            new LinkedHashSet<>(baselineApp.classBindingFacts().parameters());
+        parameters.add(new BindingId(9_000_001));
+        Optional<CompilerDiagnostic> bindingsMismatch = SemanticLowerer.validateProjectUnit(
+            baselineApp, baselineApp.bodyTable(), baselineFacts,
+            new ClassBindingFacts(parameters,
+                baselineApp.classBindingFacts().importAliases()),
+            baselineApp.classFactories(), baselineApp.jsonDefaults(), appInterface,
+            noSharedFactories, seeds);
+        expectProjectAdmissionFailure(bindingsMismatch,
+            SemanticLowerer.PROJECT_VIEW_MISMATCH, "binding facts",
+            "a differing supplied binding-facts view rejects through E6005");
+
+        Map<ClassFactoryId, OpId> factories =
+            new LinkedHashMap<>(baselineApp.classFactories().factories());
+        factories.put(new ClassFactoryId(9_000_001), new OpId(APP, 9_000_001));
+        Optional<CompilerDiagnostic> factoriesMismatch = SemanticLowerer.validateProjectUnit(
+            baselineApp, baselineApp.bodyTable(), baselineFacts,
+            baselineApp.classBindingFacts(), new ClassFactoryRegistry(factories),
+            baselineApp.jsonDefaults(), appInterface, noSharedFactories, seeds);
+        expectProjectAdmissionFailure(factoriesMismatch,
+            SemanticLowerer.PROJECT_VIEW_MISMATCH, "class-factory registry",
+            "a differing supplied class-factory view rejects through E6005");
+
+        Map<OpId, List<OpId>> defaults =
+            new LinkedHashMap<>(baselineApp.jsonDefaults().defaultChildren());
+        defaults.put(new OpId(APP, 9_000_002), List.of());
+        Optional<CompilerDiagnostic> defaultsMismatch = SemanticLowerer.validateProjectUnit(
+            baselineApp, baselineApp.bodyTable(), baselineFacts,
+            baselineApp.classBindingFacts(), baselineApp.classFactories(),
+            new JsonDefaultChildTable(defaults), appInterface, noSharedFactories, seeds);
+        expectProjectAdmissionFailure(defaultsMismatch,
+            SemanticLowerer.PROJECT_VIEW_MISMATCH, "JSON-default table",
+            "a differing supplied JSON-default view rejects through E6005");
+
+        // (7) The project framing admission: a module-map key that disagrees
+        // with the contained unit's identity, a closure module without its
+        // index entry, a misclassified provider, an inverted dependency order
+        // and a foreign carried profile all reject; the coherent
+        // dependency-ordered project (with its repeated references to the
+        // one provider) admits.
+        Map<ModuleId, LoweredModuleUnit> renamedKeys = new LinkedHashMap<>();
+        renamedKeys.put(new ModuleId("util.alias"), lowered.modules().get(UTIL));
+        renamedKeys.put(APP, lowered.modules().get(APP));
+        expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                new ExecutableLoweredProject(lowered.semanticProfile(),
+                    lowered.interfaceIndex(), renamedKeys, APP, lowered.classSeeds()), facts),
+            SemanticIrValidator.R_IDENTITY_LINK, "module-map key",
+            "the typed project rejects a module-map key that disagrees with the "
+                + "contained unit's identity");
+
+        ProjectInterfaceIndex withoutUtil = withoutIndexModule(
+            lowered.interfaceIndex(), UTIL);
+        expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                new ExecutableLoweredProject(lowered.semanticProfile(), withoutUtil,
+                    lowered.modules(), lowered.entryModule(), lowered.classSeeds()), facts),
+            SemanticIrValidator.R_IDENTITY_LINK, "no module silently disappears",
+            "the typed project rejects a closure module without its index entry "
+                + "(no module silently disappears)");
+
+        ProjectInterfaceIndex misclassified = withImportKind(
+            lowered.interfaceIndex(), APP, "u", ExternalModuleKind.HOST);
+        expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                new ExecutableLoweredProject(lowered.semanticProfile(), misclassified,
+                    lowered.modules(), lowered.entryModule(), lowered.classSeeds()), facts),
+            SemanticIrValidator.R_IDENTITY_LINK, "classified",
+            "the typed project rejects an import whose kind disagrees with the "
+                + "provider's index classification");
+
+        ProjectInterfaceIndex hostAsImplementation = withIndexKind(
+            lowered.interfaceIndex(), UTIL, ExternalModuleKind.HOST);
+        expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                new ExecutableLoweredProject(lowered.semanticProfile(),
+                    hostAsImplementation, lowered.modules(), lowered.entryModule(),
+                    lowered.classSeeds()), facts),
+            SemanticIrValidator.R_IDENTITY_LINK, "a closure unit is an implementation "
+                + "provider",
+            "the typed project rejects a closure unit whose index entry is "
+                + "classified HOST");
+
+        Map<ModuleId, LoweredModuleUnit> reordered = new LinkedHashMap<>();
+        reordered.put(APP, lowered.modules().get(APP));
+        reordered.put(UTIL, lowered.modules().get(UTIL));
+        expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                new ExecutableLoweredProject(lowered.semanticProfile(),
+                    lowered.interfaceIndex(), reordered, lowered.entryModule(),
+                    lowered.classSeeds()), facts),
+            SemanticIrValidator.R_IDENTITY_LINK, "dependency order",
+            "the typed project rejects a closure that is not in dependency order");
+
+        CanonicalJson.Obj projectObj = (CanonicalJson.Obj) CanonicalJson.parse(
+            SemanticIrValidator.toProjectText(lowered));
+        String foreignProfile = CanonicalJson.serializeText(withEntry(projectObj,
+            "semanticProfile", CanonicalJson.str("DEAL_V1_2_INT32")));
+        expectProjectAdmissionFailure(SemanticIrValidator.validateText(foreignProfile, facts),
+            SemanticIrValidator.R_PROFILE, "project semanticProfile",
+            "the project text rejects a carried profile that is not the supplied one");
     }
 
 
@@ -2593,6 +2948,21 @@ public class ProjectLoweringTest {
         checkEq(parsed, reassembled,
             "the manifest plus the ordered module documents reassemble to the exact "
                 + "project (modules and order, entry, profile, index, seeds and units)");
+        // The reassembled document set admits as one project: the manifest and
+        // the module records are not independent authorities, and only their
+        // agreement exposes a project.
+        Map<ModuleId, LoweredModuleUnit> reassembledModules = new LinkedHashMap<>();
+        for (RawUnit raw : reassembled.modules()) {
+            reassembledModules.put(new ModuleId(raw.modulePath()),
+                RawUnitMaterializer.materialize(raw));
+        }
+        Optional<CompilerDiagnostic> reassembledAdmission = SemanticIrValidator.validate(
+            new ExecutableLoweredProject(SemanticProfile.DEAL_V1_3_INT32,
+                reassembled.interfaceIndex(), reassembledModules,
+                new ModuleId(reassembled.entryModule()), reassembled.classSeeds()), facts);
+        check(reassembledAdmission.isEmpty(),
+            "the reassembled dump documents admit as one project: "
+                + reassembledAdmission.map(CompilerDiagnostic::message).orElse(""));
         checkEq(lowered.semanticProfile().name(), reassembled.semanticProfile(),
             "the reassembled project carries the typed project's profile");
         checkEq(lowered.entryModule().path(), reassembled.entryModule(),
@@ -2812,14 +3182,15 @@ public class ProjectLoweringTest {
             // (4) The carried interface index is consumed on both surfaces:
             // a mutation changes its digest, so the carried digest no longer
             // equals the invocation's supplied digest.
-            ProjectInterfaceIndex renamedIndex = withRenamedIndexModule(
-                lowered.interfaceIndex(), lowered.interfaceIndex().modules().keySet()
-                    .iterator().next(), "renamed.module");
+            ProjectInterfaceIndex renamedIndex = withIndexExportType(
+                lowered.interfaceIndex(),
+                lowered.interfaceIndex().modules().keySet().iterator().next(),
+                "(i32) => i32");
             check(!renamedIndex.interfaceIndexDigest()
                     .equals(lowered.interfaceIndex().interfaceIndexDigest()),
-                "the renamed index carries another digest");
+                "the mutated index carries another digest");
             expectProjectAdmissionFailure(SemanticIrValidator.validateText(
-                    asText(manifestWithMutatedIndexModule(
+                    asText(manifestWithIndexExportType(
                         text.getBytes(StandardCharsets.UTF_8))),
                     facts),
                 SemanticIrValidator.R_PROFILE, "interface index digest",
@@ -3088,23 +3459,144 @@ public class ProjectLoweringTest {
         return new ClassRegistrationSeeds(registrations);
     }
 
-    /** The interface index with one module entry's identity renamed. */
-    private static ProjectInterfaceIndex withRenamedIndexModule(
-            ProjectInterfaceIndex index, ModuleId moduleId, String newPath) {
+    /**
+     * The interface index with one module entry's export list rewritten:
+     * only a declared-type text changes, so the digest moves while every
+     * module identity, kind and resolved import of the framing stays
+     * structurally coherent (the carried-digest comparison is then the
+     * first failure).
+     */
+    private static ProjectInterfaceIndex withIndexExportType(
+            ProjectInterfaceIndex index, ModuleId moduleId, String declaredType) {
         Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
         for (Map.Entry<ModuleId, ExternalModuleInterface> entry
                 : index.modules().entrySet()) {
-            if (entry.getKey().equals(moduleId)) {
-                ExternalModuleInterface original = entry.getValue();
-                ModuleId renamed = new ModuleId(newPath);
-                modules.put(renamed, new ExternalModuleInterface(renamed,
-                    original.kind(), original.imports(), original.exports(),
-                    original.classes(), original.initialization()));
-            } else {
+            ExternalModuleInterface original = entry.getValue();
+            List<ExportInterface> exports = new ArrayList<>();
+            for (int i = 0; i < original.exports().size(); i++) {
+                ExportInterface export = original.exports().get(i);
+                exports.add(entry.getKey().equals(moduleId) && i == 0
+                    ? new ExportInterface(export.name(), declaredType) : export);
+            }
+            modules.put(entry.getKey(), new ExternalModuleInterface(original.moduleId(),
+                original.kind(), original.imports(), exports, original.classes(),
+                original.initialization()));
+        }
+        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+    }
+
+    /** The interface index without one module's entry. */
+    private static ProjectInterfaceIndex withoutIndexModule(
+            ProjectInterfaceIndex index, ModuleId moduleId) {
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                : index.modules().entrySet()) {
+            if (!entry.getKey().equals(moduleId)) {
                 modules.put(entry.getKey(), entry.getValue());
             }
         }
         return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+    }
+
+    /** The interface index with one module's named import reclassified. */
+    private static ProjectInterfaceIndex withImportKind(ProjectInterfaceIndex index,
+            ModuleId moduleId, String alias, ExternalModuleKind kind) {
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                : index.modules().entrySet()) {
+            ExternalModuleInterface original = entry.getValue();
+            List<ResolvedImport> imports = new ArrayList<>();
+            for (ResolvedImport importFact : original.imports()) {
+                imports.add(entry.getKey().equals(moduleId)
+                        && importFact.alias().equals(alias)
+                    ? new ResolvedImport(importFact.alias(), importFact.modulePath(),
+                        importFact.resolvedModuleId(), kind)
+                    : importFact);
+            }
+            modules.put(entry.getKey(), new ExternalModuleInterface(original.moduleId(),
+                original.kind(), imports, original.exports(), original.classes(),
+                original.initialization()));
+        }
+        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+    }
+
+    /** The interface index with one module entry's kind reclassified. */
+    private static ProjectInterfaceIndex withIndexKind(ProjectInterfaceIndex index,
+            ModuleId moduleId, ExternalModuleKind kind) {
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                : index.modules().entrySet()) {
+            ExternalModuleInterface original = entry.getValue();
+            modules.put(entry.getKey(), entry.getKey().equals(moduleId)
+                ? new ExternalModuleInterface(original.moduleId(), kind,
+                    original.imports(), original.exports(), original.classes(),
+                    original.initialization())
+                : original);
+        }
+        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+    }
+
+    /**
+     * Whether one complete raw unit carries a fact that requires the
+     * complete project closure: a SHARED_BODY external function of another
+     * module, a CALL externalEntryRef naming another module, or a
+     * {@code CLASS_NEW} under an imported/declared default owner. The
+     * standalone surfaces never admit such content; the complete project
+     * surfaces resolve exactly these links from the supplied closure.
+     */
+    private static boolean requiresProviderContext(RawUnit unit) {
+        for (RawBinding binding : unit.bindings()) {
+            if ("externalFunction".equals(binding.shape())
+                    && "SHARED_BODY".equals(binding.executionOwner())
+                    && binding.modulePath() != null
+                    && !unit.modulePath().equals(binding.modulePath())) {
+                return true;
+            }
+        }
+        for (RawOp op : unit.ops()) {
+            if (SemanticOpKind.CALL.name().equals(op.kind())) {
+                CanonicalJson.Value ref = payloadField(op.payload(), "externalEntryRef");
+                if (ref instanceof CanonicalJson.Obj refObj) {
+                    CanonicalJson.Value module = payloadField(refObj, "module");
+                    if (module instanceof CanonicalJson.Obj moduleObj
+                            && !unit.modulePath().equals(
+                                modulePathOf(moduleObj))) {
+                        return true;
+                    }
+                }
+            }
+            if (SemanticOpKind.CLASS_NEW.name().equals(op.kind())) {
+                CanonicalJson.Value owner = payloadField(op.payload(), "defaultOwner");
+                if (owner instanceof CanonicalJson.Str str
+                        && (DefaultOwner.SHARED_FACTORY.name().equals(str.value())
+                            || DefaultOwner.HOST_DEFAULTS.name().equals(str.value())
+                            || DefaultOwner.FFI_PLAN.name().equals(str.value()))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** One payload member of a raw operation payload, or null. */
+    private static CanonicalJson.Value payloadField(CanonicalJson.Obj payload, String key) {
+        for (CanonicalJson.Entry entry : payload.entries()) {
+            if (entry.key().equals(key)) {
+                return entry.value();
+            }
+        }
+        return null;
+    }
+
+    /** The module path of a canonical module-identity object, or null. */
+    private static String modulePathOf(CanonicalJson.Obj moduleId) {
+        CanonicalJson.Value path = null;
+        for (CanonicalJson.Entry entry : moduleId.entries()) {
+            if (entry.key().equals("path")) {
+                path = entry.value();
+            }
+        }
+        return path instanceof CanonicalJson.Str str ? str.value() : null;
     }
 
     // ---- manifest/document mutation helpers (checked reassembly negatives) ----
@@ -3190,6 +3682,28 @@ public class ProjectLoweringTest {
         }
         return CanonicalJson.serializeBytes(
             withEntry(root, "modules", CanonicalJson.arr(items)));
+    }
+
+    /** The manifest with one module entry's first export declared type replaced. */
+    private static byte[] manifestWithIndexExportType(byte[] manifest) {
+        CanonicalJson.Obj root = objOf(manifest);
+        CanonicalJson.Obj index = (CanonicalJson.Obj) at(root, "interfaceIndex");
+        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(index, "modules");
+        List<CanonicalJson.Value> entries = new ArrayList<>();
+        for (int i = 0; i < modules.items().size(); i++) {
+            CanonicalJson.Obj entry = (CanonicalJson.Obj) modules.items().get(i);
+            CanonicalJson.Arr exports = (CanonicalJson.Arr) at(entry, "exports");
+            if (i == 0 && !exports.items().isEmpty()) {
+                List<CanonicalJson.Value> updated = new ArrayList<>(exports.items());
+                CanonicalJson.Obj first = (CanonicalJson.Obj) updated.get(0);
+                updated.set(0, withEntry(first, "declaredType",
+                    CanonicalJson.str("(i32) => i32")));
+                entry = withEntry(entry, "exports", CanonicalJson.arr(updated));
+            }
+            entries.add(entry);
+        }
+        return CanonicalJson.serializeBytes(withEntry(root, "interfaceIndex",
+            withEntry(index, "modules", CanonicalJson.arr(entries))));
     }
 
     /** The manifest with the first index entry's module identity renamed. */
@@ -3391,10 +3905,21 @@ public class ProjectLoweringTest {
                 (CanonicalJson.Obj) CanonicalJson.parse(text));
             checkEq(raw, reparsed, unit.moduleId() + ": the unit facts round-trip "
                 + "typed -> raw -> text -> raw");
-            check(SemanticIrValidator.validate(unit, facts).isEmpty(),
-                unit.moduleId() + ": the unchanged unit admits on the typed surface");
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                unit.moduleId() + ": the unchanged unit admits on the text surface");
+            Optional<CompilerDiagnostic> standaloneTyped =
+                SemanticIrValidator.validate(unit, facts);
+            Optional<CompilerDiagnostic> standaloneText =
+                SemanticIrValidator.validateText(text, facts);
+            if (requiresProviderContext(raw)) {
+                check(standaloneTyped.isPresent() && standaloneText.isPresent(),
+                    unit.moduleId() + ": a unit whose facts refer to a foreign provider"
+                        + " rejects on the standalone surfaces (the required provider"
+                        + " context is supplied by the complete project closure only)");
+            } else {
+                check(standaloneTyped.isEmpty(),
+                    unit.moduleId() + ": the unchanged unit admits on the typed surface");
+                check(standaloneText.isEmpty(),
+                    unit.moduleId() + ": the unchanged unit admits on the text surface");
+            }
         }
         // T3: the project transport keeps the complete project and admits on
         // both surfaces.
@@ -3567,10 +4092,20 @@ public class ProjectLoweringTest {
                     (CanonicalJson.Obj) CanonicalJson.parse(transport));
                 checkEq(raw, reparsed, unit.moduleId() + ": the unit facts round-trip "
                     + "typed -> raw -> text -> raw");
-                check(SemanticIrValidator.validate(unit, facts).isEmpty(),
-                    unit.moduleId() + ": the unchanged unit admits on the typed surface");
-                check(SemanticIrValidator.validateText(transport, facts).isEmpty(),
-                    unit.moduleId() + ": the unchanged unit admits on the text surface");
+                Optional<CompilerDiagnostic> standaloneTyped =
+                    SemanticIrValidator.validate(unit, facts);
+                Optional<CompilerDiagnostic> standaloneText =
+                    SemanticIrValidator.validateText(transport, facts);
+                if (requiresProviderContext(raw)) {
+                    check(standaloneTyped.isPresent() && standaloneText.isPresent(),
+                        unit.moduleId() + ": a unit whose facts refer to a foreign"
+                            + " provider rejects on the standalone surfaces");
+                } else {
+                    check(standaloneTyped.isEmpty(),
+                        unit.moduleId() + ": the unchanged unit admits on the typed surface");
+                    check(standaloneText.isEmpty(),
+                        unit.moduleId() + ": the unchanged unit admits on the text surface");
+                }
                 for (FunctionExecutionBinding binding : unit.functionBindings().values()) {
                     variants.add(bindingName(binding));
                 }
@@ -4373,6 +4908,7 @@ public class ProjectLoweringTest {
             LoweredProject imported = new LoweredProject(importedProject,
                 lower(importedProject, invocation()));
             testImportedInProjectClassResolution(imported);
+            testStandaloneProviderContextAndExactViews(imported, baseline);
             testInconsistentFactSeed(imported);
             testDeclarationClassConstruction();
             testBuiltinErrorConstruction();

@@ -1881,15 +1881,19 @@ public class SemanticIrValidatorTest {
                             new FieldInterface("label", "string", true, true, false)),
                         new ClassFactoryId(7))),
                     InitializationMode.ONCE_AFTER_DEPENDENCIES));
-                put(MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.HOST,
+                put(MOD_B, new ExternalModuleInterface(MOD_B,
+                    ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(), List.of(),
+                    InitializationMode.ONCE_AFTER_DEPENDENCIES));
+                put(new ModuleId("host.cfg"), new ExternalModuleInterface(
+                    new ModuleId("host.cfg"), ExternalModuleKind.HOST,
                     List.of(), List.of(), List.of(),
                     InitializationMode.ONCE_AFTER_DEPENDENCIES));
             }});
         Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
-        modules.put(MOD, classTransportUnit(index.interfaceIndexDigest()));
         modules.put(MOD_B, withInterfaceHash(
             unit("mod.b", Set.of(), Map.of(), Map.of(), List.of(constOp())),
             index.interfaceIndexDigest()));
+        modules.put(MOD, classTransportUnit(index.interfaceIndexDigest()));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
             SemanticProfile.DEAL_V1_3_INT32, index, modules, MOD,
             ClassRegistrationSeeds.builtinErrorOnly());
@@ -1913,8 +1917,6 @@ public class SemanticIrValidatorTest {
         checkEq("DEAL_V1_3_INT32", parsed.semanticProfile(),
             "the parsed project keeps the profile as supplied");
         checkEq("mod.a", parsed.entryModule(), "the parsed project keeps the entry module");
-        checkEq(List.of("mod.a", "mod.b"), parsed.modulePaths(),
-            "the parsed project keeps the module order");
         checkEq(index, parsed.interfaceIndex(),
             "the interface index inverse retains every module/interface/import/class/field "
                 + "fact");
@@ -1922,9 +1924,14 @@ public class SemanticIrValidatorTest {
             "the reparsed index keeps its digest");
         checkEq(ClassRegistrationSeeds.builtinErrorOnly(), parsed.classSeeds(),
             "the parsed project keeps the class registration seeds");
-        checkEq(RawUnit.fromTyped(modules.get(MOD)), parsed.modules().get(0),
+        // The carried project keeps its dependency order: mod.b precedes its
+        // consumer mod.a, and the host declaration provider carries an index
+        // entry without a unit.
+        checkEq(List.of("mod.b", "mod.a"), parsed.modulePaths(),
+            "the parsed project keeps the dependency-ordered module paths");
+        checkEq(RawUnit.fromTyped(modules.get(MOD_B)), parsed.modules().get(0),
             "the first module round-trips every complete unit fact");
-        checkEq(RawUnit.fromTyped(modules.get(MOD_B)), parsed.modules().get(1),
+        checkEq(RawUnit.fromTyped(modules.get(MOD)), parsed.modules().get(1),
             "the second module round-trips every complete unit fact");
         checkEq(text, serialize(ContractSnapshotCanonicalizer.toJson(parsed)),
             "the reparsed project re-serializes byte-identically");
@@ -2004,8 +2011,11 @@ public class SemanticIrValidatorTest {
                     .noneMatch(entry -> entry.layout().fields().isEmpty()),
                 "the seeds are never merged into a unit's own classLayouts");
         }
+        RawUnit detachedModA = detachedParsed.modules().stream()
+            .filter(raw -> raw.modulePath().equals("mod.a")).findFirst().orElse(null);
+        check(detachedModA != null, "the detached project keeps the mod.a unit");
         checkEq(RawUnit.fromTyped(modules.get(MOD)).classLayouts(),
-            detachedParsed.modules().get(0).classLayouts(),
+            detachedModA == null ? null : detachedModA.classLayouts(),
             "the unit keeps exactly its own declared classLayouts beside the seeds");
 
         // The /1 envelope is never filled or repaired.
@@ -2123,7 +2133,6 @@ public class SemanticIrValidatorTest {
             InitializationMode.ONCE_AFTER_DEPENDENCIES));
         return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, entries);
     }
-
     private static Map<ClassId, ClassLayout> batteryLayouts() {
         Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
         layouts.put(BATTERY_CLASS, new ClassLayout(BATTERY_CLASS, List.of(
@@ -2230,8 +2239,8 @@ public class SemanticIrValidatorTest {
     private static ExecutableLoweredProject batteryProject(LoweredModuleUnit unit,
             ProjectInterfaceIndex index) {
         Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
-        modules.put(MOD, unit);
         modules.put(MOD_B, batteryDependencyUnit(index.interfaceIndexDigest()));
+        modules.put(MOD, unit);
         return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_3_INT32, index, modules,
             MOD, ClassRegistrationSeeds.builtinErrorOnly());
     }
