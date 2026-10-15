@@ -611,11 +611,22 @@ function $jsonIntOrNil($text) {
         $expNeg = $c === 0x2d;
         $i++;
       }
-      if ($text.length - $i > 18) {
-        $expo = 1e18;
-      } else {
-        $expo = Number($text.slice($i));
+      // The exponent magnitude accumulates its digits with bounded
+      // saturation: leading zeroes contribute nothing, so an exponent
+      // text longer than 18 characters whose value is small stays exact
+      // (the shared JsonNumberClassifier rule), and the arithmetic can
+      // never overflow.
+      let $magnitude = 0;
+      while ($i < $text.length) {
+        const $digit = $text.charCodeAt($i) - 0x30;
+        if ($magnitude > (1000000000000 - $digit) / 10) {
+          $magnitude = 1000000000000;
+        } else {
+          $magnitude = $magnitude * 10 + $digit;
+        }
+        $i++;
       }
+      $expo = $magnitude;
     }
   }
   let $digits = $text.slice($intStart, $intEnd);
@@ -642,15 +653,16 @@ function $jsonIntOrNil($text) {
   if ($significant.length + $effective > 10) {
     return null;
   }
-  let $value = Number($significant + "0".repeat($effective));
-  if ($neg) {
-    $value = -$value;
-  }
+  const $value = Number($significant + "0".repeat($effective));
+  // The signed32 range check compares the unsigned magnitude before the
+  // sign is applied: negating first would leave the negative branch dead
+  // for every magnitude in [2147483649, ...] (the shared classifier
+  // rule: at most 2147483648 may carry the minus sign).
   const $limit = $neg ? 2147483648 : 2147483647;
   if ($value > $limit) {
     return null;
   }
-  return $value;
+  return $neg ? -$value : $value;
 }
 
 // $parseJsonText: the conforming RFC-8259 scanner over the code points of

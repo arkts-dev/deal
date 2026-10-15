@@ -713,7 +713,9 @@ test("json.parse classifies exact decimal lexemes (v1.3)", function()
   -- The lexeme's mathematical value decides the int/number variant before
   -- binary64 rounding. This standalone module carries Lua numbers, so the
   -- observable facts are the normalized zero, the exact integral values,
-  -- and the acceptance of the signed32 edges.
+  -- and the acceptance of the signed32 edges; the variant itself is
+  -- pinned through the canonical text of the compiled-artifact fixtures
+  -- (stdlib/json/int32-boundary-parse, jsonable/table-field-roundtrip).
   local neg_zero = json.parse.f("-0.0")
   assert(neg_zero == 0, "-0.0 normalizes to the integer zero")
   assert(1 / neg_zero == math.huge, "-0.0 is the positive zero, never -0.0")
@@ -723,6 +725,18 @@ test("json.parse classifies exact decimal lexemes (v1.3)", function()
   assert(json.parse.f("2147483647e0") == 2147483647, "the positive signed32 edge")
   assert(json.parse.f("-2147483648.0") == -2147483648, "the negative signed32 edge")
   assert(json.parse.f("1.5") == 1.5, "a fractional token stays a number")
+  -- The signed32 check compares the magnitude before the sign is applied:
+  -- the negative neighbours stay in range-consistent values.
+  assert(json.parse.f("-2147483649") == -2147483649, "-2147483649 stays a number")
+  assert(json.parse.f("-9999999999") == -9999999999, "-9999999999 stays a number")
+  -- The exponent magnitude accumulates digits with bounded saturation:
+  -- leading zeroes contribute nothing, so a zero-padded exponent text
+  -- longer than 18 characters whose value is small stays exactly
+  -- classified.
+  assert(json.parse.f("1e0000000000000000001") == 10, "a zero-padded long exponent denotes 10")
+  assert(json.parse.f("1e00000000000000000000") == 1, "a zero-valued zero-padded exponent denotes 1")
+  assert(json.parse.f("100e-000000000000000000002") == 1, "a zero-padded negative exponent denotes 1")
+  assert(json.parse.f("-1e0000000000000000001") == -10, "a negative zero-padded long exponent denotes -10")
   local huge = json.parse.f("1e999999999999999999999")
   assert(huge == math.huge, "a huge exponent converts to binary64 infinity")
   -- A long digit run past the signed32 range stays a number and never

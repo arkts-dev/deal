@@ -312,10 +312,13 @@ public class JsonClassExecutorTest {
     private static void testAlgorithmObservations() {
         ClassOpsExecutor.JsonParser parser = JsonClassAlgorithmAdapter.parser();
         String[] numbers = {"2147483647", "-2147483648", "-0", "2147483648", "1.5",
-            "1e0", "1.0", "100e-2", "2147483647.00000001"};
+            "1e0", "1.0", "100e-2", "2147483647.00000001",
+            "-2147483649", "-9999999999", "1e0000000000000000001",
+            "100e-000000000000000000002", "-1e0000000000000000001"};
         double[] expected = {2147483647, -2147483648, 0, 2147483648.0, 1.5, 1, 1, 1,
-            2147483647.0};
-        boolean[] isInt = {true, true, true, false, false, true, true, true, false};
+            2147483647.0, -2147483649.0, -9999999999.0, 10, 1, -10};
+        boolean[] isInt = {true, true, true, false, false, true, true, true, false,
+            false, false, true, true, true};
         for (int i = 0; i < numbers.length; i++) {
             JsonParse parsed = parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate(numbers[i]));
             Value value = ((JsonParse.Success) parsed).value();

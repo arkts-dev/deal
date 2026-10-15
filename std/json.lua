@@ -115,11 +115,22 @@ local function json_int_or_nil(text)
         exp_neg = (c == "-")
         i = i + 1
       end
-      if #text - i + 1 > 18 then
-        expo = 1e18
-      else
-        expo = tonumber(string.sub(text, i)) or 1e18
+      -- The exponent magnitude accumulates its digits with bounded
+      -- saturation: leading zeroes contribute nothing, so an exponent
+      -- text longer than 18 characters whose value is small stays exact
+      -- (the shared JsonNumberClassifier rule), and the arithmetic can
+      -- never overflow.
+      local magnitude = 0
+      while i <= #text do
+        local d = string.byte(text, i) - 48
+        if magnitude > (1000000000000 - d) / 10 then
+          magnitude = 1000000000000
+        else
+          magnitude = magnitude * 10 + d
+        end
+        i = i + 1
       end
+      expo = magnitude
     end
   end
   local digits = string.sub(text, int_start, int_end)
@@ -141,8 +152,13 @@ local function json_int_or_nil(text)
   if #significant + effective > 10 then return nil end
   local value = tonumber(significant .. string.rep("0", effective))
   if value == nil then return nil end
+  -- The signed32 range check compares the unsigned magnitude before the
+  -- sign is applied: negating first would leave the negative branch dead
+  -- for every magnitude in [2147483649, ...] (the shared classifier
+  -- rule: at most 2147483648 may carry the minus sign).
+  local limit = neg and 2147483648 or 2147483647
+  if value > limit then return nil end
   if neg then value = -value end
-  if value > (neg and 2147483648 or 2147483647) then return nil end
   return value
 end
 

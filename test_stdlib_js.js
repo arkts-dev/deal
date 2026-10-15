@@ -596,6 +596,27 @@ test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are int", functi
     "a rounded fractional token stays a number (canonical decimal text)");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":2147483648}', "f.js", 1, 1), "f.js", 1, 1),
     '{"v":2.147483648E9}', "an out-of-range integer token is a number");
+  // The signed32 check compares the magnitude before the sign is applied:
+  // a negative magnitude above 2147483648 is the number variant, never an
+  // out-of-range int (the canonical text proves the variant).
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483648}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-2147483648}', "the negative signed32 edge is an int");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483649}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-2.147483649E9}', "-2147483649 is the number variant");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-9999999999}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-9.999999999E9}', "-9999999999 is the number variant");
+  // The exponent magnitude accumulates its digits with bounded
+  // saturation: leading zeroes contribute nothing, so a zero-padded
+  // exponent text longer than 18 characters whose value is small stays
+  // exactly classified (1e0000000000000000001 is the integral 10).
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":10}', "a zero-padded long exponent stays the int 10");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1e00000000000000000000}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "a zero-valued zero-padded exponent stays the int 1");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":100e-000000000000000000002}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "a zero-padded negative exponent stays the int 1");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-10}', "a negative zero-padded long exponent stays the int -10");
   // A huge exponent converts to binary64 infinity: the classification
   // itself never overflows, and the nonfinite value then fails the
   // finite-only encode arm.

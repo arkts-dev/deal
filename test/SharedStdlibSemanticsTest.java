@@ -537,6 +537,10 @@ public class SharedStdlibSemanticsTest {
         expectParseValue("2147483648", new Value.Number(2147483648d), "2147483648 → number");
         expectParseValue("-2147483648", new Value.Int(-2147483648), "-2147483648 → int");
         expectParseValue("-2147483649", new Value.Number(-2147483649d), "-2147483649 → number");
+        expectParseValue("-2147483649.0", new Value.Number(-2147483649d),
+            "an out-of-range negative integral fraction → number");
+        expectParseValue("-9999999999", new Value.Number(-9999999999d),
+            "an out-of-range negative magnitude → number");
         // The exact decimal classification: an integral mathematical value
         // inside signed32 is the int, whatever its lexical form.
         expectParseValue("1.0", new Value.Int(1), "1.0 → int (mathematically integral)");
@@ -567,6 +571,21 @@ public class SharedStdlibSemanticsTest {
             "an all-zero coefficient with a huge exponent → int 0");
         expectParseValue("1e-999999999999999999999", new Value.Number(0.0),
             "a tiny exponent converts to binary64 zero");
+        // The exponent magnitude accumulates its digits with bounded
+        // saturation: leading zeroes contribute nothing, so an exponent
+        // text longer than 18 characters whose value is small stays
+        // exactly classified.
+        expectParseValue("1e0000000000000000001", new Value.Int(10),
+            "a zero-padded long exponent → int 10");
+        expectParseValue("1e00000000000000000000", new Value.Int(1),
+            "a zero-valued zero-padded exponent → int 1");
+        expectParseValue("100e-000000000000000000002", new Value.Int(1),
+            "a zero-padded negative exponent → int 1");
+        expectParseValue("-1e0000000000000000001", new Value.Int(-10),
+            "a negative zero-padded long exponent → int -10");
+        expectParseValue("-2147483648e000000000000000000000",
+            new Value.Int(-2147483648),
+            "the negative signed32 edge with a zero-padded exponent → int");
 
         // Round-trip: parse then stringify reproduces the RFC text.
         Outcome<Value> roundTripParse = SharedStdlibSemantics.jsonParse(origin(),
