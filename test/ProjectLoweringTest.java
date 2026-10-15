@@ -21,6 +21,11 @@ import deal.semantic.HostDeclarationSurface;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.BindingGeneration;
+import deal.semantic.ir.LoweredFunction;
+import deal.semantic.ir.OperationContractSnapshot;
+import deal.semantic.ir.RawOp;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BindingId;
@@ -45,6 +50,7 @@ import deal.semantic.ir.FieldInterface;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
+import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
@@ -59,6 +65,7 @@ import deal.semantic.ir.NamespaceRegistrations;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.RawUnit;
+import deal.semantic.ir.RawUnitMaterializer;
 import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.RuntimeDescriptor;
@@ -318,6 +325,53 @@ public class ProjectLoweringTest {
         """;
 
     private static final ClassId SEGMENT = new ClassId("src", "Segment");
+
+    /**
+     * The binding/class common-admission fixture: a module-level class with
+     * generated JSON defaults, an ordinary closure with two generation-pinned
+     * captures, a host function value materialized at its producing crossing,
+     * and parameter/import initializations.
+     */
+    private static final String BINDING_CLASS_UTIL_SOURCE = """
+        // @jsonable
+        export class Point {
+          x: int = 4;
+          label: string = "p";
+          note?: string;
+        }
+
+        export function makeCounter(start: int, step: int): () => int {
+          let n: int = start;
+          function bump(): int {
+            n = n + step;
+            return n;
+          }
+          return bump;
+        }
+        """;
+
+    /** The host declaration of the binding/class fixture: a function-valued return. */
+    private static final String BINDING_CLASS_DECLARATION = """
+        export function pick(): (x: int) => int;
+        """;
+
+    private static final String BINDING_CLASS_APP_SOURCE = """
+        import * as u from "util";
+        import * as cfg from "host/cfg";
+
+        function twice(x: int): int {
+          return x + x;
+        }
+
+        export function main(): null {
+          let p: u.Point = {x: 5};
+          let c: () => int = u.makeCounter(1, 2);
+          let a: (x: int, y: int) => int = twice;
+          let h: (x: int) => int = cfg.pick();
+          let n: int = c();
+          return null;
+        }
+        """;
 
     private static final ModuleId MID = new ModuleId("mid");
 
@@ -2357,6 +2411,9 @@ public class ProjectLoweringTest {
                 unit.moduleId() + ": parameter/import facts survive");
             checkEq(text, CanonicalJson.serializeText(ContractSnapshotCanonicalizer.toJson(reparsed)),
                 unit.moduleId() + ": canonical text is byte-stable");
+            checkEq(unit, RawUnitMaterializer.materialize(reparsed),
+                unit.moduleId() + ": the transported facts materialize back to the exact "
+                    + "typed unit");
             Optional<CompilerDiagnostic> readmitted = SemanticIrValidator.validateText(text, facts);
             check(readmitted.isEmpty(), unit.moduleId() + ": text re-admits: " + readmitted);
             sawCaptures |= reparsed.functions().stream().anyMatch(f -> !f.captures().isEmpty());
@@ -2717,19 +2774,25 @@ public class ProjectLoweringTest {
 
             // (2) Text admission: the same internally consistent mutation and
             // the seed field-descriptor mutation are rejected by the class
-            // validation owner's rule, never silently admitted.
+            // validation owner's rule, never silently admitted. The composed
+            // per-module class owner runs before the project-level seed joins,
+            // so the first failure is its resolved-layout disagreement with the
+            // referring CLASS_NEW; the seed joins still reject the same records
+            // at checked reassembly (assertion (1)).
             expectProjectAdmissionFailure(SemanticIrValidator.validateText(
                     asText(manifestWithSeedOwnerAndFieldOwners(
                         text.getBytes(StandardCharsets.UTF_8), "Endpoint", "FFI_PLAN")),
                     facts),
-                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "defaultOwner",
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                "carries a layout that differs from the resolved layout",
                 "the text project surface rejects the seed owner that contradicts "
                     + "the module's referring CLASS_NEW");
             expectProjectAdmissionFailure(SemanticIrValidator.validateText(
                     asText(manifestWithSeedFieldDescriptor(
                         text.getBytes(StandardCharsets.UTF_8), "Endpoint", "path", "int")),
                     facts),
-                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "path",
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                "carries a layout that differs from the resolved layout",
                 "the text project surface rejects the manifest seed descriptor that "
                     + "contradicts the interface's declared field type");
 
@@ -2741,7 +2804,8 @@ public class ProjectLoweringTest {
                 lowered.entryModule(),
                 withSeedOwner(lowered.classSeeds(), ENDPOINT, DefaultOwner.FFI_PLAN));
             expectProjectAdmissionFailure(SemanticIrValidator.validate(ownerMutated, facts),
-                ClassConstructionValidator.CONSTRUCTION_COHERENCE, "defaultOwner",
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                "carries a layout that differs from the resolved layout",
                 "the typed project surface rejects the seed owner that contradicts "
                     + "the module's referring CLASS_NEW");
 
@@ -2940,13 +3004,13 @@ public class ProjectLoweringTest {
                 expectProjectAdmissionFailure(SemanticIrValidator.validateText(asText(
                     manifestWithSeedFieldDescriptor(text.getBytes(StandardCharsets.UTF_8),
                         "Hidden", "secret", "int")), facts),
-                    ClassConstructionValidator.CONSTRUCTION_COHERENCE, "secret",
+                    ClassConstructionValidator.FIELD_OPERATION_SHAPE, "Hidden.secret",
                     "text admission rejects private seed/read disagreement");
                 expectProjectAdmissionFailure(SemanticIrValidator.validate(
                     new ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
                         project.modules(), project.entryModule(), withSeedFieldDescriptor(
                             project.classSeeds(), HOST_HIDDEN, "secret", RuntimeDescriptor.Int.INSTANCE)), facts),
-                    ClassConstructionValidator.CONSTRUCTION_COHERENCE, "secret",
+                    ClassConstructionValidator.FIELD_OPERATION_SHAPE, "Hidden.secret",
                     "typed admission rejects private seed/read disagreement");
             } finally { deleteRecursively(hidden.root()); }
         }
@@ -3455,6 +3519,838 @@ public class ProjectLoweringTest {
             "the dumped module text differs from the unmutated dump");
     }
 
+    /**
+     * The combined common-admission dependency check (ISSUE-0820, T1-T5):
+     * the real project lowers once (T1) with every complete binding variant,
+     * a module-level class with generated JSON defaults, an imported class
+     * factory, an ordinary closure with two generation-pinned captures and
+     * parameter/import initializations; every unit and the project travel
+     * typed -> raw -> text -> raw (T2/T3) unchanged and admit on both
+     * surfaces with the result views equal to the owned facts; then one-record
+     * binding and class mutations reject identically on both surfaces with no
+     * partial project, and remain visible in the transported text (T4/T5).
+     */
+    private static void testCommonAdmissionBindingAndClassParity() throws Exception {
+        System.out.println("-- the common admission over the real transported project: "
+            + "functions, captures, bindings and class construction parity (ISSUE-0820) --");
+        RealProject project = compileProject(BINDING_CLASS_APP_SOURCE,
+            Map.of("src/util.deal", BINDING_CLASS_UTIL_SOURCE,
+                "src/cfg.d.deal", BINDING_CLASS_DECLARATION), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the binding/class fixture lowers: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+                project.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
+                invocation().capabilityRegistryHash());
+            LoweredModuleUnit util = lowered.modules().get(UTIL);
+            LoweredModuleUnit app = lowered.modules().get(APP);
+            check(util != null && app != null,
+                "the closure carries the class module and the constructing entry module");
+            if (util == null || app == null) {
+                return;
+            }
+
+            // T1/T2: the dependency-ordered units travel typed -> raw -> text ->
+            // raw and the unchanged content admits on both surfaces; the
+            // transported graph carries every complete binding variant.
+            Set<String> variants = new LinkedHashSet<>();
+            LoweredFunction twoCapture = null;
+            for (LoweredModuleUnit unit : lowered.modules().values()) {
+                RawUnit raw = RawUnit.fromTyped(unit);
+                String transport = SemanticIrValidator.toUnitText(unit);
+                RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
+                    (CanonicalJson.Obj) CanonicalJson.parse(transport));
+                checkEq(raw, reparsed, unit.moduleId() + ": the unit facts round-trip "
+                    + "typed -> raw -> text -> raw");
+                check(SemanticIrValidator.validate(unit, facts).isEmpty(),
+                    unit.moduleId() + ": the unchanged unit admits on the typed surface");
+                check(SemanticIrValidator.validateText(transport, facts).isEmpty(),
+                    unit.moduleId() + ": the unchanged unit admits on the text surface");
+                for (FunctionExecutionBinding binding : unit.functionBindings().values()) {
+                    variants.add(bindingName(binding));
+                }
+                for (LoweredFunction function : unit.functions().values()) {
+                    if (function.captures().size() > 1) {
+                        twoCapture = function;
+                    }
+                }
+            }
+            checkEq(Set.of("loweredBody", "adapter", "hostFunction", "hostFunctionValue",
+                    "externalFunction", "intrinsicFunction", "dynamicFunctionValue"),
+                variants, "the transported project carries every complete binding variant");
+            check(twoCapture != null, "the fixture carries the two-capture ordinary closure");
+            if (twoCapture == null) {
+                return;
+            }
+            checkEq(closureCaptures(util, twoCapture.functionId()), twoCapture.captures(),
+                "the closure payload and the function record carry the same ordered "
+                    + "generation-pinned captures");
+            check(util.classFactories().factories().size() == 1
+                    && util.jsonDefaults().defaultChildren().size() == 1,
+                "the class module carries its factory registry and its JSON-default children");
+            boolean sharedFactory = false;
+            for (SemanticOp op : app.ops()) {
+                if (op.payload() instanceof KindPayload.ClassNewPayload newPayload
+                        && newPayload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                    sharedFactory = true;
+                }
+            }
+            check(sharedFactory, "the imported class factory construction is transported");
+            check(!util.classBindingFacts().parameters().isEmpty()
+                    && !app.classBindingFacts().importAliases().isEmpty(),
+                "the parameter and import-alias initialization facts are transported");
+
+            // T3: the project transport keeps the complete project and admits
+            // on both surfaces; the result views are the owned records.
+            String projectText = SemanticIrValidator.toProjectText(lowered);
+            ContractSnapshotCanonicalizer.ParsedProject reparsedProject =
+                ContractSnapshotCanonicalizer.parseProject(
+                    (CanonicalJson.Obj) CanonicalJson.parse(projectText));
+            checkEq(lowered.interfaceIndex(), reparsedProject.interfaceIndex(),
+                "the project transport keeps the interface index");
+            checkEq(lowered.classSeeds(), reparsedProject.classSeeds(),
+                "the project transport keeps the class registration seeds");
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the unchanged project admits on the typed surface");
+            check(SemanticIrValidator.validateText(projectText, facts).isEmpty(),
+                "the unchanged project admits on the text surface");
+            check(lowered.classSeeds() == result.seeds(),
+                "result.seeds() is exactly project.classSeeds()");
+            for (LoweredModuleUnit unit : lowered.modules().values()) {
+                check(result.tableOf(unit.moduleId()) == unit.bodyTable()
+                        && result.registryOf(unit.moduleId()) == unit.classFactories(),
+                    unit.moduleId() + ": the result views are the unit's own records");
+            }
+
+            // Diagnostic-only metadata never becomes a rejection: a unit
+            // text whose operation origin carries an absent source id, an
+            // unusable position and an open kind still admits, and the
+            // materialized admission does not throw.
+            {
+                String doctored = withFirstOpOrigin(SemanticIrValidator.toUnitText(util),
+                    CanonicalJson.obj(
+                        CanonicalJson.e("sourceId", CanonicalJson.nullValue()),
+                        CanonicalJson.e("span", CanonicalJson.obj(
+                            CanonicalJson.e("file", CanonicalJson.str("doctored.deal")),
+                            CanonicalJson.e("startLine", CanonicalJson.intValue(0)),
+                            CanonicalJson.e("startColumn", CanonicalJson.intValue(0)),
+                            CanonicalJson.e("endLine", CanonicalJson.intValue(0)),
+                            CanonicalJson.e("endColumn", CanonicalJson.intValue(0)),
+                            CanonicalJson.e("startScalarOffset",
+                                CanonicalJson.intValue(-1)),
+                            CanonicalJson.e("endScalarOffset",
+                                CanonicalJson.intValue(-1)))),
+                        CanonicalJson.e("kind", CanonicalJson.str("NOT_A_KIND")),
+                        CanonicalJson.e("anchorId", CanonicalJson.obj(
+                            CanonicalJson.e("id", CanonicalJson.intValue(7)),
+                            CanonicalJson.e("type", CanonicalJson.str("anchor")))),
+                        CanonicalJson.e("parentOpId", CanonicalJson.nullValue())));
+                Optional<CompilerDiagnostic> admitted;
+                try {
+                    admitted = SemanticIrValidator.validateText(doctored, facts);
+                } catch (RuntimeException e) {
+                    check(false, "a doctored diagnostic-only origin must not change "
+                        + "admission or throw: " + e);
+                    admitted = null;
+                }
+                check(admitted != null && admitted.isEmpty(),
+                    "a doctored diagnostic-only origin leaves admission unchanged: "
+                        + (admitted == null ? "threw"
+                            : admitted.map(CompilerDiagnostic::message).orElse("admitted")));
+            }
+
+            // Fail closed: a decodable unit text whose payload loses a
+            // mandatory recognized position passes the transport framing and
+            // rejects as the closed-position E6005 of the materialized
+            // admission, never as an unchecked failure.
+            {
+                String utilText = SemanticIrValidator.toUnitText(util);
+                String dropped = withoutPayloadKey(utilText, "mutable");
+                check(!dropped.equals(utilText),
+                    "the dropped payload position is a real text mutation");
+                Optional<CompilerDiagnostic> failure = null;
+                try {
+                    failure = SemanticIrValidator.validateText(dropped, facts);
+                } catch (RuntimeException e) {
+                    check(false, "a decodable dropped payload position must fail closed, "
+                        + "never throw: " + e);
+                }
+                assertMutationRule("a dropped payload position", failure, "R-ENUM",
+                    "payload position", "is absent");
+            }
+
+            // Mutation (1): drop a capture from the closure payload and the
+            // function record together; the body reference to it is then
+            // outside the captures list.
+            {
+                List<BindingGeneration> shortened = List.of(twoCapture.captures().get(0));
+                LoweredModuleUnit mutated = withClosureCaptures(
+                    withFunction(util, twoCapture, shortened), twoCapture.functionId(),
+                    shortened);
+                expectBindingGraphMutationRejects("a dropped capture", lowered, facts,
+                    mutated, "CAPTURE_RESOLUTION", "outside the captures list");
+            }
+            // Mutation (1b): duplicate a capture binding in the record and
+            // the payload together; a capture set names each binding once.
+            {
+                List<BindingGeneration> duplicated = new ArrayList<>(twoCapture.captures());
+                duplicated.add(duplicated.get(0));
+                LoweredModuleUnit mutated = withClosureCaptures(
+                    withFunction(util, twoCapture, duplicated), twoCapture.functionId(),
+                    duplicated);
+                expectBindingGraphMutationRejects("a duplicated capture binding", lowered,
+                    facts, mutated, "CAPTURE_RESOLUTION", "more than once");
+            }
+            // Mutation (2): change a capture generation in the function
+            // record alone; the closure/record capture link rejects.
+            {
+                List<BindingGeneration> changed = new ArrayList<>(twoCapture.captures());
+                BindingGeneration first = changed.get(0);
+                changed.set(0, new BindingGeneration(first.binding(),
+                    first.generation() + 1));
+                LoweredModuleUnit mutated = withFunction(util, twoCapture, changed);
+                expectBindingGraphMutationRejects("a changed capture generation", lowered,
+                    facts, mutated, "CAPTURE_RESOLUTION", "publishes captures");
+            }
+            // Mutation (3): change the capture order (the record alone).
+            {
+                List<BindingGeneration> reversed = List.of(twoCapture.captures().get(1),
+                    twoCapture.captures().get(0));
+                LoweredModuleUnit mutated = withFunction(util, twoCapture, reversed);
+                expectBindingGraphMutationRejects("a reordered capture list", lowered,
+                    facts, mutated, "CAPTURE_RESOLUTION", "publishes captures");
+            }
+            // Mutation (4): a stale capture generation in the record and the
+            // payload together: the creation site still resolves the previous
+            // generation.
+            {
+                List<BindingGeneration> stale = new ArrayList<>(twoCapture.captures());
+                BindingGeneration first = stale.get(0);
+                stale.set(0, new BindingGeneration(first.binding(),
+                    first.generation() + 1));
+                LoweredModuleUnit mutated = withClosureCaptures(
+                    withFunction(util, twoCapture, stale), twoCapture.functionId(), stale);
+                expectBindingGraphMutationRejects("a stale capture generation", lowered,
+                    facts, mutated, "CAPTURE_RESOLUTION", "names generation");
+            }
+            // Mutation (5): break the function body link (the record's body
+            // block differs from the closure's registered body).
+            {
+                BlockId otherBody = otherBlockOf(util, twoCapture.body());
+                Map<FunctionId, LoweredFunction> functions =
+                    new LinkedHashMap<>(util.functions());
+                functions.put(twoCapture.functionId(), new LoweredFunction(
+                    twoCapture.functionId(), twoCapture.descriptor(), twoCapture.captures(),
+                    otherBody, twoCapture.sourceName()));
+                LoweredModuleUnit mutated = withFunctions(util, functions);
+                // The control owner runs before the bindings owner and owns the
+                // detached RETURN whose recorded function no longer has that
+                // body block.
+                expectBindingGraphMutationRejects("a retargeted function body link",
+                    lowered, facts, mutated, "CONTROL_EXIT", "names function");
+            }
+            // Mutation (6): retarget the loweredBody registration's block
+            // (the registry entry alone).
+            {
+                FunctionAllocationIdentity key = allocationOf(
+                    util, twoCapture.functionId());
+                FunctionExecutionBinding.LoweredBody body =
+                    (FunctionExecutionBinding.LoweredBody) util.functionBindings().get(key);
+                Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+                    new LinkedHashMap<>(util.functionBindings());
+                bindings.put(key, new FunctionExecutionBinding.LoweredBody(
+                    body.functionId(), otherBlockOf(util, body.blockId())));
+                LoweredModuleUnit mutated = withBindings(util, bindings);
+                expectBindingGraphMutationRejects("a retargeted loweredBody block",
+                    lowered, facts, mutated, "REGISTRY_ONE_TO_ONE",
+                    "does not match its LoweredBody payload");
+            }
+            // Mutation (7): retarget the adapter registration's target
+            // signature (the registry alone).
+            {
+                FunctionAllocationIdentity key = adapterKey(app);
+                FunctionExecutionBinding.AdapterBinding adapter =
+                    (FunctionExecutionBinding.AdapterBinding) app.functionBindings().get(key);
+                Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+                    new LinkedHashMap<>(app.functionBindings());
+                bindings.put(key, new FunctionExecutionBinding.AdapterBinding(
+                    adapter.adaptOpId(), adapter.captureMode(), adapter.sourceRef(),
+                    adapter.sourceSignature(),
+                    new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE,
+                        RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+                        RuntimeDescriptor.Int.INSTANCE)));
+                LoweredModuleUnit mutated = withBindings(app, bindings);
+                expectBindingGraphMutationRejects("a retargeted adapter signature",
+                    lowered, facts, mutated, "REGISTRY_ONE_TO_ONE",
+                    "registration carries signatures");
+            }
+            // Mutation (8): retarget the adapter registration's sourceRef (the
+            // registry alone).
+            {
+                FunctionAllocationIdentity key = adapterKey(app);
+                FunctionExecutionBinding.AdapterBinding adapter =
+                    (FunctionExecutionBinding.AdapterBinding) app.functionBindings().get(key);
+                AdaptSourceRef.SharedCell shared =
+                    (AdaptSourceRef.SharedCell) adapter.sourceRef();
+                Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+                    new LinkedHashMap<>(app.functionBindings());
+                bindings.put(key, new FunctionExecutionBinding.AdapterBinding(
+                    adapter.adaptOpId(), adapter.captureMode(),
+                    new AdaptSourceRef.SharedCell(shared.binding(), shared.generation() + 1),
+                    adapter.sourceSignature(), adapter.targetSignature()));
+                LoweredModuleUnit mutated = withBindings(app, bindings);
+                expectBindingGraphMutationRejects("a retargeted adapter sourceRef",
+                    lowered, facts, mutated, "REGISTRY_ONE_TO_ONE",
+                    "registration carries mode");
+            }
+            // Mutation (9): mis-resolve the host-function-value materializing
+            // boundary op (the registry alone).
+            {
+                FunctionAllocationIdentity key = hostValueKey(app);
+                FunctionExecutionBinding.HostFunctionValue value =
+                    (FunctionExecutionBinding.HostFunctionValue)
+                        app.functionBindings().get(key);
+                OpId notACrossing = firstConstOp(app);
+                check(notACrossing != null, "the fixture carries a non-crossing op");
+                if (notACrossing != null) {
+                    Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+                        new LinkedHashMap<>(app.functionBindings());
+                    bindings.put(key, new FunctionExecutionBinding.HostFunctionValue(
+                        value.hostModuleId(), notACrossing, value.descriptor()));
+                    LoweredModuleUnit mutated = withBindings(app, bindings);
+                    expectBindingGraphMutationRejects(
+                        "a mis-resolved materializing boundary op", lowered, facts,
+                        mutated, "R-FUNCTION-BINDING", "does not resolve");
+                }
+            }
+            // Mutation (10): contradict a parameter/import initialization
+            // fact: a local declaration cell is declared a parameter.
+            {
+                BindingId local = null;
+                for (BindingGeneration capture : twoCapture.captures()) {
+                    if (!util.classBindingFacts().parameters().contains(capture.binding())
+                            && !util.classBindingFacts().importAliases()
+                                .contains(capture.binding())) {
+                        local = capture.binding();
+                    }
+                }
+                check(local != null, "the fixture carries a captured local declaration cell");
+                if (local != null) {
+                    Set<BindingId> parameters =
+                        new LinkedHashSet<>(util.classBindingFacts().parameters());
+                    parameters.add(local);
+                    LoweredModuleUnit mutated = withClassBindingFacts(util,
+                        new ClassBindingFacts(parameters,
+                            util.classBindingFacts().importAliases()));
+                    expectBindingGraphMutationRejects(
+                        "a contradicted parameter initialization fact", lowered, facts,
+                        mutated, "BINDING_INIT_ONCE", "targets a parameter cell");
+                }
+            }
+            // Mutation (10b): a parameter fact names a binding with no
+            // producing allocation.
+            {
+                Set<BindingId> parameters =
+                    new LinkedHashSet<>(util.classBindingFacts().parameters());
+                parameters.add(new BindingId(9001));
+                LoweredModuleUnit mutated = withClassBindingFacts(util,
+                    new ClassBindingFacts(parameters,
+                        util.classBindingFacts().importAliases()));
+                expectBindingGraphMutationRejects(
+                    "a parameter fact naming no allocation", lowered, facts, mutated,
+                    "BINDING_INIT_ONCE", "names no producing allocation");
+            }
+            // Mutation (11): retarget a factory registration to a non-factory
+            // op (the class facts need the carried interface context, so the
+            // project surfaces reject).
+            {
+                ClassFactoryId entry = util.classFactories().factories().keySet()
+                    .iterator().next();
+                OpId classDefault = null;
+                for (SemanticOp op : util.ops()) {
+                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                        classDefault = op.opId();
+                    }
+                }
+                check(classDefault != null, "the fixture carries a CLASS_DEFAULT op");
+                if (classDefault != null) {
+                    Map<ClassFactoryId, OpId> factories = new LinkedHashMap<>(
+                        util.classFactories().factories());
+                    factories.put(entry, classDefault);
+                    LoweredModuleUnit mutated = withFactories(util,
+                        new ClassFactoryRegistry(factories));
+                    expectClassGraphMutationRejects("a retargeted factory registration",
+                        lowered, facts, mutated, "FACTORY_COHERENCE", "not CLASS_FACTORY");
+                }
+            }
+            // Mutation (12a): reorder the CLASS_FACTORY payload's default
+            // children with a recomputed snapshot digest: a recomputed digest
+            // is no proof that the factory link is valid.
+            {
+                ClassFactoryId entry = util.classFactories().factories().keySet()
+                    .iterator().next();
+                OpId factoryOpId = util.classFactories().factoryFor(entry);
+                SemanticOp factoryOp = opOf(util, factoryOpId);
+                KindPayload.ClassFactoryPayload factoryPayload =
+                    (KindPayload.ClassFactoryPayload) factoryOp.payload();
+                List<OpId> reordered =
+                    new ArrayList<>(factoryPayload.classDefaultOpIds());
+                java.util.Collections.reverse(reordered);
+                LoweredModuleUnit mutated = replaceOpWith(util, factoryOp,
+                    rebuildOp(factoryOp, new KindPayload.ClassFactoryPayload(
+                        factoryPayload.classId(), reordered,
+                        factoryPayload.callerOpRef())));
+                SemanticOp rebuilt = opOf(mutated, factoryOpId);
+                checkEq(ContractSnapshotCanonicalizer.digest(rebuilt.contract()),
+                    rebuilt.contract().canonicalDigest(),
+                    "the retargeted factory op carries its recomputed snapshot digest");
+                expectClassGraphMutationRejects("a reordered factory default child",
+                    lowered, facts, mutated, "FACTORY_COHERENCE", "not @src/Point.x");
+            }
+            // Mutation (12): reorder a JSON-default row's class-default
+            // children (the class facts).
+            {
+                OpId jsonFromClass = util.jsonDefaults().defaultChildren().keySet()
+                    .iterator().next();
+                List<OpId> children =
+                    util.jsonDefaults().childrenOf(jsonFromClass);
+                Map<OpId, List<OpId>> rows = new LinkedHashMap<>(
+                    util.jsonDefaults().defaultChildren());
+                List<OpId> reordered = new ArrayList<>(children);
+                java.util.Collections.swap(reordered, 0, reordered.size() - 1);
+                rows.put(jsonFromClass, reordered);
+                LoweredModuleUnit mutated = withJsonDefaults(util,
+                    new JsonDefaultChildTable(rows));
+                expectClassGraphMutationRejects("a reordered JSON-default child row",
+                    lowered, facts, mutated, "JSON_LAYOUT_COHERENCE",
+                    "not @src/Point.x");
+            }
+            // Mutation (13): make the carried constructionEntry disagree with
+            // the registry (the class facts).
+            {
+                ClassFactoryId entry = util.classFactories().factories().keySet()
+                    .iterator().next();
+                Map<ClassFactoryId, OpId> factories = new LinkedHashMap<>(
+                    util.classFactories().factories());
+                OpId factoryOp = factories.remove(entry);
+                factories.put(new ClassFactoryId(entry.id() + 100), factoryOp);
+                LoweredModuleUnit mutated = withFactories(util,
+                    new ClassFactoryRegistry(factories));
+                expectClassGraphMutationRejects(
+                    "a constructionEntry that disagrees with the registry", lowered, facts,
+                    mutated, "FACTORY_COHERENCE",
+                    "no factory registered under constructionEntry");
+            }
+            // Mutation (14): the builtin Error registration contradicts the
+            // 0787-owned compiler descriptor/layout contract (a project-level
+            // carried record: no equivalent unit mutation exists).
+            {
+                Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+                    new LinkedHashMap<>(lowered.classSeeds().registrations());
+                registrations.put(ClassId.ERROR,
+                    new ClassRegistrationSeeds.ClassRegistration(
+                        new ClassLayout(ClassId.ERROR, List.of(
+                            new ClassLayout.FieldLayout("code",
+                                RuntimeDescriptor.String.INSTANCE, true,
+                                DefaultOwner.BUILTIN_DEFAULTS))),
+                        DefaultOwner.BUILTIN_DEFAULTS));
+                ExecutableLoweredProject mutatedProject = new ExecutableLoweredProject(
+                    lowered.semanticProfile(), lowered.interfaceIndex(),
+                    lowered.modules(), lowered.entryModule(),
+                    new ClassRegistrationSeeds(registrations));
+                Optional<CompilerDiagnostic> typedProject =
+                    SemanticIrValidator.validate(mutatedProject, facts);
+                Optional<CompilerDiagnostic> textProject = SemanticIrValidator.validateText(
+                    SemanticIrValidator.toProjectText(mutatedProject), facts);
+                assertMutationRule("the builtin Error contract (typed project)",
+                    typedProject, "CONSTRUCTION_COHERENCE", "compiler-owned");
+                assertMutationRule("the builtin Error contract (project text)",
+                    textProject, "CONSTRUCTION_COHERENCE", "compiler-owned");
+                if (typedProject.isPresent() && textProject.isPresent()) {
+                    checkEq(typedProject.get().message(), textProject.get().message(),
+                        "the project surfaces report the identical builtin Error failure");
+                }
+            }
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /** The unit text with its first operation's origin replaced. */
+    private static String withFirstOpOrigin(String unitText, CanonicalJson.Obj origin) {
+        CanonicalJson.Obj root = objOf(unitText.getBytes(
+            java.nio.charset.StandardCharsets.UTF_8));
+        CanonicalJson.Arr ops = (CanonicalJson.Arr) at(root, "ops");
+        List<CanonicalJson.Value> items = new ArrayList<>(ops.items());
+        CanonicalJson.Obj first = (CanonicalJson.Obj) items.get(0);
+        items.set(0, withEntry(first, "origin", origin));
+        return CanonicalJson.serializeText(withEntry(root, "ops", CanonicalJson.arr(items)));
+    }
+
+    /** The unit rebuilt with one operation record replaced. */
+    private static LoweredModuleUnit replaceOpWith(LoweredModuleUnit unit,
+            SemanticOp target, SemanticOp replacement) {
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            ops.add(op == target ? replacement : op);
+        }
+        return withOperationList(unit, ops);
+    }
+
+    /** The unit text with one payload member removed from its BINDING_ALLOC op. */
+    private static String withoutPayloadKey(String unitText, String key) {
+        CanonicalJson.Obj root = objOf(unitText.getBytes(
+            java.nio.charset.StandardCharsets.UTF_8));
+        CanonicalJson.Arr ops = (CanonicalJson.Arr) at(root, "ops");
+        List<CanonicalJson.Value> items = new ArrayList<>(ops.items());
+        for (int i = 0; i < items.size(); i++) {
+            CanonicalJson.Obj op = (CanonicalJson.Obj) items.get(i);
+            if (!"BINDING_ALLOC".equals(((CanonicalJson.Str) at(op, "kind")).value())) {
+                continue;
+            }
+            CanonicalJson.Obj payload = (CanonicalJson.Obj) at(op, "payload");
+            List<CanonicalJson.Entry> entries = new ArrayList<>();
+            for (CanonicalJson.Entry entry : payload.entries()) {
+                if (!entry.key().equals(key)) {
+                    entries.add(entry);
+                }
+            }
+            items.set(i, withEntry(op, "payload", CanonicalJson.obj(entries)));
+            break;
+        }
+        return CanonicalJson.serializeText(withEntry(root, "ops", CanonicalJson.arr(items)));
+    }
+
+    /** The binding variant name of one complete registration. */
+    private static String bindingName(FunctionExecutionBinding binding) {
+        return switch (binding) {
+            case FunctionExecutionBinding.LoweredBody ignored -> "loweredBody";
+            case FunctionExecutionBinding.AdapterBinding ignored -> "adapter";
+            case FunctionExecutionBinding.HostFunction ignored -> "hostFunction";
+            case FunctionExecutionBinding.HostFunctionValue ignored -> "hostFunctionValue";
+            case FunctionExecutionBinding.ExternalFunction ignored -> "externalFunction";
+            case FunctionExecutionBinding.IntrinsicFunction ignored -> "intrinsicFunction";
+            case FunctionExecutionBinding.DynamicFunctionValue ignored -> "dynamicFunctionValue";
+        };
+    }
+
+    /** The closure payload's captures for one function id. */
+    private static List<BindingGeneration> closureCaptures(LoweredModuleUnit unit,
+            FunctionId functionId) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.ClosureNewPayload closure
+                    && closure.function().equals(functionId)) {
+                return closure.captures();
+            }
+        }
+        return null;
+    }
+
+    /** The unit rebuilt with one function record replaced. */
+    private static LoweredModuleUnit withFunction(LoweredModuleUnit unit,
+            LoweredFunction function, List<BindingGeneration> captures) {
+        Map<FunctionId, LoweredFunction> functions =
+            new LinkedHashMap<>(unit.functions());
+        functions.put(function.functionId(), new LoweredFunction(function.functionId(),
+            function.descriptor(), captures, function.body(), function.sourceName()));
+        return withFunctions(unit, functions);
+    }
+
+    /** The unit rebuilt with one closure payload's captures replaced. */
+    private static LoweredModuleUnit withClosureCaptures(LoweredModuleUnit unit,
+            FunctionId functionId, List<BindingGeneration> captures) {
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.ClosureNewPayload closure
+                    && closure.function().equals(functionId)) {
+                ops.add(rebuildOp(op, new KindPayload.ClosureNewPayload(closure.function(),
+                    closure.signature(), captures, closure.binding())));
+            } else {
+                ops.add(op);
+            }
+        }
+        return withOperationList(unit, ops);
+    }
+
+    /** The same op with another payload and its recomputed contract. */
+    private static SemanticOp rebuildOp(SemanticOp op, KindPayload payload) {
+        OperationContractSnapshot draft = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, op.kind(), op.resultType(),
+            op.operandTypes(), payload instanceof KindPayload.SelectorCarrying carrying
+                ? carrying.selector() : null,
+            payload, op.failurePolicy(), op.contract().referencedSemanticIds(), "draft");
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, op.kind(), op.resultType(),
+            op.operandTypes(), draft.selector(), payload, op.failurePolicy(),
+            op.contract().referencedSemanticIds(),
+            ContractSnapshotCanonicalizer.digest(draft));
+        return new SemanticOp(op.opId(), op.kind(), op.origin(), op.result(),
+            op.resultType(), op.operands(), op.operandTypes(), payload, op.failurePolicy(),
+            contract);
+    }
+
+    /** The unit rebuilt with another operation list. */
+    private static LoweredModuleUnit withOperationList(LoweredModuleUnit unit,
+            List<SemanticOp> ops) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            ops, unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
+    }
+
+    /** The unit rebuilt with another function registry. */
+    private static LoweredModuleUnit withFunctions(LoweredModuleUnit unit,
+            Map<FunctionId, LoweredFunction> functions) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            functions, unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
+    }
+
+    /** The unit rebuilt with another binding registry. */
+    private static LoweredModuleUnit withBindings(LoweredModuleUnit unit,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops(),
+            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            unit.classBindingFacts());
+    }
+
+    /** The unit rebuilt with another class-factory registry. */
+    private static LoweredModuleUnit withFactories(LoweredModuleUnit unit,
+            ClassFactoryRegistry factories) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            unit.ops(), unit.bodyTable(), factories, unit.jsonDefaults(),
+            unit.classBindingFacts());
+    }
+
+    /** The unit rebuilt with another JSON-default child table. */
+    private static LoweredModuleUnit withJsonDefaults(LoweredModuleUnit unit,
+            JsonDefaultChildTable jsonDefaults) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            unit.ops(), unit.bodyTable(), unit.classFactories(), jsonDefaults,
+            unit.classBindingFacts());
+    }
+
+    /** The unit rebuilt with another parameter/import initialization fact set. */
+    private static LoweredModuleUnit withClassBindingFacts(LoweredModuleUnit unit,
+            ClassBindingFacts facts) {
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(), facts);
+    }
+
+    /** Another block of the unit's membership table. */
+    private static BlockId otherBlockOf(LoweredModuleUnit unit, BlockId block) {
+        for (BlockId candidate : unit.bodyTable().blockOps().keySet()) {
+            if (!candidate.equals(block)) {
+                return candidate;
+            }
+        }
+        return block;
+    }
+
+    /** The allocation identity of one registered function id. */
+    private static FunctionAllocationIdentity allocationOf(LoweredModuleUnit unit,
+            FunctionId functionId) {
+        for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
+                : unit.functionBindings().entrySet()) {
+            if (entry.getValue() instanceof FunctionExecutionBinding.LoweredBody body
+                    && body.functionId().equals(functionId)) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    /** The adapter registration's allocation identity. */
+    private static FunctionAllocationIdentity adapterKey(LoweredModuleUnit unit) {
+        for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
+                : unit.functionBindings().entrySet()) {
+            if (entry.getValue() instanceof FunctionExecutionBinding.AdapterBinding) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    /** The host-function-value registration's allocation identity. */
+    private static FunctionAllocationIdentity hostValueKey(LoweredModuleUnit unit) {
+        for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
+                : unit.functionBindings().entrySet()) {
+            if (entry.getValue() instanceof FunctionExecutionBinding.HostFunctionValue) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    /** The first CONST op's id. */
+    private static OpId firstConstOp(LoweredModuleUnit unit) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.CONST) {
+                return op.opId();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * One binding mutation: the mutation survives typed -> raw -> text -> raw,
+     * the typed and text unit admissions, the typed and text project
+     * admissions and the composed production admission all report the same
+     * first E6005 (rule, message and range), and the mutation stays visible in
+     * the transported text; no project or partial companion is exposed.
+     */
+    private static void expectBindingGraphMutationRejects(String what,
+            ExecutableLoweredProject lowered, SemanticIrValidator.ComparisonFacts facts,
+            LoweredModuleUnit mutated, String rule, String... contains) {
+        RawUnit raw = RawUnit.fromTyped(mutated);
+        String text = SemanticIrValidator.toUnitText(mutated);
+        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
+            (CanonicalJson.Obj) CanonicalJson.parse(text));
+        checkEq(raw, reparsed, what + ": the mutation survives typed -> raw -> text -> raw");
+        check(!text.equals(SemanticIrValidator.toUnitText(
+                lowered.modules().get(mutated.moduleId()))),
+            what + ": the mutation stays visible in the transported unit text");
+        checkEq(text, CanonicalJson.serializeText(
+                ContractSnapshotCanonicalizer.toJson(reparsed)),
+            what + ": re-serializing the transported mutation is byte-stable");
+        for (RawOp op : raw.ops()) {
+            checkEq(op.canonicalDigest(),
+                ContractSnapshotCanonicalizer.recomputeSnapshotDigest(op.snapshot()),
+                what + ": op " + op.opId() + " keeps a valid contract digest");
+        }
+        Optional<CompilerDiagnostic> typedUnit = SemanticIrValidator.validate(mutated, facts);
+        Optional<CompilerDiagnostic> textUnit = SemanticIrValidator.validateText(text, facts);
+        assertMutationRule(what + " (typed unit)", typedUnit, rule, contains);
+        assertMutationRule(what + " (unit text)", textUnit, rule, contains);
+        assertMutationRule(what + " (typed project)", projectAdmission(lowered, mutated, facts),
+            rule, contains);
+        Optional<CompilerDiagnostic> textProject = SemanticIrValidator.validateText(
+            SemanticIrValidator.toProjectText(mutatedProject(lowered, mutated)), facts);
+        assertMutationRule(what + " (project text)", textProject, rule, contains);
+        check(typedUnit.isPresent() && textUnit.isPresent()
+                && typedUnit.get().message().equals(textUnit.get().message()),
+            what + ": the unit surfaces report the identical first failure");
+        check(typedUnit.isPresent() && textProject.isPresent()
+                && typedUnit.get().message().equals(textProject.get().message()),
+            what + ": the unit and project surfaces report the identical first failure");
+        if (typedUnit.isPresent() && textUnit.isPresent() && textProject.isPresent()) {
+            checkEq(typedUnit.get().range(), textUnit.get().range(),
+                what + ": the unit surfaces keep the same failing range");
+            checkEq(typedUnit.get().range(), textProject.get().range(),
+                what + ": the project surfaces keep the same failing range");
+        }
+        Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
+            mutated.bodyTable(), facts, mutated.classBindingFacts(), mutated.classFactories(),
+            mutated.jsonDefaults(), lowered.interfaceIndex().modules().get(mutated.moduleId()),
+            Map.of(), lowered.classSeeds().registrations());
+        check(composed.isPresent() && typedUnit.isPresent()
+                && composed.get().message().equals(typedUnit.get().message())
+                && composed.get().range().equals(typedUnit.get().range()),
+            what + ": the composed production admission reports the same first failure "
+                + "and range: " + composed.map(CompilerDiagnostic::message)
+                    .orElse("admitted"));
+    }
+
+    /**
+     * One class-fact mutation: a standalone unit carries no provider context,
+     * so its applicable predicates admit; the typed and text project
+     * admissions and the composed production admission reject with the same
+     * first E6005, and the mutation stays visible in the transported text.
+     */
+    private static void expectClassGraphMutationRejects(String what,
+            ExecutableLoweredProject lowered, SemanticIrValidator.ComparisonFacts facts,
+            LoweredModuleUnit mutated, String rule, String... contains) {
+        RawUnit raw = RawUnit.fromTyped(mutated);
+        String text = SemanticIrValidator.toUnitText(mutated);
+        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
+            (CanonicalJson.Obj) CanonicalJson.parse(text));
+        checkEq(raw, reparsed, what + ": the mutation survives typed -> raw -> text -> raw");
+        check(!text.equals(SemanticIrValidator.toUnitText(
+                lowered.modules().get(mutated.moduleId()))),
+            what + ": the mutation stays visible in the transported unit text");
+        check(SemanticIrValidator.validate(mutated, facts).isEmpty(),
+            what + ": the standalone unit carries no provider context, so its applicable "
+                + "predicates pass");
+        check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+            what + ": the standalone unit text carries no provider context");
+        Optional<CompilerDiagnostic> typedProject = projectAdmission(lowered, mutated, facts);
+        Optional<CompilerDiagnostic> textProject = SemanticIrValidator.validateText(
+            SemanticIrValidator.toProjectText(mutatedProject(lowered, mutated)), facts);
+        assertMutationRule(what + " (typed project)", typedProject, rule, contains);
+        assertMutationRule(what + " (project text)", textProject, rule, contains);
+        if (typedProject.isPresent() && textProject.isPresent()) {
+            checkEq(typedProject.get().message(), textProject.get().message(),
+                what + ": the project surfaces report the identical first failure");
+            checkEq(typedProject.get().range(), textProject.get().range(),
+                what + ": the project surfaces keep the same failing range");
+        }
+        Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
+            mutated.bodyTable(), facts, mutated.classBindingFacts(), mutated.classFactories(),
+            mutated.jsonDefaults(), lowered.interfaceIndex().modules().get(mutated.moduleId()),
+            Map.of(), lowered.classSeeds().registrations());
+        check(composed.isPresent() && typedProject.isPresent()
+                && composed.get().message().equals(typedProject.get().message())
+                && composed.get().range().equals(typedProject.get().range()),
+            what + ": the composed production admission reports the same first failure "
+                + "and range: " + composed.map(CompilerDiagnostic::message)
+                    .orElse("admitted"));
+    }
+
+    private static ExecutableLoweredProject mutatedProject(ExecutableLoweredProject lowered,
+            LoweredModuleUnit mutated) {
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>(lowered.modules());
+        modules.put(mutated.moduleId(), mutated);
+        return new ExecutableLoweredProject(lowered.semanticProfile(),
+            lowered.interfaceIndex(), modules, lowered.entryModule(), lowered.classSeeds());
+    }
+
+    private static Optional<CompilerDiagnostic> projectAdmission(
+            ExecutableLoweredProject lowered, LoweredModuleUnit mutated,
+            SemanticIrValidator.ComparisonFacts facts) {
+        return SemanticIrValidator.validate(mutatedProject(lowered, mutated), facts);
+    }
+
+    private static void assertMutationRule(String what,
+            Optional<CompilerDiagnostic> failure, String rule, String... contains) {
+        check(failure.isPresent(), what + " is rejected with E6005");
+        if (failure.isEmpty()) {
+            return;
+        }
+        CompilerDiagnostic diagnostic = failure.get();
+        check("E6005".equals(diagnostic.code()),
+            what + " carries the canonical E6005 code");
+        check(diagnostic.message().contains(rule)
+                && diagnostic.message().contains("validatorRule " + rule + ","),
+            what + " is named as the validator rule " + rule + "; got "
+                + diagnostic.message());
+        for (String fragment : contains) {
+            check(diagnostic.message().contains(fragment),
+                what + " names \"" + fragment + "\"; got " + diagnostic.message());
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Project Lowering Entry Tests (ISSUE-0634) ===\n");
         RealProject project = null;
@@ -3470,6 +4366,7 @@ public class ProjectLoweringTest {
             testComposedChainOverUnifiedUnits(baseline);
             testCompleteProjectTransportAndDumpReassembly(baseline);
             testCommonAdmissionMembershipParity(baseline);
+            testCommonAdmissionBindingAndClassParity();
             testInProjectClassArm();
             importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,
                 Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());

@@ -1256,17 +1256,97 @@ public final class BindingsProductionValidator {
     // =========================================================================
 
     private static Optional<CompilerDiagnostic> checkCaptureResolution(Model model) {
-        Optional<CompilerDiagnostic> failure = checkFunctionCaptureResolution(model);
+        Optional<CompilerDiagnostic> failure = checkClosureProductionLinks(model);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        failure = checkFunctionCaptureResolution(model);
         if (failure.isPresent()) {
             return failure;
         }
         return checkThunkCaptureResolution(model);
     }
 
+    /**
+     * The closure production link (B9): every {@code CLOSURE_NEW} publishes
+     * one function identity — its payload's {@code function} and
+     * {@code LoweredBody} registration name the same function, whose
+     * record's body block is the recorded body — and the record's ordered
+     * generation-pinned captures are exactly the payload's captures. The
+     * transport carries the three records independently, so a disagreement
+     * between them (a retargeted body, a renamed function or a reordered or
+     * dropped capture list) is rejected content, never repaired.
+     */
+    private static Optional<CompilerDiagnostic> checkClosureProductionLinks(Model model) {
+        for (SemanticOp op : model.unit.ops()) {
+            if (!(op.payload() instanceof KindPayload.ClosureNewPayload closure)) {
+                continue;
+            }
+            if (!closure.function().equals(closure.binding().functionId())) {
+                return fail(op, model, CAPTURE_RESOLUTION, "the CLOSURE_NEW op "
+                    + op.opId() + " publishes function " + closure.function()
+                    + " and a LoweredBody registration of "
+                    + closure.binding().functionId()
+                    + " (the payload's function and its registration are one fact)");
+            }
+            LoweredFunction named = model.unit.functions().get(closure.function());
+            if (named == null) {
+                return fail(op, model, CAPTURE_RESOLUTION, "the CLOSURE_NEW op "
+                    + op.opId() + " publishes function " + closure.function()
+                    + " which has no LoweredFunction record");
+            }
+            if (!named.body().equals(closure.binding().blockId())) {
+                return fail(op, model, CAPTURE_RESOLUTION, "the CLOSURE_NEW op "
+                    + op.opId() + " registers body block " + closure.binding().blockId()
+                    + " for " + closure.function() + " while the function record's body "
+                    + "is " + named.body()
+                    + " (the closure, its registration and the function record are one "
+                    + "fact)");
+            }
+            if (!named.captures().equals(closure.captures())) {
+                return fail(op, model, CAPTURE_RESOLUTION, "the CLOSURE_NEW op "
+                    + op.opId() + " publishes captures " + captureText(closure.captures())
+                    + " while the function record " + named.functionId() + " carries "
+                    + captureText(named.captures())
+                    + " (the ordered generation-pinned captures of a function and its "
+                    + "detaching closure are one fact)");
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The ordered capture list as the failure message renders it. */
+    private static String captureText(List<BindingGeneration> captures) {
+        if (captures.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder text = new StringBuilder("[");
+        for (int i = 0; i < captures.size(); i++) {
+            if (i > 0) {
+                text.append(", ");
+            }
+            text.append("{").append(captures.get(i).binding()).append(", ")
+                .append(captures.get(i).generation()).append("}");
+        }
+        return text.append("]").toString();
+    }
+
     private static Optional<CompilerDiagnostic> checkFunctionCaptureResolution(Model model) {
         for (LoweredFunction function : model.unit.functions().values()) {
             BlockId root = function.body();
             SemanticOp detaching = model.detachingOfFunction.get(root);
+            // A duplicated capture binding is never a real capture set: a
+            // function captures each binding at most once (the closed
+            // generation-pinned entry names the creation-site incarnation).
+            Set<BindingId> seenCaptures = new LinkedHashSet<>();
+            for (BindingGeneration capture : function.captures()) {
+                if (!seenCaptures.add(capture.binding())) {
+                    return fail(detaching, model, CAPTURE_RESOLUTION, "the captures list "
+                        + "of " + function.functionId() + " names " + capture.binding()
+                        + " more than once (a capture set names each captured binding "
+                        + "once)");
+                }
+            }
             // Every captures entry resolves at the detaching op's creation
             // site (a chain closing with zero or multiple producing
             // allocations is invalid), and the entry names exactly the
@@ -1563,6 +1643,24 @@ public final class BindingsProductionValidator {
     // =========================================================================
 
     private static Optional<CompilerDiagnostic> checkBindingInitOnce(Model model) {
+        // Every parameter and import-alias fact names a real cell of the unit:
+        // the two checker-fact sets authorize the pinned initializing writes
+        // of actual allocations, so a fact naming no producing allocation is
+        // rejected content, never a blanket authority.
+        for (BindingId parameter : model.parameters) {
+            if (model.allocationsByBinding.getOrDefault(parameter, List.of()).isEmpty()) {
+                return fail(model, BINDING_INIT_ONCE, "the parameter fact " + parameter
+                    + " names no producing allocation of the unit (a parameter cell is "
+                    + "an allocation of the function-entry block)");
+            }
+        }
+        for (BindingId alias : model.importAliases) {
+            if (model.allocationsByBinding.getOrDefault(alias, List.of()).isEmpty()) {
+                return fail(model, BINDING_INIT_ONCE, "the import-alias fact " + alias
+                    + " names no producing allocation of the unit (an import alias is "
+                    + "an allocation completed by its MODULE_IMPORT record)");
+            }
+        }
         for (Map.Entry<BindingSite, List<SemanticOp>> entry
                 : model.initsBySite.entrySet()) {
             List<SemanticOp> inits = entry.getValue();
@@ -2516,6 +2614,33 @@ public final class BindingsProductionValidator {
                         return fail(op, model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
                             + op.opId() + " registration is not its AdapterBinding "
                             + "(a mismatched registration is invalid IR)");
+                    }
+                    // The registration's complete adapter member set is the
+                    // payload's: the transport carries the registry record and
+                    // the op independently, so a retargeted capture mode,
+                    // source reference or source/target signature is rejected
+                    // content, never a second adapter authority.
+                    KindPayload.FunctionAdaptPayload adapt =
+                        (KindPayload.FunctionAdaptPayload) op.payload();
+                    if (adapter.captureMode() != adapt.mode()
+                            || !adapter.sourceRef().equals(adapt.source())) {
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
+                            + op.opId() + " registration carries mode "
+                            + adapter.captureMode() + " and source " + adapter.sourceRef()
+                            + " while its payload carries mode " + adapt.mode()
+                            + " and source " + adapt.source()
+                            + " (the registration and the op are one fact)");
+                    }
+                    if (!adapter.sourceSignature().equals(adapt.sourceSignature())
+                            || !adapter.targetSignature().equals(adapt.targetSignature())) {
+                        return fail(op, model, REGISTRY_ONE_TO_ONE, "the FUNCTION_ADAPT op "
+                            + op.opId() + " registration carries signatures "
+                            + adapter.sourceSignature().canonicalSpecText() + " → "
+                            + adapter.targetSignature().canonicalSpecText()
+                            + " while its payload carries "
+                            + adapt.sourceSignature().canonicalSpecText() + " → "
+                            + adapt.targetSignature().canonicalSpecText()
+                            + " (the registration and the op are one fact)");
                     }
                 }
                 default -> {

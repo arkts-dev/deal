@@ -1,6 +1,7 @@
 package deal.semantic.ir;
 
 import deal.diagnostics.CompilerDiagnostic;
+import deal.semantic.BindingsProductionValidator;
 import deal.semantic.ClassConstructionValidator;
 import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.ControlFlowValidator;
@@ -131,32 +132,29 @@ public final class SemanticIrValidator {
      *
      * <p>The entrypoint composes the common-admission head
      * ({@link #validateUnitHead(LoweredModuleUnit, ComparisonFacts)}) with
-     * the control-flow membership/exits owner, so the typed unit surface
-     * applies the same predicate set as the text surface
-     * ({@link #validateText(String, ComparisonFacts)}): an equivalent
-     * malformed fact yields the same first rule, message and range on
-     * both. The production composition runs the head at its pinned
+     * the control-flow membership/exits owner and the bindings-production
+     * owner, so the typed unit surface applies the same predicate set as the
+     * text surface ({@link #validateText(String, ComparisonFacts)}): an
+     * equivalent malformed fact yields the same first rule, message and
+     * range on both. The production composition runs the head at its pinned
      * position instead — before {@code AddressChainProtocol}, the control
-     * owner, bindings and class construction — and never applies the
-     * control owner a second time.</p>
+     * owner, bindings and class construction — and never applies one of those
+     * owners a second time.</p>
      *
      * <p>Cross-unit obligations (a {@code SHARED_BODY}
      * {@code ExternalFunction} binding or an {@code externalEntryRef}
-     * naming another module) are checked at project level by
-     * {@link #validate(ExecutableLoweredProject, ComparisonFacts)}; a
-     * unit-level validation treats foreign-module references as
-     * indeterminate and skips them.</p>
+     * naming another module) and the class-construction owner's
+     * interface/provider joins are checked at project level by
+     * {@link #validate(ExecutableLoweredProject, ComparisonFacts)}: a
+     * standalone unit carries no interface index, seeds or surrounding
+     * modules, so its applicable predicates are the local ones and it cannot
+     * approve a required provider link.</p>
      *
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit, ComparisonFacts facts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
-        RawUnit raw = RawUnit.fromTyped(unit);
-        Optional<CompilerDiagnostic> head = validateRawUnitHead(raw, facts, Map.of(), null);
-        if (head.isPresent()) {
-            return head;
-        }
-        return ControlFlowValidator.validate(raw);
+        return validateRawUnit(RawUnit.fromTyped(unit), facts, Map.of(), null);
     }
 
     /**
@@ -179,28 +177,24 @@ public final class SemanticIrValidator {
 
     /**
      * Validates a complete executable project on the typed record surface:
-     * every module in dependency (map insertion) order with the
-     * common-admission head plus the control-flow owner, plus the
-     * cross-unit checks (R-EXTERNAL-ENTRY resolution across the complete
-     * implementation closure). Returns empty on pass and exactly one E6005
-     * naming the first failing rule on failure.
+     * every module in dependency (map insertion) order with the common
+     * per-module composed sequence — the common-admission head, the
+     * control-flow owner, the bindings-production owner and the
+     * class-construction owner over the module's complete materialized
+     * facts, with the shared-factory provider join accumulated in the same
+     * order as the production lowering — plus the project class-fact
+     * coherence and the cross-unit checks (R-EXTERNAL-ENTRY resolution
+     * across the complete implementation closure). Returns empty on pass and
+     * exactly one E6005 naming the first failing rule on failure.
      *
      */
     public static Optional<CompilerDiagnostic> validate(ExecutableLoweredProject project,
                                                         ComparisonFacts facts) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
-        Map<String, RawUnit> closure = projectClosure(project);
-        for (LoweredModuleUnit unit : project.modules().values()) {
-            RawUnit raw = closure.get(unit.moduleId().path());
-            Optional<CompilerDiagnostic> failure = validateRawUnit(raw, facts, closure,
-                project.interfaceIndex().modules().get(unit.moduleId()));
-            if (failure.isPresent()) {
-                return failure;
-            }
-        }
-        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
-            List.copyOf(closure.values()), project.entryModule().path(), facts);
+        return validateRawProject(List.copyOf(projectClosure(project).values()),
+            project.interfaceIndex(), project.classSeeds(), project.entryModule().path(),
+            facts);
     }
 
     /**
@@ -304,16 +298,8 @@ public final class SemanticIrValidator {
                 origin(R_PROFILE, "project semanticProfile \"" + project.semanticProfile()
                     + "\" is not DEAL_V1_3_INT32"));
         }
-        for (RawUnit unit : closure.values()) {
-            Optional<CompilerDiagnostic> failure = validateRawUnit(unit, facts, closure,
-                project.interfaceIndex().modules()
-                    .get(new ModuleId(unit.modulePath())));
-            if (failure.isPresent()) {
-                return failure;
-            }
-        }
-        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
-            project.modules(), project.entryModule(), facts);
+        return validateRawProject(project.modules(), project.interfaceIndex(),
+            project.classSeeds(), project.entryModule(), facts);
     }
 
     /**
@@ -382,16 +368,21 @@ public final class SemanticIrValidator {
 
     /**
      * The common admission of one complete raw unit: the common-admission
-     * head below plus the control-flow membership/exits owner over exactly
-     * the same raw facts. The typed and text entrypoints
+     * head below, the control-flow membership/exits owner and the
+     * bindings-production owner over exactly the same raw facts. The typed
+     * and text unit entrypoints
      * ({@link #validate(LoweredModuleUnit, ComparisonFacts)},
-     * {@link #validate(ExecutableLoweredProject, ComparisonFacts)},
      * {@link #validateText(String, ComparisonFacts)}) compose this one
      * admission, so an equivalent malformed fact yields the same first
      * failure on both surfaces. The production composition runs the head
      * ({@link #validateUnitHead}/{@link #validateProjectHead}) at its
-     * pinned position and then the control owner after
-     * {@code AddressChainProtocol}, never applying it a second time.
+     * pinned position and then the typed owners after
+     * {@code AddressChainProtocol}, never applying one a second time.
+     *
+     * <p>A standalone unit carries no provider context, so the
+     * class-construction owner runs on the complete-project surfaces
+     * ({@link #validateRawProject}) where the carried interface index,
+     * seeds and surrounding modules supply the exact provider join.</p>
      */
     private static Optional<CompilerDiagnostic> validateRawUnit(RawUnit unit,
                                                                 ComparisonFacts facts,
@@ -402,7 +393,149 @@ public final class SemanticIrValidator {
         if (failure.isPresent()) {
             return failure;
         }
-        return ControlFlowValidator.validate(unit);
+        failure = ControlFlowValidator.validate(unit);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        return checkBindings(unit, facts);
+    }
+
+    /**
+     * The common admission of one complete raw project: every supplied
+     * module in dependency order with the per-module composed sequence
+     * (common-admission head, control-flow owner, bindings-production
+     * owner, class-construction owner), each owner over the materialized
+     * complete facts of that module, followed by the project class-fact
+     * coherence. This is the same per-module sequence the production
+     * composition runs, so the typed project surface and the project text
+     * surface observe the same owners, messages and ranges as each other
+     * and as the production chain; the provider join is assembled exactly
+     * as the production lowering assembles it (each module's own interface
+     * entry plus the accumulated shared-factory facts of the preceding
+     * modules in dependency order).
+     */
+    private static Optional<CompilerDiagnostic> validateRawProject(List<RawUnit> units,
+                                                                   ProjectInterfaceIndex interfaceIndex,
+                                                                   ClassRegistrationSeeds classSeeds,
+                                                                   String entryModule,
+                                                                   ComparisonFacts facts) {
+        Map<String, RawUnit> closure = new LinkedHashMap<>();
+        for (RawUnit unit : units) {
+            closure.put(unit.modulePath(), unit);
+        }
+        Map<ClassId, SharedFactoryFacts> sharedFactories = new LinkedHashMap<>();
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses =
+            classSeeds.registrations();
+        for (RawUnit unit : units) {
+            ExternalModuleInterface ownInterface =
+                interfaceIndex.modules().get(new ModuleId(unit.modulePath()));
+            Optional<CompilerDiagnostic> failure =
+                validateRawUnitHead(unit, facts, closure, ownInterface);
+            if (failure.isPresent()) {
+                return failure;
+            }
+            failure = ControlFlowValidator.validate(unit);
+            if (failure.isPresent()) {
+                return failure;
+            }
+            LoweredModuleUnit typed;
+            try {
+                typed = RawUnitMaterializer.materialize(unit);
+            } catch (RawUnitMaterializer.Defect defect) {
+                return materializationFailure(unit, facts, defect);
+            }
+            failure = checkBindings(typed);
+            if (failure.isPresent()) {
+                return failure;
+            }
+            if (ownInterface != null) {
+                failure = ClassConstructionValidator.validate(typed,
+                    typed.bodyTable(), typed.classFactories(),
+                    typed.jsonDefaults(), ownInterface, sharedFactories,
+                    declarationClasses);
+                if (failure.isPresent()) {
+                    return failure;
+                }
+            }
+            accumulateSharedFactoryFacts(ownInterface, typed, sharedFactories);
+        }
+        return checkProjectClassFacts(interfaceIndex, classSeeds, units, entryModule, facts);
+    }
+
+    /**
+     * The bindings-production owner of one complete raw unit: the
+     * materialized typed content (the exact inverse of the typed-to-raw
+     * conversion), the transported block membership and the transported
+     * parameter/import initialization facts. The owner's rules, messages
+     * and ranges are unchanged, so a binding mutation cannot disappear in
+     * a typed/raw projection.
+     */
+    private static Optional<CompilerDiagnostic> checkBindings(RawUnit unit,
+                                                              ComparisonFacts facts) {
+        LoweredModuleUnit typed;
+        try {
+            typed = RawUnitMaterializer.materialize(unit);
+        } catch (RawUnitMaterializer.Defect defect) {
+            return materializationFailure(unit, facts, defect);
+        }
+        return checkBindings(typed);
+    }
+
+    private static Optional<CompilerDiagnostic> checkBindings(LoweredModuleUnit unit) {
+        return BindingsProductionValidator.validate(unit, unit.bodyTable(),
+            unit.classBindingFacts());
+    }
+
+    /**
+     * The fail-closed rejection of content that passed the transport framing
+     * and the closed rule engine but is not a complete recognized shape: an
+     * open or absent value in a closed payload position (R-ENUM, the closed
+     * position rule). The failure carries the offending position and the
+     * same first-failure ordering as the rest of the admission; no
+     * executable or partial result is exposed.
+     */
+    private static Optional<CompilerDiagnostic> materializationFailure(
+            RawUnit unit, ComparisonFacts facts, RawUnitMaterializer.Defect defect) {
+        return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+            origin(R_ENUM, defect.subject() + ": " + defect.detail()));
+    }
+
+    /**
+     * The production lowering's in-project shared-factory join over one
+     * admitted module: the module's own interface class entries, its own
+     * class layouts and its class-factory registry entries whose factory op
+     * actually produces a value. Later modules in dependency order resolve
+     * their imported constructions through exactly these facts.
+     */
+    private static void accumulateSharedFactoryFacts(ExternalModuleInterface ownInterface,
+                                                     LoweredModuleUnit unit,
+                                                     Map<ClassId, SharedFactoryFacts> accumulated) {
+        if (ownInterface == null) {
+            return;
+        }
+        for (ClassInterface classEntry : ownInterface.classes()) {
+            ClassLayout layout = unit.classLayouts().get(classEntry.classId());
+            if (layout == null) {
+                continue;
+            }
+            OpId factoryOpId = unit.classFactories()
+                .factoryFor(classEntry.constructionEntry());
+            if (factoryOpId == null) {
+                continue;
+            }
+            SemanticOp factoryOp = null;
+            for (SemanticOp op : unit.ops()) {
+                if (op.opId().equals(factoryOpId)) {
+                    factoryOp = op;
+                    break;
+                }
+            }
+            if (factoryOp == null || !(factoryOp.result() instanceof ValueId result)) {
+                continue;
+            }
+            accumulated.put(classEntry.classId(), new SharedFactoryFacts(
+                classEntry.classId(), classEntry, layout, factoryOpId, result));
+        }
     }
 
     /**

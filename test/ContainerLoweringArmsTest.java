@@ -2117,10 +2117,16 @@ public class ContainerLoweringArmsTest {
             ConstructKind.SCALAR_LITERAL, ConstructKind.SCALAR_LITERAL.mappedOpKinds());
         LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(), INTERFACE_HASH,
             REGISTRY_HASH);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit, facts());
+        // The slice opens value frames for the parameters without lowering
+        // the declaration arm, so its binding cells are absent; the
+        // common-admission head is the applicable closed-rule gate of this
+        // partial slice (the complete admission of a full closure runs the
+        // bindings owner over the produced cells).
+        Optional<CompilerDiagnostic> validation =
+            SemanticIrValidator.validateUnitHead(unit, facts());
         check(validation.isEmpty(),
-            "the slice's unit passes the closed validator (R-COVERAGE/R-CAPABILITY green): "
-                + validation);
+            "the slice's unit passes the common-admission head "
+                + "(R-COVERAGE/R-CAPABILITY green): " + validation);
         if (validation.isPresent()) {
             return;
         }
