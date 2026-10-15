@@ -1446,6 +1446,62 @@ public class ControlFlowLoweringTest {
         check(exempt.validate().isEmpty(), "five module-level kinds exempt from block completeness");
     }
 
+    /**
+     * The declared-function root order of the block-tree owner is the
+     * producer order of the transported facts: with several functions whose
+     * body blocks are all absent from the table, the root-existence rule
+     * names the first function of the produced order, on the typed entry
+     * and on the raw facts the text surface feeds, with the identical
+     * message and range.
+     */
+    private static void testFunctionRootProducerOrder() {
+        System.out.println("-- Function roots: the first missing body follows producer order --");
+        SemanticLowerer.LoweringResult produced =
+            lowerDetected(checkSlice("for (;;) { break; }"));
+        check(produced != null && !produced.hasErrors(),
+            "the function-root order seed lowers: "
+                + (produced == null ? "null" : produced.diagnostics()));
+        if (produced == null || produced.hasErrors()) {
+            return;
+        }
+        LoweredModuleUnit seed = produced.unit();
+        RuntimeDescriptor.Func signature = new RuntimeDescriptor.Func(List.of(),
+            RuntimeDescriptor.Null.INSTANCE);
+        List<deal.semantic.ir.FunctionId> order = List.of(
+            new deal.semantic.ir.FunctionId(0), new deal.semantic.ir.FunctionId(2),
+            new deal.semantic.ir.FunctionId(4));
+        List<BlockId> bodies = List.of(new BlockId(100), new BlockId(102),
+            new BlockId(104));
+        Map<deal.semantic.ir.FunctionId, deal.semantic.ir.LoweredFunction> functions =
+            new LinkedHashMap<>();
+        for (int index = 0; index < order.size(); index++) {
+            deal.semantic.ir.FunctionId id = order.get(index);
+            functions.put(id, new deal.semantic.ir.LoweredFunction(id, signature, List.of(),
+                bodies.get(index)));
+        }
+        LoweredModuleUnit unit = new LoweredModuleUnit(seed.formatVersion(),
+            seed.semanticProfile(), seed.moduleId(), seed.interfaceHash(),
+            seed.loweringContextHash(), seed.requiredCapabilities(),
+            seed.constructCoverage(), seed.classLayouts(), functions, seed.moduleInit(),
+            seed.exportPlan(), seed.functionBindings(), seed.ops(), seed.bodyTable(),
+            seed.classFactories(), seed.jsonDefaults(), seed.classBindingFacts());
+        Optional<CompilerDiagnostic> typed = ControlFlowValidator.validate(unit, unit.bodyTable());
+        assertControlE6005(typed, "CONTROL_BLOCK_TREE",
+            "the body block BlockId(100) of function FunctionId(0) is not a block of the table");
+        Optional<CompilerDiagnostic> raw =
+            ControlFlowValidator.validate(RawUnit.fromTyped(unit));
+        check(typed.isPresent() && raw.isPresent()
+                && typed.get().message().equals(raw.get().message())
+                && typed.get().range().equals(raw.get().range()),
+            "the raw facts report the identical first missing-root failure: "
+                + raw.map(CompilerDiagnostic::message).orElse("admitted"));
+        check(raw.isPresent() && raw.get().message().contains("FunctionId(0)")
+                && !raw.get().message().contains("FunctionId(2)")
+                && !raw.get().message().contains("FunctionId(4)"),
+            "the first missing root is the producer-first function: "
+                + raw.map(CompilerDiagnostic::message).orElse("admitted"));
+    }
+
     private static void expectFlowException(Class<? extends Throwable> type, Runnable action) {
         try { action.run(); fail("expected " + type.getName()); }
         catch (Throwable failure) { check(type.isInstance(failure), "exact exception family " + failure); }
@@ -1880,6 +1936,7 @@ public class ControlFlowLoweringTest {
         testDiscardArm();
         testValidatorNegatives();
         testValidatorMutationMatrix();
+        testFunctionRootProducerOrder();
         testChainsInsideBlocksT2();
         testCoverageRows();
         testDeterminism();

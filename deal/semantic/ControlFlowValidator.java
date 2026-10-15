@@ -24,6 +24,7 @@ import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.StructuredBodyTable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -226,7 +227,12 @@ public final class ControlFlowValidator {
             this.ops = List.copyOf(ops);
             this.roots = Set.copyOf(roots);
             this.initBlock = initBlock;
-            this.functionBodies = Map.copyOf(functionBodies);
+            // The declared-function map keeps the producer order of the
+            // transported facts: the root-existence rule reports the
+            // first missing body in that order, so `Map.copyOf` (hash
+            // slot iteration) must not replace it.
+            this.functionBodies = Collections.unmodifiableMap(
+                new LinkedHashMap<>(functionBodies));
             this.loweredBodies = List.copyOf(loweredBodies);
             Map<OpId, OpView> byId = new LinkedHashMap<>();
             for (OpView op : this.ops) {

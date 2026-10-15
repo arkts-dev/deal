@@ -129,6 +129,17 @@ public final class SemanticIrValidator {
      * pass and exactly one E6005 diagnostic naming the first failing rule
      * on failure. No mutation; deterministic single pass.
      *
+     * <p>The entrypoint composes the common-admission head
+     * ({@link #validateUnitHead(LoweredModuleUnit, ComparisonFacts)}) with
+     * the control-flow membership/exits owner, so the typed unit surface
+     * applies the same predicate set as the text surface
+     * ({@link #validateText(String, ComparisonFacts)}): an equivalent
+     * malformed fact yields the same first rule, message and range on
+     * both. The production composition runs the head at its pinned
+     * position instead — before {@code AddressChainProtocol}, the control
+     * owner, bindings and class construction — and never applies the
+     * control owner a second time.</p>
+     *
      * <p>Cross-unit obligations (a {@code SHARED_BODY}
      * {@code ExternalFunction} binding or an {@code externalEntryRef}
      * naming another module) are checked at project level by
@@ -140,12 +151,36 @@ public final class SemanticIrValidator {
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit, ComparisonFacts facts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
-        return validateRawUnit(RawUnit.fromTyped(unit), facts, Map.of(), null);
+        RawUnit raw = RawUnit.fromTyped(unit);
+        Optional<CompilerDiagnostic> head = validateRawUnitHead(raw, facts, Map.of(), null);
+        if (head.isPresent()) {
+            return head;
+        }
+        return ControlFlowValidator.validate(raw);
+    }
+
+    /**
+     * The common-admission head of one unit on the typed record surface:
+     * the closed rule engine, the dynamic/layout correlations and the
+     * module-init/export-plan publication links over the complete raw
+     * facts, without the composed control-flow owner. This is the exact
+     * element the production composition runs at its pinned position (the
+     * common-admission head, then {@code AddressChainProtocol}, then the
+     * control owner, then bindings and class construction); the typed and
+     * text entrypoints add the control owner to it for surface parity.
+     *
+     */
+    public static Optional<CompilerDiagnostic> validateUnitHead(LoweredModuleUnit unit,
+                                                                ComparisonFacts facts) {
+        Objects.requireNonNull(unit, "unit must not be null");
+        Objects.requireNonNull(facts, "facts must not be null");
+        return validateRawUnitHead(RawUnit.fromTyped(unit), facts, Map.of(), null);
     }
 
     /**
      * Validates a complete executable project on the typed record surface:
-     * every module in dependency (map insertion) order, plus the
+     * every module in dependency (map insertion) order with the
+     * common-admission head plus the control-flow owner, plus the
      * cross-unit checks (R-EXTERNAL-ENTRY resolution across the complete
      * implementation closure). Returns empty on pass and exactly one E6005
      * naming the first failing rule on failure.
@@ -155,11 +190,7 @@ public final class SemanticIrValidator {
                                                         ComparisonFacts facts) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
-        Map<String, RawUnit> closure = new LinkedHashMap<>();
-        for (LoweredModuleUnit unit : project.modules().values()) {
-            RawUnit raw = RawUnit.fromTyped(unit);
-            closure.put(raw.modulePath(), raw);
-        }
+        Map<String, RawUnit> closure = projectClosure(project);
         for (LoweredModuleUnit unit : project.modules().values()) {
             RawUnit raw = closure.get(unit.moduleId().path());
             Optional<CompilerDiagnostic> failure = validateRawUnit(raw, facts, closure,
@@ -170,6 +201,41 @@ public final class SemanticIrValidator {
         }
         return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
             List.copyOf(closure.values()), project.entryModule().path(), facts);
+    }
+
+    /**
+     * The common-admission head of a complete project on the typed record
+     * surface: the head of every module in dependency order, plus the
+     * project class facts, without the control-flow owner (which the
+     * production composition runs per module at its declared position
+     * after {@code AddressChainProtocol}).
+     *
+     */
+    public static Optional<CompilerDiagnostic> validateProjectHead(
+            ExecutableLoweredProject project, ComparisonFacts facts) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(facts, "facts must not be null");
+        Map<String, RawUnit> closure = projectClosure(project);
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            RawUnit raw = closure.get(unit.moduleId().path());
+            Optional<CompilerDiagnostic> failure = validateRawUnitHead(raw, facts, closure,
+                project.interfaceIndex().modules().get(unit.moduleId()));
+            if (failure.isPresent()) {
+                return failure;
+            }
+        }
+        return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
+            List.copyOf(closure.values()), project.entryModule().path(), facts);
+    }
+
+    /** The project's modules as their complete raw facts, in dependency order. */
+    private static Map<String, RawUnit> projectClosure(ExecutableLoweredProject project) {
+        Map<String, RawUnit> closure = new LinkedHashMap<>();
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            RawUnit raw = RawUnit.fromTyped(unit);
+            closure.put(raw.modulePath(), raw);
+        }
+        return closure;
     }
 
     /**
@@ -315,25 +381,49 @@ public final class SemanticIrValidator {
     // =========================================================================
 
     /**
-     * The common admission of one complete raw unit: the closed rule
-     * engine over the transported facts, then the applicable composed
-     * predicates — the dynamic DEAL-body cell form, the layout-only
-     * class-declaration coverage, the module-init/export-plan
-     * publication links, and the control-flow membership/exits owner —
-     * over exactly the same facts. Both entrypoints (the typed record
-     * surface through {@link RawUnit#fromTyped(LoweredModuleUnit)} and the
-     * text surface through
-     * {@link ContractSnapshotCanonicalizer#parseUnit(CanonicalJson.Obj)})
-     * call this one composition, so an equivalent malformed fact yields
-     * the same first failure on both surfaces. {@code closure} is the
-     * project module map for cross-unit resolution (empty for unit-level
-     * validation) and {@code ownInterface} is the carried own-module
-     * interface entry when a project supplies it ({@code null} standalone).
+     * The common admission of one complete raw unit: the common-admission
+     * head below plus the control-flow membership/exits owner over exactly
+     * the same raw facts. The typed and text entrypoints
+     * ({@link #validate(LoweredModuleUnit, ComparisonFacts)},
+     * {@link #validate(ExecutableLoweredProject, ComparisonFacts)},
+     * {@link #validateText(String, ComparisonFacts)}) compose this one
+     * admission, so an equivalent malformed fact yields the same first
+     * failure on both surfaces. The production composition runs the head
+     * ({@link #validateUnitHead}/{@link #validateProjectHead}) at its
+     * pinned position and then the control owner after
+     * {@code AddressChainProtocol}, never applying it a second time.
      */
     private static Optional<CompilerDiagnostic> validateRawUnit(RawUnit unit,
                                                                 ComparisonFacts facts,
                                                                 Map<String, RawUnit> closure,
                                                                 ExternalModuleInterface ownInterface) {
+        Optional<CompilerDiagnostic> failure =
+            validateRawUnitHead(unit, facts, closure, ownInterface);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        return ControlFlowValidator.validate(unit);
+    }
+
+    /**
+     * The common-admission head of one complete raw unit: the closed rule
+     * engine over the transported facts, then the applicable composed
+     * predicates that precede the address-chain protocol — the dynamic
+     * DEAL-body cell form, the layout-only class-declaration coverage and
+     * the module-init/export-plan publication links — over exactly the
+     * same facts. Both surfaces (the typed record surface through
+     * {@link RawUnit#fromTyped(LoweredModuleUnit)} and the text surface
+     * through
+     * {@link ContractSnapshotCanonicalizer#parseUnit(CanonicalJson.Obj)})
+     * feed this one composition. {@code closure} is the
+     * project module map for cross-unit resolution (empty for unit-level
+     * validation) and {@code ownInterface} is the carried own-module
+     * interface entry when a project supplies it ({@code null} standalone).
+     */
+    private static Optional<CompilerDiagnostic> validateRawUnitHead(RawUnit unit,
+                                                                    ComparisonFacts facts,
+                                                                    Map<String, RawUnit> closure,
+                                                                    ExternalModuleInterface ownInterface) {
         Optional<CompilerDiagnostic> failure = validateUnit(unit, facts, closure);
         if (failure.isPresent()) {
             return failure;
@@ -346,11 +436,7 @@ public final class SemanticIrValidator {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = checkPlans(unit, facts, ownInterface);
-        if (failure.isPresent()) {
-            return failure;
-        }
-        return ControlFlowValidator.validate(unit);
+        return checkPlans(unit, facts, ownInterface);
     }
 
     /**
