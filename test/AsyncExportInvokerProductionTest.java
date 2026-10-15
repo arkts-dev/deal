@@ -1078,9 +1078,9 @@ public class AsyncExportInvokerProductionTest {
                         && failure.getMessage().startsWith(
                             "value-representation failure")
                         && failure.getMessage().contains(
-                            "unsupported type for JSON encoding: table"),
-                    backend + ": the cycle rejection is the pinned"
-                        + " representation failure: " + failure.getMessage());
+                            "cyclic value cannot be encoded as JSON"),
+                    backend + ": the cycle rejection is the pinned closed cycle"
+                        + " arm (v1.3): " + failure.getMessage());
             } finally {
                 deleteRecursively(cyclic.root());
             }
@@ -1107,7 +1107,7 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(numbers, "run", "?table");
                 checkEq(valueResult(backend, "?table",
-                        "{\"x\":0.30000000000000004,\"xs\":[5.0],\"n\":7}"),
+                        "{\"x\":0.30000000000000004,\"xs\":[5],\"n\":7}"),
                     result,
                     backend + ": every parsed numeric leaf keeps its variant"
                         + " text: " + result);
@@ -1134,9 +1134,10 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(exponents, "run", "?table");
                 checkEq(valueResult(backend, "?table",
-                        "{\"xs\":[1.0E17,1.0E-320,-0.0]}"), result,
+                        "{\"xs\":[1.0E17,1.0E-320,0]}"), result,
                     backend + ": parsed exponent and signed-zero leaves keep"
-                        + " their canonical text: " + result);
+                        + " their canonical text (5.0 form and -0.0 classify as"
+                        + " int by the v1.3 exact rule): " + result);
                 assertNoInternalKeys(backend, valueJson(result));
             } finally {
                 deleteRecursively(exponents.root());

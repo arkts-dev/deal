@@ -709,6 +709,65 @@ local function assert_json_error(fn, needle)
   return err
 end
 
+test("json.parse classifies exact decimal lexemes (v1.3)", function()
+  -- The lexeme's mathematical value decides the int/number variant before
+  -- binary64 rounding. This standalone module carries Lua numbers, so the
+  -- observable facts are the normalized zero, the exact integral values,
+  -- and the acceptance of the signed32 edges; the variant itself is
+  -- pinned through the canonical text of the compiled-artifact fixtures
+  -- (stdlib/json/int32-boundary-parse, jsonable/table-field-roundtrip).
+  local neg_zero = json.parse.f("-0.0")
+  assert(neg_zero == 0, "-0.0 normalizes to the integer zero")
+  assert(1 / neg_zero == math.huge, "-0.0 is the positive zero, never -0.0")
+  assert(json.parse.f("1.0") == 1, "1.0 denotes the integer value 1")
+  assert(json.parse.f("1e0") == 1, "1e0 denotes the integer value 1")
+  assert(json.parse.f("100e-2") == 1, "100e-2 denotes the integer value 1")
+  assert(json.parse.f("2147483647e0") == 2147483647, "the positive signed32 edge")
+  assert(json.parse.f("-2147483648.0") == -2147483648, "the negative signed32 edge")
+  assert(json.parse.f("1.5") == 1.5, "a fractional token stays a number")
+  -- The signed32 check compares the magnitude before the sign is applied:
+  -- the negative neighbours stay in range-consistent values.
+  assert(json.parse.f("-2147483649") == -2147483649, "-2147483649 stays a number")
+  assert(json.parse.f("-9999999999") == -9999999999, "-9999999999 stays a number")
+  -- The exponent magnitude accumulates digits with bounded saturation:
+  -- leading zeroes contribute nothing, so a zero-padded exponent text
+  -- longer than 18 characters whose value is small stays exactly
+  -- classified.
+  assert(json.parse.f("1e0000000000000000001") == 10, "a zero-padded long exponent denotes 10")
+  assert(json.parse.f("1e00000000000000000000") == 1, "a zero-valued zero-padded exponent denotes 1")
+  assert(json.parse.f("100e-000000000000000000002") == 1, "a zero-padded negative exponent denotes 1")
+  assert(json.parse.f("-1e0000000000000000001") == -10, "a negative zero-padded long exponent denotes -10")
+  local huge = json.parse.f("1e999999999999999999999")
+  assert(huge == math.huge, "a huge exponent converts to binary64 infinity")
+  -- A long digit run past the signed32 range stays a number and never
+  -- crashes the bounded classification.
+  assert(json.parse.f("123456789012345678901234567890") > 1e29,
+    "an out-of-range integer token converts to binary64")
+end)
+
+test("json.parse rejects decoded-key duplicates at the second key (v1.3)", function()
+  local err = assert_json_error(function() json.parse.f('{"a":1,"a":2}') end,
+    "JSON parse error at position 8: duplicate key")
+  assert(err.expected == nil and err.actual == nil,
+    "the duplicate tuple carries no expected/actual")
+  assert_json_error(function() json.parse.f('{"a":null,"\\u0061":1}') end, "duplicate key")
+  assert_json_error(function() json.parse.f('{"\\u0061":1,"a":2}') end, "duplicate key")
+  assert_json_error(function() json.parse.f('{"o":{"k":1,"k":2}}') end, "duplicate key")
+  local ok = json.parse.f('{"a":1,"b":2}')
+  assert(ok.a == 1 and ok.b == 2, "distinct decoded keys stay accepted")
+end)
+
+test("json.stringify rejects a path-local cycle with the closed arm (v1.3)", function()
+  local cyc = {}
+  cyc.self = cyc
+  assert_json_error(function() json.stringify.f(cyc) end,
+    "cyclic value cannot be encoded as JSON")
+  -- A shared acyclic child is duplicated, never rejected.
+  local shared = { v = 1 }
+  local ok = json.parse.f(json.stringify.f({ a = shared, b = shared }))
+  assert(ok.a.v == 1 and ok.b.v == 1, "a shared acyclic child serializes twice")
+end)
+
 test("json.parse decodes the full RFC 8259 escape table", function()
   local text = '"' .. '\\"' .. '\\\\' .. '\\/' .. '\\b' .. '\\f' .. '\\n' .. '\\r' .. '\\t' .. '"'
   local r = json.parse.f(text)

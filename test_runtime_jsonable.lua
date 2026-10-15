@@ -1117,7 +1117,7 @@ test("_json_table_shape: mixed-shape tables rejected", function()
   assert(__rt._json_table_shape({ [0] = "x" }, {}, 0) == false)            -- 0-key array
 end)
 
-test("_json_table_shape: depth boundary 512 accepted, 513 rejected", function()
+test("_json_table_shape: deep finite chains have no fixed cap", function()
   local function build_chain(n)  -- n tables total: deepest nested at depth n-1
     local root = {}
     local cur = root
@@ -1128,15 +1128,18 @@ test("_json_table_shape: depth boundary 512 accepted, 513 rejected", function()
     cur.leaf = "x"
     return root
   end
-  assert(__rt._json_table_shape(build_chain(513), {}, 0) == true)   -- deepest at depth 512
-  assert(__rt._json_table_shape(build_chain(514), {}, 0) == false)  -- deepest at depth 513
-end)
-
-test("_json_table_shape: malformed seen/depth arguments never throw", function()
-  assert(__rt._json_table_shape({ x = 1 }, 42, "deep") == true)
+  assert(__rt._json_table_shape(build_chain(513), {}) == true)
+  assert(__rt._json_table_shape(build_chain(600), {}) == true)
   local cyc = {}
   cyc.self = cyc
-  assert(__rt._json_table_shape(cyc, "not-a-set", -5) == false)
+  assert(__rt._json_table_shape(cyc, {}) == false)
+end)
+
+test("_json_table_shape: malformed seen arguments never throw", function()
+  assert(__rt._json_table_shape({ x = 1 }, 42) == true)
+  local cyc = {}
+  cyc.self = cyc
+  assert(__rt._json_table_shape(cyc, "not-a-set") == false)
   assert(__rt._json_defaults_acyclic({ a = 1 }, "not-a-set") == true)
 end)
 
@@ -1408,8 +1411,8 @@ end)
 
 -- ==================== Direct helpers: depth constant ====================
 
-test("_JSON_MAX_DEPTH is 512 (JVM parity)", function()
-  assert(__rt._JSON_MAX_DEPTH == 512)
+test("no fixed JSON depth constant remains (v1.3)", function()
+  assert(__rt._JSON_MAX_DEPTH == nil)
 end)
 
 -- ==================== Hardened json_from_json decode matrix (D2) ====================
@@ -1940,7 +1943,7 @@ test("decode matrix: cyclic defaults return nil", function()
   assert(__rt.json_from_json("C", {}, nested, fields) == nil)
 end)
 
-test("decode matrix: table-value depth boundary 513 accepted, 514 rejected", function()
+test("decode matrix: a deep table value has no fixed cap", function()
   local fields = {
     { name = "data", jtype = "table", optional = false, nullable = false }
   }
@@ -1957,10 +1960,10 @@ test("decode matrix: table-value depth boundary 513 accepted, 514 rejected", fun
   end
   local ok = __rt.json_from_json("C", { data = build_chain(513) }, defaults, fields)
   assert(ok ~= nil)
-  assert(__rt.json_from_json("C", { data = build_chain(514) }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { data = build_chain(600) }, defaults, fields) ~= nil)
 end)
 
-test("decode matrix: nested-array depth boundary 512 accepted, 513 rejected", function()
+test("decode matrix: a deep nested array has no fixed cap", function()
   local function build(n)
     -- n nested array levels ending in an int element
     local elem = { jtype = "int", optional = false, nullable = false }
@@ -1984,10 +1987,10 @@ test("decode matrix: nested-array depth boundary 512 accepted, 513 rejected", fu
   local f512, d512 = build(512)
   assert(__rt.json_from_json("C", { grid = d512 }, defaults, f512) ~= nil)
   local f513, d513 = build(513)
-  assert(__rt.json_from_json("C", { grid = d513 }, defaults, f513) == nil)
+  assert(__rt.json_from_json("C", { grid = d513 }, defaults, f513) ~= nil)
 end)
 
-test("decode matrix: nested-class depth boundary 513 accepted, 514 rejected", function()
+test("decode matrix: a deep nested class has no fixed cap", function()
   local function build_chain(n)
     -- n nested class objects; the deepest is an empty object (defaulted).
     -- entries[i] is the single field entry of level i's fields array;
@@ -2015,8 +2018,8 @@ test("decode matrix: nested-class depth boundary 513 accepted, 514 rejected", fu
   end
   local f513, d513, p513 = build_chain(513)
   assert(__rt.json_from_json("L1", p513, d513, f513) ~= nil)
-  local f514, d514, p514 = build_chain(514)
-  assert(__rt.json_from_json("L1", p514, d514, f514) == nil)
+  local f514, d514, p514 = build_chain(600)
+  assert(__rt.json_from_json("L1", p514, d514, f514) ~= nil)
 end)
 
 test("decode matrix: empty parsed table decodes as the defaulted instance ([]/{} collapse)", function()
@@ -2417,7 +2420,7 @@ end)
 
 -- ---- Depth limit (D5) ----
 
-test("json_to_json encode matrix: depth boundary 512 accepted, 513 rejected (class chain)", function()
+test("json_to_json encode matrix: a deep class chain has no fixed cap", function()
   local fields = {
     { name = "child", jtype = "class", optional = true, nullable = false,
       className = "C", fields = nil }
@@ -2436,12 +2439,12 @@ test("json_to_json encode matrix: depth boundary 512 accepted, 513 rejected (cla
   local ok_result = __rt.json_to_json("C", build_chain(513), fields)
   assert(ok_result ~= nil)
   assert(ok_result.child ~= nil)
-  assert_error(function()
-    __rt.json_to_json("C", build_chain(514), fields)
-  end, "E8001", "maximum JSON nesting depth (512) exceeded")
+  local deep_result = __rt.json_to_json("C", build_chain(600), fields)
+  assert(deep_result ~= nil)
+  assert(deep_result.child ~= nil)
 end)
 
-test("json_to_json encode matrix: depth boundary 512 accepted, 513 rejected (array chain)", function()
+test("json_to_json encode matrix: a deep array chain has no fixed cap", function()
   local function build_desc(n)  -- n nested array levels around an int element
     local desc = { jtype = "int" }
     for _ = 1, n - 1 do
@@ -2456,25 +2459,15 @@ test("json_to_json encode matrix: depth boundary 512 accepted, 513 rejected (arr
     end
     return data
   end
-  -- build_data(k) has k-1 array levels around 42; the field m is the
-  -- outermost level, so the innermost int is processed at walker depth
-  -- k-1. 512 array levels put the int exactly at depth 512 (accepted);
-  -- 513 array levels put it at depth 513 (rejected).
-  local ok_fields = {
+  -- A deep chain is finite data: it serializes at every depth (there is
+  -- no fixed nesting bound).
+  local deep_fields = {
     { name = "m", jtype = "array", optional = false, nullable = false,
-      element = build_desc(512) }
+      element = build_desc(600) }
   }
   local ok_result = __rt.json_to_json("C",
-    { m = build_data(513), __classname = "C", __kind = "class" }, ok_fields)
+    { m = build_data(601), __classname = "C", __kind = "class" }, deep_fields)
   assert(ok_result ~= nil)
-  local over_fields = {
-    { name = "m", jtype = "array", optional = false, nullable = false,
-      element = build_desc(513) }
-  }
-  assert_error(function()
-    __rt.json_to_json("C",
-      { m = build_data(514), __classname = "C", __kind = "class" }, over_fields)
-  end, "E8001", "maximum JSON nesting depth (512) exceeded")
 end)
 
 -- ---- Descriptor-entry validation (D3 step 2, encode rules) ----

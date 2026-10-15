@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: json.parse maps a JSON number to int exactly inside [-2147483648, 2147483647] and to number outside; -0 normalizes to 0 (v1.2 D5)
+// @description: json.parse maps a JSON number to int exactly inside [-2147483648, 2147483647] and to number outside; -0 normalizes to 0 (v1.2 D5). The variant itself is pinned through the canonical stringify text on every backend: a negative magnitude below the signed32 lower bound is the number variant, and a long zero-padded exponent whose mathematical value is small stays the int variant (v1.3).
 // @expected: runtime-ok
-// @features: stdlib, json, int, v1.2
+// @features: stdlib, json, int, v1.2, v1.3
 
 import * as json from "std/json";
 import * as str from "std/string";
@@ -32,6 +32,44 @@ export function main(): null {
   }
   if (str.contains(s, "-0")) {
     throw { code: "TEST_FAIL", message: "stringify output must not carry -0" };
+  }
+  // The number variant's canonical text is the shortest round-trippable
+  // decimal spelling (E-notation outside [1e-3, 1e7)), so the text itself
+  // proves which variant the negative boundary token selected: the
+  // signed32 check compares the magnitude before the sign is applied, so
+  // -2147483649 and -9999999999 are the number variant on every backend.
+  let below: string = json.stringify(json.parse("{\"v\":-2147483649}"));
+  if (below !== "{\"v\":-2.147483649E9}") {
+    throw { code: "TEST_FAIL", message: "-2147483649 must be the number variant (-2.147483649E9)" };
+  }
+  let far: string = json.stringify(json.parse("{\"v\":-9999999999}"));
+  if (far !== "{\"v\":-9.999999999E9}") {
+    throw { code: "TEST_FAIL", message: "-9999999999 must be the number variant (-9.999999999E9)" };
+  }
+  let lower: string = json.stringify(json.parse("{\"v\":-2147483648}"));
+  if (lower !== "{\"v\":-2147483648}") {
+    throw { code: "TEST_FAIL", message: "-2147483648 must be the int variant" };
+  }
+  // The exponent magnitude accumulates digits with bounded saturation:
+  // leading zeroes contribute nothing, so a zero-padded exponent text
+  // longer than 18 characters whose mathematical value is small stays
+  // exactly classified. 1e0000000000000000001 is the integral 10.
+  let padded: table = json.parse("{\"v\":1e0000000000000000001}");
+  let paddedValue: int = padded.v;
+  if (paddedValue !== 10) {
+    throw { code: "TEST_FAIL", message: "a zero-padded long exponent must decode to the int 10" };
+  }
+  let paddedText: string = json.stringify(padded);
+  if (paddedText !== "{\"v\":10}") {
+    throw { code: "TEST_FAIL", message: "a zero-padded long exponent must stay the int variant" };
+  }
+  let paddedZero: string = json.stringify(json.parse("{\"v\":1e00000000000000000000}"));
+  if (paddedZero !== "{\"v\":1}") {
+    throw { code: "TEST_FAIL", message: "a zero-valued zero-padded exponent must stay the int variant" };
+  }
+  let paddedFraction: string = json.stringify(json.parse("{\"v\":100e-000000000000000000002}"));
+  if (paddedFraction !== "{\"v\":1}") {
+    throw { code: "TEST_FAIL", message: "a zero-padded negative exponent must stay the int variant" };
   }
   return null;
 }

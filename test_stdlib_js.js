@@ -354,24 +354,24 @@ test("json.parse rejects a top-level scalar with E8001 expected table", function
 
 test("json.parse rejects a lone high surrogate \\uD834 with E8001", function() {
   assertErrorMessage(function() { json.parse.$f('"\\uD834"', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate code unit in unicode escape");
+    "unpaired surrogate escape");
 });
 
 test("json.parse rejects a lone low surrogate \\uDD1E with E8001", function() {
   assertErrorMessage(function() { json.parse.$f('"\\uDD1E"', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate code unit in unicode escape");
+    "unpaired surrogate escape");
 });
 
 test("json.parse rejects a surrogate pair mismatch \\uD834\\u0041 with E8001", function() {
   assertErrorMessage(function() { json.parse.$f('"\\uD834\\u0041"', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate code unit in unicode escape");
+    "unpaired surrogate escape");
 });
 
 test("json.parse rejects lone surrogate escapes in an object key and a nested array element", function() {
   assertErrorMessage(function() { json.parse.$f('{"\\uD834":1}', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate code unit in unicode escape");
+    "unpaired surrogate escape");
   assertErrorMessage(function() { json.parse.$f('["\\uDD1E"]', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate code unit in unicode escape");
+    "unpaired surrogate escape");
 });
 
 test("json.parse accepts valid surrogate pairs (the combined U+1D11E pin)", function() {
@@ -394,11 +394,11 @@ test("json.parse rejects in-string raw controls U+0000-U+001F with E8001", funct
   for (let c = 0x00; c <= 0x1f; c++) {
     const text = '"' + String.fromCharCode(c) + '"';
     assertErrorMessage(function() { json.parse.$f(text, "f.js", 1, 1); }, "E8001",
-      "raw control character in string (must be escaped)");
+      "unexpected character");
   }
   const keyText = '{"' + String.fromCharCode(0x01) + '":1}';
   assertErrorMessage(function() { json.parse.$f(keyText, "f.js", 1, 1); }, "E8001",
-    "raw control character in string (must be escaped)");
+    "unexpected character");
 });
 
 test("json.parse accepts escaped control forms and raw DEL", function() {
@@ -439,32 +439,32 @@ test("json.stringify rejects a stored wrapper with the function E8001", function
 
 test("json.stringify rejects NaN with E8001", function() {
   assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ x: NaN }), "f.js", 1, 1); }, "E8001",
-    "cannot encode NaN as JSON");
+    "unsupported type for JSON encoding: number");
   const nested = rt.makeTable({ val: NaN });
   assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ data: nested }), "f.js", 1, 1); }, "E8001",
-    "cannot encode NaN as JSON");
+    "unsupported type for JSON encoding: number");
 });
 
 test("json.stringify rejects Infinity with E8001", function() {
   assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ x: Infinity }), "f.js", 1, 1); }, "E8001",
-    "cannot encode Infinity as JSON");
+    "unsupported type for JSON encoding: number");
   assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ x: -Infinity }), "f.js", 1, 1); }, "E8001",
-    "cannot encode Infinity as JSON");
+    "unsupported type for JSON encoding: number");
   assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ data: [1, Infinity] }), "f.js", 1, 1); }, "E8001",
-    "cannot encode Infinity as JSON");
+    "unsupported type for JSON encoding: number");
 });
 
 test("json.stringify rejects a self-referencing table with the cycle E8001", function() {
   const cyc = rt.makeTable({});
   cyc.set("self", cyc);
   assertErrorMessage(function() { json.stringify.$f(cyc, "f.js", 1, 1); }, "E8001",
-    "circular reference in JSON encoding");
+    "cyclic value cannot be encoded as JSON");
   const outer = rt.makeTable({});
   const arr = [];
   arr.push(outer);
   outer.set("a", arr);
   assertErrorMessage(function() { json.stringify.$f(outer, "f.js", 1, 1); }, "E8001",
-    "circular reference in JSON encoding");
+    "cyclic value cannot be encoded as JSON");
 });
 
 test("json.stringify rejects a standalone MISSING with the unsupported-type E8001", function() {
@@ -487,17 +487,17 @@ test("json.stringify rejects a bytes value with the explicit bytes E8001 arm", f
 
 test("json.stringify rejects unpaired-surrogate string values with E8001", function() {
   assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1); }, "E8001",
-    "cannot encode invalid UTF-8 as JSON");
+    "unsupported type for JSON encoding: string");
 });
 
 test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and mixed-key array-marked)", function() {
   const plain = rt.makeTable({ ["\uD800"]: 1 });
   assertErrorMessage(function() { json.stringify.$f(plain, "f.js", 1, 1); }, "E8001",
-    "cannot encode invalid UTF-8 as JSON");
+    "unsupported type for JSON encoding: string");
   const marked = json.parse.$f("[1,2]", "f.js", 1, 1);
   marked.set("\uD800", 3);
   assertErrorMessage(function() { json.stringify.$f(marked, "f.js", 1, 1); }, "E8001",
-    "cannot encode invalid UTF-8 as JSON");
+    "unsupported type for JSON encoding: string");
 });
 
 // ===========================================================================
@@ -514,6 +514,11 @@ test("json round-trip: stringify(parse(\"[1,2]\")) === \"[1,2]\" and keys [\"1\"
   const parsed = json.parse.$f("[1,2]", "f.js", 1, 1);
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[1,2]", "array round-trip");
   assertArrayEqual(table.keys.$f(parsed, "f.js", 1, 1), ["1", "2"], "keys of a parsed array");
+});
+
+test("json round-trip: an empty parsed array stays the JSON array", function() {
+  const parsed = json.parse.$f("[]", "f.js", 1, 1);
+  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[]", "empty array round-trip");
 });
 
 test("json round-trip: a mixed-key mutation falls back to the object form", function() {
@@ -540,52 +545,121 @@ test("json round-trip: a __proto__-keyed table round-trips through stringify and
   assertEqual(reparsed.get("ok"), true, "the parse round-trip keeps the sibling entry");
 });
 
-test("json.stringify encodes a class instance through the widened entry gate", function() {
+test("json.stringify rejects a root class value (no implicit table conversion)", function() {
   const defaults = function() {
-    return { ["name"]: "default-name", ["__proto__"]: "proto-v", ["opt"]: rt.MISSING, ["nick"]: null };
+    return { ["name"]: "default-name", ["opt"]: rt.MISSING, ["nick"]: null };
   };
   const inst = rt.makeClass("User", "@app.main/User", defaults, { ["name"]: "x" }, "f.js", 9, 4);
-  // The instance carries its own runtime tag properties — the field walk
-  // must exclude exactly these from the output.
-  assert(Object.keys(inst).indexOf("$kind") !== -1, "the instance carries the $kind tag");
-  assert(Object.keys(inst).indexOf("$classname") !== -1, "the instance carries the $classname tag");
-
-  const text = json.stringify.$f(inst, "f.js", 9, 4);
-  const decoded = JSON.parse(text);
-  assertEqual(JSON.stringify(Object.keys(decoded).sort()),
-    JSON.stringify(["__classname", "__kind", "__proto__", "name", "nick"].sort()),
-    "the output key set is exactly the tags plus present fields");
-  assert(decoded.__kind !== undefined && decoded.__kind === "class", "the __kind tag");
-  assertEqual(decoded.__classname, "@app.main/User", "the __classname tag");
-  assertEqual(decoded.name, "x", "the provided field");
-  assertEqual(decoded["__proto__"], "proto-v", "the __proto__-named declared field emits as an ordinary key");
-  assertEqual(decoded.nick, null, "a null field serializes as JSON null");
-  assert(!Object.prototype.hasOwnProperty.call(decoded, "opt"), "the MISSING optional is omitted");
-  assert(!Object.prototype.hasOwnProperty.call(decoded, "$kind"), "no $kind key in the output");
-  assert(!Object.prototype.hasOwnProperty.call(decoded, "$classname"), "no $classname key in the output");
-
-  const reparsed = json.parse.$f(text, "f.js", 9, 4);
-  assertEqual(reparsed.get("__kind"), "class", "the tag round-trips as a Map entry");
-  assertEqual(reparsed.get("__classname"), "@app.main/User", "the classname round-trips");
-  assertEqual(reparsed.get("__proto__"), "proto-v", "the __proto__ entry round-trips as a Map entry");
-  assertEqual(reparsed.get("name"), "x", "the field round-trips");
-  assert(rt.isJsonNullTable(reparsed.get("nick")), "the null field round-trips as a null-marked Map");
-  assertEqual(json.stringify.$f(reparsed, "f.js", 9, 4).indexOf('"nick":null') !== -1, true,
-    "the null field re-emits as JSON null");
-  assert(!reparsed.has("opt"), "the omitted optional stays absent");
+  // A class instance is a table-carried value on the carrier-kind
+  // projection and never its canonical identity: the widened entry gate
+  // admits the carrier, and the walk rejects it with the closed
+  // unsupported-type projection (the reference's __c needle). Root class
+  // values are not implicitly table arguments to std/json.stringify.
+  const err = assertErrorMessage(function() { json.stringify.$f(inst, "f.js", 9, 4); }, "E8001",
+    "unsupported type for JSON encoding: table");
+  assertEqual(err.expected, "string, number, boolean, or table", "the arm's pinned expected text");
+  assertEqual(err.actual, "table", "the carried table token");
 });
 
-test("json.stringify of a table holding a class instance emits tags and fields nested", function() {
+test("json.stringify rejects class instances inside table content", function() {
   const defaults = function() { return { ["name"]: "n" }; };
   const inst = rt.makeClass("User", "@app.main/User", defaults, { ["name"]: "x" }, "f.js", 1, 1);
-  const t = rt.makeTable({ u: inst });
-  const text = json.stringify.$f(t, "f.js", 1, 1);
-  const decoded = JSON.parse(text);
-  assertEqual(decoded.u.__kind, "class", "the nested instance's __kind tag");
-  assertEqual(decoded.u.__classname, "@app.main/User", "the nested instance's __classname tag");
-  assertEqual(decoded.u.name, "x", "the nested instance's field");
-  assert(!Object.prototype.hasOwnProperty.call(decoded.u, "$kind"), "no $kind key nested");
-  assert(!Object.prototype.hasOwnProperty.call(decoded.u, "$classname"), "no $classname key nested");
+  const nested = rt.makeTable({ u: inst });
+  assertErrorMessage(function() { json.stringify.$f(nested, "f.js", 1, 1); }, "E8001",
+    "unsupported type for JSON encoding: table");
+  // The nested-array position rejects through the same closed arm.
+  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ u: [inst] }), "f.js", 1, 1); }, "E8001",
+    "unsupported type for JSON encoding: table");
+});
+
+// ===========================================================================
+// Exact JSON number classification and decoded-key duplicates (v1.3)
+// ===========================================================================
+
+test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are int", function() {
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "integer token");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1.0}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "1.0 denotes the int value");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1e0}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "1e0 denotes the int value");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":100e-2}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "100e-2 denotes the int value");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-0.0}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":0}', "-0.0 normalizes to int 0");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":0e999999999999999999999}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":0}', "an all-zero coefficient with a huge exponent is int 0");
+  // A fractional token that merely rounds to an integral double keeps
+  // the number variant and spells through the canonical decimal text.
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1.5}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1.5}', "a fractional token stays a number");
+  assertEqual(json.stringify.$f(
+    json.parse.$f('{"v":2147483647.00000001}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":2.147483647E9}',
+    "a rounded fractional token stays a number (canonical decimal text)");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":2147483648}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":2.147483648E9}', "an out-of-range integer token is a number");
+  // The signed32 check compares the magnitude before the sign is applied:
+  // a negative magnitude above 2147483648 is the number variant, never an
+  // out-of-range int (the canonical text proves the variant).
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483648}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-2147483648}', "the negative signed32 edge is an int");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483649}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-2.147483649E9}', "-2147483649 is the number variant");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-9999999999}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-9.999999999E9}', "-9999999999 is the number variant");
+  // The exponent magnitude accumulates its digits with bounded
+  // saturation: leading zeroes contribute nothing, so a zero-padded
+  // exponent text longer than 18 characters whose value is small stays
+  // exactly classified (1e0000000000000000001 is the integral 10).
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":10}', "a zero-padded long exponent stays the int 10");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":1e00000000000000000000}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "a zero-valued zero-padded exponent stays the int 1");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":100e-000000000000000000002}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":1}', "a zero-padded negative exponent stays the int 1");
+  assertEqual(json.stringify.$f(json.parse.$f('{"v":-1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
+    '{"v":-10}', "a negative zero-padded long exponent stays the int -10");
+  // A huge exponent converts to binary64 infinity: the classification
+  // itself never overflows, and the nonfinite value then fails the
+  // finite-only encode arm.
+  const huge = json.parse.$f('{"v":1e999999999999999999999}', "f.js", 1, 1);
+  assertEqual(huge.get("v"), Infinity, "a huge exponent converts to binary64 infinity");
+  assertErrorMessage(function() { json.stringify.$f(huge, "f.js", 1, 1); }, "E8001",
+    "unsupported type for JSON encoding: number");
+});
+
+test("json.parse rejects decoded-key duplicates with the shared E8001 projection", function() {
+  const err = assertErrorMessage(function() { json.parse.$f('{"a":1,"a":2}', "f.js", 5, 7); }, "E8001",
+    "JSON parse error at position 8: duplicate key");
+  assertEqual(err.expected, undefined, "no expected field");
+  assertEqual(err.actual, undefined, "no actual field");
+  assertEqual(err.file, "f.js", "the forwarded file");
+  assertEqual(err.line, 5, "the forwarded line");
+  assertEqual(err.column, 7, "the forwarded column");
+  // An escaped spelling of the same decoded key is a duplicate, and a
+  // null first value does not exempt the second key.
+  assertErrorMessage(function() { json.parse.$f('{"a":null,"\u0061":1}', "f.js", 1, 1); }, "E8001",
+    "duplicate key");
+  assertErrorMessage(function() { json.parse.$f('{"\u0061":1,"a":2}', "f.js", 1, 1); }, "E8001",
+    "duplicate key");
+  // Nested objects track their own decoded keys.
+  assertErrorMessage(function() { json.parse.$f('{"o":{"k":1,"k":2}}', "f.js", 1, 1); }, "E8001",
+    "duplicate key");
+  // Distinct decoded keys stay accepted.
+  const ok = json.parse.$f('{"a":1,"b":2}', "f.js", 1, 1);
+  assertEqual(ok.get("a"), 1, "distinct key a");
+  assertEqual(ok.get("b"), 2, "distinct key b");
+});
+
+test("json.parse/json.stringify handle deep finite nesting beyond 512 levels", function() {
+  let text = "1";
+  for (let i = 0; i < 600; i++) {
+    text = '{"d":' + text + "}";
+  }
+  const parsed = json.parse.$f(text, "f.js", 1, 1);
+  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), text,
+    "a 600-deep finite object round-trips");
 });
 
 test("json.stringify rejects a top-level Array with E8001 expected table (actual array)", function() {

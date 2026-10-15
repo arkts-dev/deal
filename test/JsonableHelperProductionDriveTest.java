@@ -103,8 +103,8 @@ import java.util.stream.Stream;
  * stays JSON-shaped); a nested class's table field must spell its keys in
  * first-insertion order and its int/number leaves by their own variant
  * (the exact text compared on all three consumers); the recursive
- * nested-class walk must stop at the shared JSON depth bound (511 chain
- * links succeed, 512 links fail through the walk arm with the exceeding
+ * nested-class walk has no fixed depth cap (511 and 1200 chain links both
+ * succeed with the exact text; there is no
  * container's token and path); the oracle's array executor view must stay
  * live behind a class field's in-place element replacement, append, and
  * deletion (exact text for replacement and append, outcome parity for the
@@ -126,8 +126,8 @@ import java.util.stream.Stream;
  * with exit 0, empty transcripts, no probe defect, and no failure transport
  * (the nonzero-without-transport control included), and the accepted-depth
  * artifact leg consumes that same completed-process credit — a nonzero exit
- * without a transport file can never be credited as a completed
- * 512-container encode.</p>
+ * without a transport file can never be credited as a completed deep
+ * encode.</p>
  *
  * <p>The combined dependency step runs the oracle over every fixture of
  * the family through the same one-lowering closure (the runtime-ok
@@ -2380,8 +2380,8 @@ public class JsonableHelperProductionDriveTest {
 
     /**
      * The valid-depth artifact leg's completed-process credit: the same
-     * comparison the exact-text drives use, so the 511-link chain (512
-     * containers) is credited only when the fixture process exits 0 with
+     * comparison the exact-text drives use, so the deep chain is credited
+     * only when the fixture process exits 0 with
      * empty transcripts, no probe defect, and no failure transport. A
      * nonzero exit without a written transport file — a toolchain that dies
      * before running the tested body — is a mismatch, never a completed
@@ -2464,11 +2464,11 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The nested-class depth fixture: {@code Wrapper.child.data} is the head
+     * The nested-class deep fixture: {@code Wrapper.child.data} is the head
      * of a chain of {@code links} links (one table per link). The valid form
-     * compares the helper text against the exact expected string; the invalid
-     * form ({@code expectedText == null}) returns the helper text directly
-     * (the walk raises).
+     * compares the helper text against the exact expected string; the
+     * ({@code expectedText == null}) form returns the helper text directly
+     * (defensive — the walk never raises for a deep finite chain).
      */
     private static String nestedClassDepthSource(int links, String expectedText) {
         StringBuilder body = new StringBuilder();
@@ -2507,22 +2507,19 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The JSON walk depth bound in the recursive nested-class path (the
-     * three-consumer boundary): the 511-link chain (512 containers) completes
-     * on the oracle and both production artifacts, and the 512-link chain
-     * (513 containers) fails through the canonical walk arm with the exceeding
-     * container's token and field path at the helper call origin — the
-     * identical tuple on all three consumers.
+     * No fixed JSON walk depth bound in the recursive nested-class path (the
+     * three-consumer boundary): the 511-link chain (512 containers) and the
+     * 1200-link chain (1201 containers) both complete with the exact text on
+     * the oracle and both production artifacts. A finite chain is never
+     * reported as a JSON value failure for its depth.
      */
     private static void testNestedClassDepthBound() throws Exception {
-        System.out.println("-- the nested-class walk's depth bound: 511 links "
-            + "succeed, 512 links fail through the walk arm on all three "
-            + "consumers --");
+        System.out.println("-- the nested-class walk has no fixed depth bound: "
+            + "511 and 1200 links succeed on all three consumers --");
         driveExactHelperProgram("nested-class-depth-ok",
             nestedClassDepthSource(511, nestedChainText(511)));
-        driveHelperFailure("nested-class-depth-overflow", nestedClassDepthSource(512, null),
-            "Wrapper$toJson(w)", "value at child.data" + ".next".repeat(512)
-                + " is not JSON serializable: table", "table");
+        driveExactHelperProgram("nested-class-depth-1200-ok",
+            nestedClassDepthSource(1200, nestedChainText(1200)));
     }
 
     // =========================================================================
@@ -2896,7 +2893,7 @@ public class JsonableHelperProductionDriveTest {
 
     /**
      * The valid-depth artifact leg's negative control: the credit the
-     * 511-link accepted-depth leg consumes (the same method the leg calls)
+     * accepted-depth leg consumes (the same method the leg calls)
      * accepts only a completed zero-status, empty-transcript encode and
      * rejects an execution that exits nonzero without writing a transport
      * file — the exact case the leg's former {@code capture == null} check
@@ -2909,7 +2906,7 @@ public class JsonableHelperProductionDriveTest {
             + "nonzero execution without a transport file is rejected --");
         Execution completed = new Execution(0, "", "", null, false);
         check(validDepthArtifactMismatches(completed).isEmpty(),
-            "the depth-leg credit accepts a completed 512-container encode "
+            "the depth-leg credit accepts a completed deep encode "
                 + "(the control)");
         Execution nonzeroNoTransport = new Execution(17, "", "", null, false);
         List<String> mismatches = validDepthArtifactMismatches(nonzeroNoTransport);

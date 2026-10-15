@@ -5,8 +5,10 @@ package deal.semantic.ir;
  * ({@code SharedStdlibSemantics}, {@code JvmRuntime},
  * {@code CanonicalJson}, the LuaJIT async-export invoker): the cursor
  * operations, the whitespace/literal/string/hex-escape scans, and the
- * signed32 integer-range decision. Value production stays in each parser's
- * own reader; the hooks build the parser's own failure type.
+ * number-token scan. The exact decimal classification of one scanned
+ * token is {@link JsonNumberClassifier}'s one algorithm. Value production
+ * stays in each parser's own reader; the hooks build the parser's own
+ * failure type.
  */
 public final class JsonScan {
 
@@ -183,21 +185,14 @@ public final class JsonScan {
             }
         }
 
-        /**
-         * The scanned number token: the raw text, whether the lexical form
-         * is an integer, and the scan start/negative facts the signed32
-         * range decision needs.
-         */
-        public record NumberScan(String text, boolean integerForm, int start,
-                                 boolean negative) {
+        /** The scanned number token: the raw lexeme text. */
+        public record NumberScan(String text) {
         }
 
-        /** Scans one RFC-8259 number token; the value production stays with the caller. */
+        /** Scans one RFC-8259 number token; the classification stays with the caller. */
         public final NumberScan parseNumberText() {
             int start = position;
-            boolean negative = false;
             if (peek() == '-') {
-                negative = true;
                 advance();
             }
             if (atEnd()) {
@@ -207,7 +202,6 @@ public final class JsonScan {
             if (c < '0' || c > '9') {
                 throw failure(REASON_INVALID_NUMBER);
             }
-            boolean integerForm = true;
             if (c == '0') {
                 advance();
                 if (!atEnd() && isDigit(peek())) {
@@ -220,7 +214,6 @@ public final class JsonScan {
                 }
             }
             if (!atEnd() && peek() == '.') {
-                integerForm = false;
                 advance();
                 if (atEnd() || !isDigit(peek())) {
                     throw failure(REASON_INVALID_NUMBER);
@@ -230,7 +223,6 @@ public final class JsonScan {
                 }
             }
             if (!atEnd() && (peek() == 'e' || peek() == 'E')) {
-                integerForm = false;
                 advance();
                 if (!atEnd() && (peek() == '+' || peek() == '-')) {
                     advance();
@@ -242,48 +234,7 @@ public final class JsonScan {
                     advance();
                 }
             }
-            return new NumberScan(new String(codePoints, start, position - start),
-                integerForm, start, negative);
-        }
-
-        /**
-         * The exact signed32 value of an integer-form scan
-         * ({@code -0} normalizes to {@code 0}), or {@code null} when the
-         * lexically valid integer is outside the signed32 range.
-         */
-        public final Integer exactInt32OrNull(NumberScan scan) {
-            int digitsStart = scan.start() + (scan.negative() ? 1 : 0);
-            int significantStart = digitsStart;
-            while (significantStart < position && codePoints[significantStart] == '0') {
-                significantStart++;
-            }
-            int significantLength = Math.max(1, position - significantStart);
-            boolean outOfRange;
-            if (significantLength > 10) {
-                outOfRange = true;
-            } else if (significantLength == 10) {
-                long significant = 0L;
-                for (int i = significantStart; i < significantStart + 10; i++) {
-                    significant = significant * 10 + (codePoints[i] - '0');
-                }
-                long limit = scan.negative() ? 2147483648L : 2147483647L;
-                outOfRange = significant > limit;
-            } else {
-                outOfRange = false;
-            }
-            if (outOfRange) {
-                return null;
-            }
-            // Exact digit accumulation: at most 10 significant digits, so
-            // the long value is exact; "-0" yields 0.
-            long value = 0L;
-            for (int i = digitsStart; i < position; i++) {
-                value = value * 10 + (codePoints[i] - '0');
-            }
-            if (scan.negative()) {
-                value = -value;
-            }
-            return (int) value;
+            return new NumberScan(new String(codePoints, start, position - start));
         }
 
         private static boolean isWs(int codePoint) {

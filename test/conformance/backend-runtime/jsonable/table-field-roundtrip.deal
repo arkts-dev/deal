@@ -1,7 +1,7 @@
 // @spec: Classes — @jsonable table fields
-// @description: @jsonable table fields roundtrip JSON object values
+// @description: @jsonable table fields roundtrip JSON object values; a decoded table leaf keeps its exact decimal variant, so a negative magnitude below the signed32 lower bound stays the number variant and a long zero-padded exponent whose value is small stays the int variant (v1.3)
 // @expected: runtime-ok
-// @features: jsonable, table, roundtrip
+// @features: jsonable, table, roundtrip, v1.3
 
 // @jsonable
 export class Wrapper {
@@ -20,6 +20,50 @@ export function test_jsonable_table_field(): null {
     }
   } else {
     throw { code: "TEST_FAIL", message: "fromJson returned null" };
+  }
+  // The exact decimal classification of a decoded table leaf: the
+  // canonical text proves which variant the token selected. The signed32
+  // check compares the magnitude before the sign is applied, so
+  // -2147483649 is the number variant and -2147483648 stays the int.
+  let below: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-2147483649}}");
+  if (below !== null) {
+    let text: string = Wrapper$toJson(below);
+    if (text !== "{\"data\":{\"v\":-2.147483649E9}}") {
+      throw { code: "TEST_FAIL", message: "-2147483649 must stay the number variant" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "a negative boundary token must decode" };
+  }
+  let lower: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-2147483648}}");
+  if (lower !== null) {
+    let text: string = Wrapper$toJson(lower);
+    if (text !== "{\"data\":{\"v\":-2147483648}}") {
+      throw { code: "TEST_FAIL", message: "-2147483648 must stay the int variant" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "the negative signed32 edge must decode" };
+  }
+  let far: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-9999999999}}");
+  if (far !== null) {
+    let text: string = Wrapper$toJson(far);
+    if (text !== "{\"data\":{\"v\":-9.999999999E9}}") {
+      throw { code: "TEST_FAIL", message: "-9999999999 must stay the number variant" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "a far negative boundary token must decode" };
+  }
+  // The exponent magnitude accumulates digits with bounded saturation:
+  // leading zeroes contribute nothing, so a zero-padded exponent text
+  // longer than 18 characters whose value is small stays exactly
+  // classified (1e0000000000000000001 is the integral 10).
+  let padded: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":1e0000000000000000001}}");
+  if (padded !== null) {
+    let text: string = Wrapper$toJson(padded);
+    if (text !== "{\"data\":{\"v\":10}}") {
+      throw { code: "TEST_FAIL", message: "a zero-padded long exponent must stay the int 10" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "a zero-padded long exponent must decode" };
   }
   return null;
 }

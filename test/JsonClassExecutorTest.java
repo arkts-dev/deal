@@ -311,23 +311,29 @@ public class JsonClassExecutorTest {
 
     private static void testAlgorithmObservations() {
         ClassOpsExecutor.JsonParser parser = JsonClassAlgorithmAdapter.parser();
-        String[] numbers = {"2147483647", "-2147483648", "-0", "2147483648", "1.5", "1e0"};
-        double[] expected = {2147483647, -2147483648, 0, 2147483648.0, 1.5, 1.0};
+        String[] numbers = {"2147483647", "-2147483648", "-0", "2147483648", "1.5",
+            "1e0", "1.0", "100e-2", "2147483647.00000001",
+            "-2147483649", "-9999999999", "1e0000000000000000001",
+            "100e-000000000000000000002", "-1e0000000000000000001"};
+        double[] expected = {2147483647, -2147483648, 0, 2147483648.0, 1.5, 1, 1, 1,
+            2147483647.0, -2147483649.0, -9999999999.0, 10, 1, -10};
+        boolean[] isInt = {true, true, true, false, false, true, true, true, false,
+            false, false, true, true, true};
         for (int i = 0; i < numbers.length; i++) {
             JsonParse parsed = parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate(numbers[i]));
             Value value = ((JsonParse.Success) parsed).value();
-            check(i < 3 ? value instanceof Value.Int n && n.value() == expected[i]
+            check(isInt[i] ? value instanceof Value.Int n && n.value() == expected[i]
                     : value instanceof Value.Number number && number.value() == expected[i],
                 "numeric lexical variant and value: " + numbers[i]);
         }
         check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate("{x"))
             instanceof JsonParse.SyntaxFailure, "invalid JSON syntax is rejected");
-        Value.Table duplicates = (Value.Table) ((JsonParse.Success) parser.parse(
-            (UnicodeScalars.Valid) UnicodeScalars.validate("{\"a\":1,\"b\":2,\"a\":3}"))).value();
-        check(duplicates.table().keys().equals(List.of("a", "b"))
-                && duplicates.table().get("a") instanceof SemanticTable.Lookup.Present<Value> p
-                && p.value() instanceof Value.Int n && n.value() == 3,
-            "duplicate keys retain first position and last value");
+        check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate(
+                "{\"a\":1,\"b\":2,\"a\":3}")) instanceof JsonParse.SyntaxFailure,
+            "a decoded-key duplicate is a syntax failure");
+        check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate(
+                "{\"a\":null,\"\\u0061\":1}")) instanceof JsonParse.SyntaxFailure,
+            "an escaped spelling of the same decoded key is a duplicate");
         check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate("\"text\""))
                 instanceof JsonParse.Success p && p.value() instanceof Value.String s
                 && carrier(s).equals("text"), "string parse retains literal text");
@@ -730,14 +736,15 @@ public class JsonClassExecutorTest {
     }
 
     // =========================================================================
-    // (e) JSON_FROM_CLASS: the depth bound
+    // (e) JSON_FROM_CLASS: no fixed nesting-depth bound
     // =========================================================================
 
     private static void testFromJsonDepthBound() {
-        System.out.println("-- fromJson: the 512 walk-depth bound --");
+        System.out.println("-- fromJson: deep finite documents have no fixed cap --");
 
-        // A self-nested nullable class chain: depth overflow returns null;
-        // the 512-level bound decodes.
+        // A self-nested nullable class chain: 513 and 1200 nesting levels
+        // both decode (resource exhaustion is never reported as a JSON
+        // value failure).
         ClassLayout node = layoutOf(INNER,
             field("next", new RuntimeDescriptor.Nullable(new RuntimeDescriptor.Class(
                 INNER)), false));
@@ -748,59 +755,44 @@ public class JsonClassExecutorTest {
         NestedClassFactory emptyFactory = (classId, providedFields) ->
             new Value.Class(classId, List.of(FieldState.Missing.INSTANCE));
         Value deep = nestedTable(513);
-        Value overflow = ClassOpsExecutor.executeJsonFromClass(op,
+        Value decoded = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("unused")), List.of(), Map.of(), layouts,
             scriptedParser(deep), emptyFactory,
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(overflow instanceof Value.Null, "a 513-deep nested document returns null");
+        check(decoded instanceof Value.Class,
+            "a 513-deep nested document decodes (the old bound is gone)");
 
-        Value atBound = nestedTable(512);
-        Value bounded = ClassOpsExecutor.executeJsonFromClass(op,
+        Value deeper = nestedTable(1200);
+        Value deeperDecoded = ClassOpsExecutor.executeJsonFromClass(op,
             Map.of(jsonId, Value.string("unused")), List.of(), Map.of(), layouts,
-            scriptedParser(atBound), emptyFactory,
+            scriptedParser(deeper), emptyFactory,
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(bounded instanceof Value.Class,
-            "a 512-deep nested document decodes (the bound is inclusive)");
+        check(deeperDecoded instanceof Value.Class,
+            "a 1200-deep nested document decodes");
 
-        // Table-field contents are bounded by the same walk depth (the
-        // retained _json_table_shape authority): a table subtree whose
-        // nested containers pass the bound returns null; the bound
-        // itself decodes (a container at depth 512 is inclusive).
+        // Table-field contents are unbounded too: a 600-deep table
+        // subtree inside a table field decodes.
         ClassLayout withTable = layoutOf(POINT, field("data", TABLE, true));
         ValueId tableJsonId = nextValue();
         SemanticOp tableOp = jsonFromOp(withTable, tableJsonId);
         Map<ClassId, ClassLayout> tableLayouts = Map.of(POINT, withTable);
         NestedClassFactory noNested = (classId, providedFields) -> {
-            throw new Defect("the table-content depth walk never resolves a nested "
+            throw new Defect("the table-content walk never resolves a nested "
                 + "class");
         };
-        Value tableOverflow = ClassOpsExecutor.executeJsonFromClass(tableOp,
+        Value tableDeep = ClassOpsExecutor.executeJsonFromClass(tableOp,
             Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
-            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedTableChain(513)))),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedTableChain(600)))),
             noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(tableOverflow instanceof Value.Null,
-            "a 513-deep table subtree inside a table field returns null");
-        Value tableBounded = ClassOpsExecutor.executeJsonFromClass(tableOp,
-            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
-            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedTableChain(512)))),
-            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(tableBounded instanceof Value.Class instance
+        check(tableDeep instanceof Value.Class instance
                 && fieldValue(instance, withTable, "data") instanceof Value.Table,
-            "a 512-deep table subtree inside a table field decodes (the bound is "
-                + "inclusive)");
-        Value mixedOverflow = ClassOpsExecutor.executeJsonFromClass(tableOp,
+            "a 600-deep table subtree inside a table field decodes");
+        Value mixedDeep = ClassOpsExecutor.executeJsonFromClass(tableOp,
             Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
-            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedMixedChain(513)))),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedMixedChain(600)))),
             noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(mixedOverflow instanceof Value.Null,
-            "a 513-deep mixed table/array subtree inside a table field returns null");
-        Value mixedBounded = ClassOpsExecutor.executeJsonFromClass(tableOp,
-            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
-            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedMixedChain(512)))),
-            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(mixedBounded instanceof Value.Class,
-            "a 512-deep mixed table/array subtree inside a table field decodes "
-                + "(the bound is inclusive)");
+        check(mixedDeep instanceof Value.Class,
+            "a 600-deep mixed table/array subtree inside a table field decodes");
     }
 
     /** A parsed nested document of the given depth: {"next":{"next":...{}}}. */
@@ -1250,12 +1242,12 @@ public class JsonClassExecutorTest {
     }
 
     // =========================================================================
-    // (h) JSON_TO_CLASS: cycles and the depth bound
+    // (h) JSON_TO_CLASS: cycles and deep finite nesting
     // =========================================================================
 
     private static void testToJsonCyclesAndDepth() {
-        System.out.println("-- toJson: cycles (class and table) and the 512 depth "
-            + "bound --");
+        System.out.println("-- toJson: cycles (class and table) and deep "
+            + "finite nesting --");
 
         ClassLayout node = layoutOf(INNER,
             field("next", new RuntimeDescriptor.Nullable(new RuntimeDescriptor.Class(
@@ -1324,7 +1316,9 @@ public class JsonClassExecutorTest {
             "the production adapter fails the cyclic table on the cycle arm (never a "
                 + "producer crash)");
 
-        // The depth bound: a 513-deep class nesting fails; 512 decodes.
+        // No fixed nesting cap: a 513-deep and a 1200-deep class nesting
+        // both serialize (resource exhaustion is never reported as a JSON
+        // value failure).
         ValueId deepClassId = nextValue();
         SemanticOp deepOp = jsonToOp(node, deepClassId);
         Value.Class deepInstance = emptyNode();
@@ -1332,127 +1326,62 @@ public class JsonClassExecutorTest {
             deepInstance = new Value.Class(INNER,
                 List.of(new FieldState.Present(deepInstance)));
         }
-        SourceOrigin depthCallOrigin = nextOrigin(null);
-        Outcome<Value> overflow = ClassOpsExecutor.executeJsonToClass(deepOp,
+        SourceOrigin deepCallOrigin = nextOrigin(null);
+        Outcome<Value> deepOutcome = ClassOpsExecutor.executeJsonToClass(deepOp,
             Map.of(deepClassId, deepInstance), layouts, JsonClassAlgorithmAdapter.stringifier(),
-            depthCallOrigin);
-        String depthOverflowPath = "next" + ".next".repeat(512);
-        check(overflow instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals("value at "
-                    + depthOverflowPath + " is not JSON serializable: " + INNER.text())
-                && failure.failure().origin().equals(depthCallOrigin)
-                && !failure.failure().origin().equals(deepOp.origin())
-                && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals(INNER.text()),
-            "a 513-deep class nesting fails the walk arm at the exceeding container's "
-                + "path with the carried canonical class atom, no expected field, and "
-                + "the supplied call origin (never the generated body's synthetic "
-                + "anchor)");
-        Value.Class boundedInstance = emptyNode();
-        for (int i = 0; i < 512; i++) {
-            boundedInstance = new Value.Class(INNER,
-                List.of(new FieldState.Present(boundedInstance)));
+            deepCallOrigin);
+        check(deepOutcome instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.String text
+                && text.scalar() instanceof UnicodeScalars.Valid valid
+                && valid.carrier().startsWith("{\"next\":")
+                && valid.carrier().endsWith("}"),
+            "a 513-deep class nesting serializes (no fixed cap)");
+        Value.Class deeperInstance = emptyNode();
+        for (int i = 0; i < 1200; i++) {
+            deeperInstance = new Value.Class(INNER,
+                List.of(new FieldState.Present(deeperInstance)));
         }
-        Outcome<Value> bounded = ClassOpsExecutor.executeJsonToClass(deepOp,
-            Map.of(deepClassId, boundedInstance), layouts, JsonClassAlgorithmAdapter.stringifier(),
-            nextOrigin(null));
-        check(bounded instanceof Outcome.Success<Value>,
-            "a 512-deep class nesting serializes (the bound is inclusive)");
+        Outcome<Value> deeperOutcome = ClassOpsExecutor.executeJsonToClass(deepOp,
+            Map.of(deepClassId, deeperInstance), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
+        check(deeperOutcome instanceof Outcome.Success<Value>,
+            "a 1200-deep class nesting serializes");
 
-        // Table-field contents are bounded by the same walk depth (the
-        // retained _json_table_shape authority): a 513-deep table
-        // subtree fails at the exceeding container's pinned path (513
-        // key segments) with the table token; a 512-deep one
-        // serializes; the production adapter fails identically (the
-        // pre-walk bounds before the seam runs, so no unbounded seam
-        // recursion ever escapes).
+        // Table-field contents have no cap either: a 600-deep table
+        // subtree serializes, and a 600-deep mixed table/array subtree
+        // serializes.
         ClassLayout tableLayout = layoutOf(POINT, field("data", TABLE, true));
         Value.Class deepTable = instanceOf(tableLayout,
-            Map.of("data", nestedTableChain(513)));
+            Map.of("data", nestedTableChain(600)));
         ValueId deepTableClassId = nextValue();
         SemanticOp deepTableOp = jsonToOp(tableLayout, deepTableClassId);
-        String overflowPath = "data" + ".k".repeat(513);
         SourceOrigin tableDepthOrigin = nextOrigin(null);
-        Outcome<Value> tableOverflow = ClassOpsExecutor.executeJsonToClass(deepTableOp,
+        Outcome<Value> tableDeep = ClassOpsExecutor.executeJsonToClass(deepTableOp,
             Map.of(deepTableClassId, deepTable), Map.of(POINT, tableLayout),
             JsonClassAlgorithmAdapter.stringifier(), tableDepthOrigin);
-        check(tableOverflow instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals(
-                    "value at " + overflowPath + " is not JSON serializable: table")
-                && failure.failure().origin().equals(tableDepthOrigin)
-                && !failure.failure().origin().equals(deepTableOp.origin())
-                && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("table"),
-            "a 513-deep table subtree fails the walk arm at the exceeding container's "
-                + "pinned path with the table token, no expected field, and the "
-                + "supplied call origin (never the generated body's synthetic anchor)");
-        SourceOrigin tableDepthAdapterOrigin = nextOrigin(null);
-        Outcome<Value> tableOverflowAdapter = ClassOpsExecutor.executeJsonToClass(
-            deepTableOp, Map.of(deepTableClassId, deepTable), Map.of(POINT, tableLayout),
-            JsonClassAlgorithmAdapter.stringifier(), tableDepthAdapterOrigin);
-        check(tableOverflowAdapter instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals(
-                    "value at " + overflowPath + " is not JSON serializable: table")
-                && failure.failure().origin().equals(tableDepthAdapterOrigin)
-                && !failure.failure().origin().equals(deepTableOp.origin())
-                && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("table"),
-            "the production adapter fails the deep table subtree identically (the "
-                + "walk arm's tuple at the supplied origin, never a producer crash)");
-        Value.Class boundedTable = instanceOf(tableLayout,
-            Map.of("data", nestedTableChain(512)));
-        ValueId boundedTableClassId = nextValue();
-        SemanticOp boundedTableOp = jsonToOp(tableLayout, boundedTableClassId);
-        Outcome<Value> tableBounded = ClassOpsExecutor.executeJsonToClass(boundedTableOp,
-            Map.of(boundedTableClassId, boundedTable), Map.of(POINT, tableLayout),
-            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
-        check(tableBounded instanceof Outcome.Success<Value>,
-            "a 512-deep table subtree serializes (the bound is inclusive)");
-
-        // A mixed table/array subtree: array segments inside table
-        // contents append [0] (the pinned convention — a segment's
-        // spelling is the parent container's kind: a table parent
-        // appends ".k", an array parent appends "[0]"), and the
-        // exceeding innermost array wrapper reports the array token.
+        check(tableDeep instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.String,
+            "a 600-deep table subtree serializes");
         Value.Class deepMixed = instanceOf(tableLayout,
-            Map.of("data", nestedMixedChain(514)));
+            Map.of("data", nestedMixedChain(600)));
         ValueId deepMixedClassId = nextValue();
         SemanticOp deepMixedOp = jsonToOp(tableLayout, deepMixedClassId);
-        StringBuilder mixedPath = new StringBuilder("data");
-        for (int j = 2; j <= 514; j++) {
-            mixedPath.append(j % 2 == 0 ? ".k" : "[0]");
-        }
-        SourceOrigin mixedDepthOrigin = nextOrigin(null);
-        Outcome<Value> mixedOverflow = ClassOpsExecutor.executeJsonToClass(deepMixedOp,
+        Outcome<Value> mixedDeep = ClassOpsExecutor.executeJsonToClass(deepMixedOp,
             Map.of(deepMixedClassId, deepMixed), Map.of(POINT, tableLayout),
-            JsonClassAlgorithmAdapter.stringifier(), mixedDepthOrigin);
-        check(mixedOverflow instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals(
-                    "value at " + mixedPath + " is not JSON serializable: array")
-                && failure.failure().origin().equals(mixedDepthOrigin)
-                && !failure.failure().origin().equals(deepMixedOp.origin())
-                && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("array"),
-            "a mixed table/array subtree fails the walk arm at the exceeding array "
-                + "container with the pinned mixed segments and the array token, no "
-                + "expected field, and the supplied call origin (never the generated "
-                + "body's synthetic anchor)");
+            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
+        check(mixedDeep instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.String,
+            "a 600-deep mixed table/array subtree serializes");
 
-        // The depth bound is one of the walk's first-failure conditions in
-        // walk order, never a preflight that overrides an earlier selected
-        // failure: a table whose first key holds a nonfinite number and whose
-        // second key holds a 513-deep chain fails at the earlier nonfinite
-        // position (both seams), and the same graph with the chain first
-        // fails at the exceeding container.
-        SemanticTable<Value> earlierFailureThenDepth = new SemanticTable<>();
-        earlierFailureThenDepth.put("bad", new Value.Number(Double.NaN));
-        earlierFailureThenDepth.put("k", nestedTableChain(513));
+        // The first failing position still decides the walk in walk order,
+        // never a preflight: a table whose first key holds a nonfinite
+        // number and whose second key holds a 600-deep chain fails at the
+        // earlier nonfinite position.
+        SemanticTable<Value> earlierFailureThenDeep = new SemanticTable<>();
+        earlierFailureThenDeep.put("bad", new Value.Number(Double.NaN));
+        earlierFailureThenDeep.put("k", nestedTableChain(600));
         Value.Class shallowFailure = instanceOf(tableLayout,
-            Map.of("data", new Value.Table(earlierFailureThenDepth)));
+            Map.of("data", new Value.Table(earlierFailureThenDeep)));
         ValueId shallowFailureClassId = nextValue();
         SemanticOp shallowFailureOp = jsonToOp(tableLayout, shallowFailureClassId);
         SourceOrigin shallowFailureOrigin = nextOrigin(null);
@@ -1470,41 +1399,30 @@ public class JsonClassExecutorTest {
                     failure.failure().failure().metadata().get("fieldPath"))
                 && failure.failure().origin().equals(shallowFailureOrigin)
                 && !failure.failure().origin().equals(shallowFailureOp.origin()),
-            "a nonfinite value before a 513-deep chain fails the production adapter "
-                + "at the earlier position (the depth bound never overrides an "
-                + "earlier selected failure), with the pinned walk tuple and the "
-                + "supplied call origin");
-        Outcome<Value> earlierPositionFixture = ClassOpsExecutor.executeJsonToClass(
-            shallowFailureOp, Map.of(shallowFailureClassId, shallowFailure),
-            Map.of(POINT, tableLayout), JsonClassAlgorithmAdapter.stringifier(),
-            nextOrigin(null));
-        check(earlierPositionFixture instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().message().equals(
-                    "value at data.bad is not JSON serializable: number")
-                && failure.failure().failure().actual().equals("number"),
-            "the fixture seam selects the same earlier position over the depth bound");
+            "a nonfinite value before a 600-deep chain fails the walk at the earlier "
+                + "position with the pinned walk tuple and the supplied call origin");
 
-        SemanticTable<Value> depthThenLaterFailure = new SemanticTable<>();
-        depthThenLaterFailure.put("k", nestedTableChain(513));
-        depthThenLaterFailure.put("zbad", new Value.Number(Double.NaN));
-        Value.Class depthFirst = instanceOf(tableLayout,
-            Map.of("data", new Value.Table(depthThenLaterFailure)));
-        ValueId depthFirstClassId = nextValue();
-        SemanticOp depthFirstOp = jsonToOp(tableLayout, depthFirstClassId);
-        Outcome<Value> depthFirstFailure = ClassOpsExecutor.executeJsonToClass(
-            depthFirstOp, Map.of(depthFirstClassId, depthFirst),
+        // The same graph with the deep chain first now serializes: with no
+        // fixed cap there is no depth failure to precede the later
+        // nonfinite value.
+        SemanticTable<Value> deepThenLaterFailure = new SemanticTable<>();
+        deepThenLaterFailure.put("k", nestedTableChain(600));
+        deepThenLaterFailure.put("zbad", new Value.Number(Double.NaN));
+        Value.Class deepFirst = instanceOf(tableLayout,
+            Map.of("data", new Value.Table(deepThenLaterFailure)));
+        ValueId deepFirstClassId = nextValue();
+        SemanticOp deepFirstOp = jsonToOp(tableLayout, deepFirstClassId);
+        Outcome<Value> deepFirstFailure = ClassOpsExecutor.executeJsonToClass(
+            deepFirstOp, Map.of(deepFirstClassId, deepFirst),
             Map.of(POINT, tableLayout), JsonClassAlgorithmAdapter.stringifier(),
             nextOrigin(null));
-        check(depthFirstFailure instanceof Outcome.Failure<Value> failure
+        check(deepFirstFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals("value at "
-                    + overflowPath + " is not JSON serializable: table")
-                && failure.failure().failure().actual().equals("table")
-                && overflowPath.equals(
-                    failure.failure().failure().metadata().get("fieldPath")),
-            "a 513-deep chain before a nonfinite value keeps the depth bound's own "
-                + "failure at the exceeding container (the bound is a first-failure "
-                + "condition, never demoted)");
+                && failure.failure().failure().message().equals(
+                    "value at data.zbad is not JSON serializable: number")
+                && failure.failure().failure().actual().equals("number"),
+            "a 600-deep chain before a nonfinite value keeps walk order and fails at "
+                + "the later nonfinite position (there is no depth bound to fire)");
     }
 
     // =========================================================================
@@ -1734,20 +1652,19 @@ public class JsonClassExecutorTest {
     }
 
     // =========================================================================
-    // (h3) JSON_TO_CLASS: the selected failure before an over-depth tail
-    //      (the acceptance remediation of the depth preflight)
+    // (h3) JSON_TO_CLASS: the selected failure before a deep finite tail
+    //      (the integrated class walk)
     // =========================================================================
 
     /**
-     * The acceptance remediation of the depth-only preflight: the selected
-     * first failing position decides the walk arm and its literal fieldPath,
-     * so an over-depth tail behind an unsupported value or a path-local
-     * re-entry never overrides it, while the 512 bound and its admission stay
-     * unchanged. Every case drives the integrated class walk with the
-     * production adapter (never the seam alone).
+     * The selected first failing position decides the walk arm and its
+     * literal fieldPath, so a deep finite tail behind an unsupported value or
+     * a path-local re-entry never overrides it; a clean deep tail serializes
+     * (there is no fixed nesting bound). Every case drives the integrated
+     * class walk with the production adapter (never the seam alone).
      */
-    private static void testToJsonSelectedFailureBeforeOverDepthTail() {
-        System.out.println("-- toJson: a selected failure before an over-depth tail "
+    private static void testToJsonSelectedFailureBeforeDeepTail() {
+        System.out.println("-- toJson: a selected failure before a deep finite tail "
             + "(the integrated class walk) --");
 
         ClassLayout tableLayout = layoutOf(POINT, field("data", TABLE, true));
@@ -1755,60 +1672,58 @@ public class JsonClassExecutorTest {
         ValueId classId = nextValue();
         SemanticOp op = jsonToOp(tableLayout, classId);
 
-        // An unsupported value under the first inserted key, a table chain
-        // beyond JSON_MAX_DEPTH under the later key: the selected first
-        // failing position is data.bad (the walk arm's function token), never
-        // the later over-depth container.
+        // An unsupported value under the first inserted key, a 600-deep
+        // table chain under the later key: the selected first failing
+        // position is data.bad (the walk arm's function token), never the
+        // later container.
         SemanticTable<Value> badThenDeep = new SemanticTable<>();
         Value.Table badThenDeepValue = new Value.Table(badThenDeep);
         badThenDeep.put("bad", functionValue());
-        badThenDeep.put("later", nestedTableChain(ClassOpsExecutor.JSON_MAX_DEPTH + 1));
+        badThenDeep.put("later", nestedTableChain(600));
         checkIntegratedWalkFailure(op, layouts, classId,
             instanceOf(tableLayout, Map.of("data", badThenDeepValue)), nextOrigin(null),
             "value at data.bad is not JSON serializable: function", "function",
             "data.bad",
-            "an unsupported value before an over-depth table tail renders the walk arm "
+            "an unsupported value before a deep finite table tail renders the walk arm "
                 + "at data.bad");
 
-        // The same shape with the over-depth tail closed through a mixed
+        // The same shape with the deep tail closed through a mixed
         // table/array chain.
         SemanticTable<Value> badThenMixed = new SemanticTable<>();
         Value.Table badThenMixedValue = new Value.Table(badThenMixed);
         badThenMixed.put("bad", functionValue());
-        badThenMixed.put("later",
-            nestedMixedChain(ClassOpsExecutor.JSON_MAX_DEPTH + 2));
+        badThenMixed.put("later", nestedMixedChain(602));
         checkIntegratedWalkFailure(op, layouts, classId,
             instanceOf(tableLayout, Map.of("data", badThenMixedValue)),
             nextOrigin(null),
             "value at data.bad is not JSON serializable: function", "function",
             "data.bad",
-            "an unsupported value before an over-depth mixed table/array tail renders "
+            "an unsupported value before a deep finite mixed table/array tail renders "
                 + "the walk arm at data.bad");
 
         // Cycle-first: the table field's own path-local re-entry under the
-        // first inserted key, the over-depth chain under the later key. The
+        // first inserted key, the deep chain under the later key. The
         // needle's own closed marker selects the cycle arm with no
-        // parameters, expected, actual or metadata — the later depth position
+        // parameters, expected, actual or metadata — the later container
         // never overrides it.
         SemanticTable<Value> cycleThenDeep = new SemanticTable<>();
         Value.Table cycleThenDeepValue = new Value.Table(cycleThenDeep);
         cycleThenDeep.put("self", cycleThenDeepValue);
-        cycleThenDeep.put("later", nestedTableChain(ClassOpsExecutor.JSON_MAX_DEPTH + 1));
+        cycleThenDeep.put("later", nestedTableChain(600));
         checkIntegratedCycleFailure(op, layouts, classId,
             instanceOf(tableLayout, Map.of("data", cycleThenDeepValue)),
             nextOrigin(null),
-            "a path-local table re-entry before an over-depth table tail keeps the "
+            "a path-local table re-entry before a deep finite table tail keeps the "
                 + "cycle arm's parameterless tuple");
 
         SemanticTable<Value> cycleThenMixed = new SemanticTable<>();
         Value.Table cycleThenMixedValue = new Value.Table(cycleThenMixed);
         cycleThenMixed.put("self", cycleThenMixedValue);
-        cycleThenMixed.put("later",
-            nestedMixedChain(ClassOpsExecutor.JSON_MAX_DEPTH + 2));
+        cycleThenMixed.put("later", nestedMixedChain(602));
         checkIntegratedCycleFailure(op, layouts, classId,
             instanceOf(tableLayout, Map.of("data", cycleThenMixedValue)),
             nextOrigin(null),
-            "a path-local table re-entry before an over-depth mixed table/array tail "
+            "a path-local table re-entry before a deep finite mixed table/array tail "
                 + "keeps the cycle arm's parameterless tuple");
 
         // The acceptance reproducer through the integrated class walk (not
@@ -1835,23 +1750,15 @@ public class JsonClassExecutorTest {
             "the integrated class walk returns the selected data.bad failure without "
                 + "traversing the 50,000-container cyclic tail behind it");
 
-        // The control: with no earlier failure, the same bounded walk selects
-        // the depth arm at the exceeding container's own position and token
-        // (the 512 limit and its admission are unchanged). The mixed chain's
-        // container at relative index 513 is the first beyond the bound; a
-        // table key appends ".k" and an array element "[0]".
-        StringBuilder mixedOverPath = new StringBuilder("data");
-        for (int i = 1; i <= ClassOpsExecutor.JSON_MAX_DEPTH + 1; i++) {
-            mixedOverPath.append(i % 2 == 1 ? ".k" : "[0]");
-        }
-        checkIntegratedWalkFailure(op, layouts, classId,
-            instanceOf(tableLayout,
-                Map.of("data", nestedMixedChain(ClassOpsExecutor.JSON_MAX_DEPTH + 2))),
-            nextOrigin(null),
-            "value at " + mixedOverPath + " is not JSON serializable: array",
-            "array", mixedOverPath.toString(),
-            "a clean over-depth mixed tail still fails the walk arm at the exceeding "
-                + "container (the 512 bound is unchanged)");
+        // The control: with no earlier failure, a clean 602-deep mixed
+        // table/array tail serializes (there is no depth bound to fire).
+        Outcome<Value> cleanDeepTail = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, instanceOf(tableLayout,
+                Map.of("data", nestedMixedChain(602)))),
+            layouts, JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
+        check(cleanDeepTail instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.String,
+            "a clean 602-deep mixed tail serializes (no fixed cap)");
     }
 
     /**
@@ -2093,16 +2000,15 @@ public class JsonClassExecutorTest {
     // =========================================================================
 
     /**
-     * The 512/513 walk-depth checks descend the production encoder and the
-     * production adapter's seam walk to their full supported depth (about
-     * one thousand nested frames for a 513-deep class chain). The frame
-     * sizes depend on the JIT's compilation state; C1 frames alone need
-     * over 1 MiB, so the JVM's default main-thread stack (1 MiB) can
-     * overflow nondeterministically before the pinned depth failure is
-     * rendered. The suite therefore runs on a dedicated thread with a
-     * fixed, generous stack: the depth-bound assertions then measure the
-     * implemented bound instead of the default stack size, and the pinned
-     * tuple is asserted on every run.
+     * The deep finite nesting checks descend the production encoder and the
+     * production adapter's seam walk (about two thousand nested frames for
+     * the 1200-deep class chain). The frame sizes depend on the JIT's
+     * compilation state; C1 frames alone need over 1 MiB, so the JVM's
+     * default main-thread stack (1 MiB) can overflow nondeterministically
+     * before a deep document completes. The suite therefore runs on a
+     * dedicated thread with a fixed, generous stack, so the deep-document
+     * assertions measure the implemented walk instead of the default stack
+     * size.
      */
     private static final long WALK_DEPTH_TEST_STACK_BYTES = 32L * 1024 * 1024;
 
@@ -2149,7 +2055,7 @@ public class JsonClassExecutorTest {
         testToJsonFailureTemplateAndOrigin();
         testToJsonCyclesAndDepth();
         testToJsonNoncycleFailureBeforeCycle();
-        testToJsonSelectedFailureBeforeOverDepthTail();
+        testToJsonSelectedFailureBeforeDeepTail();
         testRoundtripAndDefects();
     }
 }

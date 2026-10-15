@@ -490,12 +490,20 @@ public class SharedStdlibSemanticsTest {
         expectParseValue("{\"b\": 2, \"a\": 1}", new Value.Table(ordered),
             "object order follows the text order");
 
-        // Duplicate keys keep the last value and the first position.
-        SemanticTable<Value> duplicate = new SemanticTable<>();
-        duplicate.put("a", new Value.Int(3));
-        duplicate.put("b", new Value.Int(2));
-        expectParseValue("{\"a\": 1, \"b\": 2, \"a\": 3}", new Value.Table(duplicate),
-            "duplicate keys keep the last value and the first position");
+        // A member key whose decoded scalar text equals an earlier key of
+        // the same object is a syntax defect at the second key's opening
+        // quote (escaped spellings compare decoded).
+        expectParseFailure("{\"a\": 1, \"b\": 2, \"a\": 3}", 18, "duplicate key",
+            "a repeated decoded key fails at the second key's opening quote");
+        expectParseFailure("{\"a\":null,\"\\u0061\":1}", 11, "duplicate key",
+            "an escaped spelling of the same decoded key is a duplicate");
+        expectParseFailure("{\"o\":{\"k\":1,\"k\":2}}", 13, "duplicate key",
+            "nested objects track their own decoded keys");
+        SemanticTable<Value> distinct = new SemanticTable<>();
+        distinct.put("a", new Value.Int(1));
+        distinct.put("b", new Value.Int(2));
+        expectParseValue("{\"a\":1,\"b\":2}", new Value.Table(distinct),
+            "distinct decoded keys stay accepted");
 
         // Nested structures.
         SemanticTable<Value> nestedInner = new SemanticTable<>();
@@ -529,23 +537,55 @@ public class SharedStdlibSemanticsTest {
         expectParseValue("2147483648", new Value.Number(2147483648d), "2147483648 → number");
         expectParseValue("-2147483648", new Value.Int(-2147483648), "-2147483648 → int");
         expectParseValue("-2147483649", new Value.Number(-2147483649d), "-2147483649 → number");
-        expectParseValue("1.0", new Value.Number(1.0), "1.0 → number (fraction form)");
-        expectParseValue("1e3", new Value.Number(1000.0), "1e3 → number (exponent form)");
+        expectParseValue("-2147483649.0", new Value.Number(-2147483649d),
+            "an out-of-range negative integral fraction → number");
+        expectParseValue("-9999999999", new Value.Number(-9999999999d),
+            "an out-of-range negative magnitude → number");
+        // The exact decimal classification: an integral mathematical value
+        // inside signed32 is the int, whatever its lexical form.
+        expectParseValue("1.0", new Value.Int(1), "1.0 → int (mathematically integral)");
+        expectParseValue("1e3", new Value.Int(1000), "1e3 → int");
+        expectParseValue("3E2", new Value.Int(300), "uppercase E exponent → int");
+        expectParseValue("100e-2", new Value.Int(1), "100e-2 → int (trailing zeroes cancel)");
+        expectParseValue("0e3", new Value.Int(0), "0e3 → int 0");
+        expectParseValue("0.000", new Value.Int(0), "an all-zero coefficient → int 0");
+        expectParseValue("-0.0", new Value.Int(0), "-0.0 normalizes to int 0");
+        expectParseValue("-2147483648.0", new Value.Int(-2147483648),
+            "the negative signed32 edge in fraction form → int");
+        expectParseValue("2147483647e0", new Value.Int(2147483647),
+            "the positive signed32 edge in exponent form → int");
         expectParseValue("-1.5e-2", new Value.Number(-0.015), "-1.5e-2 → number");
-        expectParseValue("3E2", new Value.Number(300.0), "uppercase E exponent → number");
         expectParseValue("0.5", new Value.Number(0.5), "a fraction with zero int part → number");
-        expectParseValue("0e3", new Value.Number(0.0), "0e3 → number (exponent form)");
         expectParseValue("123456789012345678901234567890",
             new Value.Number(Double.parseDouble("123456789012345678901234567890")),
             "an out-of-range integer lexical form → number");
-
-        // -0.0: a fraction form stays an IEEE number with its sign.
-        Value parsedNegativeZero = ((Outcome.Success<Value>) SharedStdlibSemantics.jsonParse(
-            origin(), valid("-0.0"))).value();
-        check(parsedNegativeZero instanceof Value.Number
-                && Double.doubleToLongBits(((Value.Number) parsedNegativeZero).value())
-                    == Double.doubleToLongBits(-0.0),
-            "-0.0 → number -0.0 (the IEEE value, not the int normalization)");
+        expectParseValue("2147483647.00000001",
+            new Value.Number(Double.parseDouble("2147483647.00000001")),
+            "a fractional token that rounds to an integral double stays a number");
+        expectParseValue("2147483648.0", new Value.Number(2147483648.0),
+            "an out-of-range integral fraction form → number");
+        expectParseValue("1e999999999999999999999",
+            new Value.Number(Double.POSITIVE_INFINITY),
+            "a huge exponent converts to binary64 infinity (no machine overflow)");
+        expectParseValue("0e999999999999999999999", new Value.Int(0),
+            "an all-zero coefficient with a huge exponent → int 0");
+        expectParseValue("1e-999999999999999999999", new Value.Number(0.0),
+            "a tiny exponent converts to binary64 zero");
+        // The exponent magnitude accumulates its digits with bounded
+        // saturation: leading zeroes contribute nothing, so an exponent
+        // text longer than 18 characters whose value is small stays
+        // exactly classified.
+        expectParseValue("1e0000000000000000001", new Value.Int(10),
+            "a zero-padded long exponent → int 10");
+        expectParseValue("1e00000000000000000000", new Value.Int(1),
+            "a zero-valued zero-padded exponent → int 1");
+        expectParseValue("100e-000000000000000000002", new Value.Int(1),
+            "a zero-padded negative exponent → int 1");
+        expectParseValue("-1e0000000000000000001", new Value.Int(-10),
+            "a negative zero-padded long exponent → int -10");
+        expectParseValue("-2147483648e000000000000000000000",
+            new Value.Int(-2147483648),
+            "the negative signed32 edge with a zero-padded exponent → int");
 
         // Round-trip: parse then stringify reproduces the RFC text.
         Outcome<Value> roundTripParse = SharedStdlibSemantics.jsonParse(origin(),
@@ -685,6 +725,14 @@ public class SharedStdlibSemanticsTest {
             Map.of("fieldPath", fieldPath, "actual", carrierToken), origin(), note);
     }
 
+    /** The walk family's closed cycle arm: no parameters and no expected/actual. */
+    private static void expectStringifyCycle(SemanticTable<Value> table, String note) {
+        expectFailure(SharedStdlibSemantics.jsonStringify(origin(), table),
+            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
+            "cyclic value cannot be encoded as JSON", null, null,
+            Map.of(), origin(), note);
+    }
+
     static void testJsonStringifyValues() {
         System.out.println("-- JSON_STRINGIFY: order, escaping, shortest round-trip decimals --");
 
@@ -785,17 +833,24 @@ public class SharedStdlibSemanticsTest {
         expectStringifyFailure(tableOf("arr", Value.array(new Value.Number(Double.NaN))),
             "arr.0", "number", "a nonfinite element projects the number token");
 
-        // A cycle fails on the repeated container.
+        // A path-local container re-entry selects the walk family's closed
+        // cycle arm (no parameters, no expected/actual); a shared acyclic
+        // child is duplicated, never rejected.
         SemanticTable<Value> self = new SemanticTable<>();
         self.put("self", new Value.Table(self));
-        expectStringifyFailure(self, "self", "table",
-            "a table cycle fails on the repeated table");
+        expectStringifyCycle(self, "a table cycle selects the cycle arm");
         SemanticTable<Value> root = new SemanticTable<>();
         SemanticTable<Value> child = new SemanticTable<>();
         child.put("up", new Value.Table(root));
         root.put("a", new Value.Table(child));
-        expectStringifyFailure(root, "a.up", "table",
-            "an indirect cycle fails on the repeated table");
+        expectStringifyCycle(root, "an indirect cycle selects the cycle arm");
+        SemanticTable<Value> shared = new SemanticTable<>();
+        shared.put("v", new Value.Int(1));
+        SemanticTable<Value> aliasRoot = new SemanticTable<>();
+        aliasRoot.put("a", new Value.Table(shared));
+        aliasRoot.put("b", new Value.Table(shared));
+        expectStringify(aliasRoot, "{\"a\":{\"v\":1},\"b\":{\"v\":1}}",
+            "a shared acyclic child is duplicated, never a cycle");
 
         // Acyclic finite data never fails: a deep but finite shape passes.
         SemanticTable<Value> deep = new SemanticTable<>();

@@ -7,13 +7,18 @@
 -- lone surrogates and raw control characters (U+0000-U+001F) are rejected,
 -- and stringify refuses to emit strings that are not scalar-valid UTF-8.
 --
--- Int32 number mapping and stringify shape rejection (v1.2,
--- luajit-v1.2-stdlib-contracts D5): parse maps a JSON number to DEAL int
--- iff it is finite, integral, and inside [-2147483648, 2147483647]
--- (-0 normalizes to 0); every other JSON number maps to number. stringify
--- raises Error on non-JSON-shaped values, including bytes-kind objects
--- (the same explicit bytes arm the JS runtime landed, js-v12-int32-bytes
--- D3); object key order follows Lua iteration order.
+-- Exact decimal classification, decoded-key duplicates, and stringify
+-- shape rejection (DEAL v1.3): parse classifies the numeric lexeme's
+-- exact mathematical decimal value before any binary64 rounding — an
+-- integral value inside [-2147483648, 2147483647] becomes DEAL int
+-- (-0/-0.0 normalize to 0) and every other lexeme becomes number; a
+-- member key whose decoded scalar text equals an earlier key of the same
+-- object is a parse failure ("duplicate key" at the second key's opening
+-- quote). stringify raises Error on non-JSON-shaped values, including
+-- bytes-kind objects (the same explicit bytes arm the JS runtime landed,
+-- js-v12-int32-bytes D3) and a path-local container re-entry (the closed
+-- "cyclic value cannot be encoded as JSON" arm); there is no fixed
+-- nesting-depth bound. Object key order follows Lua iteration order.
 
 local __rt = require("deal.runtime")
 
@@ -69,7 +74,95 @@ local function escape(s, file, line, column)
   end))
 end
 
-local function encode_value(v, file, line, column)
+-- The exact decimal classification of one grammar-valid RFC-8259
+-- numeric lexeme (DEAL v1.3): a token denotes the signed32 integer value
+-- exactly when its mathematical decimal value is integral and inside
+-- [-2147483648, 2147483647]; every other token denotes the binary64
+-- value. Coefficient digits, fraction scale, and exponent combine with
+-- bounded magnitude comparisons (a very long exponent saturates), so no
+-- machine overflow and no input cap can change the decision; -0/-0.0
+-- normalize to the integer 0.
+local function json_int_or_nil(text)
+  local i = 1
+  local neg = false
+  if string.sub(text, 1, 1) == "-" then neg = true; i = 2 end
+  local int_start = i
+  while i <= #text do
+    local b = string.byte(text, i)
+    if b < 48 or b > 57 then break end
+    i = i + 1
+  end
+  local int_end = i - 1
+  local frac_start, frac_end = nil, nil
+  if i <= #text and string.sub(text, i, i) == "." then
+    i = i + 1
+    frac_start = i
+    while i <= #text do
+      local b = string.byte(text, i)
+      if b < 48 or b > 57 then break end
+      i = i + 1
+    end
+    frac_end = i - 1
+  end
+  local expo = 0
+  local exp_neg = false
+  if i <= #text then
+    local e = string.sub(text, i, i)
+    if e == "e" or e == "E" then
+      i = i + 1
+      local c = string.sub(text, i, i)
+      if c == "+" or c == "-" then
+        exp_neg = (c == "-")
+        i = i + 1
+      end
+      -- The exponent magnitude accumulates its digits with bounded
+      -- saturation: leading zeroes contribute nothing, so an exponent
+      -- text longer than 18 characters whose value is small stays exact
+      -- (the shared JsonNumberClassifier rule), and the arithmetic can
+      -- never overflow.
+      local magnitude = 0
+      while i <= #text do
+        local d = string.byte(text, i) - 48
+        if magnitude > (1000000000000 - d) / 10 then
+          magnitude = 1000000000000
+        else
+          magnitude = magnitude * 10 + d
+        end
+        i = i + 1
+      end
+      expo = magnitude
+    end
+  end
+  local digits = string.sub(text, int_start, int_end)
+  if frac_start ~= nil then
+    digits = digits .. string.sub(text, frac_start, frac_end)
+  end
+  local stripped = string.gsub(digits, "^0+", "")
+  if stripped == "" then return 0 end
+  local trailing = 0
+  while string.sub(stripped, #stripped - trailing, #stripped - trailing) == "0" do
+    trailing = trailing + 1
+  end
+  local significant = string.sub(stripped, 1, #stripped - trailing)
+  local frac_len = 0
+  if frac_start ~= nil then frac_len = frac_end - frac_start + 1 end
+  local effective = expo - frac_len + trailing
+  if exp_neg then effective = -expo - frac_len + trailing end
+  if effective < 0 then return nil end
+  if #significant + effective > 10 then return nil end
+  local value = tonumber(significant .. string.rep("0", effective))
+  if value == nil then return nil end
+  -- The signed32 range check compares the unsigned magnitude before the
+  -- sign is applied: negating first would leave the negative branch dead
+  -- for every magnitude in [2147483649, ...] (the shared classifier
+  -- rule: at most 2147483648 may carry the minus sign).
+  local limit = neg and 2147483648 or 2147483647
+  if value > limit then return nil end
+  if neg then value = -value end
+  return value
+end
+
+local function encode_value(v, file, line, column, path)
   if v == __rt.__NULL then
     return 'null'
   end
@@ -98,6 +191,16 @@ local function encode_value(v, file, line, column)
     if v.__kind == "bytes" then
       error(__rt._err("E8001", "unsupported type for JSON encoding: bytes", file, line, column, "string, number, boolean, or table", "bytes"))
     end
+    -- The path-local cycle guard (the walk family's closed cycle arm): a
+    -- container re-entering its own active path is the E8001 cycle
+    -- failure; a repeated acyclic reference is duplicated, never
+    -- rejected. The active set is local per stringify call and every
+    -- entry is removed on the way out.
+    if type(path) ~= "table" then path = {} end
+    if path[v] then
+      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
+    end
+    path[v] = true
     -- Check if it's an array (sequential integer keys starting at 1)
     local isArray = true
     local maxIdx = 0
@@ -111,8 +214,9 @@ local function encode_value(v, file, line, column)
     if isArray and maxIdx > 0 then
       local parts = {}
       for i = 1, maxIdx do
-        parts[#parts + 1] = encode_value(v[i], file, line, column)
+        parts[#parts + 1] = encode_value(v[i], file, line, column, path)
       end
+      path[v] = nil
       return '[' .. table.concat(parts, ',') .. ']'
     else
       local parts = {}
@@ -127,8 +231,9 @@ local function encode_value(v, file, line, column)
         else
           key_str = '"' .. escape(tostring(k), file, line, column) .. '"'
         end
-        parts[#parts + 1] = key_str .. ':' .. encode_value(val, file, line, column)
+        parts[#parts + 1] = key_str .. ':' .. encode_value(val, file, line, column, path)
       end
+      path[v] = nil
       return '{' .. table.concat(parts, ',') .. '}'
     end
   end
@@ -141,7 +246,7 @@ end
 -- bytes, NaN/Infinity, invalid UTF-8 leaves) reports it byte-exact.
 json.stringify = __rt.function_("(table)->string", function(v, file, line, column)
   __rt.check_table(v, file, line, column)
-  return encode_value(v, file, line, column)
+  return encode_value(v, file, line, column, {})
 end)
 
 --- Decode a JSON string to a Lua table. The trailing span triplet
@@ -153,13 +258,15 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   local pos = 1
   local len = #s
 
-  -- Report a parse error with context.
+  -- Report a parse error at the current position, or at an explicit
+  -- position (the duplicate-key defect reports the second key's opening
+  -- quote).
+  local function parse_error_at(where, msg)
+    error(__rt._err("E8001", "JSON parse error at position " .. where .. ": " .. msg,
+      file, line, column, nil, nil))
+  end
   local function parse_error(msg)
-    local ctx_start = math.max(1, pos - 10)
-    local ctx_end = math.min(len, pos + 10)
-    local ctx = s:sub(ctx_start, ctx_end)
-    error(__rt._err("E8001", "JSON parse error at position " .. pos .. ": " .. msg
-      .. " (near '" .. ctx .. "')", file, line, column, nil, nil))
+    parse_error_at(pos, msg)
   end
 
   -- Read four characters as hexadecimal digits; the first result is the
@@ -368,15 +475,16 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     if #num_str == 0 then
       parse_error("invalid number: empty")
     end
+    -- The exact decimal classification (DEAL v1.3): the lexeme's
+    -- mathematical value decides the int/number variant before any
+    -- binary64 rounding; -0/-0.0 normalize to the integer 0.
+    local exact = json_int_or_nil(num_str)
+    if exact ~= nil then
+      return exact
+    end
     local n = tonumber(num_str)
-    -- v1.2 int32 number mapping (luajit-v1.2-stdlib-contracts D5): a JSON
-    -- number maps to DEAL int iff it is finite, integral, and inside
-    -- [-2147483648, 2147483647] (-0 normalizes to 0); every other JSON
-    -- number maps to number. Lua numbers carry both roles, so the int32
-    -- predicate is the mapping decision and the typed-boundary checks
-    -- enforce the range afterwards.
-    if __rt._json_is_int(n) then
-      return n + 0  -- normalize -0 to 0 (the int branch)
+    if n == nil then
+      parse_error("invalid number")
     end
     return n
   end
@@ -384,6 +492,7 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   function parse_object()
     pos = pos + 1 -- skip {
     local obj = {}
+    local seen = {}
     skip_ws()
     if peek() == '}' then
       pos = pos + 1
@@ -392,9 +501,17 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     while true do
       skip_ws()
       if peek() ~= '"' then
-        parse_error("expected string key in object")
+        parse_error("missing key")
       end
+      -- The duplicate-key defect's position is the second key's opening
+      -- quote; decoded equality makes an escaped spelling of the same key
+      -- a duplicate too.
+      local key_start = pos
       local key = parse_string()
+      if seen[key] then
+        parse_error_at(key_start, "duplicate key")
+      end
+      seen[key] = true
       skip_ws()
       expect_char(':')
       obj[key] = parse_value()

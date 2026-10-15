@@ -1,0 +1,16 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.stringify rejects a nonfinite number through the closed JSON_STRINGIFY_UNSUPPORTED arm (v1.3)
+// @expected: runtime-error E8001
+// @features: stdlib, json, nonfinite, v1.3
+
+import * as json from "std/json";
+
+export function test_json_stringify_nonfinite(): string {
+  let t: table = { x: 1.0 };
+  t.x = 1.0 / 0.0;
+  return json.stringify(t);
+}
+
+export function main(): null {
+  return null;
+}

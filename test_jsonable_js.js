@@ -117,6 +117,25 @@ test("jsonToJson serializes declared fields in declaration order", function() {
     "document key order never leaks into the output (source order)");
 });
 
+test("jsonFromJson rejects decoded-key duplicates and rounded fractional int tokens", function() {
+  const fields = [f("age", "int", false, false)];
+  const thunk = () => ({ age: 0 });
+  // A decoded-key duplicate is a parse failure: fromJson collapses it to
+  // the DEAL null (never a partial instance or a parser exception).
+  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":1,"age":2}', ...LOC),
+    "duplicate key");
+  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":null,"\u0061ge":2}', ...LOC),
+    "escaped-equivalent unknown key stays an extra key");
+  // The exact classification admits 1.0/1e0 as int and keeps a
+  // fractional token that rounds to an integral double a number.
+  const ok = rt.jsonFromJson("@m/U", fields, thunk, '{"age":1.0}', ...LOC);
+  assert(ok !== null && ok.age === 1, "1.0 denotes the int value");
+  const okExponent = rt.jsonFromJson("@m/U", fields, thunk, '{"age":1e0}', ...LOC);
+  assert(okExponent !== null && okExponent.age === 1, "1e0 denotes the int value");
+  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":2147483647.00000001}', ...LOC),
+    "a rounded fractional token never satisfies an int field");
+});
+
 test("jsonFromJson applies defaults for omitted fields", function() {
   const fields = [f("name", "string", false, false), f("age", "int", false, false)];
   const thunk = () => ({ name: "", age: 7 });
@@ -364,7 +383,7 @@ test("table fields accept only a JSON object", function() {
   assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":5}', ...LOC), "scalar for a table field");
 });
 
-test("class instances inside table fields keep the D9 std/json encoding", function() {
+test("class instances inside table fields are rejected by the walk arm", function() {
   const fields = [f("data", "table", false, false)];
   const thunk = () => ({ data: rt.makeTable({}) });
   const inner = rt.makeClass("User", "@m/User", () => ({ name: "", nick: rt.MISSING }),
@@ -372,9 +391,11 @@ test("class instances inside table fields keep the D9 std/json encoding", functi
   const u = rt.jsonFromJson("@m/W", fields, thunk, '{"data":{"u":{}}}', ...LOC);
   assert(u !== null, "decode with a table field");
   u.data.set("u", inner);
-  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC),
-    '{"data":{"u":{"__kind":"class","__classname":"@m/User","name":"Ada"}}}',
-    "D9 tags and present fields inside table fields");
+  // Table-field contents stay JSON-shaped: a class instance is not a
+  // JSON value and fails the walk arm at its position (never the D9 tag
+  // encoding).
+  assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
+    "value at data.u is not JSON serializable: @m/User", "class inside table content");
 });
 
 // =========================================================================
@@ -397,14 +418,14 @@ test("jsonToJson: explicit null on a non-nullable field raises E8001", function(
   const u = rt.makeClass("User", "@m/User", () => ({ name: "" }), null, ...LOC);
   rt.setProp(u, "name", null);
   assertError(() => rt.jsonToJson("@m/User", u, fields, ...LOC), "E8001",
-    "explicit null on non-nullable field 'name'", "non-nullable null");
+    "value at name is not JSON serializable: null", "non-nullable null");
 });
 
 test("jsonToJson: a missing required field raises E8001", function() {
   const fields = [f("name", "string", false, false)];
   const u = rt.setProp(rt.setProp({}, "$kind", "class"), "$classname", "@m/User");
   assertError(() => rt.jsonToJson("@m/User", u, fields, ...LOC), "E8001",
-    "missing required field 'name'", "missing required field");
+    "value at name is not JSON serializable: nil", "missing required field");
 });
 
 test("jsonToJson raises E8001 for cyclic class graphs", function() {
@@ -430,10 +451,10 @@ test("jsonToJson raises E8001 for NaN/Infinity number fields", function() {
   const u = rt.makeClass("N", "@m/N", () => ({ x: 0.0 }), null, ...LOC);
   rt.setProp(u, "x", NaN);
   assertError(() => rt.jsonToJson("@m/N", u, fields, ...LOC), "E8001",
-    "cannot encode NaN as JSON", "NaN field");
+    "value at x is not JSON serializable: number", "NaN field");
   rt.setProp(u, "x", Infinity);
   assertError(() => rt.jsonToJson("@m/N", u, fields, ...LOC), "E8001",
-    "cannot encode Infinity as JSON", "Infinity field");
+    "value at x is not JSON serializable: number", "Infinity field");
 });
 
 test("jsonToJson raises E8001 for function values inside table fields", function() {
@@ -441,7 +462,7 @@ test("jsonToJson raises E8001 for function values inside table fields", function
   const u = rt.makeClass("W", "@m/W", () => ({ data: rt.makeTable({}) }), null, ...LOC);
   u.data.set("f", rt.function("()->null", function() { return null; }));
   assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "unsupported type for JSON encoding: function", "function inside table");
+    "value at data.f is not JSON serializable: function", "function inside table");
 });
 
 test("jsonToJson raises E8001 for a non-JSON-shaped table value", function() {
@@ -449,7 +470,7 @@ test("jsonToJson raises E8001 for a non-JSON-shaped table value", function() {
   const u = rt.makeClass("W", "@m/W", () => ({ data: rt.makeTable({}) }), null, ...LOC);
   u.data.set("bad", rt.MISSING);
   assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "unsupported type for JSON encoding", "MISSING inside table");
+    "value at data.bad is not JSON serializable: nil", "MISSING inside table");
 });
 
 test("jsonToJson int fields enforce the boundary (E8004 range)", function() {
@@ -464,19 +485,27 @@ test("jsonToJson int fields enforce the boundary (E8004 range)", function() {
 // Shared D9 conversion members (js-backend-runtime D9 reuse)
 // =========================================================================
 
-test("jsonParseValue/jsonEncodeValue roundtrip the marked Map shapes", function() {
+test("jsonParseText/jsonParseValue/jsonStringifyText roundtrip the marked Map shapes", function() {
   const arr = rt.jsonParseValue([1, 2], ...LOC);
   assert(arr instanceof Map && rt.isJsonArrayTable(arr), "array-marked Map");
   assertEqual(arr.get("2"), 2, "array element by string key");
   const nil = rt.jsonParseValue(null, ...LOC);
   assert(nil instanceof Map && rt.isJsonNullTable(nil), "null-marked Map");
-  assertEqual(rt.jsonEncodeValue(arr, [], ...LOC)[1], 2, "encode back to a JSON array");
-  assertEqual(rt.jsonEncodeValue(nil, [], ...LOC), null, "null-marked Map encodes as null");
+  assertEqual(rt.jsonStringifyText(arr, [], ...LOC), "[1,2]", "encode back to a JSON array");
+  assertEqual(rt.jsonStringifyText(nil, [], ...LOC), "null", "null-marked Map encodes as null");
   const obj = rt.jsonParseValue({ a: [1], n: null }, ...LOC);
   assert(obj instanceof Map && !rt.isJsonArrayTable(obj) && !rt.isJsonNullTable(obj),
     "object Map");
-  const encoded = rt.jsonEncodeValue(obj, [], ...LOC);
-  assertEqual(JSON.stringify(encoded), '{"a":[1],"n":null}', "object form with nested marks");
+  const encoded = rt.jsonStringifyText(obj, [], ...LOC);
+  assertEqual(encoded, '{"a":[1],"n":null}', "object form with nested marks");
+  // The conforming scanner (jsonParseText) classifies exactly and
+  // records the per-slot variant marks consulted by the encode walk.
+  const parsed = rt.jsonParseText('{"i":1.0,"n":1.5}', ...LOC);
+  assertEqual(parsed.i, 1, "1.0 denotes the int value");
+  assertEqual(parsed.n, 1.5, "1.5 stays a number");
+  const parsedMap = rt.jsonParseValue(parsed, ...LOC);
+  assertEqual(rt.jsonStringifyText(parsedMap, [], ...LOC), '{"i":1,"n":1.5}',
+    "the number-variant marks survive the conversion");
 });
 
 // =========================================================================

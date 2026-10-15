@@ -1740,11 +1740,6 @@ end
 -- it returns a boolean and never raises, so the no-throw decode guarantee
 -- and the DEAL-error-only encode contract stay mechanical.
 
--- Maximum walker recursion depth (D5; the JVM emitter's JSON table
--- depth limit is 512: entry at depth 0, every recursive descent
--- increments, depth > 512 rejects).
-__rt._JSON_MAX_DEPTH = 512
-
 --- True iff t is a JSON-object-shaped table: every key is a string
 -- (empty tables qualify). Non-table t is false — the type guard runs
 -- before any iteration, so no predicate can throw.
@@ -1833,20 +1828,20 @@ end
 -- finite numbers, or strings, and whose nested tables satisfy the same
 -- shape. Functions, function wrappers (__kind == "function"), class
 -- instances (__kind == "class"), async handles (__kind == "async"),
--- NaN/Infinity leaves, cycles, and depth overruns are false; empty
--- tables are true. Non-table v is false — the guard runs before any
--- iteration. seen is the path-local set: pushed before recursion,
--- popped on every return (D4). depth counts nesting levels (D5);
--- nil seen/depth default to a fresh set and 0 so the helper is total.
+-- NaN/Infinity leaves, and cycles are false; empty tables are true, and
+-- there is no fixed nesting-depth bound (a finite datum is never
+-- rejected for its depth). Non-table v is false — the guard runs before
+-- any iteration. seen is the path-local set: pushed before recursion,
+-- popped on every return (D4); nil seen defaults to a fresh set so the
+-- helper is total.
 --
--- Second return value (encode-side refinement, D3/D4/D5): a false
--- verdict carries a reason — "cycle" (seen re-entry), "depth" (nesting
--- past __rt._JSON_MAX_DEPTH), or "shape" (any other violation). The
--- boolean first return is the helper's contract — decode-side and
--- predicate callers read only that value, so the helper stays total
--- and non-throwing; the encoder maps the reason to the pinned E8001
--- messages.
-function __rt._json_table_shape(v, seen, depth)
+-- Second return value (encode-side refinement, D3/D4): a false verdict
+-- carries a reason — "cycle" (seen re-entry) or "shape" (any other
+-- violation). The boolean first return is the helper's contract —
+-- decode-side and predicate callers read only that value, so the helper
+-- stays total and non-throwing; the encoder maps the reason to the
+-- pinned E8001 messages.
+function __rt._json_table_shape(v, seen)
   if type(v) ~= "table" then
     return false, "shape"
   end
@@ -1855,12 +1850,6 @@ function __rt._json_table_shape(v, seen, depth)
   end
   if type(seen) ~= "table" then
     seen = {}
-  end
-  if type(depth) ~= "number" then
-    depth = 0
-  end
-  if depth > __rt._JSON_MAX_DEPTH then
-    return false, "depth"
   end
   if seen[v] then
     return false, "cycle"
@@ -1881,7 +1870,7 @@ function __rt._json_table_shape(v, seen, depth)
           break
         end
       elseif type(val) == "table" then
-        local nested_ok, nested_reason = __rt._json_table_shape(val, seen, depth + 1)
+        local nested_ok, nested_reason = __rt._json_table_shape(val, seen)
         if not nested_ok then
           ok = false
           reason = nested_reason or "shape"
@@ -2148,26 +2137,18 @@ end
 -- @param fields     array   array of field descriptor tables
 -- @return tagged instance table on success, or nil on validation failure
 function __rt.json_from_json(descriptor, parsed, defaults, fields)
-  return __rt._json_from_instance(descriptor, parsed, defaults, fields, {}, 0)
+  return __rt._json_from_instance(descriptor, parsed, defaults, fields, {})
 end
 
 --- Decode one class instance (D2 gate order, steps 1-10). Never throws:
 -- every failure path returns nil. seen is the shared path-local set (D4);
--- depth counts walker nesting levels (D5). Nested class decode recurses
--- here with depth + 1, re-running every gate on the nested defaults and
--- fields.
-function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen, depth)
+-- nested class decode recurses here, re-running every gate on the nested
+-- defaults and fields. There is no fixed nesting-depth bound.
+function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
   if type(seen) ~= "table" then
     seen = {}
   end
-  if type(depth) ~= "number" then
-    depth = 0
-  end
-  -- 1. Depth guard (D5): past 512 nesting levels → nil.
-  if depth > __rt._JSON_MAX_DEPTH then
-    return nil
-  end
-  -- 2. Top-level input gate (D2 step 2): only a decoded JSON object may
+  -- 1. Top-level input gate (D2 step 2): only a decoded JSON object may
   -- reach the key gate; the null sentinel is itself a Lua table and is
   -- rejected by identity (the generated wrapper maps nil to __NULL, so
   -- C$fromJson("null") returns the DEAL null).
@@ -2231,7 +2212,7 @@ function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen, de
   for _, f in ipairs(fields) do
     local raw = parsed[f.name]
     if raw ~= nil then
-      local v = __rt._json_from_value(f, raw, seen, depth)
+      local v = __rt._json_from_value(f, raw, seen)
       if v == nil then
         seen[parsed] = nil
         return nil
@@ -2257,13 +2238,10 @@ end
 -- _json_validate_fields gate; element descriptors by the array branch's
 -- re-validation), so jtype is known and field-entry flags are booleans
 -- (an absent element flag reads nil — false semantics). seen is the
--- shared path-local set; depth counts walker nesting levels.
-function __rt._json_from_value(fdesc, raw, seen, depth)
+-- shared path-local set.
+function __rt._json_from_value(fdesc, raw, seen)
   if type(seen) ~= "table" then
     seen = {}
-  end
-  if type(depth) ~= "number" then
-    depth = 0
   end
   if raw == __rt.__NULL then
     -- Explicit JSON null: accepted only on a nullable field/element or a
@@ -2305,12 +2283,9 @@ function __rt._json_from_value(fdesc, raw, seen, depth)
     -- fdesc.fields, the defaults identity gate on fdesc.defaults, the
     -- key gate on the nested object) and pushes raw onto seen.
     return __rt._json_from_instance(fdesc.className, raw, fdesc.defaults,
-        fdesc.fields, seen, depth + 1)
+        fdesc.fields, seen)
   elseif jtype == "array" then
     if type(raw) ~= "table" then
-      return nil
-    end
-    if depth > __rt._JSON_MAX_DEPTH then
       return nil
     end
     -- Dense JSON array shape (holes or mixed keys are rejections; the
@@ -2333,7 +2308,7 @@ function __rt._json_from_value(fdesc, raw, seen, depth)
     seen[raw] = true
     local arr = {}
     for i = 1, #raw do
-      local v = __rt._json_from_value(fdesc.element, raw[i], seen, depth + 1)
+      local v = __rt._json_from_value(fdesc.element, raw[i], seen)
       if v == nil then
         seen[raw] = nil
         return nil
@@ -2353,7 +2328,7 @@ function __rt._json_from_value(fdesc, raw, seen, depth)
     end
     -- The whole datum must be JSON-shaped (finite leaves, acyclic);
     -- _json_table_shape pushes raw onto seen and pops on every return.
-    if not __rt._json_table_shape(raw, seen, depth) then
+    if not __rt._json_table_shape(raw, seen) then
       return nil
     end
     -- Store the validated parsed sub-table by reference (v1.1 aliasing
@@ -2372,10 +2347,7 @@ end
 -- helper reads fields and never mutates value. The trailing span
 -- triplet (ISSUE-0598) is the C$toJson call site: every raise carries
 -- it, so encode-side errors report the toJson call byte-exact.
-function __rt._json_to_instance(descriptor, value, fields, seen, depth, file, line, column)
-  if depth > __rt._JSON_MAX_DEPTH then
-    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
-  end
+function __rt._json_to_instance(descriptor, value, fields, seen, file, line, column)
   -- Recursive rule (D3 step 2): every nested fields array re-runs the
   -- encode descriptor-entry validation before iteration, so validation
   -- depth always equals walker depth and no encode path ever iterates
@@ -2392,7 +2364,7 @@ function __rt._json_to_instance(descriptor, value, fields, seen, depth, file, li
       end
       -- Missing optional field: omit the key from the output
     else
-      result[f.name] = __rt._json_to_value(f, v, seen, depth, file, line, column)
+      result[f.name] = __rt._json_to_value(f, v, seen, file, line, column)
     end
   end
   return result
@@ -2407,10 +2379,7 @@ end
 -- arrays are validated before _json_to_instance iterates them and the
 -- array branch re-validates its element descriptor before element-wise
 -- recursion (D3 step 2 recursive rule).
-function __rt._json_to_value(fdesc, v, seen, depth, file, line, column)
-  if depth > __rt._JSON_MAX_DEPTH then
-    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
-  end
+function __rt._json_to_value(fdesc, v, seen, file, line, column)
   local jtype = fdesc.jtype
   if v == __rt.__NULL then
     -- Explicit null: accepted iff the field/element is nullable or the
@@ -2453,20 +2422,15 @@ function __rt._json_to_value(fdesc, v, seen, depth, file, line, column)
     if type(v) ~= "table" then
       error(__rt._err("E8001", "expected table", file, line, column, "table", type(v)))
     end
-    if depth + 1 > __rt._JSON_MAX_DEPTH then
-      error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
-    end
     -- D7: toJson accepts string-keyed objects and dense arrays with
     -- finite primitive leaves, finite and acyclic. _json_table_shape
     -- shares the walker's path-local seen set, so a datum re-entering
     -- any table on the path (instance, array container, nested table
     -- value) is a cycle.
-    local ok, reason = __rt._json_table_shape(v, seen, depth + 1)
+    local ok, reason = __rt._json_table_shape(v, seen)
     if not ok then
       if reason == "cycle" then
         error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
-      elseif reason == "depth" then
-        error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
       else
         error(__rt._err("E8001", "value is not JSON-shaped", file, line, column, nil, nil))
       end
@@ -2484,7 +2448,7 @@ function __rt._json_to_value(fdesc, v, seen, depth, file, line, column)
       error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
     end
     seen[v] = true
-    local nested = __rt._json_to_instance(fdesc.className, v, fdesc.fields, seen, depth + 1, file, line, column)
+    local nested = __rt._json_to_instance(fdesc.className, v, fdesc.fields, seen, file, line, column)
     seen[v] = nil
     return nested
   elseif jtype == "array" then
@@ -2506,7 +2470,7 @@ function __rt._json_to_value(fdesc, v, seen, depth, file, line, column)
     seen[v] = true
     local arr = {}
     for i = 1, #v do
-      arr[i] = __rt._json_to_value(fdesc.element, v[i], seen, depth + 1, file, line, column)
+      arr[i] = __rt._json_to_value(fdesc.element, v[i], seen, file, line, column)
     end
     seen[v] = nil
     return arr
@@ -2523,8 +2487,8 @@ end
 -- Raises E8001/E8004 DEAL errors (never raw Lua errors) on invalid input:
 -- identity mismatch, malformed descriptors at any nesting depth, wrong
 -- primitive types, explicit null on non-nullable fields/elements, missing
--- required fields, shape violations, non-JSON table values, cycles, and
--- depth overruns (Contract 2).
+-- required fields, shape violations, non-JSON table values, and cycles
+-- (Contract 2).
 --
 -- @param descriptor string  classifier for error messages and __classname tag
 -- @param value      table   tagged class instance table
@@ -2554,7 +2518,7 @@ function __rt.json_to_json(descriptor, value, fields, file, line, column)
   -- below runs for the success path.
   local seen = {}
   seen[value] = true
-  local result = __rt._json_to_instance(descriptor, value, fields, seen, 0, file, line, column)
+  local result = __rt._json_to_instance(descriptor, value, fields, seen, file, line, column)
   seen[value] = nil
   return result
 end

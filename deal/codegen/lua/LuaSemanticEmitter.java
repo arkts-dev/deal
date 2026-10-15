@@ -7188,7 +7188,6 @@ public final class LuaSemanticEmitter {
 -- backslash bytes are emitted through string.char.
 local __JSONSYNTAX = setmetatable({}, {__tostring = function() return "json-syntax" end})
 local __JNULL = setmetatable({}, {__tostring = function() return "json-null" end})
-local __JSON_MAX_DEPTH = 512
 local __plans = {}
 local __BS = string.char(92)
 local __QT = string.char(34)
@@ -7302,9 +7301,7 @@ local function __jsonParse(s)
     else
       return nil
     end
-    local integral = true
     if pos <= len and string.sub(s, pos, pos) == "." then
-      integral = false
       pos = pos + 1
       if pos > len or not string.match(string.sub(s, pos, pos), "%d") then
         return nil
@@ -7316,7 +7313,6 @@ local function __jsonParse(s)
     if pos <= len then
       local e = string.sub(s, pos, pos)
       if e == "e" or e == "E" then
-        integral = false
         pos = pos + 1
         local sg = string.sub(s, pos, pos)
         if sg == "+" or sg == "-" then pos = pos + 1 end
@@ -7331,22 +7327,23 @@ local function __jsonParse(s)
     local text = string.sub(s, start, pos - 1)
     local value = tonumber(text)
     if value == nil then return nil end
-    if integral and value >= -2147483648 and value <= 2147483647 then
-      -- The signed32 integer lexical form: the int variant with -0
-      -- normalized to 0 (the shared parser's exact rule).
-      if value == 0 then value = 0 end
-      return value, false
+    local exact = __jsonIntOrNil(text)
+    if exact ~= nil then
+      -- The exact decimal classification: the lexeme's mathematical
+      -- value is integral and inside signed32, so it is the int variant
+      -- (-0/-0.0 normalized to 0); every other lexeme is the number
+      -- variant.
+      return exact, false
     end
     return value, true
   end
-  parseValue = function(depth)
-    if depth > __JSON_MAX_DEPTH then return nil end
+  parseValue = function()
     skipws()
     if pos > len then return nil end
     local c = string.sub(s, pos, pos)
     if c == "{" then
       pos = pos + 1
-      local obj = {__jo = true, __jkeys = {}, __jnum = {}}
+      local obj = {__jo = true, __jkeys = {}, __jnum = {}, __jseen = {}}
       skipws()
       if pos <= len and string.sub(s, pos, pos) == "}" then
         pos = pos + 1
@@ -7355,14 +7352,19 @@ local function __jsonParse(s)
       while true do
         skipws()
         if pos > len or string.sub(s, pos, pos) ~= __QT then return nil end
+        -- The decoded-key duplicate rule: a member key whose decoded
+        -- scalar text equals an earlier member key of the same object is
+        -- a parse defect (an escaped spelling included).
         local key = parseString()
         if key == nil then return nil end
+        if obj.__jseen[key] then return nil end
+        obj.__jseen[key] = true
         skipws()
         if pos > len or string.sub(s, pos, pos) ~= ":" then return nil end
         pos = pos + 1
-        local value, numberVariant = parseValue(depth + 1)
+        local value, numberVariant = parseValue()
         if value == nil then return nil end
-        if obj[key] == nil then obj.__jkeys[#obj.__jkeys + 1] = key end
+        obj.__jkeys[#obj.__jkeys + 1] = key
         obj[key] = value
         if numberVariant then obj.__jnum[key] = true else obj.__jnum[key] = nil end
         skipws()
@@ -7381,7 +7383,7 @@ local function __jsonParse(s)
         return arr
       end
       while true do
-        local value, numberVariant = parseValue(depth + 1)
+        local value, numberVariant = parseValue()
         if value == nil then return nil end
         arr.__n = arr.__n + 1
         arr[arr.__n] = value
@@ -7613,8 +7615,7 @@ end
 -- read/write/JSON_STRINGIFY consumers. The nested @jsonable class arm
 -- decodes through the nested class's own plan (the same phase order).
 local __jsonDecodeClass
-local function __jsonDecodeRaw(desc, v, depth, numberVariant)
-  if depth > __JSON_MAX_DEPTH then return false end
+local function __jsonDecodeRaw(desc, v, numberVariant)
   local kind, inner = __jsonKindOf(desc)
   if kind == "null" then
     if v == __JNULL then return true, nil end
@@ -7645,7 +7646,7 @@ local function __jsonDecodeRaw(desc, v, depth, numberVariant)
     local out = {__a = true, __n = v.__n, __nK = {}}
     for i = 1, v.__n do
       local ok, element, elementVariant =
-        __jsonDecodeRaw(inner, v[i], depth + 1, v.__jnum[i] == true)
+        __jsonDecodeRaw(inner, v[i], v.__jnum[i] == true)
       if not ok then return false end
       out[i] = (element == nil) and __NULL or element
       if elementVariant == "number" then out.__nK[i] = true end
@@ -7653,7 +7654,7 @@ local function __jsonDecodeRaw(desc, v, depth, numberVariant)
     return true, out
   elseif kind == "nullable" then
     if v == __JNULL then return true, nil end
-    return __jsonDecodeRaw(inner, v, depth, numberVariant)
+    return __jsonDecodeRaw(inner, v, numberVariant)
   elseif kind == "class" then
     -- The nested @jsonable class decode (K-D8 step 6): the nested
     -- class's own plan drives the same phase order, and its omitted
@@ -7666,7 +7667,7 @@ local function __jsonDecodeRaw(desc, v, depth, numberVariant)
     end
     if __jsonIsArray(v) and v.__n == 0 then v = __jsonEmptyObject() end
     if not __jsonIsObject(v) then return false end
-    local ok, inst = __jsonDecodeClass(nested, v, depth + 1)
+    local ok, inst = __jsonDecodeClass(nested, v)
     if not ok then return false end
     return true, inst
   end
@@ -7690,8 +7691,7 @@ end
 -- functions), the final descriptor validation, and the tagged
 -- instance. Shared by the top-level walk and the nested @jsonable class
 -- field decode (the nested plan's own walk).
-__jsonDecodeClass = function(plan, doc, depth)
-  if depth > __JSON_MAX_DEPTH then return false end
+__jsonDecodeClass = function(plan, doc)
   local fields = plan.fields
   for i = 1, #doc.__jkeys do
     if not __jsonKnownField(plan, doc.__jkeys[i]) then return false end
@@ -7701,7 +7701,7 @@ __jsonDecodeClass = function(plan, doc, depth)
   for i = 1, #fields do
     local f = fields[i]
     if doc[f.name] ~= nil then
-      local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name], depth,
+      local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name],
         doc.__jnum[f.name] == true)
       if not ok then return false end
       values[f.name] = decoded
@@ -7737,17 +7737,16 @@ local function __jsonFromClassOp(planName, text)
   if doc == __JSONSYNTAX or doc == __JNULL then return nil end
   if __jsonIsArray(doc) and doc.__n == 0 then doc = __jsonEmptyObject() end
   if not __jsonIsObject(doc) then return nil end
-  local ok, inst = __jsonDecodeClass(plan, doc, 0)
+  local ok, inst = __jsonDecodeClass(plan, doc)
   if not ok then return nil end
   return inst
 end
 -- The JSON_TO_CLASS walk: (true, text) or (false, nil, armId,
 -- parameters, actual) for the JSON_TO_ERROR projection. Table fields
 -- serialize their present keys in first-insertion order (the shared Lua
--- table carrier's __order discipline), and every class/table/array
--- recursion carries the shared JSON walk depth bound (the oracle's
--- JSON_MAX_DEPTH semantics: a container whose depth exceeds the bound
--- fails through the walk arm with its own token and field path).
+-- table carrier's __order discipline); there is no fixed nesting-depth
+-- bound, and a path-local container re-entry is the walk family's cycle
+-- arm.
 -- The innermost active call's origin, or the fallback: the generated
 -- C$toJson body's JSON_TO_ERROR projection renders the call that
 -- invoked it, never the generated body's synthetic anchor.
@@ -7789,8 +7788,7 @@ local function __jsonToClassOp(planName, root)
   local encodeTableValue
   local encodeArrayValue
   local encodeClass
-  encodeTableValue = function(tv, tpath, visited, depth)
-    if depth > __JSON_MAX_DEPTH then return fail(tpath, tv) end
+  encodeTableValue = function(tv, tpath, visited)
     if visited[tv] then return cycle() end
     visited[tv] = true
     -- The carrier's first-insertion order (the __order discipline every
@@ -7847,13 +7845,11 @@ local function __jsonToClassOp(planName, root)
         out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
       elseif type(element) == "table" then
         if element.__a then
-          local nested = encodeArrayValue(element, elementPath, visited, nil,
-            depth + 1)
+          local nested = encodeArrayValue(element, elementPath, visited, nil)
           if nested == nil then return nil end
           out[#out + 1] = nested
         elseif element.__t then
-          local nested = encodeTableValue(element, elementPath, visited,
-            depth + 1)
+          local nested = encodeTableValue(element, elementPath, visited)
           if nested == nil then return nil end
           out[#out + 1] = nested
         else
@@ -7867,8 +7863,7 @@ local function __jsonToClassOp(planName, root)
     out[#out + 1] = "}"
     return table.concat(out)
   end
-  encodeArrayValue = function(av, apath, visited, edesc, depth)
-    if depth > __JSON_MAX_DEPTH then return fail(apath, av) end
+  encodeArrayValue = function(av, apath, visited, edesc)
     if visited[av] then return cycle() end
     visited[av] = true
     local marks = av.__nK
@@ -7906,8 +7901,7 @@ local function __jsonToClassOp(planName, root)
             k = (marks ~= nil and marks[i] == true) and "number" or "int",
             d = element}
         end
-        local encoded = encodeField(edesc, declared, elementPath, visited,
-          depth + 1)
+        local encoded = encodeField(edesc, declared, elementPath, visited)
         if encoded == nil then return nil end
         out[#out + 1] = encoded
       elseif element == nil then out[#out + 1] = "null"
@@ -7937,13 +7931,11 @@ local function __jsonToClassOp(planName, root)
         out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
       elseif type(element) == "table" then
         if element.__a then
-          local nested = encodeArrayValue(element, elementPath, visited, nil,
-            depth + 1)
+          local nested = encodeArrayValue(element, elementPath, visited, nil)
           if nested == nil then return nil end
           out[#out + 1] = nested
         elseif element.__t then
-          local nested = encodeTableValue(element, elementPath, visited,
-            depth + 1)
+          local nested = encodeTableValue(element, elementPath, visited)
           if nested == nil then return nil end
           out[#out + 1] = nested
         else
@@ -7969,8 +7961,7 @@ local function __jsonToClassOp(planName, root)
   -- spelled as JSON null, and every present field encoded per its
   -- declared descriptor. The class instance enters the path-local
   -- visited set, so a class re-entry on the path is the cycle needle.
-  encodeClass = function(instance, classId, cpath, visited, depth)
-    if depth > __JSON_MAX_DEPTH then return fail(cpath, instance) end
+  encodeClass = function(instance, classId, cpath, visited)
     if type(instance) ~= "table" or instance.__c ~= true
         or instance.__id ~= classId then
       return fail(cpath, instance)
@@ -8007,7 +7998,7 @@ local function __jsonToClassOp(planName, root)
         -- (the typed-boundary projection classifies the value as null,
         -- never as the sentinel's table spelling).
         if value == __NULL then value = nil end
-        local encoded = encodeField(f.desc, value, fieldPath, visited, depth)
+        local encoded = encodeField(f.desc, value, fieldPath, visited)
         if encoded == nil then return nil end
         if not first then out[#out + 1] = "," end
         first = false
@@ -8019,8 +8010,7 @@ local function __jsonToClassOp(planName, root)
     out[#out + 1] = "}"
     return table.concat(out)
   end
-  encodeField = function(desc, v, path, visited, depth)
-    if depth > __JSON_MAX_DEPTH then return fail(path, v) end
+  encodeField = function(desc, v, path, visited)
     local kind, inner = __jsonKindOf(desc)
     if kind == "null" then
       if v == nil then return "null" end
@@ -8069,15 +8059,15 @@ local function __jsonToClassOp(planName, root)
       return __QT .. __jsonEscapeString(v) .. __QT
     elseif kind == "nullable" then
       if v == nil then return "null" end
-      return encodeField(inner, v, path, visited, depth)
+      return encodeField(inner, v, path, visited)
     elseif kind == "table" then
       if type(v) ~= "table" or v.__t ~= true then return fail(path, v) end
-      return encodeTableValue(v, path, visited, depth)
+      return encodeTableValue(v, path, visited)
     elseif kind == "array" then
       if type(v) ~= "table" or v.__a ~= true then return fail(path, v) end
-      return encodeArrayValue(v, path, visited, inner, depth)
+      return encodeArrayValue(v, path, visited, inner)
     elseif kind == "class" then
-      return encodeClass(v, inner, path, visited, depth + 1)
+      return encodeClass(v, inner, path, visited)
     end
     return fail(path, v)
   end
@@ -8086,7 +8076,7 @@ local function __jsonToClassOp(planName, root)
     fail("", root)
     return failure()
   end
-  local encodedRoot = encodeClass(root, plan.classId, "", {}, 0)
+  local encodedRoot = encodeClass(root, plan.classId, "", {})
   if not encodedRoot then
     return failure()
   end
@@ -11454,6 +11444,93 @@ local function __subseqIndexOf(hay, needle, from)
   end
   return -1
 end
+-- The one exact decimal classification of the RFC-8259 numeric lexemes
+-- (DEAL v1.3 JSON number classification): a token denotes the signed32
+-- integer value exactly when its mathematical decimal value is integral
+-- and inside [-2147483648, 2147483647]; every other token denotes the
+-- binary64 value of the standard conversion. Coefficient digits, fraction
+-- scale, and exponent combine with bounded magnitude comparisons (a very
+-- long exponent saturates), so no machine overflow and no input cap can
+-- change the decision, and '-0'/-0.0 normalize to the integer 0.
+local function __jsonIntOrNil(text)
+  local i = 1
+  local neg = false
+  if string.sub(text, 1, 1) == "-" then neg = true; i = 2 end
+  local intStart = i
+  while i <= #text do
+    local b = string.byte(text, i)
+    if b < 48 or b > 57 then break end
+    i = i + 1
+  end
+  local intEnd = i - 1
+  local fracStart, fracEnd = nil, nil
+  if i <= #text and string.sub(text, i, i) == "." then
+    i = i + 1
+    fracStart = i
+    while i <= #text do
+      local b = string.byte(text, i)
+      if b < 48 or b > 57 then break end
+      i = i + 1
+    end
+    fracEnd = i - 1
+  end
+  local expo = 0
+  local expNeg = false
+  if i <= #text then
+    local e = string.sub(text, i, i)
+    if e == "e" or e == "E" then
+      i = i + 1
+      local c = string.sub(text, i, i)
+      if c == "+" or c == "-" then
+        expNeg = (c == "-")
+        i = i + 1
+      end
+      -- The exponent magnitude accumulates its digits with bounded
+      -- saturation: leading zeroes contribute nothing, so an exponent
+      -- text longer than 18 characters whose value is small stays exact
+      -- (the shared JsonNumberClassifier rule), and the arithmetic can
+      -- never overflow.
+      local magnitude = 0
+      while i <= #text do
+        local d = string.byte(text, i) - 48
+        if magnitude > (1000000000000 - d) / 10 then
+          magnitude = 1000000000000
+        else
+          magnitude = magnitude * 10 + d
+        end
+        i = i + 1
+      end
+      expo = magnitude
+    end
+  end
+  local digits = string.sub(text, intStart, intEnd)
+  if fracStart ~= nil then
+    digits = digits .. string.sub(text, fracStart, fracEnd)
+  end
+  local stripped = string.gsub(digits, "^0+", "")
+  if stripped == "" then return 0 end
+  local trailing = 0
+  while string.sub(stripped, #stripped - trailing, #stripped - trailing) == "0" do
+    trailing = trailing + 1
+  end
+  local significant = string.sub(stripped, 1, #stripped - trailing)
+  local fracLen = 0
+  if fracStart ~= nil then fracLen = fracEnd - fracStart + 1 end
+  local effective = expo - fracLen + trailing
+  if expNeg then effective = -expo - fracLen + trailing end
+  if effective < 0 then return nil end
+  if #significant + effective > 10 then return nil end
+  local value = tonumber(significant .. string.rep("0", effective))
+  if value == nil then return nil end
+  -- The signed32 range check compares the unsigned magnitude before the
+  -- sign is applied: negating first would leave the negative branch dead
+  -- for every magnitude in [2147483649, ...] (the shared classifier
+  -- rule: at most 2147483648 may carry the minus sign).
+  local limit = neg and 2147483648 or 2147483647
+  if value > limit then return nil end
+  if neg then value = -value end
+  return value
+end
 -- The in-target realization of the closed stdlib table: the parameter
 -- boundaries already ran, so the carriers are boundary-admitted (valid
 -- scalar strings, integral numbers, tables). The invoking op's event
@@ -11592,9 +11669,12 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       consumed = consumed + __u8len(cp)
       return cp
     end
-    local function parseFail(reason)
+    local function parseFailAt(offset, reason)
       __sfail("JSON_PARSE_ERROR",
-        {oneBasedByteOffset = consumed + 1, reason = reason}, nil, nil)
+        {oneBasedByteOffset = offset, reason = reason}, nil, nil)
+    end
+    local function parseFail(reason)
+      parseFailAt(consumed + 1, reason)
     end
     local function skipWs()
       while not atEnd() do
@@ -11676,13 +11756,20 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local function parseObject()
       advance()
       local t = {__t = true, __keys = {}, __order = {}}
+      local seen = {}
       skipWs()
       if not atEnd() and peek() == 125 then advance(); return t end
       while true do
         skipWs()
         if atEnd() then parseFail("unexpected end of input") end
         if peek() ~= 34 then parseFail("missing key") end
+        -- The duplicate-key defect's position is the second key's opening
+        -- quote (one-based UTF-8 byte offset); decoded equality makes an
+        -- escaped spelling of the same key a duplicate too.
+        local keyStart = consumed + 1
         local key = parseString()
+        if seen[key] then parseFailAt(keyStart, "duplicate key") end
+        seen[key] = true
         skipWs()
         if atEnd() or peek() ~= 58 then parseFail("missing colon") end
         advance()
@@ -11727,7 +11814,6 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       if atEnd() then parseFail("invalid number") end
       local c = peek()
       if c < 48 or c > 57 then parseFail("invalid number") end
-      local integerForm = true
       if c == 48 then
         advance()
         if not atEnd() and peek() >= 48 and peek() <= 57 then
@@ -11738,38 +11824,20 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         while not atEnd() and peek() >= 48 and peek() <= 57 do advance() end
       end
       if not atEnd() and peek() == 46 then
-        integerForm = false
         advance()
         if atEnd() or peek() < 48 or peek() > 57 then parseFail("invalid number") end
         while not atEnd() and peek() >= 48 and peek() <= 57 do advance() end
       end
       if not atEnd() and (peek() == 101 or peek() == 69) then
-        integerForm = false
         advance()
         if not atEnd() and (peek() == 43 or peek() == 45) then advance() end
         if atEnd() or peek() < 48 or peek() > 57 then parseFail("invalid number") end
         while not atEnd() and peek() >= 48 and peek() <= 57 do advance() end
       end
       local text = string.sub(s, startPos, pos - 1)
-      if integerForm then
-        local ds = text
-        if neg then ds = string.sub(text, 2) end
-        local sig = ds
-        while #sig > 1 and string.sub(sig, 1, 1) == "0" do
-          sig = string.sub(sig, 2)
-        end
-        local outOfRange = false
-        if #sig > 10 then
-          outOfRange = true
-        elseif #sig == 10 then
-          local limit = neg and "2147483648" or "2147483647"
-          outOfRange = sig > limit
-        end
-        if not outOfRange then
-          local value = tonumber(text)
-          if value == 0 then value = 0 end
-          return {__jn = true, k = "int", d = value}
-        end
+      local exact = __jsonIntOrNil(text)
+      if exact ~= nil then
+        return {__jn = true, k = "int", d = exact}
       end
       return {__jn = true, k = "number", d = tonumber(text)}
     end
@@ -11803,6 +11871,12 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       local actual = __stdJsonKind(v)
       __sfail("JSON_STRINGIFY_UNSUPPORTED", {actual = actual},
         __arms.JSON_STRINGIFY_UNSUPPORTED.p, actual)
+    end
+    -- The walk family's closed cycle arm: a path-local container re-entry
+    -- is a JSON_TO_ERROR failure with no parameters and no expected/actual
+    -- (the needle's own fact selects the arm, never a token comparison).
+    local function sfCycle()
+      __sfail("JSON_TO_WALK_CYCLE", nil, nil, nil)
     end
     local sfValue
     -- The number slot flag is the written slot's recorded static kind
@@ -11840,7 +11914,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           return
         end
         if v.__a then
-          if path[v] then sfFail(v); return end
+          if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "["
           local marks = v.__nK
@@ -11862,7 +11936,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         end
         local ns = __nsSurfaces[v]
         if ns ~= nil then
-          if path[v] then sfFail(v); return end
+          if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "{"
           for i = 1, #ns.order do
@@ -11881,7 +11955,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           return
         end
         if v.__t then
-          if path[v] then sfFail(v); return end
+          if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "{"
           local marks = v.__nK
