@@ -8153,13 +8153,22 @@ end
 -- runtime-representation value built from the source representation's own
 -- complete field map — the identity text is the crossing position's
 -- declared descriptor, a nested pointer field is projected by the same
--- rule, and a pointer token's own __ptr is carried. The source value is
--- never mutated; a value already carrying the runtime representation
--- passes through. No null mapping exists inside this bridge: C_STRUCT and
--- C_POINTER positions are non-nullable by the declaration policy.
+-- rule, and a pointer token's own __ptr is carried. The builtin Error
+-- carrier (__d) projects to the loaded matcher's own Error instance shape
+-- — the canonical Error identity tag plus the declared code/message
+-- fields — so the declared Error position's cell admits it, and a nested
+-- Error field of a projected class value takes the same projection. The
+-- source value is never mutated; a value already carrying the runtime
+-- representation passes through. No null mapping exists inside this
+-- bridge: C_STRUCT and C_POINTER positions are non-nullable by the
+-- declaration policy.
 local function __hostClassProject(desc, v)
   if type(v) ~= "table" then return v end
   if v.__kind == "class" then return v end
+  if v.__d then
+    return {__kind = "class", __classname = "Error",
+            code = v.code, message = v.m}
+  end
   if not v.__c then return v end
   local out = {__kind = "class", __classname = desc}
   if v.__ptr ~= nil then out.__ptr = v.__ptr end
@@ -8167,6 +8176,8 @@ local function __hostClassProject(desc, v)
     for k, val in pairs(v.__f) do
       if type(val) == "table" and val.__c then
         out[k] = __hostClassProject(val.__id, val)
+      elseif type(val) == "table" and val.__d then
+        out[k] = __hostClassProject("Error", val)
       else
         out[k] = val
       end
@@ -8178,14 +8189,23 @@ end
 -- identity text tags one fresh chunk-representation value whose declared
 -- field set is the runtime instance's own non-tag keys (its phase-1
 -- admission and phase-2 fill make them exactly the declared fields) and
--- whose pointer token carries its pointer. The source value is never
--- mutated; a value already carrying the chunk representation passes
--- through. The projection runs before the crossing's events, so the trace
--- observes exactly one heap value per class-typed crossing.
+-- whose pointer token carries its pointer. The loaded runtime's builtin
+-- Error instance (its own class representation, __kind/__classname with
+-- the declared code/message fields) projects to the chunk's own Error
+-- carrier (__d with the carrier's code/m slots) — the shape every
+-- emitted Error read and boundary check observes — so the canonical
+-- Error descriptor's declared round-trip keeps one representation on the
+-- DEAL side. The source value is never mutated; a value already carrying
+-- the chunk representation passes through. The projection runs before the
+-- crossing's events, so the trace observes exactly one heap value per
+-- class-typed crossing.
 local function __hostDealProject(desc, v, origin)
   if type(v) ~= "table" then return v end
   if v.__c then return v end
   if v.__kind ~= "class" then return v end
+  if desc == "Error" and v.__classname == "Error" then
+    return {__d = true, code = v.code, m = v.message}
+  end
   if v.__classname ~= desc then
     -- The bridge guard keeps its landed E8010 code while its text is the
     -- identity arm's own template (no composed spelling).

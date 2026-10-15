@@ -81,6 +81,7 @@ public class HostModuleLoadEmissionTest {
     private static final String CFG_SPECIFIER = "host/cfg";
     private static final String MISSING_SPECIFIER = "host/missing_export";
     private static final String ARRAY_SPECIFIER = "host/array_probe";
+    private static final String ERROR_SPECIFIER = "host/error_probe";
 
     /** The host ABI declaration: scalar, array, function, bytes, and async positions. */
     private static final String ABI_DECLARATION_SOURCE = """
@@ -224,6 +225,116 @@ public class HostModuleLoadEmissionTest {
         }
         """;
 
+    /**
+     * The declared Error host surface (ISSUE-0787 DescriptorV13 host
+     * control): the canonical builtin Error atom as a declared parameter
+     * and return in both directions, a recursive Error field of a declared
+     * host class, and the superseded identity aliases a host could spell.
+     */
+    private static final String ERROR_DECLARATION_SOURCE = """
+        export function echo(e: Error): Error;
+        export function make(): Error;
+        export function aliased(): Error;
+        export function builtinAliased(): Error;
+        export class Holder {
+          e: Error;
+        }
+        export function wrap(e: Error): Holder;
+        export function observe(v: Holder): Error;
+        """;
+
+    /** The imported Error-host drive: the round-trip summary and the aliases. */
+    private static final String ERROR_APP_SOURCE = """
+        import * as err from "host/error_probe";
+
+        export function drive(): string {
+          let seed: Error = { code: "E_H", message: "hm" };
+          let echoed: Error = err.echo(seed);
+          let made: Error = err.make();
+          let holder: err.Holder = err.wrap(seed);
+          let nested: Error = err.observe(holder);
+          return echoed.code + ":" + echoed.message + ":" + made.code + ":"
+            + made.message + ":" + nested.code + ":" + nested.message;
+        }
+
+        export function aliasRejected(): Error {
+          return err.aliased();
+        }
+
+        export function builtinAliasRejected(): Error {
+          return err.builtinAliased();
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed LuaJIT host implementation of host/error_probe: every
+     * crossing position admits the loaded matcher's runtime Error instance
+     * shape only (the declared code/message fields), transforms the value
+     * so the DEAL side observes the host's own input, and returns the
+     * runtime representation — the two superseded v1.2 identity aliases
+     * included, so the wrapper's canonical matcher must refuse them.
+     */
+    private static final String ERROR_LUA = """
+        local function runtimeError(e)
+          if type(e) ~= "table" or e.__kind ~= "class"
+              or e.__classname ~= "Error" then
+            return nil
+          end
+          return e
+        end
+        return {
+          echo = function(e)
+            if runtimeError(e) == nil then
+              error("host echo: the parameter is not the runtime Error instance", 0)
+            end
+            return { __kind = "class", __classname = "Error",
+                     code = "R:" .. e.code, message = e.message }
+          end,
+          make = function()
+            return { __kind = "class", __classname = "Error",
+                     code = "E_M", message = "mm" }
+          end,
+          aliased = function()
+            return { __kind = "class", __classname = "@/Error",
+                     code = "E_A", message = "am" }
+          end,
+          builtinAliased = function()
+            return { __kind = "class", __classname = "@$builtin/Error",
+                     code = "E_B", message = "bm" }
+          end,
+          Holder = { __kind = "class",
+                     __classname = "@$external/host/error_probe/Holder" },
+          Holder_defaults = { e = nil },
+          wrap = function(e)
+            if runtimeError(e) == nil then
+              error("host wrap: the parameter is not the runtime Error instance", 0)
+            end
+            return { __kind = "class",
+                     __classname = "@$external/host/error_probe/Holder",
+                     e = { __kind = "class", __classname = "Error",
+                           code = "W:" .. e.code, message = e.message } }
+          end,
+          observe = function(v)
+            if type(v) ~= "table" or v.__kind ~= "class"
+                or v.__classname ~= "@$external/host/error_probe/Holder" then
+              error("host observe: the parameter is not the runtime Holder "
+                .. "instance", 0)
+            end
+            local inner = v.e
+            if runtimeError(inner) == nil then
+              error("host observe: the nested field is not the runtime Error "
+                .. "instance", 0)
+            end
+            return { __kind = "class", __classname = "Error",
+                     code = "O:" .. inner.code, message = inner.message }
+          end,
+        }
+        """;
+
     private record Fixture(
         Path root,
         CheckedProjectInput checkedProject,
@@ -351,6 +462,14 @@ public class HostModuleLoadEmissionTest {
         sources.put("src/app.deal", ARRAY_APP_SOURCE);
         return compileProject(sources,
             Map.of(ARRAY_SPECIFIER, "src/array_probe.d.deal"));
+    }
+
+    private static Fixture errorFixture() throws Exception {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/error_probe.d.deal", ERROR_DECLARATION_SOURCE);
+        sources.put("src/app.deal", ERROR_APP_SOURCE);
+        return compileProject(sources,
+            Map.of(ERROR_SPECIFIER, "src/error_probe.d.deal"));
     }
 
     private static SemanticLowerer.ProjectLoweringResult lower(Fixture fixture) {
@@ -572,6 +691,105 @@ public class HostModuleLoadEmissionTest {
             CFG_LUA.replace("describe = function(s)",
                 "Endpoint_fields = 42, describe = function(s)"),
             fieldsMessage, cfgOrigin, "cfg-non-table-fields");
+    }
+
+    /**
+     * The LuaJIT host-Error crossing (ISSUE-0787 DescriptorV13, the
+     * canonical Error descriptor's host boundary): one DEAL Error value
+     * crosses the declared host parameter and return cells in both
+     * directions — the loaded matcher's runtime Error instance carrying
+     * the declared code/message fields on the host side and the chunk's
+     * own Error carrier on the DEAL side, recursively through a declared
+     * host class's Error field — while the superseded v1.2 identity
+     * aliases fail with the pinned E8010 and no fallback identity.
+     */
+    private static void testLuaErrorCrossing(Baseline fixture) throws Exception {
+        System.out.println("-- the LuaJIT host Error crossing: the canonical Error "
+            + "atom round-trips through the declared host cells and the "
+            + "superseded aliases are refused --");
+        Path workspace = Files.createTempDirectory("host-error-lua");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
+            if (result.project() == null) {
+                fail("the host-Error fixture lowers: " + result.diagnostics());
+                return;
+            }
+            Path artifact = workspace.resolve("project.lua");
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
+            deployRuntime(workspace);
+            writeFileIn(workspace, "host/error_probe.lua", ERROR_LUA);
+            Path probe = workspace.resolve("probe.lua");
+            Files.writeString(probe, luaErrorProbe(artifact), StandardCharsets.UTF_8);
+            ProcessOutcome run = runProcess(List.of("luajit",
+                probe.toAbsolutePath().toString()), workspace, true);
+            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
+                "the Error host crossing round-trips through the declared cells "
+                    + "and the aliases fail with the pinned E8010: exit="
+                    + run.exitCode() + " stdout=" + escaped(run.stdout())
+                    + " stderr=" + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /**
+     * The LuaJIT host-Error probe: the round-trip summary (the host's own
+     * transformed values read back through the DEAL Error carrier's fields),
+     * the canonical-shaped superseded alias's exact E8010 refusal, and the
+     * $builtin-namespace spelling's fail-closed non-admission.
+     */
+    private static String luaErrorProbe(Path artifact) {
+        return """
+            local function fail(message)
+              print("PROBE-FAIL: " .. message)
+              os.exit(1)
+            end
+            dofile(%s)
+            local ok, err = __dealMain()
+            if not ok then
+              fail("the init walk failed: "
+                .. tostring(type(err) == "table" and err.m or err))
+            end
+            local surface = __exportSurfaces["app"]
+            local summary = surface["drive"].f()
+            if summary ~= "R:E_H:hm:E_M:mm:O:W:E_H:hm" then
+              fail("the Error round-trip summary: " .. tostring(summary))
+            end
+            local function rejected(name, alias)
+              local ok2, e = pcall(surface[name].f)
+              if ok2 then
+                fail(name .. ": the superseded alias " .. alias .. " was admitted")
+              end
+              if type(e) ~= "table" or e.__d ~= true then
+                fail(name .. ": the failure is not the DEAL Error carrier: "
+                  .. tostring(e))
+              end
+              if e.code ~= "E8010" then
+                fail(name .. ": code " .. tostring(e.code))
+              end
+              if e.e ~= "Error" then
+                fail(name .. ": expected " .. tostring(e.e))
+              end
+              if e.m ~= "return value 1 type mismatch: expected instance of "
+                  .. "Error, got " .. alias then
+                fail(name .. ": message " .. tostring(e.m))
+              end
+            end
+            rejected("aliasRejected", "@/Error")
+            -- The $builtin namespace is no canonical class atom at all,
+            -- so the crossing fails closed and never admits the value as
+            -- an Error (no fallback identity).
+            local builtinOk, builtinErr =
+              pcall(surface["builtinAliasRejected"].f)
+            if builtinOk then
+              fail("builtinAliasRejected: the superseded alias was admitted")
+            end
+            if not string.find(tostring(builtinErr), "@$builtin/Error", 1, true) then
+              fail("builtinAliasRejected: the refusal does not name the carried "
+                .. "alias: " .. tostring(builtinErr))
+            end
+            print("PROBE-OK")
+            """.formatted(luaString(artifact.toAbsolutePath().toString()));
     }
 
     /**
@@ -1474,8 +1692,10 @@ public class HostModuleLoadEmissionTest {
             Baseline missing = prepare(missingFixture(), true, roots);
             Baseline cfg = prepare(cfgOnlyFixture(), true, roots);
             Baseline array = prepare(arrayFixture(), true, roots);
+            Baseline errors = prepare(errorFixture(), false, roots);
             testLuaArtifactText(abi, aliases);
             testLuaExecution(aliases, missing, cfg);
+            testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
             testJvmToolchain(abi);
             testJvmMissingExport(missing, cfg);
