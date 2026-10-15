@@ -1025,17 +1025,27 @@ public final class ContractSnapshotCanonicalizer {
             capabilities.add(requireStringValue(item, "requiredCapabilities entry"));
         }
         List<RawCoverage> coverage = new ArrayList<>();
-        for (CanonicalJson.Value item : requireArray(obj, "constructCoverage").items()) {
+        Set<String> constructs = new LinkedHashSet<>();
+        CanonicalJson.Arr coverageRows = requireArray(obj, "constructCoverage");
+        for (int i = 0; i < coverageRows.items().size(); i++) {
+            String where = "constructCoverage[" + i + "]";
+            CanonicalJson.Value item = coverageRows.items().get(i);
             if (!(item instanceof CanonicalJson.Obj row)) {
                 throw new SemanticIrTextDecodeException(
                     "constructCoverage entries must be objects, got " + jsonKindName(item));
             }
             checkKeys(row, "construct", "opKinds");
+            String construct = requireString(row, "construct");
+            if (!constructs.add(construct)) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate constructCoverage construct \"" + construct + "\" ("
+                        + where + ")");
+            }
             List<String> kinds = new ArrayList<>();
             for (CanonicalJson.Value kind : requireArray(row, "opKinds").items()) {
                 kinds.add(requireStringValue(kind, "constructCoverage opKinds entry"));
             }
-            coverage.add(new RawCoverage(requireString(row, "construct"), kinds));
+            coverage.add(new RawCoverage(construct, kinds));
         }
         List<RawUnit.RawClassLayout> classLayouts = parseClassLayouts(obj);
         List<RawUnit.RawFunction> functions = parseFunctions(obj);
@@ -1191,15 +1201,28 @@ public final class ContractSnapshotCanonicalizer {
         return bindings;
     }
 
-    /** Decodes the produced operations in source order. */
+    /**
+     * Decodes the produced operations in source order. The operation id is
+     * the entry identity: a repeated id is a duplicate entry identity and
+     * rejects before any identity-keyed view can overwrite one entry.
+     */
     private static List<RawOp> parseOps(CanonicalJson.Obj obj) {
         List<RawOp> ops = new ArrayList<>();
-        for (CanonicalJson.Value item : requireArray(obj, "ops").items()) {
+        Set<OpId> opIds = new LinkedHashSet<>();
+        CanonicalJson.Arr rows = requireArray(obj, "ops");
+        for (int i = 0; i < rows.items().size(); i++) {
+            String where = "ops[" + i + "]";
+            CanonicalJson.Value item = rows.items().get(i);
             if (!(item instanceof CanonicalJson.Obj op)) {
                 throw new SemanticIrTextDecodeException(
                     "ops entries must be objects, got " + jsonKindName(item));
             }
-            ops.add(opFromText(op));
+            RawOp decoded = opFromText(op);
+            if (!opIds.add(decoded.opId())) {
+                throw new SemanticIrTextDecodeException(
+                    "duplicate ops opId " + decoded.opId() + " (" + where + ")");
+            }
+            ops.add(decoded);
         }
         return ops;
     }

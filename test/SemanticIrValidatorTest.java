@@ -17,6 +17,7 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.RawCoverage;
 import deal.semantic.ir.RawSourceRef;
 import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.CaptureMode;
@@ -1518,6 +1519,64 @@ public class SemanticIrValidatorTest {
                             CanonicalJson.e("ops", CanonicalJson.arr())))),
                     CanonicalJson.e("opBlocks", CanonicalJson.arr())))),
             "a duplicate bodyTable block rejects");
+        // A duplicate operation identity is a duplicate entry identity,
+        // whether the repeated row is byte-identical or differs in
+        // contents; the single-row control decodes.
+        expectDecodeFailure(duplicateArrayEntry(complete, "ops"),
+            "a duplicate ops opId rejects");
+        String differentOp = withEntryAt(complete, "kind", CanonicalJson.str("BOUNDARY"),
+            "ops", 0);
+        checkEq("BOUNDARY", ContractSnapshotCanonicalizer.parseUnit(parseObj(differentOp))
+                .ops().get(0).kind(),
+            "a same-opId ops row with different contents decodes alone");
+        expectDecodeFailure(withEntryAt(duplicateArrayEntry(complete, "ops"),
+                "kind", CanonicalJson.str("BOUNDARY"), "ops", 1),
+            "a same-opId ops row with different contents rejects");
+        checkEq(1, ContractSnapshotCanonicalizer.parseUnit(parseObj(complete)).ops().size(),
+            "the single-row ops control decodes");
+        // constructCoverage is keyed by construct: a repeated construct row
+        // is a duplicate entry identity and rejects before the
+        // construct-keyed map can overwrite one entry. Distinct rows keep
+        // their producer order and the single-row control decodes.
+        LoweredModuleUnit covered = unit(Set.of(),
+            Map.of(ConstructKind.SCALAR_LITERAL, List.of(SemanticOpKind.CONST)),
+            Map.of(), List.of(constOp()));
+        String coveredText = SemanticIrValidator.toUnitText(covered);
+        checkEq("SCALAR_LITERAL", ContractSnapshotCanonicalizer.parseUnit(
+                parseObj(coveredText)).coverage().get(0).construct(),
+            "the single-row constructCoverage control decodes");
+        expectDecodeFailure(duplicateArrayEntry(coveredText, "constructCoverage"),
+            "a duplicate constructCoverage construct rejects");
+        String differentCoverage = withEntryAt(coveredText, "opKinds",
+            CanonicalJson.arr(), "constructCoverage", 0);
+        checkEq(0, ContractSnapshotCanonicalizer.parseUnit(parseObj(differentCoverage))
+                .coverage().get(0).opKinds().size(),
+            "a same-construct coverage row with different opKinds decodes alone");
+        expectDecodeFailure(withEntryAt(duplicateArrayEntry(coveredText, "constructCoverage"),
+                "opKinds", CanonicalJson.arr(), "constructCoverage", 1),
+            "a same-construct coverage row with different opKinds rejects");
+        Map<ConstructKind, List<SemanticOpKind>> twoCoverageRows = new LinkedHashMap<>();
+        twoCoverageRows.put(ConstructKind.SCALAR_LITERAL, List.of(SemanticOpKind.CONST));
+        twoCoverageRows.put(ConstructKind.CALL, ConstructKind.CALL.mappedOpKinds());
+        List<String> coverageConstructs = new ArrayList<>();
+        for (RawCoverage row : ContractSnapshotCanonicalizer.parseUnit(parseObj(
+                SemanticIrValidator.toUnitText(unit(Set.of(), twoCoverageRows, Map.of(),
+                    List.of(constOp()))))).coverage()) {
+            coverageConstructs.add(row.construct());
+        }
+        checkEq(List.of("SCALAR_LITERAL", "CALL"), coverageConstructs,
+            "distinct coverage rows decode in producer order");
+        // The decode failure precedes admission on the validation surface:
+        // a duplicated identity yields no decoded result there either.
+        for (String duplicate : List.of(duplicateArrayEntry(complete, "ops"),
+                duplicateArrayEntry(coveredText, "constructCoverage"))) {
+            try {
+                SemanticIrValidator.validateText(duplicate, FACTS);
+                fail("a duplicate entry identity is a decode failure on the validation surface");
+            } catch (SemanticIrTextDecodeException expected) {
+                passed++;
+            }
+        }
         // A recognized binding shape keeps its exact member set.
         expectDecodeFailure(missingBindingMember(complete, "adapter", "sourceSignature"),
             "an adapter binding without sourceSignature rejects");
