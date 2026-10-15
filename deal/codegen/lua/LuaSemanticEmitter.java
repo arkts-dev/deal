@@ -173,14 +173,17 @@ public final class LuaSemanticEmitter {
     }
 
     /**
-     * The source-mapping production entry (the effective {@code --source-map}
-     * request): identical emission to the overload above with one
+     * The source-mapping production entry (the v1.3 default debugging
+     * artifacts): identical emission to the overload above with one
      * {@link SourceMapRecorder} installed, so every mapped op entry emits its
      * source comment before the generated statement group and records the
      * generated position in its owning module's mapper. The caller serializes
      * the recorders into the project's {@code .deal.map.json} sidecars and
-     * stages them atomically with the artifact. A {@code null} recorder is the
-     * recorder-less emission (byte-identical to the overload above).
+     * stages them atomically with the artifact. The production path always
+     * installs the recorder — the accepted {@code --source-map} request
+     * spelling selects nothing — while a direct {@code null}-recorder call
+     * stays the recorder-less emission (byte-identical to the overload
+     * above), never a product route.
      */
     public static String emitProductionProject(ExecutableLoweredProject project,
                                                Map<ModuleId, StructuredBodyTable> tables,

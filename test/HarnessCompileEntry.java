@@ -135,7 +135,7 @@ public final class HarnessCompileEntry {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             located.context(), entryFile, verbose, dumpIr,
-            dumpIr || sourceMap, sourceMap, diagnosticsJsonPath, invocation);
+            sourceMap, sourceMap, diagnosticsJsonPath, invocation);
         boolean success;
         try {
             success = orchestrator.compile();

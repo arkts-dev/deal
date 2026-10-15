@@ -147,9 +147,11 @@ public final class Main {
             if (dumpIr) {
                 System.out.println("IR dump: enabled");
             }
-            if (sourceMap) {
-                System.out.println("Source maps: enabled");
-            }
+            // The v1.3 default debugging artifacts: source comments and
+            // per-source map sidecars are emitted by every successful
+            // compile, and the accepted --source-map spelling selects
+            // nothing.
+            System.out.println("Source maps: enabled");
         }
 
         // Release-owned invocation resolution (A2/F1/F7): every compile
@@ -172,8 +174,8 @@ public final class Main {
         // --diagnostics-json is set; manifest-configuration failures are
         // written by this CLI directly above.
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            context, entryFile, verbose, dumpIr, dumpIr || sourceMap,
-            sourceMap, diagnosticsJsonPath, invocation);
+            context, entryFile, verbose, dumpIr,
+            sourceMap, sourceMap, diagnosticsJsonPath, invocation);
 
         boolean success;
         try {
@@ -250,7 +252,7 @@ public final class Main {
         System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default), jvm, or js");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
-        System.err.println("  --source-map         Produce source map sidecar files (.deal.map.json)");
+        System.err.println("  --source-map         Accepted (source comments and .deal.map.json sidecars are the default)");
         System.err.println("  --diagnostics-json <path>  Write the structured diagnostics document (version 1)");
     }
 }

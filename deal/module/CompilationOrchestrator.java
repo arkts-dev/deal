@@ -81,20 +81,13 @@ public final class CompilationOrchestrator {
     private final boolean verbose;
     private final boolean dumpIr;
     /**
-     * The effective source-map flag of this compile (the explicit
-     * {@code --source-map} request or the {@code --dump-ir}-derived one,
-     * resolved by {@code deal.Main}): the one flag both sidecar emitters —
-     * the JS arm and the LuaJIT/JVM production projection — consume.
+     * The v1.3 default debugging-artifacts fact: every successful backend
+     * compilation emits source comments and one version-1 per-source map
+     * sidecar per constituent module. The accepted {@code --source-map} /
+     * {@code sourceMap} constructor spellings remain part of the CLI and
+     * harness surface but select nothing — there is no no-map compile.
      */
-    private final boolean sourceMap;
-
-    /**
-     * The explicit {@code --source-map} spelling of the effective
-     * {@link #sourceMap} flag. Retained as part of the constructor surface;
-     * the production projection is governed by the effective flag alone (one
-     * flag, one sidecar authority across backends).
-     */
-    private final boolean sourceMapExplicit;
+    private static final boolean SOURCE_MAPS_ENABLED = true;
     private final Backend backend;
 
     /**
@@ -296,8 +289,6 @@ public final class CompilationOrchestrator {
         this.outputRoot = Path.of(context.outputPath().absoluteNormalizedPath());
         this.verbose = verbose;
         this.dumpIr = dumpIr;
-        this.sourceMap = sourceMap;
-        this.sourceMapExplicit = sourceMapExplicit;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
         this.distributionHome = DistributionHome.forManifestDirectory(
             context.manifestDirectory());
@@ -358,10 +349,11 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Test-only isolated-phase overload; see the 6-argument form.
-     * {@code sourceMapExplicit} distinguishes the explicit
-     * {@code --source-map} request from the effective {@code sourceMap}
-     * flag (also derived from {@code --dump-ir}).
+     * Test-only isolated-phase overload; see the 6-argument form. Both the
+     * {@code sourceMap} and {@code sourceMapExplicit} spellings are accepted
+     * request surface only: the v1.3 default emits source comments and
+     * sidecars for every successful compilation, so neither selects an
+     * emission mode.
      */
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     boolean dumpIr, boolean sourceMap,
@@ -401,8 +393,6 @@ public final class CompilationOrchestrator {
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
         this.verbose = verbose;
         this.dumpIr = dumpIr;
-        this.sourceMap = sourceMap;
-        this.sourceMapExplicit = sourceMapExplicit;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
         this.distributionHome = DistributionHome.forManifestDirectory(
             context.manifestDirectory());
@@ -2069,9 +2059,9 @@ public final class CompilationOrchestrator {
      * {@link ProductionProjectEmission#run} over the compile's declared
      * inputs — the one project lowering, the pre-emission closure guard,
      * the one production emission (with the project's source comments and
-     * {@code .deal.map.json} sidecars under the effective source-map flag),
-     * and the one staged project artifact plus the unchanged LuaJIT
-     * deployment copies — then the one project emission record
+     * {@code .deal.map.json} sidecars, the v1.3 default), and the one
+     * staged project artifact plus the complete LuaJIT deployment
+     * copies — then the one project emission record
      * ({@link #semanticEmissionCount}) and the one read-only
      * produced-project reference this compile exposes
      * ({@link #producedProject()}). A lowering, guard, or emission
@@ -2103,7 +2093,7 @@ public final class CompilationOrchestrator {
             builtinErrorDeclaration(checked.input()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
-            Set.of(), backend, sourceMap, distributionHome, stager);
+            Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;
             recordProducedProject(result.producedProject());
@@ -2325,7 +2315,7 @@ public final class CompilationOrchestrator {
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 importResolutions, hostModules, externCImports, isEntry,
                 identityIndex, identityIndex.moduleIdentityLookup(),
-                sourceMap ? new SourceMapGenerator() : null,
+                new SourceMapGenerator(),
                 completedPlansByModulePath(),
                 classLiteralProvidersByModulePath);
             // Native ranged backend list (T12): the backend emits
@@ -2348,11 +2338,11 @@ public final class CompilationOrchestrator {
             jsGeneratedResults.put(info.sourcePath, res);
         }
 
-        // Pass 2: write artifacts for clean modules only. With the
-        // effective sourceMap flag, each clean module additionally
-        // writes its .deal.map.json sidecar (js-v12-source-maps D1):
-        // one <modulePath with '/' for '.'>.deal.map.json next to the
-        // artifact, serialized from the module's recorded mappings via
+        // Pass 2: write artifacts for clean modules only. Every clean
+        // module writes its .deal.map.json sidecar (js-v12-source-maps
+        // D1, the v1.3 default debugging artifacts): one <modulePath
+        // with '/' for '.'>.deal.map.json next to the artifact,
+        // serialized from the module's recorded mappings via
         // SourceMapGenerator.toJson with the same project-relative
         // source/generated path strings the Lua arm passes. A clean
         // statement-less module (an empty or comment-only source)
@@ -2373,18 +2363,18 @@ public final class CompilationOrchestrator {
             Files.writeString(stageOutputPath, res.source());
             log("  Generated: " + liveArtifactPath);
 
-            if (sourceMap && res.sourceMap() != null) {
-                String[] paths = sourceMapSidecarPaths(info.sourcePath,
-                    outputRoot, liveArtifactPath);
-                String mapJson = res.sourceMap().toJson(paths[0], paths[1]);
-                Path stageMapPath = stager.stagePath(
-                    res.modulePath().replace('.', '/')
-                        + ".deal.map.json");
-                Files.writeString(stageMapPath, mapJson);
-                log("  Source map: " + outputRoot.resolve(
-                    res.modulePath().replace('.', '/')
-                        + ".deal.map.json"));
-            }
+            SourceMapGenerator moduleMap = res.sourceMap() != null
+                ? res.sourceMap() : new SourceMapGenerator();
+            String[] paths = sourceMapSidecarPaths(info.sourcePath,
+                outputRoot, liveArtifactPath);
+            String mapJson = moduleMap.toJson(paths[0], paths[1]);
+            Path stageMapPath = stager.stagePath(
+                res.modulePath().replace('.', '/')
+                    + ".deal.map.json");
+            Files.writeString(stageMapPath, mapJson);
+            log("  Source map: " + outputRoot.resolve(
+                res.modulePath().replace('.', '/')
+                    + ".deal.map.json"));
         }
 
         copyJsRuntimeLibrary();
@@ -2556,11 +2546,17 @@ public final class CompilationOrchestrator {
             // distribution surface — project-local surface first, then
             // the language distribution, then the checkout CWD dev
             // fallback — and no skip of an existing destination remains.
+            // A spec-listed implementation the surface does not provide
+            // is missing required deployment content (the one shared
+            // pinned E6000 of the LuaJIT arm too), never a silent skip:
+            // the compile fails and publishes nothing.
             String name = stdlibModule.substring("std/".length());
             Optional<DistributionHome.ResolvedSource> source =
                 stager.stageStdlibCopy(name, "js", distributionHome);
             if (source.isEmpty()) {
-                continue;
+                recordSyntheticError(
+                    ProductionProjectEmission.stdlibLibraryMissing(name, "js"));
+                return;
             }
             log("  Copied stdlib: " + stdlibModule + " ("
                 + source.get().tier() + ")");
@@ -2716,6 +2712,12 @@ public final class CompilationOrchestrator {
                                 String missingAnchorNote) {
         diagnostics.add(CompilerDiagnostic.syntheticError(code, message, file,
             missingAnchorNote));
+        hasErrors = true;
+    }
+
+    /** Records one already-built synthetic diagnostic as a compile error. */
+    private void recordSyntheticError(CompilerDiagnostic diagnostic) {
+        diagnostics.add(diagnostic);
         hasErrors = true;
     }
 

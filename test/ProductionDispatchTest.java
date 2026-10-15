@@ -18,6 +18,7 @@ import deal.module.PlannedDefaultClass;
 import deal.module.ProductionProjectEmission;
 import deal.module.RuntimeImportDependency;
 import deal.module.RuntimeResourceReference;
+import deal.module.StdlibModuleResolver;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.project.CliOverrides;
@@ -1211,10 +1212,9 @@ public class ProductionDispatchTest {
             check(!artifacts.contains("lib.lua"),
                 "the published set carries no per-module sibling: "
                     + artifacts);
-            check(artifacts.stream().noneMatch(
-                    file -> file.endsWith(".deal.map.json")),
-                "the production set carries no source-map sidecar: "
-                    + artifacts);
+            check(artifacts.contains("main.deal.map.json"),
+                "the production set carries the v1.3 default per-source "
+                    + "source-map sidecar: " + artifacts);
 
             ProcessOutcome run = runProcess(out, "luajit", "main.lua");
             check(run.exitCode() == 0,
@@ -1234,8 +1234,13 @@ public class ProductionDispatchTest {
             checkEq(first.keySet(), second.keySet(),
                 "the repeated compile publishes the same artifact set");
             for (String relative : first.keySet()) {
-                check(Arrays.equals(first.get(relative), second.get(relative)),
-                    "the repeated compile is byte-identical for " + relative);
+                boolean equal = relative.endsWith(".deal.map.json")
+                    ? normalizedSidecarText(first.get(relative)).equals(
+                        normalizedSidecarText(second.get(relative)))
+                    : Arrays.equals(first.get(relative), second.get(relative));
+                check(equal, "the repeated compile is byte-identical for "
+                    + relative + (relative.endsWith(".deal.map.json")
+                        ? " (apart from its own generated path spelling)" : ""));
             }
         } finally {
             deleteRecursively(project);
@@ -1265,9 +1270,10 @@ public class ProductionDispatchTest {
 
             Path out = project.resolve("out");
             List<String> artifacts = artifactFiles(out);
-            check(artifacts.equals(List.of("Main.java")),
-                "the one project artifact is the entry class source: "
-                    + artifacts);
+            check(artifacts.equals(List.of("Main.java", "lib.deal.map.json",
+                    "main.deal.map.json")),
+                "the one project artifact is the entry class source plus the "
+                    + "default per-source sidecars: " + artifacts);
 
             // The export surfaces of both modules are in the artifact, keyed
             // by the dotted module path.
@@ -2727,8 +2733,8 @@ public class ProductionDispatchTest {
                     + "artifact and both sidecars");
             write(project, "src/lib.deal", MAP_LIB_SOURCE);
 
-            // (3) The effective --dump-ir-derived request emits the same set
-            // without a warning (the one effective flag of both arms).
+            // (3) --dump-ir emits the default sidecar set together with the
+            // requested dumps, without a warning.
             Path dumpOut = project.resolve("build/dump");
             ProjectOutcome dumpIr = runProductionCli("compile",
                 project.resolve("src/main.deal").toAbsolutePath().toString(),
@@ -2737,11 +2743,11 @@ public class ProductionDispatchTest {
             check(dumpIr.exitCode() == 0,
                 "the --dump-ir production compile succeeds: " + dumpIr.stderr());
             check(!dumpIr.stderr().contains("Warning:"),
-                "a --dump-ir-derived flag prints no warning: " + dumpIr.stderr());
+                "a --dump-ir compile prints no warning: " + dumpIr.stderr());
             List<String> dumped = artifactFiles(dumpOut);
             check(dumped.contains("main.deal.map.json")
                     && dumped.contains("lib.deal.map.json"),
-                "the --dump-ir-derived flag emits the same sidecar set: "
+                "the --dump-ir compile emits the default sidecar set: "
                     + dumped);
 
             // (4) The LuaJIT target: the chunk carries the source comments and
@@ -3744,10 +3750,12 @@ public class ProductionDispatchTest {
                 "the harness mirror and the release-owned compile both "
                     + "succeed: harness=" + harness.exitCode() + " release="
                     + release.exitCode() + " stderr=" + harness.stderr());
-            check(treeEquals(snapshotTree(mirror.resolve("out-harness")),
+            check(treeEqualsApartFromSidecarPaths(
+                    snapshotTree(mirror.resolve("out-harness")),
                     snapshotTree(mirror.resolve("out-release"))),
                 "the harness mirror publishes the release-owned artifact set "
-                    + "byte-for-byte");
+                    + "byte-for-byte (each sidecar keeps its own "
+                    + "output-root-relative generated path spelling)");
         } finally {
             deleteRecursively(mirror);
         }
@@ -3896,6 +3904,39 @@ public class ProductionDispatchTest {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether two published trees are byte-identical apart from each
+     * sidecar's {@code generated} field: a sidecar names its own
+     * output-root-relative generated artifact (the pinned project-relative
+     * spelling), so two compiles of one project into differently named roots
+     * have path-bearing sidecar documents and byte-equal artifacts.
+     */
+    private static boolean treeEqualsApartFromSidecarPaths(
+            Map<String, byte[]> left, Map<String, byte[]> right) {
+        if (!left.keySet().equals(right.keySet())) {
+            return false;
+        }
+        for (Map.Entry<String, byte[]> entry : left.entrySet()) {
+            byte[] other = right.get(entry.getKey());
+            if (entry.getKey().endsWith(".deal.map.json")) {
+                if (!normalizedSidecarText(entry.getValue())
+                        .equals(normalizedSidecarText(other))) {
+                    return false;
+                }
+            } else if (!Arrays.equals(entry.getValue(), other)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** One sidecar document with its generated-path field text normalized. */
+    private static String normalizedSidecarText(byte[] json) {
+        return new String(json, StandardCharsets.UTF_8).replaceAll(
+            "\"generated\": \"[^\"]*\"",
+            "\"generated\": \"<artifact>\"");
     }
 
 
@@ -4121,6 +4162,154 @@ public class ProductionDispatchTest {
      * over-limit observation is refused before any comparison instead
      * of being read as a transcript.
      */
+    // =========================================================================
+    // The complete deployment: missing required content fails the compile
+    // =========================================================================
+
+    /**
+     * The v1.3 deployment-completeness contract through the public CLI in a
+     * child JVM whose distribution surface is exactly the assembled classpath
+     * resource root (the process CWD is the project, so the checkout dev
+     * fallback cannot repair it): a distribution that provides the runtime but
+     * not a spec-listed stdlib implementation is missing required content — the
+     * compile fails with the pinned E6000 and the absent output root stays
+     * absent — while the complete surface publishes the artifact, its default
+     * source-map sidecar, the runtime and all six stdlib copies on both
+     * targets.
+     */
+    private static void testMissingDeploymentContentFails() throws Exception {
+        System.out.println("-- deployment completeness: a spec-listed stdlib "
+            + "implementation the resolved distribution surface does not provide "
+            + "fails the compile with the pinned E6000 and publishes nothing on "
+            + "both targets; the complete surface publishes the artifact, its "
+            + "default sidecar, the runtime and all six stdlib copies --");
+
+        Path project = Files.createTempDirectory("production-dispatch-deploy-");
+        Path partial = Files.createTempDirectory(
+            "production-dispatch-deploy-partial-");
+        Path complete = Files.createTempDirectory(
+            "production-dispatch-deploy-complete-");
+        Path emptyHome = Files.createTempDirectory(
+            "production-dispatch-deploy-home-");
+        try {
+            write(project, "deal.json", DEAL_JSON_LUA);
+            write(project, "src/main.deal", TRIVIAL_MAIN_SOURCE);
+            List<String> stdlibModules = StdlibModuleResolver.SPEC_STDLIB_MODULES;
+            for (String stdlibModule : stdlibModules) {
+                for (String extension : List.of("lua", "js")) {
+                    String relative = stdlibModule + "." + extension;
+                    copyRepoFile(Path.of(relative), complete.resolve(relative));
+                    if (!relative.equals("std/time.lua")
+                            && !relative.equals("std/time.js")) {
+                        copyRepoFile(Path.of(relative),
+                            partial.resolve(relative));
+                    }
+                }
+            }
+            for (String runtime : List.of("deal/runtime.lua", "deal/runtime.js")) {
+                copyRepoFile(Path.of(runtime), complete.resolve(runtime));
+                copyRepoFile(Path.of(runtime), partial.resolve(runtime));
+            }
+
+            // (1) LuaJIT: the omitted std/time.lua fails the compile with the
+            // pinned diagnostic; the absent output root stays absent.
+            ProcessOutcome luaMissing = runCliSubprocess(project, partial,
+                emptyHome, "compile",
+                project.resolve("src/main.deal").toAbsolutePath().toString(),
+                "--backend", "luajit", "--output",
+                project.resolve("out-lua-missing").toAbsolutePath().toString());
+            check(luaMissing.exitCode() == 1,
+                "the incomplete LuaJIT distribution fails the compile: exit="
+                    + luaMissing.exitCode() + " output=" + luaMissing.output());
+            check(luaMissing.output().contains(
+                    "E6000: Stdlib module not found: std/time.lua"),
+                "the failure is the pinned missing-stdlib E6000: "
+                    + luaMissing.output());
+            check(!Files.exists(project.resolve("out-lua-missing")),
+                "the missing-content failure publishes nothing (the absent "
+                    + "root stays absent)");
+
+            // (2) JavaScript: the same contract at the .js spelling.
+            ProcessOutcome jsMissing = runCliSubprocess(project, partial,
+                emptyHome, "compile",
+                project.resolve("src/main.deal").toAbsolutePath().toString(),
+                "--backend", "js", "--output",
+                project.resolve("out-js-missing").toAbsolutePath().toString());
+            check(jsMissing.exitCode() == 1,
+                "the incomplete JavaScript distribution fails the compile: "
+                    + "exit=" + jsMissing.exitCode() + " output="
+                    + jsMissing.output());
+            check(jsMissing.output().contains(
+                    "E6000: Stdlib module not found: std/time.js"),
+                "the JavaScript failure is the pinned missing-stdlib E6000: "
+                    + jsMissing.output());
+            check(!Files.exists(project.resolve("out-js-missing")),
+                "the JavaScript missing-content failure publishes nothing");
+
+            // (3) The complete distribution: both targets publish the whole
+            // set — artifact, default sidecar, runtime and all six stdlib
+            // implementations.
+            for (String backend : List.of("luajit", "js")) {
+                String extension = backend.equals("luajit") ? "lua" : "js";
+                Path out = project.resolve("out-" + backend);
+                ProcessOutcome compiled = runCliSubprocess(project, complete,
+                    emptyHome, "compile",
+                    project.resolve("src/main.deal").toAbsolutePath().toString(),
+                    "--backend", backend, "--output",
+                    out.toAbsolutePath().toString());
+                check(compiled.exitCode() == 0,
+                    "the complete " + backend + " distribution compiles: exit="
+                        + compiled.exitCode() + " output=" + compiled.output());
+                if (compiled.exitCode() != 0) {
+                    continue;
+                }
+                List<String> published = artifactFiles(out);
+                check(published.contains("main." + extension)
+                        && published.contains("main.deal.map.json")
+                        && published.contains("deal/runtime." + extension),
+                    "the " + backend + " artifact set carries the artifact, its "
+                        + "default sidecar and the runtime: " + published);
+                for (String stdlibModule : stdlibModules) {
+                    check(published.contains(stdlibModule + "." + extension),
+                        "the complete " + backend + " set carries "
+                            + stdlibModule + "." + extension + ": " + published);
+                }
+            }
+        } finally {
+            deleteRecursively(project);
+            deleteRecursively(partial);
+            deleteRecursively(complete);
+            deleteRecursively(emptyHome);
+        }
+    }
+
+    /**
+     * Runs the public CLI in a child JVM whose classpath is the compiler's
+     * own classpath plus the given distribution resource root, in the given
+     * working directory, with {@code DEAL_HOME} pinned to an empty directory:
+     * the child's resolvable distribution surface is exactly the resource
+     * root (no checkout fallback, no inherited home).
+     */
+    private static ProcessOutcome runCliSubprocess(Path workingDir,
+            Path resources, Path dealHome, String... args) throws Exception {
+        List<String> command = new ArrayList<>(List.of("java", "-ea", "-cp",
+            absoluteClasspath() + File.pathSeparator + resources));
+        command.add("deal.Main");
+        command.addAll(List.of(args));
+        BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
+            command, workingDir, Map.of("DEAL_HOME", dealHome.toString()));
+        return new ProcessOutcome(result.exitCode(),
+            result.stdout() + result.stderr());
+    }
+
+    /** Copies one checkout resource into an assembled distribution root. */
+    private static void copyRepoFile(Path relative, Path target)
+            throws IOException {
+        Files.createDirectories(target.getParent());
+        Files.copy(relative, target,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    }
+
     private static void testV12CornerCaseCorpusProductionDrive()
             throws Exception {
         System.out.println("-- the v1.2 corner-case corpus through the"
@@ -5115,6 +5304,7 @@ public class ProductionDispatchTest {
         testPreservedLoweringOrigins();
         testFailClosedFamilies();
         testSourceMapDisposition();
+        testMissingDeploymentContentFails();
         testSourceMapUnsafeSourcePathText();
         testSourceMapControlCharacterPaths();
         testSourceMapDirectEmissionGroups();

@@ -22,9 +22,12 @@ import java.util.Objects;
  * string, so the comment and the sidecar never disagree — the recorder is
  * the single source-map authority of one production emission.</p>
  *
- * <p>A compile without the effective source-map request installs no
- * recorder: no source comment is emitted, no mapping is recorded, and the
- * artifact bytes stay exactly the recorder-less bytes.</p>
+ * <p>The v1.3 default debugging artifacts install one recorder on every
+ * successful production emission: the emitted source comments and the
+ * staged sidecars come from this single recorder, and the accepted
+ * {@code --source-map} request spelling selects nothing. Only a direct
+ * emitter API call may pass no recorder (the recorder-less emission); no
+ * product compile takes that route.</p>
  */
 public final class SourceMapRecorder {
 
