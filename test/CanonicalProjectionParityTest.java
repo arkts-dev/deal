@@ -462,12 +462,39 @@ public class CanonicalProjectionParityTest {
         }
     }
 
+    private record JvmHost(String source, Map<String, String> systemProperties) {
+        JvmHost {
+            systemProperties = Map.copyOf(systemProperties);
+        }
+    }
+
     private static final class JvmPreparation {
         private boolean emitted;
         private Path artifactClasses;
-        private final Map<JvmDrive, Path> drives = new LinkedHashMap<>();
+        private final Map<JvmDrive, PreparedJvmDrive> drives = new LinkedHashMap<>();
         private final Map<String, Path> probes = new LinkedHashMap<>();
         private Map<String, String> defaultHosts;
+    }
+
+    private record PreparedJvmDrive(Path workingDirectory, String classpath,
+            String driverName, String what) {
+        String run(List<String> arguments, Map<String, String> systemProperties)
+                throws Exception {
+            List<String> javaArgs = new ArrayList<>(List.of("java"));
+            systemProperties.forEach((key, value) -> javaArgs.add("-D" + key + "=" + value));
+            javaArgs.addAll(List.of("-cp", classpath, driverName));
+            javaArgs.addAll(arguments);
+            BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+                javaArgs, workingDirectory, Map.of());
+            String output = captured.stdout();
+            String diagnostics = output + captured.stderr();
+            check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+                what + " (jvm): the probe output is not truncated: " + diagnostics);
+            int exit = captured.exitCode();
+            check(exit == 0, what + " (jvm): the probe runs: exit="
+                + exit + " output=" + diagnostics);
+            return output;
+        }
     }
 
     /** The release-owned production invocation. */
@@ -2171,8 +2198,9 @@ public class CanonicalProjectionParityTest {
     }
 
     /** The JVM numeric-completion host: one boxed carrier expression for every export. */
-    private static String jvmAsyncNumericHost(String carrier) {
-        return numericCarrierKey(carrier);
+    private static JvmHost jvmAsyncNumericHost(String carrier) {
+        return new JvmHost(jvmNumericHostSource("async_numeric"),
+            Map.of("deal.parity.numeric", numericCarrierKey(carrier)));
     }
 
     private static String numericCarrierKey(String carrier) {
@@ -3548,7 +3576,7 @@ public class CanonicalProjectionParityTest {
      */
     private static void assertAsyncCompletionSuccess(Compiled compiled, String stem,
             SemanticOracle.HostResponder responder, String export, String luaHost,
-            String jvmHost, String what) throws Exception {
+            JvmHost jvmHost, String what) throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
             compiled.project(), compiled.tables(), responder,
             compiled.checkedProject().entryModule(), export, List.of());
@@ -3559,7 +3587,7 @@ public class CanonicalProjectionParityTest {
             luaExportProbe(compiled, export));
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): the "
             + "production artifact completes without a failure event: " + lua);
-        String jvm = jvmExportOutput(compiled, export, Map.of(stem, jvmHost));
+        String jvm = jvmExportOutput(compiled, export, stem, jvmHost);
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the production artifact completes without a failure event: "
             + jvm);
@@ -3574,6 +3602,13 @@ public class CanonicalProjectionParityTest {
     private static void assertAsyncCompletionFailure(Compiled compiled, String stem,
             SemanticOracle.HostResponder responder, String export, Tuple expected,
             String luaHost, String jvmHost, String what) throws Exception {
+        assertAsyncCompletionFailure(compiled, stem, responder, export, expected,
+            luaHost, new JvmHost(jvmHost, Map.of()), what);
+    }
+
+    private static void assertAsyncCompletionFailure(Compiled compiled, String stem,
+            SemanticOracle.HostResponder responder, String export, Tuple expected,
+            String luaHost, JvmHost jvmHost, String what) throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
             compiled.project(), compiled.tables(), responder,
             compiled.checkedProject().entryModule(), export, List.of());
@@ -3768,8 +3803,9 @@ public class CanonicalProjectionParityTest {
     }
 
     /** The JVM numeric-return host: one boxed carrier expression for every export. */
-    private static String jvmNumericHost(String carrier) {
-        return numericCarrierKey(carrier);
+    private static JvmHost jvmNumericHost(String carrier) {
+        return new JvmHost(jvmNumericHostSource("numeric_return"),
+            Map.of("deal.parity.numeric", numericCarrierKey(carrier)));
     }
 
     /**
@@ -3794,8 +3830,14 @@ public class CanonicalProjectionParityTest {
      */
     private static void assertHostFailure(Compiled compiled, String stem,
             SemanticOracle.HostResponder responder, String export, Tuple expected,
-            String luaHost, String jvmHost, String what)
-            throws Exception {
+            String luaHost, String jvmHost, String what) throws Exception {
+        assertHostFailure(compiled, stem, responder, export, expected, luaHost,
+            new JvmHost(jvmHost, Map.of()), what);
+    }
+
+    private static void assertHostFailure(Compiled compiled, String stem,
+            SemanticOracle.HostResponder responder, String export, Tuple expected,
+            String luaHost, JvmHost jvmHost, String what) throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
             compiled.project(), compiled.tables(), compiled.registries(), responder,
             compiled.checkedProject().entryModule(), export, List.of());
@@ -3827,6 +3869,13 @@ public class CanonicalProjectionParityTest {
     private static void assertHostSuccess(Compiled compiled, String stem,
             SemanticOracle.HostResponder responder, String export, String luaHost,
             String jvmHost, String what) throws Exception {
+        assertHostSuccess(compiled, stem, responder, export, luaHost,
+            new JvmHost(jvmHost, Map.of()), what);
+    }
+
+    private static void assertHostSuccess(Compiled compiled, String stem,
+            SemanticOracle.HostResponder responder, String export, String luaHost,
+            JvmHost jvmHost, String what) throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeSyncEntry(
             compiled.project(), compiled.tables(), compiled.registries(), responder,
             compiled.checkedProject().entryModule(), export, List.of());
@@ -3836,8 +3885,7 @@ public class CanonicalProjectionParityTest {
             luaExportProbe(compiled, export));
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): "
             + "the admitted presence completes without a failure event: " + lua);
-        String jvm = jvmExportOutput(compiled, export,
-            Map.of(stem, jvmHost));
+        String jvm = jvmExportOutput(compiled, export, stem, jvmHost);
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the admitted presence completes without a failure event: "
             + jvm);
@@ -3857,8 +3905,12 @@ public class CanonicalProjectionParityTest {
     /** The JVM artifact's failure tuple of one probe under the named host stem. */
     private static Tuple jvmHostFailure(Compiled compiled, String stem,
             String hostSource, String export) throws Exception {
-        String output = jvmExportOutput(compiled, export,
-            Map.of(stem, hostSource));
+        return jvmHostFailure(compiled, stem, new JvmHost(hostSource, Map.of()), export);
+    }
+
+    private static Tuple jvmHostFailure(Compiled compiled, String stem,
+            JvmHost host, String export) throws Exception {
+        String output = jvmExportOutput(compiled, export, stem, host);
         if (output == null) {
             return null;
         }
@@ -3932,15 +3984,15 @@ public class CanonicalProjectionParityTest {
      */
     private static String jvmExportOutput(Compiled compiled, String export,
             Map<String, String> hostOverrides) throws Exception {
-        for (String stem : List.of("numeric_return", "async_numeric")) {
-            if (hostOverrides.containsKey(stem)) {
-                return jvmArtifactOutput(compiled, jvmExportProbe(compiled),
-                    Map.of(stem, jvmNumericHostSource(stem)),
-                    List.of(export, hostOverrides.get(stem)));
-            }
-        }
         return jvmArtifactOutput(compiled, jvmExportProbe(compiled), hostOverrides,
             List.of(export));
+    }
+
+    private static String jvmExportOutput(Compiled compiled, String export,
+            String stem, JvmHost host) throws Exception {
+        PreparedJvmDrive drive = prepareJvmDrive(compiled, jvmExportProbe(compiled),
+            Map.of(stem, host.source()));
+        return drive == null ? null : drive.run(List.of(export), host.systemProperties());
     }
 
     private static String jvmExportProbe(Compiled compiled) {
@@ -3948,9 +4000,6 @@ public class CanonicalProjectionParityTest {
         return """
             final class CanonicalProjectionParityDriver {
               public static void main(String[] args) {
-                if (args.length > 1) {
-                  System.setProperty("deal.parity.numeric", args[1]);
-                }
                 try {
                   %s.dealMain();
                 } catch (Throwable t) {
@@ -5742,7 +5791,8 @@ public class CanonicalProjectionParityTest {
                 + ": the oracle and the LuaJIT artifact render the identical "
                 + "tuple");
             Tuple jvm = jvmArtifactWithHost(compiled, "async_shape_bad",
-                numericHostJava(value));
+                new JvmHost(numericHostJava(),
+                    Map.of("deal.parity.asyncHandle", Long.toString(value))));
             checkEq(null, firstDifferingField(oracle, jvm), where
                 + ": the oracle and the JVM artifact render the identical "
                 + "tuple");
@@ -5761,14 +5811,14 @@ public class CanonicalProjectionParityTest {
     }
 
     /** The JVM host carrier of one numeric-boundary drive: a boxed long. */
-    private static String numericHostJava(long value) {
+    private static String numericHostJava() {
         return """
             final class HostAsync_shape_bad {
               public static Object fetchValue() {
-                return java.lang.Long.valueOf(%dL);
+                return java.lang.Long.valueOf(System.getProperty("deal.parity.asyncHandle"));
               }
             }
-            """.formatted(value);
+            """;
     }
 
     /**
@@ -7020,6 +7070,12 @@ public class CanonicalProjectionParityTest {
 
     private static String jvmArtifactOutput(Compiled compiled, String probeSource,
             Map<String, String> hostOverrides, List<String> arguments) throws Exception {
+        PreparedJvmDrive drive = prepareJvmDrive(compiled, probeSource, hostOverrides);
+        return drive == null ? null : drive.run(arguments, Map.of());
+    }
+
+    private static PreparedJvmDrive prepareJvmDrive(Compiled compiled, String probeSource,
+            Map<String, String> hostOverrides) throws Exception {
         Path out = compiled.root().resolve("out-jvm");
         JvmPreparation preparation = compiled.jvmPreparation();
         if (!preparation.emitted) {
@@ -7047,11 +7103,11 @@ public class CanonicalProjectionParityTest {
         }
         String driverName = "CanonicalProjectionParityDriver";
         JvmDrive drive = new JvmDrive(probeSource, hostSources);
-        Path classes = preparation.drives.get(drive);
+        PreparedJvmDrive prepared = preparation.drives.get(drive);
         String classpath = absoluteClasspath();
-        if (classes == null) {
+        if (prepared == null) {
             Path workspace = Files.createTempDirectory(compiled.root(), "jvm-drive-");
-            classes = workspace.resolve("classes");
+            Path classes = workspace.resolve("classes");
             Files.createDirectories(classes);
             boolean first = preparation.artifactClasses == null;
             String compileClasspath = first ? classpath
@@ -7089,24 +7145,13 @@ public class CanonicalProjectionParityTest {
             if (probeClasses == null) {
                 preparation.probes.put(probeSource, classes);
             }
-            preparation.drives.put(drive, classes);
+            prepared = new PreparedJvmDrive(out,
+                classes + File.pathSeparator + preparation.probes.get(probeSource)
+                    + File.pathSeparator + preparation.artifactClasses
+                    + File.pathSeparator + classpath, driverName, compiled.spec().what());
+            preparation.drives.put(drive, prepared);
         }
-        List<String> javaArgs = new ArrayList<>(List.of("java", "-cp",
-            classes + File.pathSeparator + preparation.probes.get(probeSource)
-                + File.pathSeparator + preparation.artifactClasses
-                + File.pathSeparator + classpath, driverName));
-        javaArgs.addAll(arguments);
-        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
-            javaArgs, out, Map.of());
-        String output = captured.stdout();
-        String diagnostics = output + captured.stderr();
-        check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
-            compiled.spec().what() + " (jvm): the probe output is not truncated: "
-                + diagnostics);
-        int exit = captured.exitCode();
-        check(exit == 0, compiled.spec().what() + " (jvm): the probe runs: exit="
-            + exit + " output=" + diagnostics);
-        return output;
+        return prepared;
     }
 
     /** Runs the JVM production artifact and captures its failure tuple. */
@@ -7142,10 +7187,16 @@ public class CanonicalProjectionParityTest {
      */
     private static Tuple jvmArtifactWithHost(Compiled compiled, String stem,
             String hostSource) throws Exception {
+        return jvmArtifactWithHost(compiled, stem, new JvmHost(hostSource, Map.of()));
+    }
+
+    private static Tuple jvmArtifactWithHost(Compiled compiled, String stem,
+            JvmHost host) throws Exception {
         String entryModule = compiled.checkedProject().entryModule().path();
-        String output = jvmArtifactOutput(compiled,
+        PreparedJvmDrive drive = prepareJvmDrive(compiled,
             jvmProbe(JvmNames.classNameFor(entryModule), entryModule, ""),
-            Map.of(stem, hostSource));
+            Map.of(stem, host.source()));
+        String output = drive == null ? null : drive.run(List.of(), host.systemProperties());
         if (output == null) {
             return null;
         }
