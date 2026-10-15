@@ -163,12 +163,134 @@ public class DynamicResolutionIrTest {
             Map<FunctionId, LoweredFunction> functions,
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings,
             List<SemanticOp> ops) {
+        Map<FunctionId, LoweredFunction> declared = new LinkedHashMap<>(functions);
+        for (SemanticOp op : ops) {
+            // A body RETURN of a declared function needs its declaration: the
+            // fixture declares it with the membership block as its body. The
+            // invocation-owned RETURN record of a dynamic invocation carries
+            // no declaration (it is not an op of a lowered function).
+            if (op.payload() instanceof KindPayload.ReturnPayload returned
+                    && !declared.containsKey(returned.function())
+                    && !callOwnedReturn(ops, op)) {
+                declared.put(returned.function(), new LoweredFunction(returned.function(), SIG,
+                    List.of(), new BlockId(0), "synthetic"));
+            }
+        }
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_3_INT32, module, IFACE, LCH, Set.of(), Map.of(), Map.of(),
-            functions, new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
-            bindings, ops, new StructuredBodyTable(Map.of(), Map.of()),
+            declared, new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
+            bindings, ops, membership(ops, bindings),
             new ClassFactoryRegistry(Map.of()),
             new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+    }
+
+    /**
+     * The consistent membership of one synthetic unit: every op is a member
+     * of the module-init block (the plan's init block and a root of the
+     * block tree), and every lowered-body binding's block is a real block
+     * the binding references.
+     */
+    private static StructuredBodyTable membership(List<SemanticOp> ops,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        List<OpId> ids = new ArrayList<>();
+        for (SemanticOp op : ops) {
+            if (callOwnedReturn(ops, op)) {
+                // The invocation-owned RETURN record of a dynamic invocation
+                // is unattached, exactly as the producer emits it (the typed
+                // admission's call-owned-return exemption covers it).
+                continue;
+            }
+            ids.add(op.opId());
+            opBlocks.put(op.opId(), new BlockId(0));
+        }
+        blockOps.put(new BlockId(0), ids);
+        for (SemanticOp op : ops) {
+            for (BlockId block : payloadBlocks(op)) {
+                blockOps.putIfAbsent(block, List.of());
+            }
+        }
+        for (FunctionExecutionBinding binding : bindings.values()) {
+            if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
+                blockOps.putIfAbsent(body.blockId(), List.of());
+            }
+        }
+        return new StructuredBodyTable(blockOps, opBlocks);
+    }
+
+    /** The invocation-owned RETURN record of one dynamic invocation in the list. */
+    private static boolean callOwnedReturn(List<SemanticOp> ops, SemanticOp op) {
+        if (!(op.payload() instanceof KindPayload.ReturnPayload returned)) {
+            return false;
+        }
+        for (SemanticOp candidate : ops) {
+            OpId cell = dynamicCellOf(candidate);
+            if (cell != null && cell.equals(returned.returnBoundaryOpId())
+                    && candidate.opId().equals(returned.enclosingInvocationOpId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The dynamic invocation's recorded DEAL-body cell, or {@code null}. */
+    private static OpId dynamicCellOf(SemanticOp op) {
+        if (op.payload() instanceof KindPayload.CallPayload call
+                && call.callee() instanceof KindPayload.CallCallee.Dynamic
+                && call.dynamicReturnBoundary() != null) {
+            return call.dynamicReturnBoundary().dealBodyBoundaryOpId();
+        }
+        if (op.payload() instanceof KindPayload.AsyncStartPayload start
+                && start.callee() instanceof KindPayload.CallCallee.Dynamic
+                && start.returnBoundaryOpId() != null) {
+            return start.returnBoundaryOpId();
+        }
+        return null;
+    }
+
+    /** Every block a payload position of the op references. */
+    private static List<BlockId> payloadBlocks(SemanticOp op) {
+        List<BlockId> blocks = new ArrayList<>();
+        switch (op.payload()) {
+            case KindPayload.BindingAllocPayload p -> blocks.add(p.scope());
+            case KindPayload.CallPayload p -> {
+                if (p.bodyBlock() != null) {
+                    blocks.add(p.bodyBlock());
+                }
+            }
+            case KindPayload.ClassDefaultPayload p -> blocks.add(p.defaultBlock());
+            case KindPayload.FunctionAdaptPayload p -> {
+                if (p.source() instanceof AdaptSourceRef.Thunk thunk) {
+                    blocks.add(thunk.blockId());
+                }
+            }
+            case KindPayload.ModuleInitPayload p -> blocks.add(p.initBlock());
+            case KindPayload.BranchPayload p -> {
+                blocks.add(p.selectedBlock());
+                if (p.alternateBlock() != null) {
+                    blocks.add(p.alternateBlock());
+                }
+            }
+            case KindPayload.LoopPayload p -> {
+                if (p.initBlock() != null) {
+                    blocks.add(p.initBlock());
+                }
+                blocks.add(p.bodyBlock());
+                if (p.updateBlock() != null) {
+                    blocks.add(p.updateBlock());
+                }
+            }
+            case KindPayload.ForEachPayload p -> blocks.add(p.body());
+            case KindPayload.TryCatchPayload p -> {
+                blocks.add(p.tryBlock());
+                blocks.add(p.catchBlock());
+            }
+            default -> {
+                // No payload block positions.
+            }
+        }
+        return blocks;
     }
 
     private static LoweredModuleUnit unit(

@@ -18,6 +18,7 @@ import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.RawCoverage;
+import deal.semantic.ir.RawOp;
 import deal.semantic.ir.RawSourceRef;
 import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.CaptureMode;
@@ -74,6 +75,7 @@ import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StdlibFunctionId;
+import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.UnarySelector;
 import deal.semantic.ir.ValueId;
 
@@ -185,9 +187,35 @@ public class SemanticIrValidatorTest {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_3_INT32, new ModuleId(module), IFACE, LCH, caps, coverage,
             Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
-            bindings, ops, new StructuredBodyTable(Map.of(), Map.of()),
+            bindings, ops, membership(ops, bindings),
             new ClassFactoryRegistry(Map.of()),
             new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+    }
+
+    /**
+     * The consistent membership of one synthetic unit: every produced op is
+     * a member of the module-init block, which is the plan's init block and
+     * therefore a root of the block tree, and every lowered-body binding's
+     * block is a real (empty) block the binding references. Synthetic
+     * negatives that own a membership mutation build their own explicit
+     * table.
+     */
+    private static StructuredBodyTable membership(List<SemanticOp> ops,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        List<OpId> ids = new ArrayList<>();
+        for (SemanticOp op : ops) {
+            ids.add(op.opId());
+            opBlocks.put(op.opId(), new BlockId(0));
+        }
+        blockOps.put(new BlockId(0), ids);
+        for (FunctionExecutionBinding binding : bindings.values()) {
+            if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
+                blockOps.putIfAbsent(body.blockId(), List.of());
+            }
+        }
+        return new StructuredBodyTable(blockOps, opBlocks);
     }
 
     private static LoweredModuleUnit unit(Set<SemanticCapability> caps,
@@ -1424,7 +1452,11 @@ public class SemanticIrValidatorTest {
 
     private static void testTransportMandatoryEmptiesAndNegatives(String complete) {
 
-        LoweredModuleUnit empty = unit(List.of(constOp()));
+        LoweredModuleUnit empty = completeUnit(Map.of(), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
         String text = SemanticIrValidator.toUnitText(empty);
         for (String fact : List.of("\"classLayouts\":[]", "\"functions\":[]",
                 "\"exportPlan\":[]", "\"classFactories\":[]", "\"jsonDefaults\":[]",
@@ -2002,6 +2034,587 @@ public class SemanticIrValidatorTest {
     }
 
     // =========================================================================
+    // 10. Common admission: membership, registry identity and plan links
+    //     (ISSUE-0819)
+    // =========================================================================
+
+    private static final ClassId BATTERY_CLASS = new ClassId("src", "Point");
+    private static final FunctionId BATTERY_FUNCTION = new FunctionId(3);
+    private static final BlockId BATTERY_BODY_BLOCK = new BlockId(7);
+    private static final BlockId BATTERY_INIT_BLOCK = new BlockId(9);
+    private static final OpId BATTERY_PUBLISH_MAIN = new OpId(MOD, 41);
+    private static final OpId BATTERY_PUBLISH_OTHER = new OpId(MOD, 42);
+    private static final OpId BATTERY_MODULE_INIT = new OpId(MOD, 50);
+    private static final OpId BATTERY_BODY_CONST = new OpId(MOD, 51);
+    private static final OpId BATTERY_UNPRODUCED = new OpId(MOD, 99);
+
+    /** The carried project index of the common-admission battery. */
+    private static ProjectInterfaceIndex batteryIndex() {
+        Map<ModuleId, ExternalModuleInterface> entries = new LinkedHashMap<>();
+        entries.put(MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
+            List.of(new ResolvedImport("b", "mod/b", MOD_B, ExternalModuleKind.IMPLEMENTATION)),
+            List.of(new ExportInterface("main", "() => null"),
+                new ExportInterface("other", "i32")),
+            List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES));
+        entries.put(MOD_B, new ExternalModuleInterface(MOD_B,
+            ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(), List.of(),
+            InitializationMode.ONCE_AFTER_DEPENDENCIES));
+        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, entries);
+    }
+
+    private static Map<ClassId, ClassLayout> batteryLayouts() {
+        Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
+        layouts.put(BATTERY_CLASS, new ClassLayout(BATTERY_CLASS, List.of(
+            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL))));
+        return layouts;
+    }
+
+    private static Map<FunctionId, LoweredFunction> batteryFunctions() {
+        Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
+        functions.put(BATTERY_FUNCTION, new LoweredFunction(BATTERY_FUNCTION, SIG_II,
+            List.of(), BATTERY_BODY_BLOCK, "f"));
+        return functions;
+    }
+
+    private static List<SemanticOp> batteryOps() {
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(userOp(opWith(BATTERY_PUBLISH_MAIN, SemanticOpKind.EXPORT_PUBLISH,
+            new KindPayload.ExportPublishPayload(MOD, "main", SIG_II, new ValueId(41)),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null)));
+        ops.add(userOp(opWith(BATTERY_PUBLISH_OTHER, SemanticOpKind.EXPORT_PUBLISH,
+            new KindPayload.ExportPublishPayload(MOD, "other", INT, new ValueId(42)),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null)));
+        ops.add(userOp(opWith(BATTERY_MODULE_INIT, SemanticOpKind.MODULE_INIT,
+            new KindPayload.ModuleInitPayload(MOD, List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null)));
+        ops.add(userOp(opWith(BATTERY_BODY_CONST, SemanticOpKind.CONST,
+            new KindPayload.ConstPayload(new ScalarValue.Int(1)), new ValueId(51), INT,
+            FailurePolicyId.NO_DEAL_FAILURE, null)));
+        return ops;
+    }
+
+    /** The same op with a real USER origin (the range parity probe). */
+    private static SemanticOp userOp(SemanticOp op) {
+        return withOrigin(op, userOrigin("test.deal", null));
+    }
+
+    private static ExportPlan batteryExportPlan() {
+        return new ExportPlan(List.of(
+            new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_MAIN),
+            new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
+    }
+
+    private static StructuredBodyTable batteryTable(List<OpId> initOps, List<OpId> bodyOps) {
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        blockOps.put(BATTERY_INIT_BLOCK, initOps);
+        blockOps.put(BATTERY_BODY_BLOCK, bodyOps);
+        for (OpId op : initOps) {
+            opBlocks.put(op, BATTERY_INIT_BLOCK);
+        }
+        for (OpId op : bodyOps) {
+            opBlocks.put(op, BATTERY_BODY_BLOCK);
+        }
+        return new StructuredBodyTable(blockOps, opBlocks);
+    }
+
+    private static StructuredBodyTable batteryBaseTable() {
+        return batteryTable(List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER),
+            List.of(BATTERY_BODY_CONST));
+    }
+
+    /**
+     * One complete battery unit: the complete /2 facts with the supplied
+     * records, so a mutation rebuilds exactly one record and the transport
+     * carries the rest unchanged.
+     */
+    private static LoweredModuleUnit batteryUnit(
+            String interfaceHash,
+            Map<ConstructKind, List<SemanticOpKind>> coverage,
+            Map<ClassId, ClassLayout> layouts,
+            Map<FunctionId, LoweredFunction> functions,
+            ModuleInitPlan moduleInit,
+            ExportPlan exportPlan,
+            List<SemanticOp> ops,
+            StructuredBodyTable table) {
+        return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_3_INT32, MOD, interfaceHash, LCH, Set.of(), coverage,
+            layouts, functions, moduleInit, exportPlan, Map.of(), ops, table,
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
+    }
+
+    private static LoweredModuleUnit batteryUnit(String interfaceHash) {
+        return batteryUnit(interfaceHash, Map.of(), batteryLayouts(), batteryFunctions(),
+            new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK), batteryExportPlan(),
+            batteryOps(), batteryBaseTable());
+    }
+
+    private static LoweredModuleUnit batteryDependencyUnit(String interfaceHash) {
+        OpId constOp = new OpId(MOD_B, 91);
+        StructuredBodyTable table = new StructuredBodyTable(
+            Map.of(new BlockId(0), List.of(constOp)), Map.of(constOp, new BlockId(0)));
+        return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_3_INT32, MOD_B, interfaceHash, LCH, Set.of(), Map.of(),
+            Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)),
+            ExportPlan.empty(), Map.of(),
+            List.of(opWith(constOp, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(2)), new ValueId(91), INT,
+                FailurePolicyId.NO_DEAL_FAILURE, null)),
+            table, new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
+    }
+
+    private static ExecutableLoweredProject batteryProject(LoweredModuleUnit unit,
+            ProjectInterfaceIndex index) {
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        modules.put(MOD, unit);
+        modules.put(MOD_B, batteryDependencyUnit(index.interfaceIndexDigest()));
+        return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_3_INT32, index, modules,
+            MOD, ClassRegistrationSeeds.builtinErrorOnly());
+    }
+
+    /**
+     * The mutation battery: the mutation travels typed -> raw -> text ->
+     * raw unchanged, and the typed unit admission, the unit text admission
+     * and both project admissions return the same first E6005 (rule,
+     * message and range) with no executable or partial result exposed.
+     */
+    private static void assertCommonAdmissionRejects(String what, LoweredModuleUnit mutated,
+            ProjectInterfaceIndex index, String rule, String... contains) {
+        SemanticIrValidator.ComparisonFacts facts = projectFacts(index);
+        RawUnit raw = RawUnit.fromTyped(mutated);
+        String text = SemanticIrValidator.toUnitText(mutated);
+        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
+        checkEq(raw, reparsed,
+            what + ": the mutation survives typed->raw->text->raw unchanged");
+        for (RawOp op : raw.ops()) {
+            checkEq(op.canonicalDigest(),
+                ContractSnapshotCanonicalizer.recomputeSnapshotDigest(op.snapshot()),
+                what + ": op " + op.opId() + " keeps a valid contract digest "
+                    + "(the rejection is not a digest artifact)");
+        }
+        checkEq(text, CanonicalJson.serializeText(
+                ContractSnapshotCanonicalizer.toJson(reparsed)),
+            what + ": re-serializing the transported mutation is byte-stable");
+        Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(mutated, facts);
+        Optional<CompilerDiagnostic> unitText = SemanticIrValidator.validateText(text, facts);
+        assertE6005(typed, rule, contains);
+        assertE6005(unitText, rule, contains);
+        check(typed.isPresent() && unitText.isPresent()
+                && typed.get().message().equals(unitText.get().message()),
+            what + ": unit text admission reports the identical first failure");
+        if (typed.isPresent() && unitText.isPresent()) {
+            checkEq(typed.get().range(), unitText.get().range(),
+                what + ": unit text admission reports the identical range");
+        }
+        ExecutableLoweredProject project = batteryProject(mutated, index);
+        Optional<CompilerDiagnostic> typedProject = SemanticIrValidator.validate(project, facts);
+        Optional<CompilerDiagnostic> projectText = SemanticIrValidator.validateText(
+            SemanticIrValidator.toProjectText(project), facts);
+        assertE6005(typedProject, rule, contains);
+        assertE6005(projectText, rule, contains);
+        if (typed.isPresent() && typedProject.isPresent() && projectText.isPresent()) {
+            checkEq(typed.get().message(), typedProject.get().message(),
+                what + ": typed project admission reports the identical first failure");
+            checkEq(typed.get().range(), typedProject.get().range(),
+                what + ": typed project admission reports the identical range");
+            checkEq(typed.get().message(), projectText.get().message(),
+                what + ": project text admission reports the identical first failure");
+            checkEq(typed.get().range(), projectText.get().range(),
+                what + ": project text admission reports the identical range");
+        }
+        // The composed typed production admission (the lowering entry's own
+        // chain) rejects the same content with the same first failure, so no
+        // production path can expose a project or a companion view for it.
+        Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
+            mutated.bodyTable(), facts, mutated.classBindingFacts(), mutated.classFactories(),
+            mutated.jsonDefaults(), index.modules().get(MOD), Map.of(), Map.of());
+        check(composed.isPresent() && typed.isPresent()
+                && composed.get().message().equals(typed.get().message()),
+            what + ": the composed typed production admission rejects with the same "
+                + "first failure: " + composed.map(CompilerDiagnostic::message)
+                    .orElse("admitted"));
+    }
+
+    private static void testCommonAdmissionMembershipAndPlans() {
+        System.out.println("-- Common admission: membership, registry identity and plan "
+            + "links over the complete facts (ISSUE-0819) --");
+        ProjectInterfaceIndex index = batteryIndex();
+        String hash = index.interfaceIndexDigest();
+        SemanticIrValidator.ComparisonFacts facts = projectFacts(index);
+        LoweredModuleUnit base = batteryUnit(hash);
+        assertPass(SemanticIrValidator.validate(base, facts),
+            "the common-admission base unit (typed)");
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(base), facts),
+            "the common-admission base unit (unit text)");
+        ExecutableLoweredProject baseProject = batteryProject(base, index);
+        assertPass(SemanticIrValidator.validate(baseProject, facts),
+            "the common-admission base project (typed)");
+        assertPass(SemanticIrValidator.validateText(
+                SemanticIrValidator.toProjectText(baseProject), facts),
+            "the common-admission base project (project text)");
+
+        // Membership: the two directions are exact inverses and the listed
+        // operations are the unit's produced operations.
+        {
+            Map<OpId, BlockId> inverse = new LinkedHashMap<>(
+                batteryBaseTable().opBlocks());
+            inverse.remove(BATTERY_PUBLISH_OTHER);
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
+                new StructuredBodyTable(batteryBaseTable().blockOps(), inverse));
+            assertCommonAdmissionRejects("a deleted opBlocks inverse row", mutated, index,
+                "CONTROL_BLOCK_TREE", "has no inverse membership entry");
+        }
+        {
+            // The converse: the block list loses a row while the inverse map
+            // still names it.
+            Map<BlockId, List<OpId>> blocks = new LinkedHashMap<>(
+                batteryBaseTable().blockOps());
+            blocks.put(BATTERY_INIT_BLOCK, List.of(BATTERY_PUBLISH_MAIN));
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
+                new StructuredBodyTable(blocks, batteryBaseTable().opBlocks()));
+            assertCommonAdmissionRejects("a deleted blockOps row", mutated, index,
+                "CONTROL_BLOCK_TREE", "listed in no block");
+        }
+        {
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
+                batteryTable(List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_MAIN,
+                    BATTERY_PUBLISH_OTHER), List.of(BATTERY_BODY_CONST)));
+            assertCommonAdmissionRejects("an op listed twice in one block", mutated, index,
+                "CONTROL_BLOCK_TREE", "listed twice in one block");
+        }
+        {
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
+                batteryTable(List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER,
+                    BATTERY_UNPRODUCED), List.of(BATTERY_BODY_CONST)));
+            assertCommonAdmissionRejects("an op the unit does not produce", mutated, index,
+                "CONTROL_BLOCK_TREE", "not a produced op");
+        }
+        {
+            // The function root disappears from the table entirely (the
+            // block and its ops' membership rows).
+            Map<BlockId, List<OpId>> blocks = new LinkedHashMap<>();
+            blocks.put(BATTERY_INIT_BLOCK,
+                List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER));
+            Map<OpId, BlockId> inverse = new LinkedHashMap<>();
+            inverse.put(BATTERY_PUBLISH_MAIN, BATTERY_INIT_BLOCK);
+            inverse.put(BATTERY_PUBLISH_OTHER, BATTERY_INIT_BLOCK);
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
+                new StructuredBodyTable(blocks, inverse));
+            assertCommonAdmissionRejects("a missing function root", mutated, index,
+                "CONTROL_BLOCK_TREE", "is not a block of the table");
+        }
+
+        // Registry identity: a key/record disagreement survives transport
+        // and rejects on the same raw facts.
+        {
+            Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>(batteryLayouts());
+            layouts.put(FOREIGN_CLASS, layouts.remove(BATTERY_CLASS));
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), layouts, batteryFunctions(),
+                new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK),
+                batteryExportPlan(), batteryOps(), batteryBaseTable());
+            assertCommonAdmissionRejects("a class-layout key disagreement", mutated, index,
+                "R-IDENTITY-LINK", "class-layout registry key");
+        }
+        {
+            Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
+            functions.put(new FunctionId(4), batteryFunctions().get(BATTERY_FUNCTION));
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(), functions,
+                new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK),
+                batteryExportPlan(), batteryOps(), batteryBaseTable());
+            assertCommonAdmissionRejects("a function key disagreement", mutated, index,
+                "R-IDENTITY-LINK", "function registry key");
+        }
+
+        // Plans: the module-init plan agrees with its initialization
+        // operation, and every export entry names its actual publication.
+        {
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_BODY_BLOCK), batteryExportPlan(), batteryOps(),
+                batteryBaseTable());
+            assertCommonAdmissionRejects("a retargeted moduleInit.initBlock", mutated, index,
+                "R-IDENTITY-LINK", "module-init plan names init block");
+        }
+        {
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B), BATTERY_INIT_BLOCK),
+                batteryExportPlan(), batteryOps(), batteryBaseTable());
+            assertCommonAdmissionRejects("retargeted moduleInit.imports", mutated, index,
+                "R-IDENTITY-LINK", "ordered resolved imports");
+        }
+        {
+            ExportPlan plan = new ExportPlan(List.of(
+                new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_OTHER),
+                new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), plan, batteryOps(), batteryBaseTable());
+            assertCommonAdmissionRejects("a retargeted export publish op", mutated, index,
+                "R-IDENTITY-LINK", "whose export name is");
+        }
+        {
+            ExportPlan plan = new ExportPlan(List.of(
+                new ExportPlan.ExportPlanEntry("mainElsewhere", SIG_II, BATTERY_PUBLISH_MAIN),
+                new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), plan, batteryOps(), batteryBaseTable());
+            assertCommonAdmissionRejects("a retargeted export name", mutated, index,
+                "R-IDENTITY-LINK", "whose export name is");
+        }
+        {
+            // The publication names a foreign module (the op is rebuilt so
+            // its contract digest stays valid): a recomputed digest is not
+            // proof that the plan link is valid.
+            List<SemanticOp> ops = new ArrayList<>();
+            for (SemanticOp op : batteryOps()) {
+                ops.add(op.opId().equals(BATTERY_PUBLISH_MAIN)
+                    ? userOp(opWith(BATTERY_PUBLISH_MAIN, SemanticOpKind.EXPORT_PUBLISH,
+                        new KindPayload.ExportPublishPayload(MOD_B, "main", SIG_II,
+                            new ValueId(41)),
+                        null, null, FailurePolicyId.NO_DEAL_FAILURE, null))
+                    : op);
+            }
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), batteryExportPlan(), ops, batteryBaseTable());
+            assertCommonAdmissionRejects("a foreign publication", mutated, index,
+                "R-IDENTITY-LINK", "foreign publication");
+        }
+        {
+            // A duplicate export name is the entry identity: the typed
+            // admission rejects it; the text surface rejects it earlier, at
+            // transport decode (the framing precedes admission).
+            ExportPlan plan = new ExportPlan(List.of(
+                new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_MAIN),
+                new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_MAIN)));
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), plan, batteryOps(), batteryBaseTable());
+            assertE6005(SemanticIrValidator.validate(mutated, facts),
+                "R-IDENTITY-LINK", "more than once");
+            expectDecodeFailure(SemanticIrValidator.toUnitText(mutated),
+                "a duplicate export-plan name rejects at transport decode");
+        }
+
+        // The own-interface link needs the project context: a standalone unit
+        // admission cannot approve it, the complete project admission rejects
+        // it on both surfaces.
+        {
+            ExportPlan plan = new ExportPlan(List.of(
+                new ExportPlan.ExportPlanEntry("notDeclared", SIG_II, BATTERY_PUBLISH_MAIN),
+                new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
+            List<SemanticOp> ops = new ArrayList<>();
+            for (SemanticOp op : batteryOps()) {
+                ops.add(op.opId().equals(BATTERY_PUBLISH_MAIN)
+                    ? userOp(opWith(BATTERY_PUBLISH_MAIN, SemanticOpKind.EXPORT_PUBLISH,
+                        new KindPayload.ExportPublishPayload(MOD, "notDeclared", SIG_II,
+                            new ValueId(41)),
+                        null, null, FailurePolicyId.NO_DEAL_FAILURE, null))
+                    : op);
+            }
+            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
+                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
+                    BATTERY_INIT_BLOCK), plan, ops, batteryBaseTable());
+            assertPass(SemanticIrValidator.validate(mutated, facts),
+                "the standalone unit admission carries no own-interface context");
+            ExecutableLoweredProject project = batteryProject(mutated, index);
+            Optional<CompilerDiagnostic> typedProject =
+                SemanticIrValidator.validate(project, facts);
+            Optional<CompilerDiagnostic> projectText = SemanticIrValidator.validateText(
+                SemanticIrValidator.toProjectText(project), facts);
+            assertE6005(typedProject, "R-IDENTITY-LINK", "not a declared export");
+            assertE6005(projectText, "R-IDENTITY-LINK", "not a declared export");
+            check(typedProject.isPresent() && projectText.isPresent()
+                    && typedProject.get().message().equals(projectText.get().message()),
+                "both project surfaces report the identical own-interface disagreement");
+        }
+
+        // The two exemptions stay live: the invocation-owned RETURN record
+        // and the module-level kinds are admissible absent from the table.
+        {
+            LoweredModuleUnit dynamicPositive = dynamicCellUnit(hash, Map.of());
+            assertPass(SemanticIrValidator.validate(dynamicPositive, facts),
+                "the call-owned DEAL-body cell and its unattached RETURN are admissible");
+            assertPass(SemanticIrValidator.validateText(
+                    SemanticIrValidator.toUnitText(dynamicPositive), facts),
+                "the call-owned DEAL-body cell through the text surface");
+            check(dynamicPositive.bodyTable().blockOps().containsKey(BATTERY_INIT_BLOCK)
+                    && !dynamicPositive.bodyTable().opBlocks().containsKey(
+                        DYNAMIC_RETURN_OP),
+                "the fixture keeps the invocation-owned RETURN out of the table");
+        }
+    }
+
+    private static final OpId DYNAMIC_CALL_OP = new OpId(MOD, 60);
+    private static final OpId DYNAMIC_PARAM_OP = new OpId(MOD, 61);
+    private static final OpId DYNAMIC_DEAL_CELL = new OpId(MOD, 62);
+    private static final OpId DYNAMIC_HOST_CELL = new OpId(MOD, 63);
+    private static final OpId DYNAMIC_EXTERNAL_CELL = new OpId(MOD, 64);
+    private static final OpId DYNAMIC_RETURN_OP = new OpId(MOD, 65);
+
+    /**
+     * The dynamic DEAL-body cell fixture: one Dynamic CALL recording the
+     * three cells, the DEAL-body cell parented to the unattached
+     * invocation-owned RETURN. Declaring the RETURN's function makes the
+     * record the callee-owned form; the callee value then needs the
+     * same-walk loweredBody registration the dynamic-cell correlation
+     * requires.
+     */
+    private static LoweredModuleUnit dynamicCellUnit(String interfaceHash,
+            Map<FunctionId, LoweredFunction> functions) {
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(boundaryWith(DYNAMIC_PARAM_OP, BoundaryKind.FUNCTION_PARAMETER, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, DYNAMIC_CALL_OP));
+        ops.add(boundaryWith(DYNAMIC_DEAL_CELL, BoundaryKind.FUNCTION_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, DYNAMIC_RETURN_OP));
+        ops.add(boundaryWith(DYNAMIC_HOST_CELL, BoundaryKind.HOST_TO_DEAL, INT,
+            FailurePolicyId.HOST_SYNC_RETURN, DYNAMIC_CALL_OP));
+        ops.add(boundaryWith(DYNAMIC_EXTERNAL_CELL, BoundaryKind.EXTERNAL_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, DYNAMIC_CALL_OP));
+        ops.add(opWith(DYNAMIC_RETURN_OP, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(nextValue(), new FunctionId(1), DYNAMIC_CALL_OP,
+                DYNAMIC_DEAL_CELL),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, DYNAMIC_CALL_OP));
+        ops.add(opWith(DYNAMIC_CALL_OP, SemanticOpKind.CALL,
+            new KindPayload.CallPayload(CallMode.INDIRECT,
+                new KindPayload.CallCallee.Dynamic(new ValueId(77)), SIG_II,
+                List.of(DYNAMIC_PARAM_OP), null,
+                new KindPayload.DynamicReturnBoundary(DYNAMIC_DEAL_CELL, DYNAMIC_HOST_CELL,
+                    DYNAMIC_EXTERNAL_CELL),
+                null, null),
+            nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+        List<OpId> attached = new ArrayList<>();
+        Map<OpId, BlockId> inverse = new LinkedHashMap<>();
+        for (SemanticOp op : ops) {
+            if (op.opId().equals(DYNAMIC_RETURN_OP)) {
+                continue;
+            }
+            attached.add(op.opId());
+            inverse.put(op.opId(), BATTERY_INIT_BLOCK);
+        }
+        StructuredBodyTable table = new StructuredBodyTable(
+            Map.of(BATTERY_INIT_BLOCK, attached), inverse);
+        return batteryUnit(interfaceHash, Map.of(), Map.of(), functions,
+            new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(), ops, table);
+    }
+
+    /**
+     * The previously typed-only correlations of the complete facts run
+     * identically on both surfaces: the layout-only CLASS_DECLARATION
+     * coverage and the dynamic DEAL-body cell form.
+     */
+    private static void testCommonAdmissionCorrelations() {
+        System.out.println("-- Common admission: the typed-only correlations run on both "
+            + "surfaces (ISSUE-0819) --");
+        Map<ConstructKind, List<SemanticOpKind>> classCoverage = Map.of(
+            ConstructKind.CLASS_DECLARATION, ConstructKind.CLASS_DECLARATION.mappedOpKinds());
+        StructuredBodyTable emptyTable = new StructuredBodyTable(
+            Map.of(BATTERY_INIT_BLOCK, List.of()), Map.of());
+        LoweredModuleUnit layoutOnly = batteryUnit(IFACE, classCoverage, batteryLayouts(),
+            Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(),
+            List.of(), emptyTable);
+        assertPass(SemanticIrValidator.validate(layoutOnly, FACTS),
+            "the layout-only class unit (typed)");
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(layoutOnly),
+                FACTS),
+            "the layout-only class unit (unit text)");
+        LoweredModuleUnit layoutMissing = batteryUnit(IFACE, classCoverage, Map.of(),
+            Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(),
+            List.of(), emptyTable);
+        Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(layoutMissing, FACTS);
+        Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
+            SemanticIrValidator.toUnitText(layoutMissing), FACTS);
+        assertE6005(typed, "R-COVERAGE", "no class layout record");
+        assertE6005(text, "R-COVERAGE", "no class layout record");
+        check(typed.isPresent() && text.isPresent()
+                && typed.get().message().equals(text.get().message()),
+            "the layout-only correlation reports the identical first failure on both surfaces");
+        if (typed.isPresent() && text.isPresent()) {
+            checkEq(typed.get().range(), text.get().range(),
+                "the layout-only correlation keeps the same range on both surfaces");
+        }
+
+        LoweredModuleUnit cellPass = dynamicCellUnit(IFACE, Map.of());
+        assertPass(SemanticIrValidator.validate(cellPass, FACTS),
+            "the call-owned DEAL-body cell form (typed)");
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(cellPass),
+                FACTS),
+            "the call-owned DEAL-body cell form (unit text)");
+        Map<FunctionId, LoweredFunction> declared = Map.of(new FunctionId(1),
+            new LoweredFunction(new FunctionId(1), SIG_II, List.of(), BATTERY_INIT_BLOCK, "f"));
+        LoweredModuleUnit cellFail = dynamicCellUnit(IFACE, declared);
+        Optional<CompilerDiagnostic> typedCell = SemanticIrValidator.validate(cellFail, FACTS);
+        Optional<CompilerDiagnostic> textCell = SemanticIrValidator.validateText(
+            SemanticIrValidator.toUnitText(cellFail), FACTS);
+        assertE6005(typedCell, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell",
+            "no same-walk loweredBody registration");
+        assertE6005(textCell, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell",
+            "no same-walk loweredBody registration");
+        check(typedCell.isPresent() && textCell.isPresent()
+                && typedCell.get().message().equals(textCell.get().message()),
+            "the dynamic cell form reports the identical first failure on both surfaces");
+        if (typedCell.isPresent() && textCell.isPresent()) {
+            checkEq(typedCell.get().range(), textCell.get().range(),
+                "the dynamic cell form keeps the same range on both surfaces");
+        }
+
+        // The same two correlations on the project paths: the project text
+        // and the typed project admission agree with the unit surfaces.
+        ProjectInterfaceIndex index = batteryIndex();
+        String hash = index.interfaceIndexDigest();
+        LoweredModuleUnit layoutOnlyProject = batteryUnit(hash, classCoverage,
+            batteryLayouts(), Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK),
+            ExportPlan.empty(), List.of(), emptyTable);
+        assertPass(SemanticIrValidator.validate(batteryProject(layoutOnlyProject, index),
+                projectFacts(index)),
+            "the layout-only class project (typed)");
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
+                batteryProject(layoutOnlyProject, index)), projectFacts(index)),
+            "the layout-only class project (project text)");
+        LoweredModuleUnit layoutMissingProject = batteryUnit(hash, classCoverage, Map.of(),
+            Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(),
+            List.of(), emptyTable);
+        assertE6005(SemanticIrValidator.validate(batteryProject(layoutMissingProject, index),
+                projectFacts(index)),
+            "R-COVERAGE", "no class layout record");
+        assertE6005(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
+                batteryProject(layoutMissingProject, index)), projectFacts(index)),
+            "R-COVERAGE", "no class layout record");
+        LoweredModuleUnit cellPassProject = dynamicCellUnit(hash, Map.of());
+        assertPass(SemanticIrValidator.validate(batteryProject(cellPassProject, index),
+                projectFacts(index)),
+            "the call-owned DEAL-body cell project (typed)");
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
+                batteryProject(cellPassProject, index)), projectFacts(index)),
+            "the call-owned DEAL-body cell project (project text)");
+        LoweredModuleUnit cellFailProject = dynamicCellUnit(hash, declared);
+        Optional<CompilerDiagnostic> typedCellProject = SemanticIrValidator.validate(
+            batteryProject(cellFailProject, index), projectFacts(index));
+        Optional<CompilerDiagnostic> textCellProject = SemanticIrValidator.validateText(
+            SemanticIrValidator.toProjectText(batteryProject(cellFailProject, index)),
+            projectFacts(index));
+        assertE6005(typedCellProject, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell");
+        assertE6005(textCellProject, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell");
+        check(typedCellProject.isPresent() && textCellProject.isPresent()
+                && typedCellProject.get().message().equals(textCellProject.get().message())
+                && typedCellProject.get().range().equals(textCellProject.get().range()),
+            "the project paths report the identical dynamic cell failure");
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -2023,6 +2636,8 @@ public class SemanticIrValidatorTest {
         testTransportMandatoryEmptiesAndNegatives(text);
         testProjectTransportAndMandatoryEmpties();
         testRegistrySourceRefDiscriminator(text);
+        testCommonAdmissionMembershipAndPlans();
+        testCommonAdmissionCorrelations();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

@@ -36,6 +36,7 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BindingId;
+import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.ClassId;
@@ -64,6 +65,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceSpan;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.ValueId;
 import deal.semantic.ir.ExternalModuleInterface;
@@ -1546,10 +1548,22 @@ public class AddressChainLoweringTest {
     private static LoweredModuleUnit protocolUnit(List<SemanticOp> ops) {
         LoweredModuleUnit unit = lowerer(checks(Map.of(), new SymbolTable()))
             .buildUnit(Map.of(), List.of(), INTERFACE_HASH, REGISTRY_HASH);
+        // The membership of the detached fixture ops: one block that is the
+        // plan's init block (a root of the block tree), so the protocol and
+        // rule-family fixtures exercise exactly their subject op.
+        BlockId initBlock = unit.moduleInit().initBlock();
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        List<OpId> ids = new ArrayList<>();
+        for (SemanticOp op : ops) {
+            ids.add(op.opId());
+            opBlocks.put(op.opId(), initBlock);
+        }
+        blockOps.put(initBlock, ids);
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(), unit.moduleId(),
             unit.interfaceHash(), unit.loweringContextHash(), unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(), unit.exportPlan(),
-            unit.functionBindings(), ops, unit.bodyTable(), unit.classFactories(),
+            unit.functionBindings(), ops, new StructuredBodyTable(blockOps, opBlocks), unit.classFactories(),
             unit.jsonDefaults(), unit.classBindingFacts());
     }
 
@@ -1757,7 +1771,10 @@ public class AddressChainLoweringTest {
         expectProtocolException(IllegalArgumentException.class, () -> deal.semantic.ir.NormalizedSlot.tableSlot(IndexMode.ARRAY_WRITE, "k"));
         expectProtocolException(NullPointerException.class, () -> deal.semantic.ir.NormalizedSlot.tableSlot(IndexMode.TABLE_WRITE, null));
         SemanticOp normalize = protocolSeed(2).get(4);
-        check(SemanticIrValidator.validate(protocolUnit(List.of(normalize)), facts()).isEmpty(), "INDEX_NORMALIZE pure policy admitted");
+        Optional<CompilerDiagnostic> pureFailure = SemanticIrValidator.validate(
+            protocolUnit(List.of(normalize)), facts());
+        check(pureFailure.isEmpty(), "INDEX_NORMALIZE pure policy admitted: "
+            + pureFailure.map(CompilerDiagnostic::message).orElse(""));
         SemanticOp wrong = protocolCopy(normalize, normalize.payload(), FailurePolicyId.TYPE_DESCRIPTOR, normalize.origin());
         Optional<CompilerDiagnostic> failure = SemanticIrValidator.validate(protocolUnit(List.of(wrong)), facts());
         check(failure.isPresent() && failure.get().message().contains("R-POLICY-KIND"), "INDEX_NORMALIZE wrong policy rejected");

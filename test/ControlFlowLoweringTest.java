@@ -63,6 +63,7 @@ import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.OpResultType;
 import deal.semantic.ir.OperationContractSnapshot;
+import deal.semantic.ir.RawUnit;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.RuntimeDescriptor;
@@ -1250,8 +1251,12 @@ public class ControlFlowLoweringTest {
             mark(op);
         }
 
+        LoweredModuleUnit mutatedUnit() {
+            return withOps(seed, ops, new StructuredBodyTable(blocks, inverse));
+        }
+
         Optional<CompilerDiagnostic> validate() {
-            LoweredModuleUnit unit = withOps(seed, ops, new StructuredBodyTable(blocks, inverse));
+            LoweredModuleUnit unit = mutatedUnit();
             return ControlFlowValidator.validate(unit, unit.bodyTable());
         }
     }
@@ -1407,6 +1412,18 @@ public class ControlFlowLoweringTest {
                         : failure.get().range().equals(mutation.offender.span().range()),
                     row.name() + " exact offending range: " + failure.get().range());
             }
+            // The same mutation through the complete raw fact model: the
+            // common admission's control owner runs exactly this rule over
+            // exactly this content with the same message and range
+            // (ISSUE-0819).
+            Optional<CompilerDiagnostic> rawFailure = ControlFlowValidator.validate(
+                RawUnit.fromTyped(mutation.mutatedUnit()));
+            check(failure.map(CompilerDiagnostic::message)
+                    .equals(rawFailure.map(CompilerDiagnostic::message))
+                && failure.map(CompilerDiagnostic::range)
+                    .equals(rawFailure.map(CompilerDiagnostic::range)),
+                row.name() + " raw facts run the same rule with the same message and range: "
+                    + rawFailure.map(CompilerDiagnostic::message).orElse("admitted"));
         }
         testFlowTableContracts(lowered);
         testRepresentedTails(lowered);

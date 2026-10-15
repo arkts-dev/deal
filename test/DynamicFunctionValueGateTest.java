@@ -386,11 +386,17 @@ public class DynamicFunctionValueGateTest {
     private static LoweredModuleUnit copy(LoweredModuleUnit unit,
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
             List<SemanticOp> ops) {
+        return copy(unit, registry, ops, unit.bodyTable());
+    }
+
+    private static LoweredModuleUnit copy(LoweredModuleUnit unit,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
+            List<SemanticOp> ops, StructuredBodyTable table) {
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), registry, ops,
-            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
+            table, unit.classFactories(), unit.jsonDefaults(),
             unit.classBindingFacts());
     }
 
@@ -430,14 +436,40 @@ public class DynamicFunctionValueGateTest {
     private static LoweredModuleUnit syntheticUnit(
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
             Map<FunctionId, LoweredFunction> functions, List<SemanticOp> ops) {
+        return syntheticUnit(registry, functions, ops, syntheticTable(ops));
+    }
+
+    private static LoweredModuleUnit syntheticUnit(
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
+            Map<FunctionId, LoweredFunction> functions, List<SemanticOp> ops,
+            StructuredBodyTable table) {
+        Map<FunctionId, LoweredFunction> declared = new LinkedHashMap<>(functions);
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_3_INT32, MODULE, INTERFACE_HASH,
             LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH),
-            Set.of(), Map.of(), Map.of(), functions,
+            Set.of(), Map.of(), Map.of(), declared,
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), registry, ops,
-            new StructuredBodyTable(Map.of(), Map.of()),
+            table,
             new ClassFactoryRegistry(Map.of()),
             new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+    }
+
+    private static List<SemanticOp> appendOp(List<SemanticOp> ops, SemanticOp op) {
+        List<SemanticOp> extended = new ArrayList<>(ops);
+        extended.add(op);
+        return extended;
+    }
+
+    /** The synthetic single-block membership without the named unattached records. */
+    private static StructuredBodyTable syntheticTableExcept(List<SemanticOp> ops,
+            Set<OpId> unattached) {
+        List<SemanticOp> attached = new ArrayList<>();
+        for (SemanticOp op : ops) {
+            if (!unattached.contains(op.opId())) {
+                attached.add(op);
+            }
+        }
+        return syntheticTable(attached);
     }
 
     private static StructuredBodyTable syntheticTable(List<SemanticOp> ops) {
@@ -886,6 +918,11 @@ public class DynamicFunctionValueGateTest {
         OpId invocationOp = nextOpId();
         ValueId operand = new ValueId(602);
         List<SemanticOp> ops = new ArrayList<>();
+        // The invocation-owned RETURN record of a dynamic invocation is an
+        // unattached record (never a block member), exactly as the
+        // producer emits it; the typed admission's call-owned-return
+        // exemption covers it.
+        OpId invocationOwnedReturn = null;
         SemanticOp load = opWith(SemanticOpKind.BINDING_LOAD,
             new KindPayload.BindingLoadPayload(new BindingId(9), 0), calleeValue, SIG0,
             FailurePolicyId.NO_DEAL_FAILURE, null);
@@ -896,6 +933,7 @@ public class DynamicFunctionValueGateTest {
             OpId taskCellId = null;
             if (dynamic) {
                 OpId taskReturn = nextOpId();
+                invocationOwnedReturn = taskReturn;
                 SemanticOp taskCell = boundaryWith(nextOpId(), BoundaryKind.FUNCTION_RETURN,
                     INT, operand, FailurePolicyId.TYPE_DESCRIPTOR, taskReturn);
                 ops.add(taskCell);
@@ -913,6 +951,9 @@ public class DynamicFunctionValueGateTest {
             resultType = InternalResultType.INTERNAL_ASYNC;
         } else {
             OpId callReturn = nextOpId();
+            if (dynamic) {
+                invocationOwnedReturn = callReturn;
+            }
             SemanticOp dealCell = boundaryWith(nextOpId(), BoundaryKind.FUNCTION_RETURN, INT,
                 operand, FailurePolicyId.TYPE_DESCRIPTOR, callReturn);
             ops.add(dealCell);
@@ -941,9 +982,11 @@ public class DynamicFunctionValueGateTest {
         }
         ops.add(newOp(invocationOp, async ? SemanticOpKind.ASYNC_START : SemanticOpKind.CALL,
             payload, nextValue(), resultType, FailurePolicyId.NO_DEAL_FAILURE, null));
+        Set<OpId> unattached = invocationOwnedReturn == null
+            ? Set.of() : Set.of(invocationOwnedReturn);
         return syntheticUnit(Map.of(new FunctionAllocationIdentity(calleeValue.id()),
             new FunctionExecutionBinding.DynamicFunctionValue(load.opId(), SIG0)),
-            Map.of(), ops);
+            Map.of(), ops, syntheticTableExcept(ops, unattached));
     }
 
     private static void testCalleePositionAndCellFamily() {
@@ -1147,8 +1190,9 @@ public class DynamicFunctionValueGateTest {
             new KindPayload.BindingLoadPayload(seedBinding, seedGeneration),
             new ValueId(seedKey), intrinsic.descriptor(), FailurePolicyId.NO_DEAL_FAILURE,
             null);
-        LoweredModuleUnit loaded = withOp(unit, preserved);
-        StructuredBodyTable loadedTable = withTableOp(raw.table(), preserved, seedBlock);
+        StructuredBodyTable loadedTable = withTableOp(unit.bodyTable(), preserved, seedBlock);
+        LoweredModuleUnit loaded = copy(unit, unit.functionBindings(),
+            appendOp(unit.ops(), preserved), loadedTable);
 
         assertBindingsPass(BindingsProductionValidator.validate(loaded, loadedTable,
             raw.pinnedWriteFacts()),
