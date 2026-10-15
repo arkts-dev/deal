@@ -348,13 +348,19 @@ public class SemanticIrValidatorTest {
         System.out.println("-- Exceptional positive admissions --");
 
         {
-            // INDIRECT → LoweredBody through functionBindings.
+            // INDIRECT → LoweredBody through functionBindings: the
+            // registration is produced by the closure that detaches the
+            // body, so the complete binding graph admits.
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings = Map.of(
                 new FunctionAllocationIdentity(9),
                 new FunctionExecutionBinding.LoweredBody(new FunctionId(1), new BlockId(1)));
+            Map<FunctionId, LoweredFunction> functions = Map.of(new FunctionId(1),
+                new LoweredFunction(new FunctionId(1), SIG_II, List.of(), new BlockId(1),
+                    "f"));
             OpId callOp = nextOpId();
             OpId paramBoundary = nextOpId();
             OpId returnBoundary = nextOpId();
+            OpId closureOp = nextOpId();
             List<SemanticOp> ops = new ArrayList<>();
             ops.add(boundaryWith(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
                 FailurePolicyId.TYPE_DESCRIPTOR, callOp));
@@ -365,7 +371,12 @@ public class SemanticIrValidatorTest {
                     new KindPayload.CallCallee.Indirect(new ValueId(9)),
                     SIG_II, List.of(paramBoundary), returnBoundary, null, null, null),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
-            assertAdmission("registered indirect CALL", ops, bindings);
+            ops.add(opWith(closureOp, SemanticOpKind.CLOSURE_NEW,
+                new KindPayload.ClosureNewPayload(new FunctionId(1), SIG_II, List.of(),
+                    new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
+                        new BlockId(1))),
+                new ValueId(9), SIG_II, FailurePolicyId.NO_DEAL_FAILURE, null));
+            assertAdmissionWithFunctions("registered indirect CALL", ops, bindings, functions);
         }
         {
             // EXTERNAL RETAINED_ABI: caller-side return boundary.
@@ -463,6 +474,19 @@ public class SemanticIrValidatorTest {
     private static void assertAdmission(String what, List<SemanticOp> ops,
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
         LoweredModuleUnit unit = unit(Set.of(), Map.of(), bindings, ops);
+        assertPass(SemanticIrValidator.validate(unit, FACTS), what);
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(unit), FACTS),
+            what + " through the text surface");
+    }
+
+    /** The same positive admission with the unit's function records supplied. */
+    private static void assertAdmissionWithFunctions(String what, List<SemanticOp> ops,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings,
+            Map<FunctionId, LoweredFunction> functions) {
+        LoweredModuleUnit unit = completeUnit(Map.of(), functions,
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), bindings, ops,
+            membership(ops, bindings), new ClassFactoryRegistry(Map.of()),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
         assertPass(SemanticIrValidator.validate(unit, FACTS), what);
         assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(unit), FACTS),
             what + " through the text surface");
@@ -1798,6 +1822,40 @@ public class SemanticIrValidatorTest {
     }
 
     /**
+     * The transport project's entry unit: the declared class of the carried
+     * interface index with its complete construction facts (the registered
+     * {@code CLASS_FACTORY} and the defaulted field's {@code CLASS_DEFAULT}
+     * child), so the carried index, the unit's layouts and the unit's class
+     * registry are one coherent class graph.
+     */
+    private static LoweredModuleUnit classTransportUnit(String interfaceHash) {
+        ClassId point = new ClassId("mod.a", "Point");
+        ClassFactoryId constructionEntry = new ClassFactoryId(7);
+        ClassLayout layout = new ClassLayout(point, List.of(
+            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL),
+            new ClassLayout.FieldLayout("label", STR, false, DefaultOwner.LOCAL)));
+        OpId caller = new OpId(MOD, 60);
+        OpId defaultX = new OpId(MOD, 61);
+        OpId factoryOp = new OpId(MOD, 62);
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(constOp());
+        ops.add(opWith(defaultX, SemanticOpKind.CLASS_DEFAULT,
+            new KindPayload.ClassDefaultPayload(point, "x", new BlockId(0)),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(factoryOp, SemanticOpKind.CLASS_FACTORY,
+            new KindPayload.ClassFactoryPayload(point, List.of(defaultX), caller),
+            new ValueId(63), new RuntimeDescriptor.Class(point),
+            FailurePolicyId.CLASS_CONSTRUCTION, null));
+        return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_3_INT32, MOD, interfaceHash, LCH, Set.of(), Map.of(),
+            Map.of(point, layout), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            ops, membership(ops, Map.of()),
+            new ClassFactoryRegistry(Map.of(constructionEntry, factoryOp)),
+            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+    }
+
+    /**
      * The complete {@code deal.semantic-ir/2} project transport
      * (ISSUE-0818): the project text carries the {@code
      * deal.semantic-interface/1} index, the class registration seeds and
@@ -1828,8 +1886,7 @@ public class SemanticIrValidatorTest {
                     InitializationMode.ONCE_AFTER_DEPENDENCIES));
             }});
         Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
-        modules.put(MOD, withInterfaceHash(unit(List.of(constOp())),
-            index.interfaceIndexDigest()));
+        modules.put(MOD, classTransportUnit(index.interfaceIndexDigest()));
         modules.put(MOD_B, withInterfaceHash(
             unit("mod.b", Set.of(), Map.of(), Map.of(), List.of(constOp())),
             index.interfaceIndexDigest()));
@@ -1943,9 +2000,13 @@ public class SemanticIrValidatorTest {
         checkEq(detachedSeeds, detachedParsed.classSeeds(),
             "the seed key/layout disagreement survives typed->text->typed unchanged");
         for (RawUnit raw : detachedParsed.modules()) {
-            check(raw.classLayouts().isEmpty(),
+            check(raw.classLayouts().stream()
+                    .noneMatch(entry -> entry.layout().fields().isEmpty()),
                 "the seeds are never merged into a unit's own classLayouts");
         }
+        checkEq(RawUnit.fromTyped(modules.get(MOD)).classLayouts(),
+            detachedParsed.modules().get(0).classLayouts(),
+            "the unit keeps exactly its own declared classLayouts beside the seeds");
 
         // The /1 envelope is never filled or repaired.
         expectProjectDecodeFailure(

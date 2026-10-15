@@ -1288,9 +1288,14 @@ public class AddressChainLoweringTest {
             ConstructKind.DELETE, ConstructKind.DELETE.mappedOpKinds());
         LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(), INTERFACE_HASH,
             REGISTRY_HASH);
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit, facts());
+        // The manual chain slice lowers no declaration arm, so its binding
+        // cells are absent; the common-admission head is the applicable
+        // closed-rule gate of this partial slice (the complete admission of
+        // a full closure runs the bindings owner over the produced cells).
+        Optional<CompilerDiagnostic> validation =
+            SemanticIrValidator.validateUnitHead(unit, facts());
         check(validation.isEmpty(),
-            "the two-chain unit passes the foundation validator: " + validation);
+            "the two-chain unit passes the common-admission head: " + validation);
         if (validation.isPresent()) {
             return;
         }

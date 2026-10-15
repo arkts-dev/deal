@@ -918,6 +918,21 @@ public class DynamicFunctionValueGateTest {
         OpId invocationOp = nextOpId();
         ValueId operand = new ValueId(602);
         List<SemanticOp> ops = new ArrayList<>();
+        // The callee's module-level cell: the value operand is produced by a
+        // constant (not a producer-less seed), and the one allocation plus
+        // its one init dominate the callee load, so the complete binding
+        // graph of this synthetic slice is consistent.
+        ValueId initial = new ValueId(603);
+        ops.add(opWith(SemanticOpKind.CONST,
+            new KindPayload.ConstPayload(new ScalarValue.Int(1)), initial, INT,
+            FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(SemanticOpKind.BINDING_ALLOC,
+            new KindPayload.BindingAllocPayload(new BindingId(9), new BlockId(0), false,
+                BindingCellKind.DIRECT, 0), null, null,
+            FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(SemanticOpKind.BINDING_INIT,
+            new KindPayload.BindingInitPayload(new BindingId(9), 0, initial), null, null,
+            FailurePolicyId.NO_DEAL_FAILURE, null));
         // The invocation-owned RETURN record of a dynamic invocation is an
         // unattached record (never a block member), exactly as the
         // producer emits it; the typed admission's call-owned-return
@@ -1256,8 +1271,18 @@ public class DynamicFunctionValueGateTest {
                 raw.pinnedWriteFacts()), "ADAPTER_SOURCE_SHAPE",
                 "a proof over the seeded intrinsic identity naming another binding",
                 "naming no seeded binding/generation");
-            assertSchemaPass(SemanticIrValidator.validate(foreignProof,
-                facts(foreignProof)), "the mis-proved adapter unit on the schema surface");
+            // The common admission composes the bindings owner, so the
+            // mis-proved adapter rejects there too, identically on both
+            // surfaces.
+            assertSchemaRule(SemanticIrValidator.validate(foreignProof,
+                    facts(foreignProof)), "ADAPTER_SOURCE_SHAPE",
+                "the mis-proved adapter unit on the typed common admission",
+                "naming no seeded binding/generation");
+            assertSchemaRule(SemanticIrValidator.validateText(
+                    SemanticIrValidator.toUnitText(foreignProof), facts(foreignProof)),
+                "ADAPTER_SOURCE_SHAPE",
+                "the mis-proved adapter unit on the text common admission",
+                "naming no seeded binding/generation");
         }
 
         // The seeded proof and the proof-less seeded operand: admissible with
