@@ -72,6 +72,7 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SemanticValue;
+import deal.semantic.ir.SharedFactoryFacts;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
@@ -739,6 +740,193 @@ public class ClassConstructionValidatorTest {
                 lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
+    }
+
+    /**
+     * The malformed links of the exact declaring-provider field route: a
+     * recorded construction entry naming another class's declaration entry,
+     * an entry resolving no registered declaration, and a record-less
+     * operation of a multiple-declaration identity. Each fails with the
+     * named E6005 carrying the offending op's own SOURCE range — never the
+     * range-less canonical synthetic surface (ISSUE-0809: the available
+     * origin survives the admission failure).
+     */
+    private static void testFieldLayoutLinkOrigins() {
+        System.out.println("-- the malformed field-layout links fail closed with the "
+            + "offending op's own SOURCE range --");
+
+        String source = """
+            class Point {
+              x: int;
+              y?: int = 0;
+            }
+            let p: Point = {x: 1};
+            let v: int | null = p.y;
+            p.x = 9;
+            delete p.y;
+            """;
+        LoweredSlice lowered = lowerModule(source);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
+        check(result != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null, "the link baseline lowers");
+        if (result == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.lowering().unit();
+        SemanticOp read = firstOfKind(unit, SemanticOpKind.FIELD_READ);
+        check(read != null, "the link baseline produces one FIELD_READ");
+        if (read == null) {
+            return;
+        }
+        ClassId point = ((KindPayload.FieldReadPayload) read.payload()).classId();
+        ClassId foreign = new ClassId("src/m/ir", "Ir");
+        ClassFactoryId foreignEntry = new ClassFactoryId(1_001);
+        ClassFactoryId siblingEntry = new ClassFactoryId(1_002);
+        ClassFactoryId unregisteredEntry = new ClassFactoryId(9_999);
+        // Two same-identity sibling declarations of one canonical class id:
+        // a record-less operation of the identity resolves no exact
+        // declaration and fails closed rather than selecting a first alias.
+        List<FieldInterface> foreignFields = List.of(
+            new FieldInterface("a", "int", false, false, false));
+        ClassLayout foreignLayout = new ClassLayout(foreign, List.of(
+            new ClassLayout.FieldLayout("a", RuntimeDescriptor.Int.INSTANCE, true,
+                DefaultOwner.LOCAL)));
+        Map<ClassFactoryId, SharedFactoryFacts> providers = new LinkedHashMap<>();
+        providers.put(foreignEntry, new SharedFactoryFacts(foreign,
+            new ClassInterface(foreign, foreignFields, foreignEntry), foreignLayout,
+            new OpId(new ModuleId("src/m/ir"), 1), new ValueId(1)));
+        providers.put(siblingEntry, new SharedFactoryFacts(foreign,
+            new ClassInterface(foreign, foreignFields, siblingEntry),
+            new ClassLayout(foreign, foreignLayout.fields()),
+            new OpId(new ModuleId("src/m/codec"), 1), new ValueId(2)));
+
+        Map<SemanticOpKind, SemanticOp> fieldOps = new LinkedHashMap<>();
+        Map<SemanticOpKind, String> accessText = new LinkedHashMap<>();
+        fieldOps.put(SemanticOpKind.FIELD_READ, read);
+        accessText.put(SemanticOpKind.FIELD_READ, "p.y");
+        fieldOps.put(SemanticOpKind.FIELD_WRITE,
+            firstOfKind(unit, SemanticOpKind.FIELD_WRITE));
+        accessText.put(SemanticOpKind.FIELD_WRITE, "p.x");
+        fieldOps.put(SemanticOpKind.FIELD_DELETE,
+            firstOfKind(unit, SemanticOpKind.FIELD_DELETE));
+        accessText.put(SemanticOpKind.FIELD_DELETE, "p.y");
+
+        for (Map.Entry<SemanticOpKind, SemanticOp> entry : fieldOps.entrySet()) {
+            SemanticOp op = entry.getValue();
+            check(op != null, "the link baseline produces one " + entry.getKey());
+            if (op == null) {
+                continue;
+            }
+            String text = accessText.get(entry.getKey());
+            expectFieldLinkRange(validateFieldLink(unit, op, point, foreignEntry,
+                    lowered, result, providers), op, source, text,
+                "a construction entry of another class's declaration",
+                "not its own classId");
+            expectFieldLinkRange(validateFieldLink(unit, op, point, unregisteredEntry,
+                    lowered, result, providers), op, source, text,
+                "a construction entry resolving no registered declaration",
+                "resolves no registered declaration");
+            expectFieldLinkRange(validateFieldLink(unit, op, foreign, null,
+                    lowered, result, providers), op, source, text,
+                "a record-less operation of a multiple-declaration identity",
+                "carries no exact declaring-provider reference");
+        }
+    }
+
+    /** One tampered field op admitted with the supplied provider facts. */
+    private static Optional<CompilerDiagnostic> validateFieldLink(
+            LoweredModuleUnit unit, SemanticOp op, ClassId classId,
+            ClassFactoryId ref, LoweredSlice lowered,
+            SemanticLowerer.ClassDeclarationCoreResult result,
+            Map<ClassFactoryId, SharedFactoryFacts> providers) {
+        return ClassConstructionValidator.validate(
+            withFieldLink(unit, op, classId, ref), result.lowering().table(),
+            result.registry(), result.jsonDefaults(), lowered.ownInterface(),
+            Map.of(), Map.of(), providers, Set.of());
+    }
+
+    /**
+     * One field op whose payload carries {@code classId}/{@code ref}, with
+     * its receiver boundary child carrying the matching class descriptor
+     * (the field op's receiver child names the payload's class id).
+     */
+    private static LoweredModuleUnit withFieldLink(LoweredModuleUnit unit, SemanticOp op,
+                                                   ClassId classId, ClassFactoryId ref) {
+        KindPayload tampered = switch (op.payload()) {
+            case KindPayload.FieldReadPayload read -> new KindPayload.FieldReadPayload(
+                read.classValue(), classId, read.field(), ref);
+            case KindPayload.FieldWritePayload write -> new KindPayload.FieldWritePayload(
+                write.classValue(), classId, write.field(), write.value(), ref);
+            case KindPayload.FieldDeletePayload delete -> new KindPayload.FieldDeletePayload(
+                delete.classValue(), classId, delete.field(), ref);
+            default -> throw new IllegalArgumentException(
+                "not a field payload: " + op.payload());
+        };
+        SemanticOp rebuilt = rebuild(op, tampered);
+        SemanticOp receiver = receiverBoundaryOf(unit, op);
+        List<SemanticOp> ops = new ArrayList<>(unit.ops());
+        for (int i = 0; i < ops.size(); i++) {
+            SemanticOp candidate = ops.get(i);
+            if (candidate.opId().equals(op.opId())) {
+                ops.set(i, rebuilt);
+            } else if (receiver != null && candidate.opId().equals(receiver.opId())) {
+                KindPayload.BoundaryPayload boundary =
+                    (KindPayload.BoundaryPayload) receiver.payload();
+                ops.set(i, rebuild(receiver, new KindPayload.BoundaryPayload(
+                    boundary.kind(), new RuntimeDescriptor.Class(classId),
+                    boundary.input(), boundary.realization())));
+            }
+        }
+        return unitWithOps(unit, ops);
+    }
+
+    /** The op's UNTYPED_CLASS_INPUT boundary child, or {@code null}. */
+    private static SemanticOp receiverBoundaryOf(LoweredModuleUnit unit, SemanticOp op) {
+        for (SemanticOp child : childrenOf(unit, op)) {
+            if (child.payload() instanceof KindPayload.BoundaryPayload boundary
+                    && boundary.kind() == BoundaryKind.UNTYPED_CLASS_INPUT) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Asserts the named E6005 of one malformed field link carries exactly
+     * the offending op's own SOURCE range, whose offsets name the member
+     * access of the test source.
+     */
+    private static void expectFieldLinkRange(Optional<CompilerDiagnostic> outcome,
+                                             SemanticOp op, String source,
+                                             String accessText, String link,
+                                             String messageFragment) {
+        expectE6005(outcome, ClassConstructionValidator.FIELD_OPERATION_SHAPE);
+        if (outcome.isEmpty()) {
+            return;
+        }
+        CompilerDiagnostic diagnostic = outcome.get();
+        check(diagnostic.message().contains(messageFragment),
+            "the " + link + " failure names the malformed link (" + messageFragment
+                + "); got " + diagnostic.message());
+        DiagnosticRange expected = op.origin().span().range();
+        DiagnosticRange range = diagnostic.range();
+        check(expected.origin() == RangeOrigin.SOURCE,
+            "the offending " + op.kind() + " " + op.opId()
+                + " carries its own SOURCE origin; got " + expected);
+        check(range.equals(expected),
+            "the " + link + " failure carries the offending " + op.kind() + " "
+                + op.opId() + "'s own SOURCE range " + expected + "; got " + range);
+        check(!range.isCanonicalSynthetic(),
+            "the " + link + " failure never carries the range-less canonical "
+                + "synthetic surface; got " + range);
+        int start = range.startScalarOffset();
+        int end = range.endScalarOffset();
+        check(start >= 0 && end == start + accessText.length()
+                && source.startsWith(accessText, start),
+            "the " + link + " failure range " + range + " names the member access '"
+                + accessText + "' in the source; got [" + start + "," + end + ")");
     }
 
     // =========================================================================
@@ -2157,6 +2345,7 @@ public class ClassConstructionValidatorTest {
         testFactoryNegatives(shared);
         testConstructionNegatives(shared);
         testFieldOperationNegatives();
+        testFieldLayoutLinkOrigins();
         testDefaultBlockAdmissionNegatives(shared);
         testDefaultBlockAdmissionReferenceOrigins();
         testJsonNegatives();

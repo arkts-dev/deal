@@ -822,6 +822,20 @@ public final class ClassConstructionValidator {
             return FailureContractRegistry.e6005(detail(rule, origin));
         }
 
+        /**
+         * Builds the E6005 diagnostic of one failing rule naming an
+         * offending op: the diagnostic carries that op's own source origin
+         * as its range (never a guessed anchor). A failure with no produced
+         * offending op keeps the canonical synthetic range.
+         */
+        private CompilerDiagnostic defect(String rule, String origin,
+                                          SemanticOp op) {
+            return op == null
+                ? defect(rule, origin)
+                : FailureContractRegistry.e6005(detail(rule, origin),
+                    op.origin().span().range());
+        }
+
         private Optional<CompilerDiagnostic> fail(String rule, String origin) {
             return Optional.of(defect(rule, origin));
         }
@@ -834,10 +848,7 @@ public final class ClassConstructionValidator {
          */
         private Optional<CompilerDiagnostic> fail(String rule, String origin,
                                                   SemanticOp op) {
-            return Optional.of(op == null
-                ? defect(rule, origin)
-                : FailureContractRegistry.e6005(detail(rule, origin),
-                    op.origin().span().range()));
+            return Optional.of(defect(rule, origin, op));
         }
 
         /** The op named by the id, or {@code null}. */
@@ -986,7 +997,8 @@ public final class ClassConstructionValidator {
          * identity-keyed layout. An unresolvable recorded reference or a
          * record-less operation of a multiple-declaration identity fails
          * closed with the named rule — never a first alias or a unit-local
-         * mask.
+         * mask — and every failure carries the offending operation's own
+         * source origin as its range.
          */
         private FieldLayoutResolution fieldLayoutResolution(ClassId classId,
                                                             ClassFactoryId ref,
@@ -1001,7 +1013,7 @@ public final class ClassConstructionValidator {
                                 + " carries classFactoryRef " + ref + " of "
                                 + provider.classId() + ", not its own classId "
                                 + classId + " (the recorded reference must name the"
-                                + " operation's exact declaring provider)"));
+                                + " operation's exact declaring provider)", op));
                     }
                     return FieldLayoutResolution.layout(provider.layout());
                 }
@@ -1016,7 +1028,7 @@ public final class ClassConstructionValidator {
                         + " registered declaration of " + classId + " (an exact"
                         + " declaring provider reference must name a project"
                         + " declaration's construction entry or the unit's own"
-                        + " exported class entry)"));
+                        + " exported class entry)", op));
             }
             if (identityAmbiguous(classId)) {
                 ClassLayout own = unit.classLayouts().get(classId);
@@ -1035,7 +1047,7 @@ public final class ClassConstructionValidator {
                         + " while the canonical class identity has more than one"
                         + " declared provider (same-directory sibling declarations):"
                         + " the operation fails closed rather than selecting a first"
-                        + " alias or an identity-keyed first match"));
+                        + " alias or an identity-keyed first match", op));
             }
             return FieldLayoutResolution.layout(layoutContext.get(classId));
         }
