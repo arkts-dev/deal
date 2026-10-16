@@ -1865,21 +1865,51 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The shadowing-initializer assignment collision (review 0005): the
-     * assignment inside a shadowing let's own initializer targets the
-     * enclosing binding (the pending declaration is not visible there,
-     * docs/spec-v1.3.md §Name resolution — Declaration order), so the literal keeps that
-     * binding's declared provider — the enclosing annotation names
-     * {@code ir} even when the not-yet-visible inner declaration names
-     * the identity-equal sibling and the import that happens to come
-     * first. Asserted in both import orders for the enclosing block and
-     * the loop-head form, with the exact defining range, one
-     * import-order-independent digest, and the published artifact
-     * outcome.
+     * The shadowing-initializer crossing (review 0005; ISSUE-0809 review
+     * cycle 2): the assignment inside a shadowing let's own initializer
+     * targets the enclosing binding (the pending declaration is not
+     * visible there, docs/spec-v1.3.md §Name resolution — Declaration
+     * order), so the constructed literal carries that binding's declared
+     * provider — the enclosing annotation names {@code ir} even when the
+     * not-yet-visible inner declaration names the identity-equal sibling
+     * and the import that happens to come first. The inner declaration of
+     * another provider never retags that value: both import orders are
+     * refused with E3019 at the shadowing initializers and nothing is
+     * published, so the import order can never decide the demanded
+     * default.
      */
-    private static void testProductionShadowingInitializerCollision() throws Exception {
-        checkCollision(new CollisionCase("shadowing-initializer", SHADOW_IR_SOURCE, SHADOW_CODEC_SOURCE,
-            List.of(SHADOW_MAIN_CODEC_FIRST, SHADOW_MAIN_IR_FIRST), false, false, true, false, true));
+    private static void testProductionShadowingInitializerCrossingRejected()
+            throws Exception {
+        Path root = Files.createTempDirectory("production-shadowing-initializer-");
+        try {
+            write(root, "deal.json", DEAL_JSON_JS);
+            write(root, "src/m/ir.deal", SHADOW_IR_SOURCE);
+            write(root, "src/m/codec.deal", SHADOW_CODEC_SOURCE);
+            String[] entries = { "src/main.deal", "src/main_ir_first.deal" };
+            String[] sources = { SHADOW_MAIN_CODEC_FIRST, SHADOW_MAIN_IR_FIRST };
+            for (int i = 0; i < entries.length; i++) {
+                String label = i == 0 ? "codec-first" : "ir-first";
+                write(root, entries[i], sources[i]);
+                ArmCompile compile = compileWithInvocation(root, entries[i],
+                    productionInvocation());
+                check(!compile.success(),
+                    "the shadowing same-identity crossing is refused (" + label + ")");
+                List<CompilerDiagnostic> diagnostics =
+                    compile.orchestrator().diagnostics();
+                long crossings = diagnostics.stream()
+                    .filter(d -> "E3019".equals(d.code())).count();
+                checkEq(2L, crossings,
+                    "the block initializer and the loop-head initializer are "
+                        + "named as crossings (" + label + "): " + diagnostics);
+                check(diagnostics.stream().noneMatch(d -> "E6005".equals(d.code())),
+                    "the crossing is a frontend rejection, never a lowering "
+                        + "fail-close (" + label + "): " + diagnostics);
+                check(!Files.exists(root.resolve("out")),
+                    "the refused crossing publishes no artifact (" + label + ")");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
     }
 
     /**
@@ -5964,7 +5994,7 @@ public class ProductionDispatchTest {
         testProductionDeclaredContextSiblingCollision();
         testProductionIdentifierAssignmentCollision();
         testProductionMemberAssignmentCollision();
-        testProductionShadowingInitializerCollision();
+        testProductionShadowingInitializerCrossingRejected();
         testConversionOverflowTerminal();
         Path sync = Files.createTempDirectory("production-dispatch-sync-");
         try {

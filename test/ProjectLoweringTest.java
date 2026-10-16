@@ -680,6 +680,7 @@ public class ProjectLoweringTest {
 
     private static final String LOCAL_ATTRIBUTION_CODEC_SOURCE = """
         export class Ir { a: int = 93; }
+        export function id(x: Ir): Ir { return x; }
         """;
 
     private static final String LOCAL_ATTRIBUTION_APP_SOURCE = """
@@ -688,10 +689,12 @@ public class ProjectLoweringTest {
 
         class Ir { a: int = 5; }
 
-        class Holder { f: Ir = ir.id({}); }
+        function id(x: Ir): Ir { return x; }
+
+        class Holder { f: Ir = id({}); }
 
         export function main(): null {
-          let p: Ir = ir.id({});
+          let p: Ir = id({});
           let q: Holder = {};
           if (p.a !== 5) { throw { code: "WRONG_P", message: "p.a" }; }
           if (q.f.a !== 5) { throw { code: "WRONG_F", message: "q.f.a" }; }
@@ -705,10 +708,12 @@ public class ProjectLoweringTest {
 
         class Ir { a: int = 5; }
 
-        class Holder { f: Ir = ir.id({}); }
+        function id(x: Ir): Ir { return x; }
+
+        class Holder { f: Ir = id({}); }
 
         export function main(): null {
-          let p: Ir = ir.id({});
+          let p: Ir = id({});
           let q: Holder = {};
           if (p.a !== 5) { throw { code: "WRONG_P", message: "p.a" }; }
           if (q.f.a !== 5) { throw { code: "WRONG_F", message: "q.f.a" }; }
@@ -717,19 +722,19 @@ public class ProjectLoweringTest {
         """;
 
     /**
-     * The annotated-import + imported-callee-argument fixture: the
-     * annotation's qualified spelling names {@code codec}'s declaration
-     * while the literal is an argument of {@code ir.id}. The checker's
-     * recorded construction context is the annotation's declaration, so
-     * the construction must use codec's 93 — never the callee's
-     * parameter provider 7.
+     * The annotated-import construction fixture: the annotation's
+     * qualified spelling names {@code codec}'s declaration while the
+     * callee parameter names the same declaration (a crossing callee
+     * would be refused by the checker). The checker's recorded
+     * construction context is the annotation's declaration, so the
+     * construction must use codec's 93 — never the sibling ir's 7.
      */
     private static final String IMPORTED_CONTEXT_PROBE_SOURCE = """
         import * as ir from "./ir";
         import * as codec from "./codec";
 
         export function main(): null {
-          let p: codec.Ir = ir.id({});
+          let p: codec.Ir = codec.id({});
           if (p.a !== 93) { throw { code: "WRONG_CODEC", message: "p.a" }; }
           return null;
         }
@@ -2495,6 +2500,70 @@ public class ProjectLoweringTest {
         }
     }
 
+    /**
+     * The same-identity provider crossing (ISSUE-0809 review cycle 2): two
+     * files in one directory declaring the same class name share one
+     * canonical public identity, so the imported declaration's value never
+     * retags to the consumer's same-spelled declaration. The production
+     * pipeline refuses the project at the frontend with E3019 and
+     * publishes nothing — never an artifact whose field layout belongs to
+     * the other declaration.
+     */
+    private static void testSameIdentityProviderCrossingRejected() throws Exception {
+        System.out.println("-- a same-identity provider crossing is a frontend "
+            + "E3019 and publishes no project --");
+        Path proj = Files.createTempDirectory("project-lowering-crossing");
+        try {
+            writeFileIn(proj, "src/other.deal", """
+                export class Point { nick: int = 1; }
+                """);
+            writeFileIn(proj, "src/app.deal", """
+                import * as other from "./other";
+
+                class Point { nick: string = ""; }
+
+                export function main(): null {
+                  let y: other.Point = {};
+                  let p: Point = y;
+                  let s: string = p.nick;
+                  return null;
+                }
+                """);
+            Path entry = proj.resolve("src/app.deal").toAbsolutePath();
+            Path output = proj.resolve("out").toAbsolutePath();
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entry, output, false, false, false, false, Backend.LUAJIT,
+                Map.of(), List.of(proj.resolve("src").toAbsolutePath()),
+                Path.of(".").toAbsolutePath().normalize(), null,
+                ConformanceHarnessMetadata.invocation());
+            check(!orchestrator.compile(),
+                "the same-identity provider crossing is refused, never "
+                    + "published: " + orchestrator.diagnostics());
+            check(orchestrator.diagnostics().stream()
+                    .anyMatch(d -> "E3019".equals(d.code())),
+                "the refused project names the crossing E3019: "
+                    + orchestrator.diagnostics());
+            check(orchestrator.checkedProject() == null,
+                "the refused project publishes no partial checked project");
+            check(!Files.exists(output) || isEmptyTree(output),
+                "the refused project publishes no output artifact: " + output);
+        } finally {
+            deleteRecursively(proj);
+        }
+    }
+
+    /** True when the tree contains no regular file and no directory entry. */
+    private static boolean isEmptyTree(Path root) {
+        if (!Files.isDirectory(root)) {
+            return false;
+        }
+        try (var entries = Files.list(root)) {
+            return entries.findAny().isEmpty();
+        } catch (java.io.IOException defect) {
+            return false;
+        }
+    }
+
     private static void testSameIdentityFieldOperationResolution() throws Exception {
         System.out.println("-- same-identity sibling field operations: the exact "
             + "declaring provider owns every field read/write/delete, independent "
@@ -2883,11 +2952,12 @@ public class ProjectLoweringTest {
      * resource and per-construction default (5), independent of the import
      * order.
      */
-    private static void testLocalDeclarationBesideImportedCalleeArgument()
+    private static void testLocalDeclarationOwnsLiteralBesideImportedSiblings()
             throws Exception {
-        System.out.println("-- the annotated-local + imported-callee-argument "
-            + "shape: the checker's recorded construction declaration owns the "
-            + "literal's plan and per-construction default --");
+        System.out.println("-- the annotated-local construction shape: the "
+            + "checker's recorded construction declaration owns the "
+            + "literal's plan and per-construction default beside imported "
+            + "same-identity siblings --");
         for (boolean reversed : new boolean[] { false, true }) {
             String label = reversed ? "reversed imports" : "ir imported first";
             RealProject project = compileProject("src/m/app.deal",
@@ -2987,8 +3057,8 @@ public class ProjectLoweringTest {
      */
     private static void testImportedContextBesideCalleeArgumentProvider()
             throws Exception {
-        System.out.println("-- the annotated-import + imported-callee-argument "
-            + "shape: the checker's recorded construction context owns the "
+        System.out.println("-- the annotated-import construction shape: the "
+            + "checker's recorded construction context owns the "
             + "literal's provider and per-construction default --");
         for (boolean reversed : new boolean[] { false, true }) {
             String label = reversed ? "reversed imports" : "ir imported first";
@@ -2998,9 +3068,9 @@ public class ProjectLoweringTest {
                     "src/m/codec.deal", LOCAL_ATTRIBUTION_CODEC_SOURCE),
                 Map.of());
             try {
-                // The literal is an argument of ir.id but the annotation
-                // names codec.Ir: the recorder records codec as the
-                // construction provider.
+                // The literal is an argument of codec.id and the
+                // annotation names codec.Ir: the recorder records codec
+                // as the construction provider, never the sibling ir.
                 for (CheckedModuleInput module : project.checkedProject().modules()) {
                     if (module.moduleId().path().equals("m.probe")) {
                         checkEq(1, module.classLiteralProviders().size(),
@@ -3047,7 +3117,7 @@ public class ProjectLoweringTest {
                             + "annotation provider's factory (" + label + ")");
                     checkEq(codecEntry, payload.classFactoryRef(),
                         "the construction references codec's construction entry, "
-                            + "never the callee's ir entry (" + label + ")");
+                            + "never the sibling ir entry (" + label + ")");
                 }
                 check(constructionSeen,
                     "the probe carries the contextually declared construction ("
@@ -3057,7 +3127,7 @@ public class ProjectLoweringTest {
                         result.registries(), null);
                 check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                     "the oracle completes the probe with the annotation's 93, never "
-                        + "the callee's 7 (" + label + "): "
+                        + "the sibling's 7 (" + label + "): "
                         + run.comparisonReport());
             } finally {
                 deleteRecursively(project.root());
@@ -6180,12 +6250,13 @@ public class ProjectLoweringTest {
             testSeedImplementationReferenceAndPrivateFieldRead();
             testSameSpelledProviderResolution();
             testSameNameSiblingProviderResolution();
+            testSameIdentityProviderCrossingRejected();
             testSameIdentityFieldOperationResolution();
             testAmbiguousFieldOperationFailClosed();
             testAmbiguousJsonNestedLinkFailClosed();
             testSinglePlanJsonNestedLinkResolves();
             testPlanImportedBesideNonPlanLocal();
-            testLocalDeclarationBesideImportedCalleeArgument();
+            testLocalDeclarationOwnsLiteralBesideImportedSiblings();
             testImportedContextBesideCalleeArgumentProvider();
             testCalleeParameterAndReturnProviderBesideSameIdentityLocal();
             testUnanchoredConstructionContextFailsClosed();

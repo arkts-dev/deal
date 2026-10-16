@@ -96,8 +96,20 @@ public final class Types {
                 // class-identity equality (record structural equality
                 // over (moduleIdentity, className)) — never dotted-path
                 // text comparison (descriptor-identity-propagation D1).
+                //
+                // ISSUE-0809 exact_provider_carriage: the canonical
+                // public identity omits the defining file, so two
+                // declarations of one directory share it; the defining
+                // provider participates in nominal equality, so two
+                // declarations of distinct providers never compare equal
+                // even when their canonical identity is the same. The
+                // unbound carrier (null: public descriptor synthesis,
+                // the builtin Error, retained harnesses) names no
+                // defining file and equals only another unbound one.
                 Type.Class cb = (Type.Class) b;
-                yield ca.identity().equals(cb.identity());
+                yield ca.identity().equals(cb.identity())
+                    && providerCompatible(ca.providerModule(),
+                        cb.providerModule());
             }
             case Type.Func fa -> {
                 Type.Func fb = (Type.Func) b;
@@ -228,10 +240,65 @@ public final class Types {
     /**
      * Make a Class type carrying its canonical class identity
      * (descriptor-identity-propagation D1): the identity is supplied by
-     * the module-identity layer, never reconstructed here.
+     * the module-identity layer, never reconstructed here. The provider
+     * stays unbound (public descriptor synthesis, the builtin
+     * {@code Error}, retained harnesses).
      */
     public static Type.Class classType(java.lang.String name, CanonicalClassIdentity identity) {
         return new Type.Class(name, identity);
+    }
+
+    /**
+     * Make a Class type carrying its canonical class identity and the
+     * defining provider module (ISSUE-0809 exact_provider_carriage): the
+     * provider is the declaring module's own wiring key, so two
+     * same-spelled declarations sharing one canonical identity stay
+     * nominal-distinct. Only synthesis sites that know the declaring
+     * module supply it; the unbound form remains for public descriptor
+     * and harness carriers.
+     */
+    public static Type.Class classType(java.lang.String name,
+                                       CanonicalClassIdentity identity,
+                                       java.lang.String providerModule) {
+        return new Type.Class(name, identity, providerModule);
+    }
+
+    /**
+     * Provider compatibility for nominal class equality: the defining
+     * provider participates (two declarations of distinct providers are
+     * never equal); an unbound (null) carrier names no defining file and
+     * equals only another unbound one.
+     */
+    private static boolean providerCompatible(java.lang.String a,
+                                              java.lang.String b) {
+        return java.util.Objects.equals(a, b);
+    }
+
+    /**
+     * The two class types name one canonical class identity through two
+     * bound, distinct defining providers — the sibling-declaration
+     * crossing a same-spelled class of another module produces. Unbound
+     * carriers never cross (they name no second declaration).
+     */
+    public static boolean crossesClassProviders(Type expected, Type actual) {
+        Type.Class expectedClass = nonNullClassOrNull(expected);
+        Type.Class actualClass = nonNullClassOrNull(actual);
+        if (expectedClass == null || actualClass == null) {
+            return false;
+        }
+        return expectedClass.identity().equals(actualClass.identity())
+            && expectedClass.providerModule() != null
+            && actualClass.providerModule() != null
+            && !expectedClass.providerModule().equals(actualClass.providerModule());
+    }
+
+    /** The innermost class under any nullable wrapper, or null. */
+    private static Type.Class nonNullClassOrNull(Type type) {
+        Type current = type;
+        while (current instanceof Type.Nullable nullable) {
+            current = nullable.inner();
+        }
+        return current instanceof Type.Class cls ? cls : null;
     }
 
     /** Make a Function type, with isAsync. */

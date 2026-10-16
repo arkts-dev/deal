@@ -167,9 +167,11 @@ public final class NameResolver {
         return new CanonicalClassIdentity(moduleIdentity, className);
     }
 
-    /** A Class type carrying the layer-resolved identity. */
+    /** A Class type carrying the layer-resolved identity and the
+     * defining provider module (the declaring module's own wiring key). */
     private Type.Class classTypeFor(String name, String wiringPath) {
-        return Types.classType(name, classIdentityFor(wiringPath, name));
+        return Types.classType(name, classIdentityFor(wiringPath, name),
+            wiringPath);
     }
 
     /** The intrinsic Error class type (E2's synthesis). */
@@ -658,24 +660,18 @@ public final class NameResolver {
     }
 
     /**
-     * The local class declaration a type annotation names, or
+     * The local or imported class declaration a type annotation names, or
      * {@code null} when the annotation does not pin one (primitives,
-     * imported classes, function types). The pin travels on the declared
-     * variable so the assignment gate can tell two same-named class
-     * declarations of one module apart (ISSUE-0717 defect snippet 47).
+     * function types, unresolvable surfaces). The pin travels on the
+     * declared variable so the assignment gate can tell two same-named
+     * class declarations apart (ISSUE-0717 defect snippet 47) and the
+     * exact receiver resolution can select the declaring provider of a
+     * qualified annotation (ISSUE-0809): a bare name resolves its local
+     * symbol, a qualified name the alias's own declared class symbol, and
+     * nullable/array wrappers recurse to their inner class leaf.
      */
     public Symbol.ClassSymbol declaredClassSymbolOf(TypeNode tn) {
-        if (tn instanceof NamedType nt) {
-            Symbol sym = currentScope.resolve(nt.name());
-            if (sym instanceof Symbol.ClassSymbol cs) {
-                return cs;
-            }
-            return null;
-        }
-        if (tn instanceof NullableType nt) {
-            return declaredClassSymbolOf(nt.innerType());
-        }
-        return null;
+        return classSymbolInScope(currentScope, tn);
     }
 
     /**
@@ -1051,14 +1047,16 @@ public final class NameResolver {
             case "bytes" -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
-                    yield Types.classType(cs.name(), cs.identity());
+                    yield Types.classType(cs.name(), cs.identity(),
+                        cs.modulePath());
                 }
                 yield Type.Bytes.INSTANCE;
             }
             default -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
-                    yield Types.classType(cs.name(), cs.identity());
+                    yield Types.classType(cs.name(), cs.identity(),
+                        cs.modulePath());
                 }
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
                         .withMissingSymbol("TYPE", name, modulePath, List.of("class")));

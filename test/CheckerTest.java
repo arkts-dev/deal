@@ -463,6 +463,7 @@ public class CheckerTest {
         testJsonableImportedSameNameDistinctIdentity();
         testImportedClassProviderWithSameNamedLocal();
         testImportedProviderDeleteBesideSameNamedLocal();
+        testImportedProviderCrossingRejected();
         testJsonableImportedThroughArrayAndNullable();
         testJsonableLocalCycleWithSameNamedImported();
 
@@ -4210,6 +4211,135 @@ public class CheckerTest {
             "the optional imported field's delete is accepted beside a "
                 + "required same-named local declaration: "
                 + optional.result.diagnostics());
+    }
+
+    /**
+     * A value whose checked class declaration binds one defining provider
+     * never retags to an expected declaration of another provider
+     * (ISSUE-0809 review cycle 2): the canonical public identity omits
+     * the defining file, so an imported {@code Other.Point} and a local
+     * {@code Point} are one canonical identity and two declarations. Every
+     * assignment boundary — declaration initialization, assignment, call
+     * argument, return, array element, class-literal field and nullable
+     * target — names the crossing deterministically (E3019) instead of
+     * accepting the value, while same-provider values stay compatible.
+     */
+    static void testImportedProviderCrossingRejected() {
+        System.out.println("-- a same-identity same-spelled imported/local "
+            + "declaration crossing is E3019 at every assignment boundary --");
+        deal.ast.Span span = new deal.ast.Span("test.deal", 1, 1, 1, 5);
+        // The imported declaration shares the consumer's canonical class
+        // identity (two files in one directory) while carrying its own
+        // defining provider module: the crossing is a provider crossing,
+        // never an identity mismatch.
+        deal.identity.CanonicalClassIdentity sharedIdentity =
+            IdentityTestFixtures.identityOf("test.deal", "Point");
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
+            "Point",
+            List.of(new ClassField(span, "nick", true, false,
+                new deal.ast.NamedType(span, "int"), java.util.Optional.empty())),
+            "./foreign", sharedIdentity));
+        Type foreignPoint = Types.classType("Point", sharedIdentity, "./foreign");
+        Map<String, Type> exports = new HashMap<>();
+        exports.put("Point", foreignPoint);
+        resolver.register("./foreign", exports);
+
+        String local = "import * as Other from \"./foreign\";\n"
+            + "class Point { nick?: string; }\n";
+
+        CheckerOutput init = checkProgramWithModule(local
+            + "export function main(): null {\n"
+            + "  let y: Other.Point = {};\n"
+            + "  let p: Point = y;\n"
+            + "  return null;\n"
+            + "}\n", resolver);
+        assertError(init, "E3019",
+            "an imported value at a same-identity local declaration "
+                + "initialization is E3019");
+
+        CheckerOutput reverse = checkProgramWithModule(local
+            + "export function main(): null {\n"
+            + "  let p: Point = {};\n"
+            + "  let y: Other.Point = p;\n"
+            + "  return null;\n"
+            + "}\n", resolver);
+        assertError(reverse, "E3019",
+            "a local value at a same-identity imported declaration "
+                + "initialization is E3019");
+
+        CheckerOutput assignment = checkProgramWithModule(local
+            + "export function main(): null {\n"
+            + "  let y: Other.Point = {};\n"
+            + "  let p: Point = {};\n"
+            + "  p = y;\n"
+            + "  return null;\n"
+            + "}\n", resolver);
+        assertError(assignment, "E3019",
+            "an assignment crossing the two same-identity declarations is "
+                + "E3019");
+
+        CheckerOutput nullable = checkProgramWithModule(local
+            + "export function main(): null {\n"
+            + "  let y: Other.Point = {};\n"
+            + "  let p: Point | null = y;\n"
+            + "  return null;\n"
+            + "}\n", resolver);
+        assertError(nullable, "E3019",
+            "a nullable same-identity target keeps the crossing rejection");
+
+        CheckerOutput argument = checkProgramWithModule(local
+            + "export function main(): null {\n"
+            + "  let y: Other.Point = {};\n"
+            + "  take(y);\n"
+            + "  return null;\n"
+            + "}\n"
+            + "function take(p: Point): int { return 0; }\n", resolver);
+        assertError(argument, "E3019",
+            "an imported value at a local class-typed argument position is "
+                + "E3019 (never a silent retag)");
+
+        CheckerOutput returned = checkProgramWithModule(local
+            + "function make(): Point { let y: Other.Point = {}; return y; }\n"
+            + "export function main(): null { return null; }\n", resolver);
+        assertError(returned, "E3019",
+            "an imported value at a local declared-return position is E3019");
+
+        CheckerOutput arrayElement = checkProgramWithModule(local
+            + "export function main(): null {\n"
+            + "  let y: Other.Point = {};\n"
+            + "  let xs: Point[] = [y];\n"
+            + "  return null;\n"
+            + "}\n", resolver);
+        assertError(arrayElement, "E3019",
+            "an imported value as a same-identity array element is E3019");
+
+        CheckerOutput literalField = checkProgramWithModule(local
+            + "class Holder { p: Point = {}; }\n"
+            + "export function main(): null {\n"
+            + "  let y: Other.Point = {};\n"
+            + "  let h: Holder = { p: y };\n"
+            + "  return null;\n"
+            + "}\n", resolver);
+        assertError(literalField, "E3019",
+            "an imported value at a same-identity class-literal field is "
+                + "E3019");
+
+        // Same-provider values stay compatible: the imported declaration
+        // initializing itself and the local declaration within itself are
+        // legal, and the imported provider's own field stays readable.
+        CheckerOutput control = checkProgramWithModule(local
+            + "export function main(): null {\n"
+            + "  let y: Other.Point = {};\n"
+            + "  let y2: Other.Point = y;\n"
+            + "  let n: int | null = y2.nick;\n"
+            + "  let p: Point = {};\n"
+            + "  let p2: Point = p;\n"
+            + "  return null;\n"
+            + "}\n", resolver);
+        assertNoErrors(control,
+            "same-provider values remain compatible beside the distinct "
+                + "same-spelled declaration");
     }
 
     static void testJsonableImportedSameNameDistinctIdentity() {

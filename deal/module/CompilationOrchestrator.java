@@ -1957,7 +1957,8 @@ public final class CompilationOrchestrator {
                                 correctedExports.put(exportName, fs.funcType());
                             } else if (sym instanceof Symbol.ClassSymbol cs) {
                                 correctedExports.put(exportName,
-                                    Types.classType(cs.name(), cs.identity()));
+                                    Types.classType(cs.name(), cs.identity(),
+                                        cs.modulePath()));
                             }
                         }
                     }
@@ -1974,7 +1975,8 @@ public final class CompilationOrchestrator {
                         && cd.isJsonable()) {
                     Symbol clsSym = symTable.resolve(cd.name());
                     if (clsSym instanceof Symbol.ClassSymbol cs) {
-                        Type clsType = Types.classType(cs.name(), cs.identity());
+                        Type clsType = Types.classType(cs.name(), cs.identity(),
+                            cs.modulePath());
 
                         // C$fromJson: (string) -> C | null
                         Type.Func fromJsonType = new Type.Func(

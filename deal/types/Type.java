@@ -74,20 +74,35 @@ public sealed interface Type
     }
 
     /**
-     * Nominal class type, identified by name and canonical class
-     * identity (the v1.2 identity carriage — design source
-     * {@code descriptor-identity-propagation} D1): equality is identity
-     * equality and descriptor text comes only from the compilation's
-     * {@code CanonicalClassIdentityIndex}.  The retired dotted
-     * {@code modulePath} carrier no longer exists; the private
-     * deployment module id stays the import/export wiring key outside
-     * the type.  Uses fully qualified java.lang.String to avoid
+     * Nominal class type, identified by name, canonical class identity
+     * and — when the carrier binds one — the defining provider module
+     * (ISSUE-0809 {@code exact_provider_carriage}): the canonical
+     * identity's public projection omits the defining file, so two
+     * files in one directory declaring the same class name share one
+     * canonical identity yet stay two distinct declarations. The
+     * provider is the defining module's existing wiring key (the
+     * {@code ClassSymbol.modulePath} the import/export routing uses),
+     * never an import alias or public text; descriptor text still comes
+     * only from the compilation's {@code CanonicalClassIdentityIndex}.
+     * A {@code null} provider is the unbound carrier (public descriptor
+     * synthesis, builtin {@code Error}, retained harnesses); the bound
+     * forms keep same-spelled declarations of distinct providers
+     * nominal-distinct. Uses fully qualified java.lang.String to avoid
      * ambiguity with the nested {@link Type.String} enum.
      */
-    record Class(java.lang.String name, CanonicalClassIdentity identity) implements Type {
+    record Class(java.lang.String name, CanonicalClassIdentity identity,
+                 java.lang.String providerModule) implements Type {
         public Class {
             if (name == null) throw new IllegalArgumentException("name must not be null");
             if (identity == null) throw new IllegalArgumentException("identity must not be null");
+        }
+
+        /**
+         * The provider-unbound carrier (public descriptor synthesis, the
+         * intrinsic builtin {@code Error}, retained harnesses).
+         */
+        public Class(java.lang.String name, CanonicalClassIdentity identity) {
+            this(name, identity, null);
         }
     }
 

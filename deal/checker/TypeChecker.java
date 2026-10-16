@@ -317,11 +317,14 @@ public final class TypeChecker {
             if (fieldType != Type.Error.INSTANCE
                     && defType != Type.Error.INSTANCE
                     && !isAssignable(fieldType, defType)) {
-                error(DiagnosticCode.E3001,
-                    "Default value type mismatch for field '" + cf.name()
-                    + "': expected " + typeName(fieldType)
-                    + ", got " + typeName(defType),
-                    def.span());
+                if (!reportClassProviderCrossing(fieldType, defType,
+                        def.span())) {
+                    error(DiagnosticCode.E3001,
+                        "Default value type mismatch for field '" + cf.name()
+                        + "': expected " + typeName(fieldType)
+                        + ", got " + typeName(defType),
+                        def.span());
+                }
             }
         }
 
@@ -1025,10 +1028,13 @@ public final class TypeChecker {
             if (exprType == Type.Error.INSTANCE) return;
 
             if (!isAssignable(currentReturnType, exprType)) {
-                error(DiagnosticCode.E5003,
-                    "Return type mismatch: expected " + typeName(currentReturnType)
-                    + ", got " + typeName(exprType),
-                    rs.expr().get().span());
+                if (!reportClassProviderCrossing(currentReturnType, exprType,
+                        rs.expr().get().span())) {
+                    error(DiagnosticCode.E5003,
+                        "Return type mismatch: expected " + typeName(currentReturnType)
+                        + ", got " + typeName(exprType),
+                        rs.expr().get().span());
+                }
             }
         } else {
             if (currentReturnType != null && !Types.isNull(currentReturnType)) {
@@ -1883,11 +1889,14 @@ public final class TypeChecker {
             Type argType = argTypes.get(i);
             if (argType == Type.Error.INSTANCE) continue;
             if (!isAssignable(paramType, argType)) {
-                error(DiagnosticCode.E5001,
-                    "Function argument type mismatch at position " + (i + 1)
-                    + ": expected " + typeName(paramType)
-                    + ", got " + typeName(argType),
-                    call.args().get(i).span());
+                if (!reportClassProviderCrossing(paramType, argType,
+                        call.args().get(i).span())) {
+                    error(DiagnosticCode.E5001,
+                        "Function argument type mismatch at position " + (i + 1)
+                        + ": expected " + typeName(paramType)
+                        + ", got " + typeName(argType),
+                        call.args().get(i).span());
+                }
             }
         }
 
@@ -2115,10 +2124,13 @@ public final class TypeChecker {
                 expectedType = savedExpected;
                 if (elemType == Type.Error.INSTANCE) { ok = false; continue; }
                 if (!isAssignable(elementContext, elemType)) {
-                    error(DiagnosticCode.E3011,
-                        "Mixed types in array literal: " + typeName(elementContext)
-                        + " and " + typeName(elemType),
-                        elem.span());
+                    if (!reportClassProviderCrossing(elementContext, elemType,
+                            elem.span())) {
+                        error(DiagnosticCode.E3011,
+                            "Mixed types in array literal: " + typeName(elementContext)
+                            + " and " + typeName(elemType),
+                            elem.span());
+                    }
                     ok = false;
                 }
             }
@@ -2289,10 +2301,13 @@ public final class TypeChecker {
                 expectedType = savedExpected;
                 if (valueType != Type.Error.INSTANCE) {
                     if (!isAssignable(fieldType, valueType)) {
-                        error(DiagnosticCode.E4003,
-                            "Type mismatch for field '" + cf.name() + "': expected "
-                            + typeName(fieldType) + ", got " + typeName(valueType),
-                            prop.span());
+                        if (!reportClassProviderCrossing(fieldType, valueType,
+                                prop.span())) {
+                            error(DiagnosticCode.E4003,
+                                "Type mismatch for field '" + cf.name() + "': expected "
+                                + typeName(fieldType) + ", got " + typeName(valueType),
+                                prop.span());
+                        }
                     }
                 }
             } else {
@@ -2545,7 +2560,10 @@ public final class TypeChecker {
         if (uncheckedTableFieldWrite) {
             // Table write — always allowed
         } else if (!isAssignable(declaredTarget, valueType)) {
-            reportAssignabilityError(declaredTarget, valueType, assign.span());
+            if (!reportClassProviderCrossing(declaredTarget, valueType,
+                    assign.span())) {
+                reportAssignabilityError(declaredTarget, valueType, assign.span());
+            }
         }
 
         // ISSUE-0717 (defect snippet 47): two same-named class declarations
@@ -2579,8 +2597,37 @@ public final class TypeChecker {
         if (targetType == null || exprType == null) return;
         if (targetType == Type.Error.INSTANCE || exprType == Type.Error.INSTANCE) return;
         if (!isAssignable(targetType, exprType)) {
+            if (reportClassProviderCrossing(targetType, exprType, span)) {
+                return;
+            }
             reportAssignabilityError(targetType, exprType, span);
         }
+    }
+
+    /**
+     * Reports the E3019 crossing when the expected and actual types name
+     * one canonical class identity through two bound, distinct defining
+     * providers (ISSUE-0809): the canonical public identity omits the
+     * defining file, so a same-spelled class of a sibling module is a
+     * distinct declaration the value never retags into. Returns
+     * {@code true} when the crossing was reported (and the caller skips
+     * its own boundary diagnostic), {@code false} otherwise.
+     */
+    private boolean reportClassProviderCrossing(Type expected, Type actual,
+                                                Span span) {
+        if (!Types.crossesClassProviders(expected, actual)) {
+            return false;
+        }
+        Type.Class expectedClass = nonNullClassType(expected) instanceof Type.Class cls
+            ? cls : null;
+        String name = expectedClass == null
+            ? typeName(expected) : expectedClass.name();
+        error(DiagnosticCode.E3019,
+            "Cannot assign class '" + name
+                + "' across its distinct declarations of the same "
+                + "canonical identity (module + name)",
+            span);
+        return true;
     }
 
     /**
@@ -2681,6 +2728,12 @@ public final class TypeChecker {
     }
 
     private boolean isAssignable(Type expected, Type actual) {
+        // ISSUE-0809 exact_provider_carriage: two bound providers of one
+        // canonical class identity are two declarations — a value never
+        // retags across them, regardless of the structural arms below
+        // (the provider-aware Types.equals already covers the recursive
+        // positions; this keeps the nominal rule explicit).
+        if (Types.crossesClassProviders(expected, actual)) return false;
         if (Types.equals(expected, actual)) return true;
         if (expected instanceof Type.Nullable ne) {
             if (Types.equals(ne.inner(), actual)) return true;
@@ -2805,7 +2858,7 @@ public final class TypeChecker {
             }
             case Symbol.FunctionSymbol fs -> fs.funcType();
             case Symbol.ClassSymbol cs ->
-                Types.classType(cs.name(), cs.identity());
+                Types.classType(cs.name(), cs.identity(), cs.modulePath());
             case Symbol.ModuleSymbol ms -> Type.Table.INSTANCE;
             case Symbol.IntrinsicSymbol is -> is.type();
         };

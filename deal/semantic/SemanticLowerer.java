@@ -5269,7 +5269,8 @@ public final class SemanticLowerer {
             }
             try {
                 return DescriptorService.describe(
-                    deal.types.Types.classType(classSymbol.name(), classSymbol.identity()));
+                    deal.types.Types.classType(classSymbol.name(),
+                        classSymbol.identity(), classSymbol.modulePath()));
             } catch (DescriptorService.Defect defect) {
                 throw new ConstructUnlowered("class '" + name
                     + "' of unrepresentable checked type (" + defect.getMessage() + ")");
@@ -5311,7 +5312,7 @@ public final class SemanticLowerer {
                     Symbol symbol = resolveScopeName(name);
                     if (symbol instanceof Symbol.ClassSymbol classSymbol) {
                         yield deal.types.Types.classType(classSymbol.name(),
-                            classSymbol.identity());
+                            classSymbol.identity(), classSymbol.modulePath());
                     }
                     yield Type.Bytes.INSTANCE;
                 }
@@ -5319,7 +5320,7 @@ public final class SemanticLowerer {
                     Symbol symbol = resolveScopeName(name);
                     if (symbol instanceof Symbol.ClassSymbol classSymbol) {
                         yield deal.types.Types.classType(classSymbol.name(),
-                            classSymbol.identity());
+                            classSymbol.identity(), classSymbol.modulePath());
                     }
                     throw new ConstructUnlowered("class-field type annotation names unknown "
                         + "type '" + name + "' (a checked module cannot reach this arm — "
