@@ -335,6 +335,9 @@ public final class NameResolver {
             Map<String, Symbol.ClassSymbol> importedClasses =
                 moduleResolver.resolveModuleClassSymbols(
                     path, modulePath, modulesInProgress);
+            Map<String, Symbol.FunctionSymbol> importedFunctions =
+                moduleResolver.resolveModuleFunctionSymbols(
+                    path, modulePath, modulesInProgress);
             // An import binding named `bytes` shadows the lowest-tier
             // bytes intrinsic (imports resolve at step 4, intrinsics at
             // step 5); the intrinsic root binding must be removed before
@@ -343,7 +346,7 @@ public final class NameResolver {
                 root.remove(alias);
             }
             root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span(),
-                importedClasses));
+                importedClasses, importedFunctions));
         } catch (ModuleResolver.CffiImportWithoutNativeLibraryException e) {
             // The C FFI manifest policy (docs/spec-v1.3.md §Package manifest):
             // importing a C FFI declaration file without an externals
@@ -480,7 +483,8 @@ public final class NameResolver {
         }
 
         Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-        root.define(name, new Symbol.FunctionSymbol(name, ft));
+        root.define(name, new Symbol.FunctionSymbol(name, ft,
+            fd.params().stream().map(Parameter::type).toList(), modulePath));
     }
 
     /**
@@ -756,7 +760,8 @@ public final class NameResolver {
             }
 
             Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-            currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft));
+            currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft,
+                fd.params().stream().map(Parameter::type).toList(), modulePath));
         }
 
         SymbolTable saved = currentScope;

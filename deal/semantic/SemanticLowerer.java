@@ -2842,15 +2842,6 @@ public final class SemanticLowerer {
         private Map<ClassId, ModuleId> jsonPlanOwners = Map.of();
         private Map<ClassId, deal.semantic.ir.ClassFactoryId> jsonPlanOwnerEntries =
             Map.of();
-        /**
-         * The canonical class identities carried by more than one
-         * accumulating provider declaration (a same-directory sibling
-         * pair): an unrecorded literal of such an identity has no
-         * unambiguous provider and fails closed rather than selecting a
-         * first alias.
-         */
-        private java.util.Set<ClassId> ambiguousProviderClassIds =
-            java.util.Set.of();
 
         private ClassRegistrationSeeds registrationSeeds =
             ClassRegistrationSeeds.builtinErrorOnly();
@@ -5056,25 +5047,80 @@ public final class SemanticLowerer {
             ClassId classId = new ClassId(
                 DescriptorService.semanticModulePath(classType.identity()), classType.name());
 
-            // The exact declaring provider first: the recorded contextual
-            // provider alias (the literal's own construction context) names
-            // the imported declaration's construction entry, so two
-            // same-named classes of sibling modules in one directory — one
-            // canonical class identity — never collapse into a first
-            // alias.
-            SharedFactoryFacts sharedFacts =
-                recordedProviderFacts(literal, classId);
-            deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
-            if (sharedFacts == null && layout == null
-                    && ambiguousProviderClassIds.contains(classId)) {
-                throw new ConstructUnlowered("class literal of imported class "
-                    + classId + " resolves more than one declared provider sharing "
-                    + "the canonical class identity (same-directory sibling "
-                    + "declarations): the recorded provider context is required and "
-                    + "a first alias is never selected", literal.span());
-            }
-            if (sharedFacts == null && layout == null) {
-                sharedFacts = sharedFactories.get(classId);
+            // The checker's recorded contextual declaration first: the
+            // literal's own construction context (the enclosing
+            // annotation's declaration, the callee parameter's declared
+            // provider, or the declared return annotation's provider)
+            // names the declaration the literal was laid out by, so two
+            // same-named classes of sibling modules in one directory —
+            // one canonical class identity — never collapse into the
+            // unit-local layout or a first alias. The compiler-owned
+            // builtin Error class carries the builtin synthesis as its
+            // symbol and constructs through its registration seed
+            // (BUILTIN_DEFAULTS), never through a module declaration.
+            Symbol.ClassSymbol exact = ClassId.ERROR.equals(classId) ? null
+                : exactReceiverDeclaration(literal);
+            SharedFactoryFacts sharedFacts = null;
+            deal.semantic.ir.ClassLayout layout = null;
+            if (exact != null && classType.identity().equals(exact.identity())) {
+                String declaring = exact.modulePath();
+                if (declaring == null || declaring.isEmpty()
+                        || declaring.equals(module.path())) {
+                    // The unit's own declaration is the exact one: its own
+                    // lowered layout supplies the construction.
+                    layout = classLayouts.get(classId);
+                    if (layout == null) {
+                        throw new ConstructUnlowered("class literal of "
+                            + classId + " is attributed to this module's own"
+                            + " declared class, but the unit carries no lowered"
+                            + " layout for it (a producer defect)",
+                            literal.span());
+                    }
+                } else {
+                    // The context names another module's declaration: only
+                    // that declaring occurrence's registered construction
+                    // entry and shared facts construct it, never the
+                    // unit-local mask of an identity-equal sibling.
+                    deal.semantic.ir.ClassFactoryId entry =
+                        providerEntryOf(declaring, classId);
+                    sharedFacts = entry == null ? null
+                        : providerFactoryFacts.get(entry);
+                    if (sharedFacts == null) {
+                        throw new ConstructUnlowered("class literal of "
+                            + classId + " is attributed to the declaration of"
+                            + " module '" + declaring + "', but the project"
+                            + " carries no registered construction entry and"
+                            + " shared facts for it (a required provider fact is"
+                            + " missing; the exact declaration is never repaired"
+                            + " by a first alias)", literal.span());
+                    }
+                }
+            } else {
+                // No recorded construction context: the literal's
+                // expectation named no declaration (a function-typed
+                // callee value, an inferred position) or the context was
+                // not resolvable. A multiple-declaration identity has no
+                // selectable declaration then, so it fails closed even
+                // when the unit carries a local layout (the unit-local
+                // mask must not select the construction's declaration);
+                // a single-declaration identity resolves by the identity-
+                // keyed route.
+                if (ambiguousFieldIdentity(classId)) {
+                    throw new ConstructUnlowered("class literal of "
+                        + classId + " resolves more than one declared provider"
+                        + " sharing the canonical class identity (same-directory"
+                        + " sibling declarations): no recorded construction"
+                        + " context selects one and a first alias is never"
+                        + " selected", literal.span());
+                }
+                // The recorded contextual provider alias (the identity-keyed
+                // context route) names the imported declaration's
+                // construction entry.
+                sharedFacts = recordedProviderFacts(literal, classId);
+                layout = classLayouts.get(classId);
+                if (sharedFacts == null && layout == null) {
+                    sharedFacts = sharedFactories.get(classId);
+                }
             }
             DefaultOwner defaultOwner = DefaultOwner.LOCAL;
             deal.semantic.ir.ClassFactoryId classFactoryRef = null;
@@ -8663,17 +8709,6 @@ public final class SemanticLowerer {
             this.recordedClassLiteralProviders = java.util.Collections
                 .unmodifiableMap(new java.util.LinkedHashMap<>(
                     recordedClassLiteralProviders));
-            java.util.Map<ClassId, deal.semantic.ir.ClassFactoryId> unique =
-                new java.util.LinkedHashMap<>();
-            java.util.Set<ClassId> ambiguous = new java.util.LinkedHashSet<>();
-            for (SharedFactoryFacts facts : providerFactoryFacts.values()) {
-                if (unique.putIfAbsent(facts.classId(),
-                        facts.interfaceEntry().constructionEntry()) != null) {
-                    ambiguous.add(facts.classId());
-                }
-            }
-            this.ambiguousProviderClassIds =
-                java.util.Collections.unmodifiableSet(ambiguous);
         }
 
         public void setRegistrationSeeds(ClassRegistrationSeeds seeds) {

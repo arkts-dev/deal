@@ -1,6 +1,8 @@
 package deal.test;
 
 import deal.ast.ClassField;
+import deal.ast.ExpressionNode;
+import deal.ast.ObjectLiteralExpr;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.checker.CheckResult;
 import deal.codegen.Backend;
@@ -732,6 +734,61 @@ public class ProjectLoweringTest {
           return null;
         }
         """;
+
+    /**
+     * The callee-parameter / declared-return context providers (review
+     * cycle 5 finding 1): the imported implementation module declares
+     * {@code Ir} with the default 7 and a function whose parameter and
+     * return annotations name it.
+     */
+    private static final String PARAM_RETURN_PROVIDER_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    /** A second same-identity sibling provider (the differing default 93). */
+    private static final String PARAM_RETURN_PROVIDER_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        """;
+
+    /**
+     * The standalone callee-parameter and declared-return fixture beside a
+     * same-identity local declaration: {@code ir.useIr({})} and
+     * {@code g({})} construct the imported {@code ir.Ir} (7), never the
+     * local declaration, and {@code make(): ir.Ir { return {}; }} returns
+     * the imported layout. {@code localFieldsOnly} switches the local
+     * declaration between differing fields and a differing default.
+     */
+    private static String paramReturnProviderAppSource(boolean reversed,
+            boolean localFieldsOnly) {
+        return (reversed
+                ? "import * as codec from \"./codec\";\n"
+                    + "import * as ir from \"./ir\";\n"
+                : "import * as ir from \"./ir\";\n"
+                    + "import * as codec from \"./codec\";\n")
+            + "\n"
+            + (localFieldsOnly
+                ? "class Ir { b: string = \"local\"; }\n"
+                : "class Ir { a: int = 5; }\n")
+            + "\n"
+            + "function g(x: ir.Ir): int { return x.a; }\n"
+            + "function make(): ir.Ir { return {}; }\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  let n: int = ir.useIr({});\n"
+            + "  if (n !== 7) { throw { code: \"WRONG_PARAM\", message: \"n\" }; }\n"
+            + "  let m: int = g({});\n"
+            + "  if (m !== 7) { throw { code: \"WRONG_LOCAL_PARAM\", message: \"m\" }; }\n"
+            + "  let r: ir.Ir = make();\n"
+            + "  if (r.a !== 7) { throw { code: \"WRONG_RETURN\", message: \"r\" }; }\n"
+            + (localFieldsOnly
+                ? "  return null;\n"
+                : "  let local: Ir = {};\n"
+                    + "  if (local.a !== 5) { throw { code: \"WRONG_LOCAL\","
+                    + " message: \"local\" }; }\n"
+                    + "  return null;\n")
+            + "}\n";
+    }
 
     /**
      * The malformed-provider negative fixture: the entry writes a field
@@ -2604,15 +2661,28 @@ public class ProjectLoweringTest {
                 "src/other.deal", FIELD_SIBLING_OTHER_SOURCE),
             Map.of());
         try {
-            // The same real project with the checker's exact class
+            // The same real project with the checker's exact receiver
             // declarations removed: the field operations of the
             // same-identity spellings have no recorded declaring provider.
+            // (The literals' own recorded construction contexts stay:
+            // this negative isolates the field-operation path, whose
+            // fail-close must not be bypassed by an identity-equal unit
+            // layout.)
             List<CheckedModuleInput> modules = new ArrayList<>();
             for (CheckedModuleInput module : project.checkedProject().modules()) {
                 CheckResult checks = module.checks();
+                Map<ExpressionNode, deal.checker.Symbol.ClassSymbol> literalFacts =
+                    new LinkedHashMap<>();
+                for (Map.Entry<ExpressionNode, deal.checker.Symbol.ClassSymbol> entry
+                        : checks.exactClassDeclarations().entrySet()) {
+                    if (entry.getKey() instanceof ObjectLiteralExpr) {
+                        literalFacts.put(entry.getKey(), entry.getValue());
+                    }
+                }
                 CheckResult stripped = new CheckResult(checks.typeMap(),
                     checks.symbolTable(), checks.scopeMap(), checks.diagnostics(),
-                    checks.classScopes(), checks.constructedClassDecls());
+                    checks.classScopes(), checks.constructedClassDecls(),
+                    literalFacts);
                 modules.add(new CheckedModuleInput(module.moduleId(), module.sourceId(),
                     module.sourcePath(), module.ast(), stripped, module.imports(),
                     module.exports(), module.kind(), module.classLiteralProviders()));
@@ -2996,6 +3066,218 @@ public class ProjectLoweringTest {
     }
 
     /**
+     * The standalone callee-parameter and declared-return construction
+     * contexts (review cycle 5 finding 1): a literal in an imported
+     * function's parameter or declared-return position is attributed to
+     * that annotation's own declared provider — never the consumer's
+     * same-identity local declaration — in either import order, for both
+     * a differing field set and a differing per-construction default.
+     */
+    private static void testCalleeParameterAndReturnProviderBesideSameIdentityLocal()
+            throws Exception {
+        System.out.println("-- the imported callee-parameter and declared-return "
+            + "contexts own their literals' construction beside a same-identity "
+            + "local declaration --");
+        for (boolean reversed : new boolean[] { false, true }) {
+            for (boolean localFieldsOnly : new boolean[] { false, true }) {
+                String label = (reversed ? "reversed imports" : "ir imported first")
+                    + (localFieldsOnly ? ", differing fields" : ", differing defaults");
+                RealProject project = compileProject("src/m/app.deal",
+                    paramReturnProviderAppSource(reversed, localFieldsOnly),
+                    Map.of("src/m/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE,
+                        "src/m/codec.deal", PARAM_RETURN_PROVIDER_CODEC_SOURCE),
+                    Map.of());
+                try {
+                    // The checker's recorded construction contexts name the
+                    // imported provider for exactly the three imported
+                    // literals (never the local declaration).
+                    for (CheckedModuleInput module : project.checkedProject().modules()) {
+                        if (!module.moduleId().path().equals("m.app")) {
+                            continue;
+                        }
+                        checkEq(3,
+                            module.classLiteralProviders().size(),
+                            "the three imported construction literals record their "
+                                + "context provider (the local literal records none) ("
+                                + label + ")");
+                        int irAliases = 0;
+                        for (String alias : module.classLiteralProviders().values()) {
+                            if (alias.equals("ir")) {
+                                irAliases++;
+                            }
+                        }
+                        checkEq(3, irAliases,
+                            "the parameter and return literals record the ir "
+                                + "provider, never the local declaration or codec ("
+                                + label + "): " + module.classLiteralProviders());
+                    }
+                    SemanticLowerer.ProjectLoweringResult result =
+                        lower(project, invocation());
+                    check(!result.hasErrors() && result.project() != null,
+                        "the parameter/return provider project lowers (" + label
+                            + "): " + result.diagnostics());
+                    if (result.project() == null) {
+                        return;
+                    }
+                    ExecutableLoweredProject lowered = result.project();
+                    ModuleId irModule = new ModuleId("m.ir");
+                    ModuleId appModule = new ModuleId("m.app");
+                    LoweredModuleUnit irUnit = lowered.modules().get(irModule);
+                    LoweredModuleUnit app = lowered.modules().get(appModule);
+                    check(irUnit != null && app != null,
+                        "the closure carries the ir provider and the consumer ("
+                            + label + ")");
+                    if (irUnit == null || app == null) {
+                        return;
+                    }
+                    ClassId irId = new ClassId("src/m", "Ir");
+                    ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+                    check(irEntry != null,
+                        "the ir provider registers its construction entry (" + label + ")");
+                    if (irEntry == null) {
+                        return;
+                    }
+                    int shared = 0;
+                    int local = 0;
+                    for (SemanticOp op : app.ops()) {
+                        if (op.kind() != SemanticOpKind.CLASS_NEW
+                                || !(op.payload()
+                                    instanceof KindPayload.ClassNewPayload payload)
+                                || !payload.classId().equals(irId)) {
+                            continue;
+                        }
+                        if (payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                            shared++;
+                            checkEq(irEntry, payload.classFactoryRef(),
+                                "the imported construction references the ir "
+                                    + "provider's entry (" + label + ")");
+                            checkEq(irUnit.classLayouts().get(irId), payload.layout(),
+                                "the imported construction carries the ir "
+                                    + "provider's layout (" + label + ")");
+                        } else {
+                            local++;
+                            checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
+                                "the local construction stays LOCAL (" + label + ")");
+                            checkEq(null, payload.classFactoryRef(),
+                                "the local construction references no provider ("
+                                    + label + ")");
+                            checkEq(app.classLayouts().get(irId), payload.layout(),
+                                "the local construction carries the unit's own "
+                                    + "layout (" + label + ")");
+                        }
+                    }
+                    checkEq(3, shared,
+                        "the parameter, g-parameter and return literals construct "
+                            + "the imported provider (" + label + ")");
+                    checkEq(localFieldsOnly ? 0 : 1, local,
+                        "the explicitly annotated local literal constructs the unit's "
+                            + "own declaration (" + label + ")");
+                    SemanticIrValidator.ComparisonFacts facts =
+                        new SemanticIrValidator.ComparisonFacts(
+                            project.index().interfaceIndexDigest(),
+                            SemanticProfile.DEAL_V1_3_INT32,
+                            invocation().capabilityRegistryHash());
+                    check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                        "the project passes the typed project surface (" + label + ")");
+                    String text = SemanticIrValidator.toProjectText(lowered);
+                    check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                        "the project passes the text project surface (" + label + ")");
+                    SemanticRuntimeModel.ConsumerRun run =
+                        SemanticOracle.executeProjectInits(lowered, result.tables(),
+                            result.registries(), null);
+                    check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                        "the oracle executes the imported provider's constructions "
+                            + "(" + label + "): " + run.comparisonReport());
+                } finally {
+                    deleteRecursively(project.root());
+                }
+            }
+        }
+    }
+
+    /**
+     * The unanchored construction context (review cycle 5 finding 1's
+     * fail-close): a literal whose callee carries no declaration surface
+     * (a function-typed value) has no recorded construction context, so a
+     * same-identity collision fails it closed with the named E6005 even
+     * though the unit carries a local layout; the same shape without the
+     * collision keeps the identity-keyed provider route.
+     */
+    private static void testUnanchoredConstructionContextFailsClosed()
+            throws Exception {
+        System.out.println("-- an unanchored literal of a multiple-declaration "
+            + "identity fails closed: no recorded construction context selects a "
+            + "declaration even though the unit carries a local layout --");
+        String app = "import * as ir from \"./ir\";\n\n"
+            + "class Ir { a: int = 5; }\n\n"
+            + "export function main(): null {\n"
+            + "  let f: (x: ir.Ir) => int = ir.useIr;\n"
+            + "  let n: int = f({});\n"
+            + "  if (n !== 7) { throw { code: \"WRONG_N\", message: \"n\" }; }\n"
+            + "  return null;\n"
+            + "}\n";
+        for (CompilerDiagnostic diagnostic : refusedCompile(app,
+                Map.of("src/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE))) {
+            check("E6005".equals(diagnostic.code())
+                    && diagnostic.message().contains("CONSTRUCT_UNLOWERED")
+                    && diagnostic.message().contains(
+                        "same-directory sibling declarations")
+                    && diagnostic.message().contains(
+                        "no recorded construction context selects one"),
+                "the unanchored multiple-declaration construction fails closed "
+                    + "with the named E6005; got " + diagnostic.message());
+        }
+        // The control: the same shape without the same-identity local
+        // declaration has exactly one declaration, so the identity-keyed
+        // provider route constructs it.
+        RealProject control = compileProject(
+            app.replace("class Ir { a: int = 5; }\n\n", ""),
+            Map.of("src/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result =
+                lower(control, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the single-declaration control lowers: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            LoweredModuleUnit appUnit = result.project().modules().get(APP);
+            LoweredModuleUnit irUnit = result.project().modules()
+                .get(new ModuleId("ir"));
+            check(appUnit != null && irUnit != null,
+                "the control carries the consumer and the single provider");
+            if (appUnit == null || irUnit == null) {
+                return;
+            }
+            ClassId irId = new ClassId("src", "Ir");
+            ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+            int shared = 0;
+            for (SemanticOp op : appUnit.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_NEW
+                        && op.payload()
+                            instanceof KindPayload.ClassNewPayload payload
+                        && payload.classId().equals(irId)
+                        && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                    shared++;
+                    checkEq(irEntry, payload.classFactoryRef(),
+                        "the control's construction references the sole "
+                            + "provider's entry");
+                }
+            }
+            checkEq(1, shared,
+                "the control's unanchored literal resolves the sole declaration");
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(result.project(),
+                    result.tables(), result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the control's oracle executes with the provider's 7: "
+                    + run.comparisonReport());
+        } finally {
+            deleteRecursively(control.root());
+        }
+    }
+
+    /**
      * The production pipeline over a fixture whose lowering must be
      * refused: the compile returns false and its diagnostics are the
      * refused project's named failure.
@@ -3164,10 +3446,18 @@ public class ProjectLoweringTest {
                     + "seeds, and no registrations");
             if (!result.diagnostics().isEmpty()) {
                 CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+                // The construction context names the declaration of the
+                // module outside the closure, so the missing provider fact
+                // fails closed with the named CONSTRUCT_UNLOWERED naming
+                // that exact declaration (never a seed or a first alias).
                 check("E6005".equals(diagnostic.code())
-                        && diagnostic.message().contains("RETAINED_ABI_DEFERRED"),
+                        && diagnostic.message().contains(
+                            SemanticLowerer.CONSTRUCT_UNLOWERED)
+                        && diagnostic.message().contains(
+                            "no registered construction entry"),
                     "the inconsistent-fact seed returns the first E6005 "
-                        + "RETAINED_ABI_DEFERRED; got " + diagnostic.message());
+                        + "CONSTRUCT_UNLOWERED naming the missing provider fact; "
+                        + "got " + diagnostic.message());
             }
         }
     }
@@ -5905,6 +6195,8 @@ public class ProjectLoweringTest {
             testPlanImportedBesideNonPlanLocal();
             testLocalDeclarationBesideImportedCalleeArgument();
             testImportedContextBesideCalleeArgumentProvider();
+            testCalleeParameterAndReturnProviderBesideSameIdentityLocal();
+            testUnanchoredConstructionContextFailsClosed();
             testImportedFieldWriteProviderDeferral();
             testCorruptedUnitSeed(baseline);
             testMissingModuleSeed(baseline);

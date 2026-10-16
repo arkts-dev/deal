@@ -41,6 +41,24 @@ public interface ModuleResolver {
     }
 
     /**
+     * Resolves the imported module's declared function symbols by
+     * declared name (the exact callee-declaration route): a call
+     * argument's construction context resolves the callee parameter's
+     * own declared class annotation in the callee's declaring module, so
+     * two same-named classes of sibling modules in one directory — one
+     * canonical class identity — stay two declarations. The default
+     * returns an empty map (unsupported by non-production resolvers);
+     * callers keep the identity-keyed route then.
+     */
+    default Map<String, Symbol.FunctionSymbol> resolveModuleFunctionSymbols(
+            String modulePath, String importingModule,
+            Set<String> modulesInProgress)
+            throws ModuleNotFoundException,
+                CffiImportWithoutNativeLibraryException {
+        return Map.of();
+    }
+
+    /**
      * Resolves the exact declared class symbol one class-typed annotation
      * names in the supplied declaring module's own scope, or {@code null}:
      * the declared-symbol counterpart of

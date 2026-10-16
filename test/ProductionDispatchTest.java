@@ -221,6 +221,40 @@ public class ProductionDispatchTest {
         reverseSiblingImports(CONTEXTUAL_BODY_CODEC_FIRST);
 
     /**
+     * The callee-parameter and declared-return provider fixture beside a
+     * same-identity local declaration (review cycle 5, finding 1): the
+     * entry declares its own {@code Ir} (default 5) in the provider's
+     * directory, so the import's {@code useIr} parameter and {@code g}'s
+     * parameter and {@code make}'s declared return all name an
+     * identity-equal sibling: those literals construct the imported
+     * declaration's 7 while the explicitly annotated local literal stays
+     * the entry's own 5.
+     */
+    private static String localProviderBody(String firstImport,
+            String secondImport) {
+        return "import * as console from \"std/console\";\n"
+            + firstImport + secondImport
+            + "\n"
+            + "class Ir { a: int = 5; }\n"
+            + "\n"
+            + "function g(x: ir.Ir): int { return x.a; }\n"
+            + "function make(): ir.Ir { return {}; }\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  let n: int = ir.useIr({});\n"
+            + "  let m: int = g({});\n"
+            + "  let r: ir.Ir = make();\n"
+            + "  let local: Ir = {};\n"
+            + "  if (n === 7 && m === 7 && r.a === 7 && local.a === 5) {\n"
+            + "    console.log(\"ok\");\n"
+            + "  } else {\n"
+            + "    console.log(\"wrong\");\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n";
+    }
+
+    /**
      * The shadowed-local-callee collision (review cycle 4): a nested
      * function declaration shadows a same-named module-level function
      * whose parameter names the codec sibling, while the nested
@@ -1281,6 +1315,72 @@ public class ProductionDispatchTest {
                     write(project, "src/main.deal", codecFirst
                         ? CONTEXTUAL_BODY_CODEC_FIRST
                         : CONTEXTUAL_BODY_IR_FIRST);
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /**
+     * The standalone callee-parameter and declared-return provider lanes
+     * (review cycle 5, finding 1): with the entry's own same-identity
+     * {@code Ir} declaration present, the imported parameter/return
+     * contexts must still construct the imported declaration (7) on the
+     * real LuaJIT and JVM production lanes, in either import order, and
+     * the explicitly annotated local literal must stay the entry's own
+     * declaration (5).
+     */
+    private static void testProductionLocalDeclarationBesideCalleeProvider()
+            throws Exception {
+        System.out.println("-- public compilation: the imported callee-parameter "
+            + "and declared-return providers beside a same-identity local "
+            + "declaration on the shared-IR production lanes --");
+        for (boolean codecFirst : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = "local-beside-provider " + backend
+                    + (codecFirst ? " (codec first)" : " (ir first)");
+                Path project = Files.createTempDirectory(
+                    "production-local-provider-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/ir.deal", CONTEXTUAL_IR_SOURCE);
+                    write(project, "src/codec.deal", CONTEXTUAL_CODEC_SOURCE);
+                    write(project, "src/main.deal", codecFirst
+                        ? localProviderBody(
+                            "import * as codec from \"./codec\";\n",
+                            "import * as ir from \"./ir\";\n")
+                        : localProviderBody(
+                            "import * as ir from \"./ir\";\n",
+                            "import * as codec from \"./codec\";\n"));
 
                     ProjectOutcome compile = productionCompile(project,
                         "src/main.deal", "out");
@@ -5855,6 +5955,7 @@ public class ProductionDispatchTest {
         testProductionLuaJitTwoModuleSurfaces();
         testProductionSiblingModuleProviderIdentity();
         testProductionSameNameSiblingSharedIr();
+        testProductionLocalDeclarationBesideCalleeProvider();
         testProductionPlanOwnerJsonLinks();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();

@@ -47,8 +47,32 @@ public sealed interface Symbol
         }
     }
 
-    /** A function declaration, carrying its function type. */
-    record FunctionSymbol(String name, Type.Func funcType) implements Symbol {}
+    /**
+     * A function declaration, carrying its function type and — for a
+     * function the frontend walked — its declared parameter type
+     * annotations and the module path declaring it. Two same-named
+     * classes of sibling modules in one directory share one canonical
+     * class identity, so a call argument's construction context resolves
+     * the exact declaring provider of a class-typed parameter through
+     * the parameter's own declared annotation and the callee's declaring
+     * module: never an identity-first match or a first alias. Synthetic
+     * symbols (intrinsics, generated helpers, retained harnesses) carry
+     * no declaration surface and keep the identity-keyed route.
+     */
+    record FunctionSymbol(String name, Type.Func funcType,
+                          List<TypeNode> paramTypeNodes,
+                          String declaringModulePath) implements Symbol {
+        public FunctionSymbol {
+            if (paramTypeNodes != null) {
+                paramTypeNodes = List.copyOf(paramTypeNodes);
+            }
+        }
+
+        /** The declaration-surface-free symbol (synthetic helpers, retained harnesses). */
+        public FunctionSymbol(String name, Type.Func funcType) {
+            this(name, funcType, null, null);
+        }
+    }
 
     /**
      * A class declaration, carrying its fields, the canonical class
@@ -74,12 +98,31 @@ public sealed interface Symbol
      * match or a first alias — resolves through the import's own symbol
      * surface. An empty map (declaration modules, unsupported resolvers)
      * keeps the identity-keyed route.</p>
+     *
+     * <p>{@code functionSymbols} carries the imported module's own
+     * declared function symbols the same way: a call argument's
+     * construction context resolves the callee parameter's exact
+     * declaring class provider through the parameter's own annotation
+     * in the callee's declaring module.</p>
      */
     record ModuleSymbol(String name, Map<String, Type> exports, Span importSpan,
-                        Map<String, ClassSymbol> classSymbols) implements Symbol {
-        /** The class-symbol-free import symbol (retained constructors). */
+                        Map<String, ClassSymbol> classSymbols,
+                        Map<String, FunctionSymbol> functionSymbols)
+            implements Symbol {
+        public ModuleSymbol {
+            classSymbols = classSymbols == null ? Map.of() : classSymbols;
+            functionSymbols = functionSymbols == null ? Map.of() : functionSymbols;
+        }
+
+        /** The declaration-surface-free import symbol (retained constructors). */
         public ModuleSymbol(String name, Map<String, Type> exports, Span importSpan) {
-            this(name, exports, importSpan, Map.of());
+            this(name, exports, importSpan, Map.of(), Map.of());
+        }
+
+        /** The function-surface-free import symbol (retained constructors). */
+        public ModuleSymbol(String name, Map<String, Type> exports, Span importSpan,
+                            Map<String, ClassSymbol> classSymbols) {
+            this(name, exports, importSpan, classSymbols, Map.of());
         }
     }
 

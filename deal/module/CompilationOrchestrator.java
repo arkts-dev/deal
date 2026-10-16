@@ -2846,6 +2846,35 @@ public final class CompilationOrchestrator {
         }
 
         /**
+         * The imported module's own declared function symbols by name (the
+         * exact callee-declaration route): a call argument's construction
+         * context resolves the callee parameter's own declared class
+         * annotation in the callee's declaring module, so two same-named
+         * classes of sibling modules in one directory stay two
+         * declarations. A declaration module carries no checked symbol
+         * table: its functions resolve through the identity-keyed route.
+         */
+        @Override
+        public Map<String, Symbol.FunctionSymbol> resolveModuleFunctionSymbols(
+                String modulePath, String importingModule,
+                Set<String> modulesInProgress)
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
+            ModuleInfo target = targetModule(modulePath, importingModule);
+            if (target.symbolTable == null) {
+                return Map.of();
+            }
+            Map<String, Symbol.FunctionSymbol> functions = new LinkedHashMap<>();
+            for (Map.Entry<String, Symbol> entry
+                    : target.symbolTable.symbols().entrySet()) {
+                if (entry.getValue() instanceof Symbol.FunctionSymbol functionSymbol) {
+                    functions.put(entry.getKey(), functionSymbol);
+                }
+            }
+            return functions;
+        }
+
+        /**
          * The imported module's {@link ModuleInfo}: a direct internal-name
          * match first (the checker passes dotted module paths carried by
          * Type.Class values, which are internal names, never import

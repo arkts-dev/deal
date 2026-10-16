@@ -87,6 +87,14 @@ public final class TypeChecker {
     // -- Current function return type (for return checking) --
     private Type currentReturnType = null;
 
+    // -- The exact class declaration the current function's declared
+    //    return annotation names (resolved in the scope of the function's
+    //    own declaration). A returned object literal is laid out by that
+    //    declaration, so an annotated return of a same-identity sibling
+    //    module's class keeps the declared provider instead of the
+    //    scope's same-named local declaration. --
+    private Symbol.ClassSymbol currentReturnContext = null;
+
     // -- Current scope for name resolution --
     private SymbolTable currentScope;
 
@@ -907,9 +915,18 @@ public final class TypeChecker {
         }
 
         Type savedReturnType = currentReturnType;
+        Symbol.ClassSymbol savedReturnContext = currentReturnContext;
         boolean savedInsideAsync = insideAsyncFunction;
         if (funcType != null) {
             currentReturnType = funcType.returnType();
+            // The return annotation's own declared class symbol, resolved
+            // in the scope the function declaration lives in: a returned
+            // object literal is constructed by that declaration, never by
+            // a same-named local declaration the lexical scope resolves
+            // instead (two same-named classes of sibling modules share
+            // one canonical identity).
+            currentReturnContext = exactAnnotationClassSymbol(currentScope,
+                fd.returnType());
             insideAsyncFunction = funcType.isAsync();
         }
 
@@ -975,6 +992,7 @@ public final class TypeChecker {
         }
 
         currentReturnType = savedReturnType;
+        currentReturnContext = savedReturnContext;
         insideAsyncFunction = savedInsideAsync;
     }
 
@@ -989,9 +1007,20 @@ public final class TypeChecker {
                 return;
             }
             Type savedExpected = expectedType;
+            Symbol.ClassSymbol savedContextual = contextualClassDecl;
             expectedType = currentReturnType;
+            // The declared return annotation is the returned literal's
+            // construction context: a `return {}` of an imported class
+            // return type is laid out by that provider's declaration,
+            // never by a same-named local declaration of the same
+            // canonical identity.
+            if (currentReturnContext != null
+                    && contextualClassDecl == null) {
+                contextualClassDecl = currentReturnContext;
+            }
             Type exprType = checkExpression(rs.expr().get());
             expectedType = savedExpected;
+            contextualClassDecl = savedContextual;
 
             if (exprType == Type.Error.INSTANCE) return;
 
@@ -1701,17 +1730,38 @@ public final class TypeChecker {
 
         // F5: Determine parameter types for contextual typing BEFORE checking args
         List<Type> paramTypesForContext = getParamTypesForContext(call);
+        // The parameter positions' exact declared class symbols (the
+        // callee's own parameter annotations resolved in the callee's
+        // declaring module): an argument object literal of a class-typed
+        // parameter is laid out by that declared provider, so a
+        // same-named local declaration of the same canonical identity
+        // never captures the construction. A null entry leaves the
+        // literal's construction context to the enclosing expectation.
+        List<Symbol.ClassSymbol> paramClassDeclsForContext =
+            getParamClassDeclsForContext(call);
 
         List<Type> argTypes = new ArrayList<>();
         for (int i = 0; i < call.args().size(); i++) {
             ExpressionNode arg = call.args().get(i);
 
             Type savedExpected = expectedType;
+            Symbol.ClassSymbol savedContextual = contextualClassDecl;
             if (paramTypesForContext != null && i < paramTypesForContext.size()) {
                 expectedType = paramTypesForContext.get(i);
             }
+            // The enclosing construction context (an annotated binding,
+            // field default or assignment target) stays authoritative
+            // when it exists: the parameter context supplies the literal's
+            // declaration only for an argument the enclosing expression
+            // does not already lay out.
+            if (contextualClassDecl == null
+                    && paramClassDeclsForContext != null
+                    && i < paramClassDeclsForContext.size()) {
+                contextualClassDecl = paramClassDeclsForContext.get(i);
+            }
             argTypes.add(checkExpression(arg));
             expectedType = savedExpected;
+            contextualClassDecl = savedContextual;
         }
 
         // Intrinsic call?
@@ -1738,6 +1788,55 @@ public final class TypeChecker {
 
         error(DiagnosticCode.E3008, typeName(calleeType) + " is not callable", call.callee().span());
         return Type.Error.INSTANCE;
+    }
+
+    /**
+     * The exact declared class symbol of every callee parameter position
+     * (the callee's own function symbol resolved through the identifier
+     * or the imported module alias): the parameter's declared annotation
+     * resolved in the callee's declaring module scope. Two same-named
+     * classes of sibling modules share one canonical identity, so the
+     * parameter's own declared provider — never an identity-first match
+     * or the call site's local declaration — names the construction
+     * context. Returns null when the callee carries no declaration
+     * surface (a function-typed value, an intrinsic, a synthetic
+     * symbol).
+     */
+    private List<Symbol.ClassSymbol> getParamClassDeclsForContext(CallExpr call) {
+        Symbol.FunctionSymbol callee = calleeDeclarationOf(call);
+        if (callee == null || callee.paramTypeNodes() == null) {
+            return null;
+        }
+        List<Symbol.ClassSymbol> decls = new ArrayList<>();
+        for (TypeNode paramNode : callee.paramTypeNodes()) {
+            decls.add(paramNode == null ? null
+                : nameResolver.resolveTypeNodeClassSymbolInModule(paramNode,
+                    callee.declaringModulePath()));
+        }
+        return decls;
+    }
+
+    /**
+     * The declared function symbol a call's own callee names: a direct
+     * identifier (a local or hoisted function), or a member access on an
+     * imported module alias (the imported module's own declared function
+     * symbol). A callee that is a function-typed value names no
+     * declaration and returns null.
+     */
+    private Symbol.FunctionSymbol calleeDeclarationOf(CallExpr call) {
+        ExpressionNode callee = call.callee();
+        if (callee instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            return sym instanceof Symbol.FunctionSymbol fs ? fs : null;
+        }
+        if (callee instanceof MemberAccessExpr mae
+                && mae.object() instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                return ms.functionSymbols().get(mae.field());
+            }
+        }
+        return null;
     }
 
     /**
@@ -2104,22 +2203,23 @@ public final class TypeChecker {
         // declaration the lexical scope resolves instead.
         Symbol sym;
         Symbol.ClassSymbol contextual = contextualClassDecl;
-        // Whether the selection is exact (the contextual declaration or
-        // the scope's own exact-identity declaration) rather than the
-        // identity-keyed cross-module route: only an exact selection is a
-        // construction context the one lowering may attribute a literal's
-        // resources to.
-        boolean exactSelection = false;
+        // Whether the enclosing construction context supplied the
+        // declaration: only the contextual declaration is published as
+        // the literal's exact construction declaration. The scope's own
+        // identity-equal declaration (the unanchored fallback) and the
+        // identity-keyed cross-module route name no construction context:
+        // the one lowering then resolves the literal by the recorded
+        // contextual provider or fails closed when the canonical identity
+        // carries more than one declaration.
+        boolean contextualSelection = false;
         if (contextual != null
                 && contextual.name().equals(cls.name())
                 && contextual.identity().equals(cls.identity())) {
             sym = contextual;
-            exactSelection = true;
+            contextualSelection = true;
         } else {
             sym = exactLocalClassSymbol(cls);
-            if (sym != null) {
-                exactSelection = true;
-            } else {
+            if (sym == null) {
                 // If the local scope names no exact-identity declaration,
                 // try the identity-keyed cross-module resolution (never a
                 // textual class-name search that would pick a same-spelled
@@ -2136,15 +2236,17 @@ public final class TypeChecker {
         // initialization and assignment-expression boundaries, and by the
         // one lowering's exact-provider selection.
         constructedClassDecls.put(obj, cs);
-        // The exact construction context (the contextual declaration or
-        // the scope's own declaration) is published through CheckResult:
-        // the one lowering attributes the literal's resources and plan to
-        // that declaration, so a same-identity sibling or an imported
-        // callee's parameter provider never captures the construction.
-        // The identity-keyed route stays unpublished: it is not a
-        // construction context, and the lowering's recorded contextual
-        // provider supplies the callee-argument attribution instead.
-        if (exactSelection) {
+        // The construction context is published through CheckResult when
+        // - and only when - an enclosing annotation, a callee parameter or
+        // a declared return annotation named this exact declaration: the
+        // one lowering attributes the literal's resources and plan to that
+        // declaration, so a same-identity sibling or an imported callee's
+        // parameter provider never captures the construction. A literal
+        // without such a context (the scope's own declaration or the
+        // identity-keyed route) publishes nothing: the lowering must not
+        // silently lay it out by a unit-local same-identity declaration
+        // when the identity carries more than one declaration.
+        if (contextualSelection) {
             recordExactClassDecl(obj, cls, cs);
         }
         // The declaration's AST node, when the symbol is this module's own
@@ -2215,6 +2317,12 @@ public final class TypeChecker {
             paramTypes.add(nameResolver.resolveTypeNode(p.type()));
         }
         Type returnType = nameResolver.resolveTypeNode(fe.returnType());
+        // The return annotation's own declared class symbol, resolved in
+        // the scope the function expression is declared in (never in its
+        // parameter scope): a returned object literal keeps the declared
+        // provider's declaration.
+        Symbol.ClassSymbol returnContext = exactAnnotationClassSymbol(
+            currentScope, fe.returnType());
         Type.Func funcType = new Type.Func(paramTypes, returnType, fe.isAsync());
 
         // F1: Check if Pass 1 recorded a scope for this function expression.
@@ -2244,8 +2352,10 @@ public final class TypeChecker {
         }
 
         Type savedReturnType = currentReturnType;
+        Symbol.ClassSymbol savedReturnContext = currentReturnContext;
         boolean savedInsideAsync = insideAsyncFunction;
         currentReturnType = returnType;
+        currentReturnContext = returnContext;
         insideAsyncFunction = fe.isAsync();
 
         // F1: Use walkStatement(fe.body()) instead of walkStatements(fe.body().statements())
@@ -2287,6 +2397,7 @@ public final class TypeChecker {
         }
 
         currentReturnType = savedReturnType;
+        currentReturnContext = savedReturnContext;
         insideAsyncFunction = savedInsideAsync;
         currentScope = savedScope;
         nameResolver.setCurrentScope(savedScope);
