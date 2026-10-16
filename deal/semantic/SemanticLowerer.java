@@ -817,11 +817,11 @@ public final class SemanticLowerer {
      * address-chain protocol (see {@link #finishLowering}), never twice.
      */
     private static Optional<LoweringResult> validateUnitGates(
-            LoweredModuleUnit unit, String interfaceHash,
+            LoweredModuleUnit unit, SemanticProfile profile, String interfaceHash,
             String capabilityRegistryHash) {
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return Optional.of(new LoweringResult(null, null, List.of(validation.get())));
         }
@@ -840,9 +840,10 @@ public final class SemanticLowerer {
      */
     private static LoweringResult finishLowering(ModuleLowerer lowerer,
                                                  LoweredModuleUnit unit,
+                                                 SemanticProfile profile,
                                                  String interfaceHash,
                                                  String capabilityRegistryHash) {
-        Optional<LoweringResult> gates = validateUnitGates(unit, interfaceHash,
+        Optional<LoweringResult> gates = validateUnitGates(unit, profile, interfaceHash,
             capabilityRegistryHash);
         if (gates.isPresent()) {
             return gates.get();
@@ -970,12 +971,12 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash);
+            profile, interfaceHash, capabilityRegistryHash);
         // E5 production-time checks (A-D1/C-D2): the common-admission
         // head, the address-chain protocol, and the block-membership
         // table's control-flow validator, in order; the first violation is
         // the returned E6005.
-        return finishLowering(lowerer, unit, interfaceHash, capabilityRegistryHash);
+        return finishLowering(lowerer, unit, profile, interfaceHash, capabilityRegistryHash);
     }
 
     public static BindingCoreResult lowerModuleBindingCore(CheckedModuleInput module,
@@ -1011,9 +1012,9 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        Optional<LoweringResult> gates = validateUnitGates(unit, interfaceHash,
+        Optional<LoweringResult> gates = validateUnitGates(unit, profile, interfaceHash,
             capabilityRegistryHash);
         if (gates.isPresent()) {
             return new BindingCoreResult(gates.get(), lowerer.bindingFacts());
@@ -1058,9 +1059,9 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
-        return finishLowering(lowerer, unit, interfaceHash, capabilityRegistryHash);
+        return finishLowering(lowerer, unit, profile, interfaceHash, capabilityRegistryHash);
     }
 
     public static FullProgramE7Result lowerModuleFullProgramE7(CheckedModuleInput module,
@@ -1106,10 +1107,10 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         return new FullProgramE7Result(
-            finishLowering(lowerer, unit, interfaceHash, capabilityRegistryHash),
+            finishLowering(lowerer, unit, profile, interfaceHash, capabilityRegistryHash),
             lowerer.recordedEntries(), lowerer.recordedCallbacks());
     }
 
@@ -1163,7 +1164,7 @@ public final class SemanticLowerer {
         String capabilityRegistryHash = invocation.capabilityRegistryHash();
         SemanticIrValidator.ComparisonFacts comparisonFacts =
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash);
+                invocation.semanticProfile(), capabilityRegistryHash);
 
         // (2) The declaration-fact agreement: every declaration import of
         // the closure is covered by the surface (a declaration module's
@@ -1293,7 +1294,7 @@ public final class SemanticLowerer {
                         + " entry (the index covers every module of the closure)");
             }
             LoweredProjectModule lowered = lowerProjectModule(module, manifest,
-                interfaceHash, capabilityRegistryHash, allocator,
+                invocation.semanticProfile(), interfaceHash, capabilityRegistryHash, allocator,
                 calleeExternalEntries, callbackExports, seeds.seeds(),
                 conversionIntrinsics, ownInterface, comparisonFacts,
                 inProjectFactoryFacts, declaredParameterAnnotations);
@@ -1323,7 +1324,7 @@ public final class SemanticLowerer {
         // project owns the produced class registration seeds; the lowering
         // result's seed view is exactly that record.
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_3_INT32, interfaceIndex, units,
+            invocation.semanticProfile(), interfaceIndex, units,
             checkedProject.entryModule(), seeds.seeds());
         Optional<CompilerDiagnostic> projectGate = SemanticIrValidator.validateProjectHead(
             project, comparisonFacts);
@@ -1399,6 +1400,7 @@ public final class SemanticLowerer {
     private static LoweredProjectModule lowerProjectModule(
             CheckedModuleInput module,
             SemanticRequirementManifest manifest,
+            SemanticProfile profile,
             String interfaceHash,
             String capabilityRegistryHash,
             SemanticIdAllocator allocator,
@@ -1443,7 +1445,7 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(manifest.constructCoverage(),
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> unitChain = validateProjectUnit(unit,
             unit.bodyTable(), comparisonFacts, unit.classBindingFacts(),
@@ -1810,11 +1812,11 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ClosureCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -1867,11 +1869,11 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new GroupCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -1927,11 +1929,11 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ImmutabilityCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -1991,11 +1993,11 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new CreationRuleCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -2056,11 +2058,11 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ShapeMapCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -2121,11 +2123,11 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E6_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ValidationCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -2230,11 +2232,11 @@ public final class SemanticLowerer {
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            interfaceHash, capabilityRegistryHash,
+            profile, interfaceHash, capabilityRegistryHash,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validateUnitHead(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
-                SemanticProfile.DEAL_V1_3_INT32, capabilityRegistryHash));
+                profile, capabilityRegistryHash));
         if (validation.isPresent()) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
@@ -7954,10 +7956,11 @@ public final class SemanticLowerer {
         public LoweredModuleUnit buildUnit(Map<ConstructKind, List<SemanticOpKind>>
                                                constructCoverage,
                                            List<ModuleId> imports,
+                                           SemanticProfile profile,
                                            String interfaceHash,
                                            String capabilityRegistryHash) {
-            return buildUnit(constructCoverage, imports, interfaceHash, capabilityRegistryHash,
-                ContainerClaimingSeam.E5_GATE_ACTIVATION);
+            return buildUnit(constructCoverage, imports, profile, interfaceHash,
+                capabilityRegistryHash, ContainerClaimingSeam.E5_GATE_ACTIVATION);
         }
 
         /**
@@ -7967,16 +7970,21 @@ public final class SemanticLowerer {
          * {@code BINDING_LOAD} — while the E5 window derives the claim
          * set under the E5-gate activation:
          * {@code CONTAINERS_AND_STRINGS} and {@code EVALUATION_ORDER}
-         * activate).
+         * activate). The carried {@code profile} is the invocation's
+         * active profile: it is recorded on the unit and derives the
+         * unit's {@code loweringContextHash} — never a profile projected
+         * from a hard-coded constant.
          */
         public LoweredModuleUnit buildUnit(Map<ConstructKind, List<SemanticOpKind>>
                                                constructCoverage,
                                            List<ModuleId> imports,
+                                           SemanticProfile profile,
                                            String interfaceHash,
                                            String capabilityRegistryHash,
                                            Set<SemanticCapability> activation) {
             Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
             Objects.requireNonNull(imports, "imports must not be null");
+            Objects.requireNonNull(profile, "profile must not be null");
             Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
             Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
             Objects.requireNonNull(activation, "activation must not be null");
@@ -8022,11 +8030,10 @@ public final class SemanticLowerer {
             this.producedClassBindingFacts = computePinnedWriteFacts();
             return new LoweredModuleUnit(
                 LoweredModuleUnit.FORMAT_VERSION,
-                SemanticProfile.DEAL_V1_3_INT32,
+                profile,
                 module,
                 interfaceHash,
-                LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
-                    capabilityRegistryHash),
+                LoweringContextHash.of(profile, capabilityRegistryHash),
                 claims,
                 coverage,
                 new LinkedHashMap<>(classLayouts),

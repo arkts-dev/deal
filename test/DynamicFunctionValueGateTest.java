@@ -254,6 +254,7 @@ public class DynamicFunctionValueGateTest {
         LoweredModuleUnit unit = lowerer.buildUnit(
             fixture.manifests().get(0).constructCoverage(),
             fixture.module().imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            SemanticProfile.DEAL_V1_3_INT32,
             fixture.index().interfaceIndexDigest(), REGISTRY_HASH,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
         return new RawLowering(unit, lowerer.bodyTable(), lowerer.pinnedWriteFacts());

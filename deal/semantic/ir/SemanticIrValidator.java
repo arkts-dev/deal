@@ -101,8 +101,14 @@ public final class SemanticIrValidator {
         R_TOKEN_REUSE, R_PRIVATE_STEP, R_RESERVED_NAME, R_DIGEST, R_PROFILE,
         R_IDENTITY_LINK);
 
-    /** The only admitted unit profile name (S1). */
-    public static final String ADMITTED_PROFILE = "DEAL_V1_3_INT32";
+    /**
+     * The only admitted unit profile name (S1): derived from the
+     * single-profile owner {@link SemanticProfile#DEAL_V1_3_INT32}, never a
+     * duplicated spelling. A carried profile that is not the owner's value
+     * rejects; the owner itself is the closed set of supported semantic
+     * modes.
+     */
+    public static final String ADMITTED_PROFILE = SemanticProfile.DEAL_V1_3_INT32.name();
 
     // =========================================================================
     // Comparison facts (validator contract Input)
@@ -391,6 +397,14 @@ public final class SemanticIrValidator {
                     + "\" is not \"" + ADMITTED_PROFILE
                     + "\" (the supplied comparison profile is "
                     + facts.semanticProfile() + ")"));
+        }
+        for (RawUnit unit : units) {
+            if (!projectProfile.equals(unit.semanticProfile())) {
+                return fail(unit, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_PROFILE, "module \"" + unit.modulePath()
+                        + "\" carries semanticProfile \"" + unit.semanticProfile()
+                        + "\", not the project's \"" + projectProfile + "\""));
+            }
         }
         if (!entryModule.equals(subject.modulePath())) {
             return fail(units.get(0), facts, R_IDENTITY_LINK,
@@ -4380,14 +4394,25 @@ public final class SemanticIrValidator {
         if (!ADMITTED_PROFILE.equals(unit.semanticProfile())) {
             return fail(unit, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_PROFILE, "semanticProfile \"" + unit.semanticProfile()
-                    + "\" is not DEAL_V1_3_INT32"));
+                    + "\" is not \"" + ADMITTED_PROFILE + "\""));
+        }
+        if (!unit.semanticProfile().equals(facts.semanticProfile().name())) {
+            return fail(unit, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,
+                origin(R_PROFILE, "the carried semanticProfile \""
+                    + unit.semanticProfile() + "\" disagrees with the supplied"
+                    + " comparison profile \"" + facts.semanticProfile() + "\""));
         }
         if (!facts.interfaceIndexDigest().equals(unit.interfaceHash())) {
             return fail(unit, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_PROFILE, "interfaceHash \"" + unit.interfaceHash()
                     + "\" differs from the interface index digest"));
         }
-        String expectedHash = LoweringContextHash.of(facts.semanticProfile(),
+        // The recomputation consumes the carried active profile: the carried
+        // name was just admitted as the owner's value, and it agrees with the
+        // supplied comparison facts. The supplied capability-registry hash is
+        // the other derivation input; no hard-coded profile is projected in.
+        SemanticProfile carriedProfile = SemanticProfile.valueOf(unit.semanticProfile());
+        String expectedHash = LoweringContextHash.of(carriedProfile,
             facts.capabilityRegistryHash());
         if (!expectedHash.equals(unit.loweringContextHash())) {
             return fail(unit, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,

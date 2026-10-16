@@ -846,6 +846,16 @@ public class SemanticIrValidatorTest {
         return CanonicalJson.obj(entries);
     }
 
+    private static CanonicalJson.Obj withoutEntry(CanonicalJson.Obj obj, String key) {
+        List<CanonicalJson.Entry> entries = new ArrayList<>();
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (!entry.key().equals(key)) {
+                entries.add(entry);
+            }
+        }
+        return CanonicalJson.obj(entries);
+    }
+
     private static String recomputeContractDigest(CanonicalJson.Obj contract) {
         List<CanonicalJson.Entry> eight = new ArrayList<>();
         for (CanonicalJson.Entry entry : contract.entries()) {
@@ -2811,6 +2821,134 @@ public class SemanticIrValidatorTest {
     }
 
     // =========================================================================
+    // 12. Explicit profile transport and the v1.3 activation boundary
+    // =========================================================================
+
+    /**
+     * ISSUE-0822: the semanticProfile flows explicitly from the
+     * single-profile owner through the unit/project transport and the dump
+     * framing, and no path substitutes a removed v1.2 value or a second
+     * supported mode. The owner carries exactly one member, so the typed
+     * record surfaces can only carry that value; the text surface is where
+     * a foreign carried value is exercised, and it rejects with the same
+     * R-PROFILE rule. Removing the carried profile is a decode failure,
+     * never a silent substitution.
+     */
+    private static void testExplicitProfileTransport() {
+        System.out.println("-- Explicit semanticProfile transport and the v1.3 owner --");
+
+        // The admitted name is the owner's value, not an independent literal,
+        // and the owner is a closed single-member set with unchanged peer
+        // format versions (no speculative bump).
+        checkEq(1, SemanticProfile.values().length,
+            "the single-profile owner carries exactly one member");
+        checkEq(SemanticProfile.DEAL_V1_3_INT32.name(), SemanticIrValidator.ADMITTED_PROFILE,
+            "the admitted profile name is the owner's value");
+        checkEq("deal.semantic-interface/1", ProjectInterfaceIndex.FORMAT_VERSION,
+            "the interface format is unchanged (no speculative bump)");
+        checkEq(1, OperationContractSnapshot.VERSION,
+            "the operation snapshot format is unchanged (no speculative bump)");
+
+        LoweredModuleUnit base = unit(List.of(constOp()));
+
+        // The typed unit carries the owner's profile and the raw transport
+        // preserves it explicitly at the unit surface.
+        checkEq(SemanticProfile.DEAL_V1_3_INT32, base.semanticProfile(),
+            "the typed unit carries the owner profile");
+        checkEq(SemanticProfile.DEAL_V1_3_INT32.name(),
+            RawUnit.fromTyped(base).semanticProfile(),
+            "the raw transport carries the profile name explicitly");
+
+        // The unit text carries the owner value, and nothing in the
+        // admission/transport output mentions a removed profile.
+        String text = SemanticIrValidator.toUnitText(base);
+        check(text.contains("\"semanticProfile\":\""
+                + SemanticProfile.DEAL_V1_3_INT32.name() + "\""),
+            "the unit text carries the owner profile");
+        check(!text.contains("DEAL_V1_2_INT32") && !text.contains("LEGACY_SAFE_INT"),
+            "no removed profile value appears in the unit transport");
+        assertPass(SemanticIrValidator.validateText(text, FACTS),
+            "the owner-profile unit text admits");
+        checkEq(LCH, LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY),
+            "the carried loweringContextHash is the owner/capability derivation");
+
+        // Omission is a transport decode failure, never a silent substitution.
+        String omitted = serialize(withoutEntry(parseObj(text), "semanticProfile"));
+        try {
+            SemanticIrValidator.validateText(omitted, FACTS);
+            fail("a unit text without semanticProfile must not decode");
+        } catch (SemanticIrTextDecodeException expected) {
+            check(true, "an omitted carried profile is a decode failure, never a substitution");
+        }
+
+        // A carried removed v1.2 value whose loweringContextHash equals the
+        // owner derivation still rejects by profile name: the carried value is
+        // rejected, not silently interpreted under the owner profile.
+        String removed = serialize(withEntry(parseObj(text),
+            "semanticProfile", CanonicalJson.str("DEAL_V1_2_INT32")));
+        check(removed.contains("\"loweringContextHash\":\"" + LCH + "\""),
+            "the removed-profile mutation keeps the owner-derived hash (precondition)");
+        assertE6005(SemanticIrValidator.validateText(removed, FACTS),
+            "R-PROFILE", "DEAL_V1_2_INT32");
+
+        // A carried profile that disagrees with the supplied facts rejects at
+        // the same R-PROFILE relation; the derivation consumes the supplied
+        // capability-registry hash, so a foreign pair rejects at the hash.
+        String wrongRegistryHash = LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
+            REGISTRY + "-other");
+        check(!wrongRegistryHash.equals(LCH),
+            "the foreign registry hash changes the derivation (precondition)");
+        String hashMismatch = serialize(withEntry(parseObj(text), "loweringContextHash",
+            CanonicalJson.str(wrongRegistryHash)));
+        assertE6005(SemanticIrValidator.validateText(hashMismatch, FACTS),
+            "R-PROFILE", "loweringContextHash");
+
+        // The project surface: the typed project and each of its units carry
+        // the owner profile, the text carries it explicitly, and the output
+        // mentions no removed value.
+        ProjectInterfaceIndex index = new ProjectInterfaceIndex(
+            ProjectInterfaceIndex.FORMAT_VERSION,
+            Map.of(MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
+                    List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES),
+                MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
+                    List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+        LoweredModuleUnit unitA = withInterfaceHash(unit("mod.a", Set.of(), Map.of(),
+            Map.of(), List.of(constOp())), index.interfaceIndexDigest());
+        LoweredModuleUnit unitB = withInterfaceHash(unit("mod.b", Set.of(), Map.of(),
+            Map.of(), List.of(constOp())), index.interfaceIndexDigest());
+        ExecutableLoweredProject project = new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_3_INT32, index,
+            new LinkedHashMap<>() {{
+                put(MOD, unitA);
+                put(MOD_B, unitB);
+            }}, MOD, ClassRegistrationSeeds.builtinErrorOnly());
+        assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
+            "the owner-profile project admits");
+        checkEq(SemanticProfile.DEAL_V1_3_INT32, project.semanticProfile(),
+            "the typed project carries the owner profile");
+        for (LoweredModuleUnit carried : project.modules().values()) {
+            checkEq(SemanticProfile.DEAL_V1_3_INT32, carried.semanticProfile(),
+                "unit " + carried.moduleId() + " carries the owner profile");
+        }
+        String projectText = SemanticIrValidator.toProjectText(project);
+        check(projectText.contains("\"semanticProfile\":\""
+                + SemanticProfile.DEAL_V1_3_INT32.name() + "\""),
+            "the project text carries the owner profile");
+        check(!projectText.contains("DEAL_V1_2_INT32")
+                && !projectText.contains("LEGACY_SAFE_INT"),
+            "no removed profile value appears in the project transport");
+        assertPass(SemanticIrValidator.validateText(projectText, projectFacts(index)),
+            "the owner-profile project text admits");
+        try {
+            SemanticIrValidator.validateText(serialize(withoutEntry(parseObj(projectText),
+                "semanticProfile")), projectFacts(index));
+            fail("a project text without semanticProfile must not decode");
+        } catch (SemanticIrTextDecodeException expected) {
+            check(true, "an omitted project profile is a decode failure, never a substitution");
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -2835,6 +2973,7 @@ public class SemanticIrValidatorTest {
         testCommonAdmissionMembershipAndPlans();
         testCommonAdmissionReturnPosition();
         testCommonAdmissionCorrelations();
+        testExplicitProfileTransport();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
