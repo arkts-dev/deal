@@ -2529,27 +2529,71 @@ public class ProjectLoweringTest {
                   return null;
                 }
                 """);
-            Path entry = proj.resolve("src/app.deal").toAbsolutePath();
-            Path output = proj.resolve("out").toAbsolutePath();
-            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                entry, output, false, false, false, false, Backend.LUAJIT,
-                Map.of(), List.of(proj.resolve("src").toAbsolutePath()),
-                Path.of(".").toAbsolutePath().normalize(), null,
-                ConformanceHarnessMetadata.invocation());
-            check(!orchestrator.compile(),
-                "the same-identity provider crossing is refused, never "
-                    + "published: " + orchestrator.diagnostics());
-            check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E3019".equals(d.code())),
-                "the refused project names the crossing E3019: "
-                    + orchestrator.diagnostics());
-            check(orchestrator.checkedProject() == null,
-                "the refused project publishes no partial checked project");
-            check(!Files.exists(output) || isEmptyTree(output),
-                "the refused project publishes no output artifact: " + output);
+            assertCrossingRejected(proj,
+                "the identifier-assignment crossing");
         } finally {
             deleteRecursively(proj);
         }
+
+        // The nested-call crossing (ISSUE-0809 review cycle 2): the
+        // enclosing annotation lays the innermost literal out by the
+        // consumer's own declaration, so that declaration's provider
+        // travels with the value and the sibling-parameter call refuses
+        // it — the shape previously published an artifact whose callee
+        // read the other declaration's field set and failed E8001.
+        Path nested = Files.createTempDirectory("project-lowering-crossing");
+        try {
+            writeFileIn(nested, "src/ir.deal", """
+                export class Ir { a: int = 7; }
+                export function g(x: Ir): Ir { return x; }
+                """);
+            writeFileIn(nested, "src/app.deal", """
+                import * as ir from "./ir";
+
+                class Ir { b: string = "local"; }
+
+                function f(x: ir.Ir): Ir { return {}; }
+
+                export function main(): null {
+                  let p: Ir = f(ir.g({}));
+                  if (p.b !== "local") { throw { code: "WRONG", message: "b" }; }
+                  return null;
+                }
+                """);
+            assertCrossingRejected(nested,
+                "the nested-call crossing");
+        } finally {
+            deleteRecursively(nested);
+        }
+    }
+
+    /**
+     * Compiles the project at its {@code src/app.deal} entry through the
+     * production pipeline and asserts the same-identity provider crossing
+     * is refused with E3019 and no partial or published view.
+     */
+    private static void assertCrossingRejected(Path proj, String label)
+            throws Exception {
+        Path entry = proj.resolve("src/app.deal").toAbsolutePath();
+        Path output = proj.resolve("out").toAbsolutePath();
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entry, output, false, false, false, false, Backend.LUAJIT,
+            Map.of(), List.of(proj.resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize(), null,
+            ConformanceHarnessMetadata.invocation());
+        check(!orchestrator.compile(),
+            label + " is refused, never published: "
+                + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E3019".equals(d.code())),
+            "the refused project names " + label + " E3019: "
+                + orchestrator.diagnostics());
+        check(orchestrator.checkedProject() == null,
+            "the refused project publishes no partial checked project ("
+                + label + ")");
+        check(!Files.exists(output) || isEmptyTree(output),
+            "the refused project publishes no output artifact (" + label
+                + "): " + output);
     }
 
     /** True when the tree contains no regular file and no directory entry. */

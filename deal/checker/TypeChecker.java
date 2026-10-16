@@ -2319,7 +2319,31 @@ public final class TypeChecker {
                 }
             }
         }
-        return cls;
+        // A literal an explicit construction context named is checked as
+        // that declaration's own class type (the contextual declaration,
+        // the callee parameter, or the declared return annotation) —
+        // never as the surrounding expectation's carrier: a value a
+        // same-identity sibling laid out keeps that sibling's provider,
+        // so the enclosing boundary sees the crossing instead of the
+        // value silently adopting the expected declaration's provider
+        // while its layout/defaults belong to the other declaration
+        // (ISSUE-0809 review cycle 2). The unanchored fallback keeps the
+        // expectation's carrier: the one lowering then refuses the
+        // multiple-declaration identity instead of committing to a first
+        // declaration (never a silent first-alias selection). The builtin
+        // Error module path is the unbound provider.
+        return contextualSelection ? classTypeOf(cs) : cls;
+    }
+
+    /**
+     * The checked class type of one exact declared class symbol: the
+     * declaring module's own wiring key is the defining provider and the
+     * builtin {@code Error} module path stays the unbound provider.
+     */
+    private static Type.Class classTypeOf(Symbol.ClassSymbol cs) {
+        String provider = cs.modulePath() == null || cs.modulePath().isEmpty()
+            ? null : cs.modulePath();
+        return Types.classType(cs.name(), cs.identity(), provider);
     }
 
     // =======================================================================
