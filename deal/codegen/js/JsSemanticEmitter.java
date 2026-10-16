@@ -4,6 +4,7 @@ import deal.codegen.SharedEmissionFailure;
 import deal.codegen.SourceMapGenerator;
 import deal.diagnostics.DiagnosticRange;
 import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
@@ -29,6 +30,7 @@ import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.NullableSide;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticOp;
@@ -67,18 +69,28 @@ import java.util.Set;
  * {@code STRING_CONCAT}/{@code INTRINSIC_CALL}; {@code ARRAY_NEW}/
  * {@code TABLE_NEW}/{@code ARRAY_LENGTH}/member and index read/write/delete/
  * optional/has; the binding, closure, recursive-group and function-adapter
- * creation ops; the account chains; the direct and indirect calls; the
- * structured control-flow ops; the module init/import/export/entry ops; and
- * the class family — per-attempt default thunks, local and imported-provider
- * construction ({@code CLASS_NEW} under the LOCAL, SHARED_FACTORY and
- * builtin owners), the private defaults-only factory transfer
- * ({@code CLASS_FACTORY}), the presence-aware field reads/writes/deletes, the
- * JSON from/to walkers over the canonical descriptor arrays, and the public
- * class surface (META, the full-construction {@code C$new} and the hidden
- * {@code C$fields} export of a {@code @jsonable} class). Stdlib calls,
- * async operations, host imports and callbacks belong to the later
- * decomposition units of the same migration and fail closed here; no public
- * dispatch selects this renderer until the production cutover.</p>
+ * creation ops; the account chains; the direct, indirect, host and
+ * external calls (the host callee is the recorded source import
+ * occurrence's typed surface entry — never a module/name lookup); the
+ * runtime-resolved dynamic callee call/async start (the carrier's private
+ * class tag selects the class path and the recorded per-class return cell
+ * per the shared resolution protocol); the native Promise
+ * {@code ASYNC_START}/{@code AWAIT} realization with the single
+ * await-site completion check; the host-driven callback crossing of
+ * {@code CALLBACK_INVOKE}; the structured control-flow ops; the module
+ * init/import/export/entry ops; and the class family — per-attempt
+ * default thunks, local and imported-provider construction
+ * ({@code CLASS_NEW} under the LOCAL, SHARED_FACTORY and builtin owners),
+ * the private defaults-only factory transfer ({@code CLASS_FACTORY}), the
+ * presence-aware field reads/writes/deletes, the JSON from/to walkers over
+ * the canonical descriptor arrays, and the public class surface (META, the
+ * full-construction {@code C$new} and the hidden {@code C$fields} export
+ * of a {@code @jsonable} class). The builtin {@code Error} construction is
+ * realized because {@code THROW} transport needs the tagged error carrier.
+ * Stdlib calls, host imports and the {@code RETAINED_ABI} external calls
+ * belong to the later decomposition units of the same migration and fail
+ * closed here; no public dispatch selects this renderer until the
+ * production cutover.</p>
  */
 public final class JsSemanticEmitter {
 
@@ -165,6 +177,39 @@ public final class JsSemanticEmitter {
         private String currentCallSpan;
         /** The {@code CLASS_DEFAULT} op currently emitted as a detached thunk. */
         private OpId currentDefaultOp;
+        /**
+         * The canonical async token's owning start op per token id (the
+         * op whose result is the {@link AsyncTokenId.Canonical}).
+         */
+        private final Map<Long, SemanticOp> canonicalTokenOwner = new HashMap<>();
+        /**
+         * The publishing {@code ASYNC_START} op per token id the closure
+         * records on a start's result — the caller-side alias identity of
+         * an external async call included, whose referent canonical token
+         * is owned by the callee unit's {@code EXTERNAL_ENTRY} record and
+         * therefore has no op in this closure.
+         */
+        private final Map<Long, OpId> startByTokenId = new HashMap<>();
+        /**
+         * A nested adapter-source {@code ASYNC_START} op and the owning
+         * outer {@code ASYNC_START} op whose adapter invocation publishes
+         * its single operation (the nested op's own canonical token is
+         * that operation).
+         */
+        private final Map<OpId, OpId> nestedStartOwner = new HashMap<>();
+        /**
+         * The consuming {@code AWAIT} op per publishing {@code ASYNC_START}
+         * op: the awaited form appends the await site's own span triple to
+         * the recorded host operation call.
+         */
+        private final Map<OpId, SemanticOp> awaitOfStart = new HashMap<>();
+        /**
+         * The module-level function declarations a {@code CALLBACK_INVOKE}
+         * record names as host-driven callbacks, with that record: the
+         * published wrapper carries the recorded {@code HOST_TO_DEAL}
+         * parameter crossing.
+         */
+        private final Map<Long, SemanticOp> callbackByFunction = new HashMap<>();
 
         private final StringBuilder out = new StringBuilder();
         private int indent;
@@ -185,6 +230,7 @@ public final class JsSemanticEmitter {
             }
             markNonEntryModuleDelegations();
             indexClassFacts();
+            indexAsyncAndCallbackRecords();
         }
 
         // =====================================================================
@@ -398,6 +444,93 @@ public final class JsSemanticEmitter {
             }
         }
 
+        /**
+         * Indexes the async and callback records of the whole closure once:
+         * the canonical token owners, the nested adapter-source
+         * {@code ASYNC_START}s (executed by their owning adapter
+         * invocation, never by the block walk), the consuming {@code AWAIT}
+         * of every publishing start (the awaited form's completion span),
+         * and the {@code CALLBACK_INVOKE} records (the published wrapper's
+         * host crossing).
+         */
+        private void indexAsyncAndCallbackRecords() {
+            for (LoweredModuleUnit unit : units.values()) {
+                for (SemanticOp op : unit.ops()) {
+                    if (op.result() instanceof AsyncTokenId.Canonical canonical) {
+                        canonicalTokenOwner.put(canonical.tokenId(), op);
+                    }
+                    if (op.kind() == SemanticOpKind.ASYNC_START
+                            && op.result() instanceof AsyncTokenId token) {
+                        startByTokenId.put(token.tokenId(), op.opId());
+                        // An external async start owns the caller-side alias
+                        // whose canonical referent lives in the callee unit:
+                        // the caller-side op is the one that publishes the
+                        // operation, so an await naming either identity
+                        // resolves to this start.
+                        if (token instanceof AsyncTokenId.Alias alias
+                                && !canonicalTokenOwner.containsKey(
+                                    canonicalToken(alias).tokenId())) {
+                            startByTokenId.putIfAbsent(
+                                canonicalToken(alias).tokenId(), op.opId());
+                        }
+                    }
+                }
+            }
+            for (LoweredModuleUnit unit : units.values()) {
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() == SemanticOpKind.ASYNC_START) {
+                        OpId parentId = op.origin() == null ? null
+                            : op.origin().parentOpId();
+                        SemanticOp parent = parentId == null ? null
+                            : opsById.get(parentId);
+                        if (parent != null
+                                && parent.kind() == SemanticOpKind.ASYNC_START) {
+                            // The nested adapter-source start: its single
+                            // operation is published by the owning adapter
+                            // invocation (the outer op), so the block walk
+                            // must not execute it a second time.
+                            if (!(op.result() instanceof AsyncTokenId.Canonical)) {
+                                throw new IllegalStateException("the nested"
+                                    + " ASYNC_START " + op.opId() + " carries"
+                                    + " no canonical token result (producer"
+                                    + " defect)");
+                            }
+                            nestedStartOwner.put(op.opId(), parentId);
+                            skippedOps.add(op.opId());
+                        }
+                    }
+                }
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() == SemanticOpKind.AWAIT) {
+                        KindPayload.AwaitPayload payload =
+                            (KindPayload.AwaitPayload) op.payload();
+                        awaitOfStart.putIfAbsent(
+                            publishingStart(op, payload.token()), op);
+                    }
+                }
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() != SemanticOpKind.CALLBACK_INVOKE) {
+                        continue;
+                    }
+                    KindPayload.CallbackInvokePayload payload =
+                        (KindPayload.CallbackInvokePayload) op.payload();
+                    SemanticOp producer = producerByValue.get(payload.function().id());
+                    if (producer == null
+                            || producer.kind() != SemanticOpKind.CLOSURE_NEW) {
+                        throw new IllegalStateException("the CALLBACK_INVOKE "
+                            + op.opId() + " names " + payload.function()
+                            + ", which no CLOSURE_NEW op produces; a"
+                            + " host-driven callback is a module-level"
+                            + " lowered body (producer defect)");
+                    }
+                    FunctionId functionId =
+                        ((KindPayload.ClosureNewPayload) producer.payload())
+                            .function();
+                    callbackByFunction.put(functionId.id(), op);
+                }
+            }
+        }
+
         /** The project closure's layout of one class identity, or null. */
         private ClassLayout layoutOf(ClassId classId) {
             return layouts.get(classId);
@@ -433,6 +566,48 @@ public final class JsSemanticEmitter {
                     + " resolves through no unique factory registration: "
                     + conflict.getMessage());
             }
+        }
+
+        /** The canonical token one token identity resolves to (alias chains). */
+        private static AsyncTokenId.Canonical canonicalToken(AsyncTokenId token) {
+            AsyncTokenId current = token;
+            while (current instanceof AsyncTokenId.Alias alias) {
+                current = alias.referent();
+            }
+            return (AsyncTokenId.Canonical) current;
+        }
+
+        /**
+         * The {@code ASYNC_START} op that publishes the operation of one
+         * token: the start carrying the token's own identity, or the start
+         * carrying the alias whose referent the token names (an external
+         * callee's canonical token has no op in the caller's closure).
+         */
+        private OpId publishingStart(SemanticOp awaitingOp, AsyncTokenId token) {
+            OpId found = startByTokenId.get(token.tokenId());
+            if (found == null && token instanceof AsyncTokenId.Alias alias) {
+                found = startByTokenId.get(alias.referent().tokenId());
+            }
+            if (found == null) {
+                throw unsupported(awaitingOp, "the async token " + token
+                    + " resolves to no started operation in the closure"
+                    + " (producer defect)");
+            }
+            return nestedStartOwner.getOrDefault(found, found);
+        }
+
+        /**
+         * The emitted operation slot of one token: the publishing start's
+         * slot — for a nested adapter-source start, the owning outer start's
+         * slot, because one adapter invocation publishes the one operation
+         * both tokens name.
+         */
+        private String tokenSlotOf(SemanticOp awaitingOp, AsyncTokenId token) {
+            return startSlot(publishingStart(awaitingOp, token));
+        }
+
+        private static String startSlot(OpId startOp) {
+            return "$a" + startOp.id();
         }
 
         // =====================================================================
@@ -545,6 +720,12 @@ public final class JsSemanticEmitter {
                 }
                 if (op.result() instanceof ValueId valueId) {
                     slots.add(slot(valueId));
+                }
+                if (op.kind() == SemanticOpKind.ASYNC_START
+                        && !skippedOps.contains(op.opId())) {
+                    // The started operation's slot (the single Promise one
+                    // start publishes; the awaiting op reads it).
+                    slots.add(startSlot(op.opId()));
                 }
                 if (op.payload() instanceof KindPayload.IndexNormalizePayload) {
                     slots.add(lengthSlot(op.opId()));
@@ -744,6 +925,8 @@ public final class JsSemanticEmitter {
                 case ASSIGN -> emitAssign(op);
                 case DELETE -> emitDelete(op);
                 case CALL -> emitCall(op);
+                case ASYNC_START -> emitAsyncStart(op);
+                case AWAIT -> emitAwait(op);
                 case BRANCH -> emitBranch(op);
                 case LOOP -> emitLoop(op);
                 case FOR_EACH -> emitForEach(op);
@@ -759,9 +942,17 @@ public final class JsSemanticEmitter {
                 case ENTRY_INVOKE -> emitEntryInvoke(unit, op);
                 case MODULE_INIT -> emit("// The artifact's registered record"
                     + " and init body carry this record.");
-                case EXTERNAL_ENTRY -> emit("// EXTERNAL_ENTRY "
-                    + op.opId().id() + ": the cross-module entry record"
-                    + " executes under the later call-realization unit.");
+                case EXTERNAL_ENTRY -> emit("// EXTERNAL_ENTRY '"
+                    + ((KindPayload.ExternalEntryPayload) op.payload())
+                        .exportName()
+                    + "': the published CommonJS export is the invocation"
+                    + " record; the callee's callable body carries its"
+                    + " crossing checks.");
+                case CALLBACK_INVOKE -> throw unsupported(op,
+                    "the CALLBACK_INVOKE " + op.opId() + " is an unattached"
+                    + " host-driven dispatch record: its published wrapper"
+                    + " carries the HOST_TO_DEAL crossing and the block walk"
+                    + " must not execute it (producer defect)");
                 case CLASS_NEW -> emitClassNew(op);
                 case FIELD_READ -> emitFieldRead(op);
                 case FIELD_WRITE -> emitFieldWrite(op);
@@ -772,7 +963,7 @@ public final class JsSemanticEmitter {
                     + " detached " + op.kind() + " " + op.opId() + " executes"
                     + " only under its triggering constructor or factory arm —"
                     + " the block walk never runs it (producer defect)");
-                case STDLIB_CALL, ASYNC_START, AWAIT, CALLBACK_INVOKE ->
+                case STDLIB_CALL ->
                     throw unsupported(op, "the op kind " + op.kind()
                         + " belongs to a realized later decomposition unit of"
                         + " the JavaScript semantic-IR renderer; the"
@@ -1319,10 +1510,16 @@ public final class JsSemanticEmitter {
                 }
                 params.append("$file, $line, $column");
             }
+            // An async declared body emits the native async function: the
+            // awaited operations suspend and complete through real
+            // Promises, and the resolved completion is the declared
+            // return value the body's own RETURN cell checked.
+            String keyword = function.descriptor().isAsync() ? "async " : "";
             emit(prefix + "$rt.function("
-                + jsString(function.descriptor().canonicalSpecText()) + ", ("
-                + params + ") => {");
+                + jsString(function.descriptor().canonicalSpecText()) + ", "
+                + keyword + "(" + params + ") => {");
             indent++;
+            emitCallbackCrossing(functionId, parameters);
             String previousSpan = currentCallSpan;
             currentCallSpan = callSpan ? "$file, $line, $column" : null;
             try {
@@ -1332,6 +1529,50 @@ public final class JsSemanticEmitter {
             }
             indent--;
             emit("}" + suffix);
+        }
+
+        /**
+         * The host-driven callback crossing of one closure: when a
+         * {@code CALLBACK_INVOKE} record names this module-level function,
+         * the published wrapper is the host invocation entry, so its
+         * prologue runs the recorded {@code HOST_TO_DEAL} parameter cells
+         * in one-based order (the descriptor check at each cell's own
+         * origin) before the body. A DEAL call site's own parameter cells
+         * are unaffected: the same admitted value passes any repeated
+         * pure check, and the body publishes no partial result on
+         * failure.
+         */
+        private void emitCallbackCrossing(FunctionId functionId,
+                                          List<BindingId> parameters) {
+            SemanticOp callback = callbackByFunction.get(functionId.id());
+            if (callback == null) {
+                return;
+            }
+            KindPayload.CallbackInvokePayload payload =
+                (KindPayload.CallbackInvokePayload) callback.payload();
+            if (payload.parameterBoundaryOpIds().size() != parameters.size()) {
+                throw unsupported(callback, "the CALLBACK_INVOKE "
+                    + callback.opId() + " records "
+                    + payload.parameterBoundaryOpIds().size()
+                    + " HOST_TO_DEAL parameter cell(s) for " + parameters.size()
+                    + " lowered parameter(s) (producer defect)");
+            }
+            for (int i = 0; i < parameters.size(); i++) {
+                SemanticOp boundary = opsById.get(
+                    payload.parameterBoundaryOpIds().get(i));
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                if (boundaryPayload.kind() != BoundaryKind.HOST_TO_DEAL) {
+                    throw unsupported(boundary, "the CALLBACK_INVOKE "
+                        + callback.opId() + " parameter cell " + (i + 1)
+                        + " carries the boundary kind " + boundaryPayload.kind()
+                        + " instead of HOST_TO_DEAL (producer defect)");
+                }
+                String cellExpr = cell(parameters.get(i), 0);
+                emit(cellExpr + " = $rt.checkType("
+                    + jsString(boundaryPayload.descriptor().canonicalSpecText())
+                    + ", " + cellExpr + ", " + spanArgs(boundary) + ");");
+            }
         }
 
         private void emitRecursiveGroupInit(SemanticOp op) {
@@ -1357,7 +1598,8 @@ public final class JsSemanticEmitter {
         private void emitFunctionAdapt(SemanticOp op) {
             KindPayload.FunctionAdaptPayload payload =
                 (KindPayload.FunctionAdaptPayload) op.payload();
-            String sourceExpr;
+            String sourceExpr = null;
+            String thunkFn = null;
             switch (payload.source()) {
                 case AdaptSourceRef.Value value -> {
                     // The already-materialized operand is retained for the
@@ -1370,10 +1612,21 @@ public final class JsSemanticEmitter {
                     // The generation cell is read per invocation, so a later
                     // reassignment retargets the adapter.
                     sourceExpr = cellSource(cell.binding(), cell.generation());
-                case AdaptSourceRef.Thunk thunk ->
-                    throw unsupported(op, "the REEVALUATE_THUNK adaptation"
-                        + " source of " + op.opId() + " belongs to the"
-                        + " adapter-realization unit");
+                case AdaptSourceRef.Thunk thunk -> {
+                    // One detached re-executor: every invocation re-runs the
+                    // recorded thunk block and consumes its final producing
+                    // value, so side effects repeat and a fresh closure per
+                    // run keeps fresh identity.
+                    thunkFn = "$at" + op.opId().id();
+                    emit("const " + thunkFn + " = () => {");
+                    indent++;
+                    emitFunctionBody(units.get(opModule.get(op.opId())),
+                        thunk.blockId());
+                    emit("return " + thunkResultSlot(op, thunk.blockId())
+                        + ";");
+                    indent--;
+                    emit("};");
+                }
             }
             // The adapter's ABI is the retained call shape: the target
             // signature's parameters followed by the call-site span
@@ -1383,11 +1636,17 @@ public final class JsSemanticEmitter {
             // the authoritative call origin.
             int targetArity = payload.targetSignature().paramTypes().size();
             int sourceArity = payload.sourceSignature().paramTypes().size();
+            // An async target emits the native async function: the
+            // invocation returns the source's single operation as a real
+            // Promise (the converted completion), never a second start.
+            String keyword = payload.targetSignature().isAsync() ? "async " : "";
             emit(slotOf(op) + " = $rt.function("
                 + jsString(payload.targetSignature().canonicalSpecText())
-                + ", (" + adapterParameters(targetArity) + ") => {");
+                + ", " + keyword + "(" + adapterParameters(targetArity)
+                + ") => {");
             indent++;
-            emit("const $src = " + sourceExpr + ";");
+            emit("const $src = " + (thunkFn == null ? sourceExpr
+                : thunkFn + "()") + ";");
             emit("$rt.checkFunctionSig("
                 + jsString(payload.sourceSignature().canonicalSpecText())
                 + ", $src.$sig, $src, $file, $line, $column);");
@@ -1395,6 +1654,34 @@ public final class JsSemanticEmitter {
                 + ");");
             indent--;
             emit("});");
+        }
+
+        /**
+         * The final producing value of one adapter thunk block: the last
+         * non-owned member op that publishes a value, exactly the source
+         * value the adapter invocation consumes (the block's own ops ran in
+         * source order inside the re-executor).
+         */
+        private String thunkResultSlot(SemanticOp adaptOp, BlockId block) {
+            LoweredModuleUnit unit = units.get(opModule.get(adaptOp.opId()));
+            List<OpId> members = memberOps(unit, block);
+            if (members == null) {
+                throw unsupported(adaptOp, "the adapter thunk block " + block
+                    + " has no membership row (producer defect)");
+            }
+            for (int i = members.size() - 1; i >= 0; i--) {
+                OpId opId = members.get(i);
+                if (ownedChildren.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op != null && op.result() instanceof ValueId valueId) {
+                    return slot(valueId);
+                }
+                break;
+            }
+            throw unsupported(adaptOp, "the adapter thunk block " + block
+                + " has no final producing value (producer defect)");
         }
 
         /** The adapter's declared parameters: target arity plus the span. */
@@ -1573,13 +1860,6 @@ public final class JsSemanticEmitter {
             KindPayload.CallPayload payload =
                 (KindPayload.CallPayload) op.payload();
             FunctionExecutionBinding binding = resolvedBinding(op, payload);
-            if (binding instanceof FunctionExecutionBinding.HostFunction
-                    || binding instanceof FunctionExecutionBinding.HostFunctionValue) {
-                throw unsupported(op, "the CALL " + op.opId() + " resolves the "
-                    + binding.getClass().getSimpleName() + " binding: the host"
-                    + " call slice belongs to a realized later decomposition"
-                    + " unit");
-            }
             if (binding instanceof FunctionExecutionBinding.DynamicFunctionValue
                     dynamic) {
                 throw unsupported(op, "the CALL " + op.opId() + " resolves the"
@@ -1649,8 +1929,68 @@ public final class JsSemanticEmitter {
             }
             List<String> callArguments = new ArrayList<>(arguments);
             callArguments.add(spanArgs(op));
+            if (binding instanceof FunctionExecutionBinding.HostFunction
+                    || binding instanceof FunctionExecutionBinding.HostFunctionValue) {
+                // The host callee is the recorded source import occurrence's
+                // typed surface entry (or the host-materialized value at its
+                // own crossing): the call passes the checked arguments plus
+                // the call-site span triple the typed wrapper's boundary
+                // checks consume, and the single caller-side
+                // HOST_TO_DEAL return cell runs on the returned value.
+                emit(slotOf(op) + " = " + hostCalleeExpr(op, binding) + ".$f("
+                    + String.join(", ", callArguments) + ");");
+                SemanticOp returnBoundary = payload.returnBoundaryOpId() == null
+                    ? null : opsById.get(payload.returnBoundaryOpId());
+                if (returnBoundary != null) {
+                    emitBoundaryCheck(returnBoundary, slotOf(op),
+                        descriptorOf(returnBoundary));
+                }
+                return;
+            }
             emit(slotOf(op) + " = " + calleeExpr(op, payload) + ".$f("
                 + String.join(", ", callArguments) + ");");
+        }
+
+        /**
+         * The host callee expression of one call: the recorded source
+         * import occurrence's typed surface entry (its alias cell holds
+         * the occurrence's fresh typed surface, so the read never falls
+         * back to a module/name lookup), or the value the recorded
+         * {@code HOST_TO_DEAL} crossing materialized.
+         */
+        private String hostCalleeExpr(SemanticOp op,
+                                      FunctionExecutionBinding binding) {
+            switch (binding) {
+                case FunctionExecutionBinding.HostFunction host -> {
+                    if (host.importCell() == null) {
+                        throw unsupported(op, "the " + op.kind() + " "
+                            + op.opId() + " resolves the host export '"
+                            + host.hostModuleId().path() + "#"
+                            + host.exportName() + "' whose binding records no"
+                            + " source import occurrence cell (producer"
+                            + " defect; the typed surface is per source import"
+                            + " occurrence)");
+                    }
+                    return cell(host.importCell(), 0) + "["
+                        + jsString(host.exportName()) + "]";
+                }
+                case FunctionExecutionBinding.HostFunctionValue value -> {
+                    SemanticOp crossing = opsById.get(
+                        value.materializingBoundaryOpId());
+                    if (crossing == null || !(crossing.payload()
+                            instanceof KindPayload.BoundaryPayload boundary)) {
+                        throw unsupported(op, "the " + op.kind() + " "
+                            + op.opId() + " resolves the host-materialized"
+                            + " function value of "
+                            + value.materializingBoundaryOpId() + ", which is"
+                            + " not a recorded boundary op (producer defect)");
+                    }
+                    return slot(boundary.input());
+                }
+                default -> throw new IllegalStateException("the host callee"
+                    + " resolution accepts a HostFunction or HostFunctionValue"
+                    + " binding only; got " + binding + " (producer defect)");
+            }
         }
 
         /**
@@ -1715,6 +2055,167 @@ public final class JsSemanticEmitter {
                 }
             }
             return null;
+        }
+
+        /** The recorded binding of one callee reference, or null for Dynamic. */
+        private FunctionExecutionBinding resolvedBindingOf(
+                KindPayload.CallCallee callee) {
+            return switch (callee) {
+                case KindPayload.CallCallee.Static staticCallee ->
+                    staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect ->
+                    bindingOfIdentity(indirect.callee());
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+        }
+
+        // =====================================================================
+        // Async operations
+        // =====================================================================
+
+        /**
+         * {@code ASYNC_START} — exactly one native operation start: the
+         * recorded parameter cells run in one-based order at the call site,
+         * then the recorded callee is invoked once (an async wrapper's
+         * {@code $f} returns the real Promise; an external async call
+         * starts the callee unit's published entry exactly once). The
+         * started operation is published in the start's own slot, so the
+         * token's single {@code AWAIT} consumes exactly this operation. A
+         * nested adapter-source start executes inside its owning adapter
+         * invocation and never here.
+         */
+        private void emitAsyncStart(SemanticOp op) {
+            KindPayload.AsyncStartPayload payload =
+                (KindPayload.AsyncStartPayload) op.payload();
+            if (nestedStartOwner.containsKey(op.opId())) {
+                throw new IllegalStateException("the nested adapter-source"
+                    + " ASYNC_START " + op.opId() + " executes inside its"
+                    + " owning adapter invocation; the block walk must skip it"
+                    + " (producer defect)");
+            }
+            if (payload.parameterBoundaryMode() != ParameterBoundaryMode.RUN) {
+                throw unsupported(op, "the ASYNC_START " + op.opId() + " carries"
+                    + " the parameter-boundary mode "
+                    + payload.parameterBoundaryMode() + " outside an owning"
+                    + " adapter invocation (producer defect)");
+            }
+            List<String> arguments = new ArrayList<>();
+            for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                SemanticOp boundary = opsById.get(boundaryId);
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                emitBoundaryCheck(boundary, slot(boundaryPayload.input()),
+                    boundaryPayload.descriptor());
+                arguments.add(slot(boundaryPayload.input()));
+            }
+            String target = startSlot(op.opId());
+            FunctionExecutionBinding binding = resolvedBindingOf(payload.callee());
+            if (binding instanceof FunctionExecutionBinding.ExternalFunction
+                    external) {
+                if (external.executionOwner()
+                        != ExternalExecutionOwner.SHARED_BODY) {
+                    throw unsupported(op, "the ASYNC_START " + op.opId()
+                        + " resolves the RETAINED_ABI external '"
+                        + external.moduleId().path() + "#"
+                        + external.exportName() + "': the retained-ABI async"
+                        + " slice belongs to a realized later decomposition"
+                        + " unit");
+                }
+                // The callee unit's published async entry starts the one
+                // operation; the caller records no return boundary (the
+                // callee body's RETURN runs its own FUNCTION_RETURN cell) and
+                // the awaited completion is checked at the await site.
+                emit(target + " = $rt.callExport("
+                    + jsString(external.moduleId().path()) + ", "
+                    + jsString(external.exportName()) + ", ["
+                    + String.join(", ", arguments) + "]);");
+                return;
+            }
+            List<String> callArguments = new ArrayList<>(arguments);
+            callArguments.add(spanArgs(op));
+            SemanticOp await = awaitOfStart.get(op.opId());
+            if (await != null) {
+                // The awaited form carries the await site's own span triple
+                // after the call-site triple: a host async wrapper splits
+                // the two (shape/parameter checks at the call site, the
+                // completion check at the await site).
+                callArguments.add(spanArgs(await));
+            }
+            emit(target + " = " + asyncCalleeExpr(op, payload, binding)
+                + ".$f(" + String.join(", ", callArguments) + ");");
+        }
+
+        /**
+         * The callee expression of one async start: the recorded binding's
+         * value — a lowered body's created closure (or the indirect
+         * callee's own slot), an adapter's created wrapper, or the
+         * occurrence-owned host entry. An external binding is handled by
+         * the {@code callExport} arm before this method runs.
+         */
+        private String asyncCalleeExpr(SemanticOp op,
+                                       KindPayload.AsyncStartPayload payload,
+                                       FunctionExecutionBinding binding) {
+            if (binding instanceof FunctionExecutionBinding.HostFunction
+                    || binding instanceof FunctionExecutionBinding.HostFunctionValue) {
+                return hostCalleeExpr(op, binding);
+            }
+            boolean indirect = payload.callee()
+                instanceof KindPayload.CallCallee.Indirect;
+            if (binding instanceof FunctionExecutionBinding.LoweredBody body) {
+                if (indirect) {
+                    return slot(((KindPayload.CallCallee.Indirect)
+                        payload.callee()).callee());
+                }
+                String closure = closureBindings.get(body.functionId().id());
+                if (closure == null) {
+                    throw unsupported(op, "the static ASYNC_START " + op.opId()
+                        + " names the lowered body " + body.functionId()
+                        + " whose created closure has no recorded binding cell"
+                        + " (producer defect)");
+                }
+                return closure;
+            }
+            if (binding instanceof FunctionExecutionBinding.AdapterBinding
+                    adapter) {
+                if (indirect) {
+                    return slot(((KindPayload.CallCallee.Indirect)
+                        payload.callee()).callee());
+                }
+                SemanticOp adaptOp = opsById.get(adapter.adaptOpId());
+                if (adaptOp == null
+                        || !(adaptOp.result() instanceof ValueId valueId)) {
+                    throw unsupported(op, "the static ASYNC_START " + op.opId()
+                        + " names the adapter " + adapter.adaptOpId()
+                        + " whose creation op carries no result value"
+                        + " (producer defect)");
+                }
+                return slot(valueId);
+            }
+            throw unsupported(op, "the ASYNC_START " + op.opId() + " resolves"
+                + " the " + (binding == null ? "dynamic"
+                    : binding.getClass().getSimpleName())
+                + " binding: the runtime execution-class dispatch belongs to a"
+                + " realized later decomposition unit");
+        }
+
+        /**
+         * {@code AWAIT} — one native await of the token's operation and the
+         * single {@code ASYNC_COMPLETION} cell at the await site. A
+         * rejected operation propagates its identical DEAL error (never a
+         * re-check or synthesized copy); a completion value crosses the
+         * recorded boundary check once.
+         */
+        private void emitAwait(SemanticOp op) {
+            KindPayload.AwaitPayload payload =
+                (KindPayload.AwaitPayload) op.payload();
+            String target = slotOf(op);
+            emit(target + " = await " + tokenSlotOf(op, payload.token()) + ";");
+            SemanticOp boundary = opsById.get(payload.completionBoundaryOpId());
+            if (boundary == null) {
+                throw unsupported(op, "the AWAIT " + op.opId() + " names no"
+                    + " recorded ASYNC_COMPLETION boundary (producer defect)");
+            }
+            emitBoundaryCheck(boundary, target, descriptorOf(boundary));
         }
 
         // =====================================================================

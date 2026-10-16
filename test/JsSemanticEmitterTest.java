@@ -50,20 +50,25 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * The JavaScript semantic-IR renderer acceptance drives (ISSUE-0798): one
- * artifact per implementation unit in dependency order, the structural
- * declaration projection, local value/cell/control execution under the real
- * Node binary, the nullable equality pair's shared nil-equivalence rule, the
- * seeded intrinsic carrier's single materialization and reference identity,
- * the array hole decision at the contextual boundary, the adapter's
- * forwarded call origin, the carrier-neutral module-namespace index
- * realization, the private module registry's repeat identity and sticky
- * failure, coordinate-only maps, the malformed/no-frontend seam assertions,
- * independent determinism, and the fail-closed unsupported-slice contract
- * with the offending operation's own origin. The class drive (ISSUE-0799)
- * adds the per-attempt defaults, imported-provider construction, field
- * commits, the public helper ABI and the JSON walkers through real Node
- * artifacts.
+ * The JavaScript semantic-IR renderer acceptance drives: the ISSUE-0798
+ * foundation (one artifact per implementation unit in dependency order,
+ * the structural declaration projection, local value/cell/control
+ * execution under the real Node binary, the nullable equality pair's
+ * shared nil-equivalence rule, the seeded intrinsic carrier's single
+ * materialization and reference identity, the array hole decision at the
+ * contextual boundary, the adapter's forwarded call origin, the
+ * carrier-neutral module-namespace index realization, the private module
+ * registry's repeat identity and sticky failure, coordinate-only maps, the
+ * malformed/no-frontend seam assertions, independent determinism, and the
+ * fail-closed unsupported-slice contract with the offending operation's own
+ * origin), the ISSUE-0799 class drive (the per-attempt defaults,
+ * imported-provider construction, field commits, the public helper ABI and
+ * the JSON walkers), and the ISSUE-0800 call/boundary realization (native
+ * {@code ASYNC_START}/{@code AWAIT} under real Promises, the async adapter
+ * and cross-module async entry, the direct-run/require entry split with
+ * the uncaught-main presentation, the {@code $rt.invokeAsyncExport} legs
+ * with their exact per-invocation counts, the awaited failure transport
+ * across modules, and the host-driven callback crossing).
  */
 public class JsSemanticEmitterTest {
 
@@ -120,6 +125,10 @@ public class JsSemanticEmitterTest {
             testFailureTuples(tmpRoot, node);
             testClassConstructionAndJson(tmpRoot, node);
             testModuleRegistry(tmpRoot, node);
+            testAsyncCallsAndCompletion(tmpRoot, node);
+            testAwaitedFailureTransport(tmpRoot, node);
+            testAsyncExportAbiAndEntryLegs(tmpRoot, node);
+            testCallbackCrossing(tmpRoot, node);
             testDeclarationProjection(tmpRoot);
             testFailClosedAndSeamPurity(tmpRoot);
         } finally {
@@ -185,6 +194,12 @@ public class JsSemanticEmitterTest {
         return compileFixture(root, appSource, extraSources, Map.of());
     }
 
+    private static Fixture compileFixture(Path root, String appSource,
+            Map<String, String> extraSources,
+            Map<String, String> externals) throws Exception {
+        return compileFixture(root, appSource, extraSources, externals, Set.of());
+    }
+
     /**
      * Compiles one fixture project through the production frontend, lowers
      * it once, and produces the seeds/namespaces/declaration surface of the
@@ -192,7 +207,8 @@ public class JsSemanticEmitterTest {
      */
     private static Fixture compileFixture(Path root, String appSource,
             Map<String, String> extraSources,
-            Map<String, String> externals) throws Exception {
+            Map<String, String> externals,
+            Set<String> callbackExports) throws Exception {
         writeFileIn(root, "src/app.deal", appSource);
         for (Map.Entry<String, String> extra : extraSources.entrySet()) {
             writeFileIn(root, extra.getKey(), extra.getValue());
@@ -239,7 +255,7 @@ public class JsSemanticEmitterTest {
                 builtinError,
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                     IntrinsicKind.BYTES_NEW),
-                Set.of());
+                callbackExports);
         if (lowering.hasErrors() || lowering.project() == null) {
             throw new IllegalStateException("the fixture project did not"
                 + " lower: " + lowering.diagnostics());
@@ -1541,6 +1557,468 @@ public class JsSemanticEmitterTest {
         check(onceRun.output().contains("\"exportsEmpty\":true"),
             "a failed initialization discards its unpublished exports: "
                 + onceRun.output());
+    }
+
+    // =========================================================================
+    // 4b. The call/boundary realization: native async, entry ABI and the
+    // host-driven callback crossing
+    // =========================================================================
+
+    /**
+     * ISSUE-0800: one real Promise operation per async call with one awaited
+     * completion — the local body, the arity-extension async adapter, the
+     * cross-module stored async value, the awaited loop position, the
+     * awaited error caught and rethrown — driven through the production
+     * async-export ABI under the real Node binary.
+     */
+    private static void testAsyncCallsAndCompletion(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- native async start/await, the async adapter and"
+            + " the cross-module stored async value under Node --");
+        Path root = Files.createTempDirectory(tmpRoot, "async-calls");
+        Fixture fixture = compileFixture(root, """
+            import * as lib from "./lib";
+
+            async function inner(x: int): int {
+              return x + 1;
+            }
+
+            async function fail(): int {
+              throw { code: "E9001", message: "async-boom" };
+            }
+
+            export async function run(): int {
+              let a: int = await inner(1);
+              let g: async (x: int, y: int) => int = inner;
+              let b: int = await g(a, 9);
+              let stored: async (x: int) => int = lib.fetch;
+              let d: int = await stored(10);
+              let total: int = 0;
+              for (let i: int = 0; i < 3; i = i + 1) {
+                total = total + (await inner(i));
+              }
+              if (a !== 2 || b !== 3 || d !== 21 || total !== 6) {
+                throw { code: "TEST_FAIL", message: "async" };
+              }
+              return a + b + d + total;
+            }
+
+            export async function swallowed(): int {
+              try {
+                let c: int = await fail();
+                return c;
+              } catch (e) {
+                return 0;
+              }
+            }
+
+            export async function rethrown(): int {
+              try {
+                let c: int = await fail();
+                return c;
+              } catch (e) {
+                throw e;
+              }
+            }
+
+            export function main(): null { return null; }
+            """, Map.of("src/lib.deal", """
+                export async function fetch(n: int): int {
+                  return n + 11;
+                }
+                """));
+        Path out = stage(fixture, "async-calls", true);
+        if (!node) {
+            skip("async call drive needs node");
+            return;
+        }
+        String appSource = Files.readString(out.resolve("app.js"),
+            StandardCharsets.UTF_8);
+        check(appSource.contains(
+                "$rt.function(\"async()->int\", async () => {"),
+            "the async body is emitted as a real async function:"
+                + " the awaited completion is the Promise resolution");
+        check(appSource.contains(" = await "),
+            "the await op consumes the started operation natively");
+        check(appSource.contains("$rt.callExport(\"lib\", \"fetch\""),
+            "the cross-module async start invokes the callee's published"
+                + " entry through the shared export surface");
+        check(appSource.contains("async ($p0, $p1, $file, $line, $column)"),
+            "the async arity-extension adapter emits an async wrapper"
+                + " returning the source's own operation");
+        JsProjectEmission mapped = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(true));
+        JsModuleArtifact mappedApp = mapped.modules().stream()
+            .filter(a -> a.moduleId().equals(new ModuleId("app")))
+            .findFirst().orElseThrow();
+        check(mappedApp.mappings() != null && mappedApp.mappings().stream()
+                .anyMatch(m -> m.sourceLine() == 12),
+            "the async start/await group maps to its own local source line");
+        check(mappedApp.mappings().stream()
+                .anyMatch(m -> m.sourceLine() == 16),
+            "the cross-module async call group maps to its own local"
+                + " source line");
+
+        Files.writeString(out.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const app = require("./app.js");
+            (async () => {
+              const out = {};
+              out.run = await $rt.invokeAsyncExport(app, "run", "int");
+              out.direct = await app.run.$f();
+              out.swallowed =
+                await $rt.invokeAsyncExport(app, "swallowed", "int");
+              out.rethrown =
+                await $rt.invokeAsyncExport(app, "rethrown", "int");
+              console.log(JSON.stringify(out));
+            })();
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the async driver exits 0: " + run.output());
+        check(run.output().contains(
+                "\"run\":{\"$ok\":true,\"$value\":32}"),
+            "the awaited calls, the async adapter, the loop await and the"
+                + " cross-module stored async value carry their declared"
+                + " values: " + run.output());
+        check(run.output().contains("\"direct\":32"),
+            "a host awaiting the published async wrapper directly receives"
+                + " the same completion: " + run.output());
+        check(run.output().contains(
+                "\"swallowed\":{\"$ok\":true,\"$value\":0}"),
+            "an awaited DEAL error is caught by the enclosing catch:"
+                + " " + run.output());
+        check(run.output().contains("\"code\":\"E9001\""),
+            "the rethrown awaited error keeps its code: " + run.output());
+        check(run.output().contains("\"message\":\"async-boom\""),
+            "the rethrown awaited error keeps its message: " + run.output());
+        check(run.output().contains("\"line\":8"),
+            "the rethrown awaited error keeps its authoritative origin: "
+                + run.output());
+    }
+
+    /**
+     * ISSUE-0800: the awaited failure transport across a module edge — the
+     * failing operation's error crosses {@code callExport} and the await
+     * with its companion origin, expected/actual pair and frames intact,
+     * and an absent cause stays absent.
+     */
+    private static void testAwaitedFailureTransport(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- the awaited failure transport keeps the"
+            + " companion's origin, tuple and frames --");
+        Path root = Files.createTempDirectory(tmpRoot, "async-failure");
+        Fixture fixture = compileFixture(root, """
+            import * as lib from "./lib";
+
+            export async function run(): int {
+              try {
+                let v: int = await lib.boom();
+                return v;
+              } catch (e) {
+                throw e;
+              }
+            }
+
+            export function main(): null { return null; }
+            """, Map.of("src/lib.deal", """
+                export async function boom(): int {
+                  let t: table = {a: "x"};
+                  let n: int = t.a;
+                  return n;
+                }
+                """));
+        Path out = stage(fixture, "async-failure", false);
+        if (!node) {
+            skip("awaited failure drive needs node");
+            return;
+        }
+        Files.writeString(out.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const app = require("./app.js");
+            (async () => {
+              const r = await $rt.invokeAsyncExport(app, "run", "int");
+              const e = r.$error;
+              console.log(JSON.stringify({ok: r.$ok, code: e.code,
+                message: e.message, expected: e.expected, actual: e.actual,
+                companionOrigin: typeof e.file === "string"
+                  && e.file.endsWith("src/lib.deal"),
+                line: e.line, column: e.column,
+                frames: typeof e.frames === "string" && e.frames.length > 0,
+                absent: !Object.prototype.hasOwnProperty.call(e, "cause")}));
+            })();
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the failure-transport driver exits 0: "
+            + run.output());
+        check(run.output().contains("\"ok\":false"),
+            "the rejected operation is the DEAL-error signal, not a host"
+                + " failure: " + run.output());
+        check(run.output().contains("\"code\":\"E8001\""),
+            "the awaited failure keeps its code: " + run.output());
+        check(run.output().contains("\"expected\":\"int\""),
+            "the awaited failure keeps its expected token: " + run.output());
+        check(run.output().contains("\"actual\":\"string\""),
+            "the awaited failure keeps its actual token: " + run.output());
+        check(run.output().contains("\"companionOrigin\":true"),
+            "the awaited failure keeps the companion's authoritative"
+                + " origin: " + run.output());
+        check(run.output().contains("\"line\":3"),
+            "the awaited failure keeps the failing source line: "
+                + run.output());
+        check(run.output().contains("\"frames\":true"),
+            "the awaited failure keeps its frames: " + run.output());
+        check(run.output().contains("\"absent\":true"),
+            "an absent cause stays absent, never null: " + run.output());
+    }
+
+    /**
+     * ISSUE-0800: the entry and async-export ABI — direct execution
+     * initializes and runs non-async {@code main(): null} once (with the
+     * uncaught-main stderr/status presentation), a bare require only
+     * initializes, and every explicit {@code $rt.invokeAsyncExport} runs
+     * its own main leg once, selects the exact {@code async()->R} export,
+     * and distinguishes DEAL errors from the pinned host-selection
+     * failures.
+     */
+    private static void testAsyncExportAbiAndEntryLegs(Path tmpRoot,
+                                                       boolean node)
+            throws Exception {
+        System.out.println("-- direct-run/require entry legs and the explicit"
+            + " invokeAsyncExport selection legs --");
+        Path root = Files.createTempDirectory(tmpRoot, "async-abi");
+        Fixture fixture = compileFixture(root, """
+            export async function oracle(): int { return 7; }
+            export function sync(): int { return 1; }
+            export async function parameterized(x: int): int { return x; }
+            export function main(): null { return null; }
+            """);
+        Path out = stage(fixture, "async-abi", false);
+        if (!node) {
+            skip("async-export ABI drive needs node");
+            return;
+        }
+        Files.writeString(out.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const app = require("./app.js");
+            (async () => {
+              let mains = 0;
+              let exports = 0;
+              const main = app.main;
+              app.main = { $kind: "function", $sig: main.$sig,
+                $f: async function() { mains++; return main.$f(); } };
+              const oracle = app.oracle;
+              app.oracle = { $kind: "function", $sig: oracle.$sig,
+                $f: async function() { exports++; return oracle.$f(); } };
+              const out = {};
+              out.success =
+                await $rt.invokeAsyncExport(app, "oracle", "int");
+              out.missing = await $rt.invokeAsyncExport(app, "nope", "int");
+              out.sync = await $rt.invokeAsyncExport(app, "sync", "int");
+              out.parameterized =
+                await $rt.invokeAsyncExport(app, "parameterized", "int");
+              out.mismatch =
+                await $rt.invokeAsyncExport(app, "oracle", "null");
+              const firstCounts = { mains: mains, exports: exports };
+              out.first =
+                await $rt.invokeAsyncExport(app, "oracle", "int");
+              out.firstDelta = { mains: mains - firstCounts.mains,
+                exports: exports - firstCounts.exports };
+              const secondCounts = { mains: mains, exports: exports };
+              out.second =
+                await $rt.invokeAsyncExport(app, "oracle", "int");
+              out.secondDelta = { mains: mains - secondCounts.mains,
+                exports: exports - secondCounts.exports };
+              console.log(JSON.stringify(out));
+            })();
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the async-export driver exits 0: "
+            + run.output());
+        check(run.output().contains(
+                "\"success\":{\"$ok\":true,\"$value\":7}"),
+            "the exact async()->int export completes once with its checked"
+                + " value: " + run.output());
+        check(run.output().contains(
+                "\"missing\":{\"$ok\":false,\"$failure\":\"export not"
+                    + " found: nope\"}"),
+            "a missing export is the pinned host-selection failure: "
+                + run.output());
+        check(run.output().contains("sync export: expected"),
+            "a sync export is the pinned host-selection failure: "
+                + run.output());
+        check(run.output().contains("parameterized export: expected"),
+            "a parameterized export is the pinned host-selection failure: "
+                + run.output());
+        check(run.output().contains("descriptor mismatch: expected"),
+            "a descriptor-mismatched export is the pinned host-selection"
+                + " failure: " + run.output());
+        check(run.output().contains("\"firstDelta\":{\"mains\":1,"
+                + "\"exports\":1}"),
+            "one explicit invocation runs exactly one main leg and one"
+                + " export leg: " + run.output());
+        check(run.output().contains("\"secondDelta\":{\"mains\":1,"
+                + "\"exports\":1}"),
+            "a second explicit invocation runs its own main/export legs"
+                + " exactly once: " + run.output());
+
+        // A bare require only initializes: the same entry whose main runs
+        // once per explicit invocation under the invoker never runs main
+        // when it is only required.
+        Files.writeString(out.resolve("require.js"), """
+            const app = require("./app.js");
+            console.log(JSON.stringify({mainSig: app.main.$sig}));
+            """, StandardCharsets.UTF_8);
+        NodeRun requireRun = runNode(out, "require.js");
+        checkEq(0, requireRun.status(), "the require-only driver exits 0: "
+            + requireRun.output());
+        check(requireRun.output().contains("\"mainSig\":\"()->null\""),
+            "a bare require publishes the non-async main wrapper without"
+                + " running it: " + requireRun.output());
+        NodeRun direct = runNode(out, entryPath(out));
+        checkEq(0, direct.status(), "direct execution of the entry exits 0: "
+            + direct.output());
+        checkEq("", direct.output(),
+            "a successful direct run writes nothing");
+
+        // The uncaught-main presentation: one located DEAL_ERROR_CODE line
+        // and status 1, with the source Error left untouched.
+        Path throwingRoot = Files.createTempDirectory(tmpRoot, "async-main");
+        Fixture throwing = compileFixture(throwingRoot, """
+            export function main(): null {
+              throw { code: "E9001", message: "main-boom" };
+            }
+            """);
+        Path throwingOut = stage(throwing, "async-main", false);
+        NodeRun directThrowing = runNode(throwingOut, entryPath(throwingOut));
+        checkEq(1, directThrowing.status(),
+            "an uncaught main DEAL error exits 1: " + directThrowing.output());
+        check(directThrowing.output().startsWith(
+                "DEAL_ERROR_CODE: E9001 main-boom at "),
+            "the uncaught-main presentation keeps the located suffix: "
+                + directThrowing.output());
+        checkEq(1, directThrowing.output().split("DEAL_ERROR_CODE", -1).length - 1,
+            "the entry guard runs main exactly once: "
+                + directThrowing.output());
+        Files.writeString(throwingOut.resolve("require.js"), """
+            const app = require("./app.js");
+            console.log("required");
+            """, StandardCharsets.UTF_8);
+        NodeRun requireThrowing = runNode(throwingOut, "require.js");
+        checkEq(0, requireThrowing.status(),
+            "requiring an entry whose main would throw only initializes: "
+                + requireThrowing.output());
+        check(requireThrowing.output().contains("required"),
+            "the require-only load never runs main: "
+                + requireThrowing.output());
+
+        // An initialization failure stays distinct from main framing: the
+        // raw failure propagates out of the require and a later load
+        // rethrows the identical saved failure without re-executing.
+        Path initRoot = Files.createTempDirectory(tmpRoot, "async-init");
+        Fixture initFailure = compileFixture(initRoot, """
+            import * as util from "./util";
+
+            export function main(): null { return util.one(); }
+            """, Map.of("src/util.deal", """
+                export function one(): null { return null; }
+                """));
+        Path initOut = stage(initFailure, "async-init", false);
+        Files.delete(initOut.resolve("util.js"));
+        Files.writeString(initOut.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const out = {};
+            let first = null;
+            let second = null;
+            try { require("./app.js"); } catch (e) { first = e; }
+            out.state = $rt.moduleState("app");
+            try { require("./app.js"); } catch (e) { second = e; }
+            out.identical = first === second;
+            out.mainFraming = first !== null
+              && String(first.message).indexOf("DEAL_ERROR_CODE") >= 0;
+            console.log(JSON.stringify(out));
+            """, StandardCharsets.UTF_8);
+        NodeRun initRun = runNode(initOut, "driver.js");
+        checkEq(0, initRun.status(),
+            "the initialization-failure driver exits 0: " + initRun.output());
+        check(initRun.output().contains("\"state\":\"FAILED\""),
+            "a failed initialization records FAILED: " + initRun.output());
+        check(initRun.output().contains("\"identical\":true"),
+            "a later load rethrows the identical saved failure: "
+                + initRun.output());
+        check(initRun.output().contains("\"mainFraming\":false"),
+            "an initialization failure is never converted to main-shim"
+                + " framing: " + initRun.output());
+        NodeRun directInit = runNode(initOut, entryPath(initOut));
+        check(directInit.status() != 0,
+            "direct execution of a failing initialization fails: "
+                + directInit.output());
+        check(!directInit.output().contains("DEAL_ERROR_CODE"),
+            "direct execution keeps the initialization failure's own"
+                + " presentation, not main framing: " + directInit.output());
+    }
+
+    /**
+     * ISSUE-0800: the host-driven callback crossing — a {@code CALLBACK_INVOKE}
+     * record makes the published wrapper the host invocation entry, so a
+     * host call runs the recorded {@code HOST_TO_DEAL} parameter cells at
+     * their own origins while DEAL-internal calls keep reaching the same
+     * lowered body.
+     */
+    private static void testCallbackCrossing(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- the host-driven callback crossing checks the"
+            + " HOST_TO_DEAL parameter cells at their own origins --");
+        Path root = Files.createTempDirectory(tmpRoot, "callback");
+        Fixture fixture = compileFixture(root, """
+            export function cb(x: int): int {
+              return x * 2;
+            }
+
+            export function main(): null { return null; }
+            """, Map.of(), Map.of(), Set.of("cb"));
+        Path out = stage(fixture, "callback", false);
+        if (!node) {
+            skip("callback crossing drive needs node");
+            return;
+        }
+        String appSource = Files.readString(out.resolve("app.js"),
+            StandardCharsets.UTF_8);
+        check(appSource.contains(
+                "$g36 = $rt.checkType(\"int\", $g36, "),
+            "the published callback wrapper runs the recorded HOST_TO_DEAL"
+                + " cell in its prologue");
+        Files.writeString(out.resolve("driver.js"), """
+            const app = require("./app.js");
+            const out = {};
+            out.ok = app.cb.$f(21);
+            try {
+              out.bad = app.cb.$f("nope");
+            } catch (e) {
+              out.bad = { code: e.code, expected: e.expected,
+                actual: e.actual,
+                located: typeof e.file === "string" && e.line > 0
+                  && e.column > 0 };
+            }
+            console.log(JSON.stringify(out));
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the callback driver exits 0: "
+            + run.output());
+        check(run.output().contains("\"ok\":42"),
+            "a host invocation of the published callback runs the body: "
+                + run.output());
+        check(run.output().contains("\"code\":\"E8001\""),
+            "a host argument of the wrong type raises the cell's E8001: "
+                + run.output());
+        check(run.output().contains("\"expected\":\"int\""),
+            "the crossing failure carries the declared expected token: "
+                + run.output());
+        check(run.output().contains("\"actual\":\"string\""),
+            "the crossing failure carries the actual token: "
+                + run.output());
+        check(run.output().contains("\"located\":true"),
+            "the crossing failure carries the cell's own origin: "
+                + run.output());
     }
 
     // =========================================================================
