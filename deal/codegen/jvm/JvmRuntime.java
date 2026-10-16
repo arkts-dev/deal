@@ -10,6 +10,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -2687,7 +2688,7 @@ public final class JvmRuntime {
                     StringBuilder out = new StringBuilder();
                     java.util.Set<Object> path =
                         java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-                    stringifyTable(out, root, path);
+                    stringifyValue(out, root, path);
                     return out.toString();
                 }
                 case "MATH_FLOOR" -> {
@@ -2902,6 +2903,9 @@ public final class JvmRuntime {
      */
     private static final class JsonReader extends JsonScan.CodePointCursor {
 
+        /** The sentinel a container open returns to the frame loop. */
+        private static final Object OPENED = new Object();
+
         JsonReader(int[] codePoints) {
             super(codePoints);
         }
@@ -2911,17 +2915,72 @@ public final class JvmRuntime {
             return new JsonParseFailure(reason, offsetOfCurrent());
         }
 
-        Object parseValue() {
+        /**
+         * One open container of the stack-safe parser. The frame's
+         * {@code state} drives its member loop and {@code pendingKey}
+         * carries the object member awaiting its value.
+         */
+        private static final class Frame {
+
+            static final int OBJECT_FIRST = 0;
+            static final int OBJECT_KEY = 1;
+            static final int VALUE = 2;
+            static final int OBJECT_AFTER = 3;
+            static final int ARRAY_FIRST = 4;
+            static final int ARRAY_AFTER = 5;
+
+            final boolean array;
+            final Table table;
+            final Array elements;
+            final java.util.Set<String> decodedKeys;
+            String pendingKey;
+            int state;
+
+            private Frame(boolean array, Table table, Array elements,
+                          java.util.Set<String> decodedKeys, int state) {
+                this.array = array;
+                this.table = table;
+                this.elements = elements;
+                this.decodedKeys = decodedKeys;
+                this.state = state;
+            }
+
+            static Frame object() {
+                return new Frame(false, new Table(), null, new java.util.HashSet<>(),
+                    OBJECT_FIRST);
+            }
+
+            static Frame array() {
+                Array array = new Array(0);
+                // The decoded-array mark (B3): the std/json parse
+                // realization is the only producer of the mark; a nested
+                // decoded array carries it too.
+                array.decodedArray = true;
+                return new Frame(true, null, array, null, ARRAY_FIRST);
+            }
+        }
+
+        /**
+         * Parses one value at the cursor: a scalar returns directly, a
+         * container pushes its frame on {@code stack} and returns
+         * {@code null}. The frame loop of {@link #parseValue()} then
+         * drives the open container.
+         */
+        private Object parseValueAtCursor(java.util.Deque<Frame> stack) {
             if (atEnd()) {
                 throw failure(REASON_UNEXPECTED_END);
             }
             int c = peek();
             switch (c) {
                 case '{' -> {
-                    return parseObject();
+                    advance(); // '{'
+                    stack.push(Frame.object());
+                    return OPENED;
                 }
                 case '[' -> {
-                    return parseArray();
+                    advance(); // '['
+                    stack.push(Frame.array());
+                    return OPENED;
                 }
                 case '"' -> {
                     return parseString();
@@ -2944,90 +3003,143 @@ public final class JvmRuntime {
             }
         }
 
-        Table parseObject() {
-            advance(); // '{'
-            Table table = new Table();
-            java.util.Set<String> decodedKeys = new java.util.HashSet<>();
-            skipWs();
-            if (!atEnd() && peek() == '}') {
-                advance();
-                return table;
-            }
+        /**
+         * The stack-safe parse of one value: an explicit frame stack
+         * replaces the recursive descent, so a finite nested document
+         * has no stack bound. Every transition, defect class, and
+         * 1-based UTF-8 byte offset is the recursive reader's.
+         */
+        Object parseValue() {
+            java.util.Deque<Frame> stack = new java.util.ArrayDeque<>();
+            Object completed = null;
+            boolean haveValue = false;
             while (true) {
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNEXPECTED_END);
-                }
-                if (peek() != '"') {
-                    throw failure(REASON_MISSING_KEY);
-                }
-                // The duplicate-key defect's position is the second key's
-                // opening quote (one-based UTF-8 byte offset); decoded
-                // equality makes an escaped spelling of the same key a
-                // duplicate too.
-                long keyOffset = offsetOfCurrent();
-                String key = parseString();
-                if (!decodedKeys.add(key)) {
-                    throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
-                }
-                skipWs();
-                if (atEnd() || peek() != ':') {
-                    throw failure(REASON_MISSING_COLON);
-                }
-                advance(); // ':'
-                skipWs();
-                Object value = parseValue();
-                table.write(key, value);
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNTERMINATED_OBJECT);
-                }
-                int c = peek();
-                if (c == ',') {
-                    advance();
+                if (haveValue) {
+                    if (stack.isEmpty()) {
+                        return completed;
+                    }
+                    Frame parent = stack.peek();
+                    if (parent.array) {
+                        parent.elements.elements.add(completed);
+                        parent.elements.length++;
+                        parent.state = Frame.ARRAY_AFTER;
+                    } else {
+                        parent.table.write(parent.pendingKey, completed);
+                        parent.state = Frame.OBJECT_AFTER;
+                    }
+                    completed = null;
+                    haveValue = false;
                     continue;
                 }
-                if (c == '}') {
-                    advance();
-                    return table;
-                }
-                throw failure(REASON_MISSING_COMMA);
-            }
-        }
-
-        Array parseArray() {
-            advance(); // '['
-            Array array = new Array(0);
-            // The decoded-array mark (B3): the std/json parse realization is
-            // the only producer of the mark; a nested decoded array carries
-            // it too (this reader recurses through parseValue).
-            array.decodedArray = true;
-            skipWs();
-            if (!atEnd() && peek() == ']') {
-                advance();
-                return array;
-            }
-            while (true) {
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNEXPECTED_END);
-                }
-                array.elements.add(parseValue());
-                array.length++;
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNTERMINATED_ARRAY);
-                }
-                int c = peek();
-                if (c == ',') {
-                    advance();
+                if (stack.isEmpty()) {
+                    Object parsed = parseValueAtCursor(stack);
+                    if (parsed == OPENED) {
+                        continue;
+                    }
+                    completed = parsed;
+                    haveValue = true;
                     continue;
                 }
-                if (c == ']') {
-                    advance();
-                    return array;
+                Frame frame = stack.peek();
+                switch (frame.state) {
+                    case Frame.OBJECT_FIRST -> {
+                        skipWs();
+                        if (!atEnd() && peek() == '}') {
+                            advance();
+                            completed = frame.table;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            frame.state = Frame.OBJECT_KEY;
+                        }
+                    }
+                    case Frame.OBJECT_KEY -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNEXPECTED_END);
+                        }
+                        if (peek() != '"') {
+                            throw failure(REASON_MISSING_KEY);
+                        }
+                        // The duplicate-key defect's position is the
+                        // second key's opening quote (one-based UTF-8
+                        // byte offset); decoded equality makes an
+                        // escaped spelling of the same key a duplicate
+                        // too.
+                        long keyOffset = offsetOfCurrent();
+                        String key = parseString();
+                        if (!frame.decodedKeys.add(key)) {
+                            throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
+                        }
+                        skipWs();
+                        if (atEnd() || peek() != ':') {
+                            throw failure(REASON_MISSING_COLON);
+                        }
+                        advance(); // ':'
+                        frame.pendingKey = key;
+                        frame.state = Frame.VALUE;
+                    }
+                    case Frame.VALUE -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNEXPECTED_END);
+                        }
+                        Object parsed = parseValueAtCursor(stack);
+                        if (parsed != OPENED) {
+                            completed = parsed;
+                            haveValue = true;
+                        }
+                    }
+                    case Frame.OBJECT_AFTER -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNTERMINATED_OBJECT);
+                        }
+                        int c = peek();
+                        if (c == ',') {
+                            advance();
+                            frame.state = Frame.OBJECT_KEY;
+                        } else if (c == '}') {
+                            advance();
+                            completed = frame.table;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            throw failure(REASON_MISSING_COMMA);
+                        }
+                    }
+                    case Frame.ARRAY_FIRST -> {
+                        skipWs();
+                        if (!atEnd() && peek() == ']') {
+                            advance();
+                            completed = frame.elements;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            frame.state = Frame.VALUE;
+                        }
+                    }
+                    case Frame.ARRAY_AFTER -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNTERMINATED_ARRAY);
+                        }
+                        int c = peek();
+                        if (c == ',') {
+                            advance();
+                            frame.state = Frame.VALUE;
+                        } else if (c == ']') {
+                            advance();
+                            completed = frame.elements;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            throw failure(REASON_MISSING_COMMA);
+                        }
+                    }
+                    default -> throw new IllegalStateException(
+                        "unknown JSON reader frame state " + frame.state);
                 }
-                throw failure(REASON_MISSING_COMMA);
             }
         }
 
@@ -3126,47 +3238,85 @@ public final class JvmRuntime {
             java.util.Map.of(), null, null);
     }
 
-    /** Serializes one table (object) with path-local cycle detection and first-insertion order. */
-    private static void stringifyTable(StringBuilder out, Table table,
-                                       java.util.Set<Object> path) {
-        if (!path.add(table)) {
-            throw jsonCycleFailure();
+    /**
+     * One open container of the stack-safe stringify walk: the explicit
+     * work stack replaces the recursive descent, so a finite nested
+     * input has no stack bound. Each frame emits its entries in
+     * first-insertion/index order from {@link #index}.
+     */
+    private static final class StringifyFrame {
+
+        final Table table;
+        final Array array;
+        final List<String> keys;
+        int index;
+
+        StringifyFrame(Table table, List<String> keys) {
+            this.table = table;
+            this.array = null;
+            this.keys = keys;
         }
-        out.append('{');
-        List<String> keys = new ArrayList<>(table.entries.keySet());
-        for (int i = 0; i < keys.size(); i++) {
-            String key = keys.get(i);
-            if (i > 0) {
-                out.append(',');
-            }
-            appendJsonString(out, key);
-            out.append(':');
-            stringifyValue(out, table.entries.get(key), path);
+
+        StringifyFrame(Array array) {
+            this.table = null;
+            this.array = array;
+            this.keys = null;
         }
-        out.append('}');
-        path.remove(table);
     }
 
-    /** Serializes one array with path-local cycle detection and index order. */
-    private static void stringifyArray(StringBuilder out, Array array,
-                                       java.util.Set<Object> path) {
-        if (!path.add(array)) {
-            throw jsonCycleFailure();
-        }
-        out.append('[');
-        for (int i = 0; i < array.elements.size(); i++) {
-            if (i > 0) {
-                out.append(',');
-            }
-            stringifyValue(out, array.elements.get(i), path);
-        }
-        out.append(']');
-        path.remove(array);
-    }
-
-    /** Serializes one value: the first declaration-order failure wins (pre-order). */
+    /**
+     * The stack-safe stringify entry: an explicit work stack replaces
+     * the recursion, and the identity set keeps the path-local cycle
+     * detection (entered on open, removed on close). Entries emit in
+     * first-insertion/index order and the first declaration-order
+     * failure wins unchanged.
+     */
     private static void stringifyValue(StringBuilder out, Object value,
                                        java.util.Set<Object> path) {
+        Deque<StringifyFrame> stack = new ArrayDeque<>();
+        appendJsonValue(out, value, path, stack);
+        while (!stack.isEmpty()) {
+            StringifyFrame frame = stack.peek();
+            if (frame.table == null) {
+                if (frame.index < frame.array.elements.size()) {
+                    int i = frame.index++;
+                    if (i > 0) {
+                        out.append(',');
+                    }
+                    appendJsonValue(out, frame.array.elements.get(i), path, stack);
+                } else {
+                    out.append(']');
+                    path.remove(frame.array);
+                    stack.pop();
+                }
+                continue;
+            }
+            if (frame.index < frame.keys.size()) {
+                int i = frame.index++;
+                String key = frame.keys.get(i);
+                if (i > 0) {
+                    out.append(',');
+                }
+                appendJsonString(out, key);
+                out.append(':');
+                appendJsonValue(out, frame.table.entries.get(key), path, stack);
+            } else {
+                out.append('}');
+                path.remove(frame.table);
+                stack.pop();
+            }
+        }
+    }
+
+    /**
+     * Appends one value: a leaf emits its text, a container checks the
+     * path-local identity and opens a frame. The first declaration-order
+     * failure wins (pre-order), exactly as the recursive walk selected
+     * it.
+     */
+    private static void appendJsonValue(StringBuilder out, Object value,
+                                        java.util.Set<Object> path,
+                                        Deque<StringifyFrame> stack) {
         if (value == null) {
             out.append("null");
         } else if (value instanceof Boolean bool) {
@@ -3182,9 +3332,18 @@ public final class JvmRuntime {
         } else if (value instanceof String string) {
             appendJsonString(out, string);
         } else if (value instanceof Table table) {
-            stringifyTable(out, table, path);
+            if (!path.add(table)) {
+                throw jsonCycleFailure();
+            }
+            out.append('{');
+            stack.push(new StringifyFrame(table,
+                new ArrayList<>(table.entries.keySet())));
         } else if (value instanceof Array array) {
-            stringifyArray(out, array, path);
+            if (!path.add(array)) {
+                throw jsonCycleFailure();
+            }
+            out.append('[');
+            stack.push(new StringifyFrame(array));
         } else if (value == MISSING) {
             throw jsonEncodingFailure(value);
         } else if (value instanceof FunctionValue) {

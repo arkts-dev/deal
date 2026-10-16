@@ -7349,64 +7349,25 @@ local function __jsonParse(s)
     end
     return value, true
   end
-  parseValue = function()
+  -- One value at the cursor: a scalar returns directly, a container opens
+  -- a frame on the stack and returns the __OPENED sentinel. The explicit
+  -- frame stack makes the traversal stack-safe: a finite nested document
+  -- has no Lua call-stack bound.
+  local __OPENED = {}
+  local function parseScalarOrOpen(frames)
     skipws()
     if pos > len then return nil end
     local c = string.sub(s, pos, pos)
     if c == "{" then
       pos = pos + 1
-      local obj = {__jo = true, __jkeys = {}, __jnum = {}, __jseen = {}}
-      skipws()
-      if pos <= len and string.sub(s, pos, pos) == "}" then
-        pos = pos + 1
-        return obj
-      end
-      while true do
-        skipws()
-        if pos > len or string.sub(s, pos, pos) ~= __QT then return nil end
-        -- The decoded-key duplicate rule: a member key whose decoded
-        -- scalar text equals an earlier member key of the same object is
-        -- a parse defect (an escaped spelling included).
-        local key = parseString()
-        if key == nil then return nil end
-        if obj.__jseen[key] then return nil end
-        obj.__jseen[key] = true
-        skipws()
-        if pos > len or string.sub(s, pos, pos) ~= ":" then return nil end
-        pos = pos + 1
-        local value, numberVariant = parseValue()
-        if value == nil then return nil end
-        obj.__jkeys[#obj.__jkeys + 1] = key
-        obj[key] = value
-        if numberVariant then obj.__jnum[key] = true else obj.__jnum[key] = nil end
-        skipws()
-        if pos > len then return nil end
-        c = string.sub(s, pos, pos)
-        if c == "," then pos = pos + 1
-        elseif c == "}" then pos = pos + 1; return obj
-        else return nil end
-      end
+      frames[#frames + 1] = {kind = "object",
+        obj = {__jo = true, __jkeys = {}, __jnum = {}, __jseen = {}}, state = 0}
+      return __OPENED
     elseif c == "[" then
       pos = pos + 1
-      local arr = {__ja = true, __n = 0, __jnum = {}}
-      skipws()
-      if pos <= len and string.sub(s, pos, pos) == "]" then
-        pos = pos + 1
-        return arr
-      end
-      while true do
-        local value, numberVariant = parseValue()
-        if value == nil then return nil end
-        arr.__n = arr.__n + 1
-        arr[arr.__n] = value
-        if numberVariant then arr.__jnum[arr.__n] = true end
-        skipws()
-        if pos > len then return nil end
-        c = string.sub(s, pos, pos)
-        if c == "," then pos = pos + 1
-        elseif c == "]" then pos = pos + 1; return arr
-        else return nil end
-      end
+      frames[#frames + 1] = {kind = "array",
+        arr = {__ja = true, __n = 0, __jnum = {}}, state = 4}
+      return __OPENED
     elseif c == __QT then
       local str = parseString()
       if str == nil then return nil end
@@ -7424,6 +7385,120 @@ local function __jsonParse(s)
       return parseNumber()
     end
     return nil
+  end
+  parseValue = function()
+    local frames = {}
+    local completedValue, completedVariant
+    local haveCompleted = false
+    while true do
+      if haveCompleted then
+        if #frames == 0 then return completedValue, completedVariant end
+        local parent = frames[#frames]
+        if parent.kind == "array" then
+          parent.arr.__n = parent.arr.__n + 1
+          parent.arr[parent.arr.__n] = completedValue
+          if completedVariant then parent.arr.__jnum[parent.arr.__n] = true end
+          parent.state = 5
+        else
+          parent.obj.__jkeys[#parent.obj.__jkeys + 1] = parent.key
+          parent.obj[parent.key] = completedValue
+          if completedVariant then parent.obj.__jnum[parent.key] = true
+          else parent.obj.__jnum[parent.key] = nil end
+          parent.state = 3
+        end
+        completedValue = nil
+        completedVariant = nil
+        haveCompleted = false
+      elseif #frames == 0 then
+        local parsed, variant = parseScalarOrOpen(frames)
+        if parsed == nil then return nil end
+        if parsed ~= __OPENED then
+          completedValue = parsed
+          completedVariant = variant
+          haveCompleted = true
+        end
+      else
+        local frame = frames[#frames]
+        if frame.kind == "object" then
+          if frame.state == 0 then
+            skipws()
+            if pos <= len and string.sub(s, pos, pos) == "}" then
+              pos = pos + 1
+              completedValue = frame.obj
+              frames[#frames] = nil
+              haveCompleted = true
+            else
+              frame.state = 1
+            end
+          elseif frame.state == 1 then
+            skipws()
+            if pos > len or string.sub(s, pos, pos) ~= __QT then return nil end
+            -- The decoded-key duplicate rule: a member key whose decoded
+            -- scalar text equals an earlier member key of the same object
+            -- is a parse defect (an escaped spelling included).
+            local key = parseString()
+            if key == nil then return nil end
+            if frame.obj.__jseen[key] then return nil end
+            frame.obj.__jseen[key] = true
+            skipws()
+            if pos > len or string.sub(s, pos, pos) ~= ":" then return nil end
+            pos = pos + 1
+            frame.key = key
+            frame.state = 2
+          elseif frame.state == 2 then
+            local parsed, variant = parseScalarOrOpen(frames)
+            if parsed == nil then return nil end
+            if parsed ~= __OPENED then
+              completedValue = parsed
+              completedVariant = variant
+              haveCompleted = true
+            end
+          else
+            skipws()
+            if pos > len then return nil end
+            local c = string.sub(s, pos, pos)
+            if c == "," then pos = pos + 1; frame.state = 1
+            elseif c == "}" then
+              pos = pos + 1
+              completedValue = frame.obj
+              frames[#frames] = nil
+              haveCompleted = true
+            else return nil end
+          end
+        else
+          if frame.state == 4 then
+            skipws()
+            if pos <= len and string.sub(s, pos, pos) == "]" then
+              pos = pos + 1
+              completedValue = frame.arr
+              frames[#frames] = nil
+              haveCompleted = true
+            else
+              frame.state = 2
+            end
+          elseif frame.state == 2 then
+            local parsed, variant = parseScalarOrOpen(frames)
+            if parsed == nil then return nil end
+            if parsed ~= __OPENED then
+              completedValue = parsed
+              completedVariant = variant
+              haveCompleted = true
+            end
+          else
+            skipws()
+            if pos > len then return nil end
+            local c = string.sub(s, pos, pos)
+            if c == "," then pos = pos + 1; frame.state = 2
+            elseif c == "]" then
+              pos = pos + 1
+              completedValue = frame.arr
+              frames[#frames] = nil
+              haveCompleted = true
+            else return nil end
+          end
+        end
+      end
+    end
   end
   local value = parseValue(0)
   if value == nil then return __JSONSYNTAX end
@@ -7533,34 +7608,84 @@ end
 -- parser's per-occurrence lexical int/number classification; a nested
 -- container carries its own markers.
 local function __jsonToLanguage(v)
-  if __jsonIsArray(v) then
-    local out = {__a = true, __n = v.__n, __nK = {}}
-    for i = 1, v.__n do
-      local element = v[i]
-      if element == __JNULL then out[i] = __NULL
-      elseif __jsonIsObject(element) or __jsonIsArray(element) then
-        out[i] = __jsonToLanguage(element)
+  -- The stack-safe conversion: an explicit frame stack replaces the
+  -- recursion, so a finite nested parsed subtree has no Lua call-stack
+  -- bound; every carrier marker and key order is the recursive
+  -- conversion's.
+  local frames = {}
+  local completed
+  local haveCompleted = false
+  local function pushContainer(source)
+    if __jsonIsArray(source) then
+      frames[#frames + 1] = {kind = "array", source = source,
+        out = {__a = true, __n = source.__n, __nK = {}}, index = 1}
+    else
+      frames[#frames + 1] = {kind = "object", source = source,
+        out = {__t = true, __keys = {}, __order = {}, __nK = {}}, index = 1}
+    end
+  end
+  pushContainer(v)
+  while true do
+    if haveCompleted then
+      if #frames == 0 then return completed end
+      local frame = frames[#frames]
+      if frame.kind == "array" then
+        frame.out[frame.index] = completed
       else
-        out[i] = element
-        if v.__jnum[i] == true then out.__nK[i] = true end
+        frame.out[frame.source.__jkeys[frame.index]] = completed
+      end
+      frame.index = frame.index + 1
+      completed = nil
+      haveCompleted = false
+    elseif #frames == 0 then
+      return nil
+    else
+      local frame = frames[#frames]
+      if frame.kind == "array" then
+        if frame.index > frame.source.__n then
+          completed = frame.out
+          frames[#frames] = nil
+          haveCompleted = true
+        else
+          local element = frame.source[frame.index]
+          if element == __JNULL then
+            frame.out[frame.index] = __NULL
+            frame.index = frame.index + 1
+          elseif __jsonIsObject(element) or __jsonIsArray(element) then
+            pushContainer(element)
+          else
+            frame.out[frame.index] = element
+            if frame.source.__jnum[frame.index] == true then
+              frame.out.__nK[frame.index] = true
+            end
+            frame.index = frame.index + 1
+          end
+        end
+      else
+        if frame.index > #frame.source.__jkeys then
+          completed = frame.out
+          frames[#frames] = nil
+          haveCompleted = true
+        else
+          local key = frame.source.__jkeys[frame.index]
+          local element = frame.source[key]
+          __orderAdd(frame.out, key)
+          if element == __JNULL then
+            frame.out[key] = __NULL
+            frame.index = frame.index + 1
+          elseif __jsonIsObject(element) or __jsonIsArray(element) then
+            pushContainer(element)
+          else
+            frame.out[key] = element
+            if frame.source.__jnum[key] == true then
+              frame.out.__nK[key] = true
+            end
+            frame.index = frame.index + 1
+          end
+        end
       end
     end
-    return out
   end
-  local out = {__t = true, __keys = {}, __order = {}, __nK = {}}
-  for i = 1, #v.__jkeys do
-    local key = v.__jkeys[i]
-    local element = v[key]
-    __orderAdd(out, key)
-    if element == __JNULL then out[key] = __NULL
-    elseif __jsonIsObject(element) or __jsonIsArray(element) then
-      out[key] = __jsonToLanguage(element)
-    else
-      out[key] = element
-      if v.__jnum[key] == true then out.__nK[key] = true end
-    end
-  end
-  return out
 end
 -- The final descriptor conformance check of the walk (K-D8 step 7).
 -- A numeric position admits the raw number and the read-side variant
@@ -7797,85 +7922,213 @@ local function __jsonToClassOp(planName, root)
     return nil
   end
   local encodeField
+  local encodeContent
   local encodeTableValue
   local encodeArrayValue
   local encodeClass
-  encodeTableValue = function(tv, tpath, visited)
-    if visited[tv] then return cycle() end
-    visited[tv] = true
-    -- The carrier's first-insertion order (the __order discipline every
-    -- shared table consumer reads): an object spells its keys exactly as
-    -- they were inserted, never in sorted order. A hand-built carrier
-    -- without the shared order marks (no production path builds one)
-    -- keeps the deterministic sorted spelling.
-    local order = tv.__order
-    if type(order) ~= "table" then
-      order = {}
-      for k, _ in pairs(tv.__keys) do order[#order + 1] = k end
-      table.sort(order)
+  -- The stack-safe dynamic content walk: an explicit frame stack replaces
+  -- the recursion, so a JSON-shaped table/array value of any finite depth
+  -- has no Lua call-stack bound. The path-local visited set keeps the
+  -- closed cycle arm (entered on open, removed on close); the first
+  -- declaration-order failure wins unchanged.
+  encodeContent = function(root, rootPath, visited, rootIsArray)
+    if visited[root] then return cycle() end
+    visited[root] = true
+    local out = {rootIsArray and "[" or "{"}
+    local frames = {{
+      array = rootIsArray,
+      value = root,
+      path = rootPath,
+      index = 1,
+      order = nil,
+      marks = nil,
+    }}
+    if not rootIsArray then
+      -- The carrier's first-insertion order (the __order discipline every
+      -- shared table consumer reads): an object spells its keys exactly as
+      -- they were inserted, never in sorted order. A hand-built carrier
+      -- without the shared order marks (no production path builds one)
+      -- keeps the deterministic sorted spelling.
+      local order = root.__order
+      if type(order) ~= "table" then
+        order = {}
+        for k, _ in pairs(root.__keys) do order[#order + 1] = k end
+        table.sort(order)
+      end
+      frames[1].order = order
     end
-    local marks = tv.__nK
-    if type(marks) ~= "table" then marks = nil end
-    local out = {"{"}
-    for i = 1, #order do
-      local key = order[i]
-      local element = tv[key]
-      if element == __NULL then element = nil end
-      if i > 1 then out[#out + 1] = "," end
-      out[#out + 1] = __QT .. __jsonEscapeString(key) .. __QT .. ":"
-      local elementPath = (tpath == "") and key or (tpath .. "." .. key)
-      if element == nil then out[#out + 1] = "null"
-      elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
-      elseif type(element) == "number" then
-        -- The numeric leaf spells by its own recorded variant (the shared
-        -- write paths' and the JSON decode's __nK mark): a number-variant
-        -- slot through the closed decimal spelling, an int-variant slot
-        -- through the integer spelling — exactly the oracle's Value.Int/
-        -- Value.Number split, never the declared descriptor's text.
-        if marks ~= nil and marks[key] == true then
-          local text = __jsonNumText(element)
-          if text == nil then return fail(elementPath, element) end
-          out[#out + 1] = text
+    local rootMarks = root.__nK
+    if type(rootMarks) ~= "table" then rootMarks = nil end
+    frames[1].marks = rootMarks
+    while #frames > 0 do
+      local frame = frames[#frames]
+      if frame.array then
+        if frame.index > frame.value.__n then
+          out[#out + 1] = "]"
+          visited[frame.value] = nil
+          frames[#frames] = nil
         else
-          out[#out + 1] = tostring(element)
-        end
-      elseif type(element) == "table" and element.__jn then
-        -- The read-side variant carrier (__readVar) keeps its value's own
-        -- recorded variant: an int carrier spells its integer text, a
-        -- number carrier the closed decimal spelling.
-        if element.k == "int" then
-          out[#out + 1] = tostring(element.d)
-        else
-          local text = __jsonNumText(element.d)
-          if text == nil then return fail(elementPath, element.d) end
-          out[#out + 1] = text
-        end
-      elseif type(element) == "string" then
-        if not __jsonValidUtf8(element) then
-          return fail(elementPath, element)
-        end
-        out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
-      elseif type(element) == "table" then
-        if element.__a then
-          local nested = encodeArrayValue(element, elementPath, visited, nil)
-          if nested == nil then return nil end
-          out[#out + 1] = nested
-        elseif element.__t then
-          local nested = encodeTableValue(element, elementPath, visited)
-          if nested == nil then return nil end
-          out[#out + 1] = nested
-        else
-          return fail(elementPath, element)
+          local i = frame.index
+          frame.index = i + 1
+          local element = frame.value[i]
+          local elementPath = frame.path .. "[" .. (i - 1) .. "]"
+          if element == __NULL then
+            -- A present null: the element descriptor then decides it.
+            element = nil
+          elseif element == nil then
+            -- A deleted element is the internal missing slot (the
+            -- read-side __MISSING), not a null: it is not JSON-shaped at
+            -- any element descriptor, and the walk renders the missing
+            -- token exactly like the oracle's Missing element and the
+            -- shared JVM runtime's MISSING array slot.
+            return fail(elementPath, __MISSING)
+          end
+          if i > 1 then out[#out + 1] = "," end
+          if element == nil then out[#out + 1] = "null"
+          elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
+          elseif type(element) == "number" then
+            -- The element's own recorded variant (the __nK mark): a
+            -- number-variant slot through the closed decimal spelling, an
+            -- int-variant slot through the integer spelling — exactly the
+            -- oracle's Value.Int/Value.Number split.
+            if frame.marks ~= nil and frame.marks[i] == true then
+              local text = __jsonNumText(element)
+              if text == nil then return fail(elementPath, element) end
+              out[#out + 1] = text
+            else
+              out[#out + 1] = tostring(element)
+            end
+          elseif type(element) == "table" and element.__jn then
+            if element.k == "int" then
+              out[#out + 1] = tostring(element.d)
+            else
+              local text = __jsonNumText(element.d)
+              if text == nil then return fail(elementPath, element.d) end
+              out[#out + 1] = text
+            end
+          elseif type(element) == "string" then
+            if not __jsonValidUtf8(element) then
+              return fail(elementPath, element)
+            end
+            out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
+          elseif type(element) == "table" then
+            if element.__a then
+              if visited[element] then return cycle() end
+              visited[element] = true
+              out[#out + 1] = "["
+              local marks = element.__nK
+              if type(marks) ~= "table" then marks = nil end
+              frames[#frames + 1] = {array = true, value = element,
+                path = elementPath, index = 1, marks = marks}
+            elseif element.__t then
+              if visited[element] then return cycle() end
+              visited[element] = true
+              out[#out + 1] = "{"
+              local order = element.__order
+              if type(order) ~= "table" then
+                order = {}
+                for k, _ in pairs(element.__keys) do order[#order + 1] = k end
+                table.sort(order)
+              end
+              local marks = element.__nK
+              if type(marks) ~= "table" then marks = nil end
+              frames[#frames + 1] = {array = false, value = element,
+                path = elementPath, index = 1, order = order, marks = marks}
+            else
+              return fail(elementPath, element)
+            end
+          else
+            return fail(elementPath, element)
+          end
         end
       else
-        return fail(elementPath, element)
+        local order = frame.order
+        if frame.index > #order then
+          out[#out + 1] = "}"
+          visited[frame.value] = nil
+          frames[#frames] = nil
+        else
+          local i = frame.index
+          frame.index = i + 1
+          local key = order[i]
+          local element = frame.value[key]
+          if element == __NULL then element = nil end
+          local elementPath = (frame.path == "") and key or (frame.path .. "." .. key)
+          if i > 1 then out[#out + 1] = "," end
+          out[#out + 1] = __QT .. __jsonEscapeString(key) .. __QT .. ":"
+          if element == nil then out[#out + 1] = "null"
+          elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
+          elseif type(element) == "number" then
+            -- The numeric leaf spells by its own recorded variant (the
+            -- shared write paths' and the JSON decode's __nK mark): a
+            -- number-variant slot through the closed decimal spelling, an
+            -- int-variant slot through the integer spelling — exactly the
+            -- oracle's Value.Int/Value.Number split, never the declared
+            -- descriptor's text.
+            if frame.marks ~= nil and frame.marks[key] == true then
+              local text = __jsonNumText(element)
+              if text == nil then return fail(elementPath, element) end
+              out[#out + 1] = text
+            else
+              out[#out + 1] = tostring(element)
+            end
+          elseif type(element) == "table" and element.__jn then
+            -- The read-side variant carrier (__readVar) keeps its value's
+            -- own recorded variant: an int carrier spells its integer
+            -- text, a number carrier the closed decimal spelling.
+            if element.k == "int" then
+              out[#out + 1] = tostring(element.d)
+            else
+              local text = __jsonNumText(element.d)
+              if text == nil then return fail(elementPath, element.d) end
+              out[#out + 1] = text
+            end
+          elseif type(element) == "string" then
+            if not __jsonValidUtf8(element) then
+              return fail(elementPath, element)
+            end
+            out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
+          elseif type(element) == "table" then
+            if element.__a then
+              if visited[element] then return cycle() end
+              visited[element] = true
+              out[#out + 1] = "["
+              local marks = element.__nK
+              if type(marks) ~= "table" then marks = nil end
+              frames[#frames + 1] = {array = true, value = element,
+                path = elementPath, index = 1, marks = marks}
+            elseif element.__t then
+              if visited[element] then return cycle() end
+              visited[element] = true
+              out[#out + 1] = "{"
+              local order = element.__order
+              if type(order) ~= "table" then
+                order = {}
+                for k, _ in pairs(element.__keys) do order[#order + 1] = k end
+                table.sort(order)
+              end
+              local marks = element.__nK
+              if type(marks) ~= "table" then marks = nil end
+              frames[#frames + 1] = {array = false, value = element,
+                path = elementPath, index = 1, order = order, marks = marks}
+            else
+              return fail(elementPath, element)
+            end
+          else
+            return fail(elementPath, element)
+          end
+        end
       end
     end
-    visited[tv] = nil
-    out[#out + 1] = "}"
     return table.concat(out)
   end
+  encodeTableValue = function(tv, tpath, visited)
+    return encodeContent(tv, tpath, visited, false)
+  end
   encodeArrayValue = function(av, apath, visited, edesc)
+    if edesc == nil then
+      return encodeContent(av, apath, visited, true)
+    end
     if visited[av] then return cycle() end
     visited[av] = true
     local marks = av.__nK
@@ -7896,72 +8149,25 @@ local function __jsonToClassOp(planName, root)
         return fail(elementPath, __MISSING)
       end
       if i > 1 then out[#out + 1] = "," end
-      if edesc ~= nil then
-        -- A declared array descriptor walks its elements through the
-        -- declared element descriptor (the oracle's per-element rule):
-        -- an int element spells its integer text, a nested array
-        -- recurses the element descriptor, and a class element walks
-        -- its class plan. A raw number carries its own recorded variant
-        -- into the walk as the read-side __jn carrier — an int-variant
-        -- slot keeps the integer spelling, a number-variant slot the
-        -- closed decimal spelling — exactly the oracle's and the shared
-        -- JVM runtime's Long/Double split, never the declared
-        -- descriptor's text.
-        local declared = element
-        if type(element) == "number" then
-          declared = {__jn = true,
-            k = (marks ~= nil and marks[i] == true) and "number" or "int",
-            d = element}
-        end
-        local encoded = encodeField(edesc, declared, elementPath, visited)
-        if encoded == nil then return nil end
-        out[#out + 1] = encoded
-      elseif element == nil then out[#out + 1] = "null"
-      elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
-      elseif type(element) == "number" then
-        -- The element's own recorded variant (the __nK mark), exactly as
-        -- the table-content leaf above.
-        if marks ~= nil and marks[i] == true then
-          local text = __jsonNumText(element)
-          if text == nil then return fail(elementPath, element) end
-          out[#out + 1] = text
-        else
-          out[#out + 1] = tostring(element)
-        end
-      elseif type(element) == "table" and element.__jn then
-        if element.k == "int" then
-          out[#out + 1] = tostring(element.d)
-        else
-          local text = __jsonNumText(element.d)
-          if text == nil then return fail(elementPath, element.d) end
-          out[#out + 1] = text
-        end
-      elseif type(element) == "string" then
-        if not __jsonValidUtf8(element) then
-          return fail(elementPath, element)
-        end
-        out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
-      elseif type(element) == "table" then
-        if element.__a then
-          local nested = encodeArrayValue(element, elementPath, visited, nil)
-          if nested == nil then return nil end
-          out[#out + 1] = nested
-        elseif element.__t then
-          local nested = encodeTableValue(element, elementPath, visited)
-          if nested == nil then return nil end
-          out[#out + 1] = nested
-        else
-          -- A class instance in a descriptor-free walk — table content
-          -- that is not JSON-shaped data — is rejected here: table-field
-          -- contents are JSON objects, arrays, and null/boolean/int/
-          -- number/string leaves, so a nested @jsonable instance
-          -- serializes only through a declared class/array element
-          -- descriptor (the encodeField/encodeClass path).
-          return fail(elementPath, element)
-        end
-      else
-        return fail(elementPath, element)
+      -- A declared array descriptor walks its elements through the
+      -- declared element descriptor (the oracle's per-element rule):
+      -- an int element spells its integer text, a nested array
+      -- recurses the element descriptor, and a class element walks
+      -- its class plan. A raw number carries its own recorded variant
+      -- into the walk as the read-side __jn carrier — an int-variant
+      -- slot keeps the integer spelling, a number-variant slot the
+      -- closed decimal spelling — exactly the oracle's and the shared
+      -- JVM runtime's Long/Double split, never the declared
+      -- descriptor's text.
+      local declared = element
+      if type(element) == "number" then
+        declared = {__jn = true,
+          k = (marks ~= nil and marks[i] == true) and "number" or "int",
+          d = element}
       end
+      local encoded = encodeField(edesc, declared, elementPath, visited)
+      if encoded == nil then return nil end
+      out[#out + 1] = encoded
     end
     visited[av] = nil
     out[#out + 1] = "]"
@@ -11784,60 +11990,6 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       end
       return value
     end
-    local function parseObject()
-      advance()
-      local t = {__t = true, __keys = {}, __order = {}}
-      local seen = {}
-      skipWs()
-      if not atEnd() and peek() == 125 then advance(); return t end
-      while true do
-        skipWs()
-        if atEnd() then parseFail("unexpected end of input") end
-        if peek() ~= 34 then parseFail("missing key") end
-        -- The duplicate-key defect's position is the second key's opening
-        -- quote (one-based UTF-8 byte offset); decoded equality makes an
-        -- escaped spelling of the same key a duplicate too.
-        local keyStart = consumed + 1
-        local key = parseString()
-        if seen[key] then parseFailAt(keyStart, "duplicate key") end
-        seen[key] = true
-        skipWs()
-        if atEnd() or peek() ~= 58 then parseFail("missing colon") end
-        advance()
-        skipWs()
-        local value = parseValue()
-        t[key] = value
-        __orderAdd(t, key)
-        skipWs()
-        if atEnd() then parseFail("unterminated object") end
-        local c = peek()
-        if c == 44 then advance()
-        elseif c == 125 then advance(); return t
-        else parseFail("missing comma") end
-      end
-    end
-    local function parseArray()
-      advance()
-      -- The decoded-array mark (B3): this realization is the std/json
-      -- decode site, so every array it produces — at every nesting depth —
-      -- carries the mark; nothing else in the artifact sets it.
-      local a = {__a = true, __n = 0, __da = true}
-      skipWs()
-      if not atEnd() and peek() == 93 then advance(); return a end
-      while true do
-        skipWs()
-        if atEnd() then parseFail("unexpected end of input") end
-        local value = parseValue()
-        a.__n = a.__n + 1
-        if value == nil then a[a.__n] = __NULL else a[a.__n] = value end
-        skipWs()
-        if atEnd() then parseFail("unterminated array") end
-        local c = peek()
-        if c == 44 then advance()
-        elseif c == 93 then advance(); return a
-        else parseFail("missing comma") end
-      end
-    end
     local function parseNumber()
       local startPos = pos
       local neg = false
@@ -11872,17 +12024,153 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       end
       return {__jn = true, k = "number", d = tonumber(text)}
     end
-    parseValue = function()
+    -- One value at the cursor: a scalar returns directly, a container
+    -- opens a frame on the stack and returns the __OPENED sentinel. The
+    -- frame loop of parseValue then drives the open container. The
+    -- explicit frame stack makes the traversal stack-safe: a finite
+    -- nested document has no Lua call-stack bound.
+    local __OPENED = {}
+    local function parseScalarOrOpen(frames)
       if atEnd() then parseFail("unexpected end of input") end
       local c = peek()
-      if c == 123 then return parseObject() end
-      if c == 91 then return parseArray() end
+      if c == 123 then
+        advance()
+        frames[#frames + 1] = {kind = "object",
+          value = {__t = true, __keys = {}, __order = {}}, seen = {}, state = 0}
+        return __OPENED
+      end
+      if c == 91 then
+        advance()
+        frames[#frames + 1] = {kind = "array",
+          value = {__a = true, __n = 0, __da = true}, state = 4}
+        return __OPENED
+      end
       if c == 34 then return parseString() end
       if c == 116 then return parseLiteral("true", true) end
       if c == 102 then return parseLiteral("false", false) end
       if c == 110 then return parseLiteral("null", nil) end
       if c == 45 or (c >= 48 and c <= 57) then return parseNumber() end
       parseFail("unexpected character")
+    end
+    parseValue = function()
+      local frames = {}
+      local completed
+      local haveCompleted = false
+      while true do
+        if haveCompleted then
+          if #frames == 0 then return completed end
+          local parent = frames[#frames]
+          if parent.kind == "array" then
+            parent.value.__n = parent.value.__n + 1
+            if completed == nil then
+              parent.value[parent.value.__n] = __NULL
+            else
+              parent.value[parent.value.__n] = completed
+            end
+            parent.state = 5
+          else
+            parent.value[parent.key] = completed
+            __orderAdd(parent.value, parent.key)
+            parent.state = 3
+          end
+          completed = nil
+          haveCompleted = false
+        elseif #frames == 0 then
+          local parsed = parseScalarOrOpen(frames)
+          if parsed ~= __OPENED then
+            completed = parsed
+            haveCompleted = true
+          end
+        else
+          local frame = frames[#frames]
+          if frame.kind == "object" then
+            if frame.state == 0 then
+              skipWs()
+              if not atEnd() and peek() == 125 then
+                advance()
+                completed = frame.value
+                frames[#frames] = nil
+                haveCompleted = true
+              else
+                frame.state = 1
+              end
+            elseif frame.state == 1 then
+              skipWs()
+              if atEnd() then parseFail("unexpected end of input") end
+              if peek() ~= 34 then parseFail("missing key") end
+              -- The duplicate-key defect's position is the second key's
+              -- opening quote (one-based UTF-8 byte offset); decoded
+              -- equality makes an escaped spelling of the same key a
+              -- duplicate too.
+              local keyStart = consumed + 1
+              local key = parseString()
+              if frame.seen[key] then parseFailAt(keyStart, "duplicate key") end
+              frame.seen[key] = true
+              skipWs()
+              if atEnd() or peek() ~= 58 then parseFail("missing colon") end
+              advance()
+              frame.key = key
+              frame.state = 2
+            elseif frame.state == 2 then
+              local parsed = parseScalarOrOpen(frames)
+              if parsed ~= __OPENED then
+                completed = parsed
+                haveCompleted = true
+              end
+            else
+              skipWs()
+              if atEnd() then parseFail("unterminated object") end
+              local c = peek()
+              if c == 44 then
+                advance()
+                frame.state = 1
+              elseif c == 125 then
+                advance()
+                completed = frame.value
+                frames[#frames] = nil
+                haveCompleted = true
+              else
+                parseFail("missing comma")
+              end
+            end
+          else
+            if frame.state == 4 then
+              skipWs()
+              if not atEnd() and peek() == 93 then
+                advance()
+                completed = frame.value
+                frames[#frames] = nil
+                haveCompleted = true
+              else
+                frame.state = 2
+              end
+            elseif frame.state == 2 then
+              skipWs()
+              if atEnd() then parseFail("unexpected end of input") end
+              local parsed = parseScalarOrOpen(frames)
+              if parsed ~= __OPENED then
+                completed = parsed
+                haveCompleted = true
+              end
+            else
+              skipWs()
+              if atEnd() then parseFail("unterminated array") end
+              local c = peek()
+              if c == 44 then
+                advance()
+                frame.state = 2
+              elseif c == 93 then
+                advance()
+                completed = frame.value
+                frames[#frames] = nil
+                haveCompleted = true
+              else
+                parseFail("missing comma")
+              end
+            end
+          end
+        end
+      end
     end
     skipWs()
     local value = parseValue()
@@ -11910,13 +12198,16 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       __sfail("JSON_TO_WALK_CYCLE", nil, nil, nil)
     end
     local sfValue
+    local sfEmit
     -- The number slot flag is the written slot's recorded static kind
     -- (__numKey): a number-typed slot — integral values included —
     -- serializes through the closed decimal spelling, an int-typed
     -- slot through the integer spelling. Without the mark (a dynamic
     -- position, a __jn carrier, or a slot no shared write path wrote)
     -- the int spelling stands, exactly the JSON_PARSE carrier split.
-    sfValue = function(v, isNumber)
+    -- The walk is stack-safe: an explicit frame stack replaces the
+    -- recursion, so a finite nested value has no Lua call-stack bound.
+    sfEmit = function(frames, v, isNumber)
       if v == nil or v == __rtNull then out[#out + 1] = "null"; return end
       if v == __MISSING then sfFail(v); return end
       local t = type(v)
@@ -11950,19 +12241,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           out[#out + 1] = "["
           local marks = v.__nK
           if type(marks) ~= "table" then marks = nil end
-          for i = 1, v.__n do
-            if i > 1 then out[#out + 1] = "," end
-            local elem = v[i]
-            -- A raw nil slot is the internal missing (the deleted
-            -- element model, exactly the read-side __arrayRead mapping);
-            -- a present null is the __NULL marker. The deleted element is
-            -- never serialized as JSON null.
-            if elem == __NULL then elem = nil
-            elseif elem == nil then sfFail(__MISSING) end
-            sfValue(elem, marks ~= nil and marks[i] == true)
-          end
-          out[#out + 1] = "]"
-          path[v] = nil
+          frames[#frames + 1] = {kind = "array", value = v, index = 1, marks = marks}
           return
         end
         local ns = __nsSurfaces[v]
@@ -11970,19 +12249,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "{"
-          for i = 1, #ns.order do
-            if i > 1 then out[#out + 1] = "," end
-            local k = ns.order[i]
-            out[#out + 1] = __jsonEscape(k)
-            out[#out + 1] = ":"
-            -- A module namespace surface's entry is projected through
-            -- __nsEntry (a compiled module's ABI wrapper unwraps to its
-            -- published value), so the walker rejects the module's own
-            -- entries exactly like the oracle's and the JVM's value.
-            sfValue(__nsEntry(v, v[k]), false)
-          end
-          out[#out + 1] = "}"
-          path[v] = nil
+          frames[#frames + 1] = {kind = "namespace", value = v, order = ns.order, index = 1}
           return
         end
         if v.__t then
@@ -11991,15 +12258,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           out[#out + 1] = "{"
           local marks = v.__nK
           if type(marks) ~= "table" then marks = nil end
-          for i = 1, #v.__order do
-            if i > 1 then out[#out + 1] = "," end
-            local k = v.__order[i]
-            out[#out + 1] = __jsonEscape(k)
-            out[#out + 1] = ":"
-            sfValue(v[k], marks ~= nil and marks[k] == true)
-          end
-          out[#out + 1] = "}"
-          path[v] = nil
+          frames[#frames + 1] = {kind = "table", value = v, order = v.__order, index = 1, marks = marks}
           return
         end
         -- The class instance is a table-carried value on the carrier-kind
@@ -12020,6 +12279,64 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       end
       if t == "function" then sfFail(v); return end
       sfFail(v)
+    end
+    sfValue = function(v, isNumber)
+      local frames = {}
+      sfEmit(frames, v, isNumber)
+      while #frames > 0 do
+        local frame = frames[#frames]
+        if frame.kind == "array" then
+          if frame.index > frame.value.__n then
+            out[#out + 1] = "]"
+            path[frame.value] = nil
+            frames[#frames] = nil
+          else
+            local i = frame.index
+            frame.index = i + 1
+            if i > 1 then out[#out + 1] = "," end
+            local elem = frame.value[i]
+            -- A raw nil slot is the internal missing (the deleted
+            -- element model, exactly the read-side __arrayRead mapping);
+            -- a present null is the __NULL marker. The deleted element is
+            -- never serialized as JSON null.
+            if elem == __NULL then elem = nil
+            elseif elem == nil then sfFail(__MISSING) end
+            sfEmit(frames, elem, frame.marks ~= nil and frame.marks[i] == true)
+          end
+        elseif frame.kind == "namespace" then
+          if frame.index > #frame.order then
+            out[#out + 1] = "}"
+            path[frame.value] = nil
+            frames[#frames] = nil
+          else
+            local i = frame.index
+            frame.index = i + 1
+            if i > 1 then out[#out + 1] = "," end
+            local k = frame.order[i]
+            out[#out + 1] = __jsonEscape(k)
+            out[#out + 1] = ":"
+            -- A module namespace surface's entry is projected through
+            -- __nsEntry (a compiled module's ABI wrapper unwraps to its
+            -- published value), so the walker rejects the module's own
+            -- entries exactly like the oracle's and the JVM's value.
+            sfEmit(frames, __nsEntry(frame.value, frame.value[k]), false)
+          end
+        else
+          if frame.index > #frame.order then
+            out[#out + 1] = "}"
+            path[frame.value] = nil
+            frames[#frames] = nil
+          else
+            local i = frame.index
+            frame.index = i + 1
+            if i > 1 then out[#out + 1] = "," end
+            local k = frame.order[i]
+            out[#out + 1] = __jsonEscape(k)
+            out[#out + 1] = ":"
+            sfEmit(frames, frame.value[k], frame.marks ~= nil and frame.marks[k] == true)
+          end
+        end
+      end
     end
     sfValue(__args[1], false)
     return table.concat(out)
