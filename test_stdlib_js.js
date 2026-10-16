@@ -343,13 +343,53 @@ test("json.parse rejects malformed JSON with the E8001 parse-error envelope", fu
   assert(err.message.indexOf("JSON parse error") === 0, "the message starts with the parse-error prefix");
 });
 
-test("json.parse rejects a top-level scalar with E8001 expected table", function() {
+test("json.parse rejects a top-level scalar, array, or null with E8001 expected table", function() {
   const errNumber = assertErrorMessage(function() { json.parse.$f("42", "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errNumber.actual, "number", "scalar number actual kind");
   const errString = assertErrorMessage(function() { json.parse.$f('"x"', "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errString.actual, "string", "scalar string actual kind");
   const errBoolean = assertErrorMessage(function() { json.parse.$f("true", "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errBoolean.actual, "boolean", "scalar boolean actual kind");
+  // The two JSON decode carriers are rejected by the same declared
+  // (string)->table exit with the shared boundary executor's own tokens:
+  // a decoded JSON array is the array carrier, a decoded JSON null is
+  // language null — never admitted as plain Maps (the cross-lane
+  // uniform v1.3 outcome).
+  const errArray = assertErrorMessage(function() { json.parse.$f("[1,2]", "f.js", 1, 1); }, "E8001", "expected table");
+  assertEqual(errArray.expected, "table", "top-level array expected token");
+  assertEqual(errArray.actual, "array", "top-level array actual kind");
+  const errNull = assertErrorMessage(function() { json.parse.$f("null", "f.js", 1, 1); }, "E8001", "expected table");
+  assertEqual(errNull.expected, "table", "top-level null expected token");
+  assertEqual(errNull.actual, "null", "top-level null actual kind");
+  const errEmpty = assertErrorMessage(function() { json.parse.$f("[]", "f.js", 1, 1); }, "E8001", "expected table");
+  assertEqual(errEmpty.actual, "array", "empty top-level array actual kind");
+});
+
+test("the decoded JSON null is language null at every null-admitting boundary", function() {
+  // The decoded null carrier is the language-null representation on the
+  // decode path: the nullable table descriptor admits it as the JS null,
+  // the null descriptor admits it, the conversion intrinsic reports the
+  // null conversion, and nullable equality treats it as null — while a
+  // plain table descriptor rejects it with the actual null token (the
+  // uniform boundary outcome).
+  const decodedNull = rt.jsonParseValue(null, "f.js", 1, 1);
+  assertEqual(rt.checkNullable("table", decodedNull, "f.js", 1, 1), null,
+    "?table admits the decoded null as language null");
+  assertEqual(rt.checkNull(decodedNull, "f.js", 1, 1), null,
+    "the null descriptor admits the decoded null");
+  assert(rt.isNilEquivalent(decodedNull), "the decoded null is nil-equivalent");
+  const convert = assertErrorMessage(function() { rt.intConvert(decodedNull, "f.js", 1, 1); },
+    "E8001", "cannot convert null to int");
+  assertEqual(convert.actual, "null", "the conversion actual token");
+  const table = assertErrorMessage(function() { rt.checkTable(decodedNull, "f.js", 1, 1); },
+    "E8001", "expected table");
+  assertEqual(table.expected, "table", "the table descriptor expected token");
+  assertEqual(table.actual, "null", "the table descriptor actual token");
+  const decodedArray = rt.jsonParseValue([1], "f.js", 1, 1);
+  assert(!rt.isNilEquivalent(decodedArray), "the decoded array is never nil-equivalent");
+  const arrayTable = assertErrorMessage(function() { rt.checkTable(decodedArray, "f.js", 1, 1); },
+    "E8001", "expected table");
+  assertEqual(arrayTable.actual, "array", "the array carrier's table-descriptor token");
 });
 
 test("json.parse rejects a lone high surrogate \\uD834 with E8001", function() {
@@ -494,7 +534,10 @@ test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and m
   const plain = rt.makeTable({ ["\uD800"]: 1 });
   assertErrorMessage(function() { json.stringify.$f(plain, "f.js", 1, 1); }, "E8001",
     "unsupported type for JSON encoding: string");
-  const marked = json.parse.$f("[1,2]", "f.js", 1, 1);
+  // The array-marked Map comes from the shared decode conversion (the
+  // declared parse exit rejects a top-level array, so the decode
+  // producer is the runtime member).
+  const marked = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   marked.set("\uD800", 3);
   assertErrorMessage(function() { json.stringify.$f(marked, "f.js", 1, 1); }, "E8001",
     "unsupported type for JSON encoding: string");
@@ -504,31 +547,47 @@ test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and m
 // JSON-shape round-trips (Verification 2)
 // ===========================================================================
 
-test("json round-trip: stringify(parse(\"null\")) === \"null\" and keys []", function() {
-  const parsed = json.parse.$f("null", "f.js", 1, 1);
+test("json round-trip: stringify of the null-marked decode carrier === \"null\"", function() {
+  const parsed = rt.jsonParseValue(null, "f.js", 1, 1);
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "null", "null round-trip");
-  assertArrayEqual(table.keys.$f(parsed, "f.js", 1, 1), [], "keys of a parsed null");
+  // The decoded null is language null, not a table: a table-parameter
+  // boundary (std/table.keys) rejects it with the shared token.
+  const err = assertErrorMessage(function() { table.keys.$f(parsed, "f.js", 1, 1); },
+    "E8001", "expected table");
+  assertEqual(err.expected, "table", "decoded null at a table parameter expected token");
+  assertEqual(err.actual, "null", "decoded null at a table parameter actual kind");
 });
 
-test("json round-trip: stringify(parse(\"[1,2]\")) === \"[1,2]\" and keys [\"1\",\"2\"]", function() {
-  const parsed = json.parse.$f("[1,2]", "f.js", 1, 1);
+test("json round-trip: stringify of the array-marked decode carrier === \"[1,2]\"", function() {
+  const parsed = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[1,2]", "array round-trip");
-  assertArrayEqual(table.keys.$f(parsed, "f.js", 1, 1), ["1", "2"], "keys of a parsed array");
+  // The decoded array is the array carrier, not a table: a
+  // table-parameter boundary rejects it with the shared token, while the
+  // array boundary admits it.
+  const err = assertErrorMessage(function() { table.keys.$f(parsed, "f.js", 1, 1); },
+    "E8001", "expected table");
+  assertEqual(err.expected, "table", "decoded array at a table parameter expected token");
+  assertEqual(err.actual, "array", "decoded array at a table parameter actual kind");
+  // The array boundary admits the same carrier unchanged (the decode
+  // mark is inert outside the table descriptor family).
+  const strings = rt.jsonParseValue(["1", "2"], "f.js", 1, 1);
+  assertEqual(rt.checkArray("[string]", strings, "f.js", 1, 1), strings,
+    "the array boundary admits the decoded array unchanged");
 });
 
-test("json round-trip: an empty parsed array stays the JSON array", function() {
-  const parsed = json.parse.$f("[]", "f.js", 1, 1);
+test("json round-trip: an empty decoded array stays the JSON array", function() {
+  const parsed = rt.jsonParseValue([], "f.js", 1, 1);
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[]", "empty array round-trip");
 });
 
 test("json round-trip: a mixed-key mutation falls back to the object form", function() {
-  const parsed = json.parse.$f("[1,2]", "f.js", 1, 1);
+  const parsed = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   parsed.set("x", 9);
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), '{"1":1,"2":2,"x":9}', "mixed-key object form");
 });
 
 test("json round-trip: a missing middle index emits null", function() {
-  const parsed = json.parse.$f("[1,2,3]", "f.js", 1, 1);
+  const parsed = rt.jsonParseValue([1, 2, 3], "f.js", 1, 1);
   parsed.delete("2");
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[1,null,3]", "missing index as null");
 });

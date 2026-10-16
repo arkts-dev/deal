@@ -940,6 +940,57 @@ test("json.stringify rejects bytes-kind values with E8001", function()
     "error message should mention bytes, got: " .. tostring(err.message))
 end)
 
+-- The closed unsupported-carrier rejection (v1.3): every carrier the
+-- reference runtime tags with its own __kind marker renders the
+-- JSON_STRINGIFY_UNSUPPORTED arm's own text with the closed
+-- carrier-kind token instead of encoding private carrier fields.
+test("json.stringify rejects a class instance with the closed table token", function()
+  local __rt = require("deal.runtime")
+  local inst = __rt.class_("@m/C", { a = 1 }, {})
+  local err = assert_error_code(function() json.stringify.f(inst) end, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: table",
+    "class instance message, got: " .. tostring(err.message))
+  assert(err.expected == "string, number, boolean, or table", "class instance expected text")
+  assert(err.actual == "table", "class instance actual token, got: " .. tostring(err.actual))
+end)
+
+test("json.stringify rejects an Error instance with the closed table token", function()
+  local __rt = require("deal.runtime")
+  local ev = __rt.error_value("E1", "boom", nil, nil, nil)
+  local err = assert_error_code(function() json.stringify.f({ e = ev }) end, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: table",
+    "Error instance message, got: " .. tostring(err.message))
+  assert(err.actual == "table", "Error instance actual token, got: " .. tostring(err.actual))
+end)
+
+test("json.stringify rejects a function wrapper with the closed function token", function()
+  local __rt = require("deal.runtime")
+  local wrapper = __rt.function_("()->null", function() return __rt.__NULL end)
+  local err = assert_error_code(function() json.stringify.f(wrapper) end, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: function",
+    "function wrapper message, got: " .. tostring(err.message))
+  assert(err.actual == "function", "function wrapper actual token, got: " .. tostring(err.actual))
+end)
+
+test("json.stringify rejects a decoded async handle with the closed table token", function()
+  local err = assert_error_code(function()
+    json.stringify.f({ op = { __kind = "async" } })
+  end, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: table",
+    "async handle message, got: " .. tostring(err.message))
+  assert(err.actual == "table", "async handle actual token, got: " .. tostring(err.actual))
+end)
+
+test("json.stringify rejects the absent marker with the closed nil token", function()
+  local __rt = require("deal.runtime")
+  local err = assert_error_code(function()
+    json.stringify.f({ m = __rt.__MISSING })
+  end, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: nil",
+    "absent marker message, got: " .. tostring(err.message))
+  assert(err.actual == "nil", "absent marker actual token, got: " .. tostring(err.actual))
+end)
+
 test("json int/number document round-trip", function()
   local doc = { count = 42, ratio = 2.5 }
   local encoded = json.stringify.f(doc)

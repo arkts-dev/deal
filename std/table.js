@@ -24,14 +24,16 @@ const $table = {};
 
 // keys(t): the array of the table's string keys in Map insertion order
 // (js-stdlib-modules D6). checkTable is the strict instanceof-Map split
-// (deal/runtime.js checkTable), so the JSON-marked Maps — a parsed array
-// table (string keys "1".."n" in element order) and a parsed null table
-// (no keys) — pass exactly like the reference's integer-keyed-table and
-// __NULL acceptance (std/json.lua:226,384-400 with deal/runtime.lua:
-// 217-222). Array.from(t.keys()) over the validated Map yields the
-// string keys in insertion order — a stricter order than the reference's
-// unspecified pairs order, which it refines. The exit checkArray
-// validates the fresh array and every string element.
+// (deal/runtime.js checkTable): an unmarked Map passes, while the two
+// JSON decode carriers — a decoded array (the array-marked Map) and a
+// decoded null (the null-marked Map) — are rejected with E8001
+// expected table and the shared expected/actual tokens (actual array /
+// actual null), exactly the boundary every other table descriptor
+// applies (the emitted chunk's refined table admission and the shared
+// boundary executor). Array.from(t.keys()) over the validated Map
+// yields the string keys in insertion order — a stricter order than the
+// reference's unspecified pairs order, which it refines. The exit
+// checkArray validates the fresh array and every string element.
 $table.keys = $rt.function("(table)->[string]", function(t, $file, $line, $column) {
   $rt.checkTable(t, $file, $line, $column);
   return $rt.checkArray("[string]", $Array.from(t.keys()), $file, $line, $column);

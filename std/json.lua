@@ -14,11 +14,17 @@
 -- (-0/-0.0 normalize to 0) and every other lexeme becomes number; a
 -- member key whose decoded scalar text equals an earlier key of the same
 -- object is a parse failure ("duplicate key" at the second key's opening
--- quote). stringify raises Error on non-JSON-shaped values, including
--- bytes-kind objects (the same explicit bytes arm the JS runtime landed,
--- js-v12-int32-bytes D3) and a path-local container re-entry (the closed
--- "cyclic value cannot be encoded as JSON" arm); there is no fixed
--- nesting-depth bound. Object key order follows Lua iteration order.
+-- quote). stringify raises Error on non-JSON-shaped values through the
+-- closed unsupported-carrier arm: the bytes carrier keeps its pinned
+-- bytes token (the same explicit bytes arm the JS runtime landed,
+-- js-v12-int32-bytes D3), and the reference runtime's other __kind-tagged
+-- carriers — a function wrapper (function), a class or Error instance
+-- and a decoded async handle (table) — plus the internal absent marker
+-- (nil) all render that arm's own text with their closed carrier-kind
+-- token instead of encoding private carrier fields; a path-local
+-- container re-entry keeps the closed "cyclic value cannot be encoded as
+-- JSON" arm. There is no fixed nesting-depth bound. Object key order
+-- follows Lua iteration order.
 
 local __rt = require("deal.runtime")
 
@@ -162,6 +168,38 @@ local function json_int_or_nil(text)
   return value
 end
 
+-- The closed carrier-kind projection of one non-JSON value (the shared
+-- JSON_STRINGIFY_UNSUPPORTED arm's actual token, the reference runtime's
+-- own __kind vocabulary): the absent marker is nil, the language-null
+-- sentinel keeps its Lua type() shape table, a function wrapper is
+-- function, the bytes carrier is bytes, and every other __kind-tagged
+-- table-carried value (a class instance, the builtin Error instance, a
+-- decoded async handle) is table. A plain table — the JSON object/array
+-- shape — is table too, so the projection alone never selects.
+local function json_carrier_kind(v)
+  if v == __rt.__MISSING or v == nil then return 'nil' end
+  if v == __rt.__NULL then return 'table' end
+  local t = type(v)
+  if t == 'table' then
+    if v.__kind == 'bytes' then return 'bytes' end
+    if v.__kind == 'function' then return 'function' end
+    return 'table'
+  end
+  return t
+end
+
+-- The closed unsupported-carrier rejection: the JSON_STRINGIFY_UNSUPPORTED
+-- arm's own text with the failing value's carrier-kind token. Every
+-- non-JSON carrier — the absent marker, the bytes carrier, a function
+-- wrapper, a class or Error instance, a decoded async handle, a raw
+-- function, and every other non-table value — renders this one
+-- projection, never a silent private-field encode.
+local function unsupported(v, file, line, column)
+  local actual = json_carrier_kind(v)
+  error(__rt._err("E8001", "unsupported type for JSON encoding: " .. actual,
+    file, line, column, "string, number, boolean, or table", actual))
+end
+
 -- The stack-safe walk: an explicit frame stack replaces the recursion, so
 -- a finite nested value has no Lua call-stack bound; the path set keeps
 -- the path-local cycle guard (entered on open, removed on close).
@@ -177,6 +215,11 @@ local function encode_value(v, file, line, column, path)
     if val == nil then
       out[#out + 1] = 'null'
       return
+    end
+    -- The internal absent marker is never JSON-shaped (the shared walk's
+    -- nil carrier token), never an empty object.
+    if val == __rt.__MISSING then
+      unsupported(val, file, line, column)
     end
     local t = type(val)
     if t == 'string' then
@@ -195,13 +238,15 @@ local function encode_value(v, file, line, column, path)
       out[#out + 1] = val and 'true' or 'false'
       return
     elseif t == 'table' then
-      -- v1.2 D5 shape rejection: a bytes-kind object is not jsonable —
-      -- stringify raises the same unsupported-type Error every other
-      -- non-JSON-shaped value raises (spec §JSON serialization "Otherwise,
-      -- it raises Error"; the explicit bytes arm mirrors the JS runtime's
-      -- landed arm, js-v12-int32-bytes D3, message byte-identical).
-      if val.__kind == "bytes" then
-        error(__rt._err("E8001", "unsupported type for JSON encoding: bytes", file, line, column, "string, number, boolean, or table", "bytes"))
+      -- The closed carrier rejection (the emitted chunk's sfValue arm order):
+      -- a bytes carrier, a function wrapper, a class instance, the builtin
+      -- Error instance (both tagged __kind == "class"), and a decoded async
+      -- handle are never JSON-shaped table contents — each renders the
+      -- JSON_STRINGIFY_UNSUPPORTED arm with its own closed token instead of
+      -- encoding private carrier fields.
+      if val.__kind == "bytes" or val.__kind == "function" or val.__kind == "class"
+          or val.__kind == "async" then
+        unsupported(val, file, line, column)
       end
       -- The path-local cycle guard (the walk family's closed cycle arm):
       -- a container re-entering its own active path is the E8001 cycle
@@ -234,7 +279,7 @@ local function encode_value(v, file, line, column, path)
       return
     end
     -- Unsupported types: reject with runtime error
-    error(__rt._err("E8001", "unsupported type for JSON encoding: " .. t, file, line, column, "string, number, boolean, or table", t))
+    unsupported(val, file, line, column)
   end
   emit(v)
   while #frames > 0 do

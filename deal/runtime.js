@@ -77,10 +77,13 @@ class $DEALError extends Error {
 const $MISSING = {};
 
 // ===== Runtime-private JSON shape marks (js-backend-runtime-artifact D2) =====
-// Unspoofable WeakSets consulted only by the exact JSON members
+// Unspoofable WeakSets: the exact JSON members
 // (jsonParseText/jsonParseValue/jsonStringifyText — the std/json module
-// and the @jsonable walkers' table branches). Never exported; no $rt
-// member exposes them.
+// and the @jsonable walkers' table branches) consume them, and the
+// language-null / table boundary members (isNilEquivalent, checkNull,
+// checkTable) read them so a decoded JSON null is language null and a
+// decoded JSON array is the array carrier — never a plain table — at
+// every declared boundary. Never exported; no $rt member exposes them.
 const $jsonArrayTables = new WeakSet();
 const $jsonNullTables = new WeakSet();
 
@@ -1894,8 +1897,15 @@ const $rt = {
   NULL: null,
   undefined: $undefined,
 
+  // isNilEquivalent: the nil-equivalent predicate of the null-admitting
+  // boundaries and the nullable equality forms. DEAL null is the JS null
+  // and the JSON-decoded null is the marked null table (the D2 decode
+  // mark), so both are nil-equivalent; undefined and MISSING stay the
+  // absent markers (the three-state optional fields keep their own
+  // distinction through the presence map).
   isNilEquivalent: function $isNilEquivalent(v) {
-    return v === $undefined || v === null || v === $MISSING;
+    return v === $undefined || v === null || v === $MISSING
+      || (v instanceof $Map && $rt.isJsonNullTable(v));
   },
 
   // Own-property write via Object.defineProperty: never invokes the
@@ -2065,9 +2075,15 @@ const $rt = {
   // value — identity except checkInt's -0 normalization. Checks are total
   // and mutate no input.
 
-  // checkNull: DEAL null is only JS null — undefined and MISSING are
-  // rejected (deal/runtime.lua:50-55).
+  // checkNull: DEAL null is the JS null and the marked JSON-decoded null
+  // table (the D2 decode mark — the one language-null representation on
+  // the decode path; the marked carrier is admitted as the JS null the
+  // language model uses). Undefined and MISSING stay rejected
+  // (deal/runtime.lua:50-55; D3).
   checkNull: function $checkNull(v, file, line, column) {
+    if (v instanceof $Map && $rt.isJsonNullTable(v)) {
+      return null;
+    }
     if (v !== null) {
       $rt.fail("E8001", "expected null", file, line, column, "null", $kindOf(v));
     }
@@ -2147,12 +2163,24 @@ const $rt = {
     return v;
   },
 
-  // checkTable: the strict split (js-backend-runtime D3) — instanceof Map
-  // passes (the T1-marked JSON Maps included, D2); anything else — Array,
-  // plain object, class instance, wrapper, primitives — is rejected.
+  // checkTable: the strict split (js-backend-runtime D3) — an unmarked
+  // instanceof-Map table passes; the two D2 JSON decode carriers do not:
+  // a decoded JSON array is the array carrier (the std/json decode mark)
+  // and a decoded JSON null is language null, so both are rejected at a
+  // table boundary with the shared boundary executor's own closed tuple
+  // (E8001 "expected table", expected "table", actual "array"/"null" —
+  // never the plain-Map "table" label). Anything else — Array, plain
+  // object, class instance, wrapper, primitives — keeps its own $kindOf
+  // actual label.
   checkTable: function $checkTable(v, file, line, column) {
     if (!(v instanceof $Map)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", $kindOf(v));
+    }
+    if ($rt.isJsonNullTable(v)) {
+      $rt.fail("E8001", "expected table", file, line, column, "table", "null");
+    }
+    if ($rt.isJsonArrayTable(v)) {
+      $rt.fail("E8001", "expected table", file, line, column, "table", "array");
     }
     return v;
   },
@@ -2161,9 +2189,10 @@ const $rt = {
 
   // checkNullable: the check_nullable mirror (deal/runtime.lua:229-235,
   // extended to MISSING per js-backend-runtime D3) — any nil-equivalent
-  // input (undefined, null, MISSING — the isNilEquivalent predicate)
-  // returns DEAL null (JS null) with no error; everything else delegates
-  // to checkType on the inner descriptor.
+  // input (undefined, null, MISSING, and the JSON-decoded null table —
+  // the isNilEquivalent predicate) returns DEAL null (JS null) with no
+  // error; everything else delegates to checkType on the inner
+  // descriptor.
   checkNullable: function $checkNullable(inner, v, file, line, column) {
     if ($rt.isNilEquivalent(v)) {
       return null;
@@ -2173,14 +2202,14 @@ const $rt = {
 
   // checkType: canonical descriptor parse ($parse) then dispatch — the
   // check_type mirror (deal/runtime.lua:417-476) realized over the
-  // canonical grammar only (js-v12-completion-architecture D3). Defensive
-  // arms: the strict === null predicate routes only JS null to the nil
-  // arm (DEAL null is only JS null, D3); undefined and every other
-  // non-string descriptor fail the parse step and take the cannot-parse
-  // arm (String(descriptor) mirrors Lua's tostring(descriptor)). Legacy
-  // spellings ("T[]", "T|null", bare class names other than the builtin
-  // "Error" atom, "@/Error", "@$builtin/Error")
-  // are unparsable text and take the pinned E8001
+  // canonical grammar only (js-v12-completion-architecture D3). The
+  // primitive null row routes through checkNull (JS null and the
+  // JSON-decoded null carrier — the two language-null representations);
+  // a null descriptor and every non-string descriptor take the pinned
+  // internal/parse arms (String(descriptor) mirrors Lua's
+  // tostring(descriptor)). Legacy spellings ("T[]", "T|null", bare
+  // class names other than the builtin "Error" atom, "@/Error",
+  // "@$builtin/Error") are unparsable text and take the pinned E8001
   // "internal: cannot parse type descriptor: {text}" arm.
   checkType: function $checkType(descriptor, v, file, line, column) {
     if (descriptor === null) {

@@ -405,6 +405,15 @@ public class CanonicalProjectionParityTest {
             "test_json_stringify_function_error"),
         driver("stdlib/json/json-parse-duplicate-key",
             "test_json_parse_duplicate_key"),
+        // The declared (string)->table exit's decode-carrier rejection: a
+        // top-level JSON array and null cross the table boundary as the
+        // array/language-null carriers and render the shared expected
+        // table tuple on the oracle and both production artifacts (the JS
+        // lane executes the same fixtures through JsConformanceTest).
+        driver("stdlib/json/json-parse-top-level-array-table-error",
+            "test_json_parse_top_level_array"),
+        driver("stdlib/json/json-parse-top-level-null-table-error",
+            "test_json_parse_top_level_null"),
         driver("stdlib/json/json-stringify-cycle",
             "test_json_stringify_cycle"),
         driver("stdlib/json/json-stringify-nonfinite",

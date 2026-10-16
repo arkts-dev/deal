@@ -57,8 +57,12 @@ $json.stringify = $rt.function("(table)->string", function(v, $file, $line, $col
 // a decoded-key duplicate included — already raises the shared E8001
 // "JSON parse error at position N: reason" projection), the shared
 // $rt.jsonParseValue conversion, and the declared-return checkTable at
-// exit — a top-level scalar fails with "expected table" while the scanner
-// arms fire before the exit check.
+// exit — a top-level scalar fails with "expected table", and the two
+// JSON decode carriers are rejected by the same boundary: a decoded
+// JSON array with the actual "array" token and a decoded JSON null with
+// the actual "null" token, exactly the shared boundary executor's
+// tuples (never admitted as Maps; the scanner arms fire before the exit
+// check).
 $json.parse = $rt.function("(string)->table", function(text, $file, $line, $column) {
   $rt.checkString(text, $file, $line, $column);
   const $doc = $rt.jsonParseText(text, $file, $line, $column);

@@ -5049,22 +5049,31 @@ public class JsBackendTest {
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
-            import * as tables from "std/table";
             class User {
               name: string = "";
               nick?: string | null;
             }
             export function test(): int {
-              let n: table = json.parse("null");
-              let ns: string = json.stringify(n);
-              if (ns !== "null") { return 0; }
-              let nk: string[] = tables.keys(n);
-              if (nk.length !== 0) { return 0; }
-              let arr: table = json.parse("[1,2]");
-              let arrJson: string = json.stringify(arr);
-              if (arrJson !== "[1,2]") { return 0; }
-              let ak: string[] = tables.keys(arr);
-              if (ak.length !== 2 || ak[0] !== "1" || ak[1] !== "2") { return 0; }
+              // The declared (string)->table exit rejects a top-level JSON
+              // array and null with the shared boundary outcome (the decoded
+              // array is the array carrier, the decoded null is language
+              // null); neither is admitted as a table.
+              let arrayOutcome: string = "";
+              try {
+                let arr: table = json.parse("[1,2]");
+                arrayOutcome = "accepted";
+              } catch (e) {
+                arrayOutcome = e.code + ":" + e.message;
+              }
+              if (arrayOutcome !== "E8001:expected table") { return 0; }
+              let nullOutcome: string = "";
+              try {
+                let n: table = json.parse("null");
+                nullOutcome = "accepted";
+              } catch (e) {
+                nullOutcome = e.code + ":" + e.message;
+              }
+              if (nullOutcome !== "E8001:expected table") { return 0; }
               let p: table = { __proto__: "x" };
               let ps: string = json.stringify(p);
               if (ps !== "{\\"__proto__\\":\\"x\\"}") { return 0; }
@@ -5089,10 +5098,45 @@ public class JsBackendTest {
             }
             """, "json-roundtrip");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "parse(\"null\")/parse(\"[1,2]\") cross the table boundary and "
-                + "round-trip; a __proto__-keyed table round-trips and a class "
-                + "instance inside table content is rejected by the closed "
-                + "unsupported-type arm: " + run.output());
+            "parse of a top-level array/null rejects with the shared "
+                + "E8001/expected-table outcome, a __proto__-keyed table "
+                + "round-trips and a class instance inside table content is "
+                + "rejected by the closed unsupported-type arm: " + run.output());
+
+        // The exact JS-lane tuple for both decode carriers, captured from
+        // the emitted artifact's thrown error (the production JS emission
+        // under node; the raw catch preserves the expected/actual fields
+        // the source-level Error projects as code/message only).
+        NodeResult tuple = runArtifactScript(checkedEmission(prepareJs("""
+            import * as json from "std/json";
+            export function test_array(): null {
+              let t: table = json.parse("[1,2]");
+              return null;
+            }
+            export function test_null(): null {
+              let t: table = json.parse("null");
+              return null;
+            }
+            """, "json-table-boundary")), """
+            "use strict";
+            const $rt = require("./deal/runtime");
+            const $entry = require("./Main");
+            for (const $k of ["test_array", "test_null"]) {
+              try {
+                $entry[$k].$f("p.deal", 1, 1);
+                process.stdout.write($k + ": NO-FAILURE\\n");
+              } catch ($e) {
+                const $err = $rt.reifyError($e);
+                process.stdout.write($k + ": " + $err.code + "|" + $err.message
+                  + "|" + $err.expected + "|" + $err.actual + "\\n");
+              }
+            }
+            """);
+        check(tuple.exitCode() == 0
+                && tuple.output().equals("test_array: E8001|expected table|table|array"
+                    + "\ntest_null: E8001|expected table|table|null"),
+            "the emitted JS artifact rejects both top-level decode carriers "
+                + "with the shared expected/actual tokens: " + tuple.output());
     }
 
     private static void testJsonStoredFunctionE8001() throws Exception {

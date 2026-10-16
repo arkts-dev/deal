@@ -4040,6 +4040,16 @@ public class ProductionDispatchTest {
             driveBoundaryCorpusFixture(
                 "class-runtime-errors/dynamic-bad-class-array-element-e8001",
                 "test_dynamic_bad_class_array_element", true, drivers);
+            // The declared (string)->table exit's decode-carrier
+            // rejection: a top-level JSON array and null render the
+            // shared expected table tuple on the release-owned
+            // production CLI artifacts under the real tools.
+            driveBoundaryCorpusFixture(
+                "stdlib/json/json-parse-top-level-array-table-error",
+                "test_json_parse_top_level_array", true, drivers);
+            driveBoundaryCorpusFixture(
+                "stdlib/json/json-parse-top-level-null-table-error",
+                "test_json_parse_top_level_null", true, drivers);
         } finally {
             deleteRecursively(drivers);
         }

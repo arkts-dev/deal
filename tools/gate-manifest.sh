@@ -127,9 +127,10 @@ WARNING: node not found, skipping standard library JS tests'
   # field is rejected by all three consumers (the table-content walk stays
   # JSON-shaped); a nested class's table field spells its keys in
   # first-insertion order and its int/number leaves by their own variant
-  # (exact text on all three consumers); the recursive nested-class
-  # walk stops at the shared JSON depth bound (511 chain links succeed,
-  # 512 fail through the walk arm); the oracle's array executor view stays
+  # (exact text on all three consumers); the nested-class walk has no
+  # fixed JSON depth bound (511- and 1200-link chains both complete with
+  # the exact text through the stack-safe iterative traversal); the
+  # oracle's array executor view stays
   # live behind a class field's in-place element replacement, append, and
   # deletion (exact text for replacement and append, outcome parity for
   # the deleted missing slot); a committed field write on a class instance
