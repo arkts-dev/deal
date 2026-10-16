@@ -4163,6 +4163,243 @@ public class ProductionDispatchTest {
      * of being read as a transcript.
      */
     // =========================================================================
+    // ISSUE-0791: the boundary fixtures whose pin lives in a driven export
+    // =========================================================================
+
+    /**
+     * The registered runtime-corpus fixtures whose expectation the JS
+     * corpus lane cannot assert as a structured verdict: the lane's
+     * runtime-error branch checks the captured diagnostic code only, and
+     * its runtime-ok branch drives the fixture's exports but a fixture
+     * whose assertion body sits in a non-{@code main} export still needs
+     * the LuaJIT/JVM legs executed for real. This drive compiles each
+     * fixture through the release-owned production CLI, executes the
+     * published artifact under the real {@code luajit}/{@code java}
+     * toolchain — entry {@code main} once, then the fixture's own
+     * zero-arity export (the production lane protocol), so the assertion
+     * body actually runs on both targets — and compares the observation
+     * against the fixture's Structured Expectation Sidecar: the exact
+     * pinned error tuple (code, message, source coordinate, expected,
+     * actual) and the exact pinned runtime-ok transcript. A divergent
+     * result is a named failure, never an unexecuted pin.
+     */
+    private static void testV13BoundaryCorpusProductionDrive()
+            throws Exception {
+        System.out.println("-- the runtime-corpus boundary fixtures through"
+            + " the release-owned production CLI on LuaJIT and JVM");
+        driveBoundaryCorpusFixture("stdlib/table/keys-nonstring-exclusion",
+            "test_table_keys_decimal_string_names", false);
+        driveBoundaryCorpusFixture(
+            "class-runtime-errors/dynamic-bad-class-array-element-e8001",
+            "test_dynamic_bad_class_array_element", true);
+    }
+
+    /**
+     * One boundary fixture on both retained production targets. The
+     * sidecar is the pin: its per-backend executed expectation selects the
+     * compared outcome shape (the exact transcript bytes and exit code, or
+     * the exact diagnostic tuple), so the drive asserts the published
+     * sidecar and never a captured value. The fixture's original
+     * classification metadata is validated against the production profile
+     * before anything is stripped, materialized or compiled (CD3).
+     */
+    private static void driveBoundaryCorpusFixture(String corpusRel,
+            String export, boolean failure) throws Exception {
+        Path fixture = REPO_ROOT.resolve("test/conformance/backend-runtime")
+            .resolve(corpusRel + ".deal");
+        String locator = "backend-runtime/" + corpusRel + ".deal";
+        String raw = Files.readString(fixture);
+        String source = ConformanceHarnessMetadata.productionCorpusSource(
+            raw, locator);
+        int strippedHeaders = raw.split("\n", -1).length
+            - source.split("\n", -1).length;
+        deal.test.conformance.SidecarExpectations.StructuredExpectationSidecar
+            sidecar = deal.test.conformance.SidecarExpectations
+                .StructuredExpectationSidecar.parse(Files.readString(
+                    fixture.resolveSibling(fixture.getFileName().toString()
+                        .replace(".deal", ".expect.json"))));
+        // The fixture is materialized under the configured root
+        // {@code conformance} at the corpus-relative path the sidecar pins
+        // (the canonical class identity is
+        // {@code @<root>/<relative path>/<Class>}), so the pinned
+        // descriptor text and source coordinate are the published
+        // artifact's own.
+        String entryRel = "conformance/" + locator + "/main.deal";
+        String moduleKey = entryRel.substring("conformance/".length(),
+            entryRel.length() - ".deal".length()).replace('/', '.');
+        for (String backend : List.of("luajit", "jvm")) {
+            deal.test.conformance.SidecarExpectations.RuntimeExpectation leg =
+                sidecar.expectationFor(backend);
+            check(leg instanceof
+                    deal.test.conformance.SidecarExpectations
+                        .RuntimeExpectation.Executed,
+                locator + " [" + backend + "]: the sidecar pins an executed"
+                    + " outcome");
+            if (!(leg instanceof deal.test.conformance.SidecarExpectations
+                    .RuntimeExpectation.Executed executed)) {
+                continue;
+            }
+            checkEq(failure ? "runtime-error" : "runtime-ok", executed.mode(),
+                locator + " [" + backend + "]: the pinned mode");
+            Path project = Files.createTempDirectory(
+                "boundary-corpus-" + export + "-" + backend + "-");
+            try {
+                write(project, entryRel, source);
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.3\","
+                    + "\n  \"moduleRoots\": [\"conformance\"],"
+                    + "\n  \"output\": \"out\","
+                    + "\n  \"backend\": \"" + backend + "\"\n}\n");
+                ProjectOutcome compile = productionCompile(project, entryRel,
+                    "out");
+                checkEq(0, compile.exitCode(), locator + " [" + backend
+                    + "]: the production compile succeeds: "
+                    + compile.stderr());
+                if (compile.exitCode() != 0) {
+                    continue;
+                }
+                if (failure) {
+                    deal.test.conformance.SidecarExpectations.ErrorExpectation
+                        pin = executed.error();
+                    check(pin != null, locator + " [" + backend
+                        + "]: the runtime-error pin carries its error");
+                    if (pin == null) {
+                        continue;
+                    }
+                    String expected = "ERR:" + pin.code() + "|"
+                        + pin.message() + "|"
+                        + project.resolve(entryRel).toAbsolutePath()
+                        + ":" + (pin.line() - strippedHeaders) + ":"
+                        + pin.column() + "|" + pin.expected().orElse("")
+                        + "|" + pin.actual().orElse("") + "\n";
+                    BoundedProcess.BoundedResult run = boundaryArtifactRun(
+                        project, backend, entryRel, moduleKey, export);
+                    checkEqualCapture(locator, backend, run, 1, expected);
+                } else {
+                    check(executed.error() == null, locator + " [" + backend
+                        + "]: a runtime-ok pin carries no error");
+                    checkEq("", new String(executed.stdout(),
+                        StandardCharsets.UTF_8), locator + " [" + backend
+                        + "]: the pinned runtime-ok stdout is empty");
+                    checkEq("", new String(executed.stderr(),
+                        StandardCharsets.UTF_8), locator + " [" + backend
+                        + "]: the pinned runtime-ok stderr is empty");
+                    checkEq(0, executed.exitCode(), locator + " [" + backend
+                        + "]: the pinned runtime-ok exit code");
+                    BoundedProcess.BoundedResult run = boundaryArtifactRun(
+                        project, backend, entryRel, moduleKey, export);
+                    checkEqualCapture(locator, backend, run, 0, "");
+                }
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
+    /**
+     * One published boundary artifact under the real toolchain, driving
+     * entry {@code main} once and then the fixture's own zero-arity export
+     * through the production entry surface (the {@code DEAL_DEFER_MAIN}
+     * chunk and the JVM export surface), so the fixture body actually runs
+     * on the artifact the production CLI published. A failing export
+     * prints the pinned tuple framing {@code ERR:} and exits 1; a clean
+     * export produces no output at all, so the runtime-ok comparison stays
+     * byte-exact against the fixture's own transcript.
+     */
+    private static BoundedProcess.BoundedResult boundaryArtifactRun(
+            Path project, String backend, String entryRel, String moduleKey,
+            String export) throws Exception {
+        Path out = project.resolve("out");
+        if ("luajit".equals(backend)) {
+            // The emitted chunk path is the canonical module path with its
+            // separators re-materialized (the shared artifact naming).
+            Path artifact = out.resolve(moduleKey.replace('.', '/')
+                + ".lua");
+            check(Files.isRegularFile(artifact), "the production CLI stages"
+                + " the Lua artifact " + artifact);
+            if (!Files.isRegularFile(artifact)) {
+                return runBounded(project, "luajit", artifact.toString());
+            }
+            Path probe = out.resolve("__boundary_probe.lua");
+            Files.writeString(probe,
+                "local surface = dofile(\"" + artifact.toAbsolutePath()
+                    + "\")\n"
+                + "local ok, err = __dealMain()\n"
+                + "if ok then ok, err = pcall(surface[\"" + export
+                    + "\"].f) end\n"
+                + "if not ok then\n"
+                + "  if type(err) ~= 'table' or not err.__d then error(err, 0) end\n"
+                + "  print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o"
+                + " .. '|' .. (err.e or '') .. '|' .. (err.a or ''))\n"
+                + "  os.exit(1)\n"
+                + "end\n",
+                StandardCharsets.UTF_8);
+            return runBounded(REPO_ROOT, "luajit",
+                probe.toAbsolutePath().toString());
+        }
+        String className = deal.codegen.jvm.JvmNames.classNameFor(moduleKey);
+        Path artifact = out.resolve(className + ".java");
+        check(Files.isRegularFile(artifact), "the production CLI stages the"
+            + " JVM artifact " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return runBounded(project, "java", "-version");
+        }
+        String probeName = "BoundaryProbe_" + java.util.UUID.randomUUID()
+            .toString().replace("-", "");
+        Files.writeString(out.resolve(probeName + ".java"),
+            "final class " + probeName + " { public static void main(String[]"
+                + " args) { try { " + className + ".dealMain();"
+                + "((deal.codegen.jvm.JvmRuntime.FunctionValue)"
+                + "deal.codegen.jvm.JvmRuntime.exportSurface(\"" + moduleKey
+                + "\").read(\"" + export + "\")).fn.invoke(new Object[]{});"
+                + " } catch (deal.codegen.jvm.JvmRuntime.DealError e) {"
+                + " System.out.println(\"ERR:\" + e.code + \"|\" + e.msg"
+                + " + \"|\" + e.origin + \"|\" + (e.expected == null ? \"\""
+                + " : e.expected) + \"|\" + (e.actual == null ? \"\""
+                + " : e.actual)); System.exit(1); } } }",
+            StandardCharsets.UTF_8);
+        Path classes = out.resolve("classes");
+        Files.createDirectories(classes);
+        String classpath = absoluteClasspath();
+        List<String> javas;
+        try (var walk = Files.list(out)) {
+            javas = walk.filter(p -> p.toString().endsWith(".java"))
+                .map(Path::toString).sorted().toList();
+        }
+        BoundedProcess.BoundedResult javac = runBounded(project,
+            javacCommand(classpath, out, javas));
+        check(javac.exitCode() == 0, "the emitted JVM artifacts accept the"
+            + " probe: " + javac.stderr());
+        if (javac.exitCode() != 0) {
+            return javac;
+        }
+        return runBounded(project, "java", "-cp",
+            out + File.pathSeparator + classpath, probeName);
+    }
+
+    /**
+     * The exact artifact comparison of one boundary leg: the pinned exit
+     * status, the exact stdout bytes and an empty stderr. A truncated or
+     * over-limit capture is refused before any comparison — a retained
+     * prefix is never a transcript.
+     */
+    private static void checkEqualCapture(String locator, String backend,
+            BoundedProcess.BoundedResult run, int exitCode,
+            String expectedStdout) {
+        Optional<String> refusal = transcriptRefusal(run);
+        check(refusal.isEmpty(), locator + " [" + backend + "]: "
+            + refusal.orElse(""));
+        if (refusal.isPresent()) {
+            return;
+        }
+        checkEq(exitCode, run.exitCode(), locator + " [" + backend
+            + "]: the artifact exit status: " + boundedOutput(run));
+        checkEq(expectedStdout, run.stdout(), locator + " [" + backend
+            + "]: the artifact stdout is pin-exact: " + boundedOutput(run));
+        checkEq("", run.stderr(), locator + " [" + backend
+            + "]: the artifact stderr is empty: " + boundedOutput(run));
+    }
+
+    // =========================================================================
     // The complete deployment: missing required content fails the compile
     // =========================================================================
 
@@ -5339,6 +5576,7 @@ public class ProductionDispatchTest {
         testV12SplitCaptureControls();
         testArrayReadV13ProductionDrive();
         testV12CornerCaseCorpusProductionDrive();
+        testV13BoundaryCorpusProductionDrive();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

@@ -12,9 +12,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The canonical Error Snapshot serialization (corpus
- * {@code v12-three-backend-conformance-corpus} C2) and the G4.6 lane
- * error framing the StructuredExpectationComparator consumes.
+ * The canonical Error Snapshot serialization (the corpus sidecar schema,
+ * version 1) and the G4.6 lane error framing the
+ * StructuredExpectationComparator consumes.
  *
  * <p>Canonical serialization is fully pinned: one single-line JSON object
  * with the fixed key order {@code code}, {@code message}, then the span

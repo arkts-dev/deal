@@ -221,7 +221,7 @@ public class JsConformanceTest {
                 .filter(c -> c.kind() == Kind.APPLICABLE).count();
             int companions = (int) classified.stream()
                 .filter(c -> c.kind() == Kind.COMPANION).count();
-            System.out.println("=== DEAL v1.2 JavaScript Corpus "
+            System.out.println("=== DEAL v1.3 JavaScript Corpus "
                 + "Conformance (ISSUE-0278 — JsConformanceTest) ===");
             System.out.println("Root: " + conformanceRoot);
             System.out.println("Node: available (a missing node is a hard "
@@ -415,7 +415,7 @@ public class JsConformanceTest {
 
             if (expected.isEmpty()) {
                 throw new IllegalStateException("no @expected tag in "
-                    + file + " — the v1.2 gate has no unclassified files");
+                    + file + " — the v1.3 gate has no unclassified files");
             }
 
             Path normalized = file.toAbsolutePath().normalize();
@@ -1960,7 +1960,7 @@ public class JsConformanceTest {
 
     private static void printReport(List<Outcome> sorted) {
         System.out.println();
-        System.out.println("=== DEAL v1.2 JavaScript Corpus Conformance "
+        System.out.println("=== DEAL v1.3 JavaScript Corpus Conformance "
             + "Summary (ISSUE-0278 — JsConformanceTest) ===");
 
         int ft = frontendTotal.get();
