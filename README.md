@@ -17,6 +17,28 @@ assertions enabled: 74 Java suites and five Lua/JS runtime records. Java
 suites run sequentially; `--jobs` controls parallel work inside suites.
 There is no alternate full-suite profile.
 
+## Distribution
+
+Build the packaged compiler with its matched runtime, declarations, drivers, and
+standard library:
+
+```bash
+./tools/build-release.sh
+```
+
+Verify a packaged distribution outside the checkout:
+
+```bash
+./tools/verify-release.sh [dist]
+```
+
+The verification copies private projects into a scratch directory, compiles and
+executes the committed smoke project through the packaged launcher on every
+supported backend (`luajit`, `jvm`, `js`), and rejects old versions, missing or
+mismatched resources, broken deployment copies, and failing executions. It needs
+`luajit`, Java 25 `javac`/`java`, and `node` on `PATH`; a missing tool or artifact
+is a failure, not a skip.
+
 ## Coverage
 
 Provide JaCoCo agent and CLI jars compatible with Java 25 (tested with

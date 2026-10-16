@@ -122,7 +122,7 @@ import java.util.Set;
  *       {@link DistributionHome}
  *       ({@code release-distribution-packaging-and-discovery} D3):
  *       {@code <manifestDirectory>/std} when it exists as a directory
- *       (the pinned v1.2 project-local override surface), else the
+ *       (the pinned v1.3 project-local override surface), else the
  *       language distribution (the classpath-resource {@code std/}
  *       directory when a pinned declaration resource materializes,
  *       then the {@code DEAL_HOME}/{@code deal.home} filesystem
@@ -226,7 +226,7 @@ public final class ProjectLocator {
 
     /**
      * Locates, strictly reads/decodes/parses, converts, and validates the
-     * exact-v1.2 project configuration of {@code entryFile} and publishes
+     * exact-v1.3 project configuration of {@code entryFile} and publishes
      * one immutable {@link ProjectContext} — or exactly one structured
      * failure.
      *
@@ -636,7 +636,7 @@ public final class ProjectLocator {
      * three-tier {@link DistributionHome} order
      * ({@code release-distribution-packaging-and-discovery} D3): the
      * project-local {@code <manifestDirectory>/std} directory first
-     * (the pinned v1.2 override surface), then the language
+     * (the pinned v1.3 override surface), then the language
      * distribution (the materialized classpath-resource {@code std/}
      * directory, then the {@code DEAL_HOME}/{@code deal.home}
      * filesystem {@code std/} directory), then the checkout

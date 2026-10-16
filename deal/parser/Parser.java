@@ -905,9 +905,9 @@ public final class Parser {
 
         if (peek().type() != TokenType.RPAREN) {
             if (peek().type() == TokenType.ELLIPSIS) {
-                // DEAL v1.2: function types have no rest arm.
+                // function types have no rest arm.
                 error(DiagnosticCode.E1047,
-                    "Rest parameters are not supported in DEAL v1.2 (function types carry no rest arm)",
+                    "Rest parameters are not supported (function types carry no rest arm)",
                     peek());
                 skipRestArmTokens();
             } else {
@@ -923,7 +923,7 @@ public final class Parser {
                     }
                     if (peek().type() == TokenType.ELLIPSIS) {
                         error(DiagnosticCode.E1047,
-                            "Rest parameters are not supported in DEAL v1.2 (function types carry no rest arm)",
+                            "Rest parameters are not supported (function types carry no rest arm)",
                             peek());
                         skipRestArmTokens();
                         break;
@@ -1120,9 +1120,9 @@ public final class Parser {
         }
 
         if (peek().type() == TokenType.ELLIPSIS) {
-            // DEAL v1.2: rest parameters were removed from the language.
+            // Rest parameters were removed from the language.
             error(DiagnosticCode.E1047,
-                "Rest parameters are not supported in DEAL v1.2", peek());
+                "Rest parameters are not supported", peek());
             skipRestParameterTokens();
             return new ParamListResult(params);
         }
@@ -1139,7 +1139,7 @@ public final class Parser {
             }
             if (peek().type() == TokenType.ELLIPSIS) {
                 error(DiagnosticCode.E1047,
-                    "Rest parameters are not supported in DEAL v1.2", peek());
+                    "Rest parameters are not supported", peek());
                 skipRestParameterTokens();
                 break;
             }

@@ -1,3 +1,8 @@
+// DEAL v1.3 capability demo: one module that exercises the active
+// language and standard library surface. Compile it with any supported
+// production backend and run its exported main:
+//   deal compile src/main.deal --backend luajit|jvm|js --output <dir>
+
 import * as console from "std/console";
 import * as json from "std/json";
 import * as math from "std/math";
@@ -205,12 +210,21 @@ export function demo_summary(): string {
   assertBoolean(tableScore > 7, "table score mismatch");
   assertBoolean(mathScore === 25, "math score mismatch");
   assertBoolean(functionScore === 97, "function score mismatch");
-  console.log("DEAL v1.2 LuaJIT demo");
+  console.log("DEAL v1.3 capabilities demo");
   return `${selected}|${stringsResult}|${classesResult}|${jsonResult}|${errorCode}`;
 }
 
 export async function demo_async(): int {
   return await delayedAdd(10, 20);
+}
+
+// The entry drives every synchronous capability; demo_async is invoked by
+// the embedding through the backend's async-export ABI.
+export function main(): null {
+  demo_runtime_checks();
+  let summary: string = demo_summary();
+  console.log(summary);
+  return null;
 }
 
 export function demo_runtime_checks(): null {

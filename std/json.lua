@@ -1,7 +1,7 @@
 -- DEAL Standard Library: std/json
 -- Provides JSON encoding and decoding (simple pure-Lua implementation).
 --
--- Unicode conformance (v1.2, RFC 8259): parse accepts exactly the section 7
+-- Unicode conformance (v1.3, RFC 8259): parse accepts exactly the section 7
 -- escape set (" \ / b f n r t u), \uXXXX must carry exactly four hex digits
 -- and decodes to UTF-8, surrogate pairs combine to one supplementary scalar,
 -- lone surrogates and raw control characters (U+0000-U+001F) are rejected,

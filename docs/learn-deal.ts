@@ -1,9 +1,11 @@
-// Learn DEAL in 15 Minutes (DEAL v1.2)
+// Learn DEAL in 15 Minutes (DEAL v1.3)
 
 // Two dashes start a one-line comment.
 
 /*  Adding * and / makes it a
     multi-line comment.  */
+
+// Every statement ends with a semicolon; block-ending forms end at '}'.
 
 // -----------------------------------------------------
 // 1. Variables and flow control.
@@ -24,6 +26,10 @@ let nothing: null = null;
 // error on overflow.
 // let huge: int = 2147483648;  // compile-time error
 // let min: int = -2147483648;  // ok: unary minus over the special token
+
+// The operator set has no exponentiation, and '%' is int-only:
+// let power: int = 2 ** 10;   // compile-time error
+// let rest: number = 5.0 % 2.0;  // compile-time error
 
 // Inference works when the type is unambiguous.
 let meaning = 42;       // int
@@ -52,7 +58,7 @@ while (sum > 0) {
 }
 
 // for-of over arrays and strings (one Unicode scalar value per string
-// iteration in v1.2):
+// iteration in v1.3):
 let xs: int[] = [1, 2, 3];
 for (let v: int of xs) {
   // v = 1, 2, 3
@@ -64,8 +70,12 @@ for (let c: string of word) {
 }
 
 // Template literals with string interpolation:
-let msg: string = `Sum is ${sum}`;
+let who: string = "Ada";
+let msg: string = `Sum is ${who}`;
 // ${} must contain a string expression — no implicit conversion.
+// Template text is literal: it excludes line terminators, backticks and
+// '${'; a backslash is ordinary text. An interpolation may contain an
+// expression, comments, line breaks and nested template literals.
 
 // null is the only null-ish value. T | null for nullable.
 let maybe: int | null = 42;
@@ -85,7 +95,7 @@ function add(a: int, b: int): int {
   return a + b;
 }
 
-// v1.2 removed rest parameters: pass an explicit array instead.
+// DEAL has no rest parameters: pass an explicit array instead.
 function sumAll(values: int[]): int {
   let total: int = 0;
   for (let i: int = 0; i < values.length; i = i + 1) {
@@ -187,12 +197,13 @@ nums[nums.length] = 40;  // [10, 20, 30, 40]
 nums[0] = 99;           // ok
 // nums[0] = "hi";           // compile-time error: string ≠ int
 // nums[99] = 1;             // runtime error: out of bounds
+// let missing: int = nums[99];  // runtime error: index out of bounds
 
 // Nullable arrays:
 let mixed: (int | null)[] = [1, null, 3];
 let m: int | null = mixed[1];  // null
 
-// bytes is a DEAL-owned mutable byte buffer (v1.2):
+// bytes is a DEAL-owned mutable byte buffer (v1.3):
 // let buf: bytes = bytes(16);   // zero-filled, length 16
 // buf[0] = 255;                 // writes require int values in 0..255
 // let hi: int = buf[0];         // reads yield int values in 0..255
@@ -202,7 +213,8 @@ let m: int | null = mixed[1];  // null
 // 5. Classes.
 // -----------------------------------------------------
 
-// class declares a nominal record type — data, not behavior.
+// class declares a nominal record type — data, not behavior. Classes are
+// module-level declarations; a class inside a function body is an error.
 class User {
   name: string = "";
   nick?: string;                // optional field, may be missing
@@ -233,11 +245,12 @@ class Vector { x: number = 0.0; y: number = 0.0; }
 // let p: Point = { x: 1.0, y: 2.0 };
 // let w: Vector = p;  // error: Point is not Vector
 
-// JSON serialization with the @jsonable directive (v1.2):
+// JSON serialization with the @jsonable directive (v1.3):
 // @jsonable
 // export class User { ... }
 // Compiler generates User$fromJson(s): User | null
-// and User$toJson(u): string
+// and User$toJson(u): string. Attaching @jsonable to any other
+// declaration is a compile-time error.
 
 // -----------------------------------------------------
 // 6. Modules.
@@ -254,6 +267,8 @@ export class Person {
 
 // Imports come first, before all other top-level declarations; at module
 // top level only imports, functions, classes, and exports are allowed.
+// Import cycles between modules are compile-time errors, and a class is
+// named through one qualifier: settings.Settings.
 import * as math from "std/math";
 let f: number = math.floor(3.14);
 
@@ -266,8 +281,10 @@ let f: number = math.floor(3.14);
 // export main with the non-async signature (): null.
 // export function main(): null { return null; }
 
-// C FFI declaration files (v1.2) start with // @extern-c and may mark
-// exported classes with // @c-struct or // @c-pointer:
+// C FFI declaration files (v1.3) start with // @extern-c and may mark
+// exported classes with // @c-struct or // @c-pointer. Only the LuaJIT
+// backend binds C FFI; the JVM and JS backends reject it before
+// producing artifacts:
 // // @extern-c
 // // @c-struct
 // export class Vec2 { x: number = 0.0; y: number = 0.0; }
@@ -276,9 +293,10 @@ let f: number = math.floor(3.14);
 // 7. Error handling.
 // -----------------------------------------------------
 
-// Error is a builtin class:
+// Error is a builtin class with string code and message fields:
 // throw an error:
 // throw { message: "something went wrong" };
+// throw { code: "E_LIMIT", message: "index out of range" };
 
 // try/catch:
 // try {
@@ -300,12 +318,14 @@ import * as console from "std/console";
 console.log("hello");
 console.error("oops");
 
-// json — parse and stringify to/from table
+// json — parse and stringify to/from table. Integral JSON numbers in int
+// range parse as int; duplicate keys are rejected; stringify rejects
+// non-finite numbers and cycles.
 import * as json from "std/json";
 let t2: table = json.parse("{\"name\":\"Ada\"}");
 let str: string = json.stringify(t2);
 
-// string — string utilities (Unicode scalar-value positions in v1.2)
+// string — string utilities (Unicode scalar-value positions in v1.3)
 import * as strings from "std/string";
 let parts: string[] = strings.split("a,b,c", ",");
 
@@ -324,9 +344,9 @@ let ms: number = time.nowMillis();
 // conversion intrinsics — built-in, no import:
 let i: int = int(3.0);    // number → int
 let d: number = number(5); // int → number
-// let buf: bytes = bytes(8); // int → bytes (v1.2)
+// let buf: bytes = bytes(8); // int → bytes (v1.3)
 
 // -----------------------------------------------------
-// This file demonstrates DEAL v1.2 syntax.
+// This file demonstrates DEAL v1.3 syntax.
 // Save as learn.deal.
 // -----------------------------------------------------

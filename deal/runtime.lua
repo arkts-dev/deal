@@ -1,4 +1,4 @@
--- DEAL Runtime Library v1.2 (LuaJIT backend)
+-- DEAL Runtime Library v1.3 (LuaJIT backend)
 -- Provides type checks, canonical descriptor parsing and matching, integer
 -- arithmetic, class construction, function wrapping,
 -- async/await infrastructure, and the C FFI loader (load_ffi).
@@ -134,7 +134,7 @@ function __rt.check_number(v, file, line, column)
   return v
 end
 
--- ===== Unicode scalar-value string support (v1.2) =====
+-- ===== Unicode scalar-value string support (v1.3) =====
 
 --- Validate that a Lua string is well-formed UTF-8 encoding a sequence of
 -- Unicode scalar values: no truncated sequences, no stray continuation
@@ -302,7 +302,7 @@ function __rt.check_string(v, file, line, column)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "string" }, "E8001",
       "expected string", file, line, column, "string", type(v)))
   end
-  -- v1.2 boundary rule: strings accepted from untrusted or backend-native
+  -- v1.3 boundary rule: strings accepted from untrusted or backend-native
   -- boundaries must reject invalid encodings (malformed UTF-8 byte
   -- sequences). A surrogate code point gets the specific pinned message
   -- (the host-surrogate-utf8-e8010 sidecar); every other malformed
@@ -457,12 +457,12 @@ function __rt.bytes_set(b, i, v, file, line, column)
   return val
 end
 
--- ===== Canonical descriptor parser and matcher (v1.2) =====
+-- ===== Canonical descriptor parser and matcher (v1.3) =====
 --
 -- The canonical cutover (runtime page D3): the legacy dialect parser and
 -- matcher are removed; parse_descriptor / check_type /
 -- check_array / check_nullable below ARE the canonical matcher. Every
--- generated v1.2 artifact, stdlib signature, and host declared map
+-- generated v1.3 artifact, stdlib signature, and host declared map
 -- carries canonical descriptors, and any legacy dialect spelling
 -- ("T[]", "T|null", bare class names, "...T[]") is rejected at the
 -- boundary. error_value tags reified Error instances with the canonical
@@ -877,7 +877,7 @@ end
 --
 -- This is the boundary path every typed crossing uses: generated
 -- wrapper/param/return/await checks, host declared maps, stdlib
--- signatures, and the v1.2 runtime entries (class_plan_ phase-3 field
+-- signatures, and the v1.3 runtime entries (class_plan_ phase-3 field
 -- validation, invoke_async_export completion validation) all call this
 -- entry with canonical descriptors. It accepts only the canonical
 -- grammar; every legacy dialect spelling fails the parser.
@@ -1013,7 +1013,7 @@ end
 -- raw call, so hosts receive plain Lua functions; __NULL (and nil) arguments
 -- on nullable-function parameters pass through unadapted.
 --
--- DEAL v1.2 has no rest parameters: the parameter list is exact. A legacy
+-- DEAL v1.3 has no rest parameters: the parameter list is exact. A legacy
 -- "...T" descriptor entry never parses under the canonical grammar, so a
 -- signature carrying one is rejected here at wrap time (E8010).
 function __rt.from_lua_function(sig, raw_f)
@@ -1056,7 +1056,7 @@ function __rt.from_lua_function(sig, raw_f)
       nargs = nargs_full - 3
     end
 
-    -- v1.2 exact arity: no rest parameters exist.
+    -- v1.3 exact arity: no rest parameters exist.
     if nargs < required_params then
       error(__rt._err("E8010", "expected at least " .. required_params .. " arguments, got " .. nargs, file, line, column, nil, nil))
     end
@@ -1788,7 +1788,7 @@ end
 
 --- Non-throwing twin of check_int (see check_int above): false for
 -- non-numbers, NaN, infinities, non-integers, and values outside the
--- signed-int32 range; true otherwise. The v1.2 int32 narrowing
+-- signed-int32 range; true otherwise. The v1.3 int32 narrowing
 -- (luajit-v1.2-stdlib-contracts D5): a JSON number maps to DEAL int
 -- exactly inside [-2147483648, 2147483647]; every other JSON number
 -- maps to number.
@@ -2524,7 +2524,7 @@ function __rt.json_to_json(descriptor, value, fields, file, line, column)
 end
 
 
--- ===== C FFI runtime half (v1.2) =====
+-- ===== C FFI runtime half (v1.3) =====
 --
 -- luajit-ffi-load-ffi-realization R1-R15/R17 (the adopted D1-D7 verbatim,
 -- the parent realization envelope, and the settled generated-content

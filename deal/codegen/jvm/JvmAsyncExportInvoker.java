@@ -158,7 +158,7 @@ public class JvmAsyncExportInvoker {
             throw new JvmAsyncExportInvocationException(
                 "no async-export host entry: missing " + launcher
                     + " next to the entry artifact (the entry artifact was"
-                    + " not emitted by the v1.2 entry-module surface)",
+                    + " not emitted by the entry-module surface)",
                 null, null);
         }
 

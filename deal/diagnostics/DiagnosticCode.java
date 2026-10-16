@@ -122,8 +122,8 @@ public enum DiagnosticCode {
     /** Invalid compiler directive placement or version. */
     E1046(Phase.FRONTEND, "Invalid compiler directive placement or version"),
 
-    /** Rest parameters are not supported in DEAL v1.2. */
-    E1047(Phase.FRONTEND, "Rest parameters are not supported in DEAL v1.2"),
+    /** Rest parameters are not supported. */
+    E1047(Phase.FRONTEND, "Rest parameters are not supported"),
 
     E1048(Phase.FRONTEND, "Import declarations must precede all other top-level declarations"),
 
@@ -318,9 +318,9 @@ public enum DiagnosticCode {
     E6001(Phase.BACKEND_LOWERING, "Continue outside loop"),
 
     E6002(Phase.BACKEND_LOWERING, "Cannot break/continue across try boundary"),
-    /** Rest parameters are not part of DEAL v1.2 (LuaJIT backend). */
-    E6003(Phase.BACKEND_LOWERING, "Rest parameters are not part of DEAL v1.2"),
-    /** Entry module must export a non-async main(): null (v1.2 entry contract). */
+    /** Rest parameters are not part of the language (LuaJIT backend). */
+    E6003(Phase.BACKEND_LOWERING, "Rest parameters are not part of the language"),
+    /** Entry module must export a non-async main(): null (entry contract). */
     E6004(Phase.BACKEND_LOWERING, "Entry module must export non-async main(): null"),
 
     E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),

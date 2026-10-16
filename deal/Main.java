@@ -107,7 +107,7 @@ public final class Main {
             return 1;
         }
 
-        // Exact-v1.2 location (D1): entry validation, ancestor-manifest
+        // Exact-v1.3 location (D1): entry validation, ancestor-manifest
         // discovery, strict UTF-8 read/decode, strict parse, override
         // validation, root/externals conversion, effective backend and
         // output, the pinned stdlib surface, and the deployment identity.

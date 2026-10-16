@@ -4406,7 +4406,7 @@ test("FFI negative-constraint source audits against deal/runtime.lua hold", func
   assert(f ~= nil, "deal/runtime.lua must be readable for the source audits")
   local src = f:read("*a")
   f:close()
-  local marker = "-- ===== C FFI runtime half (v1.2) ====="
+  local marker = "-- ===== C FFI runtime half (v1.3) ====="
   local start = string.find(src, marker, 1, true)
   assert(start ~= nil, "the FFI half section marker must exist in deal/runtime.lua")
   local half = string.sub(src, start)
@@ -5529,7 +5529,7 @@ test("FFI ISSUE-0163 D19: ISSUE-0163 structural pins hold in the FFI half (rooti
   assert(f ~= nil, "deal/runtime.lua must be readable for the structural audits")
   local src = f:read("*a")
   f:close()
-  local marker = "-- ===== C FFI runtime half (v1.2) ====="
+  local marker = "-- ===== C FFI runtime half (v1.3) ====="
   local start = string.find(src, marker, 1, true)
   assert(start ~= nil, "the FFI half section marker must exist in deal/runtime.lua")
   local half = string.sub(src, start)

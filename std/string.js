@@ -1,6 +1,6 @@
 "use strict";
 
-// DEAL Standard Library: std/string — v1.2 (JavaScript backend).
+// DEAL Standard Library: std/string — v1.3 (JavaScript backend).
 // The hand-written CommonJS string module (js-stdlib-modules D1/D5,
 // js-backend-runtime D9): the eight .d.deal members exported as
 // $rt.function wrappers with the exact spec signature strings, parameter
@@ -8,7 +8,7 @@
 // check receiving the forwarded trailing span parameters ($file, $line,
 // $column), so parameter and return errors report the DEAL call site.
 // String lengths and positions are measured in Unicode scalar values
-// (code points, v1.2); search/replace/split are plain-text (never Lua
+// (code points, v1.3); search/replace/split are plain-text (never Lua
 // patterns); trim strips the Lua %s set (space, tab, newline, vertical
 // tab, form feed, carriage return) exactly.
 //
@@ -43,7 +43,7 @@ $string.length = $rt.function("(string)->int", function(s, $file, $line, $column
 });
 
 // substring(s: string, start: int, end: int): string — the substring at
-// 0-based scalar positions [start, end) with the v1.2 clamping
+// 0-based scalar positions [start, end) with the v1.3 clamping
 // (js-stdlib-modules D5): negative start behaves as 0; negative end
 // behaves as 0 (yields ""); end beyond the scalar length clamps to the
 // length; start >= end yields ""; start beyond the string yields "".
@@ -102,20 +102,20 @@ $string.endsWith = $rt.function("(string,string)->boolean", function(s, part, $f
   return $rt.checkBoolean(s.endsWith(part), $file, $line, $column);
 });
 
-// replace(s: string, old: string, to: string): string — plain-text
-// replacement of every occurrence via s.split(old).join(to): a string
-// separator to split is literal, never a pattern, and a % in to is
-// literal (no gsub capture references). The old === "" guard returns s
+// replace(s: string, search: string, replacement: string): string — plain-text
+// replacement of every occurrence via s.split(search).join(replacement): a string
+// separator to split is literal, never a pattern, and a % in replacement is
+// literal (no gsub capture references). The search === "" guard returns s
 // unchanged — the reference's explicit return-s-unchanged branch
 // (std/string.lua replace).
-$string.replace = $rt.function("(string,string,string)->string", function(s, old, to, $file, $line, $column) {
+$string.replace = $rt.function("(string,string,string)->string", function(s, search, replacement, $file, $line, $column) {
   $rt.checkString(s, $file, $line, $column);
-  $rt.checkString(old, $file, $line, $column);
-  $rt.checkString(to, $file, $line, $column);
-  if (old === "") {
+  $rt.checkString(search, $file, $line, $column);
+  $rt.checkString(replacement, $file, $line, $column);
+  if (search === "") {
     return $rt.checkString(s, $file, $line, $column);
   }
-  return $rt.checkString(s.split(old).join(to), $file, $line, $column);
+  return $rt.checkString(s.split(search).join(replacement), $file, $line, $column);
 });
 
 // split(s: string, sep: string): string[] — plain-text split

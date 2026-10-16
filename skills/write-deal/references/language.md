@@ -15,7 +15,7 @@ Assignments use `x = x + 1`. Write callbacks as function expressions; `=>` descr
 
 Built-ins: `null`, `boolean`, `int`, `number`, `string`, `bytes`, `table`, `Error`. Compose nominal classes, homogeneous `T[]`, nullable `T | null`, and function types.
 
-Types are invariant. Integer literals are int; decimal/exponent literals are number. Int is signed 32-bit; number is IEEE 754 double. Integer arithmetic checks overflow; division truncates toward zero and rejects zero divisors.
+Types are invariant. Integer literals are int; decimal/exponent literals are number. Int is signed 32-bit; number is IEEE 754 double. Integer arithmetic checks overflow; division truncates toward zero and rejects zero divisors. There is no exponentiation operator, and `%` is int-only.
 
 Explicit `number(intValue)` converts to floating point. `int(numberValue)` requires an integral, finite, in-range value. Round deliberately before converting. Use a typed helper or declared host API for text conversion.
 
@@ -23,7 +23,7 @@ Equality uses `===`/`!==` with equal types, except nullable comparison with null
 
 ## Classes
 
-Classes describe nominal records. Required fields have defaults; optional fields use `?`. Construct through typed object literals with declared fields. Defaults apply per construction; mutable literal defaults are fresh. Same-shaped classes remain distinct.
+Classes describe nominal records and are module-level declarations only. Required fields have defaults; optional fields use `?`. Construct through typed object literals with declared fields. Defaults apply per construction; mutable literal defaults are fresh. Same-shaped classes remain distinct.
 
 Use records for fixed schemas, tables for dynamic keys, functions for behavior. Pass records explicitly to those functions.
 
@@ -47,7 +47,7 @@ Dynamic indexes are strings. Writes may store heterogeneous values; select each 
 
 ## Arrays
 
-Arrays are zero-based. Annotate empty literals. Append at length and iterate with `i < values.length` or `for-of`. Reads check their result type; invalid indexes can raise errors. Strings in `for-of` yield Unicode scalars. Transform collections with explicit loops.
+Arrays are zero-based. Annotate empty literals. Append at length and iterate with `i < values.length` or `for-of`. Reads check their result type; a read outside `0..length-1` raises an index-out-of-bounds error. Strings in `for-of` yield Unicode scalars. Transform collections with explicit loops.
 
 ## Bytes
 
@@ -57,11 +57,11 @@ Arrays are zero-based. Annotate empty literals. Append at length and iterate wit
 
 Attach `// @jsonable` immediately to an exported class. Call its generated module helpers: `C$fromJson(string): C | null`, `C$toJson(C): string`.
 
-Parsing rejects extra keys, applies defaults, preserves presence, and returns null on invalid input. Serialization omits missing fields and preserves explicit null. Choose JSON-compatible fields and acyclic class dependencies. Handle non-JSON data, non-finite numbers, and cycles explicitly.
+Parsing rejects extra keys and duplicate keys, applies defaults, preserves presence, and returns null on invalid input. Integral JSON numbers in int range parse as int; other numbers parse as number. Serialization omits missing fields and preserves explicit null. Choose JSON-compatible fields and acyclic class dependencies. Handle non-JSON data, non-finite numbers, and cycles explicitly.
 
 ## Modules
 
-Import with `import * as name from "..."`. Namespace exports are statically typed. Export functions and classes; keep module state local to function-owned storage. Arrange runtime dependencies acyclically; initialization occurs at most once.
+Import with `import * as name from "..."`. Namespace exports are statically typed; qualify an imported class with the namespace (`models.User`). Export functions and classes; keep module state local to function-owned storage. Any import cycle is a compile-time error; initialization occurs at most once.
 
 The manifest supplies module roots, output, backend, languageVersion, and external declarations. Preserve existing settings and keep ancestor manifests unambiguous.
 
@@ -77,7 +77,7 @@ export function substring(s: string, start: int, end: int): string;
 export function contains(s: string, part: string): boolean;
 export function startsWith(s: string, part: string): boolean;
 export function endsWith(s: string, part: string): boolean;
-export function replace(s: string, from: string, to: string): string;
+export function replace(s: string, search: string, replacement: string): string;
 export function split(s: string, sep: string): string[];
 export function trim(s: string): string;
 // std/table
@@ -101,7 +101,7 @@ String positions count Unicode scalars. Extend the available surface through dec
 
 ## Error handling
 
-Throw an Error-typed literal. `catch (e)` binds Error with code and message. Translate expected failures where the application contract requires it; otherwise propagate.
+Throw an Error-typed literal. `Error` is a builtin class with `code` and `message` string fields; `catch (e)` binds it. Translate expected failures where the application contract requires it; otherwise propagate.
 
 ## Async/Await
 
@@ -113,7 +113,7 @@ A host import requires `.d.deal`, a manifest external entry, and an embedding im
 
 ## C FFI declaration files
 
-Inspect the C header and backend support before binding. `// @extern-c` follows imports and precedes declarations; its external entry includes `nativeLibrary`. Mark struct/pointer classes with `// @c-struct`/`// @c-pointer`.
+C FFI is available on the LuaJIT backend only; the JVM and JS backends reject FFI declarations before producing artifacts. Inspect the C header and backend support before binding. `// @extern-c` follows imports and precedes declarations; its external entry includes `nativeLibrary`. Mark struct/pointer classes with `// @c-struct`/`// @c-pointer`.
 
 Parameters admit int, number, boolean, string, bytes, and same-file struct/pointer classes. Returns admit scalar types, same-file struct/pointer classes, and null. Declare synchronous calls. Struct fields use defaulted int/number/boolean or same-file pointer classes; construct opaque pointer values through native functions.
 

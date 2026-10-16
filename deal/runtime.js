@@ -1,6 +1,6 @@
 "use strict";
 
-// DEAL Runtime Library v1.2 — JavaScript backend (deal/runtime.js).
+// DEAL Runtime Library v1.3 — JavaScript backend (deal/runtime.js).
 // The single hand-written CommonJS runtime module exporting $rt, the JS
 // analog of deal/runtime.lua (js-backend-runtime D1-D9, pinned by
 // js-backend-runtime-artifact), plus the shared D9 JSON conversion and
@@ -18,7 +18,7 @@
 // String are not in the capture list and may be spelled bare inside this
 // trusted file. The native JSON object is not captured: the conforming
 // scanner and the canonical text encoder are the runtime's own (DEAL v1.3
-// exact JSON). $Uint8Array joins the list with the v1.2 bytes carrier
+// exact JSON). $Uint8Array joins the list with the v1.3 bytes carrier
 // (js-v12-int32-bytes D3): the constructor is captured at runtime load,
 // so no generated module ever spells the host-global Uint8Array.
 const $process = process;
@@ -74,7 +74,7 @@ const $jsonNullTables = new WeakSet();
 // bare spelling) maps to "nil"; null to "null"; wrappers and class
 // instances are identified by their $kind tag before the Map/Array
 // branches; Maps (the T1 $Map capture) are tables; Arrays (the T1 $Array
-// capture) are arrays; Uint8Arrays (the v1.2 bytes carrier,
+// capture) are arrays; Uint8Arrays (the v1.3 bytes carrier,
 // js-v12-int32-bytes D3) are bytes; everything else reports the JS
 // typeof name.
 function $kindOf($v) {
@@ -258,7 +258,7 @@ function $parseNullable($d, $cps, $st) {
 }
 
 // async? "(" (descriptor ("," descriptor)*)? ")" "->" descriptor.
-// No rest-parameter arm exists in DEAL v1.2.
+// No rest-parameter arm exists in DEAL v1.3.
 function $parseFunction($d, $cps, $st, $isAsync) {
   $st.$pos++; // consume '('
   const $params = [];
@@ -2577,7 +2577,7 @@ const $rt = {
   // 1. The trailing (file, line, column) span triple the emitted call
   //    shape appends is split off; a direct call without it is
   //    defensive misuse and runs the checks with an absent span.
-  // 2. Exact arity — v1.2 has no rest parameters: E8010 "expected at
+  // 2. Exact arity — v1.3 has no rest parameters: E8010 "expected at
   //    least N arguments, got M" / "expected N arguments, got M" (the
   //    reference's arms).
   // 3. Each parameter checks against the declared parameter descriptor
@@ -2678,7 +2678,7 @@ const $rt = {
   // contract, host-async-bad; a valid completion delivers the checked
   // value, host-async-ok). A rejected operation propagates natively at
   // the await site. Source code can only observe the operation through
-  // await (spec-v1.2:1765-1767).
+  // await (spec-v1.3:1704).
   //
   // Converged awaited-call span (ISSUE-0599): an awaited emitted call
   // appends a second trailing span triplet — the await expression's

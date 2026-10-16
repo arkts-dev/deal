@@ -1,5 +1,5 @@
--- DEAL Standard Library: std/string — v1.2
--- Provides string manipulation functions per the v1.2 spec.
+-- DEAL Standard Library: std/string — v1.3
+-- Provides string manipulation functions per the v1.3 spec.
 -- String lengths and positions are measured in Unicode scalar values.
 
 local __rt = require("deal.runtime")
@@ -21,7 +21,7 @@ local function escape_replacement(s)
 end
 
 --- length(s: string): int
--- Returns the number of Unicode scalar values in the string (v1.2).
+-- Returns the number of Unicode scalar values in the string (v1.3).
 -- The trailing span triplet carries the call site (ISSUE-0598), so the
 -- dynamic-nonstring E8001 reports it byte-exact.
 stringlib.length = __rt.function_("(string)->int", function(s, file, line, column)
@@ -39,7 +39,7 @@ end)
 
 --- substring(s: string, start: int, end: int): string
 -- Returns the substring from start (0-based, inclusive) to end (exclusive),
--- with positions measured in Unicode scalar values (v1.2).
+-- with positions measured in Unicode scalar values (v1.3).
 -- start > end, start beyond the string, or end <= 0 produce the empty
 -- string; out-of-range end clamps to the string end.
 stringlib.substring = __rt.function_("(string,int,int)->string", function(s, start, end_, file, line, column)
@@ -104,20 +104,20 @@ stringlib.endsWith = __rt.function_("(string,string)->boolean", function(s, part
   return __rt.check_boolean(s:sub(-#part) == part, file, line, column)
 end)
 
---- replace(s: string, old: string, to: string): string
--- Replaces all occurrences of old with to (plain-text, no pattern).
--- Uses string.gsub with escaped pattern and escaped replacement for
--- plain-text semantics.
-stringlib.replace = __rt.function_("(string,string,string)->string", function(s, old, to, file, line, column)
+--- replace(s: string, search: string, replacement: string): string
+-- Replaces all occurrences of search with replacement (plain-text, no
+-- pattern). Uses string.gsub with escaped pattern and escaped replacement
+-- for plain-text semantics.
+stringlib.replace = __rt.function_("(string,string,string)->string", function(s, search, replacement, file, line, column)
   __rt.check_string(s, file, line, column)
-  __rt.check_string(old, file, line, column)
-  __rt.check_string(to, file, line, column)
-  if old == "" then
+  __rt.check_string(search, file, line, column)
+  __rt.check_string(replacement, file, line, column)
+  if search == "" then
     return __rt.check_string(s, file, line, column)
   end
-  local escaped_pattern = escape_pattern(old)
-  local escaped_to = escape_replacement(to)
-  return __rt.check_string((s:gsub(escaped_pattern, escaped_to)), file, line, column)
+  local escaped_pattern = escape_pattern(search)
+  local escaped_replacement = escape_replacement(replacement)
+  return __rt.check_string((s:gsub(escaped_pattern, escaped_replacement)), file, line, column)
 end)
 
 --- split(s: string, sep: string): [string]
@@ -137,7 +137,7 @@ stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep, f
   end
 
   if sep == "" then
-    -- Split into individual Unicode scalar values (v1.2).
+    -- Split into individual Unicode scalar values (v1.3).
     local cursor = 0
     while true do
       local next_cursor, ch = __rt.utf8_next(s, cursor)
