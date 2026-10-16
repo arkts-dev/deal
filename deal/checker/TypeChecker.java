@@ -448,11 +448,46 @@ public final class TypeChecker {
      * of that spelling).
      */
     private Symbol.ClassSymbol resolveClassSymbol(Type.Class cls) {
+        if (cls.providerModule() != null) {
+            // A bound carrier names its defining provider: the exact
+            // declaration resolves in that module's own scope (the
+            // imported alias/export route needs no local AST
+            // declaration, and a same-named local declaration of the
+            // same canonical identity never captures it). Two files in
+            // one directory share one canonical identity, so a
+            // name/identity scan has no single answer and is never
+            // consulted for a bound carrier.
+            return resolveProviderClassSymbol(cls);
+        }
         Symbol.ClassSymbol local = exactLocalClassSymbol(cls);
         if (local != null) {
             return local;
         }
         return nameResolver.resolveClassSymbol(cls);
+    }
+
+    /**
+     * The exact declaration one bound class carrier names: the class
+     * symbol of the carrier's own defining provider module, resolved by
+     * its wiring path and declared name (the actual alias/export/provider
+     * route, never a local AST declaration or a textual name search).
+     * {@code null} for the unbound carrier, a provider that names no
+     * declaration, or a declaration whose canonical identity contradicts
+     * the carrier — a contradictory provider fact fails closed instead of
+     * falling back to a same-identity declaration.
+     */
+    private Symbol.ClassSymbol resolveProviderClassSymbol(Type.Class cls) {
+        String provider = cls.providerModule();
+        if (provider == null || provider.isEmpty()) {
+            return null;
+        }
+        Symbol.ClassSymbol sym =
+            nameResolver.resolveClassSymbol(cls.name(), provider);
+        if (sym == null || cls.identity() == null || sym.identity() == null
+                || !cls.identity().equals(sym.identity())) {
+            return null;
+        }
+        return sym;
     }
 
     /**
@@ -545,6 +580,51 @@ public final class TypeChecker {
             return;
         }
         exactClassDecls.put(expr, decl);
+    }
+
+    /**
+     * Records the exact declaring declaration of a class-typed expression
+     * the checker did not already attribute through an annotation: the
+     * expression's own checked type is the fact (a call result, an
+     * awaited value, a recovered expression), and a bound carrier names
+     * its defining provider, so the declared declaration is resolved
+     * through that provider — never a same-identity name/identity scan.
+     * The unbound carrier (public descriptor synthesis, retained
+     * harnesses) records nothing. An already-recorded expression keeps
+     * its annotation-derived declaration.
+     */
+    private void recordInferredClassDecl(ExpressionNode expr, Type type) {
+        if (expr == null || exactClassDecls.containsKey(expr)) {
+            return;
+        }
+        Type element = innermostElementType(type);
+        if (!(element instanceof Type.Class cls)
+                || cls.providerModule() == null) {
+            return;
+        }
+        recordExactClassDecl(expr, type, resolveProviderClassSymbol(cls));
+    }
+
+    /**
+     * The exact declaration of one class-typed parameter position named
+     * by the parameter type itself: a function-typed callee carries no
+     * declared parameter annotation, but its bound parameter carrier
+     * names the defining provider, so the argument literal's construction
+     * context still resolves the exact declaration. {@code null} entries
+     * are positions whose type names no bound class declaration.
+     */
+    private List<Symbol.ClassSymbol> providerClassDeclsOf(List<Type> paramTypes) {
+        if (paramTypes == null) {
+            return null;
+        }
+        List<Symbol.ClassSymbol> decls = new ArrayList<>(paramTypes.size());
+        for (Type paramType : paramTypes) {
+            Type element = paramType == null ? null
+                : innermostElementType(paramType);
+            decls.add(element instanceof Type.Class cls
+                ? resolveProviderClassSymbol(cls) : null);
+        }
+        return decls;
     }
 
     /**
@@ -1378,16 +1458,13 @@ public final class TypeChecker {
             }
             if (objType instanceof Type.Class cls) {
                 // The exact declaring declaration of the delete target's
-                // receiver (the receiver's own annotation first, then the
-                // exact local declaration, then the identity-keyed
-                // cross-module resolution): a same-named local
-                // declaration of another identity never owns the
-                // required/optional decision of an imported class's field
-                // (never a textual class-name search).
-                Symbol.ClassSymbol sym = exactReceiverClassSymbol(mae.object(), cls);
-                if (sym == null) {
-                    sym = exactLocalClassSymbol(cls);
-                }
+                // receiver (the receiver's own checked declaration first,
+                // then the receiver carrier's defining provider): a
+                // same-named local declaration of another identity never
+                // owns the required/optional decision of an imported
+                // class's field (never a textual class-name search).
+                Symbol.ClassSymbol sym =
+                    exactReceiverClassSymbol(mae.object(), cls);
                 if (sym == null) {
                     sym = resolveClassSymbol(cls);
                 }
@@ -1415,6 +1492,12 @@ public final class TypeChecker {
     private Type checkExpression(ExpressionNode expr) {
         Type t = computeExpressionType(expr);
         typeMap.put(expr, t);
+        // A class-typed expression the enclosing annotations did not
+        // already attribute records the exact declaration its own bound
+        // carrier names (a call result, an awaited value, an array
+        // element read): the one lowering and the field-operation checks
+        // then select the declaring provider without a name/identity scan.
+        recordInferredClassDecl(expr, t);
         return t;
     }
 
@@ -1745,6 +1828,15 @@ public final class TypeChecker {
         // literal's construction context to the enclosing expectation.
         List<Symbol.ClassSymbol> paramClassDeclsForContext =
             getParamClassDeclsForContext(call);
+        if (paramClassDeclsForContext == null && paramTypesForContext != null) {
+            // A function-typed callee carries no declared parameter
+            // annotation, but its bound parameter carriers name their
+            // defining providers: the argument literal's construction
+            // context still resolves the exact declaration (never a
+            // first alias or an identity-first match).
+            paramClassDeclsForContext =
+                providerClassDeclsOf(paramTypesForContext);
+        }
 
         List<Type> argTypes = new ArrayList<>();
         for (int i = 0; i < call.args().size(); i++) {
@@ -1954,16 +2046,13 @@ public final class TypeChecker {
         // declared nullable type is never unwrapped here.
         Type classTarget = objType;
         if (classTarget instanceof Type.Class cls) {
-            // The receiver's own declared annotation names the exact
+            // The receiver's own checked declaration names the exact
             // declaring provider first (two same-named siblings share one
-            // canonical identity), then the exact local declaration, then
-            // the identity-keyed cross-module resolution (never a textual
+            // canonical identity), then the receiver carrier's defining
+            // provider resolves the declaration (never a textual
             // class-name search that would pick a same-spelled local or
             // first-aliased class).
             Symbol.ClassSymbol sym = exactReceiverClassSymbol(mae.object(), cls);
-            if (sym == null) {
-                sym = exactLocalClassSymbol(cls);
-            }
             if (sym == null) {
                 sym = resolveClassSymbol(cls);
             }
@@ -2230,14 +2319,13 @@ public final class TypeChecker {
             sym = contextual;
             contextualSelection = true;
         } else {
-            sym = exactLocalClassSymbol(cls);
-            if (sym == null) {
-                // If the local scope names no exact-identity declaration,
-                // try the identity-keyed cross-module resolution (never a
-                // textual class-name search that would pick a same-spelled
-                // local or first-aliased class).
-                sym = resolveClassSymbol(cls);
-            }
+            // The receiver carrier's own defining provider resolves the
+            // declaration; only an unbound carrier (public descriptor
+            // synthesis, retained harnesses) falls back to the exact
+            // local declaration and the identity-keyed cross-module
+            // resolution (never a textual class-name search that would
+            // pick a same-spelled local or first-aliased class).
+            sym = resolveClassSymbol(cls);
         }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
             error(DiagnosticCode.E3004, "Unknown class '" + cls.name() + "'", obj.span());
@@ -2459,13 +2547,10 @@ public final class TypeChecker {
         }
 
         Symbol.ClassSymbol sym = exactReceiverClassSymbol(has.object(), cls);
-        if (sym == null) {
-            sym = exactLocalClassSymbol(cls);
-        }
-        // If neither the receiver's declared annotation nor the local
-        // scope names an exact declaration, try the identity-keyed
-        // cross-module resolution (never a textual class-name search that
-        // would pick a same-spelled local or first-aliased class).
+        // If neither the receiver's own checked declaration nor the local
+        // scope names an exact declaration, the receiver carrier's own
+        // defining provider resolves it (never a textual class-name search
+        // that would pick a same-spelled local or first-aliased class).
         if (sym == null) {
             sym = resolveClassSymbol(cls);
         }

@@ -464,6 +464,7 @@ public class CheckerTest {
         testImportedClassProviderWithSameNamedLocal();
         testImportedProviderDeleteBesideSameNamedLocal();
         testImportedProviderCrossingRejected();
+        testCallReceiverAndFunctionTypedProviderResolution();
         testJsonableImportedThroughArrayAndNullable();
         testJsonableLocalCycleWithSameNamedImported();
 
@@ -4358,6 +4359,112 @@ public class CheckerTest {
         assertNoErrors(control,
             "same-provider values remain compatible beside the distinct "
                 + "same-spelled declaration");
+    }
+
+    static void testCallReceiverAndFunctionTypedProviderResolution() {
+        System.out.println("-- a call-result receiver and a function-typed "
+            + "callee resolve the declared provider, never a same-identity "
+            + "local or first-listed declaration --");
+        deal.ast.Span span = new deal.ast.Span("test.deal", 1, 1, 1, 5);
+        deal.identity.CanonicalClassIdentity sharedIdentity =
+            IdentityTestFixtures.identityOf("test.deal", "Point");
+        for (boolean irFirst : new boolean[] { true, false }) {
+            String order = irFirst ? "ir registered first"
+                : "strict registered first";
+            StubModuleResolver resolver = new StubModuleResolver();
+
+            // The optional-field provider: `nick?: string` and the `a: int`
+            // member the local declaration does not carry.
+            Symbol.ClassSymbol irPoint = new Symbol.ClassSymbol("Point",
+                List.of(new ClassField(span, "nick", true, false,
+                        new deal.ast.NamedType(span, "string"),
+                        java.util.Optional.empty()),
+                    new ClassField(span, "a", false, false,
+                        new deal.ast.NamedType(span, "int"),
+                        java.util.Optional.empty())),
+                "./ir", sharedIdentity);
+            Map<String, Type> irExports = new HashMap<>();
+            irExports.put("Point", Types.classType("Point", sharedIdentity,
+                "./ir"));
+            irExports.put("make", new Type.Func(List.of(),
+                Types.classType("Point", sharedIdentity, "./ir"), false));
+            irExports.put("take", new Type.Func(List.of(
+                Types.classType("Point", sharedIdentity, "./ir")),
+                Type.Int.INSTANCE, false));
+
+            // The required-field provider (the other direction of the
+            // required/optional decision).
+            Symbol.ClassSymbol strictPoint = new Symbol.ClassSymbol("Point",
+                List.of(new ClassField(span, "nick", false, false,
+                    new deal.ast.NamedType(span, "int"),
+                    java.util.Optional.empty())),
+                "./strict", sharedIdentity);
+            Map<String, Type> strictExports = new HashMap<>();
+            strictExports.put("Point", Types.classType("Point", sharedIdentity,
+                "./strict"));
+            strictExports.put("make", new Type.Func(List.of(),
+                Types.classType("Point", sharedIdentity, "./strict"),
+                false));
+
+            if (irFirst) {
+                resolver.registerClassSymbol("./ir", irPoint);
+                resolver.register("./ir", irExports);
+                resolver.registerClassSymbol("./strict", strictPoint);
+                resolver.register("./strict", strictExports);
+            } else {
+                resolver.registerClassSymbol("./strict", strictPoint);
+                resolver.register("./strict", strictExports);
+                resolver.registerClassSymbol("./ir", irPoint);
+                resolver.register("./ir", irExports);
+            }
+
+            // The local same-identity declaration carries the required
+            // `nick` and no `a`: a name/identity-based fallback would own
+            // the call-result receiver's field decisions.
+            String local = "import * as Other from \"./ir\";\n"
+                + "class Point { nick: int = 1; }\n";
+            CheckerOutput resolved = checkProgramWithModule(local
+                + "export function main(): null {\n"
+                + "  if (has(Other.make().nick)) { return null; }\n"
+                + "  let v: int = Other.make().a;\n"
+                + "  let y = Other.make();\n"
+                + "  delete y.nick;\n"
+                + "  let f: (x: Other.Point) => int = Other.take;\n"
+                + "  let n: int = f({ nick: \"s\", a: 1 });\n"
+                + "  return null;\n"
+                + "}\n", resolver);
+            assertNoErrors(resolved,
+                "the optional receiver provider owns the has check, the call "
+                    + "read, the inferred-binding delete and the function-typed "
+                    + "argument literal beside the same-identity local "
+                    + "declaration (" + order + ")");
+
+            // The reversed requirement direction: the imported provider's
+            // `nick` is required while the local same-identity declaration
+            // declares it optional — the imported declaration still owns
+            // the decisions, so both are refused.
+            String optionalLocal = "import * as Other from \"./strict\";\n"
+                + "class Point { nick?: string; }\n";
+            CheckerOutput hasRequired = checkProgramWithModule(optionalLocal
+                + "export function main(): null {\n"
+                + "  if (has(Other.make().nick)) { return null; }\n"
+                + "  return null;\n"
+                + "}\n", resolver);
+            assertError(hasRequired, "E4005",
+                "a required field of the receiver's declared provider is not "
+                    + "silently accepted because a local same-identity "
+                    + "declaration is optional (" + order + ")");
+            CheckerOutput deleteRequired = checkProgramWithModule(optionalLocal
+                + "export function main(): null {\n"
+                + "  let y = Other.make();\n"
+                + "  delete y.nick;\n"
+                + "  return null;\n"
+                + "}\n", resolver);
+            assertError(deleteRequired, "E4004",
+                "a required field of the receiver's declared provider is not "
+                    + "deletable because a local same-identity declaration is "
+                    + "optional (" + order + ")");
+        }
     }
 
     static void testJsonableImportedSameNameDistinctIdentity() {

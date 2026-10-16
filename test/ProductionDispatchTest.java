@@ -1407,6 +1407,109 @@ public class ProductionDispatchTest {
     }
 
     /**
+     * The call-result receiver and function-typed callee fixture (review
+     * cycle 1 findings 1 and 2): the callee's declared return carries the
+     * provider, so the chained read, the inferred binding's read/write
+     * and the function-typed argument literal all select that declaration
+     * (7 and the written 11), never the sibling's 93.
+     */
+    private static final String CALL_RECEIVER_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function make(): Ir { return { a: 7 }; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    private static final String CALL_RECEIVER_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        """;
+
+    private static String callReceiverBody(String firstImport,
+            String secondImport) {
+        return "import * as console from \"std/console\";\n"
+            + firstImport + secondImport
+            + "\n"
+            + "export function main(): null {\n"
+            + "  let v: int = ir.make().a;\n"
+            + "  let f: (x: ir.Ir) => int = ir.useIr;\n"
+            + "  let n: int = f({});\n"
+            + "  let y = ir.make();\n"
+            + "  y.a = 11;\n"
+            + "  let w: int = y.a;\n"
+            + "  if (v === 7 && n === 7 && w === 11) {\n"
+            + "    console.log(\"ok\");\n"
+            + "  } else {\n"
+            + "    console.log(\"wrong\");\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n";
+    }
+
+    /**
+     * The call-result receiver lanes (review cycle 1 findings 1 and 2):
+     * a receiver whose type is the callee's declared return, an inferred
+     * binding of it, and a function-typed callee's argument literal all
+     * select the declared provider's declaration beside a same-identity
+     * sibling on the real LuaJIT and JVM production lanes, in either
+     * import order, printing {@code ok} with an empty stderr and exit 0.
+     */
+    private static void testProductionCallReceiverProviderBesideSameIdentityLocal()
+            throws Exception {
+        System.out.println("-- public compilation: the call-result receiver "
+            + "and function-typed callee providers beside a same-identity "
+            + "sibling on the shared-IR production lanes --");
+        for (boolean codecFirst : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = "call-receiver provider " + backend
+                    + (codecFirst ? " (codec first)" : " (ir first)");
+                Path project = Files.createTempDirectory(
+                    "production-call-receiver-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/m/ir.deal", CALL_RECEIVER_IR_SOURCE);
+                    write(project, "src/m/codec.deal", CALL_RECEIVER_CODEC_SOURCE);
+                    write(project, "src/main.deal", codecFirst
+                        ? callReceiverBody(
+                            "import * as codec from \"./m/codec\";\n",
+                            "import * as ir from \"./m/ir\";\n")
+                        : callReceiverBody(
+                            "import * as ir from \"./m/ir\";\n",
+                            "import * as codec from \"./m/codec\";\n"));
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /**
      * The plan-imported/non-plan-local same-identity JSON fixture (review
      * cycle 4, finding 1): the imported sibling is the only plan-bearing
      * ({@code @jsonable}) declaration while the entry's own same-identity
@@ -5986,6 +6089,7 @@ public class ProductionDispatchTest {
         testProductionSiblingModuleProviderIdentity();
         testProductionSameNameSiblingSharedIr();
         testProductionLocalDeclarationBesideCalleeProvider();
+        testProductionCallReceiverProviderBesideSameIdentityLocal();
         testProductionPlanOwnerJsonLinks();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();

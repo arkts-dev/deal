@@ -757,6 +757,67 @@ public class ProjectLoweringTest {
         """;
 
     /**
+     * The call-result receiver fixture (review cycle 1 findings 1 and 2):
+     * the provider declares {@code Ir} with the default 7 (and the same
+     * field name as the sibling, so only the exact provider's per-
+     * construction default proves the selection), a factory function, and
+     * an entry whose parameter names it.
+     */
+    private static final String CALL_RECEIVER_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function make(): Ir { return { a: 7 }; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    /** The same-identity sibling of the call-receiver provider (93). */
+    private static final String CALL_RECEIVER_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        """;
+
+    /**
+     * The call-result receiver consumer: the callee's declared return
+     * carries the provider, so the chained read, the inferred binding's
+     * read/write and the function-typed argument literal all select that
+     * declaration (7 and the written 11), never the sibling's 93.
+     */
+    private static final String CALL_RECEIVER_APP_SOURCE = """
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+
+        export function main(): null {
+          let v: int = ir.make().a;
+          let f: (x: ir.Ir) => int = ir.useIr;
+          let n: int = f({});
+          let y = ir.make();
+          y.a = 11;
+          let w: int = y.a;
+          if (v !== 7 || n !== 7 || w !== 11) {
+            throw { code: "WRONG", message: "call receiver" };
+          }
+          return null;
+        }
+        """;
+
+    /** The call-result receiver consumer with the sibling imported first. */
+    private static final String CALL_RECEIVER_APP_REVERSED_SOURCE = """
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+
+        export function main(): null {
+          let v: int = ir.make().a;
+          let f: (x: ir.Ir) => int = ir.useIr;
+          let n: int = f({});
+          let y = ir.make();
+          y.a = 11;
+          let w: int = y.a;
+          if (v !== 7 || n !== 7 || w !== 11) {
+            throw { code: "WRONG", message: "call receiver" };
+          }
+          return null;
+        }
+        """;
+
+    /**
      * The standalone callee-parameter and declared-return fixture beside a
      * same-identity local declaration: {@code ir.useIr({})} and
      * {@code g({})} construct the imported {@code ir.Ir} (7), never the
@@ -3310,18 +3371,19 @@ public class ProjectLoweringTest {
     }
 
     /**
-     * The unanchored construction context (review cycle 5 finding 1's
-     * fail-close): a literal whose callee carries no declaration surface
-     * (a function-typed value) has no recorded construction context, so a
-     * same-identity collision fails it closed with the named E6005 even
-     * though the unit carries a local layout; the same shape without the
-     * collision keeps the identity-keyed provider route.
+     * The function-typed callee's parameter provider (review cycle 1
+     * finding 2): a function-typed value carries no declared parameter
+     * annotation, but its bound parameter carrier names the defining
+     * provider, so an argument literal is laid out by that declaration —
+     * never the consumer's same-identity local declaration, whose
+     * per-construction default would otherwise capture it. The same shape
+     * without the collision keeps the identity-keyed provider route.
      */
-    private static void testUnanchoredConstructionContextFailsClosed()
+    private static void testFunctionTypedCalleeParameterProviderBesideSameIdentityLocal()
             throws Exception {
-        System.out.println("-- an unanchored literal of a multiple-declaration "
-            + "identity fails closed: no recorded construction context selects a "
-            + "declaration even though the unit carries a local layout --");
+        System.out.println("-- the function-typed callee parameter carrier owns "
+            + "its argument literal's construction beside a same-identity "
+            + "local declaration --");
         String app = "import * as ir from \"./ir\";\n\n"
             + "class Ir { a: int = 5; }\n\n"
             + "export function main(): null {\n"
@@ -3330,20 +3392,66 @@ public class ProjectLoweringTest {
             + "  if (n !== 7) { throw { code: \"WRONG_N\", message: \"n\" }; }\n"
             + "  return null;\n"
             + "}\n";
-        for (CompilerDiagnostic diagnostic : refusedCompile(app,
-                Map.of("src/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE))) {
-            check("E6005".equals(diagnostic.code())
-                    && diagnostic.message().contains("CONSTRUCT_UNLOWERED")
-                    && diagnostic.message().contains(
-                        "same-directory sibling declarations")
-                    && diagnostic.message().contains(
-                        "no recorded construction context selects one"),
-                "the unanchored multiple-declaration construction fails closed "
-                    + "with the named E6005; got " + diagnostic.message());
+        RealProject project = compileProject(app,
+            Map.of("src/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result =
+                lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the function-typed callee project lowers: "
+                    + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            LoweredModuleUnit appUnit = result.project().modules().get(APP);
+            LoweredModuleUnit irUnit = result.project().modules()
+                .get(new ModuleId("ir"));
+            check(appUnit != null && irUnit != null,
+                "the closure carries the consumer and the parameter provider");
+            if (appUnit == null || irUnit == null) {
+                return;
+            }
+            ClassId irId = new ClassId("src", "Ir");
+            ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+            int shared = 0;
+            int local = 0;
+            for (SemanticOp op : appUnit.ops()) {
+                if (op.kind() != SemanticOpKind.CLASS_NEW
+                        || !(op.payload()
+                            instanceof KindPayload.ClassNewPayload payload)
+                        || !payload.classId().equals(irId)) {
+                    continue;
+                }
+                if (payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                    shared++;
+                    checkEq(irEntry, payload.classFactoryRef(),
+                        "the function-typed callee's argument literal references "
+                            + "the parameter provider's entry");
+                    checkEq(irUnit.classLayouts().get(irId), payload.layout(),
+                        "the function-typed callee's argument literal carries "
+                            + "the parameter provider's layout");
+                } else {
+                    local++;
+                }
+            }
+            checkEq(1, shared,
+                "the argument literal constructs the parameter carrier's "
+                    + "declaration");
+            checkEq(0, local,
+                "the unit-local same-identity declaration never constructs the "
+                    + "argument literal");
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(result.project(),
+                    result.tables(), result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle executes the parameter provider's 7, never the "
+                    + "local declaration's 5: " + run.comparisonReport());
+        } finally {
+            deleteRecursively(project.root());
         }
         // The control: the same shape without the same-identity local
-        // declaration has exactly one declaration, so the identity-keyed
-        // provider route constructs it.
+        // declaration resolves the sole declaration (the parameter
+        // carrier's provider) and executes its default.
         RealProject control = compileProject(
             app.replace("class Ir { a: int = 5; }\n\n", ""),
             Map.of("src/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE), Map.of());
@@ -3379,7 +3487,7 @@ public class ProjectLoweringTest {
                 }
             }
             checkEq(1, shared,
-                "the control's unanchored literal resolves the sole declaration");
+                "the control's argument literal resolves the sole declaration");
             SemanticRuntimeModel.ConsumerRun run =
                 SemanticOracle.executeProjectInits(result.project(),
                     result.tables(), result.registries(), null);
@@ -3388,6 +3496,122 @@ public class ProjectLoweringTest {
                     + run.comparisonReport());
         } finally {
             deleteRecursively(control.root());
+        }
+    }
+
+    /**
+     * The call-result receiver (review cycle 1 findings 1 and 2): a
+     * receiver whose type is the callee's declared return carries the
+     * declaring provider, so the field read/write resolve that
+     * declaration's layout — never the same-identity sibling's — and the
+     * identity-keyed lowering fail-close is not reached for a legal
+     * program.
+     */
+    private static void testCallReceiverProviderBesideSameIdentityLocal()
+            throws Exception {
+        System.out.println("-- the call-result receiver's declared return "
+            + "provider owns its field read/write beside a same-identity "
+            + "sibling, independent of the import order --");
+        for (boolean reversed : new boolean[] { false, true }) {
+            String label = reversed ? "reversed imports" : "ir imported first";
+            RealProject project = compileProject("src/app.deal",
+                reversed ? CALL_RECEIVER_APP_REVERSED_SOURCE
+                    : CALL_RECEIVER_APP_SOURCE,
+                Map.of("src/m/ir.deal", CALL_RECEIVER_IR_SOURCE,
+                    "src/m/codec.deal", CALL_RECEIVER_CODEC_SOURCE),
+                Map.of());
+            try {
+                SemanticLowerer.ProjectLoweringResult result =
+                    lower(project, invocation());
+                check(!result.hasErrors() && result.project() != null,
+                    "the call-result receiver project lowers (" + label + "): "
+                        + result.diagnostics());
+                if (result.project() == null) {
+                    continue;
+                }
+                ExecutableLoweredProject lowered = result.project();
+                ModuleId ir = new ModuleId("m.ir");
+                LoweredModuleUnit irUnit = lowered.modules().get(ir);
+                LoweredModuleUnit app = lowered.modules().get(APP);
+                check(irUnit != null && app != null,
+                    "the " + label + " closure carries the provider and the "
+                        + "consumer");
+                if (irUnit == null || app == null) {
+                    continue;
+                }
+                ClassId irId = new ClassId("src/m", "Ir");
+                ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+                check(irEntry != null,
+                    "the " + label + " provider registers its construction "
+                        + "entry");
+                if (irEntry == null) {
+                    continue;
+                }
+                int reads = 0;
+                int writes = 0;
+                int shared = 0;
+                for (SemanticOp op : app.ops()) {
+                    switch (op.payload()) {
+                        case KindPayload.FieldReadPayload read -> {
+                            if (read.classId().equals(irId)) {
+                                reads++;
+                                checkEq(irEntry, read.classFactoryRef(),
+                                    "the " + label + " call-result read names "
+                                        + "the declared return provider's entry");
+                            }
+                        }
+                        case KindPayload.FieldWritePayload write -> {
+                            if (write.classId().equals(irId)) {
+                                writes++;
+                                checkEq(irEntry, write.classFactoryRef(),
+                                    "the " + label + " call-result write names "
+                                        + "the declared return provider's entry");
+                            }
+                        }
+                        case KindPayload.ClassNewPayload ctor -> {
+                            if (ctor.classId().equals(irId)
+                                    && ctor.defaultOwner()
+                                        == DefaultOwner.SHARED_FACTORY) {
+                                shared++;
+                                checkEq(irEntry, ctor.classFactoryRef(),
+                                    "the " + label + " argument literal names "
+                                        + "the parameter provider's entry");
+                            }
+                        }
+                        default -> {
+                            // Not a class field operation.
+                        }
+                    }
+                }
+                checkEq(2, reads,
+                    "the " + label + " call-result and inferred-binding reads "
+                        + "lower two FIELD_READs");
+                checkEq(1, writes,
+                    "the " + label + " call-result write lowers one FIELD_WRITE");
+                checkEq(1, shared,
+                    "the " + label + " function-typed argument literal "
+                        + "constructs the parameter provider's declaration");
+                SemanticIrValidator.ComparisonFacts facts =
+                    new SemanticIrValidator.ComparisonFacts(
+                        project.index().interfaceIndexDigest(),
+                        SemanticProfile.DEAL_V1_3_INT32,
+                        invocation().capabilityRegistryHash());
+                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                    "the " + label + " call-result receiver project passes "
+                        + "the typed project surface");
+                String text = SemanticIrValidator.toProjectText(lowered);
+                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                    "the " + label + " call-result receiver project passes "
+                        + "the text project surface");
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.executeProjectInits(lowered, result.tables(),
+                        result.registries(), null);
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the " + label + " oracle executes the provider's 7 and "
+                        + "the written 11: " + run.comparisonReport());
+            } finally {
+                deleteRecursively(project.root());
+            }
         }
     }
 
@@ -6303,7 +6527,8 @@ public class ProjectLoweringTest {
             testLocalDeclarationOwnsLiteralBesideImportedSiblings();
             testImportedContextBesideCalleeArgumentProvider();
             testCalleeParameterAndReturnProviderBesideSameIdentityLocal();
-            testUnanchoredConstructionContextFailsClosed();
+            testFunctionTypedCalleeParameterProviderBesideSameIdentityLocal();
+            testCallReceiverProviderBesideSameIdentityLocal();
             testImportedFieldWriteProviderDeferral();
             testCorruptedUnitSeed(baseline);
             testMissingModuleSeed(baseline);
