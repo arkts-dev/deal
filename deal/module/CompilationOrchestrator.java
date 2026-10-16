@@ -3115,6 +3115,34 @@ public final class CompilationOrchestrator {
             return null;
         }
 
+        /**
+         * The exact declared class symbol one annotation names in the
+         * supplied declaring module's own scope: an implementation
+         * module's checked symbol table resolves the local classes and
+         * its import aliases' class surfaces, a declaration module's
+         * synthesized resolver the same. Two same-named classes of
+         * sibling modules in one directory share one canonical identity,
+         * so the annotation's own declared symbol — never an
+         * identity-keyed or textual lookup — selects the declaration.
+         */
+        @Override
+        public Symbol.ClassSymbol resolveTypeNodeClassSymbolInModule(
+                TypeNode typeNode, String modulePath, String importingModule)
+                throws ModuleNotFoundException {
+            for (ModuleInfo info : modules.values()) {
+                if (!info.modulePath.equals(modulePath)) {
+                    continue;
+                }
+                if (info.symbolTable != null) {
+                    return NameResolver.classSymbolInScope(info.symbolTable,
+                        typeNode);
+                }
+                return declarationResolver(info)
+                    .resolveTypeNodeClassSymbol(typeNode);
+            }
+            return null;
+        }
+
         private NameResolver declarationResolver(ModuleInfo info) {
             NameResolver cached = declarationResolvers.get(info.modulePath);
             if (cached != null) {

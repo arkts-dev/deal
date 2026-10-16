@@ -1139,6 +1139,71 @@ public final class NameResolver {
     }
 
     /**
+     * Resolves the exact module-level class declaration a class-typed
+     * annotation names in this module's scope, or {@code null} for a
+     * primitive/function/foreign-surfaceless annotation: a qualified
+     * spelling resolves the alias's own declared class symbol (the
+     * imported module's class surface), a bare name its local symbol.
+     * Two same-named classes of sibling modules in one directory share
+     * one canonical identity, so the declared symbol — never an
+     * identity-first or textual lookup — names the declaration the
+     * annotation selected.
+     */
+    public Symbol.ClassSymbol resolveTypeNodeClassSymbol(TypeNode typeNode) {
+        return classSymbolInScope(root, typeNode);
+    }
+
+    /**
+     * The declaring module's exact declared class symbol of one
+     * annotation: this module's scope for a same-module (or empty)
+     * declaring module, the module resolver's declared-symbol surface
+     * otherwise (implementation modules carry their own checked symbol
+     * tables; declaration modules resolve through their synthesized
+     * resolver). {@code null} when no exact class declaration resolves.
+     */
+    public Symbol.ClassSymbol resolveTypeNodeClassSymbolInModule(
+            TypeNode typeNode, String modulePath) {
+        if (modulePath == null || modulePath.isEmpty()
+                || modulePath.equals(this.modulePath)) {
+            return resolveTypeNodeClassSymbol(typeNode);
+        }
+        try {
+            return moduleResolver.resolveTypeNodeClassSymbolInModule(
+                typeNode, modulePath, this.modulePath);
+        } catch (ModuleResolver.ModuleNotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The exact class symbol one annotation names in the supplied scope
+     * (the same shape {@code TypeChecker#exactAnnotationClassSymbol}
+     * consumes): the local declaration of a bare name, the imported
+     * module's own class symbol of a qualified name, and the recursive
+     * inner forms of nullable/array annotations.
+     */
+    public static Symbol.ClassSymbol classSymbolInScope(SymbolTable scope,
+                                                        TypeNode typeNode) {
+        if (scope == null || typeNode == null) {
+            return null;
+        }
+        return switch (typeNode) {
+            case NamedType nt -> {
+                Symbol sym = scope.resolve(nt.name());
+                yield sym instanceof Symbol.ClassSymbol cs ? cs : null;
+            }
+            case QualifiedType qt -> {
+                Symbol sym = scope.resolve(qt.moduleName());
+                yield sym instanceof Symbol.ModuleSymbol ms
+                    ? ms.classSymbols().get(qt.typeName()) : null;
+            }
+            case NullableType nt -> classSymbolInScope(scope, nt.innerType());
+            case ArrayType at -> classSymbolInScope(scope, at.elementType());
+            default -> null;
+        };
+    }
+
+    /**
      * Checks whether a function is exported from a given module.
      *
      * <p>For same-module queries ({@code modulePath} is null, empty, or

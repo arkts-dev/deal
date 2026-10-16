@@ -41,6 +41,23 @@ public interface ModuleResolver {
     }
 
     /**
+     * Resolves the exact declared class symbol one class-typed annotation
+     * names in the supplied declaring module's own scope, or {@code null}:
+     * the declared-symbol counterpart of
+     * {@link #resolveTypeNodeInModule}. Two same-named classes of sibling
+     * modules in one directory share one canonical identity, so the
+     * annotation's own declared symbol — never an identity-keyed or
+     * textual lookup — selects the declaration. The default returns
+     * {@code null} (unsupported by non-production resolvers); callers keep
+     * the identity-keyed route then.
+     */
+    default Symbol.ClassSymbol resolveTypeNodeClassSymbolInModule(
+            TypeNode typeNode, String modulePath, String importingModule)
+        throws ModuleNotFoundException {
+        return null; // unsupported by default
+    }
+
+    /**
      * Resolve a class symbol from an imported module.
      *
      * <p>Used by the type checker and code generator to look up class field

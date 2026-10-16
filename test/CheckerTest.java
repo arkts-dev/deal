@@ -462,6 +462,7 @@ public class CheckerTest {
         testJsonableImportedClass_invalid();
         testJsonableImportedSameNameDistinctIdentity();
         testImportedClassProviderWithSameNamedLocal();
+        testImportedProviderDeleteBesideSameNamedLocal();
         testJsonableImportedThroughArrayAndNullable();
         testJsonableLocalCycleWithSameNamedImported();
 
@@ -4131,6 +4132,84 @@ public class CheckerTest {
                     IdentityTestFixtures.identityOf("./foreign", "Point")));
         check(sawForeign, "the imported construction carries the imported "
             + "provider's canonical identity");
+    }
+
+    /**
+     * The delete target resolves the imported provider's declaration, not
+     * a same-named local declaration (ISSUE-0809 review cycle 1): the
+     * required/optional decision of an imported class's field belongs to
+     * the declaring provider only, in both directions (a required imported
+     * field is never deletable beside an optional local spelling, and an
+     * optional imported field stays deletable beside a required local
+     * spelling).
+     */
+    static void testImportedProviderDeleteBesideSameNamedLocal() {
+        System.out.println("-- imported-provider delete beside a same-named local "
+            + "declaration --");
+        deal.ast.Span span = new deal.ast.Span("test.deal", 1, 1, 1, 5);
+
+        // The imported provider's field is required while the local
+        // spelling's is optional: the delete must be rejected.
+        StubModuleResolver requiredProvider = new StubModuleResolver();
+        requiredProvider.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
+            "Point",
+            List.of(new ClassField(span, "nick", false, false,
+                new deal.ast.NamedType(span, "int"), java.util.Optional.empty())),
+            "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point")));
+        Map<String, Type> requiredExports = new HashMap<>();
+        requiredExports.put("Point",
+            IdentityTestFixtures.classType("Point", "./foreign"));
+        requiredProvider.register("./foreign", requiredExports);
+        CheckerOutput required = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n"
+            + "\n"
+            + "class Point {\n"
+            + "  nick?: string;\n"
+            + "}\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  let a: Other.Point = {};\n"
+            + "  delete a.nick;\n"
+            + "  return null;\n"
+            + "}\n",
+            requiredProvider);
+        check(required.result.diagnostics().stream()
+                .anyMatch(d -> d.code().equals("E4004")),
+            "the required imported field's delete is rejected beside an "
+                + "optional same-named local declaration: "
+                + required.result.diagnostics());
+
+        // The imported provider's field is optional while the local
+        // spelling's is required: the delete must be accepted.
+        StubModuleResolver optionalProvider = new StubModuleResolver();
+        optionalProvider.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
+            "Point",
+            List.of(new ClassField(span, "nick", true, false,
+                new deal.ast.NamedType(span, "string"),
+                java.util.Optional.empty())),
+            "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point")));
+        Map<String, Type> optionalExports = new HashMap<>();
+        optionalExports.put("Point",
+            IdentityTestFixtures.classType("Point", "./foreign"));
+        optionalProvider.register("./foreign", optionalExports);
+        CheckerOutput optional = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n"
+            + "\n"
+            + "class Point {\n"
+            + "  nick: int = 1;\n"
+            + "}\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  let a: Other.Point = {};\n"
+            + "  delete a.nick;\n"
+            + "  return null;\n"
+            + "}\n",
+            optionalProvider);
+        check(optional.result.diagnostics().stream()
+                .noneMatch(d -> d.code().equals("E4004")),
+            "the optional imported field's delete is accepted beside a "
+                + "required same-named local declaration: "
+                + optional.result.diagnostics());
     }
 
     static void testJsonableImportedSameNameDistinctIdentity() {

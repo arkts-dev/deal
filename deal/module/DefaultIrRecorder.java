@@ -719,11 +719,21 @@ final class DefaultIrRecorder {
         ProgramNode declaringProgram = null;
         DefaultPlanImport declaringProvider = null;
         if (resolvedType instanceof Type.Class cls) {
-            Symbol sym = scope.resolve(cls.name());
+            // The import the literal's checked context names is the exact
+            // declaring provider (the declared annotation's qualified
+            // spelling, the resolved imported callee's parameter context,
+            // or the enclosing field's declaring provider): a same-identity
+            // local declaration of the same name must never capture the
+            // construction of an imported context, so the textual
+            // same-module lookup runs only when the context names no
+            // import.
             Symbol.ClassSymbol sameModule = null;
-            if (sym instanceof Symbol.ClassSymbol cs
-                    && cs.identity().equals(cls.identity())) {
-                sameModule = cs;
+            if (!contextNamesImport(cls, contextProvider)) {
+                Symbol sym = scope.resolve(cls.name());
+                if (sym instanceof Symbol.ClassSymbol cs
+                        && cs.identity().equals(cls.identity())) {
+                    sameModule = cs;
+                }
             }
             if (sameModule != null) {
                 bindings.putIfAbsent(cls.name(), sameModule);
@@ -1230,6 +1240,33 @@ final class DefaultIrRecorder {
             }
         }
         return exportedMatch != null ? exportedMatch : identityMatch;
+    }
+
+    /**
+     * Whether the literal's checked context names an import that owns the
+     * demanded class: the contextual provider the checked route resolved
+     * (the declared annotation's qualified spelling, the resolved
+     * imported callee's parameter context, or the enclosing field's
+     * declaring provider), or the occurrence's recorded qualified alias.
+     * A context naming an import selects that exact declaration, so a
+     * same-identity local declaration of the same name never captures the
+     * construction (the textual scope lookup stays the retained fallback
+     * for a context that names no import).
+     */
+    private boolean contextNamesImport(Type.Class cls,
+            DefaultPlanImport contextProvider) {
+        CanonicalModuleIdentity target = cls.identity().moduleIdentity();
+        if (contextProvider != null && ownsClass(contextProvider, cls, target)) {
+            return true;
+        }
+        String qualified = qualifiedClassAliases.get(cls.name());
+        if (qualified != null) {
+            DefaultPlanImport provider = imports.get(qualified);
+            if (provider != null && ownsClass(provider, cls, target)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

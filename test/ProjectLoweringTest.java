@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.ClassField;
 import deal.checker.BuiltinErrorDeclaration;
+import deal.checker.CheckResult;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
@@ -338,6 +339,7 @@ public class ProjectLoweringTest {
      * exact provider each spelling names.
      */
     private static final String SAME_SPELLED_ALPHA_SOURCE = """
+        // @jsonable
         export class Point {
           x: int = 0;
           nick?: string;
@@ -345,14 +347,27 @@ public class ProjectLoweringTest {
         """;
 
     private static final String SAME_SPELLED_BETA_SOURCE = """
+        // @jsonable
         export class Point {
           y: string = "";
         }
         """;
 
+    /**
+     * The consumer of the same-spelled pair: the construction, field and
+     * generated JSON links of both distinct providers (the nested
+     * class-valued {@code Wrap} fields) resolve the exact declared
+     * provider.
+     */
     private static final String SAME_SPELLED_APP_SOURCE = """
         import * as alpha from "./alpha/util";
         import * as beta from "./beta/util";
+
+        // @jsonable
+        export class Wrap {
+          a: alpha.Point = { x: 1 };
+          b: beta.Point = { y: "s" };
+        }
 
         export function main(): null {
           let a: alpha.Point = { x: 1 };
@@ -369,6 +384,19 @@ public class ProjectLoweringTest {
           if (xs[0].y !== "a") { throw { code: "WRONG_ARRAY", message: "array" }; }
           let n: alpha.Point | null = { x: 2 };
           if (n === null) { throw { code: "WRONG_NULLABLE", message: "n" }; }
+          let w: Wrap = {};
+          let json: string = Wrap$toJson(w);
+          if (json !== "{\\\"a\\\":{\\\"x\\\":1},\\\"b\\\":{\\\"y\\\":\\\"s\\\"}}") {
+            throw { code: "WRONG_JSON", message: json };
+          }
+          let back: Wrap | null = Wrap$fromJson(json);
+          if (back !== null) {
+            if (back.a.x !== 1 || back.b.y !== "s") {
+              throw { code: "WRONG_JSON_FIELDS", message: "back" };
+            }
+          } else {
+            throw { code: "WRONG_JSON_NULL", message: "back" };
+          }
           return null;
         }
         """;
@@ -409,6 +437,123 @@ public class ProjectLoweringTest {
           if (h.items[0].a !== 7) { throw { code: "WRONG_ARRAY", message: "a" }; }
           let xs: ir.Ir[] = [{}];
           if (xs[0].a !== 7) { throw { code: "WRONG_LITERAL_ARRAY", message: "a" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The same-identity sibling pair's field operations: the {@code ir}
+     * sibling's optional field and the {@code codec} sibling's required
+     * field of one canonical identity, plus a same-named local spelling in
+     * the consumer's own directory ({@code src/other.deal} and the
+     * consumer's {@code Point} share the identity): every field read,
+     * write and delete selects the exact declaring provider.
+     */
+    private static final String FIELD_SIBLING_IR_SOURCE = """
+        export class Ir { a: int = 7; nick?: string; }
+        """;
+
+    private static final String FIELD_SIBLING_CODEC_SOURCE = """
+        export class Ir { nick: int = 93; }
+        """;
+
+    private static final String FIELD_SIBLING_OTHER_SOURCE = """
+        export class Point { nick: int = 1; }
+        """;
+
+    private static final String FIELD_SIBLING_APP_SOURCE = """
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+        import * as other from "./other";
+
+        class Point { nick: string = ""; }
+
+        export function main(): null {
+          let x: ir.Ir = {};
+          x.a = 5;
+          if (x.a !== 5) { throw { code: "WRONG_IR_READ", message: "a" }; }
+          let had: boolean = has(x.nick);
+          delete x.nick;
+          if (had || has(x.nick)) { throw { code: "WRONG_IR_DELETE", message: "nick" }; }
+          let y: other.Point = {};
+          y.nick = 2;
+          if (y.nick !== 2) { throw { code: "WRONG_OTHER", message: "nick" }; }
+          let p: Point = {};
+          if (p.nick !== "") { throw { code: "WRONG_LOCAL", message: "nick" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The same-identity sibling field fixture with the provider imports
+     * reversed: the field links must not depend on the import order.
+     */
+    private static final String FIELD_SIBLING_APP_REVERSED_SOURCE = """
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+        import * as other from "./other";
+
+        class Point { nick: string = ""; }
+
+        export function main(): null {
+          let x: ir.Ir = {};
+          x.a = 5;
+          if (x.a !== 5) { throw { code: "WRONG_IR_READ", message: "a" }; }
+          let had: boolean = has(x.nick);
+          delete x.nick;
+          if (had || has(x.nick)) { throw { code: "WRONG_IR_DELETE", message: "nick" }; }
+          let y: other.Point = {};
+          y.nick = 2;
+          if (y.nick !== 2) { throw { code: "WRONG_OTHER", message: "nick" }; }
+          let p: Point = {};
+          if (p.nick !== "") { throw { code: "WRONG_LOCAL", message: "nick" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The ambiguous-JSON-link fixture: two same-identity sibling jsonable
+     * declarations and a consumer whose jsonable class carries a
+     * class-valued field of the sibling identity. The generated JSON plan
+     * table is keyed by the canonical class identity, so the nested link
+     * cannot select the exact declaration and fails closed.
+     */
+    private static final String JSON_SIBLING_IR_SOURCE = """
+        // @jsonable
+        export class Ir { a: int = 7; }
+        """;
+
+    private static final String JSON_SIBLING_CODEC_SOURCE = """
+        // @jsonable
+        export class Ir { a: string = ""; }
+        """;
+
+    private static final String JSON_SIBLING_APP_SOURCE = """
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+
+        // @jsonable
+        export class Wrap { item: ir.Ir = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s === "") { throw { code: "WRONG", message: "s" }; }
+          return null;
+        }
+        """;
+
+    private static final String JSON_SIBLING_APP_REVERSED_SOURCE = """
+        import * as codec from "./m/codec";
+        import * as ir from "./m/ir";
+
+        // @jsonable
+        export class Wrap { item: ir.Ir = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s === "") { throw { code: "WRONG", message: "s" }; }
           return null;
         }
         """;
@@ -2100,6 +2245,271 @@ public class ProjectLoweringTest {
                     + "never 93): " + run.comparisonReport());
         } finally {
             deleteRecursively(project.root());
+        }
+    }
+
+    private static void testSameIdentityFieldOperationResolution() throws Exception {
+        System.out.println("-- same-identity sibling field operations: the exact "
+            + "declaring provider owns every field read/write/delete, independent "
+            + "of the import order --");
+        for (boolean reversed : new boolean[] { false, true }) {
+            String label = reversed ? "reversed imports" : "ir imported first";
+            RealProject project = compileProject(reversed
+                    ? FIELD_SIBLING_APP_REVERSED_SOURCE
+                    : FIELD_SIBLING_APP_SOURCE,
+                Map.of("src/m/ir.deal", FIELD_SIBLING_IR_SOURCE,
+                    "src/m/codec.deal", FIELD_SIBLING_CODEC_SOURCE,
+                    "src/other.deal", FIELD_SIBLING_OTHER_SOURCE),
+                Map.of());
+            try {
+                SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+                check(!result.hasErrors() && result.project() != null,
+                    "the " + label + " same-identity field project lowers through "
+                        + "the one project entry: " + result.diagnostics());
+                if (result.project() == null) {
+                    continue;
+                }
+                ExecutableLoweredProject lowered = result.project();
+                ModuleId ir = new ModuleId("m.ir");
+                ModuleId codec = new ModuleId("m.codec");
+                ModuleId other = new ModuleId("other");
+                LoweredModuleUnit irUnit = lowered.modules().get(ir);
+                LoweredModuleUnit codecUnit = lowered.modules().get(codec);
+                LoweredModuleUnit otherUnit = lowered.modules().get(other);
+                LoweredModuleUnit app = lowered.modules().get(APP);
+                check(irUnit != null && codecUnit != null && otherUnit != null
+                        && app != null,
+                    "the " + label + " closure carries both siblings, the "
+                        + "same-identity provider and the consumer");
+                if (irUnit == null || codecUnit == null || otherUnit == null
+                        || app == null) {
+                    continue;
+                }
+                ClassId irId = new ClassId("src/m", "Ir");
+                ClassId pointId = new ClassId("src", "Point");
+                ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+                ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
+                ClassFactoryId otherEntry = factoryEntryOf(otherUnit, pointId);
+                check(irEntry != null && codecEntry != null && !irEntry.equals(codecEntry)
+                        && otherEntry != null,
+                    "the " + label + " sibling and same-identity declarations carry "
+                        + "their own construction entries");
+                if (irEntry == null || otherEntry == null) {
+                    continue;
+                }
+
+                List<KindPayload.FieldReadPayload> irReads = new ArrayList<>();
+                List<KindPayload.FieldReadPayload> pointReads = new ArrayList<>();
+                List<KindPayload.FieldWritePayload> irWrites = new ArrayList<>();
+                List<KindPayload.FieldWritePayload> pointWrites = new ArrayList<>();
+                List<KindPayload.FieldDeletePayload> irDeletes = new ArrayList<>();
+                for (SemanticOp op : app.ops()) {
+                    switch (op.payload()) {
+                        case KindPayload.FieldReadPayload read -> {
+                            if (read.classId().equals(irId)) {
+                                irReads.add(read);
+                            } else if (read.classId().equals(pointId)) {
+                                pointReads.add(read);
+                            }
+                        }
+                        case KindPayload.FieldWritePayload write -> {
+                            if (write.classId().equals(irId)) {
+                                irWrites.add(write);
+                            } else if (write.classId().equals(pointId)) {
+                                pointWrites.add(write);
+                            }
+                        }
+                        case KindPayload.FieldDeletePayload delete -> {
+                            if (delete.classId().equals(irId)) {
+                                irDeletes.add(delete);
+                            }
+                        }
+                        default -> {
+                            // Not a field operation.
+                        }
+                    }
+                }
+                checkEq(1, irReads.size(), "the " + label + " ir read lowers one "
+                    + "FIELD_READ");
+                checkEq(1, irWrites.size(), "the " + label + " ir write lowers one "
+                    + "FIELD_WRITE");
+                checkEq(1, irDeletes.size(), "the " + label + " ir delete lowers one "
+                    + "FIELD_DELETE");
+                for (KindPayload.FieldReadPayload read : irReads) {
+                    checkEq(irEntry, read.classFactoryRef(),
+                        "the " + label + " ir field read names the ir sibling's "
+                            + "construction entry");
+                }
+                for (KindPayload.FieldWritePayload write : irWrites) {
+                    checkEq(irEntry, write.classFactoryRef(),
+                        "the " + label + " ir field write names the ir sibling's "
+                            + "construction entry, never the codec sibling's");
+                }
+                for (KindPayload.FieldDeletePayload delete : irDeletes) {
+                    checkEq(irEntry, delete.classFactoryRef(),
+                        "the " + label + " ir field delete names the ir sibling's "
+                            + "construction entry (the optional field's declaration)");
+                }
+                checkEq(2, pointReads.size(), "the " + label + " same-identity "
+                    + "spelling lowers two FIELD_READs");
+                long importedPointReads = pointReads.stream()
+                    .filter(read -> otherEntry.equals(read.classFactoryRef()))
+                    .count();
+                long localPointReads = pointReads.stream()
+                    .filter(read -> read.classFactoryRef() == null)
+                    .count();
+                checkEq(1L, importedPointReads, "the " + label + " imported "
+                    + "same-identity read names the imported provider's entry");
+                checkEq(1L, localPointReads, "the " + label + " unit-local "
+                    + "declaration's own read keeps the unit's layout (no provider "
+                    + "reference)");
+                checkEq(1, pointWrites.size(), "the " + label + " imported "
+                    + "same-identity write lowers one FIELD_WRITE");
+                for (KindPayload.FieldWritePayload write : pointWrites) {
+                    checkEq(otherEntry, write.classFactoryRef(),
+                        "the " + label + " imported same-identity write names the "
+                            + "imported provider's entry, never the unit-local mask");
+                }
+
+                SemanticIrValidator.ComparisonFacts facts =
+                    new SemanticIrValidator.ComparisonFacts(
+                        project.index().interfaceIndexDigest(),
+                        SemanticProfile.DEAL_V1_3_INT32,
+                        invocation().capabilityRegistryHash());
+                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                    "the " + label + " same-identity field project passes the typed "
+                        + "project surface");
+                String text = SemanticIrValidator.toProjectText(lowered);
+                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                    "the " + label + " same-identity field project passes the text "
+                        + "project surface");
+                SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
+                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
+                        text.getBytes(StandardCharsets.UTF_8))),
+                    SemanticIrDumper.reassembleProject(dump.manifest(),
+                        documentsOf(dump)),
+                    "the " + label + " same-identity field project reassembles "
+                        + "exactly");
+
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.executeProjectInits(lowered, result.tables(),
+                        result.registries(), null);
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the " + label + " oracle completes the same-identity field "
+                        + "probe (the demanded 5 and 2, the deleted optional field): "
+                        + run.comparisonReport());
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    private static void testAmbiguousFieldOperationFailClosed() throws Exception {
+        System.out.println("-- the unrecorded same-identity field operation fails "
+            + "closed: no exact declaring provider means a named E6005, never a "
+            + "first alias --");
+        RealProject project = compileProject(FIELD_SIBLING_APP_SOURCE,
+            Map.of("src/m/ir.deal", FIELD_SIBLING_IR_SOURCE,
+                "src/m/codec.deal", FIELD_SIBLING_CODEC_SOURCE,
+                "src/other.deal", FIELD_SIBLING_OTHER_SOURCE),
+            Map.of());
+        try {
+            // The same real project with the checker's exact class
+            // declarations removed: the field operations of the
+            // same-identity spellings have no recorded declaring provider.
+            List<CheckedModuleInput> modules = new ArrayList<>();
+            for (CheckedModuleInput module : project.checkedProject().modules()) {
+                CheckResult checks = module.checks();
+                CheckResult stripped = new CheckResult(checks.typeMap(),
+                    checks.symbolTable(), checks.scopeMap(), checks.diagnostics(),
+                    checks.classScopes(), checks.constructedClassDecls());
+                modules.add(new CheckedModuleInput(module.moduleId(), module.sourceId(),
+                    module.sourcePath(), module.ast(), stripped, module.imports(),
+                    module.exports(), module.kind(), module.classLiteralProviders()));
+            }
+            CompilerInvocation invocation = invocation();
+            CheckedProjectInput stripped = new CheckedProjectInput(invocation,
+                project.checkedProject().entryModule(), modules,
+                invocation.releaseStateHash());
+            SemanticLowerer.ProjectLoweringResult result =
+                SemanticLowerer.lowerProject(invocation, stripped, project.index(),
+                    project.manifests(), project.surface(),
+                    project.declarationIdentities(), project.externCModules(),
+                    BuiltinErrorDeclaration.synthesized(
+                        modules.get(0).ast().span()),
+                    List.of(IntrinsicKind.INT_CONVERT,
+                        IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
+                    Set.of());
+            check(result.hasErrors() && result.project() == null,
+                "the unrecorded same-identity field operation produces no project");
+            check(result.tables().isEmpty() && result.registries().isEmpty()
+                    && result.seeds() == null && result.namespaces() == null,
+                "the unrecorded same-identity field operation produces no tables, "
+                    + "no registries, no seeds, and no registrations");
+            if (!result.diagnostics().isEmpty()) {
+                CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.message().contains(
+                            SemanticLowerer.CONSTRUCT_UNLOWERED)
+                        && diagnostic.message().contains(
+                            "same-directory sibling declarations")
+                        && diagnostic.message().contains(
+                            "fails closed rather than selecting a first alias"),
+                    "the unrecorded same-identity field operation fails with a named "
+                        + "E6005 CONSTRUCT_UNLOWERED; got " + diagnostic.message());
+            }
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    private static void testAmbiguousJsonNestedLinkFailClosed() throws Exception {
+        System.out.println("-- the ambiguous same-identity JSON nested link fails "
+            + "closed: the plan key cannot select the exact declaration, so a "
+            + "named E6005 refuses the project in both import orders --");
+        for (boolean reversed : new boolean[] { false, true }) {
+            String label = reversed ? "reversed imports" : "ir imported first";
+            for (CompilerDiagnostic diagnostic : refusedCompile(reversed
+                        ? JSON_SIBLING_APP_REVERSED_SOURCE
+                        : JSON_SIBLING_APP_SOURCE,
+                    Map.of("src/m/ir.deal", JSON_SIBLING_IR_SOURCE,
+                        "src/m/codec.deal", JSON_SIBLING_CODEC_SOURCE))) {
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.message().contains("CONSTRUCT_UNLOWERED")
+                        && diagnostic.message().contains(
+                            "generated JSON plan key cannot select the exact "
+                                + "declaration"),
+                    "the " + label + " ambiguous JSON nested link fails with a "
+                        + "named E6005; got " + diagnostic.message());
+            }
+        }
+    }
+
+    /**
+     * The production pipeline over a fixture whose lowering must be
+     * refused: the compile returns false and its diagnostics are the
+     * refused project's named failure.
+     */
+    private static List<CompilerDiagnostic> refusedCompile(String appSource,
+            Map<String, String> extraSources) throws Exception {
+        Path proj = Files.createTempDirectory("project-lowering-refused");
+        try {
+            writeFileIn(proj, "src/app.deal", appSource);
+            for (Map.Entry<String, String> extra : extraSources.entrySet()) {
+                writeFileIn(proj, extra.getKey(), extra.getValue());
+            }
+            Path entry = proj.resolve("src/app.deal").toAbsolutePath();
+            Path output = proj.resolve("out").toAbsolutePath();
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entry, output, false, false, false, false, Backend.LUAJIT, Map.of(),
+                List.of(proj.resolve("src").toAbsolutePath()),
+                Path.of(".").toAbsolutePath().normalize(), null,
+                ConformanceHarnessMetadata.invocation());
+            check(!orchestrator.compile(),
+                "the fixture project is refused by the production pipeline");
+            return List.copyOf(orchestrator.diagnostics());
+        } finally {
+            deleteRecursively(proj);
         }
     }
 
@@ -4978,6 +5388,9 @@ public class ProjectLoweringTest {
             testSeedImplementationReferenceAndPrivateFieldRead();
             testSameSpelledProviderResolution();
             testSameNameSiblingProviderResolution();
+            testSameIdentityFieldOperationResolution();
+            testAmbiguousFieldOperationFailClosed();
+            testAmbiguousJsonNestedLinkFailClosed();
             testImportedFieldWriteProviderDeferral();
             testCorruptedUnitSeed(baseline);
             testMissingModuleSeed(baseline);

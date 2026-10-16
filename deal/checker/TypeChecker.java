@@ -55,6 +55,17 @@ public final class TypeChecker {
     private final Map<ExpressionNode, Symbol.ClassSymbol> constructedClassDecls =
         new IdentityHashMap<>();
 
+    // -- Checked expression facts: the exact module-level class declaration
+    //    a class-typed expression's own binding/field/context annotation
+    //    names, keyed by the expression node. Two same-named classes of
+    //    sibling modules in one directory share one canonical identity and
+    //    are indistinguishable in Type.Class alone, so the one lowering
+    //    consumes this record to select the exact declaring provider of a
+    //    field operation (never a unit-local or identity-keyed first
+    //    match). --
+    private final Map<ExpressionNode, Symbol.ClassSymbol> exactClassDecls =
+        new IdentityHashMap<>();
+
     // -- Checked expression facts: the AST declaration node behind the
     //    symbol above (never the symbol alone: two same-named declarations
     //    with identical fields are equal records yet distinct
@@ -165,7 +176,8 @@ public final class TypeChecker {
             Map.copyOf(scopeMap),
             List.copyOf(checker.diagnostics),
             Map.copyOf(checker.classDeclarationScopes),
-            Map.copyOf(checker.constructedDeclNodes)
+            Map.copyOf(checker.constructedDeclNodes),
+            Map.copyOf(checker.exactClassDecls)
         );
     }
 
@@ -458,6 +470,18 @@ public final class TypeChecker {
      */
     private Symbol.ClassSymbol exactReceiverClassSymbol(ExpressionNode receiver,
                                                         Type.Class cls) {
+        // The receiver expression's own recorded exact declaration first
+        // (a chained receiver's field annotation resolved in the declaring
+        // module's scope, a constructed literal, an array element): the
+        // expression-level fact names the declaring provider even when the
+        // receiver is not a plain identifier.
+        Symbol.ClassSymbol recorded = receiver == null
+            ? null : exactClassDecls.get(receiver);
+        if (recorded != null && cls.identity() != null
+                && recorded.identity() != null
+                && recorded.identity().equals(cls.identity())) {
+            return recorded;
+        }
         if (!(receiver instanceof IdentifierExpr id)) {
             return null;
         }
@@ -465,12 +489,93 @@ public final class TypeChecker {
         if (!(sym instanceof Symbol.VariableSymbol variable)) {
             return null;
         }
-        Symbol.ClassSymbol exact = variable.declaredClass() != null
-            ? variable.declaredClass()
-            : exactAnnotationClassSymbol(currentScope, variable.declaredType());
+        Symbol.ClassSymbol exact = exactBindingClassSymbol(variable);
         if (exact != null && cls.identity() != null
                 && exact.identity().equals(cls.identity())) {
             return exact;
+        }
+        return null;
+    }
+
+    /**
+     * The exact class declaration a class-typed binding's own annotation
+     * names, or {@code null}: the recorded contextual declaration when the
+     * binding carries one, otherwise the annotation's declared class
+     * symbol resolved in the current scope.
+     */
+    private Symbol.ClassSymbol exactBindingClassSymbol(
+            Symbol.VariableSymbol variable) {
+        if (variable.declaredClass() != null) {
+            return variable.declaredClass();
+        }
+        return exactAnnotationClassSymbol(currentScope, variable.declaredType());
+    }
+
+    /**
+     * Records the exact declaring class declaration of one class-typed
+     * expression (a class-typed value, an array of one class identity, or
+     * a nullable class): the exact declaration must carry the expression's
+     * own innermost class identity (a declaration of another identity is
+     * never the expression's declared class). The one lowering consumes
+     * the record to select the exact declaring provider of a field
+     * operation.
+     */
+    private void recordExactClassDecl(ExpressionNode expr, Type type,
+                                      Symbol.ClassSymbol decl) {
+        if (expr == null || decl == null) {
+            return;
+        }
+        Type element = innermostElementType(type);
+        if (!(element instanceof Type.Class cls)) {
+            return;
+        }
+        if (cls.identity() == null || decl.identity() == null
+                || !cls.identity().equals(decl.identity())) {
+            return;
+        }
+        exactClassDecls.put(expr, decl);
+    }
+
+    /**
+     * The exact declaration of a class-typed field annotation resolved in
+     * the declaring class's own module scope (a qualified spelling names
+     * that module's alias, so the annotation's own declared symbol — never
+     * an identity-keyed lookup — selects the declaration), or {@code null}
+     * when the field's innermost element type is not a class or no exact
+     * declaration resolves.
+     */
+    private Symbol.ClassSymbol exactFieldClassSymbol(Symbol.ClassSymbol owner,
+                                                     TypeNode fieldTypeNode,
+                                                     Type resolvedFieldType) {
+        Type element = innermostElementType(resolvedFieldType);
+        if (!(element instanceof Type.Class cls)) {
+            return null;
+        }
+        Symbol.ClassSymbol decl = nameResolver
+            .resolveTypeNodeClassSymbolInModule(fieldTypeNode, owner.modulePath());
+        if (decl == null || cls.identity() == null
+                || !cls.identity().equals(decl.identity())) {
+            return null;
+        }
+        return decl;
+    }
+
+    /**
+     * The innermost element type of an array/nullable-nested type (the
+     * class-typed position of an array or nullable of one class identity).
+     */
+    private static Type innermostElementType(Type type) {
+        Type current = type;
+        while (current != null) {
+            if (current instanceof Type.Array array) {
+                current = array.element();
+                continue;
+            }
+            if (current instanceof Type.Nullable nullable) {
+                current = nullable.inner();
+                continue;
+            }
+            return current;
         }
         return null;
     }
@@ -1237,9 +1342,22 @@ public final class TypeChecker {
                 return;
             }
             if (objType instanceof Type.Class cls) {
-                Symbol sym = currentScope.resolve(cls.name());
-                if (sym instanceof Symbol.ClassSymbol cs) {
-                    ClassField field = IntrinsicResolvers.findField(cs.fields(), mae.field());
+                // The exact declaring declaration of the delete target's
+                // receiver (the receiver's own annotation first, then the
+                // exact local declaration, then the identity-keyed
+                // cross-module resolution): a same-named local
+                // declaration of another identity never owns the
+                // required/optional decision of an imported class's field
+                // (never a textual class-name search).
+                Symbol.ClassSymbol sym = exactReceiverClassSymbol(mae.object(), cls);
+                if (sym == null) {
+                    sym = exactLocalClassSymbol(cls);
+                }
+                if (sym == null) {
+                    sym = resolveClassSymbol(cls);
+                }
+                if (sym != null) {
+                    ClassField field = IntrinsicResolvers.findField(sym.fields(), mae.field());
                     if (field != null && !field.optional()) {
                         error(DiagnosticCode.E4004,
                             "Cannot delete required field '" + mae.field() + "'",
@@ -1402,6 +1520,17 @@ public final class TypeChecker {
 
         Type declaredType = getDeclaredType(sym);
         Type narrowedType = narrowing.getNarrowedType(id.name());
+        // The checked expression fact of every class-typed binding read:
+        // the binding's own declaration (a narrowed nullable read keeps
+        // the same declaration).
+        if (sym instanceof Symbol.VariableSymbol variable) {
+            Symbol.ClassSymbol decl = exactBindingClassSymbol(variable);
+            if (narrowedType != null) {
+                recordExactClassDecl(id, narrowedType, decl);
+            } else {
+                recordExactClassDecl(id, declaredType, decl);
+            }
+        }
         if (narrowedType != null) {
             return narrowedType;
         }
@@ -1734,6 +1863,13 @@ public final class TypeChecker {
                 ClassField cf = IntrinsicResolvers.findField(sym.fields(), field);
                 if (cf != null) {
                     Type fieldType = resolveFieldTypeInClassModule(sym, cf.type());
+                    // The exact declaration of a class-typed field: the
+                    // chained receiver's own annotation resolved in the
+                    // declaring module's scope selects the declared
+                    // provider (a sibling module of the same directory
+                    // shares the canonical identity).
+                    recordExactClassDecl(mae, fieldType,
+                        exactFieldClassSymbol(sym, cf.type(), fieldType));
                     if (cf.optional() && !cf.nullable() && !assignmentTargetMode) {
                         // A read of an omitted optional field yields null;
                         // a write target keeps the declared field type.
@@ -1825,6 +1961,11 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
         if (arrayType instanceof Type.Array arr) {
+            // The element read keeps the array expression's recorded
+            // exact declaration (an array of one class identity), so a
+            // chained class-typed receiver resolves the declaring
+            // provider through the binding's own annotation.
+            recordExactClassDecl(idx, arr.element(), exactClassDecls.get(idx.array()));
             return arr.element();
         }
 
@@ -1983,7 +2124,8 @@ public final class TypeChecker {
         }
         // Checked expression fact: the exact declaration this literal was
         // laid out by, consumed by the E3019 cross-declaration gate at
-        // initialization and assignment-expression boundaries.
+        // initialization and assignment-expression boundaries, and by the
+        // one lowering's exact-provider selection.
         constructedClassDecls.put(obj, cs);
         // The declaration's AST node, when the symbol is this module's own
         // (a hoisted module-level or nested block declaration): published

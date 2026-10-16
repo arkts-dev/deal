@@ -15,7 +15,8 @@ public record CheckResult(
     Map<StatementNode, SymbolTable> scopeMap,
     List<CompilerDiagnostic> diagnostics,
     Map<ClassDeclaration, SymbolTable> classScopes,
-    Map<ExpressionNode, ClassDeclaration> constructedClassDecls
+    Map<ExpressionNode, ClassDeclaration> constructedClassDecls,
+    Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations
 ) {
 
     /**
@@ -26,7 +27,8 @@ public record CheckResult(
      */
     public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                        List<CompilerDiagnostic> diagnostics) {
-        this(typeMap, symbolTable, Map.of(), diagnostics, Map.of(), Map.of());
+        this(typeMap, symbolTable, Map.of(), diagnostics, Map.of(), Map.of(),
+            Map.of());
     }
 
     /**
@@ -39,7 +41,23 @@ public record CheckResult(
                        Map<StatementNode, SymbolTable> scopeMap,
                        List<CompilerDiagnostic> diagnostics,
                        Map<ClassDeclaration, SymbolTable> classScopes) {
-        this(typeMap, symbolTable, scopeMap, diagnostics, classScopes, Map.of());
+        this(typeMap, symbolTable, scopeMap, diagnostics, classScopes, Map.of(),
+            Map.of());
+    }
+
+    /**
+     * Convenience constructor for callers that carry the construction
+     * facts but no expression-level exact class declaration facts
+     * (synthetic checked facts, retained test harnesses): the one
+     * lowering keeps the identity-keyed field provider route then.
+     */
+    public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
+                       Map<StatementNode, SymbolTable> scopeMap,
+                       List<CompilerDiagnostic> diagnostics,
+                       Map<ClassDeclaration, SymbolTable> classScopes,
+                       Map<ExpressionNode, ClassDeclaration> constructedClassDecls) {
+        this(typeMap, symbolTable, scopeMap, diagnostics, classScopes,
+            constructedClassDecls, Map.of());
     }
 
     public CheckResult {
@@ -50,6 +68,10 @@ public record CheckResult(
         if (classScopes == null) throw new IllegalArgumentException("classScopes must not be null");
         if (constructedClassDecls == null) {
             throw new IllegalArgumentException("constructedClassDecls must not be null");
+        }
+        if (exactClassDeclarations == null) {
+            throw new IllegalArgumentException(
+                "exactClassDeclarations must not be null");
         }
     }
 

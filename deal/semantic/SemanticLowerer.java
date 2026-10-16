@@ -1282,6 +1282,11 @@ public final class SemanticLowerer {
         // annotation span rather than the call site.
         Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations =
             declaredParameterAnnotationIndex(checkedProject);
+        // The project-wide same-identity sibling declarations: a field or
+        // JSON link of such an identity needs its recorded exact declaring
+        // provider and fails closed without one (never a first alias).
+        java.util.Set<ClassId> projectAmbiguousClassIds =
+            ambiguousProjectClassIds(checkedProject);
 
         for (CheckedModuleInput module : checkedProject.modules()) {
             SemanticRequirementManifest manifest =
@@ -1308,7 +1313,8 @@ public final class SemanticLowerer {
                 calleeExternalEntries, callbackExports, seeds.seeds(),
                 conversionIntrinsics, ownInterface, comparisonFacts,
                 inProjectFactoryFacts, inProjectProviderFacts,
-                providerConstructionEntries, declaredParameterAnnotations);
+                providerConstructionEntries, declaredParameterAnnotations,
+                projectAmbiguousClassIds);
             if (lowered.hasErrors()) {
                 return projectFailureResult(lowered.diagnostics());
             }
@@ -1345,6 +1351,47 @@ public final class SemanticLowerer {
         NamespaceRegistrations.Assembly namespaceAssembly = namespaceRecorder.build();
         return new ProjectLoweringResult(project, tables, registries,
             project.classSeeds(), namespaceAssembly.registrations(), List.of());
+    }
+
+    /**
+     * The canonical class identities declared by more than one module of
+     * the checked project (the same-directory sibling pair): a field
+     * operation or generated JSON link of such an identity must select the
+     * exact declaring declaration through its recorded provider, never a
+     * first alias, a unit-local mask or an identity-keyed first match — an
+     * unrecorded such link fails closed.
+     */
+    private static java.util.Set<ClassId> ambiguousProjectClassIds(
+            CheckedProjectInput checkedProject) {
+        Map<ClassId, Integer> counts = new LinkedHashMap<>();
+        for (CheckedModuleInput module : checkedProject.modules()) {
+            SymbolTable table = module.checks() == null
+                ? null : module.checks().symbolTable();
+            if (table == null) {
+                continue;
+            }
+            for (Symbol symbol : table.symbols().values()) {
+                if (!(symbol instanceof Symbol.ClassSymbol classSymbol)
+                        || classSymbol.identity() == null) {
+                    continue;
+                }
+                ClassId classId = new ClassId(
+                    DescriptorService.semanticModulePath(classSymbol.identity()),
+                    classSymbol.name());
+                if (classId.equals(ClassId.ERROR)) {
+                    // The compiler-owned builtin class: one declaration.
+                    continue;
+                }
+                counts.merge(classId, 1, Integer::sum);
+            }
+        }
+        java.util.Set<ClassId> ambiguous = new java.util.LinkedHashSet<>();
+        for (Map.Entry<ClassId, Integer> entry : counts.entrySet()) {
+            if (entry.getValue() > 1) {
+                ambiguous.add(entry.getKey());
+            }
+        }
+        return java.util.Collections.unmodifiableSet(ambiguous);
     }
 
     /**
@@ -1426,7 +1473,8 @@ public final class SemanticLowerer {
                 providerFactoryFacts,
             Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
                 providerConstructionEntries,
-            Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations) {
+            Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations,
+            java.util.Set<ClassId> projectAmbiguousClassIds) {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), true, true, ownInterface,
@@ -1437,6 +1485,7 @@ public final class SemanticLowerer {
         lowerer.setDeclaredConversionIntrinsics(conversionIntrinsics);
         lowerer.setProviderFactoryFacts(Map.copyOf(providerFactoryFacts),
             providerConstructionEntries, module.classLiteralProviders());
+        lowerer.setProjectAmbiguousClassIds(projectAmbiguousClassIds);
         lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
@@ -2573,6 +2622,15 @@ public final class SemanticLowerer {
         private Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
             providerConstructionEntries = Map.of();
         private Map<DiagnosticRange, String> recordedClassLiteralProviders = Map.of();
+        /**
+         * The canonical class identities declared by more than one module
+         * of the whole project (the same-directory sibling pair): a field
+         * operation or generated JSON link of such an identity without a
+         * recorded exact declaring provider fails closed — never a first
+         * alias, a unit-local mask or an identity-keyed first match.
+         */
+        private java.util.Set<ClassId> projectAmbiguousClassIds =
+            java.util.Set.of();
         /**
          * The canonical class identities carried by more than one
          * accumulating provider declaration (a same-directory sibling
@@ -4407,6 +4465,7 @@ public final class SemanticLowerer {
         private void lowerJsonFunctions(ClassDeclaration declaration, ClassId classId,
                                         deal.semantic.ir.ClassLayout layout,
                                         List<OpId> classDefaultOpIds) {
+            rejectAmbiguousJsonNestedClasses(declaration, layout);
             // The generated signatures flow from the checker's synthetic
             // C$fromJson/C$toJson function symbols through the single
             // DescriptorService producer (the producer-singularity rule:
@@ -4442,6 +4501,47 @@ public final class SemanticLowerer {
             // C$toJson(v: C): string.
             lowerJsonFunction(declaration, layout, toSignature, toParameter, toResult,
                 FailurePolicyId.JSON_TO_ERROR, false);
+        }
+
+        /**
+         * The fail-closed rejection of a generated JSON link whose nested
+         * class identity has more than one declaration in the project (the
+         * same-directory sibling pair): the emitted plan table is keyed by
+         * the canonical class identity, so no exact declaration can be
+         * selected for the nested walk — a named E6005 with no partial
+         * project, never a first alias or a sibling's plan.
+         */
+        private void rejectAmbiguousJsonNestedClasses(ClassDeclaration declaration,
+                                                      deal.semantic.ir.ClassLayout layout) {
+            for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
+                ClassId nested = nestedClassIdOf(field.descriptor());
+                if (nested != null && ambiguousFieldIdentity(nested)) {
+                    throw new ConstructUnlowered("the @jsonable class '"
+                        + declaration.name() + "' field '" + field.name()
+                        + "' references nested class " + nested + " whose canonical"
+                        + " identity has more than one declaration in the project"
+                        + " (same-directory sibling declarations): the generated JSON"
+                        + " plan key cannot select the exact declaration, so the link"
+                        + " fails closed with no partial project",
+                        declaration.span());
+                }
+            }
+        }
+
+        /**
+         * The class identity of a JSON-walk descriptor, or {@code null} for
+         * a non-class descriptor (the nullable/array inner forms recurse
+         * like the generated walk).
+         */
+        private static ClassId nestedClassIdOf(RuntimeDescriptor descriptor) {
+            return switch (descriptor) {
+                case RuntimeDescriptor.Class cls -> cls.classId();
+                case RuntimeDescriptor.Nullable nullable ->
+                    nestedClassIdOf(nullable.inner());
+                case RuntimeDescriptor.Array array ->
+                    nestedClassIdOf(array.element());
+                default -> null;
+            };
         }
 
         /**
@@ -7789,39 +7889,25 @@ public final class SemanticLowerer {
 
             RuntimeDescriptor declaredDescriptor = null;
             RuntimeDescriptor classDescriptor = null;
+            deal.semantic.ir.ClassFactoryId providerRef = null;
             if (classCore) {
-                deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
-                if (layout == null) {
-                    // The imported implementation provider's registered
-                    // layout (the SharedFactoryFacts the owner factory
-                    // transfer carries): a field write on an imported class
-                    // selects the declaring provider's layout through the
-                    // project's accumulated factory facts — never a local
-                    // layout, a first alias, or a textual class-name search.
-                    SharedFactoryFacts shared = sharedFactories.get(classId);
-                    if (shared != null) {
-                        layout = shared.layout();
-                    }
-                }
-                if (layout == null) {
-                    // The registration seeds (the compiler-owned builtin
-                    // Error included, K13's field surface): a seeded class's
-                    // declared field descriptor comes from the seed layout
-                    // exactly like a locally declared class's; an unseeded
-                    // unresolvable class stays fail closed.
-                    ClassRegistrationSeeds.ClassRegistration seed =
-                        registrationSeeds.registrationFor(classId);
-                    if (seed != null) {
-                        layout = seed.layout();
-                    }
-                }
+                // The exact declaring provider of the receiver's checked
+                // declaration (a same-directory sibling pair shares one
+                // canonical class identity): the recorded declaration's
+                // module selects the provider's registered facts, never the
+                // identity-keyed first match and never a unit-local mask.
+                FieldReceiverResolution resolution = resolveFieldReceiver(
+                    access.object(), classId, "class field write '" + access.field() + "'",
+                    access.span());
+                providerRef = resolution.providerRef();
+                deal.semantic.ir.ClassLayout layout = resolution.layout();
                 if (layout == null) {
                     throw new ConstructUnlowered("class field write '" + access.field()
                         + "' on " + classId + " without a resolvable provider layout "
                         + "(the declared field descriptor comes from the unit's own "
-                        + "classLayouts, the imported provider's shared-factory facts, "
-                        + "or the declaration seeds; an unresolved required fact stays "
-                        + "fail closed)", access.span());
+                        + "classLayouts, the exact imported provider's shared-factory "
+                        + "facts, or the declaration seeds; an unresolved required fact "
+                        + "stays fail closed)", access.span());
                 }
                 deal.semantic.ir.ClassLayout.FieldLayout fieldLayout = null;
                 for (deal.semantic.ir.ClassLayout.FieldLayout candidate : layout.fields()) {
@@ -7857,7 +7943,7 @@ public final class SemanticLowerer {
                 valueOp = producerOpId(value);
                 commitOp = emitNullOp(SemanticOpKind.FIELD_WRITE,
                     new KindPayload.FieldWritePayload(container, classId, access.field(),
-                        value),
+                        value, providerRef),
                     access.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
                 if (classCore) {
@@ -8036,7 +8122,15 @@ public final class SemanticLowerer {
                                            Type.Class classType) {
             ClassId classId = new ClassId(DescriptorService.semanticModulePath(classType.identity()), classType.name());
             RuntimeDescriptor classDescriptor = null;
+            deal.semantic.ir.ClassFactoryId providerRef = null;
             if (classCore) {
+                // The exact declaring provider of the receiver's checked
+                // declaration (the same-directory sibling pair shares one
+                // canonical class identity): the required/optional decision
+                // belongs to the declaring declaration only.
+                providerRef = resolveFieldReceiver(access.object(), classId,
+                    "class field delete '" + access.field() + "'",
+                    access.span()).providerRef();
                 try {
                     classDescriptor = DescriptorService.describe(classType);
                 } catch (DescriptorService.Defect defect) {
@@ -8053,7 +8147,8 @@ public final class SemanticLowerer {
                 ValueId container = lowerExpression(access.object());
                 containerOp = producerOpId(container);
                 commitOp = emitNullOp(SemanticOpKind.FIELD_DELETE,
-                    new KindPayload.FieldDeletePayload(container, classId, access.field()),
+                    new KindPayload.FieldDeletePayload(container, classId,
+                        access.field(), providerRef),
                     access.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
                 if (classCore) {
@@ -8312,6 +8407,178 @@ public final class SemanticLowerer {
         public void setRegistrationSeeds(ClassRegistrationSeeds seeds) {
             this.registrationSeeds = Objects.requireNonNull(seeds,
                 "seeds must not be null");
+        }
+
+        /**
+         * Installs the project-wide set of canonical class identities
+         * declared by more than one module (the same-directory sibling
+         * pair): a field operation or JSON link of such an identity
+         * without a recorded exact declaring provider fails closed rather
+         * than selecting a first alias.
+         */
+        public void setProjectAmbiguousClassIds(java.util.Set<ClassId> ambiguous) {
+            java.util.Objects.requireNonNull(ambiguous,
+                "ambiguous must not be null");
+            this.projectAmbiguousClassIds = java.util.Collections
+                .unmodifiableSet(new java.util.LinkedHashSet<>(ambiguous));
+        }
+
+        /**
+         * The checked exact declaration of one class-typed receiver
+         * expression (the checker's per-expression record), or
+         * {@code null} when the expression's class-typed declaration is
+         * not recorded (a constructed literal, an array element or a
+         * chain whose annotations resolve locally/imported, and the
+         * binding annotations of every class-typed variable and field
+         * are recorded).
+         */
+        private Symbol.ClassSymbol exactReceiverDeclaration(
+                ExpressionNode receiver) {
+            if (receiver == null || checks == null) {
+                return null;
+            }
+            return checks.exactClassDeclarations().get(receiver);
+        }
+
+        /**
+         * The declaring module's registered construction entry of one
+         * canonical class identity, or {@code null} when the project
+         * declares no exported class of that identity in the module.
+         */
+        private deal.semantic.ir.ClassFactoryId providerEntryOf(
+                String declaringModulePath, ClassId classId) {
+            if (declaringModulePath == null || declaringModulePath.isEmpty()) {
+                return null;
+            }
+            Map<ClassId, deal.semantic.ir.ClassFactoryId> byClass =
+                providerConstructionEntries.get(new ModuleId(declaringModulePath));
+            return byClass == null ? null : byClass.get(classId);
+        }
+
+        /**
+         * The identity-keyed field layout of one class: the unit's own
+         * declaration, the accumulated imported provider's, or the
+         * declaration seeds' (the builtin Error included). Never used for
+         * an identity with more than one declaration — the exact
+         * declaring provider route owns that selection.
+         */
+        private deal.semantic.ir.ClassLayout legacyFieldLayout(ClassId classId) {
+            deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
+            if (layout != null) {
+                return layout;
+            }
+            SharedFactoryFacts shared = sharedFactories.get(classId);
+            if (shared != null) {
+                return shared.layout();
+            }
+            ClassRegistrationSeeds.ClassRegistration seed =
+                registrationSeeds.registrationFor(classId);
+            return seed == null ? null : seed.layout();
+        }
+
+        /**
+         * Whether one canonical class identity carries more than one
+         * declaration in the project or among the declarations visible to
+         * this unit. Two same-named classes of sibling modules in one
+         * directory share one canonical identity, so such an identity has
+         * no single layout and no single provider fact.
+         */
+        private boolean ambiguousFieldIdentity(ClassId classId) {
+            if (projectAmbiguousClassIds.contains(classId)) {
+                return true;
+            }
+            java.util.Set<deal.semantic.ir.ClassFactoryId> entries =
+                new java.util.LinkedHashSet<>();
+            for (SharedFactoryFacts facts : providerFactoryFacts.values()) {
+                if (facts.classId().equals(classId)) {
+                    entries.add(facts.interfaceEntry().constructionEntry());
+                }
+            }
+            for (SharedFactoryFacts facts : sharedFactories.values()) {
+                if (facts.classId().equals(classId)) {
+                    entries.add(facts.interfaceEntry().constructionEntry());
+                }
+            }
+            int count = entries.size();
+            if (classLayouts.containsKey(classId)) {
+                count++;
+            }
+            return count > 1;
+        }
+
+        /**
+         * One field operation's exact declaring-provider resolution: the
+         * declaring layout and the recorded provider reference
+         * ({@code null} when the identity-keyed route is exact — a single
+         * visible declaration, or a declaration-seeded class).
+         */
+        private record FieldReceiverResolution(
+            deal.semantic.ir.ClassLayout layout,
+            deal.semantic.ir.ClassFactoryId providerRef) {
+        }
+
+        /**
+         * The exact declaring provider of one class-typed field
+         * operation's receiver: the checker's recorded declaration of the
+         * receiver expression names the declaring module, whose own layout
+         * (this unit) or registered construction entry's shared facts (an
+         * imported provider) then supply the operation's declared field
+         * facts. An identity with more than one declaration and no
+         * recorded exact declaration fails closed — never a first alias, a
+         * unit-local mask or an identity-keyed first match.
+         */
+        private FieldReceiverResolution resolveFieldReceiver(
+                ExpressionNode receiver, ClassId classId, String operation,
+                Span span) {
+            Symbol.ClassSymbol decl = exactReceiverDeclaration(receiver);
+            String declaringModule = decl == null ? null : decl.modulePath();
+            boolean imported = declaringModule != null
+                && !declaringModule.isEmpty()
+                && !declaringModule.equals(module.path());
+            if (imported) {
+                if (!ambiguousFieldIdentity(classId)) {
+                    // One visible declaration of the identity: the
+                    // identity-keyed route already selects it exactly.
+                    return new FieldReceiverResolution(
+                        legacyFieldLayout(classId), null);
+                }
+                deal.semantic.ir.ClassFactoryId entry =
+                    providerEntryOf(declaringModule, classId);
+                SharedFactoryFacts facts = entry == null ? null
+                    : providerFactoryFacts.get(entry);
+                if (facts == null) {
+                    throw new ConstructUnlowered(operation + " on " + classId
+                        + ": the receiver's checked declaration is declared by module '"
+                        + declaringModule + "', but the project carries no registered"
+                        + " construction entry and shared facts for it (a required"
+                        + " provider fact is missing; the exact declaration is never"
+                        + " repaired by a first alias)", span);
+                }
+                return new FieldReceiverResolution(facts.layout(), entry);
+            }
+            if (declaringModule != null && declaringModule.equals(module.path())) {
+                deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
+                if (layout == null) {
+                    throw new ConstructUnlowered(operation + " on " + classId
+                        + ": the receiver's checked declaration is this module's, but the"
+                        + " unit carries no lowered layout for it (a producer defect)",
+                        span);
+                }
+                // The unit's own declaration is the exact one for a local
+                // receiver: no provider reference is recorded (the unit's
+                // own classLayouts entry is the only declaration of the
+                // identity inside this unit).
+                return new FieldReceiverResolution(layout, null);
+            }
+            if (ambiguousFieldIdentity(classId)) {
+                throw new ConstructUnlowered(operation + " on " + classId
+                    + ": more than one declaration of the canonical class identity"
+                    + " exists (same-directory sibling declarations) and the receiver's"
+                    + " checked declaration records no exact declaring provider: the"
+                    + " operation fails closed rather than selecting a first alias",
+                    span);
+            }
+            return new FieldReceiverResolution(legacyFieldLayout(classId), null);
         }
 
         public void setDeclaredConversionIntrinsics(List<IntrinsicKind> kinds) {
@@ -12342,12 +12609,24 @@ public final class SemanticLowerer {
             ClassId classId = new ClassId(
                 DescriptorService.semanticModulePath(classType.identity()), classType.name());
             RuntimeDescriptor classDescriptor;
+            deal.semantic.ir.ClassFactoryId providerRef = null;
             try {
                 classDescriptor = DescriptorService.describe(classType);
             } catch (DescriptorService.Defect defect) {
                 throw new ConstructUnlowered("class member access "
                     + classId + "." + access.field() + " on an unrepresentable receiver "
                     + "type (" + defect.getMessage() + ")", access.span());
+            }
+            if (classCore) {
+                // The exact declaring provider of the receiver's checked
+                // declaration: the read's declared result descriptor comes
+                // from the checker's exact declaration, and the recorded
+                // provider reference keeps the field link coherent with the
+                // declaring declaration's layout (a same-directory sibling
+                // pair shares one canonical class identity).
+                providerRef = resolveFieldReceiver(access.object(), classId,
+                    "class field read '" + access.field() + "'",
+                    access.span()).providerRef();
             }
             RuntimeDescriptor resultDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
@@ -12372,7 +12651,8 @@ public final class SemanticLowerer {
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(access.span()),
                 SourceOriginKind.USER, anchor, currentParent());
             emit(buildOp(opId, SemanticOpKind.FIELD_READ,
-                new KindPayload.FieldReadPayload(receiver, classId, access.field()),
+                new KindPayload.FieldReadPayload(receiver, classId, access.field(),
+                    providerRef),
                 result, resultDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
             emit(receiverBoundary);
             emit(fieldBoundary);

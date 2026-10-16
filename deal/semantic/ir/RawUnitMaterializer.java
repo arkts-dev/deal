@@ -546,13 +546,16 @@ public final class RawUnitMaterializer {
                 opIdAt(p, "callerOpRef", where));
             case FIELD_READ -> new KindPayload.FieldReadPayload(
                 valueIdAt(p, "classValue", where), classIdAt(p, "classId", where),
-                stringAt(p, "field", where));
+                stringAt(p, "field", where),
+                optionalClassFactoryId(p, "classFactoryRef", where));
             case FIELD_WRITE -> new KindPayload.FieldWritePayload(
                 valueIdAt(p, "classValue", where), classIdAt(p, "classId", where),
-                stringAt(p, "field", where), valueIdAt(p, "value", where));
+                stringAt(p, "field", where), valueIdAt(p, "value", where),
+                optionalClassFactoryId(p, "classFactoryRef", where));
             case FIELD_DELETE -> new KindPayload.FieldDeletePayload(
                 valueIdAt(p, "classValue", where), classIdAt(p, "classId", where),
-                stringAt(p, "field", where));
+                stringAt(p, "field", where),
+                optionalClassFactoryId(p, "classFactoryRef", where));
             case JSON_FROM_CLASS -> new KindPayload.JsonFromClassPayload(
                 layoutAt(p, "layout", where), valueIdAt(p, "jsonString", where));
             case JSON_TO_CLASS -> new KindPayload.JsonToClassPayload(
