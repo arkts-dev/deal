@@ -755,7 +755,25 @@ public final class TypeChecker {
             // reject every empty `: null` body, and the repository's
             // established null-return shape relies on the tolerance.
             Type retType = funcType.returnType();
-            if (!Types.isNull(retType)
+            // The try/catch-local obligation first: a try block that
+            // definitely returns via return statements requires the catch
+            // block to definitely return or throw, independently of the
+            // enclosing body's termination and of its return type
+            // (docs/spec-v1.3.md §try / catch). The deficient catch block
+            // carries the diagnostic even when a later statement returns;
+            // when the composite rule fires, the whole-body falloff
+            // diagnostic is redundant and stays suppressed.
+            List<TryStatement> fallthroughs =
+                ReturnAnalysis.tryCatchFallthroughs(fd.body());
+            for (TryStatement ts : fallthroughs) {
+                error(DiagnosticCode.E5002,
+                    "Function '" + fd.name() + "' must return on all paths:"
+                        + " the catch block of a definitely-returning try"
+                        + " must also definitely return or throw",
+                    ts.catchBlock().span());
+            }
+            if (fallthroughs.isEmpty()
+                    && !Types.isNull(retType)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
                 error(DiagnosticCode.E5002,
                     "Function '" + fd.name() + "' must return a value on all paths",
@@ -805,7 +823,9 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkIfStatement(IfStatement is) {
-        // F6: Set expectedType = boolean for if conditions
+        // F6: Set expectedType = boolean for if conditions. The fifth
+        // specification position (`if (E)`) is an admitted direct read;
+        // the loop conditions are not.
         Type savedExpected = expectedType;
         expectedType = Type.Boolean.INSTANCE;
         Type condType = checkExpression(is.condition());
@@ -863,9 +883,14 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkWhileStatement(WhileStatement ws) {
-        // F6: Set expectedType = boolean for while conditions
+        // F6: The loop-condition boolean requirement is not a
+        // contextual-read position: the closed admission list
+        // (docs/spec-v1.3.md "Reading table fields") has no loop row, so
+        // the condition checks with no expected type and a
+        // `while (t.flag)` read is E3003 at the read. The boolean
+        // requirement itself is unchanged for every non-read condition.
         Type savedExpected = expectedType;
-        expectedType = Type.Boolean.INSTANCE;
+        expectedType = null;
         Type condType = checkExpression(ws.condition());
         expectedType = savedExpected;
 
@@ -925,10 +950,12 @@ public final class TypeChecker {
             }
         }
 
-        // F6: Set expectedType = boolean for for conditions
+        // F6: Like the while condition, the for condition checks with no
+        // expected type: the boolean loop requirement admits no
+        // contextual table read.
         fs.condition().ifPresent(cond -> {
             Type savedExpected = expectedType;
-            expectedType = Type.Boolean.INSTANCE;
+            expectedType = null;
             Type condType = checkExpression(cond);
             expectedType = savedExpected;
 
@@ -1298,8 +1325,21 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkBinary(BinaryExpr bin) {
-        Type leftType = checkExpression(bin.left());
-        Type rightType = checkExpression(bin.right());
+        // A composite operator's operands do not inherit the enclosing
+        // position's expected type: the v1.3 admission list admits a direct
+        // table read in its own position (`return t.flag && true` is not a
+        // `return E` whose whole E is the read), so the operands check with
+        // no expected type and a nested read is E3003 at the operand.
+        Type savedExpected = expectedType;
+        expectedType = null;
+        Type leftType;
+        Type rightType;
+        try {
+            leftType = checkExpression(bin.left());
+            rightType = checkExpression(bin.right());
+        } finally {
+            expectedType = savedExpected;
+        }
 
         if (leftType == Type.Error.INSTANCE || rightType == Type.Error.INSTANCE) {
             return Type.Error.INSTANCE;
@@ -1390,7 +1430,17 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkUnary(UnaryExpr un) {
-        Type exprType = checkExpression(un.expr());
+        // A unary operator's operand is not the enclosing position's own
+        // expression either: it checks with no expected type, so a nested
+        // table read is E3003 at the operand.
+        Type savedExpected = expectedType;
+        expectedType = null;
+        Type exprType;
+        try {
+            exprType = checkExpression(un.expr());
+        } finally {
+            expectedType = savedExpected;
+        }
         if (exprType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
         return switch (un.op()) {
@@ -1607,7 +1657,13 @@ public final class TypeChecker {
         }
 
         // F4: Table access — in write context (assignment target), allow without
-        // contextual type. Otherwise require contextual target type.
+        // contextual type. Otherwise admit only a direct read in one of the
+        // five specification positions (let initializer, assignment value,
+        // return expression, call argument, if condition): the expected
+        // type must be present and the read must be the position's own
+        // outermost expression (`directContextualRead`). Every other table
+        // read — a loop condition or a composite operand included — is
+        // E3003 at the read.
         if (objType instanceof Type.Table) {
             if (assignmentTargetMode) {
                 return Type.Table.INSTANCE;
@@ -1650,8 +1706,9 @@ public final class TypeChecker {
                 return Type.Error.INSTANCE;
             }
             // A computed table read takes the contextual target type the
-            // surrounding expression supplies (the same algorithm as a
-            // table member read); its key must have static type string.
+            // surrounding expression supplies only in the same five direct
+            // positions (the algorithm of a table member read); its key
+            // must have static type string.
             if (!(indexType instanceof Type.String)) {
                 error(DiagnosticCode.E3007,
                     "Array index must be int, got " + typeName(indexType),
@@ -1952,8 +2009,19 @@ public final class TypeChecker {
 
         // ISSUE-0717: the reachability-ordered walk (the null-returning
         // expression keeps the landed fall-off tolerance; see
-        // checkFunctionDeclaration).
-        if (!Types.isNull(returnType)
+        // checkFunctionDeclaration). The try/catch-local obligation is
+        // independent of it.
+        List<TryStatement> fallthroughs =
+            ReturnAnalysis.tryCatchFallthroughs(fe.body());
+        for (TryStatement ts : fallthroughs) {
+            error(DiagnosticCode.E5002,
+                "Function expression must return on all paths: the catch"
+                    + " block of a definitely-returning try must also"
+                    + " definitely return or throw",
+                ts.catchBlock().span());
+        }
+        if (fallthroughs.isEmpty()
+                && !Types.isNull(returnType)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
             error(DiagnosticCode.E5002,
                 "Function expression must return a value on all paths", fe.span());

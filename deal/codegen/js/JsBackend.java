@@ -1451,8 +1451,14 @@ public final class JsBackend {
             Type paramType = resolveTypeNode(param.type());
             if (paramType != null && !(paramType instanceof Type.Error)
                     && !(paramType instanceof Type.Null)) {
-                line(emitCheckExpr(jsName(param.name()), paramType,
-                    param.type().span()) + ";");
+                // The admitted value is the one the body observes: the
+                // parameter binding receives the check's result. A
+                // discarded check would leave the raw operand (for an
+                // int parameter, a -0 number read from a dynamic slot)
+                // visible inside the callee.
+                line(jsName(param.name()) + " = "
+                    + emitCheckExpr(jsName(param.name()), paramType,
+                        param.type().span()) + ";");
             }
         }
         // The body statements emit inside an additional block scope:
@@ -2333,8 +2339,15 @@ public final class JsBackend {
             ? resolveTypeNode(node.typeAnnotation().get()) : null;
         Type exprType = typeOf(node.initializer());
 
+        // A direct contextual table read carries its own check anchor:
+        // the read expression's span is the check the lowering selects
+        // (CONTEXTUAL_TABLE_READ at the read), so the declaration-site
+        // check runs at the read — never at the later annotation span.
+        boolean contextualTableRead = isContextualTableRead(node.initializer());
         Span span = hasAnnotation
-            ? node.typeAnnotation().get().span()
+            ? (contextualTableRead
+                ? node.initializer().span()
+                : node.typeAnnotation().get().span())
             : node.initializer().span();
 
         // NameResolver.walkVarDecl resolves the initializer before the
@@ -3813,25 +3826,34 @@ public final class JsBackend {
                 boolean hasAwait = containsAwait(idx.array())
                     || containsAwait(idx.index())
                     || containsAwait(assign.value());
+                // Evaluate receiver, index and RHS exactly once in that
+                // order, then run the bounds gate, then validate the
+                // saved RHS against the element descriptor and commit
+                // once (the ARRAY_WRITE order of the shared chain: the
+                // E8002 bounds rejection follows every operand's side
+                // effects, and the element check never precedes the
+                // bounds gate).
                 if (!hasAwait) {
                     return "(() => { const $arr = " + arr
                         + "; const $idx = $rt.checkInt(" + index + ", "
                         + spanArgs(idx.span()) + "); "
+                        + "const $rhs = " + value + "; "
                         + "if ($idx < 0 || $idx > $arr.length) { "
                         + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                         + spanArgs(idx.span()) + "); } "
                         + "return $arr[$idx] = "
-                        + emitCheckExpr(value, arrT.element(), span)
+                        + emitCheckExpr("$rhs", arrT.element(), span)
                         + "; })()";
                 }
                 return "(await (async () => { const $arr = " + arr
                     + "; const $idx = $rt.checkInt(" + index + ", "
                     + spanArgs(idx.span()) + "); "
+                    + "const $rhs = " + value + "; "
                     + "if ($idx < 0 || $idx > $arr.length) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                     + spanArgs(idx.span()) + "); } "
                     + "return $arr[$idx] = "
-                    + emitCheckExpr(value, arrT.element(), span)
+                    + emitCheckExpr("$rhs", arrT.element(), span)
                     + "; })())";
             }
             if (containerType instanceof Type.Bytes) {
@@ -4050,7 +4072,11 @@ public final class JsBackend {
             .append(params).append(") {\n");
         String bodyIndent = "  ".repeat(indent + 1);
         for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
+            // The adapter's extended parameters observe the admitted
+            // value: the check result is assigned back to the parameter
+            // binding (the same rule as every wrapper prologue).
             sb.append(bodyIndent)
+                .append("$p").append(i).append(" = ")
                 .append(emitCheckExpr("$p" + i,
                     targetFunc.paramTypes().get(i), span))
                 .append(";\n");
@@ -4325,6 +4351,23 @@ public final class JsBackend {
             case LiteralValue.NumberLiteral n -> Type.Number.INSTANCE;
             case LiteralValue.StringLiteral s -> Type.String.INSTANCE;
         };
+    }
+
+    /**
+     * Whether one expression is a direct contextual table read — a member
+     * or computed read whose receiver has static type {@code table}. The
+     * checker admits these only in the five direct positions, so any such
+     * read that reaches emission was contextually admitted and carries
+     * the read's own check anchor.
+     */
+    private boolean isContextualTableRead(ExpressionNode expression) {
+        if (expression instanceof MemberAccessExpr mae) {
+            return typeOf(mae.object()) instanceof Type.Table;
+        }
+        if (expression instanceof IndexExpr idx) {
+            return typeOf(idx.array()) instanceof Type.Table;
+        }
+        return false;
     }
 
     /**

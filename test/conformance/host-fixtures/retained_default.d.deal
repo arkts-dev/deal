@@ -1,0 +1,14 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) for the
+// legal module-level default-call witness: the host retains one valid
+// runtime array and counts every omission-driven provider call in
+// declaration order; nothing mutates the array except the witness program.
+// Resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+
+export function retained(): int[];
+export function provideFirst(): int[];
+export function provideSecond(): int[];
+export function bump(): null;
+export function calls(): int;
+export function order(): string;

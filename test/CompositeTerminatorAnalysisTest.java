@@ -564,8 +564,8 @@ public class CompositeTerminatorAnalysisTest {
                 }
                 """)),
             new Negative("try with a non-returning catch", probeProgram("""
-                export function probe(): null {
-                  try { return null; } catch (e) { }
+                export function probe(c: boolean): null {
+                  try { if (c) { return null; } } catch (e) { }
                 }
                 """)),
             new Negative("literal-true loop with a break path", probeProgram("""

@@ -361,6 +361,9 @@ public class CheckerTest {
         testWhileConditionContextualTyping();
         testForConditionContextualTyping();
 
+        // ISSUE-0815: the retained corner-case frontend contracts
+        testRetainedCornerCaseFrontendContract();
+
         // F8: Break/continue outside loops
         testBreakOutsideLoop();
         testContinueOutsideLoop();
@@ -1387,20 +1390,148 @@ public class CheckerTest {
 
     static void testWhileConditionContextualTyping() {
         System.out.println("-- F6: While condition contextual typing --");
-        CheckerOutput out = checkProgram(
+        // The v1.3 admission list is closed (docs/spec-v1.3.md "Reading
+        // table fields"): a loop condition requires boolean checking but
+        // grants no contextual-read permission, so a table read in the
+        // condition is E3003 at the read while the boolean requirement
+        // still applies to every non-read condition.
+        CheckerOutput read = checkProgram(
             "let t: table = { flag: true };\n" +
             "while (t.flag) { break; }"
         );
-        assertNoErrors(out, "while condition table read has boolean context");
+        assertError(read, "E3003", "while condition table read rejects E3003");
+        CheckerOutput booleanRequirement = checkProgram(
+            "let t: table = { flag: true };\n" +
+            "while (t) { break; }"
+        );
+        assertError(booleanRequirement, "E3007",
+            "while condition still requires boolean");
     }
 
     static void testForConditionContextualTyping() {
         System.out.println("-- F6: For condition contextual typing --");
-        CheckerOutput out = checkProgram(
+        CheckerOutput read = checkProgram(
             "let t: table = { flag: true };\n" +
             "for (let i: int = 0; i < 10 && t.flag; i = i + 1) { break; }"
         );
-        assertNoErrors(out, "for condition table read has boolean context");
+        assertError(read, "E3003",
+            "for condition table read rejects E3003");
+        CheckerOutput booleanRequirement = checkProgram(
+            "let t: table = { flag: true };\n" +
+            "for (let i: int = 0; t; i = i + 1) { break; }"
+        );
+        assertError(booleanRequirement, "E3007",
+            "for condition still requires boolean");
+    }
+
+    /**
+     * The retained corner-case frontend contracts (ISSUE-0815 subjects
+     * 9-11 plus their legal controls): the closed v1.3 contextual table-read
+     * admission rejects the loop-condition and composite-operand reads with
+     * E3003 at the read, the try/catch-local obligation rejects a
+     * definitely-returning try with a fallthrough catch with E5002 at the
+     * catch block even behind a later return, and the legal controls — the
+     * five direct read positions, the throw-only try with a fallthrough
+     * catch, and catch return/throw — keep compiling.
+     */
+    static void testRetainedCornerCaseFrontendContract() {
+        System.out.println("-- retained corner-case frontend contract:"
+            + " contextual-read negatives and the catch obligation --");
+
+        // Subject 9: a while condition grants boolean checking but no
+        // contextual-read permission.
+        CheckerOutput whileRead = checkProgram(
+            "export function f(): boolean {let t: table = {flag:true};"
+                + " while(t.flag) {return true;} return false;}\n");
+        assertError(whileRead, "E3003", "while-condition table read rejects E3003");
+        checkExactRange(whileRead, "E3003", 1, 65, 1, 71,
+            "the while-condition read carries its own exact range");
+
+        // Subject 10: the t.flag operand of && does not inherit the
+        // enclosing return's permission.
+        CheckerOutput logicalRead = checkProgram(
+            "export function f(): boolean {let t: table = {flag:true};"
+                + " return t.flag && true;}\n");
+        assertError(logicalRead, "E3003",
+            "composite-operand table read rejects E3003");
+        checkExactRange(logicalRead, "E3003", 1, 66, 1, 72,
+            "the composite operand carries its own exact range");
+
+        // Subject 11: a definitely-returning try with a fallthrough catch
+        // rejects at the catch block even though a later return follows.
+        CheckerOutput catchFallthrough = checkProgram(
+            "export function f(): int {try {return 1;} catch(e) {} return 2;}\n");
+        assertError(catchFallthrough, "E5002",
+            "the fallthrough catch rejects E5002");
+        checkExactRange(catchFallthrough, "E5002", 1, 52, 1, 54,
+            "the catch obligation carries the catch block's exact range");
+
+        // The obligation is independent of the enclosing body's return:
+        // the mutual-recursion shape republishes the same E5002 at the
+        // catch, never the whole-function falloff.
+        CheckerOutput recursive = checkProgram(
+            "export function main(): null { function f(): null {try {return null;}"
+                + " catch(e) {g();}} function g(): null {f();} f(); return null; }\n");
+        assertError(recursive, "E5002",
+            "the recursive definitely-returning try rejects E5002");
+        checkExactRange(recursive, "E5002", 1, 80, 1, 86,
+            "the recursive catch carries its own exact range");
+
+        // Function expressions carry the same obligation.
+        CheckerOutput expression = checkProgram(
+            "export function f(): null {let g: () => int = function(): int"
+                + " {try {return 1;} catch(e) {} return 2;}; return null;}\n");
+        assertError(expression, "E5002",
+            "the function-expression catch rejects E5002");
+
+        // Legal control: a throw-only try does not trigger the rule, so a
+        // fallthrough catch with a valid later return compiles.
+        CheckerOutput throwOnly = checkProgram(
+            "export function f(): null {try {throw {message:\"x\"};}"
+                + " catch(e) {} return null;}\n");
+        assertNoErrors(throwOnly, "a throw-only try with a fallthrough catch"
+            + " stays legal");
+
+        // Legal controls: catch return and catch throw after a
+        // definitely-returning try stay accepted.
+        assertNoErrors(checkProgram(
+            "export function f(): int {try {return 1;} catch(e) {return 2;}}\n"),
+            "a returning catch stays legal");
+        assertNoErrors(checkProgram(
+            "export function f(): int {try {return 1;} catch(e) {throw e;}}\n"),
+            "a throwing catch stays legal");
+
+        // Legal controls: all five admitted direct read positions.
+        assertNoErrors(checkProgram(
+            "export function f(t: table): int {let x: int = t.n; x = t.n;"
+                + " if (t.flag) {return t.n;} return x;}\n"),
+            "the direct let/assignment/if/return reads stay admitted");
+        assertNoErrors(checkProgram(
+            "function g(n: int): null {return null;}"
+                + " export function f(t: table): null {g(t.n); return null;}\n"),
+            "the direct argument read stays admitted");
+    }
+
+    /** Asserts one exact diagnostic range (start and end line/column). */
+    private static void checkExactRange(CheckerOutput out, String code,
+            int startLine, int startColumn, int endLine, int endColumn,
+            String context) {
+        for (CompilerDiagnostic d : out.result.diagnostics()) {
+            if (!d.code().equals(code) || d.range() == null) {
+                continue;
+            }
+            check(d.range().startLine() == startLine
+                    && d.range().startColumn() == startColumn
+                    && d.range().endLine() == endLine
+                    && d.range().endColumn() == endColumn,
+                context + ": expected " + startLine + ":" + startColumn + "-"
+                    + endLine + ":" + endColumn + ", got "
+                    + d.range().startLine() + ":" + d.range().startColumn()
+                    + "-" + d.range().endLine() + ":" + d.range().endColumn());
+            return;
+        }
+        check(false, context + ": no " + code + " diagnostic with a range"
+            + " was reported");
     }
 
     // =========================================================================

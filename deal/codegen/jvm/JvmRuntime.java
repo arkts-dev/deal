@@ -1502,7 +1502,12 @@ public final class JvmRuntime {
                     throw arm(deal.semantic.ir.FailureArmId.INT32_RANGE,
                         java.util.Map.of(), "-", null, null);
                 }
-                return d;
+                // The int domain normalizes every zero to positive zero
+                // (spec §Numeric overflow: "-0 is normalized to 0 in int
+                // checks and arithmetic"); the admitted integral double
+                // keeps its own number variant while its sign becomes
+                // positive.
+                return d + 0.0;
             }
             throw kindFailure("int", actual, completion);
         }
@@ -3804,8 +3809,40 @@ public final class JvmRuntime {
      */
     public static String asyncExportDealErrorEnvelope(String code, String message,
                                                       String origin) {
+        return asyncExportDealErrorEnvelope(code, message, origin,
+            null, null, null);
+    }
+
+    /**
+     * The complete {@code deal-error} envelope projection: the carrier's
+     * expected/actual pair and ordered frame text travel with the
+     * code/message/origin (the ErrorDetail contract), each as its own
+     * optional field. Absent optional metadata omits its field entirely.
+     */
+    public static String asyncExportDealErrorEnvelope(String code, String message,
+                                                      String origin,
+                                                      String expected, String actual,
+                                                      String frames) {
+        return asyncExportDealErrorEnvelope(code, message, origin,
+            expected, actual, frames, null);
+    }
+
+    public static String asyncExportDealErrorEnvelope(DealError error) {
+        return asyncExportDealErrorEnvelope(error.code, error.msg, error.origin,
+            error.expected, error.actual, error.frames, error.cause);
+    }
+
+    private static String asyncExportDealErrorEnvelope(String code, String message,
+            String origin, String expected, String actual, String frames, DealError cause) {
         StringBuilder sb = new StringBuilder(ASYNC_EXPORT_RESULT_PREFIX);
-        sb.append("{\"status\":\"deal-error\",\"code\":");
+        sb.append("{\"status\":\"deal-error\",");
+        appendErrorDetail(sb, code, message, origin, expected, actual, frames, cause);
+        return sb.append('}').toString();
+    }
+
+    private static void appendErrorDetail(StringBuilder sb, String code, String message,
+            String origin, String expected, String actual, String frames, DealError cause) {
+        sb.append("\"code\":");
         appendJsonString(sb, String.valueOf(code));
         sb.append(",\"message\":");
         appendJsonString(sb, String.valueOf(message));
@@ -3821,7 +3858,28 @@ public final class JvmRuntime {
                 appendJsonString(sb, origin);
             }
         }
-        return sb.append('}').toString();
+        // The absent optional fields (null or the emitter's "-" marker)
+        // omit their envelope field; every carried fact stays verbatim.
+        appendOptionalEnvelopeField(sb, "expected", expected);
+        appendOptionalEnvelopeField(sb, "actual", actual);
+        appendOptionalEnvelopeField(sb, "frames", frames);
+        if (cause != null) {
+            sb.append(",\"cause\":{");
+            appendErrorDetail(sb, cause.code, cause.msg, cause.origin,
+                cause.expected, cause.actual, cause.frames, cause.cause);
+            sb.append('}');
+        }
+    }
+
+    private static void appendOptionalEnvelopeField(StringBuilder sb,
+                                                     String name, String value) {
+        if (value == null || "-".equals(value)) {
+            return;
+        }
+        sb.append(',');
+        appendJsonString(sb, name);
+        sb.append(':');
+        appendJsonString(sb, value);
     }
 
     /**

@@ -1,0 +1,13 @@
+// @spec: Type system
+// @description: Corner-case subject negative-zero-domains — number preserves the IEEE signed zero while int checks, conversions and arithmetic normalize every zero to positive zero. (basis: Numeric overflow, NaN, and Infinity)
+// @expected: runtime-ok
+// @features: v1.3, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let nz: number = -0.0; let pz: number = 0.0; let one: number = 1.0;
+ if(nz !== pz || !(one / nz < 0.0) || !(one / pz > 0.0)) {throw {code:"NUMBER_ZERO_SIGN",message:"number signed zero lost"};}
+ let iz: int = int(nz); let uz: int = -0;
+ if(iz !== 0 || uz !== 0 || !(one / number(iz) > 0.0) || !(one / number(uz) > 0.0)) {throw {code:"INT_ZERO_SIGN",message:"int negative zero retained"};}
+ c.log("negative-zero-domains"); return null;
+}

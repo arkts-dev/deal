@@ -3155,6 +3155,14 @@ public final class LuaSemanticEmitter {
                 out.append("  error(__chk, 0)\n");
                 out.append("end\n");
                 emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
+                // The admitted value is the one the callee observes: the
+                // boundary cell's result (the int cell's -0 normalization
+                // included) replaces the raw operand in its own slot,
+                // because the invocation binds its arguments from those
+                // slots. The operand's evaluation order and side effects
+                // are unchanged; only the checked representation is
+                // published to the callee.
+                out.append(slot(boundaryPayload.input())).append(" = __chk\n");
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
 
@@ -10227,21 +10235,30 @@ local function __bcheck(desc, staticKind, v, csig, completion)
       return error(__arm("INT32_RANGE", nil, "-", nil, nil), 0)
     end
     if type(v) == "table" and v.__jn then
-      if v.k == "int" then return v end
+      -- The int cell's positive-zero normalization: a zero-valued carrier
+      -- is re-published with a positive zero while its recorded variant
+      -- is preserved; the input carrier is never mutated.
+      local function admitCarrier()
+        if v.d == 0 and 1 / v.d < 0 then
+          return {__jn = true, k = v.k, d = 0}
+        end
+        return v
+      end
+      if v.k == "int" then return admitCarrier() end
       if v.d ~= v.d then return failRefinement("NaN") end
       if v.d == math.huge or v.d == -math.huge then
         return failRefinement("infinity")
       end
       if v.d % 1 ~= 0 then return failRefinement("number") end
       if v.d < -2147483648 or v.d > 2147483647 then return failRange() end
-      return v
+      return admitCarrier()
     end
     if type(v) == "number" then
       if v ~= v then return failRefinement("NaN") end
       if v == math.huge or v == -math.huge then return failRefinement("infinity") end
       if v % 1 ~= 0 then return failRefinement("number") end
       if v < -2147483648 or v > 2147483647 then return failRange() end
-      return v
+      return v + 0
     end
     return fail("int")
   elseif desc == "number" then
@@ -10427,25 +10444,31 @@ local function __unary(selector, v, opKey, digest, parent, origin)
   if selector == "BOOL_NOT" then return not v end
   v = __num(v)
   if selector == "INT32_NEG" then
+    -- The int domain normalizes every zero to positive zero
+    -- (docs/spec-v1.3.md §Numeric overflow: "-0 is normalized to 0 in
+    -- int checks and arithmetic"): negating 0 publishes +0, never -0.
     local r = -v
     if r < -2147483648 or r > 2147483647 then
       local e = __arm("INT32_RANGE", nil, origin, nil, nil)
       __ev(opKey, "FAILURE", "UNARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
-    return r
+    return r + 0
   end
   return -v
 end
 local function __arith(selector, l, r, opKey, digest, parent, origin)
   l = __num(l); r = __num(r)
+  -- Every int arithmetic result leaves the range gate through the int
+  -- domain's positive-zero normalization; the number selectors below
+  -- return their own IEEE results untouched.
   local function rng(v)
     if v < -2147483648 or v > 2147483647 then
       local e = __arm("INT32_RANGE", nil, origin, nil, nil)
       __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
       error(e, 0)
     end
-    return v
+    return v + 0
   end
   if selector == "INT32_ADD" then return rng(l + r) end
   if selector == "INT32_SUB" then return rng(l - r) end
@@ -10490,6 +10513,10 @@ local function __intConv(v, evKind, kind, opKey, digest, parent, origin)
   end
   v = __num(v)
   if type(v) == "number" then
+    -- The int domain normalizes every zero to positive zero (spec
+    -- §Numeric overflow: int checks normalize -0); the NaN, infinity and
+    -- fractional tokens are unaffected by the normalization.
+    v = v + 0
     if v ~= v then
       local e = __arm("INT_CONVERSION_NAN", nil, origin, "int", "NaN")
       __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))

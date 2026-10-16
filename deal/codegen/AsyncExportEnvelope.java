@@ -33,6 +33,11 @@ public final class AsyncExportEnvelope {
     private AsyncExportEnvelope() {
     }
 
+    /** A recursively validated language error; absent optional fields are null. */
+    public record ErrorDetail(String code, String message, String file,
+                              Integer line, Integer column, String expected,
+                              String actual, String frames, ErrorDetail cause) {}
+
     /** The validated closed-schema envelope of one status. */
     public static final class Envelope {
         public final String status;
@@ -43,11 +48,41 @@ public final class AsyncExportEnvelope {
         public final String file;
         public final Integer line;
         public final Integer column;
+        /**
+         * The deal-error detail's expected/actual pair and ordered frame
+         * text (the complete ErrorDetail projection): absent optional
+         * metadata stays {@code null}.
+         */
+        public final String expected;
+        public final String actual;
+        public final String frames;
+        public final ErrorDetail cause;
         public final String reason;
 
+        /**
+         * The retained status-shape constructor: callers that construct
+         * an envelope without the optional deal-error detail keep working,
+         * with expected/actual/frames absent ({@code null}).
+         */
         public Envelope(String status, String descriptor, String value, String code,
                         String message, String file, Integer line, Integer column,
                         String reason) {
+            this(status, descriptor, value, code, message, file, line, column,
+                null, null, null, reason);
+        }
+
+        public Envelope(String status, String descriptor, String value, String code,
+                        String message, String file, Integer line, Integer column,
+                        String expected, String actual, String frames,
+                        String reason) {
+            this(status, descriptor, value, code, message, file, line, column,
+                expected, actual, frames, null, reason);
+        }
+
+        public Envelope(String status, String descriptor, String value, String code,
+                        String message, String file, Integer line, Integer column,
+                        String expected, String actual, String frames,
+                        ErrorDetail cause, String reason) {
             this.status = status;
             this.descriptor = descriptor;
             this.value = value;
@@ -56,6 +91,10 @@ public final class AsyncExportEnvelope {
             this.file = file;
             this.line = line;
             this.column = column;
+            this.expected = expected;
+            this.actual = actual;
+            this.frames = frames;
+            this.cause = cause;
             this.reason = reason;
         }
     }
@@ -94,21 +133,17 @@ public final class AsyncExportEnvelope {
                 String value = requireString(obj, "value",
                     "value envelope");
                 yield new Envelope(status, descriptor, value, null, null,
-                    null, null, null, null);
+                    null, null, null, null, null, null, null);
             }
             case STATUS_DEAL_ERROR -> {
-                requireSubset(obj, Set.of("status", "code", "message",
-                    "file", "line", "column"),
-                    Set.of("status", "code", "message"), "deal-error");
-                String code = requireString(obj, "code",
-                    "deal-error envelope");
-                String message = requireString(obj, "message",
-                    "deal-error envelope");
-                String file = optionalString(obj, "file");
-                Integer line = optionalInteger(obj, "line");
-                Integer column = optionalInteger(obj, "column");
-                yield new Envelope(status, null, null, code, message, file,
-                    line, column, null);
+                // The deal-error arm carries the complete ErrorDetail
+                // contract: the required code/message plus the optional
+                // location, expected/actual and ordered frame text.
+                ErrorDetail detail = decodeError(obj, true);
+                yield new Envelope(status, null, null, detail.code(),
+                    detail.message(), detail.file(), detail.line(), detail.column(),
+                    detail.expected(), detail.actual(), detail.frames(),
+                    detail.cause(), null);
             }
             case STATUS_HOST_FAILURE -> {
                 requireClosed(obj, Set.of("status", "reason"),
@@ -116,18 +151,41 @@ public final class AsyncExportEnvelope {
                 String reason = requireString(obj, "reason",
                     "host-failure envelope");
                 yield new Envelope(status, null, null, null, null, null,
-                    null, null, reason);
+                    null, null, null, null, null, reason);
             }
             case STATUS_REPRESENTATION_FAILURE, STATUS_INFRASTRUCTURE_FAILURE -> {
                 requireClosed(obj, Set.of("status", "reason"), status);
                 String reason = requireString(obj, "reason",
                     status + " envelope");
                 yield new Envelope(status, null, null, null, null, null,
-                    null, null, reason);
+                    null, null, null, null, null, reason);
             }
             default -> throw new EnvelopeJson.ParseException(
                 "unknown envelope status: " + status);
         };
+    }
+
+    private static ErrorDetail decodeError(EnvelopeJson.ObjectValue obj,
+                                            boolean envelope) {
+        requireSubset(obj, envelope
+                ? Set.of("status", "code", "message", "file", "line", "column",
+                    "expected", "actual", "frames", "cause")
+                : Set.of("code", "message", "file", "line", "column",
+                    "expected", "actual", "frames", "cause"),
+            envelope ? Set.of("status", "code", "message")
+                : Set.of("code", "message"), "deal-error");
+        ErrorDetail cause = null;
+        if (obj.fields().containsKey("cause")) {
+            if (!(obj.fields().get("cause") instanceof EnvelopeJson.ObjectValue nested)) {
+                throw new EnvelopeJson.ParseException("cause must be an error object");
+            }
+            cause = decodeError(nested, false);
+        }
+        return new ErrorDetail(requireString(obj, "code", "deal-error"),
+            requireString(obj, "message", "deal-error"), optionalString(obj, "file"),
+            optionalInteger(obj, "line"), optionalInteger(obj, "column"),
+            optionalString(obj, "expected"), optionalString(obj, "actual"),
+            optionalString(obj, "frames"), cause);
     }
 
     private static void requireSubset(EnvelopeJson.ObjectValue obj,

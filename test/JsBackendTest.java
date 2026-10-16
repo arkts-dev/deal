@@ -172,6 +172,9 @@ public class JsBackendTest {
             testAsyncCompletionAndErrors();
             testAsyncExportInvokerNode();
             testProductionArityExtensionOrderNode();
+            testAwaitCapableArrayWriteOrderNode();
+            testAsyncErrorDetailTransportNode();
+            testCornerCasePublicErrorsNode();
             testProductionCompanionDirectNode();
             testProductionNodeCaptureBoundary();
             testOrchestratorJsBackend();
@@ -727,6 +730,319 @@ public class JsBackendTest {
     }
 
     /**
+     * The JS async error transport: the public {@code $ok:false,$error}
+     * result of a failing awaited export carries the complete ErrorDetail
+     * — code/message, the read-check origin, expected/actual and the
+     * captured frames naming the generated fail/run functions — through
+     * the existing error object, never a code/location-only record.
+     */
+    private static void testAsyncErrorDetailTransportNode() throws Exception {
+        System.out.println("-- Node: the async $error result carries the"
+            + " complete ErrorDetail --");
+        if (!nodeAvailable) {
+            skipNode("async error detail transport");
+            return;
+        }
+        Frontend f = compileFrontend("""
+            async function fail(): int {
+              let t: table = {value: "bad"};
+              let x: int = t.value;
+              return x;
+            }
+            export function main(): null { return null; }
+            export async function oracle(): int { return await fail(); }
+            """, "jstest-async-detail.deal");
+        if (!f.errors().isEmpty()) {
+            throw new RuntimeException("frontend errors: " + f.errors());
+        }
+        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
+            f.checkResult(), "jstest-async-detail.deal", "Main", Map.of(),
+            Map.of(), false);
+        if (res.hasErrors()) {
+            throw new RuntimeException("codegen errors: " + res.diagnostics());
+        }
+        Path dir = deployArtifacts(res, "Main.js");
+        Files.writeString(dir.resolve("detail_runner.js"), String.join("\n",
+            "\"use strict\";",
+            "const $rt = require(\"./deal/runtime\");",
+            "const $entry = require(\"./Main\");",
+            "$rt.invokeAsyncExport($entry, \"oracle\", \"int\").then((r) => {",
+            "  if (r.$ok === true) {",
+            "    process.stdout.write(\"DETAIL: unexpected value\");",
+            "    return;",
+            "  }",
+            "  const e = r.$error;",
+            "  process.stdout.write(\"DETAIL: \" + e.code + \"|\" + e.message",
+            "    + \"|\" + e.line + \":\" + e.column + \"|\" + e.expected",
+            "    + \"|\" + e.actual + \"|\" + e.frames);",
+            "});",
+            ""));
+        NodeResult result = runNodeScript(dir, "detail_runner.js");
+        deleteDir(dir);
+        String expected = "DETAIL: E8001|expected int|3:16|int|string";
+        check(result.exitCode() == 0
+                && result.output().startsWith(expected)
+                && result.output().contains("fail$f")
+                && result.output().contains("oracle$f"),
+            "the async $error result carries the complete ErrorDetail with"
+                + " the generated fail/run frames: " + result.output());
+    }
+
+    /**
+     * The retained corner-case public errors on the JS lane (ISSUE-0815
+     * subjects 5-8): the published two-module project's {@code run} export
+     * is invoked through the actual public surfaces — the sync direct and
+     * rethrow forms through the exported-function wrapper, the async
+     * direct and rethrow forms through the production
+     * {@code $rt.invokeAsyncExport} API with exportName {@code run} and
+     * returnDescriptor {@code int} — and every result carries the complete
+     * ErrorDetail (code, message, companion origin, expected, actual and
+     * the captured fail/run frames), while the program's own streams stay
+     * empty.
+     */
+    private static void testCornerCasePublicErrorsNode() throws Exception {
+        System.out.println("-- Node: the retained corner-case public errors"
+            + " (sync/async, direct/rethrow) --");
+        if (!nodeAvailable) { skipNode("corner-case public errors"); return; }
+        for (boolean rethrow : new boolean[] {false, true}) {
+            String suffix = rethrow ? "rethrow" : "direct";
+
+            // Subjects 5 and 7: the sync companion through the public
+            // exported-function wrapper.
+            Path syncRoot = publishCornerCaseProject("sync-" + suffix,
+                CORNER_CASE_SYNC_HELPER,
+                String.join("\n",
+                    "import * as c from \"std/console\";",
+                    "import * as helper from \"./helper\";",
+                    "export function main(): null {return null;}",
+                    "export function run(): int {"
+                        + (rethrow
+                            ? "try {return helper.fail();} catch(e) {throw e;}"
+                            : "return helper.fail();")
+                        + "}",
+                    ""));
+            try {
+                assertCornerCasePublished("sync " + suffix, syncRoot,
+                    CORNER_CASE_SYNC_HOST_SOURCE);
+            } finally {
+                deleteDir(syncRoot);
+            }
+
+            // Subjects 6 and 8: the awaited companion through the public
+            // async API (exportName run, returnDescriptor int).
+            Path asyncRoot = publishCornerCaseProject("async-" + suffix,
+                CORNER_CASE_ASYNC_HELPER,
+                String.join("\n",
+                    "import * as c from \"std/console\";",
+                    "import * as helper from \"./helper\";",
+                    "export function main(): null {return null;}",
+                    "export async function run(): int {"
+                        + (rethrow
+                            ? "try {return await helper.fail();} catch(e) {throw e;}"
+                            : "return await helper.fail();")
+                        + "}",
+                    ""));
+            try {
+                assertCornerCasePublished("async " + suffix, asyncRoot,
+                    CORNER_CASE_ASYNC_HOST_SOURCE);
+            } finally {
+                deleteDir(asyncRoot);
+            }
+        }
+    }
+
+    /** The sync companion of subjects 5 and 7 (the type-failing read on line 3). */
+    private static final String CORNER_CASE_SYNC_HELPER = String.join("\n",
+        "export function fail(): int {",
+        "  let t: table = {value: \"bad\"};",
+        "  let x: int = t.value;",
+        "  return x;",
+        "}",
+        "");
+
+    /** The awaited companion of subjects 6 and 8 (the same line 3 read). */
+    private static final String CORNER_CASE_ASYNC_HELPER = String.join("\n",
+        "export async function fail(): int {",
+        "  let t: table = {value: \"bad\"};",
+        "  let x: int = t.value;",
+        "  return x;",
+        "}",
+        "");
+
+    /**
+     * The exported-function-wrapper host of the sync subjects: it
+     * initializes the module through the published {@code main} wrapper,
+     * invokes the sync {@code run} wrapper, catches the escaped companion
+     * error and records the complete ErrorDetail in a private file, so both
+     * program streams remain the program's own.
+     */
+    private static final String CORNER_CASE_SYNC_HOST_SOURCE = String.join("\n",
+        "\"use strict\";",
+        "const fs = require(\"fs\");",
+        "const $entry = require(\"./main\");",
+        "$entry.main.$f();",
+        "let error;",
+        "try { $entry.run.$f(); } catch (caught) { error = caught; }",
+        "if (!error || typeof error !== \"object\") {",
+        "  fs.writeFileSync(\"corner_error.txt\", \"NO_ERROR\\n\");",
+        "  process.exit(4);",
+        "}",
+        "fs.writeFileSync(\"corner_error.txt\", [",
+        "  \"code=\" + error.code,",
+        "  \"message=\" + error.message,",
+        "  \"file=\" + error.file,",
+        "  \"line=\" + error.line,",
+        "  \"column=\" + error.column,",
+        "  \"expected=\" + error.expected,",
+        "  \"actual=\" + error.actual,",
+        "  \"frames=\" + error.frames,",
+        "  \"cause=\" + Object.hasOwn(error, \"cause\"),",
+        "].join(\"\\n\") + \"\\n\");",
+        "");
+
+    /**
+     * The production async-API host of the awaited subjects: the single
+     * {@code $rt.invokeAsyncExport} call with exportName {@code run} and
+     * returnDescriptor {@code int} records the {@code $ok:false,$error}
+     * detail (never a code/location-only record) in a private file; the
+     * process writes nothing to stdout or stderr.
+     */
+    private static final String CORNER_CASE_ASYNC_HOST_SOURCE = String.join("\n",
+        "\"use strict\";",
+        "const fs = require(\"fs\");",
+        "const $rt = require(\"./deal/runtime\");",
+        "const $entry = require(\"./main\");",
+        "$rt.invokeAsyncExport($entry, \"run\", \"int\").then((r) => {",
+        "  if (r.$ok === true) {",
+        "    fs.writeFileSync(\"corner_error.txt\", \"value=\" + r.$value + \"\\n\");",
+        "    return;",
+        "  }",
+        "  if (typeof r.$failure === \"string\") {",
+        "    fs.writeFileSync(\"corner_error.txt\", \"failure=\" + r.$failure + \"\\n\");",
+        "    return;",
+        "  }",
+        "  const e = r.$error;",
+        "  fs.writeFileSync(\"corner_error.txt\", [",
+        "    \"code=\" + e.code,",
+        "    \"message=\" + e.message,",
+        "    \"file=\" + e.file,",
+        "    \"line=\" + e.line,",
+        "    \"column=\" + e.column,",
+        "    \"expected=\" + e.expected,",
+        "    \"actual=\" + e.actual,",
+        "    \"frames=\" + e.frames,",
+        "    \"cause=\" + Object.hasOwn(e, \"cause\"),",
+        "  ].join(\"\\n\") + \"\\n\");",
+        "});",
+        "");
+
+    /** Publishes one two-module corner-case project through the public
+     * {@code deal compile} entry and returns the project root. */
+    private static Path publishCornerCaseProject(String name,
+            String helperSource, String mainSource) throws Exception {
+        Path root = Files.createTempDirectory("jstest_corner_case_" + name + "_");
+        Files.createDirectories(root.resolve("src"));
+        Files.writeString(root.resolve("deal.json"),
+            "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\"src\"],"
+                + " \"output\": \"out\", \"backend\": \"js\"}\n",
+            StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("src/helper.deal"), helperSource,
+            StandardCharsets.UTF_8);
+        Path entry = root.resolve("src/main.deal");
+        Files.writeString(entry, mainSource, StandardCharsets.UTF_8);
+        int exit = deal.Main.run(new String[] {"compile",
+            entry.toAbsolutePath().toString()});
+        check(exit == 0, name + ": the public deal compile of the"
+            + " corner-case project succeeds: exit=" + exit);
+        if (exit != 0) {
+            throw new IllegalStateException(name + ": the corner-case"
+                + " project did not compile through the public entry");
+        }
+        return root;
+    }
+
+    /**
+     * Drives one published corner-case project through one public host and
+     * asserts the complete observed ErrorDetail: the exact fields of the
+     * companion read, the program's empty streams and the wrong-fields
+     * controls of the shared verdict.
+     */
+    private static void assertCornerCasePublished(String name, Path root,
+            String hostSource) throws Exception {
+        Path out = root.resolve("out");
+        boolean v12Profile = !Files.readString(out.resolve("main.js"),
+            StandardCharsets.UTF_8).contains("setInt32Mode");
+        check(v12Profile, name + ": the published artifact carries no profile"
+            + " switch under the sole v1.3 profile");
+        Files.writeString(out.resolve("corner_host.js"), hostSource,
+            StandardCharsets.UTF_8);
+        ProductionNodeRun run = runNodeSplit(out, "corner_host.js",
+            "corner_error.txt", v12Profile);
+        check(run.exitCode() == 0, name + ": the public host exits 0: exit="
+            + run.exitCode() + " stderr=<" + run.stderr() + ">");
+        check(run.stdout().isEmpty(), name + ": the program stdout stays"
+            + " empty: <" + run.stdout() + ">");
+        check(run.stderr().isEmpty(), name + ": the program stderr stays"
+            + " empty: <" + run.stderr() + ">");
+        check(run.signal().contains("cause=false\n"),
+            name + ": direct/rethrow error has no own cause property");
+        CompanionErrorRecord observed = CompanionErrorRecord.parse(run.signal());
+        Optional<String> verdict = companionDirectMismatch(observed);
+        check(verdict.isEmpty(), name + ": the public error record is the"
+            + " complete ErrorDetail: " + verdict.orElse("match"));
+        check(companionDirectMismatch(observed.withColumn("10")).isPresent(),
+            name + ": the verdict rejects the later annotation column 10");
+        check(companionDirectMismatch(
+                observed.withFrames("Object.someOther$f")).isPresent(),
+            name + ": the verdict rejects frames without the fail/run"
+                + " functions");
+    }
+
+    /**
+     * The await-capable array write: the JS assignment sequence must
+     * evaluate receiver, index and the awaited RHS once in that order
+     * before the E8002 bounds rejection, publish no write and preserve
+     * alias/length/value, then append. The subject runs through the
+     * production async-export surface and reports its result as the
+     * completion value, so a reordered or suppressed operand fails the
+     * run.
+     */
+    private static void testAwaitCapableArrayWriteOrderNode()
+            throws Exception {
+        System.out.println("-- Node: the await-capable array write keeps the"
+            + " receiver/index/RHS order before the bounds gate --");
+        if (!nodeAvailable) {
+            skipNode("await-capable array write");
+            return;
+        }
+        NodeResult run = runInvokerNode("""
+            export function main(): null { return null; }
+            export async function oracle(): int {
+              let xs: int[] = [7];
+              let alias: int[] = xs;
+              let trace: string = "";
+              async function value(): int { trace = trace + "V"; return 9; }
+              function index(): int { trace = trace + "I"; return 2; }
+              function receiver(): int[] { trace = trace + "R"; return xs; }
+              try { receiver()[index()] = await value(); trace = trace + "X"; }
+              catch (e) { if (e.code !== "E8002") { return 0; } trace = trace + "C"; }
+              if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) { return 0; }
+              alias[alias.length] = 8;
+              if (xs.length !== 2 || xs[1] !== 8) { return 0; }
+              let zero: table = {value: -0.0};
+              function admitted(x: int): int {
+                if (1.0 / number(x) > 0.0) { return 1; }
+                return 0;
+              }
+              return admitted(zero.value);
+            }
+            """, "invoker-await-write", "oracle", "int");
+        check(run.exitCode() == 0 && run.output().equals("INVOKE_OK: 1"),
+            "the awaited array write evaluates RIV before the bounds gate,"
+                + " publishes no write and appends: " + run.output());
+    }
+
+    /**
      * ISSUE-0756 subject {@code public-companion-direct} on the real v1.2
      * public JS surface: the two-module project (the entry imports the
      * companion module) is published through the public {@code deal
@@ -819,9 +1135,13 @@ public class JsBackendTest {
             check(companionDirectMismatch(observed.withLine("4"))
                     .isPresent(),
                 "the verdict rejects a wrong origin line");
-            check(companionDirectMismatch(observed.withColumn("11"))
+            check(companionDirectMismatch(observed.withColumn("10"))
                     .isPresent(),
-                "the verdict rejects a wrong origin column");
+                "the verdict rejects the later annotation column 10");
+            check(companionDirectMismatch(
+                    observed.withFrames("Object.someOther$f"))
+                    .isPresent(),
+                "the verdict rejects frames without the fail/run functions");
         } finally {
             deleteDir(root);
         }
@@ -1003,13 +1323,14 @@ public class JsBackendTest {
             "  \"column=\" + error.column,",
             "  \"expected=\" + error.expected,",
             "  \"actual=\" + error.actual,",
+            "  \"frames=\" + error.frames,",
             "].join(\"\\n\") + \"\\n\");",
             "");
 
     /** One observed public-companion-direct error field record. */
     private record CompanionErrorRecord(String code, String message,
             String file, String line, String column, String expected,
-            String actual) {
+            String actual, String frames) {
 
         static CompanionErrorRecord parse(String transcript) {
             String code = null;
@@ -1019,6 +1340,7 @@ public class JsBackendTest {
             String column = null;
             String expected = null;
             String actual = null;
+            String frames = null;
             for (String field : transcript.split("\n")) {
                 int split = field.indexOf('=');
                 if (split < 0) {
@@ -1034,58 +1356,63 @@ public class JsBackendTest {
                     case "column" -> column = value;
                     case "expected" -> expected = value;
                     case "actual" -> actual = value;
+                    case "frames" -> frames = value;
                     default -> { }
                 }
             }
             return new CompanionErrorRecord(code, message, file, line,
-                column, expected, actual);
+                column, expected, actual, frames);
         }
 
         CompanionErrorRecord withCode(String value) {
             return new CompanionErrorRecord(value, message, file, line,
-                column, expected, actual);
+                column, expected, actual, frames);
         }
 
         CompanionErrorRecord withMessage(String value) {
             return new CompanionErrorRecord(code, value, file, line,
-                column, expected, actual);
+                column, expected, actual, frames);
         }
 
         CompanionErrorRecord withFile(String value) {
             return new CompanionErrorRecord(code, message, value, line,
-                column, expected, actual);
+                column, expected, actual, frames);
         }
 
         CompanionErrorRecord withLine(String value) {
             return new CompanionErrorRecord(code, message, file, value,
-                column, expected, actual);
+                column, expected, actual, frames);
         }
 
         CompanionErrorRecord withColumn(String value) {
             return new CompanionErrorRecord(code, message, file, line,
-                value, expected, actual);
+                value, expected, actual, frames);
         }
 
         CompanionErrorRecord withExpected(String value) {
             return new CompanionErrorRecord(code, message, file, line,
-                column, value, actual);
+                column, value, actual, frames);
         }
 
         CompanionErrorRecord withActual(String value) {
             return new CompanionErrorRecord(code, message, file, line,
-                column, expected, value);
+                column, expected, value, frames);
+        }
+
+        CompanionErrorRecord withFrames(String value) {
+            return new CompanionErrorRecord(code, message, file, line,
+                column, expected, actual, value);
         }
     }
 
     /**
      * The independent public-companion-direct verdict over the observed
      * public error record: the exact prescribed fields and the companion
-     * origin. The message keeps the package's constraint (it must report
-     * the int type failure); the exact column is the accepted compiler
-     * check anchor for the companion line 3 declaration read (the package
-     * leaves the exact column to the check-anchor contract), pinned as
-     * observed on the current canonical v1.2 compilation. The same
-     * function is the wrong-observation control.
+     * origin. The message is the exact typed-kind arm text, the column is
+     * the contextual read check the lowering selects at the companion
+     * read ({@code t.value}, column 16) — never the later annotation
+     * check at column 10. The same function is the wrong-observation
+     * control.
      */
     private static Optional<String> companionDirectMismatch(
             CompanionErrorRecord observed) {
@@ -1093,10 +1420,10 @@ public class JsBackendTest {
             return Optional.of("error code must be E8001, got "
                 + observed.code());
         }
-        if (observed.message() == null
-                || !observed.message().contains("int")) {
-            return Optional.of("the message must report the int type"
-                + " failure, got <" + observed.message() + ">");
+        if (!"expected int".equals(observed.message())) {
+            return Optional.of("the message must be the typed-kind arm's"
+                + " exact text 'expected int', got <" + observed.message()
+                + ">");
         }
         if (!"int".equals(observed.expected())) {
             return Optional.of("expected must be int, got "
@@ -1116,9 +1443,15 @@ public class JsBackendTest {
             return Optional.of("the origin line must be 3, got "
                 + observed.line());
         }
-        if (!"10".equals(observed.column())) {
-            return Optional.of("the origin column must be the accepted"
-                + " check anchor 10, got " + observed.column());
+        if (!"16".equals(observed.column())) {
+            return Optional.of("the origin column must be the contextual"
+                + " read check anchor 16, got " + observed.column());
+        }
+        String frames = observed.frames() == null ? "" : observed.frames();
+        if (!frames.contains("fail$f") || !frames.contains("run$f")) {
+            return Optional.of("the frames must name the generated helper"
+                + " fail and entry run functions (fail$f/run$f), got <"
+                + observed.frames() + ">");
         }
         return Optional.empty();
     }
@@ -1953,10 +2286,8 @@ public class JsBackendTest {
             "nested class with a scope-local default function generates: "
                 + (func == null ? "<null>" : func.diagnostics()));
         if (func != null && !func.hasErrors()) {
-            check(func.source().contains(
-                    "evaluator: () => next.$f("),
-                "the plan evaluator captures the scope-local function "
-                    + "(call through its wrapper)");
+            check(func.source().contains("evaluator: () => next.$f("),
+                "the plan evaluator calls the ordinary function wrapper");
         }
 
         // A module class exports META and hidden construction under the

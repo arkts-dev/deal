@@ -744,7 +744,7 @@ public class ControlFlowLoweringTest {
         System.out.println("-- LOOP(FOR): init + first condition production, update + re-test --");
 
         CheckedSlice slice = checkSlice(
-            "for (({i: 0}).i = 0; ({c: true}).c; ({u: 0}).u = 0) {}");
+            "for (({i: 0}).i = 0; true; ({u: 0}).u = 0) {}");
         if (slice == null) {
             return;
         }
@@ -776,46 +776,60 @@ public class ControlFlowLoweringTest {
         List<OpId> updateOps = table.blockOps().get(payload.updateBlock());
 
         // initBlock = init chain (5 ops) + first condition production
-        // (CONST, TABLE_NEW, MEMBER_READ, CONTEXTUAL_TABLE_READ child).
-        check(initOps.size() == 9,
+        // (CONST true).
+        check(initOps.size() == 6,
             "initBlock carries the init chain (5 ops) + the first condition production "
-                + "(4 ops); got " + initOps.size());
-        check(updateOps.size() == 9,
+                + "(1 op); got " + initOps.size());
+        check(updateOps.size() == 6,
             "updateBlock carries the update chain (5 ops) + the condition re-production "
-                + "(4 ops); got " + updateOps.size());
+                + "(1 op); got " + updateOps.size());
         List<SemanticOp> assigns = ofKind(ops, SemanticOpKind.ASSIGN);
         check(assigns.size() == 2, "the init and update chains produce two ASSIGN ops");
         check(initOps.contains(assigns.get(0).opId()),
             "the init chain op is a member of initBlock");
         check(updateOps.contains(assigns.get(1).opId()),
             "the update chain op is a member of updateBlock");
-        check(initOps.indexOf(assigns.get(0).opId()) < initOps.size() - 4
-                && updateOps.indexOf(assigns.get(1).opId()) < updateOps.size() - 4,
+        check(initOps.indexOf(assigns.get(0).opId()) < initOps.size() - 1
+                && updateOps.indexOf(assigns.get(1).opId()) < updateOps.size() - 1,
             "the update ops precede the condition productions inside each block "
                 + "(update then re-test)");
 
         // The condition ValueId: one identity, re-produced by the
-        // updateBlock production (two producing ops publish it).
-        List<SemanticOp> reads = ofKind(ops, SemanticOpKind.MEMBER_READ);
-        check(reads.size() == 2, "the condition lowers to exactly two MEMBER_READ ops");
-        check(reads.get(0).result().equals(reads.get(1).result()),
+        // updateBlock production (two producing ops publish it). The
+        // v1.3 admission list admits no loop-condition table read, so the
+        // condition is the admitted boolean literal.
+        List<SemanticOp> conditions = new ArrayList<>();
+        for (SemanticOp op : ofKind(ops, SemanticOpKind.CONST)) {
+            if (op.payload() instanceof KindPayload.ConstPayload constPayload
+                    && constPayload.value().equals(
+                        new ScalarValue.Boolean(true))) {
+                conditions.add(op);
+            }
+        }
+        check(conditions.size() == 2,
+            "the condition lowers to exactly two CONST true ops; got "
+                + conditions.size());
+        if (conditions.size() != 2) {
+            return;
+        }
+        check(conditions.get(0).result().equals(conditions.get(1).result()),
             "both condition productions publish the same condition ValueId (one identity, "
                 + "re-produced per iteration)");
-        check(payload.condition().equals(reads.get(0).result()),
+        check(payload.condition().equals(conditions.get(0).result()),
             "the payload condition is the shared condition ValueId");
-        check(initOps.contains(reads.get(0).opId())
-                && updateOps.contains(reads.get(1).opId()),
+        check(initOps.contains(conditions.get(0).opId())
+                && updateOps.contains(conditions.get(1).opId()),
             "the first production is an initBlock member and the re-production is an "
                 + "updateBlock member");
-        for (SemanticOp read : reads) {
-            check(loop.opId().equals(read.origin().parentOpId()),
+        for (SemanticOp conditionOp : conditions) {
+            check(loop.opId().equals(conditionOp.origin().parentOpId()),
                 "each condition production records the LOOP as parentOpId");
         }
         check(table.blockOps().get(payload.bodyBlock()).isEmpty(),
             "the empty body block is an empty block of the table");
         check(ops.indexOf(loop) == 0,
             "the LOOP op precedes its child block ops in the unit list");
-        check(ops.indexOf(reads.get(0)) < ops.indexOf(reads.get(1)),
+        check(ops.indexOf(conditions.get(0)) < ops.indexOf(conditions.get(1)),
             "the first condition production precedes the re-production in the unit list");
         ForStatement statement = first(slice.program(), ForStatement.class);
         checkOrigin("LOOP(FOR)", loop, statement.span(), SourceOriginKind.USER, null);

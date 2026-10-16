@@ -94,16 +94,33 @@ public class JvmAsyncExportInvoker {
 
         /**
          * A DEAL Error raised by module initialization, {@code main()},
-         * the operation, or the completion matcher — propagated with code
-         * and message unchanged, and with the carried source location
-         * projected into the location fields (absent fields are
-         * {@code null}).
+         * the operation, or the completion matcher — propagated with
+         * the complete ErrorDetail projection: code/message, the carried
+         * source location, the expected/actual pair and the ordered frame
+         * text (absent optional fields are {@code null}).
          */
         record DealError(String code, String message, String file,
-                         Integer line, Integer column) implements Result {
+                         Integer line, Integer column, String expected,
+                         String actual, String frames,
+                         AsyncExportEnvelope.ErrorDetail cause) implements Result {
+            public DealError(String code, String message, String file,
+                             Integer line, Integer column, String expected,
+                             String actual, String frames) {
+                this(code, message, file, line, column, expected, actual, frames, null);
+            }
             public DealError {
                 Objects.requireNonNull(code, "code must not be null");
                 Objects.requireNonNull(message, "message must not be null");
+            }
+
+            /**
+             * The retained public five-argument constructor: existing host
+             * clients construct the code/message/location shape, and the
+             * absent optional metadata arrives as {@code null}.
+             */
+            public DealError(String code, String message, String file,
+                             Integer line, Integer column) {
+                this(code, message, file, line, column, null, null, null);
             }
         }
 
@@ -318,7 +335,8 @@ public class JvmAsyncExportInvoker {
                 envelope.descriptor, envelope.value);
             case AsyncExportEnvelope.STATUS_DEAL_ERROR -> new Result.DealError(
                 envelope.code, envelope.message, envelope.file, envelope.line,
-                envelope.column);
+                envelope.column, envelope.expected, envelope.actual,
+                envelope.frames, envelope.cause);
             case AsyncExportEnvelope.STATUS_HOST_FAILURE -> new Result.HostFailure(
                 envelope.reason);
             case AsyncExportEnvelope.STATUS_REPRESENTATION_FAILURE ->

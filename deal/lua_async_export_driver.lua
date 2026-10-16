@@ -57,10 +57,13 @@
 --   (1) table with __hostInvocationFailure == true  -> host-failure
 --       envelope, reason = the runtime's pinned message verbatim, exit 0;
 --   (2) table with a non-nil string code            -> deal-error
---       envelope with the code/message and any present position fields
---       byte-for-byte (the runtime half's `message`/file/line/column or
---       the emitted artifact's `m` plus the `file:line:column` origin
---       text in `o`, both mapped to the same envelope fields), exit 0;
+--       envelope with the code/message, any present position fields, and
+--       the expected/actual pair plus ordered frame text
+--       byte-for-byte (the runtime half's
+--       `message`/file/line/column/expected/actual or the emitted
+--       artifact's `m` plus the `file:line:column` origin text in `o`,
+--       its `e`/`a` pair and its `f` frames, both mapped to the same
+--       envelope fields), exit 0;
 --   (3) anything else raised by dofile/invoke       -> infrastructure-
 --       failure envelope, exit 1;
 --   (4) any error raised by the completion-encoding step, regardless of
@@ -202,6 +205,20 @@ end, function(e)
   return e
 end)
 
+local function errorDetail(err)
+  local detail = {code = err.code, message = err.message or err.m}
+  local file, line, column = err.file, err.line, err.column
+  if file == nil and type(err.o) == "string" then
+    local f, l, c = string.match(err.o, "^(.*):(%d+):(%d+)$")
+    if f ~= nil then file, line, column = f, tonumber(l), tonumber(c) end
+  end
+  detail.file, detail.line, detail.column = file, line, column
+  detail.expected, detail.actual = err.expected or err.e, err.actual or err.a
+  detail.frames = err.frames or err.f
+  if err.cause ~= nil then detail.cause = errorDetail(err.cause) end
+  return detail
+end
+
 if ok then
   emit({ status = "value", descriptor = returnDescriptor, value = payload },
       0)
@@ -253,6 +270,20 @@ elseif type(payload) == "table" and type(payload.code) == "string" then
   if file ~= nil then fields.file = file end
   if line ~= nil then fields.line = line end
   if column ~= nil then fields.column = column end
+  -- The complete ErrorDetail projection: the expected/actual pair and the
+  -- ordered frame text travel with code/message/origin. The runtime
+  -- half's own shape spells them `expected`/`actual`, the emitted
+  -- artifact's closed failure arms `e`/`a`, and the frames `f`; an
+  -- absent field stays absent.
+  local expected, actual = payload.expected, payload.actual
+  if expected == nil then expected = payload.e end
+  if actual == nil then actual = payload.a end
+  local frames = payload.frames
+  if frames == nil then frames = payload.f end
+  if expected ~= nil then fields.expected = expected end
+  if actual ~= nil then fields.actual = actual end
+  if frames ~= nil then fields.frames = frames end
+  if payload.cause ~= nil then fields.cause = errorDetail(payload.cause) end
   emit(fields, 0)
 else
   emit({

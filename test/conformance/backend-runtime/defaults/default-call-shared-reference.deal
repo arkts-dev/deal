@@ -1,0 +1,68 @@
+// @spec: Classes
+// @description: Legal module-level default-call witness — class registration executes no default, each omitted required field calls its module-level provider once per construction in declaration order, a provided field skips its default, the returned array is retained (never copied) across the provider/default boundary and through an ordinary captured closure, mutation through one alias is visible through the others, and a failing default exposes its error once with prior provider effects retained and no retry. (basis: Classes §Default value evaluation; the v1.3 replacement witness for the rejected local-class subject)
+// @expected: runtime-ok
+// @features: v1.3, runtime, corner-case, defaults
+
+import * as c from "std/console";
+import * as state from "host/retained_default";
+
+function shared(xs: int[]): () => int[] {
+  return function(): int[] {return xs;};
+}
+
+class Box {
+  first: int[] = state.provideFirst();
+  second: int[] = state.provideSecond();
+}
+
+function failProvide(): int[] {
+  state.bump();
+  throw { code: "DEFAULT_FAIL", message: "default provider failure" };
+}
+
+class FailingBox {
+  xs: int[] = failProvide();
+}
+
+export function main(): null {
+  if (state.calls() !== 0 || state.order() !== "") {
+    throw { code: "REGISTRATION_DEFAULT", message: "a default executed at class registration" };
+  }
+  let original: int[] = state.retained();
+  let provider: () => int[] = shared(original);
+  let a: Box = {};
+  let b: Box = {};
+  if (state.calls() !== 4 || state.order() !== "ABAB") {
+    throw { code: "CALL_ORDER", message: "per-omission declaration order: " + state.order() };
+  }
+  if (a.first !== original || a.second !== original || b.first !== original || b.second !== original) {
+    throw { code: "REFERENCE_COPY", message: "the returned array was copied" };
+  }
+  if (provider() !== original) {
+    throw { code: "CLOSURE_REFERENCE", message: "the captured closure lost the array" };
+  }
+  let supplied: int[] = [5];
+  let explicit: Box = { first: supplied, second: supplied };
+  if (state.calls() !== 4 || explicit.first !== supplied || explicit.second !== supplied) {
+    throw { code: "PROVIDED_SKIP", message: "a provided field ran its default" };
+  }
+  a.first[0] = 9;
+  if (b.first[0] !== 9 || original[0] !== 9 || provider()[0] !== 9) {
+    throw { code: "ALIAS_MUTATION", message: "mutations through one alias are not visible" };
+  }
+  explicit.first[0] = 8;
+  if (supplied[0] !== 8 || explicit.second[0] !== 8) {
+    throw { code: "EXPLICIT_ALIAS", message: "the provided alias mutation is not visible" };
+  }
+  let failed: boolean = false;
+  try {
+    let bad: FailingBox = {};
+  } catch (e) {
+    failed = e.code === "DEFAULT_FAIL";
+  }
+  if (!failed || state.calls() !== 5) {
+    throw { code: "DEFAULT_FAILURE", message: "the failing default did not surface once without retry" };
+  }
+  c.log("default-call-shared-reference");
+  return null;
+}

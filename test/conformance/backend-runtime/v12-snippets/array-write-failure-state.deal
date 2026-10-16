@@ -1,0 +1,19 @@
+// @spec: Runtime execution model
+// @description: Corner-case subject array-write-failure-state — the invalid write evaluates receiver, index and RHS once in that order before the E8002 bounds rejection, publishes no write and preserves alias/length/value; the append then succeeds. (basis: Arrays; Operational semantics summary, rule 3)
+// @expected: runtime-ok
+// @features: v1.3, runtime, corner-case
+
+import * as c from "std/console";
+export function main(): null {
+ let trace: string = ""; let xs: int[] = [7]; let alias: int[] = xs;
+ function receiver(): int[] {trace = trace + "R"; return xs;}
+ function index(): int {trace = trace + "I"; return 2;}
+ function value(): int {trace = trace + "V"; return 9;}
+ try {receiver()[index()] = value(); trace = trace + "X";} catch(e) {
+  if(e.code !== "E8002") {throw {message:"wrong bounds code"};} trace = trace + "C";
+ }
+ if(trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) {throw {message:"failed write: " + trace};}
+ alias[alias.length] = 8;
+ if(xs.length !== 2 || xs[1] !== 8) {throw {message:"append after failure"};}
+ c.log("array-write-failure-state"); return null;
+}

@@ -5533,6 +5533,414 @@ public class ProductionDispatchTest {
     // Main
     // =========================================================================
 
+    // =========================================================================
+    // The retained corner-case subjects (ISSUE-0815 subjects 1-11)
+    // =========================================================================
+
+    /** The four-module diamond's entry (subject 4). */
+    private static final String DIAMOND_MAIN = """
+        import * as c from "std/console";
+        import * as left from "./left";
+        import * as right from "./right";
+        export function main(): null {
+          if(left.read() !== 7 || right.read() !== 7) {throw {message:"diamond value"};}
+          c.log("entry-main"); return null;
+        }
+        """;
+
+    /** The diamond's left arm: constructs the shared seed class. */
+    private static final String DIAMOND_LEFT = """
+        import * as c from "std/console";
+        import * as seed from "./seed";
+        function value(): int {c.log("left-default"); return 0;}
+        export class Node {value:int=value();}
+        export function read(): int {let x:seed.Seed={}; return x.value;}
+        export function main(): null {c.log("forbidden-left-main"); return null;}
+        """;
+
+    /** The diamond's right arm: constructs the shared seed class. */
+    private static final String DIAMOND_RIGHT = """
+        import * as c from "std/console";
+        import * as seed from "./seed";
+        function value(): int {c.log("right-default"); return 0;}
+        export class Node {value:int=value();}
+        export function read(): int {let x:seed.Seed={}; return x.value;}
+        export function main(): null {c.log("forbidden-right-main"); return null;}
+        """;
+
+    /** The diamond's seed: the default evaluated once per construction. */
+    private static final String DIAMOND_SEED = """
+        import * as c from "std/console";
+        function value(): int {c.log("seed-default"); return 7;}
+        export class Seed {value:int=value();}
+        export function main(): null {c.log("forbidden-seed-main"); return null;}
+        """;
+
+    /**
+     * The retained four-module diamond (ISSUE-0815 subject 4) on all
+     * three production backends: the selected entry is {@code main.deal}
+     * only, and the published artifact prints exactly the two seed
+     * defaults (one per construction, never at class registration) and
+     * the entry marker — no companion main, no left/right default.
+     */
+    private static void testRetainedCornerCaseDiamond() throws Exception {
+        System.out.println("-- the retained four-module diamond selects the"
+            + " entry and runs no companion main on every target --");
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            Path project = Files.createTempDirectory("production-diamond-");
+            try {
+                write(project, "deal.json", """
+                    {
+                      "languageVersion": "1.3",
+                      "moduleRoots": ["src"],
+                      "output": "out",
+                      "backend": "%s"
+                    }
+                    """.formatted(backend));
+                write(project, "src/main.deal", DIAMOND_MAIN);
+                write(project, "src/left.deal", DIAMOND_LEFT);
+                write(project, "src/right.deal", DIAMOND_RIGHT);
+                write(project, "src/seed.deal", DIAMOND_SEED);
+                ProjectOutcome compile = productionCompile(project,
+                    "src/main.deal", "out");
+                check(compile.exitCode() == 0, backend + ": the diamond"
+                    + " compiles: " + compile.stderr());
+                check(compile.stderr().isEmpty(), backend + ": the diamond"
+                    + " compile emits no diagnostic: " + compile.stderr());
+                if (compile.exitCode() != 0) {
+                    continue;
+                }
+                Path out = project.resolve("out");
+                String classpath = absoluteClasspath();
+                BoundedProcess.BoundedResult run;
+                if ("luajit".equals(backend)) {
+                    run = boundedRun(out, "luajit", "main.lua");
+                } else if ("js".equals(backend)) {
+                    run = boundedRun(out, "node", "main.js");
+                } else {
+                    BoundedProcess.BoundedResult javac = boundedRun(project,
+                        "javac", "--release", "25", "-proc:none", "-cp",
+                        classpath, "-d", out.toString(),
+                        out.resolve("Main.java").toString());
+                    checkEq(0, javac.exitCode(), backend + ": the diamond"
+                        + " artifact compiles: " + boundedOutput(javac));
+                    if (javac.exitCode() != 0) {
+                        continue;
+                    }
+                    run = boundedRun(out, "java", "-cp",
+                        out + File.pathSeparator + classpath, "Main");
+                }
+                checkEq(0, run.exitCode(), backend + ": the diamond exits 0: "
+                    + boundedOutput(run));
+                checkEq("seed-default\nseed-default\nentry-main\n",
+                    run.stdout(), backend + ": the exact diamond transcript");
+                checkEq("", run.stderr(), backend + ": the empty diamond"
+                    + " stderr");
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
+    /** The copied local-class original (subject 3, exact raw body). */
+    private static final String LOCAL_CLASS_ORIGINAL = """
+        import * as c from "std/console";
+        function shared(xs: int[]): () => int[] {return function(): int[] {return xs;};}
+        export function main(): null {
+         let original: int[] = [1]; let provider: () => int[] = shared(original); let calls: int = 0;
+         function provide(): int[] {calls = calls + 1; return provider();}
+         class Box {xs: int[] = provide();}
+         let a: Box = {}; let b: Box = {};
+         a.xs[0] = 9;
+         if(calls !== 2 || a.xs !== original || b.xs !== original || b.xs[0] !== 9) {throw {message:"call default copied"};}
+         c.log("default-call-shared-reference"); return null;
+        }
+        """;
+
+    /** Subject 9 (exact raw body). */
+    private static final String TABLE_CONDITION_CONTEXT_REJECT =
+        "export function f(): boolean {let t: table = {flag:true};"
+            + " while(t.flag) {return true;} return false;}\n";
+
+    /** Subject 10 (exact raw body). */
+    private static final String TABLE_LOGICAL_CONTEXT_REJECT =
+        "export function f(): boolean {let t: table = {flag:true};"
+            + " return t.flag && true;}\n";
+
+    /** Subject 11 (exact raw body). */
+    private static final String TRY_RETURN_CATCH_FALLTHROUGH_REJECT =
+        "export function f(): int {try {return 1;} catch(e) {} return 2;}\n";
+
+    /** The quiet entry importing one raw negative subject. */
+    private static final String QUIET_SUBJECT_ENTRY = """
+        import * as s from "./subject";
+        export function main(): null {return null;}
+        """;
+
+    /** The legal throwing-try/fallthrough-catch control (subject 11's). */
+    private static final String LEGAL_THROWING_TRY_CONTROL = """
+        import * as c from "std/console";
+        export function f(): null {try {throw {message:"x"};} catch(e) {} return null;}
+        export function main(): null {f(); c.log("legal-throwing-try"); return null;}
+        """;
+
+    /**
+     * The retained corner-case negatives (ISSUE-0815 subjects 3 and
+     * 9-11) on all three production backends: each raw subject remains an
+     * imported file with unchanged origins, fails closed before any
+     * publication with the required code and exact range, and leaves a
+     * previously published artifact set byte-identical. The legal
+     * throwing-try/fallthrough-catch control compiles and completes
+     * normally on every target.
+     */
+    private static void testRetainedCornerCaseNegatives() throws Exception {
+        System.out.println("-- the retained corner-case negatives reject"
+            + " before publication on every target --");
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            checkCornerCaseReject(backend, "local-class original",
+                Map.of("src/main.deal", LOCAL_CLASS_ORIGINAL),
+                "E1057", "src/main.deal", 6, 2, 6, 36,
+                "classes are module-level");
+            checkCornerCaseReject(backend, "table-condition-context-reject",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", TABLE_CONDITION_CONTEXT_REJECT),
+                "E3003", "src/subject.deal", 1, 65, 1, 71, null);
+            checkCornerCaseReject(backend, "table-logical-context-reject",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", TABLE_LOGICAL_CONTEXT_REJECT),
+                "E3003", "src/subject.deal", 1, 66, 1, 72, null);
+            checkCornerCaseReject(backend,
+                "try-return-catch-fallthrough-reject",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", TRY_RETURN_CATCH_FALLTHROUGH_REJECT),
+                "E5002", "src/subject.deal", 1, 52, 1, 54, null);
+
+            // The legal control completes normally on every target.
+            Path legal = Files.createTempDirectory("production-legal-try-");
+            try {
+                write(legal, "deal.json", """
+                    {
+                      "languageVersion": "1.3",
+                      "moduleRoots": ["src"],
+                      "output": "out",
+                      "backend": "%s"
+                    }
+                    """.formatted(backend));
+                write(legal, "src/main.deal", LEGAL_THROWING_TRY_CONTROL);
+                ProjectOutcome compile = productionCompile(legal,
+                    "src/main.deal", "out");
+                check(compile.exitCode() == 0, backend + ": the legal"
+                    + " throwing-try control compiles: " + compile.stderr());
+                if (compile.exitCode() != 0) {
+                    continue;
+                }
+                Path out = legal.resolve("out");
+                String classpath = absoluteClasspath();
+                BoundedProcess.BoundedResult run;
+                if ("luajit".equals(backend)) {
+                    run = boundedRun(out, "luajit", "main.lua");
+                } else if ("js".equals(backend)) {
+                    run = boundedRun(out, "node", "main.js");
+                } else {
+                    BoundedProcess.BoundedResult javac = boundedRun(legal,
+                        "javac", "--release", "25", "-proc:none", "-cp",
+                        classpath, "-d", out.toString(),
+                        out.resolve("Main.java").toString());
+                    checkEq(0, javac.exitCode(), backend + ": the legal"
+                        + " throwing-try artifact compiles: "
+                        + boundedOutput(javac));
+                    if (javac.exitCode() != 0) {
+                        continue;
+                    }
+                    run = boundedRun(out, "java", "-cp",
+                        out + File.pathSeparator + classpath, "Main");
+                }
+                checkEq(0, run.exitCode(), backend + ": the legal"
+                    + " throwing-try control exits 0: " + boundedOutput(run));
+                checkEq("legal-throwing-try\n", run.stdout(), backend
+                    + ": the legal throwing-try control completes normally");
+                checkEq("", run.stderr(), backend + ": the legal"
+                    + " throwing-try control keeps stderr empty");
+            } finally {
+                deleteRecursively(legal);
+            }
+        }
+    }
+
+    /**
+     * One negative subject on one backend: the compile of the raw imported
+     * subject fails closed with the required code at the exact range, and
+     * neither a fresh output root nor a previously published artifact set
+     * changes.
+     */
+    private static void checkCornerCaseReject(String backend, String name,
+            Map<String, String> sources, String code, String offendingRelative,
+            int startLine, int startColumn, int endLine, int endColumn,
+            String detailToken) throws Exception {
+        Path project = Files.createTempDirectory(
+            "production-corner-reject-" + name + "-");
+        try {
+            for (Map.Entry<String, String> source : sources.entrySet()) {
+                write(project, source.getKey(), source.getValue());
+            }
+            write(project, "deal.json", """
+                {
+                  "languageVersion": "1.3",
+                  "moduleRoots": ["src"],
+                  "output": "out",
+                  "backend": "%s"
+                }
+                """.formatted(backend));
+            Path out = project.resolve("out");
+            write(out, "main.prior", "-- previously published artifact\n");
+            Map<String, byte[]> before = snapshotTree(out);
+            ArmCompile arm;
+            try {
+                arm = compileWithInvocation(project, "src/main.deal",
+                    productionInvocation());
+            } catch (IllegalStateException locateFailure) {
+                // A failure before the orchestrator is a harness defect,
+                // never a pass.
+                check(false, name + " [" + backend + "]: locate failed: "
+                    + locateFailure.getMessage());
+                return;
+            }
+            String context = name + " [" + backend + "]";
+            check(!arm.success(), context + ": the compile fails closed");
+            List<CompilerDiagnostic> errors = arm.orchestrator().diagnostics()
+                .stream().filter(d -> "error".equals(d.severity())).toList();
+            checkEq(1, errors.size(), context
+                + ": exactly one error diagnostic: "
+                + arm.orchestrator().diagnostics());
+            if (errors.size() == 1) {
+                CompilerDiagnostic diagnostic = errors.get(0);
+                checkEq(code, diagnostic.code(), context + ": the code");
+                if (detailToken != null) {
+                    check(diagnostic.message().contains(detailToken), context
+                        + ": the message names " + detailToken + ": "
+                        + diagnostic.message());
+                }
+                String file = diagnostic.range() == null ? ""
+                    : diagnostic.range().file();
+                check(file.replace('\\', '/').endsWith("/"
+                        + offendingRelative), context + ": the range names "
+                        + offendingRelative + ": " + file);
+                if (diagnostic.range() != null) {
+                    checkEq(startLine, diagnostic.range().startLine(),
+                        context + ": the range start line");
+                    checkEq(startColumn, diagnostic.range().startColumn(),
+                        context + ": the range start column");
+                    checkEq(endLine, diagnostic.range().endLine(),
+                        context + ": the range end line");
+                    checkEq(endColumn, diagnostic.range().endColumn(),
+                        context + ": the range end column");
+                }
+            }
+            checkTreeIdentical(before, out,
+                context + ": admission publishes nothing");
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * The legal module-level default-call witness (ISSUE-0815 subject 3's
+     * replacement) on the two shared production targets: the corpus
+     * fixture with its host fixture (one retained runtime array and an
+     * invocation-local omission counter) publishes through the release
+     * owned CLI, executes under the real toolchain and prints exactly its
+     * line with empty stderr and status 0. The witness itself asserts the
+     * registration/order/reference/alias/closure/failure properties; the
+     * drive proves the three-backend publication path.
+     */
+    private static void testRetainedDefaultCallWitnessBothTargets()
+            throws Exception {
+        System.out.println("-- the legal module-level default-call witness on"
+            + " LuaJIT and JVM --");
+        String witness = deal.test.ConformanceHarnessMetadata
+            .productionCorpusSource(Files.readString(Path.of(
+                "test/conformance/backend-runtime/defaults/"
+                    + "default-call-shared-reference.deal")),
+                "backend-runtime/defaults/default-call-shared-reference.deal");
+        String declaration = deal.test.ConformanceHarnessMetadata
+            .productionCorpusSource(Files.readString(Path.of(
+                "test/conformance/host-fixtures/retained_default.d.deal")),
+                "host-fixtures/retained_default.d.deal");
+        for (String backend : List.of("luajit", "jvm")) {
+            Path project = Files.createTempDirectory(
+                "production-default-witness-");
+            try {
+                write(project, "src/main.deal", witness);
+                write(project, "bindings/retained_default.d.deal",
+                    declaration);
+                write(project, "deal.json", """
+                    {
+                      "languageVersion": "1.3",
+                      "moduleRoots": ["src"],
+                      "output": "out",
+                      "backend": "%s",
+                      "externals": {
+                        "host/retained_default": { "declaration": "bindings/retained_default.d.deal" }
+                      }
+                    }
+                    """.formatted(backend));
+                ProjectOutcome compile = productionCompile(project,
+                    "src/main.deal", "out");
+                check(compile.exitCode() == 0, backend + ": the default-call"
+                    + " witness compiles: " + compile.stderr());
+                check(compile.stderr().isEmpty(), backend + ": the"
+                    + " default-call witness compile emits no diagnostic: "
+                    + compile.stderr());
+                if (compile.exitCode() != 0) {
+                    continue;
+                }
+                Path out = project.resolve("out");
+                if ("luajit".equals(backend)) {
+                    write(project, "out/host/retained_default.lua",
+                        Files.readString(Path.of(
+                            "test/conformance/host-fixtures/"
+                                + "retained_default.lua")));
+                    BoundedProcess.BoundedResult run = boundedRun(out,
+                        "luajit", "main.lua");
+                    checkEq(0, run.exitCode(), backend + ": the default-call"
+                        + " witness exits 0: " + boundedOutput(run));
+                    checkEq("default-call-shared-reference\n", run.stdout(),
+                        backend + ": the exact witness stdout");
+                    checkEq("", run.stderr(), backend + ": the empty witness"
+                        + " stderr");
+                } else {
+                    Path hostJava = project.resolve(
+                        "HostRetained_default.java");
+                    Files.writeString(hostJava, Files.readString(Path.of(
+                        "test/conformance/host-fixtures/retained_default.java")),
+                        StandardCharsets.UTF_8);
+                    String classpath = absoluteClasspath();
+                    BoundedProcess.BoundedResult javac = boundedRun(project,
+                        "javac", "--release", "25", "-proc:none", "-cp",
+                        classpath, "-d", out.toString(),
+                        out.resolve("Main.java").toString(),
+                        hostJava.toString());
+                    checkEq(0, javac.exitCode(), backend + ": the default-call"
+                        + " witness artifact compiles: " + boundedOutput(javac));
+                    if (javac.exitCode() != 0) {
+                        continue;
+                    }
+                    BoundedProcess.BoundedResult run = boundedRun(out,
+                        "java", "-cp",
+                        out + File.pathSeparator + classpath, "Main");
+                    checkEq(0, run.exitCode(), backend + ": the default-call"
+                        + " witness exits 0: " + boundedOutput(run));
+                    checkEq("default-call-shared-reference\n", run.stdout(),
+                        backend + ": the exact witness stdout");
+                    checkEq("", run.stderr(), backend + ": the empty witness"
+                        + " stderr");
+                }
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Production Dispatch and Cutover Acceptance "
             + "Tests (ISSUE-0643) ===\n");
@@ -5576,6 +5984,9 @@ public class ProductionDispatchTest {
         testArrayReadV13ProductionDrive();
         testV12CornerCaseCorpusProductionDrive();
         testV13BoundaryCorpusProductionDrive();
+        testRetainedDefaultCallWitnessBothTargets();
+        testRetainedCornerCaseDiamond();
+        testRetainedCornerCaseNegatives();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

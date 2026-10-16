@@ -739,7 +739,7 @@ public final class JvmSemanticEmitter {
                 out.append("      dealMain();\n");
                 out.append("    } catch (JvmRuntime.DealError e) {\n");
                 out.append("      if (__hostInvocation) {\n");
-                out.append("        System.out.println(JvmRuntime.asyncExportDealErrorEnvelope(e.code, e.msg, e.origin));\n");
+                out.append("        System.out.println(JvmRuntime.asyncExportDealErrorEnvelope(e));\n");
                 out.append("        System.out.flush();\n");
                 out.append("        return;\n");
                 out.append("      }\n");
@@ -3284,6 +3284,15 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent)).append("}\n");
                 emitBoundarySuccess(boundary, cell, boundaryPayload.descriptor(),
                     indent);
+                // The admitted value is the one the callee observes: the
+                // boundary cell's result (the int cell's -0 normalization
+                // included) replaces the raw operand in its own slot,
+                // because the invocation binds its arguments from those
+                // slots. The operand's evaluation order and side effects
+                // are unchanged; only the checked representation is
+                // published to the callee.
+                out.append(indent(indent)).append(slot(boundaryPayload.input()))
+                    .append(" = ").append(cell).append(";\n");
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
 
@@ -7135,7 +7144,7 @@ public final class JvmSemanticEmitter {
             out.append("      }\n");
             out.append("      return JvmRuntime.asyncExportEnvelope(\"value\", \"descriptor\", returnDescriptor, \"value\", valueJson);\n");
             out.append("    } catch (JvmRuntime.DealError e) {\n");
-            out.append("      return JvmRuntime.asyncExportDealErrorEnvelope(e.code, e.msg, e.origin);\n");
+            out.append("      return JvmRuntime.asyncExportDealErrorEnvelope(e);\n");
             out.append("    } catch (Throwable t) {\n");
             out.append("      return JvmRuntime.asyncExportEnvelope(\"infrastructure-failure\", \"reason\", t.getMessage() == null ? String.valueOf(t) : t.getMessage());\n");
             out.append("    }\n");

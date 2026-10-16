@@ -39,7 +39,22 @@ const $undefined = void 0;
 // alias. file/line/column/expected/actual materialize as own properties
 // only when the corresponding argument is not undefined, the _err
 // absent-field convention (deal/runtime.lua:19-32). message comes from
-// super(message), so err.message === message.
+// super(message), so err.message === message. frames carries the error's
+// own captured stack labels (innermost first), so a catch/rethrow or an
+// async reification preserves the originating call chain instead of
+// losing it with the re-created tagged value.
+function $stackFrames($error) {
+  const $stack = $error.stack;
+  if (typeof $stack !== "string") return $undefined;
+  const $frames = [];
+  const $lines = $stack.split("\n");
+  for (let $i = 1; $i < $lines.length; $i++) {
+    const $line = $lines[$i].trim();
+    if ($line.slice(0, 3) !== "at ") continue;
+    $frames.push($line.slice(3));
+  }
+  return $frames.length === 0 ? $undefined : $frames.join(",");
+}
 class $DEALError extends Error {
   constructor($code, $message, $file, $line, $column, $expected, $actual) {
     super($message);
@@ -50,6 +65,8 @@ class $DEALError extends Error {
     if ($column !== $undefined) this.column = $column;
     if ($expected !== $undefined) this.expected = $expected;
     if ($actual !== $undefined) this.actual = $actual;
+    const $captured = $stackFrames(this);
+    if ($captured !== $undefined) this.frames = $captured;
   }
 }
 
@@ -1826,8 +1843,11 @@ const $rt = {
   // whose own properties are written via $rt.setProp; only defined fields
   // materialize, so errorValue('E','x') has exactly the four own
   // properties $kind/$classname/code/message and the seven-field form adds
-  // exactly file/line/column.
-  errorValue: function $errorValue(code, message, file, line, column) {
+  // exactly file/line/column. The optional expected/actual pair and frames
+  // text are the complete ErrorDetail projection: each materializes only
+  // when defined.
+  errorValue: function $errorValue(code, message, file, line, column,
+      expected, actual, frames, cause) {
     const $value = {};
     $rt.setProp($value, "$kind", "class");
     $rt.setProp($value, "$classname", "Error");
@@ -1836,19 +1856,26 @@ const $rt = {
     if (file !== $undefined) $rt.setProp($value, "file", file);
     if (line !== $undefined) $rt.setProp($value, "line", line);
     if (column !== $undefined) $rt.setProp($value, "column", column);
+    if (expected !== $undefined) $rt.setProp($value, "expected", expected);
+    if (actual !== $undefined) $rt.setProp($value, "actual", actual);
+    if (frames !== $undefined) $rt.setProp($value, "frames", frames);
+    if (cause !== $undefined) $rt.setProp($value, "cause", cause);
     return $value;
   },
 
   // reifyError: total conversion of a thrown value into a tagged Error
   // value. (i) $DEALError -> rebuilt via errorValue (a fresh tagged Error
-  // value with the same code/message); (ii) an already-tagged Error
+  // value with the same code/message/location plus the expected/actual
+  // pair and the captured frames — the originating call chain survives
+  // catch/rethrow and async reification); (ii) an already-tagged Error
   // instance passes through unchanged, same reference (rethrow
   // preservation, js-backend-runtime D7); (iii) anything else -> the
   // E8001 wrap errorValue("E8001", String(v)). Only fail throws; this
   // member is total.
   reifyError: function $reifyError(v) {
     if (v instanceof $DEALError) {
-      return $rt.errorValue(v.code, v.message, v.file, v.line, v.column);
+      return $rt.errorValue(v.code, v.message, v.file, v.line, v.column,
+        v.expected, v.actual, v.frames, v.cause);
     }
     if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
       return v;
