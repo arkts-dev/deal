@@ -8,11 +8,15 @@ import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
+import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ControlSelector;
-import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.ExternalExecutionOwner;
+import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IndexMode;
@@ -32,6 +36,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
+import deal.semantic.ClassRegistrationSeeds;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -63,13 +68,17 @@ import java.util.Set;
  * {@code TABLE_NEW}/{@code ARRAY_LENGTH}/member and index read/write/delete/
  * optional/has; the binding, closure, recursive-group and function-adapter
  * creation ops; the account chains; the direct and indirect calls; the
- * structured control-flow ops; and the module init/import/export/entry ops.
- * The builtin {@code Error} construction is realized because {@code THROW}
- * transport needs the tagged error carrier. Declared-class construction,
- * JSON walkers, field ops, stdlib calls, async operations, host imports and
- * callbacks belong to the later decomposition units of the same migration
- * and fail closed here; no public dispatch selects this renderer until the
- * production cutover.</p>
+ * structured control-flow ops; the module init/import/export/entry ops; and
+ * the class family — per-attempt default thunks, local and imported-provider
+ * construction ({@code CLASS_NEW} under the LOCAL, SHARED_FACTORY and
+ * builtin owners), the private defaults-only factory transfer
+ * ({@code CLASS_FACTORY}), the presence-aware field reads/writes/deletes, the
+ * JSON from/to walkers over the canonical descriptor arrays, and the public
+ * class surface (META, the full-construction {@code C$new} and the hidden
+ * {@code C$fields} export of a {@code @jsonable} class). Stdlib calls,
+ * async operations, host imports and callbacks belong to the later
+ * decomposition units of the same migration and fail closed here; no public
+ * dispatch selects this renderer until the production cutover.</p>
  */
 public final class JsSemanticEmitter {
 
@@ -130,6 +139,32 @@ public final class JsSemanticEmitter {
         private final Set<OpId> structuralOwned = new HashSet<>();
         private final Set<OpId> ownedChildren = new HashSet<>();
         private final Set<OpId> skippedOps = new HashSet<>();
+        // ----- Project class facts (validated layouts/owners/export surfaces) -----
+        /** The project closure's layout of every resolvable class identity. */
+        private final Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
+        /** The owning implementation module of every resolvable class identity. */
+        private final Map<ClassId, ModuleId> classModules = new LinkedHashMap<>();
+        /** The exported classes of each implementation module, declaration order. */
+        private final Map<ModuleId, List<ClassId>> exportedClasses =
+            new LinkedHashMap<>();
+        /** The construction entry of every exported class (interface index fact). */
+        private final Map<ClassId, ClassFactoryId> constructionEntries =
+            new LinkedHashMap<>();
+        /** Classes carrying generated JSON helpers (the jsonable fact). */
+        private final Set<ClassId> jsonableClasses = new LinkedHashSet<>();
+        /** Each class field's {@code CLASS_DEFAULT} op, by class identity. */
+        private final Map<ClassId, Map<String, SemanticOp>> classDefaultOps =
+            new LinkedHashMap<>();
+        /** Emitted {@code $fields} descriptor arrays, by class identity. */
+        private final Map<ClassId, String> classFieldsExprs =
+            new LinkedHashMap<>();
+        /** Emitted {@code $plan} constructor plans, by class identity. */
+        private final Map<ClassId, String> classPlanExprs =
+            new LinkedHashMap<>();
+        /** The call-site span parameter names of the closure being emitted. */
+        private String currentCallSpan;
+        /** The {@code CLASS_DEFAULT} op currently emitted as a detached thunk. */
+        private OpId currentDefaultOp;
 
         private final StringBuilder out = new StringBuilder();
         private int indent;
@@ -149,6 +184,7 @@ public final class JsSemanticEmitter {
                 registerUnit(entry.getValue());
             }
             markNonEntryModuleDelegations();
+            indexClassFacts();
         }
 
         // =====================================================================
@@ -291,6 +327,114 @@ public final class JsSemanticEmitter {
             }
         }
 
+        /**
+         * Indexes the project's validated class facts exactly once: the
+         * closure layouts (unit layouts plus the project's registration
+         * seeds), the interface index's exported-class entries with their
+         * recorded construction entries, the generated JSON-helper classes,
+         * and each class field's {@code CLASS_DEFAULT} child. These are the
+         * structural facts the class arms render from; no class fact is
+         * rediscovered from source text, an alias name or a target ABI
+         * registry.
+         */
+        private void indexClassFacts() {
+            for (LoweredModuleUnit unit : units.values()) {
+                for (Map.Entry<ClassId, ClassLayout> entry
+                        : unit.classLayouts().entrySet()) {
+                    layouts.putIfAbsent(entry.getKey(), entry.getValue());
+                    classModules.putIfAbsent(entry.getKey(), unit.moduleId());
+                }
+            }
+            for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
+                    : input.seeds().registrations().entrySet()) {
+                layouts.putIfAbsent(entry.getKey(), entry.getValue().layout());
+            }
+            for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                    : input.project().interfaceIndex().modules().entrySet()) {
+                for (ClassInterface classInterface : entry.getValue().classes()) {
+                    classModules.putIfAbsent(classInterface.classId(), entry.getKey());
+                    constructionEntries.putIfAbsent(classInterface.classId(),
+                        classInterface.constructionEntry());
+                    exportedClasses
+                        .computeIfAbsent(entry.getKey(), key -> new ArrayList<>())
+                        .add(classInterface.classId());
+                }
+            }
+            for (LoweredModuleUnit unit : units.values()) {
+                for (SemanticOp op : unit.ops()) {
+                    switch (op.payload()) {
+                        case KindPayload.ClassDefaultPayload payload ->
+                            classDefaultOps
+                                .computeIfAbsent(payload.classId(),
+                                    key -> new LinkedHashMap<>())
+                                .putIfAbsent(payload.field(), op);
+                        case KindPayload.JsonFromClassPayload payload ->
+                            jsonableClasses.add(payload.layout().classId());
+                        case KindPayload.JsonToClassPayload payload ->
+                            jsonableClasses.add(payload.layout().classId());
+                        default -> {
+                        }
+                    }
+                }
+            }
+            // Every generated JSON helper descends from a module-level
+            // exported @jsonable class: a helper class outside its owner's
+            // exported-class set would carry no descriptor array and no
+            // public surface, so the disagreement fails closed here.
+            for (ClassId classId : jsonableClasses) {
+                ModuleId owner = classModules.get(classId);
+                if (owner == null || !units.containsKey(owner)) {
+                    continue; // a declaration class's helpers are its module's
+                }
+                List<ClassId> exported = exportedClassesOf(owner);
+                if (!exported.contains(classId)) {
+                    throw new SharedEmissionFailure("the @jsonable class "
+                        + classId + " is not one of the exported classes of"
+                        + " its module '" + owner.path() + "': the generated"
+                        + " helpers and their descriptor export exist for"
+                        + " module-level exported @jsonable classes only"
+                        + " (producer defect)", null);
+                }
+            }
+        }
+
+        /** The project closure's layout of one class identity, or null. */
+        private ClassLayout layoutOf(ClassId classId) {
+            return layouts.get(classId);
+        }
+
+        /** The owning module of one class identity, or null. */
+        private ModuleId ownerOfClass(ClassId classId) {
+            return classModules.get(classId);
+        }
+
+        /** One class field's recorded {@code CLASS_DEFAULT} op, or null. */
+        private SemanticOp defaultOpOf(ClassId classId, String field) {
+            Map<String, SemanticOp> byField = classDefaultOps.get(classId);
+            return byField == null ? null : byField.get(field);
+        }
+
+        /** The classes exported by one module, in interface declaration order. */
+        private List<ClassId> exportedClassesOf(ModuleId module) {
+            List<ClassId> classes = exportedClasses.get(module);
+            return classes == null ? List.of() : classes;
+        }
+
+        /**
+         * The registered {@code CLASS_FACTORY} op of one construction entry
+         * over the closure's delivered registries; a conflicting registration
+         * is a producer defect (never a last-writer-wins selection).
+         */
+        private OpId factoryOpOf(SemanticOp op, ClassFactoryId factoryRef) {
+            try {
+                return ClassFactoryRegistry.ownerFactoryOp(registries, factoryRef);
+            } catch (IllegalStateException conflict) {
+                throw rejected(op, "the construction entry " + factoryRef
+                    + " resolves through no unique factory registration: "
+                    + conflict.getMessage());
+            }
+        }
+
         // =====================================================================
         // Project emission
         // =====================================================================
@@ -328,7 +472,7 @@ public final class JsSemanticEmitter {
             emit("// and never publishes a partial surface.");
             emit("$rt.initModule(" + jsString(module.path()) + ", () => {");
             indent++;
-            emitFunctionBody(unit, unit.moduleInit().initBlock());
+            emitModuleInitBody(unit, unit.moduleInit().initBlock());
             indent--;
             emit("});");
             emit("$module.exports = $rt.moduleSurface(" + jsString(module.path())
@@ -345,6 +489,34 @@ public final class JsSemanticEmitter {
          * lowered closure body; nested closure bodies own their own slots.
          */
         private void emitFunctionBody(LoweredModuleUnit unit, BlockId block) {
+            emitSlotDeclarations(unit, block);
+            declareBlockBindings(unit, block);
+            emitOps(unit, block);
+        }
+
+        /**
+         * Emits the module-init body of one artifact: the slots and binding
+         * cells, the recorded module-init ops, the class machinery (default
+         * thunks, the private factory entries, the class metadata/constructor
+         * plans and the JSON descriptor arrays) and then the entry
+         * delegation. The entry delegation runs after the class machinery so
+         * the direct-run {@code main} observes complete class artifacts
+         * before any construction, default or JSON walk can reach them; every
+         * other init op keeps its recorded position.
+         */
+        private void emitModuleInitBody(LoweredModuleUnit unit, BlockId block) {
+            emitSlotDeclarations(unit, block);
+            declareBlockBindings(unit, block);
+            List<SemanticOp> entryOps = new ArrayList<>();
+            emitOps(unit, block, entryOps);
+            emitClassMachinery(unit);
+            for (SemanticOp entryOp : entryOps) {
+                emitOp(unit, entryOp);
+            }
+        }
+
+        /** The predeclared value-slot declaration of one emitted scope. */
+        private void emitSlotDeclarations(LoweredModuleUnit unit, BlockId block) {
             Set<String> slots = new LinkedHashSet<>();
             collectSlots(unit, block, slots);
             if (!slots.isEmpty()) {
@@ -357,8 +529,6 @@ public final class JsSemanticEmitter {
                 }
                 emit("let " + declaration + ";");
             }
-            declareBlockBindings(unit, block);
-            emitOps(unit, block);
         }
 
         /** Collects every value slot an emitted scope needs (structures included). */
@@ -418,6 +588,18 @@ public final class JsSemanticEmitter {
 
         /** Emits one block's ops (no braces; the caller owns the scope). */
         private void emitOps(LoweredModuleUnit unit, BlockId block) {
+            emitOps(unit, block, null);
+        }
+
+        /**
+         * Emits one block's ops (no braces; the caller owns the scope). When
+         * {@code postponedEntries} is non-null, the block's ENTRY_INVOKE
+         * delegations are collected there instead of emitted (the module-init
+         * body runs them after the class machinery) and the current detached
+         * class-default op is skipped (its thunk owns it).
+         */
+        private void emitOps(LoweredModuleUnit unit, BlockId block,
+                             List<SemanticOp> postponedEntries) {
             List<OpId> members = memberOps(unit, block);
             if (members == null) {
                 throw new IllegalStateException("block " + block
@@ -426,13 +608,19 @@ public final class JsSemanticEmitter {
                     + " this)");
             }
             for (OpId opId : members) {
-                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)
+                        || opId.equals(currentDefaultOp)) {
                     continue;
                 }
                 SemanticOp op = opsById.get(opId);
                 if (op == null) {
                     throw new IllegalStateException("block " + block
                         + " names the unknown op " + opId);
+                }
+                if (postponedEntries != null
+                        && op.kind() == SemanticOpKind.ENTRY_INVOKE) {
+                    postponedEntries.add(op);
+                    continue;
                 }
                 emitOp(unit, op);
             }
@@ -574,10 +762,17 @@ public final class JsSemanticEmitter {
                 case EXTERNAL_ENTRY -> emit("// EXTERNAL_ENTRY "
                     + op.opId().id() + ": the cross-module entry record"
                     + " executes under the later call-realization unit.");
-                case CLASS_NEW -> emitBuiltinErrorConstruction(op);
-                case STDLIB_CALL, ASYNC_START, AWAIT, CLASS_DEFAULT,
-                     CLASS_FACTORY, FIELD_READ, FIELD_WRITE, FIELD_DELETE,
-                     JSON_FROM_CLASS, JSON_TO_CLASS, CALLBACK_INVOKE ->
+                case CLASS_NEW -> emitClassNew(op);
+                case FIELD_READ -> emitFieldRead(op);
+                case FIELD_WRITE -> emitFieldWrite(op);
+                case FIELD_DELETE -> emitFieldDelete(op);
+                case JSON_FROM_CLASS -> emitJsonFromClass(op);
+                case JSON_TO_CLASS -> emitJsonToClass(op);
+                case CLASS_DEFAULT, CLASS_FACTORY -> throw unsupported(op, "the"
+                    + " detached " + op.kind() + " " + op.opId() + " executes"
+                    + " only under its triggering constructor or factory arm —"
+                    + " the block walk never runs it (producer defect)");
+                case STDLIB_CALL, ASYNC_START, AWAIT, CALLBACK_INVOKE ->
                     throw unsupported(op, "the op kind " + op.kind()
                         + " belongs to a realized later decomposition unit of"
                         + " the JavaScript semantic-IR renderer; the"
@@ -1107,6 +1302,7 @@ public final class JsSemanticEmitter {
             LoweredModuleUnit owner = ownerOfFunction(functionId);
             List<BindingId> parameters = functionParameters.getOrDefault(
                 functionId.id(), List.of());
+            boolean callSpan = needsCallSpan(owner, function.body());
             StringBuilder params = new StringBuilder();
             for (int i = 0; i < parameters.size(); i++) {
                 if (i > 0) {
@@ -1114,11 +1310,26 @@ public final class JsSemanticEmitter {
                 }
                 params.append(cell(parameters.get(i), 0));
             }
+            if (callSpan) {
+                // The trailing call-site span triple every emitted call
+                // appends; the generated @jsonable toJson body reads it as
+                // the shared JSON_TO_ERROR projection's call origin.
+                if (params.length() > 0) {
+                    params.append(", ");
+                }
+                params.append("$file, $line, $column");
+            }
             emit(prefix + "$rt.function("
                 + jsString(function.descriptor().canonicalSpecText()) + ", ("
                 + params + ") => {");
             indent++;
-            emitFunctionBody(owner, function.body());
+            String previousSpan = currentCallSpan;
+            currentCallSpan = callSpan ? "$file, $line, $column" : null;
+            try {
+                emitFunctionBody(owner, function.body());
+            } finally {
+                currentCallSpan = previousSpan;
+            }
             indent--;
             emit("}" + suffix);
         }
@@ -1400,7 +1611,8 @@ public final class JsSemanticEmitter {
                 emit(slotOf(op) + " = $rt.callExport("
                     + jsString(external.moduleId().path()) + ", "
                     + jsString(external.exportName()) + ", ["
-                    + String.join(", ", externalArguments) + "]);");
+                    + String.join(", ", externalArguments) + "], "
+                    + spanArgs(op) + ");");
                 return;
             }
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic) {
@@ -1850,6 +2062,897 @@ public final class JsSemanticEmitter {
                 }
             }
             return null;
+        }
+
+        // =====================================================================
+        // Classes: layouts, defaults, factories, construction, fields, JSON
+        // =====================================================================
+
+        /**
+         * The module-init class machinery: one per-attempt default thunk per
+         * recorded {@code CLASS_DEFAULT} op, one private factory entry per
+         * registered construction entry, and the public class surface
+         * (META, the full-construction {@code C$new}, and the hidden
+         * {@code C$fields} descriptor export of a {@code @jsonable} class).
+         * Creating the closures executes no default and no construction; the
+         * per-attempt thunks give every construction (and every nested or
+         * reentrant attempt) a fresh scope, so an inner attempt never
+         * overwrites an outer attempt's operands. Ordinary captures of the
+         * surrounding module cells stay live.
+         */
+        private void emitClassMachinery(LoweredModuleUnit unit) {
+            boolean emitted = false;
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                    emitClassDefaultThunk(unit, op);
+                    emitted = true;
+                }
+            }
+            ClassFactoryRegistry registry = registries.get(unit.moduleId());
+            if (registry != null) {
+                for (Map.Entry<ClassFactoryId, OpId> entry
+                        : registry.factories().entrySet()) {
+                    SemanticOp factoryOp = opsById.get(entry.getValue());
+                    if (factoryOp == null
+                            || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
+                        throw new SharedEmissionFailure("the class-factory"
+                            + " registry of module '" + unit.moduleId().path()
+                            + "' binds " + entry.getKey() + " to "
+                            + entry.getValue() + ", which is not a recorded"
+                            + " CLASS_FACTORY (producer defect)", null);
+                    }
+                    emitClassFactoryEntry(unit, entry.getKey(), factoryOp);
+                    emitted = true;
+                }
+            }
+            List<ClassId> exported = exportedClassesOf(unit.moduleId());
+            for (ClassId classId : exported) {
+                ClassLayout layout = requireResolvedLayout(classId, null);
+                emitClassPlan(classId, layout);
+                if (jsonableClasses.contains(classId)) {
+                    emitClassFieldsArray(classId, layout);
+                }
+                emitted = true;
+            }
+            if (!exported.isEmpty()) {
+                emit("// The public class surface: the META value, the"
+                    + " full-construction C$new, and (for a @jsonable class)");
+                emit("// the hidden C$fields descriptor export.");
+                for (ClassId classId : exported) {
+                    String modulePath = unit.moduleId().path();
+                    String name = classId.name();
+                    emit("$rt.publishModule(" + jsString(modulePath) + ", "
+                        + jsString(name) + ", { $kind: \"class\", $classname: "
+                        + jsString(classId.text()) + " });");
+                    // The public constructor keeps the retained plan phase
+                    // order (the host-provided object's extra-key scan, then
+                    // the omitted required defaults, then validation) — the
+                    // surface's provided set is host-supplied, while the
+                    // recorded CLASS_NEW arms render the shared construction
+                    // phase order (defaults, extra-key scan, declaration-order
+                    // boundaries) for the source literals the checker admits.
+                    emit("$rt.publishModule(" + jsString(modulePath) + ", "
+                        + jsString(name + "$new") + ", (provided, $file, $line,"
+                        + " $column) => $rt.classPlan("
+                        + jsString(classId.text()) + ", "
+                        + classPlanExprs.get(classId) + ", provided, $file,"
+                        + " $line, $column));");
+                    if (jsonableClasses.contains(classId)) {
+                        emit("$rt.publishModule(" + jsString(modulePath) + ", "
+                            + jsString(name + "$fields") + ", "
+                            + classFieldsExprs.get(classId) + ");");
+                    }
+                }
+            }
+            if (emitted) {
+                emit("");
+            }
+        }
+
+        /**
+         * One detached class-default thunk: the recorded default block as a
+         * fresh-scope arrow created at module load and invoked once per
+         * construction attempt. The result is the {@code CLASS_DEFAULT} op's
+         * own value slot; the thunk runs no boundary of its own (the
+         * constructor's {@code CLASS_DEFAULT_FIELD} child admits the value at
+         * its recorded origin).
+         */
+        private void emitClassDefaultThunk(LoweredModuleUnit unit, SemanticOp op) {
+            KindPayload.ClassDefaultPayload payload =
+                (KindPayload.ClassDefaultPayload) op.payload();
+            if (!(op.result() instanceof ValueId result)) {
+                throw rejected(op, "the CLASS_DEFAULT " + op.opId()
+                    + " publishes no ValueId result (producer defect)");
+            }
+            emit("// Class default " + payload.classId().text() + "."
+                + payload.field());
+            emit("const " + defaultThunkName(op) + " = () => {");
+            indent++;
+            OpId previous = currentDefaultOp;
+            currentDefaultOp = op.opId();
+            try {
+                emitFunctionBody(unit, payload.defaultBlock());
+            } finally {
+                currentDefaultOp = previous;
+            }
+            emit("return " + slot(result) + ";");
+            indent--;
+            emit("};");
+        }
+
+        /**
+         * One private class-factory entry: the owner module's defaults-only
+         * transfer. The entry runs every omitted required-present default in
+         * declaration order (a caller-provided field is skipped), returns the
+         * internal defaults-filled transfer value and tags nothing — the
+         * caller performs the public construction. Registration executes no
+         * default.
+         */
+        private void emitClassFactoryEntry(LoweredModuleUnit unit,
+                                           ClassFactoryId factoryId,
+                                           SemanticOp factoryOp) {
+            KindPayload.ClassFactoryPayload payload =
+                (KindPayload.ClassFactoryPayload) factoryOp.payload();
+            ClassLayout layout = requireResolvedLayout(payload.classId(), factoryOp);
+            String transfer = "$t" + factoryOp.opId().id();
+            emit("// The defaults-only factory transfer of "
+                + payload.classId().text() + ".");
+            emit("$rt.registerFactory(" + jsString(unit.moduleId().path()) + ", "
+                + factoryId.id() + ", ($provided) => {");
+            indent++;
+            emit("const " + transfer + " = {};");
+            for (OpId defaultOpId : payload.classDefaultOpIds()) {
+                SemanticOp defaultOp = opsById.get(defaultOpId);
+                if (defaultOp == null
+                        || defaultOp.kind() != SemanticOpKind.CLASS_DEFAULT) {
+                    throw rejected(factoryOp, "the CLASS_FACTORY "
+                        + factoryOp.opId() + " names the CLASS_DEFAULT child "
+                        + defaultOpId + ", which is not a recorded"
+                        + " CLASS_DEFAULT (producer defect)");
+                }
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                if (!defaultPayload.classId().equals(payload.classId())) {
+                    throw rejected(factoryOp, "the CLASS_FACTORY "
+                        + factoryOp.opId() + " names the CLASS_DEFAULT child "
+                        + defaultOpId + " of " + defaultPayload.classId()
+                        + ", not of " + payload.classId()
+                        + " (producer defect)");
+                }
+                if (!(defaultOp.result() instanceof ValueId result)) {
+                    throw rejected(defaultOp, "the CLASS_DEFAULT " + defaultOpId
+                        + " publishes no ValueId result (producer defect)");
+                }
+                if (fieldOf(layout, defaultPayload.field()) == null) {
+                    throw rejected(factoryOp, "the CLASS_FACTORY "
+                        + factoryOp.opId() + " names the CLASS_DEFAULT child "
+                        + defaultOpId + " of the undeclared field '"
+                        + defaultPayload.field() + "' (producer defect)");
+                }
+                emit("if ($provided.indexOf("
+                    + jsString(defaultPayload.field()) + ") < 0) {");
+                indent++;
+                String attempt = "$v" + factoryOp.opId().id() + "_"
+                    + defaultOp.opId().id();
+                emit("const " + attempt + " = " + defaultThunkName(defaultOp)
+                    + "();");
+                emit("$rt.setProp(" + transfer + ", "
+                    + jsString(defaultPayload.field()) + ", " + attempt
+                    + ");");
+                indent--;
+                emit("}");
+            }
+            emit("return " + transfer + ";");
+            indent--;
+            emit("});");
+        }
+
+        /**
+         * One class's constructor plan over the published plan shape: the
+         * declaration-order fields with their canonical descriptors and the
+         * per-field default evaluators. It is the {@code C$new} full
+         * construction's input (the retained public constructor ABI); the
+         * plan entries carry no private layout identifier and no target
+         * grammar.
+         */
+        private void emitClassPlan(ClassId classId, ClassLayout layout) {
+            StringBuilder expression = new StringBuilder("[");
+            for (int i = 0; i < layout.fields().size(); i++) {
+                ClassLayout.FieldLayout field = layout.fields().get(i);
+                if (i > 0) {
+                    expression.append(", ");
+                }
+                expression.append("{ name: ").append(jsString(field.name()))
+                    .append(", descriptor: ")
+                    .append(jsString(field.descriptor().canonicalSpecText()))
+                    .append(", optional: ").append(!field.required());
+                SemanticOp defaultOp = defaultOpOf(classId, field.name());
+                if (defaultOp != null && field.required()) {
+                    expression.append(", evaluator: ")
+                        .append(defaultThunkName(defaultOp));
+                }
+                expression.append(" }");
+            }
+            expression.append("]");
+            String name = "$p" + classId.name();
+            emit("const " + name + " = " + expression + ";");
+            classPlanExprs.put(classId, name);
+        }
+
+        /**
+         * One class's declaration-order {@code $fields} descriptor array (the
+         * pinned JSON descriptor shape): the field name, the closed JSON kind,
+         * the nested class/array sub-shape, the optional/nullable flags, the
+         * has-default flag and the per-field default evaluator. A same-module
+         * class-valued field carries its nested array inline (the checked
+         * jsonable dependency graph is acyclic); a class of another module
+         * carries that module's published {@code C$fields} export, so its own
+         * default blocks run in their owning module.
+         */
+        private void emitClassFieldsArray(ClassId classId, ClassLayout layout) {
+            String name = "$f" + classId.name();
+            emit("const " + name + " = "
+                + fieldsArrayText(classId, layout, new LinkedHashSet<>()) + ";");
+            classFieldsExprs.put(classId, name);
+        }
+
+        private String fieldsArrayText(ClassId classId, ClassLayout layout,
+                                       Set<ClassId> stack) {
+            if (!stack.add(classId)) {
+                throw new SharedEmissionFailure("the @jsonable class " + classId
+                    + " closes a class-valued descriptor cycle: the checked"
+                    + " jsonable dependency graph is acyclic (producer defect)",
+                    null);
+            }
+            StringBuilder array = new StringBuilder("[");
+            for (int i = 0; i < layout.fields().size(); i++) {
+                if (i > 0) {
+                    array.append(", ");
+                }
+                array.append(fieldEntryText(classId, layout.fields().get(i), stack));
+            }
+            array.append("]");
+            stack.remove(classId);
+            return array.toString();
+        }
+
+        private String fieldEntryText(ClassId classId,
+                                      ClassLayout.FieldLayout field,
+                                      Set<ClassId> stack) {
+            RuntimeDescriptor descriptor = field.descriptor();
+            boolean nullable = descriptor instanceof RuntimeDescriptor.Nullable;
+            RuntimeDescriptor base = nullable
+                ? ((RuntimeDescriptor.Nullable) descriptor).inner() : descriptor;
+            StringBuilder entry = new StringBuilder("{ name: ")
+                .append(jsString(field.name()))
+                .append(", jtype: ").append(jsString(jsonJType(base)));
+            switch (base) {
+                case RuntimeDescriptor.Class classDescriptor -> {
+                    entry.append(", className: ")
+                        .append(jsString(classDescriptor.classId().text()))
+                        .append(", fields: ")
+                        .append(nestedFieldsText(classDescriptor.classId(), stack));
+                }
+                case RuntimeDescriptor.Array array -> entry.append(", element: ")
+                    .append(elementEntryText(array.element(), stack));
+                default -> {
+                }
+            }
+            SemanticOp defaultOp = defaultOpOf(classId, field.name());
+            entry.append(", optional: ").append(!field.required())
+                .append(", nullable: ").append(nullable)
+                .append(", hasDefault: ").append(defaultOp != null);
+            if (defaultOp != null && field.required()) {
+                entry.append(", evaluator: ").append(defaultThunkName(defaultOp));
+            }
+            return entry.append(" }").toString();
+        }
+
+        /** The nested descriptor array of one class-valued field. */
+        private String nestedFieldsText(ClassId nested, Set<ClassId> stack) {
+            ModuleId owner = ownerOfClass(nested);
+            if (owner == null) {
+                throw new SharedEmissionFailure("the class " + nested
+                    + " of a jsonable field resolves in no interface entry of"
+                    + " the project closure (producer defect)", null);
+            }
+            if (owner.equals(currentModule)) {
+                ClassLayout nestedLayout = layoutOf(nested);
+                if (nestedLayout == null) {
+                    throw new SharedEmissionFailure("the same-module jsonable"
+                        + " class " + nested + " carries no layout in the"
+                        + " project closure (producer defect)", null);
+                }
+                return fieldsArrayText(nested, nestedLayout, stack);
+            }
+            return "$rt.readModule(" + jsString(owner.path()) + ", "
+                + jsString(nested.name() + "$fields") + ")";
+        }
+
+        /** One array element's descriptor entry (no name/default roles). */
+        private String elementEntryText(RuntimeDescriptor element,
+                                        Set<ClassId> stack) {
+            boolean nullable = element instanceof RuntimeDescriptor.Nullable;
+            RuntimeDescriptor base = nullable
+                ? ((RuntimeDescriptor.Nullable) element).inner() : element;
+            StringBuilder entry = new StringBuilder("{ jtype: ")
+                .append(jsString(jsonJType(base)));
+            switch (base) {
+                case RuntimeDescriptor.Class classDescriptor -> {
+                    entry.append(", className: ")
+                        .append(jsString(classDescriptor.classId().text()))
+                        .append(", fields: ")
+                        .append(nestedFieldsText(classDescriptor.classId(), stack));
+                }
+                case RuntimeDescriptor.Array array -> entry.append(", element: ")
+                    .append(elementEntryText(array.element(), stack));
+                default -> {
+                }
+            }
+            return entry.append(", optional: false, nullable: ")
+                .append(nullable).append(" }").toString();
+        }
+
+        /** The closed JSON kind name of one canonical descriptor. */
+        private String jsonJType(RuntimeDescriptor descriptor) {
+            if (descriptor == RuntimeDescriptor.Null.INSTANCE) {
+                return "null";
+            }
+            if (descriptor == RuntimeDescriptor.Boolean.INSTANCE) {
+                return "boolean";
+            }
+            if (descriptor == RuntimeDescriptor.Int.INSTANCE) {
+                return "int";
+            }
+            if (descriptor == RuntimeDescriptor.Number.INSTANCE) {
+                return "number";
+            }
+            if (descriptor == RuntimeDescriptor.String.INSTANCE) {
+                return "string";
+            }
+            if (descriptor == RuntimeDescriptor.Table.INSTANCE) {
+                return "table";
+            }
+            if (descriptor instanceof RuntimeDescriptor.Class) {
+                return "class";
+            }
+            if (descriptor instanceof RuntimeDescriptor.Array) {
+                return "array";
+            }
+            throw new SharedEmissionFailure("the @jsonable field descriptor "
+                + descriptor.canonicalSpecText() + " is not a JSON kind: the"
+                + " checker's jsonable-field rule admits the primitive, array,"
+                + " nullable and jsonable-class shapes only (producer defect)",
+                null);
+        }
+
+        // ----- Construction -----
+
+        /**
+         * One {@code CLASS_NEW}: the shared construction phases over the
+         * resolved module-level layout and default owner. {@code LOCAL}
+         * constructs directly, {@code SHARED_FACTORY} transfers the owner
+         * module's defaults first, and the builtin {@code Error} keeps its
+         * compiler-constant defaults. A host-declaration or extern-C owner
+         * belongs to the host and FFI slices and fails closed here.
+         */
+        private void emitClassNew(SemanticOp op) {
+            KindPayload.ClassNewPayload payload =
+                (KindPayload.ClassNewPayload) op.payload();
+            switch (payload.defaultOwner()) {
+                case LOCAL -> emitClassNewLocal(op, payload);
+                case SHARED_FACTORY -> emitClassNewSharedFactory(op, payload);
+                case BUILTIN_DEFAULTS -> emitBuiltinErrorConstruction(op);
+                case HOST_DEFAULTS -> throw unsupported(op, "the CLASS_NEW "
+                    + op.opId() + " carries the host-declaration default owner"
+                    + " of " + payload.classId() + ": the HOST/STDLIB"
+                    + " realization (the host occurrence surfaces and their"
+                    + " declared defaults) belongs to a realized later"
+                    + " decomposition unit of the same migration");
+                case FFI_PLAN -> throw unsupported(op, "the CLASS_NEW "
+                    + op.opId() + " carries the extern-C C-struct default owner"
+                    + " of " + payload.classId() + ": the JavaScript backend"
+                    + " rejects @extern-c before lowering (E6006), so a C-struct"
+                    + " construction reaching this renderer is a producer defect");
+            }
+        }
+
+        private void emitClassNewLocal(SemanticOp op,
+                                       KindPayload.ClassNewPayload payload) {
+            ClassLayout layout = requireResolvedLayout(payload.classId(), op, payload.layout());
+            Set<String> providedNames = new LinkedHashSet<>();
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                providedNames.add(field.name());
+            }
+            // Phase 1: the omitted required-present defaults, in declaration
+            // order, each a fresh per-attempt thunk invocation into the
+            // construction's own attempt slot (so a nested or reentrant
+            // attempt never overwrites this attempt's operands).
+            Map<Long, String> defaultAttempts = new LinkedHashMap<>();
+            for (OpId defaultOpId : payload.classDefaultOpIds()) {
+                SemanticOp defaultOp = requireDefaultChild(op, payload.classId(),
+                    defaultOpId);
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                if (providedNames.contains(defaultPayload.field())) {
+                    continue;
+                }
+                String attempt = "$v" + op.opId().id() + "_"
+                    + defaultOp.opId().id();
+                emit("let " + attempt + " = " + defaultThunkName(defaultOp)
+                    + "();");
+                defaultAttempts.put(((ValueId) defaultOp.result()).id(), attempt);
+            }
+            // Phase 2: the extra-key scan (the first provided-source name
+            // outside the layout), after the defaults and before any boundary.
+            emitExtraFieldFailure(op, payload, layout);
+            // Phase 3: the declaration-order field boundaries.
+            Map<String, String> fieldValues = new LinkedHashMap<>();
+            for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
+                SemanticOp boundary = requireBoundaryChild(op, entry.boundaryOpId());
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                String input = defaultAttempts.getOrDefault(
+                    boundaryPayload.input().id(), slot(boundaryPayload.input()));
+                emitBoundaryCheck(boundary, input, boundaryPayload.descriptor());
+                fieldValues.put(entry.field(), input);
+            }
+            emitInstance(op, payload, layout, providedNames, fieldValues);
+        }
+
+        private void emitClassNewSharedFactory(SemanticOp op,
+                                               KindPayload.ClassNewPayload payload) {
+            ClassLayout layout = requireResolvedLayout(payload.classId(), op, payload.layout());
+            OpId factoryOpId = factoryOpOf(op, payload.classFactoryRef());
+            if (factoryOpId == null) {
+                throw rejected(op, "the CLASS_NEW " + op.opId()
+                    + " classFactoryRef " + payload.classFactoryRef()
+                    + " resolves in no module's ClassFactoryRegistry in the"
+                    + " closure (producer defect)");
+            }
+            if (factoryOpId.module().equals(currentModule)) {
+                throw rejected(op, "the CLASS_NEW " + op.opId()
+                    + " of the same-module class " + payload.classId()
+                    + " carries the SHARED_FACTORY owner: same-module literals"
+                    + " stay LOCAL (producer defect)");
+            }
+            SemanticOp factoryOp = opsById.get(factoryOpId);
+            if (factoryOp == null
+                    || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
+                throw rejected(op, "the CLASS_NEW " + op.opId()
+                    + " resolves the factory op " + factoryOpId + " outside"
+                    + " the pinned CLASS_FACTORY kind (producer defect)");
+            }
+            KindPayload.ClassFactoryPayload factoryPayload =
+                (KindPayload.ClassFactoryPayload) factoryOp.payload();
+            if (!factoryPayload.classId().equals(payload.classId())) {
+                throw rejected(factoryOp, "the CLASS_NEW " + op.opId()
+                    + " resolves a factory of " + factoryPayload.classId()
+                    + " (producer defect)");
+            }
+            if (!(factoryOp.result() instanceof ValueId factoryResult)) {
+                throw rejected(factoryOp, "the CLASS_FACTORY " + factoryOp.opId()
+                    + " publishes no ValueId result (producer defect)");
+            }
+            Set<String> providedNames = new LinkedHashSet<>();
+            StringBuilder names = new StringBuilder();
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                providedNames.add(field.name());
+                if (names.length() > 0) {
+                    names.append(", ");
+                }
+                names.append(jsString(field.name()));
+            }
+            // Phase 1: the owner's defaults-only transfer (the owner's
+            // recorded default blocks run in their owning module).
+            String transfer = "$t" + op.opId().id();
+            emit("const " + transfer + " = $rt.callFactory("
+                + jsString(factoryOpId.module().path()) + ", "
+                + payload.classFactoryRef().id() + ", [" + names + "], "
+                + spanArgs(op) + ");");
+            // Phase 2: the extra-key scan.
+            emitExtraFieldFailure(op, payload, layout);
+            // Phase 3: the declaration-order field boundaries; a defaulted
+            // field's value is read from the transferred instance (the
+            // cross-unit default input), a provided field's from its own
+            // operand slot.
+            Map<String, String> fieldValues = new LinkedHashMap<>();
+            for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
+                SemanticOp boundary = requireBoundaryChild(op, entry.boundaryOpId());
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                String input;
+                if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD) {
+                    if (!boundaryPayload.input().equals(factoryResult)) {
+                        throw rejected(op, "the CLASS_NEW " + op.opId()
+                            + " field boundary " + entry.boundaryOpId()
+                            + " carries input " + boundaryPayload.input()
+                            + ": the pinned SHARED_FACTORY default input is the"
+                            + " owner CLASS_FACTORY result " + factoryResult
+                            + " (producer defect)");
+                    }
+                    input = "$c" + boundary.opId().id();
+                    emit("let " + input + " = " + transfer + "["
+                        + jsString(entry.field()) + "];");
+                    emitBoundaryCheck(boundary, input, boundaryPayload.descriptor());
+                } else {
+                    input = slot(boundaryPayload.input());
+                    emitBoundaryCheck(boundary, input, boundaryPayload.descriptor());
+                }
+                fieldValues.put(entry.field(), input);
+            }
+            emitInstance(op, payload, layout, providedNames, fieldValues);
+        }
+
+        /**
+         * The extra-key rejection of one construction: the first
+         * provided-source name outside the resolved layout raises the pinned
+         * E8007 at the construction's own origin — after the defaults ran and
+         * before any provided/default boundary, so completed default effects
+         * remain and no partial instance publishes.
+         */
+        private void emitExtraFieldFailure(SemanticOp op,
+                                           KindPayload.ClassNewPayload payload,
+                                           ClassLayout layout) {
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                if (fieldOf(layout, field.name()) != null) {
+                    continue;
+                }
+                emit("$rt.fail(\"E8007\", "
+                    + jsString("extra field '" + field.name() + "' in class '"
+                        + payload.classId().text() + "'") + ", "
+                    + spanArgs(op) + ");");
+                return;
+            }
+        }
+
+        /**
+         * The constructed instance: provided values in provided-source
+         * order, then every remaining declared field in declaration order
+         * (its admitted default or the absent-optional sentinel), then the
+         * public tag pair. The object publishes as one value at the op's
+         * result; a failed boundary never reaches this build.
+         */
+        private void emitInstance(SemanticOp op, KindPayload.ClassNewPayload payload,
+                                  ClassLayout layout, Set<String> providedNames,
+                                  Map<String, String> fieldValues) {
+            String target = slotOf(op);
+            emit(target + " = {};");
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                String value = fieldValues.get(field.name());
+                if (value == null) {
+                    throw rejected(op, "the CLASS_NEW " + op.opId()
+                        + " carries no boundary for the provided field '"
+                        + field.name() + "' (producer defect)");
+                }
+                emit("$rt.setProp(" + target + ", " + jsString(field.name())
+                    + ", " + value + ");");
+            }
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                if (providedNames.contains(field.name())) {
+                    continue;
+                }
+                String value = fieldValues.get(field.name());
+                if (value != null) {
+                    emit("$rt.setProp(" + target + ", " + jsString(field.name())
+                        + ", " + value + ");");
+                } else if (!field.required()) {
+                    emit("$rt.setProp(" + target + ", " + jsString(field.name())
+                        + ", $rt.MISSING);");
+                }
+            }
+            emit("$rt.setProp(" + target + ", \"$kind\", \"class\");");
+            emit("$rt.setProp(" + target + ", \"$classname\", "
+                + jsString(payload.classId().text()) + ");");
+        }
+
+        // ----- Field operations -----
+
+        /**
+         * {@code FIELD_READ}: the receiver boundary admits the instance (its
+         * recorded untagged-class cell), the presence-aware read maps an
+         * absent optional or a deleted required field to language null, and
+         * the recorded optional-field boundary admits the read value at its
+         * own origin — a missing required field still fails there.
+         */
+        private void emitFieldRead(SemanticOp op) {
+            KindPayload.FieldReadPayload payload =
+                (KindPayload.FieldReadPayload) op.payload();
+            SemanticOp receiver = requireBoundaryChild(op,
+                BoundaryKind.UNTYPED_CLASS_INPUT);
+            SemanticOp fieldBoundary = requireBoundaryChild(op,
+                BoundaryKind.OPTIONAL_FIELD_READ);
+            String receiverDescriptor = descriptorOf(receiver).canonicalSpecText();
+            String target = slotOf(op);
+            emit(target + " = $rt.optRead($rt.checkType("
+                + jsString(receiverDescriptor) + ", "
+                + slot(payload.classValue()) + ", " + spanArgs(receiver) + ")["
+                + jsString(payload.field()) + "]);");
+            emitBoundaryCheck(fieldBoundary, target,
+                descriptorOf(fieldBoundary));
+        }
+
+        /**
+         * {@code FIELD_WRITE}: the receiver boundary admits the instance, the
+         * recorded field-assignment boundary admits the stored value at its
+         * own origin, then exactly one own-property commit runs. A failed
+         * check commits nothing.
+         */
+        private void emitFieldWrite(SemanticOp op) {
+            KindPayload.FieldWritePayload payload =
+                (KindPayload.FieldWritePayload) op.payload();
+            SemanticOp receiver = requireBoundaryChild(op,
+                BoundaryKind.UNTYPED_CLASS_INPUT);
+            SemanticOp fieldBoundary = requireBoundaryChild(op,
+                BoundaryKind.CLASS_FIELD_ASSIGNMENT);
+            String instance = "$w" + op.opId().id();
+            emit("const " + instance + " = $rt.checkType("
+                + jsString(descriptorOf(receiver).canonicalSpecText()) + ", "
+                + slot(payload.classValue()) + ", " + spanArgs(receiver) + ");");
+            emitBoundaryCheck(fieldBoundary, slot(payload.value()),
+                descriptorOf(fieldBoundary));
+            emit("$rt.setProp(" + instance + ", " + jsString(payload.field())
+                + ", " + slot(payload.value()) + ");");
+        }
+
+        /**
+         * {@code FIELD_DELETE}: the receiver boundary admits the instance,
+         * then the field becomes absent (the absent-optional sentinel), so a
+         * later read maps it to language null and {@code has} reports false.
+         * Deleting an already-absent field is a no-op commit.
+         */
+        private void emitFieldDelete(SemanticOp op) {
+            KindPayload.FieldDeletePayload payload =
+                (KindPayload.FieldDeletePayload) op.payload();
+            SemanticOp receiver = requireBoundaryChild(op,
+                BoundaryKind.UNTYPED_CLASS_INPUT);
+            String instance = "$x" + op.opId().id();
+            emit("const " + instance + " = $rt.checkType("
+                + jsString(descriptorOf(receiver).canonicalSpecText()) + ", "
+                + slot(payload.classValue()) + ", " + spanArgs(receiver) + ");");
+            emit("$rt.setProp(" + instance + ", " + jsString(payload.field())
+                + ", $rt.MISSING);");
+        }
+
+        // ----- JSON helpers -----
+
+        /**
+         * {@code JSON_FROM_CLASS}: the canonical JS JSON walker over the
+         * class's declaration-order descriptor array. Every parse, key,
+         * provided-value, default or validation failure returns the DEAL null
+         * with no partial instance; a provided-value failure runs no default.
+         */
+        private void emitJsonFromClass(SemanticOp op) {
+            KindPayload.JsonFromClassPayload payload =
+                (KindPayload.JsonFromClassPayload) op.payload();
+            requireResolvedLayout(payload.layout().classId(), op, payload.layout());
+            emit(slotOf(op) + " = $rt.jsonFromJson("
+                + jsString(payload.layout().classId().text()) + ", "
+                + classFieldsExpr(op, payload.layout().classId()) + ", null, "
+                + slot(payload.jsonString()) + ", " + callSpanArgs(op) + ");");
+        }
+
+        /**
+         * {@code JSON_TO_CLASS}: the canonical JS JSON walker over the
+         * class's declaration-order descriptor array. Absent optionals are
+         * omitted, present nulls are preserved, and the first declaration-
+         * order unsupported/cycle/nonfinite value raises E8001 at the current
+         * call expression's own origin (the generated helper forwards its
+         * call-site span).
+         */
+        private void emitJsonToClass(SemanticOp op) {
+            KindPayload.JsonToClassPayload payload =
+                (KindPayload.JsonToClassPayload) op.payload();
+            requireResolvedLayout(payload.layout().classId(), op, payload.layout());
+            emit(slotOf(op) + " = $rt.jsonToJson("
+                + jsString(payload.layout().classId().text()) + ", "
+                + slot(payload.classValue()) + ", "
+                + classFieldsExpr(op, payload.layout().classId()) + ", "
+                + callSpanArgs(op) + ");");
+        }
+
+        /** The emitted {@code $fields} binding of one jsonable class. */
+        private String classFieldsExpr(SemanticOp op, ClassId classId) {
+            ModuleId owner = ownerOfClass(classId);
+            if (owner == null) {
+                throw rejected(op, "the @jsonable class " + classId
+                    + " resolves in no interface entry of the project closure"
+                    + " (producer defect)");
+            }
+            if (owner.equals(currentModule)) {
+                // The module emits one descriptor array per local jsonable
+                // class into the binding every local helper reads.
+                return "$f" + classId.name();
+            }
+            return "$rt.readModule(" + jsString(owner.path()) + ", "
+                + jsString(classId.name() + "$fields") + ")";
+        }
+
+        /**
+         * The span arguments of one generated JSON helper operation: the
+         * enclosing closure's own call-site span parameters when the helper
+         * body declares them (the call origin the shared JSON_TO_ERROR
+         * projection names), otherwise the operation's recorded origin.
+         */
+        private String callSpanArgs(SemanticOp op) {
+            return currentCallSpan != null ? currentCallSpan : spanArgs(op);
+        }
+
+        // ----- Class-fact lookups -----
+
+        /** One declared field of a layout, or null. */
+        private static ClassLayout.FieldLayout fieldOf(ClassLayout layout,
+                                                       String name) {
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                if (field.name().equals(name)) {
+                    return field;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * The resolved layout of one class identity, validated against the
+         * construction payload's own copy (a disagreement is a producer
+         * defect, never a silent selection).
+         */
+        private ClassLayout requireResolvedLayout(ClassId classId, SemanticOp op) {
+            return requireResolvedLayout(classId, op, null);
+        }
+
+        private ClassLayout requireResolvedLayout(ClassId classId, SemanticOp op,
+                                                  ClassLayout expected) {
+            ClassLayout layout = layoutOf(classId);
+            if (layout == null) {
+                throw rejected(op, "the class " + classId
+                    + " resolves in no layout of the project closure (producer"
+                    + " defect)");
+            }
+            if (expected != null && !layout.equals(expected)) {
+                throw rejected(op, "the class " + classId
+                    + " resolves to a layout that differs from the recorded"
+                    + " payload layout (producer defect)");
+            }
+            return layout;
+        }
+
+        /** One construction's recorded {@code CLASS_DEFAULT} child. */
+        private SemanticOp requireDefaultChild(SemanticOp op, ClassId classId,
+                                               OpId defaultOpId) {
+            SemanticOp defaultOp = opsById.get(defaultOpId);
+            if (defaultOp == null
+                    || defaultOp.kind() != SemanticOpKind.CLASS_DEFAULT) {
+                throw rejected(op, "the " + op.kind() + " " + op.opId()
+                    + " names the CLASS_DEFAULT child " + defaultOpId
+                    + ", which is not a recorded CLASS_DEFAULT (producer"
+                    + " defect)");
+            }
+            KindPayload.ClassDefaultPayload payload =
+                (KindPayload.ClassDefaultPayload) defaultOp.payload();
+            if (!payload.classId().equals(classId)) {
+                throw rejected(op, "the " + op.kind() + " " + op.opId()
+                    + " names the CLASS_DEFAULT child " + defaultOpId
+                    + " of " + payload.classId() + ", not of " + classId
+                    + " (producer defect)");
+            }
+            if (!(defaultOp.result() instanceof ValueId)) {
+                throw rejected(defaultOp, "the CLASS_DEFAULT " + defaultOpId
+                    + " publishes no ValueId result (producer defect)");
+            }
+            return defaultOp;
+        }
+
+        /** One op's boundary child of the given kind, or a fail-closed defect. */
+        private SemanticOp requireBoundaryChild(SemanticOp op, BoundaryKind kind) {
+            SemanticOp boundary = boundaryChildOfKind(op, kind);
+            if (boundary == null) {
+                throw rejected(op, "the " + op.kind() + " " + op.opId()
+                    + " carries no " + kind + " boundary child (producer"
+                    + " defect)");
+            }
+            return boundary;
+        }
+
+        private SemanticOp requireBoundaryChild(SemanticOp op, OpId boundaryOpId) {
+            SemanticOp boundary = opsById.get(boundaryOpId);
+            if (boundary == null || boundary.kind() != SemanticOpKind.BOUNDARY) {
+                throw rejected(op, "the " + op.kind() + " " + op.opId()
+                    + " names the unknown boundary child " + boundaryOpId
+                    + " (producer defect)");
+            }
+            return boundary;
+        }
+
+        /** The single boundary child of one op with the given kind, or null. */
+        private SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {
+            SemanticOp found = null;
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() != SemanticOpKind.BOUNDARY
+                        || !op.opId().equals(candidate.origin().parentOpId())) {
+                    continue;
+                }
+                if (((KindPayload.BoundaryPayload) candidate.payload()).kind()
+                        != kind) {
+                    continue;
+                }
+                if (found == null || candidate.opId().id() < found.opId().id()) {
+                    found = candidate;
+                }
+            }
+            return found;
+        }
+
+        /** The emitted name of one {@code CLASS_DEFAULT} thunk. */
+        private static String defaultThunkName(SemanticOp defaultOp) {
+            return "$d" + defaultOp.opId().id();
+        }
+
+        /** The shared rejection of one identified operation. */
+        private SharedEmissionFailure rejected(SemanticOp op, String message) {
+            DiagnosticRange range = op == null || op.origin() == null
+                    || op.origin().span() == null ? null
+                : op.origin().span().range();
+            return new SharedEmissionFailure(message, range);
+        }
+
+        /**
+         * Whether one body (structures included) carries a generated
+         * {@code JSON_TO_CLASS} operation: exactly those closures declare the
+         * trailing call-site span parameters the shared toJson projection
+         * renders its failure origin from.
+         */
+        private boolean needsCallSpan(LoweredModuleUnit unit, BlockId block) {
+            return needsCallSpan(unit, block, new HashSet<>());
+        }
+
+        private boolean needsCallSpan(LoweredModuleUnit unit, BlockId block,
+                                      Set<BlockId> seen) {
+            if (block == null || !seen.add(block)) {
+                return false;
+            }
+            List<OpId> members = memberOps(unit, block);
+            if (members == null) {
+                return false;
+            }
+            for (OpId opId : members) {
+                SemanticOp op = opsById.get(opId);
+                if (op == null) {
+                    continue;
+                }
+                if (op.kind() == SemanticOpKind.JSON_TO_CLASS) {
+                    return true;
+                }
+                switch (op.payload()) {
+                    case KindPayload.BranchPayload payload -> {
+                        if (needsCallSpan(unit, payload.selectedBlock(), seen)
+                                || needsCallSpan(unit, payload.alternateBlock(),
+                                    seen)) {
+                            return true;
+                        }
+                    }
+                    case KindPayload.LoopPayload payload -> {
+                        if (needsCallSpan(unit, payload.initBlock(), seen)
+                                || needsCallSpan(unit, payload.bodyBlock(), seen)
+                                || needsCallSpan(unit, payload.updateBlock(), seen)) {
+                            return true;
+                        }
+                    }
+                    case KindPayload.ForEachPayload payload -> {
+                        if (needsCallSpan(unit, payload.body(), seen)) {
+                            return true;
+                        }
+                    }
+                    case KindPayload.TryCatchPayload payload -> {
+                        if (needsCallSpan(unit, payload.tryBlock(), seen)
+                                || needsCallSpan(unit, payload.catchBlock(), seen)) {
+                            return true;
+                        }
+                    }
+                    default -> {
+                    }
+                }
+            }
+            return false;
         }
 
         // =====================================================================

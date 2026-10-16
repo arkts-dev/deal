@@ -50,18 +50,20 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * The JavaScript semantic-IR renderer foundation acceptance drives
- * (ISSUE-0798): one artifact per implementation unit in dependency order,
- * the structural declaration projection, local value/cell/control
- * execution under the real Node binary, the nullable equality pair's
- * shared nil-equivalence rule, the seeded intrinsic carrier's single
- * materialization and reference identity, the array hole decision at the
- * contextual boundary, the adapter's forwarded call origin, the
- * carrier-neutral module-namespace index realization, the private module
- * registry's repeat identity and sticky failure, coordinate-only maps, the
- * malformed/no-frontend seam assertions, independent determinism, and the
- * fail-closed unsupported-slice contract with the offending operation's own
- * origin.
+ * The JavaScript semantic-IR renderer acceptance drives (ISSUE-0798): one
+ * artifact per implementation unit in dependency order, the structural
+ * declaration projection, local value/cell/control execution under the real
+ * Node binary, the nullable equality pair's shared nil-equivalence rule, the
+ * seeded intrinsic carrier's single materialization and reference identity,
+ * the array hole decision at the contextual boundary, the adapter's
+ * forwarded call origin, the carrier-neutral module-namespace index
+ * realization, the private module registry's repeat identity and sticky
+ * failure, coordinate-only maps, the malformed/no-frontend seam assertions,
+ * independent determinism, and the fail-closed unsupported-slice contract
+ * with the offending operation's own origin. The class drive (ISSUE-0799)
+ * adds the per-attempt defaults, imported-provider construction, field
+ * commits, the public helper ABI and the JSON walkers through real Node
+ * artifacts.
  */
 public class JsSemanticEmitterTest {
 
@@ -116,6 +118,7 @@ public class JsSemanticEmitterTest {
             testAdapterCallOrigin(tmpRoot, node);
             testModuleNamespaceIndexCarrier(tmpRoot, node);
             testFailureTuples(tmpRoot, node);
+            testClassConstructionAndJson(tmpRoot, node);
             testModuleRegistry(tmpRoot, node);
             testDeclarationProjection(tmpRoot);
             testFailClosedAndSeamPurity(tmpRoot);
@@ -1078,7 +1081,267 @@ public class JsSemanticEmitterTest {
     }
 
     // =========================================================================
-    // 3. Failure tuples, throw transport, and the entry presentation
+    // 3. Classes: defaults, construction, fields, JSON and the public surface
+    // =========================================================================
+
+    /**
+     * The composed class drive (ISSUE-0799): one legal module-class project
+     * exercised through real Node artifacts — fresh and re-executed defaults,
+     * provided/optional skips, retained references, imported provider
+     * construction, field read/write/delete/has, the public helper ABI
+     * (META, full-construction C$new, hidden C$fields and the generated
+     * wrappers) and the JSON roundtrip with its specified null failures.
+     */
+    private static void testClassConstructionAndJson(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- classes under Node: per-attempt defaults, imported"
+            + " providers, field commits, the public helper ABI and JSON --");
+        Path root = Files.createTempDirectory(tmpRoot, "classes");
+        Fixture fixture = compileFixture(root, """
+            import * as lib from "./lib";
+
+            class Bag {
+              items: int[] = [];
+              fresh: Item = makeItem();
+              opt?: string;
+            }
+
+            class Item {
+              v: int = 0;
+            }
+
+            function makeItem(): Item {
+              return { v: 7 };
+            }
+
+            // @jsonable
+            export class Form {
+              name: string = "";
+              nick?: string;
+              score: number = 0.0;
+              point: lib.Point = {};
+              many: lib.Point[] = [];
+            }
+
+            export function main(): null {
+              let a: Bag = {};
+              let b: Bag = {};
+              a.items[0] = 5;
+              if (b.items.length !== 0) { throw { code: "TEST_FAIL", message: "shared array default" }; }
+              a.fresh.v = 1;
+              if (b.fresh.v !== 7) { throw { code: "TEST_FAIL", message: "call default not re-executed" }; }
+              if (a.fresh.v !== 1) { throw { code: "TEST_FAIL", message: "call default not retained" }; }
+              let c: Bag = { items: [9], opt: "s" };
+              if (c.items[0] !== 9) { throw { code: "TEST_FAIL", message: "provided skip" }; }
+              if (!has(c.opt)) { throw { code: "TEST_FAIL", message: "provided optional" }; }
+              delete c.opt;
+              if (has(c.opt)) { throw { code: "TEST_FAIL", message: "deleted optional" }; }
+              let p1: lib.Point = { x: 2 };
+              let p2: lib.Point = {};
+              if (p1.y !== 0 || p2.x !== 0) { throw { code: "TEST_FAIL", message: "provider defaults" }; }
+              if (lib.Point$toJson(p1) !== "{\\"x\\":2,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
+              let f: Form = { name: "Ada", point: { x: 3 }, many: [{ y: 4 }] };
+              let s: string = Form$toJson(f);
+              let g: Form | null = Form$fromJson(s);
+              if (g !== null) {
+                if (g.point.x !== 3) { throw { code: "TEST_FAIL", message: "nested identity" }; }
+                if (g.many.length !== 1) { throw { code: "TEST_FAIL", message: "nested array" }; }
+                if (has(g.nick)) { throw { code: "TEST_FAIL", message: "absent optional" }; }
+              } else {
+                throw { code: "TEST_FAIL", message: "roundtrip" };
+              }
+              let e1: Form | null = Form$fromJson("{\\"nope\\":1}");
+              if (e1 !== null) { throw { code: "TEST_FAIL", message: "extra key" }; }
+              let e2: Form | null = Form$fromJson("{");
+              if (e2 !== null) { throw { code: "TEST_FAIL", message: "malformed" }; }
+              let e3: Form | null = Form$fromJson("42");
+              if (e3 !== null) { throw { code: "TEST_FAIL", message: "scalar" }; }
+              let e4: Form | null = Form$fromJson("{\\"point\\":{\\"zz\\":1}}");
+              if (e4 !== null) { throw { code: "TEST_FAIL", message: "nested extra" }; }
+              return null;
+            }
+            """, Map.of("src/lib.deal", """
+                // @jsonable
+                export class Point {
+                  x: int = 0;
+                  y: int = 0;
+                }
+                """));
+
+        String libSource = null;
+        String appSource = null;
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        for (JsModuleArtifact artifact : emission.modules()) {
+            if (artifact.artifactRelativePath().equals("lib.js")) {
+                libSource = artifact.source();
+            }
+            if (artifact.artifactRelativePath().equals("app.js")) {
+                appSource = artifact.source();
+            }
+        }
+        // The effective map selection keeps the class groups' coordinate-only
+        // mappings ordered and inside their own artifacts.
+        for (JsModuleArtifact artifact : JsSemanticEmitter
+                .emitProductionProject(fixture.emissionInput(true)).modules()) {
+            List<SourceMapGenerator.Mapping> mappings = artifact.mappings();
+            check(mappings != null && !mappings.isEmpty(),
+                "the mapped class emission records coordinates for "
+                    + artifact.artifactRelativePath());
+            if (mappings != null) {
+                int previousLine = 0;
+                boolean ordered = true;
+                for (SourceMapGenerator.Mapping mapping : mappings) {
+                    if (mapping.generatedLine() < previousLine) {
+                        ordered = false;
+                    }
+                    previousLine = mapping.generatedLine();
+                }
+                check(ordered, "the class emission's mappings stay in"
+                    + " generated order (" + artifact.artifactRelativePath()
+                    + ")");
+            }
+        }
+        check(libSource != null && appSource != null,
+            "the class fixture emits both implementation artifacts");
+        check(libSource != null && libSource.contains(
+                "$rt.registerFactory(\"lib\", 0, ($provided) => {"),
+            "the declaring module registers its CLASS_FACTORY as a private"
+                + " factory entry (defaults-only transfer)");
+        check(libSource != null && libSource.contains(
+                "$rt.publishModule(\"lib\", \"Point\", { $kind: \"class\","
+                    + " $classname: \"@src/Point\" });"),
+            "the exported class publishes its META value under its own name");
+        check(libSource != null && libSource.contains(
+                "$rt.publishModule(\"lib\", \"Point$new\","),
+            "the exported class publishes the full-construction C$new");
+        check(libSource != null && libSource.contains(
+                "$rt.publishModule(\"lib\", \"Point$fields\", $fPoint);"),
+            "the @jsonable class publishes the hidden C$fields descriptor"
+                + " export");
+        check(appSource != null && appSource.contains(
+                "$rt.registerFactory(\"app\",") 
+                && !appSource.contains("$rt.registerFactory(\"lib\","),
+            "a module registers only its own factories (the imported class's"
+                + " transfer stays in its declaring module)");
+        check(appSource != null && appSource.indexOf(
+                "$rt.publishModule(\"app\", \"Form$fields\"")
+                < appSource.indexOf("if ($require.main === $module)"),
+            "the class surface publishes before the direct-run entry shim");
+        check(appSource != null && appSource.contains(
+                "$rt.callFactory(\"lib\", 0, ["),
+            "a SHARED_FACTORY construction transfers the owner's defaults"
+                + " through the private linkage");
+        check(appSource != null && appSource.contains(
+                "$rt.jsonFromJson(\"@src/Form\", $fForm, null,")
+                && appSource.contains(
+                    "$rt.readModule(\"lib\", \"Point$fields\")"),
+            "the generated JSON helper drives the canonical walker over the"
+                + " class's own descriptor array and reads the imported"
+                + " provider's published descriptor array");
+        JsProjectEmission second =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        for (int i = 0; i < emission.modules().size(); i++) {
+            checkEq(emission.modules().get(i).source(),
+                second.modules().get(i).source(),
+                "the " + emission.modules().get(i).artifactRelativePath()
+                    + " class emission is byte-identical across independent"
+                    + " calls");
+        }
+
+        if (!node) {
+            skip("the class drive needs the real Node binary");
+            return;
+        }
+        Path out = stage(fixture, "classes", false);
+        Files.writeString(out.resolve("driver.js"), """
+            const app = require("./app.js");
+            const lib = require("./lib.js");
+            const rt = require("./deal/runtime.js");
+            const out = {state: rt.moduleState("app"),
+              exports: Object.keys(app).sort().join(","),
+              meta: app.Form, fields: app.Form$fields,
+              libExports: Object.keys(lib).sort().join(",")};
+            // The public C$new performs full construction (provided defaults).
+            const made = app.Form$new({name: "Eve"}, "d.js", 1, 1);
+            out.made = {name: made.name, score: made.score,
+              pointX: made.point.x, manyLen: made.many.length,
+              kind: made.$kind, cls: made.$classname};
+            // An imported provider constructs through its own public C$new.
+            const pt = lib.Point$new({x: 5}, "d.js", 2, 2);
+            out.point = {x: pt.x, y: pt.y};
+            try {
+              app.Form$new({zz: 1}, "d.js", 3, 3);
+              out.extra = "none";
+            } catch (e) {
+              out.extra = e.$dealCode + ":" + e.message;
+            }
+            // The generated wrappers keep the public helper ABI.
+            const text = app.Form$toJson.$f(made, "d.js", 4, 4);
+            const back = app.Form$fromJson.$f(text, "d.js", 5, 5);
+            out.json = text;
+            out.back = {name: back.name, pointX: back.point.x,
+              nickPresent: rt.has(back, "nick")};
+            out.nullFailures = [
+              app.Form$fromJson.$f("{\\"nope\\":1}", "d.js", 6, 6),
+              app.Form$fromJson.$f("{", "d.js", 7, 7),
+              app.Form$fromJson.$f("42", "d.js", 8, 8)];
+            // A non-JSON value raises the walk arm at the call-site origin.
+            made.point = made;
+            try {
+              app.Form$toJson.$f(made, "d.js", 77, 88);
+              out.walk = "none";
+            } catch (e) {
+              out.walk = e.$dealCode + ":" + e.message + ":at="
+                + e.file + ":" + e.line + ":" + e.column;
+            }
+            console.log(JSON.stringify(out));
+            """);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the class driver exits 0: " + run.output());
+        check(run.output().contains("\"state\":\"INITIALIZED\""),
+            "the entry module's init completed: " + run.output());
+        check(run.output().contains(
+                "\"exports\":\"Form,Form$fields,Form$fromJson,Form$new,Form$toJson,main\""),
+            "the module surface carries the class metadata, the constructor,"
+                + " the hidden descriptor export and the generated wrappers"
+                + " alongside the declared exports: " + run.output());
+        check(run.output().contains("\"meta\":{\"$kind\":\"class\","
+                + "\"$classname\":\"@src/Form\"}"),
+            "the exported class value is exactly the META pair with its"
+                + " canonical public identity: " + run.output());
+        check(run.output().contains("\"name\":\"Eve\",\"score\":0,"
+                + "\"pointX\":0,\"manyLen\":0"),
+            "C$new constructs with per-attempt defaults, nested class"
+                + " defaults included: " + run.output());
+        check(run.output().contains("\"extra\":\"E8007:extra field 'zz' in"
+                + " class '@src/Form'\""),
+            "C$new rejects an extra provided key with the pinned E8007 at"
+                + " the call-site origin: " + run.output());
+        check(run.output().contains("\"point\":{\"x\":5,\"y\":0}"),
+            "an imported provider's C$new constructs through its own"
+                + " defaults: " + run.output());
+        check(run.output().contains("\"json\":\"{\\\"name\\\":\\\"Eve\\\","
+                + "\\\"score\\\":0.0,\\\"point\\\":{\\\"x\\\":0,\\\"y\\\":0},"
+                + "\\\"many\\\":[]}\""),
+            "toJson serializes the declared fields in declaration order"
+                + " and omits the absent optional: " + run.output());
+        check(run.output().contains("\"back\":{\"name\":\"Eve\","
+                + "\"pointX\":0,\"nickPresent\":false}"),
+            "fromJson decodes the nested provider class through the imported"
+                + " descriptor array and keeps the absent optional absent: "
+                + run.output());
+        check(run.output().contains("\"nullFailures\":[null,null,null]"),
+            "every specified fromJson failure returns the DEAL null: "
+                + run.output());
+        check(run.output().contains("\"walk\":\"E8001:value at"
+                + " point is not JSON serializable: @src/Form:at=d.js:77:88\""),
+            "a non-JSON field raises the walk arm at the call-site origin: "
+                + run.output());
+    }
+
+    // =========================================================================
+    // 3b. Failure tuples, throw transport, and the entry presentation
     // =========================================================================
 
     private static void testFailureTuples(Path tmpRoot, boolean node)
@@ -1404,26 +1667,29 @@ public class JsSemanticEmitterTest {
 
         Path root = Files.createTempDirectory(tmpRoot, "failclosed");
         Fixture fixture = compileFixture(root, """
-            class Point {
-              x: int = 0;
-              y: int = 0;
+            async function work(): int {
+              return 1;
+            }
+
+            export async function run(): int {
+              let v: int = await work();
+              return v;
             }
 
             export function main(): null {
-              let p: Point = {x: 1, y: 2};
               return null;
             }
             """);
         try {
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
-            check(false, "the declared-class construction slice fails closed");
+            check(false, "the async-operation slice fails closed");
         } catch (SharedEmissionFailure failure) {
             passed++;
             check(failure.diagnosticRange() != null,
-                "the declared-class fail-closed failure carries the"
-                    + " construction's own origin");
-            check(failure.getMessage().contains("CLASS_NEW"),
-                "the failure names the unsupported op: "
+                "the async fail-closed failure carries the offending"
+                    + " operation's own origin");
+            check(failure.getMessage().contains("ASYNC_START"),
+                "the failure names the unsupported op and slice: "
                     + failure.getMessage());
         }
 

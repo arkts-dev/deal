@@ -1918,6 +1918,11 @@ function $executionRecord($id) {
       $state: "UNINITIALIZED",
       $surface: {},
       $failure: $undefined,
+      // The private class-factory linkage of this implementation module
+      // (the semantic-IR renderer's factoryEntries map): recorded
+      // ClassFactoryId -> defaults-only transfer callable. The entries
+      // carry no enumerable public key and register no public value.
+      $factories: new $Map(),
     };
     $executions.set($id, $record);
   }
@@ -3450,13 +3455,40 @@ const $rt = {
   // export name is the callee's published function value). The caller-side
   // EXTERNAL_PARAMETER boundaries already ran; the callee's source RETURN
   // executes the single EXTERNAL_RETURN cell, so the CALL re-checks nothing.
-  callExport: function $callExport(id, name, args) {
+  callExport: function $callExport(id, name, args, file, line, column) {
     const $fn = $rt.readModule(id, name);
     if ($fn === $undefined || $fn === null || $fn.$kind !== "function") {
-      $rt.fail("E8001", "expected function", $undefined, $undefined,
-        $undefined, "function", $kindOf($fn));
+      $rt.fail("E8001", "expected function", file, line, column,
+        "function", $kindOf($fn));
     }
-    return $fn.$f(...args);
+    return $fn.$f(...args, file, line, column);
+  },
+
+  // registerFactory: the private implementation-module linkage of one
+  // exported class's CLASS_FACTORY entry (the emission design's
+  // factoryEntries record, keyed by the recorded ClassFactoryId). The
+  // entry is a callable taking the caller's provided field names and
+  // returning the defaults-only transfer value; registration executes no
+  // default and publishes no enumerable surface key, so an internal
+  // transfer value is never confused with a public class value. The
+  // recording module registers its entries during its own init walk,
+  // before any cross-module construction can reach them.
+  registerFactory: function $registerFactory(id, factoryId, fn) {
+    $executionRecord(id).$factories.set(factoryId, fn);
+  },
+
+  // callFactory: the one cross-module CLASS_FACTORY invocation of a
+  // SHARED_FACTORY construction. The owner module required during the
+  // caller's init walk registered its entry first; an absent entry is a
+  // fail-closed linkage defect carrying the caller's own call site, never a
+  // silently fabricated transfer.
+  callFactory: function $callFactory(id, factoryId, providedNames, file, line, column) {
+    const $fn = $executionRecord(id).$factories.get(factoryId);
+    if (typeof $fn !== "function") {
+      $rt.fail("E8001", "expected class factory", file, line, column,
+        "class factory", $kindOf($fn));
+    }
+    return $fn(providedNames);
   },
 
   // readModule: the checked read of one published export of one module
