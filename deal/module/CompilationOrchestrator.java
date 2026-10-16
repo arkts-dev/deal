@@ -1958,7 +1958,7 @@ public final class CompilationOrchestrator {
                             } else if (sym instanceof Symbol.ClassSymbol cs) {
                                 correctedExports.put(exportName,
                                     Types.classType(cs.name(), cs.identity(),
-                                        cs.modulePath()));
+                                        Types.providerModule(cs.modulePath())));
                             }
                         }
                     }
@@ -1976,7 +1976,7 @@ public final class CompilationOrchestrator {
                     Symbol clsSym = symTable.resolve(cd.name());
                     if (clsSym instanceof Symbol.ClassSymbol cs) {
                         Type clsType = Types.classType(cs.name(), cs.identity(),
-                            cs.modulePath());
+                            Types.providerModule(cs.modulePath()));
 
                         // C$fromJson: (string) -> C | null
                         Type.Func fromJsonType = new Type.Func(

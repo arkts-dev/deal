@@ -264,6 +264,18 @@ public final class Types {
     }
 
     /**
+     * The defining provider module of one declaration's wiring key: the
+     * declaring module's own path, or {@code null} for the unbound
+     * carrier (the intrinsic builtin module's empty key). The single
+     * derivation every checked-class synthesis site consumes, so one
+     * declaration never yields two provider spellings.
+     */
+    public static java.lang.String providerModule(java.lang.String wiringPath) {
+        return wiringPath == null || wiringPath.isEmpty()
+            ? null : wiringPath;
+    }
+
+    /**
      * Provider compatibility for nominal class equality: the defining
      * provider participates (two declarations of distinct providers are
      * never equal); an unbound (null) carrier names no defining file and

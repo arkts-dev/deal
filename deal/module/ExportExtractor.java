@@ -107,7 +107,7 @@ public final class ExportExtractor {
 
     private Type.Class classTypeFor(String name, String wiringPath) {
         return Types.classType(name, classIdentityFor(wiringPath, name),
-            wiringPath);
+            Types.providerModule(wiringPath));
     }
 
     private Type.Class errorClassType() {

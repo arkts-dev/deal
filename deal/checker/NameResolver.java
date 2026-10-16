@@ -171,7 +171,7 @@ public final class NameResolver {
      * defining provider module (the declaring module's own wiring key). */
     private Type.Class classTypeFor(String name, String wiringPath) {
         return Types.classType(name, classIdentityFor(wiringPath, name),
-            wiringPath);
+            Types.providerModule(wiringPath));
     }
 
     /** The intrinsic Error class type (E2's synthesis). */
@@ -1048,7 +1048,7 @@ public final class NameResolver {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
                     yield Types.classType(cs.name(), cs.identity(),
-                        cs.modulePath());
+                        Types.providerModule(cs.modulePath()));
                 }
                 yield Type.Bytes.INSTANCE;
             }
@@ -1056,7 +1056,7 @@ public final class NameResolver {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
                     yield Types.classType(cs.name(), cs.identity(),
-                        cs.modulePath());
+                        Types.providerModule(cs.modulePath()));
                 }
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
                         .withMissingSymbol("TYPE", name, modulePath, List.of("class")));

@@ -2341,9 +2341,8 @@ public final class TypeChecker {
      * builtin {@code Error} module path stays the unbound provider.
      */
     private static Type.Class classTypeOf(Symbol.ClassSymbol cs) {
-        String provider = cs.modulePath() == null || cs.modulePath().isEmpty()
-            ? null : cs.modulePath();
-        return Types.classType(cs.name(), cs.identity(), provider);
+        return Types.classType(cs.name(), cs.identity(),
+            Types.providerModule(cs.modulePath()));
     }
 
     // =======================================================================
@@ -2881,8 +2880,7 @@ public final class TypeChecker {
                 yield t != null ? t : Type.Error.INSTANCE;
             }
             case Symbol.FunctionSymbol fs -> fs.funcType();
-            case Symbol.ClassSymbol cs ->
-                Types.classType(cs.name(), cs.identity(), cs.modulePath());
+            case Symbol.ClassSymbol cs -> classTypeOf(cs);
             case Symbol.ModuleSymbol ms -> Type.Table.INSTANCE;
             case Symbol.IntrinsicSymbol is -> is.type();
         };
