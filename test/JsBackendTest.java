@@ -3136,6 +3136,46 @@ public class JsBackendTest {
             "say(\"meta-identity=\" + (c1.Echo === rawClass && c2.Echo === rawClass));",
             "say(\"fresh-new=\" + (c1.Echo$new !== c2.Echo$new));",
             "say(\"fresh-fields=\" + (c1.Echo$fields !== c2.Echo$fields));",
+            // The pre-wrapped raw export shape ($rt.function's
+            // {$kind, $sig, $f} object — the DEAL-compiled-module
+            // producer): two source imports of one resolved file own
+            // fresh unequal typed wrappers, repeated same-import reads
+            // are identical, the raw wrapper object is never cloned, and
+            // a $sig mismatch fails E8011 at the import origin.
+            "const pwRaw = {};",
+            "const pwFn = function () { return 5; };",
+            "const pwExported = $rt.function(\"()->int\", pwFn);",
+            "pwRaw.pw = pwExported;",
+            "const pwDecl = { pw: { $k: \"function\", $d: \"()->int\" } };",
+            "const pw1 = $rt.loadHost(pwRaw, pwDecl, \"host/echo\", \"main.deal\", 1, 1);",
+            "const pw2 = $rt.loadHost(pwRaw, pwDecl, \"host/echo\", \"main.deal\", 2, 1);",
+            "say(\"pw-same-import-identity=\" + (pw1.pw === pw1.pw));",
+            "say(\"pw-cross-import-inequality=\" + (pw1.pw !== pw2.pw));",
+            "say(\"pw-typed-call=\" + pw1.pw.$f() + pw2.pw.$f());",
+            "say(\"pw-raw-non-cloning=\" + (pwRaw.pw === pwExported",
+            "  && pw1.pw !== pwExported && pw2.pw !== pwExported));",
+            "say(\"pw-signature=\" + pw1.pw.$sig + \",\" + pw2.pw.$sig);",
+            // The re-wrapped $f keeps the call-time enforcement: a
+            // matching $sig with a wrong-kind return still fails E8010.
+            "try {",
+            "  const pwJunk = $rt.loadHost({ pw: $rt.function(\"()->int\",",
+            "    function () { return \"junk\"; }) }, pwDecl,",
+            "    \"host/echo\", \"main.deal\", 1, 1);",
+            "  pwJunk.pw.$f();",
+            "  say(\"pw-enforce=none\");",
+            "} catch (e) {",
+            "  say(\"pw-enforce=\" + e.code + \"|\" + e.message + \"|\" + e.expected",
+            "    + \"|\" + e.actual);",
+            "}",
+            "try {",
+            "  $rt.loadHost({ pw: $rt.function(\"()->string\", pwFn) }, pwDecl,",
+            "    \"host/echo\", \"main.deal\", 1, 1);",
+            "  say(\"pw-mismatch=none\");",
+            "} catch (e) {",
+            "  say(\"pw-mismatch=\" + e.code + \"|\" + e.message + \"|\" + e.expected",
+            "    + \"|\" + e.actual + \"|file=\" + e.file + \"|line=\" + e.line",
+            "    + \"|column=\" + e.column);",
+            "}",
             // The first invalid export stops later reads: alpha (ascending
             // first) fails, so zeta is never read.
             "const failOrder = [];",
@@ -3188,6 +3228,30 @@ public class JsBackendTest {
             "each import synthesizes a fresh C$new: " + probeOut);
         check(probeOut.contains("fresh-fields=true"),
             "each import synthesizes a fresh C$fields: " + probeOut);
+        check(probeOut.contains("pw-same-import-identity=true"),
+            "a prewrapped export's repeated same-import reads are identical: "
+                + probeOut);
+        check(probeOut.contains("pw-cross-import-inequality=true"),
+            "prewrapped exports across different source imports are unequal "
+                + "typed wrappers: " + probeOut);
+        check(probeOut.contains("pw-typed-call=55"),
+            "both prewrapped typed surfaces call through the re-enforced $f: "
+                + probeOut);
+        check(probeOut.contains("pw-raw-non-cloning=true"),
+            "the raw prewrapped export object is preserved, never cloned: "
+                + probeOut);
+        check(probeOut.contains("pw-signature=()->int,()->int"),
+            "the re-wrapped prewrapped exports keep the declared signature: "
+                + probeOut);
+        check(probeOut.contains("pw-enforce=E8010|return value 1 type mismatch: "
+                + "expected int|int|string"),
+            "the re-wrapped prewrapped $f enforces the declared return "
+                + "descriptor: " + probeOut);
+        check(probeOut.contains("pw-mismatch=E8011|host export 'pw' in module "
+                + "'host/echo' has signature mismatch: expected ()->int, got "
+                + "()->string|()->int|()->string|file=main.deal|line=1|column=1"),
+            "a prewrapped $sig mismatch fails E8011 at the import origin with "
+                + "the declared/seen signatures: " + probeOut);
         check(probeOut.contains("first-failure=E8011 host export 'alpha' "
                 + "in module 'host/echo' is not a function"),
             "the first invalid export fails at its own name: " + probeOut);
@@ -3339,6 +3403,144 @@ public class JsBackendTest {
             "the declared reads run in ascending export-name order: " + nout);
         check(nout.contains("values-calls=1"),
             "the for-of iterable is evaluated exactly once: " + nout);
+
+        // (3) The declared-order failure controls: the declaration file
+        // names zeta before alpha, and the ascending-name selection must
+        // still read alpha first and stop at the first invalid export —
+        // the earlier implementation read the provider/declaration order
+        // on these paths.
+        writeFile("ord_proj/deal.json",
+            "{\"languageVersion\": \"1.3\", \"backend\": \"js\",\n"
+            + " \"externals\": {\"host/ord\": {\"declaration\": "
+            + "\"../bindings/ord.d.deal\"}}}\n");
+        writeFile("ord_proj/bindings/ord.d.deal", """
+            export function zeta(): int;
+            export function alpha(): int;
+            """);
+        writeFile("ord_proj/src/ord_main.deal", """
+            import * as h from "host/ord";
+            export function main(): null {
+              if (h.alpha() !== 7) {
+                throw { code: "ALPHA", message: "alpha" };
+              }
+              if (h.zeta() !== 9) {
+                throw { code: "ZETA", message: "zeta" };
+              }
+              return null;
+            }
+            """);
+        Path ordEntry = tmpDir.resolve(
+            "ord_proj/src/ord_main.deal").toAbsolutePath();
+        Path ordOut = tmpDir.resolve("ord_proj/build/js");
+        CompilationOrchestrator ordOrchestrator = new CompilationOrchestrator(
+            ordEntry, ordOut, false, false, false, Backend.JS,
+            Map.of("host/ord", "../bindings/ord.d.deal"),
+            List.of(tmpDir.resolve("ord_proj/src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize());
+        check(ordOrchestrator.compile(),
+            "the declared-order project compiles: "
+                + ordOrchestrator.diagnostics());
+        String ordEntryJs = Files.readString(ordOut.resolve("ord_main.js"));
+        check(ordEntryJs.contains("$rt.loadHost($require(" + q() + "./host/ord"
+                + q() + "), {" + q() + "alpha" + q() + ":")
+                && ordEntryJs.indexOf(q() + "alpha" + q() + ":") < ordEntryJs
+                    .indexOf(q() + "zeta" + q() + ":"),
+            "the zeta-first declaration file still emits the ascending declared "
+                + "map alpha, zeta: " + ordEntryJs);
+        writeFile("ord_proj/build/js/ord_runner.js", String.join("\n",
+            "\"use strict\";",
+            "try {",
+            "  const $entry = require(\"./ord_main\");",
+            "  $entry.main.$f();",
+            "  process.stdout.write(\"run=ok\\n\");",
+            "} catch (e) {",
+            "  process.stdout.write(\"run=\" + e.code + \"|\" + e.message + \"|\"",
+            "    + (e.expected === undefined ? \"<absent>\" : e.expected) + \"|\"",
+            "    + (e.actual === undefined ? \"<absent>\" : e.actual)",
+            "    + \"|file=\" + (e.file === undefined ? \"<absent>\" : e.file)",
+            "    + \"|line=\" + (e.line === undefined ? \"<absent>\" : e.line)",
+            "    + \"|column=\" + (e.column === undefined ? \"<absent>\" : e.column)",
+            "    + \"\\n\");",
+            "}",
+            "process.stdout.write(\"read-order=\"",
+            "  + (globalThis.__ordOrder || []).join(\",\") + \"|\\n\");",
+            ""));
+        String ordOrigin = "|file=" + ordEntry + "|line=1|column=1";
+        String ordAlphaFn = "$rt.function(\"()->int\", function () { return 7; })";
+        String ordZetaFn = "$rt.function(\"()->int\", function () { return 9; })";
+        String ordAlphaGetter = "Object.defineProperty(module.exports, \"alpha\", "
+            + "{ enumerable: true, get: function () { order.push(\"alpha\"); "
+            + "return %s; } });";
+        String ordZetaGetter = "Object.defineProperty(module.exports, \"zeta\", "
+            + "{ enumerable: true, get: function () { order.push(\"zeta\"); "
+            + "return %s; } });";
+
+        // (3a) alpha (ascending first) invalid: the exact first-invalid
+        // tuple at the import origin, and zeta is never read even though
+        // the declaration names it first.
+        writeFile("ord_proj/build/js/host/ord.js", ordHost(
+            ordZetaGetter.formatted(ordZetaFn) + ordAlphaGetter.formatted("17")));
+        NodeResult ordAlphaFail = runNodeScript(ordOut, "ord_runner.js");
+        check(ordAlphaFail.output().contains("run=E8011|host export 'alpha' in "
+                + "module 'host/ord' is not a function|function|number" + ordOrigin),
+            "the alpha failure renders the exact first-invalid E8011 tuple at "
+                + "the import origin: " + ordAlphaFail.output());
+        check(ordAlphaFail.output().contains("read-order=alpha|"),
+            "the alpha failure reads only alpha and stops before zeta: "
+                + ordAlphaFail.output());
+
+        // (3b) alpha valid, zeta invalid: the later failure reads
+        // [alpha, zeta] in ascending name order and stops there.
+        writeFile("ord_proj/build/js/host/ord.js", ordHost(
+            ordZetaGetter.formatted("17") + ordAlphaGetter.formatted(ordAlphaFn)));
+        NodeResult ordZetaFail = runNodeScript(ordOut, "ord_runner.js");
+        check(ordZetaFail.output().contains("run=E8011|host export 'zeta' in "
+                + "module 'host/ord' is not a function|function|number" + ordOrigin),
+            "the later zeta failure renders the exact E8011 tuple at the import "
+                + "origin: " + ordZetaFail.output());
+        check(ordZetaFail.output().contains("read-order=alpha,zeta|"),
+            "the later failure reads alpha, zeta in ascending name order: "
+                + ordZetaFail.output());
+
+        // (3c) zeta missing: the exact missing-export tuple with no
+        // later effects (alpha is the only read).
+        writeFile("ord_proj/build/js/host/ord.js", ordHost(
+            ordAlphaGetter.formatted(ordAlphaFn)));
+        NodeResult ordZetaMissing = runNodeScript(ordOut, "ord_runner.js");
+        check(ordZetaMissing.output().contains("run=E8011|missing host export "
+                + "'zeta' in module 'host/ord'|<absent>|<absent>" + ordOrigin),
+            "the missing zeta renders the exact missing-export tuple at the "
+                + "import origin: " + ordZetaMissing.output());
+        check(ordZetaMissing.output().contains("read-order=alpha|"),
+            "the missing zeta stops after alpha: " + ordZetaMissing.output());
+
+        // (3d) the valid success control: the same zeta-first declaration
+        // reads [alpha, zeta] ascending and returns.
+        writeFile("ord_proj/build/js/host/ord.js", ordHost(
+            ordZetaGetter.formatted(ordZetaFn) + ordAlphaGetter.formatted(ordAlphaFn)));
+        NodeResult ordOk = runNodeScript(ordOut, "ord_runner.js");
+        check(ordOk.output().contains("run=ok"),
+            "the valid zeta-first declaration project runs to completion: "
+                + ordOk.output());
+        check(ordOk.output().contains("read-order=alpha,zeta|"),
+            "the valid control reads alpha, zeta in ascending name order: "
+                + ordOk.output());
+    }
+
+    /**
+     * One declared-order failure-control host body: the module exports
+     * object plus the supplied getter definitions (the caller supplies
+     * the zeta getter before the alpha getter, so the host file's own
+     * property order can never explain an ascending read).
+     */
+    private static String ordHost(String getters) {
+        return """
+            "use strict";
+            const order = [];
+            globalThis.__ordOrder = order;
+            const $rt = require("../deal/runtime");
+            module.exports = {};
+            """ + getters;
     }
 
     private static void testSourceMapSidecarsEmitted() throws Exception {

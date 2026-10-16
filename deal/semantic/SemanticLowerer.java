@@ -9283,12 +9283,19 @@ public final class SemanticLowerer {
          * read value is returned together with the descriptor and the
          * binding. For a function descriptor the read registers exactly
          * one {@code FunctionExecutionBinding} through the closed registry
-         * seam — {@code HostFunction(resolvedModule, exportName, descriptor)}
-         * for a HOST-kind import and for a declared function export of a
-         * STDLIB-kind import, {@code ExternalFunction(resolvedModule,
-         * exportName, descriptor, owner)} with the route-derived execution
-         * owner for an IMPLEMENTATION-kind import — keyed by the published
-         * cell. A non-function descriptor produces the read with no
+         * seam, from the read's {@code FunctionValueImportFacts}: {@code
+         * HostFunction(resolvedModule, exportName, descriptor, importCell)}
+         * for a HOST-kind import, where {@code importCell} is the owning
+         * source import occurrence's alias cell (the read's
+         * {@code MODULE_IMPORT} completion cell), so every call form
+         * selects that occurrence's typed surface; {@code
+         * HostFunction(resolvedModule, exportName, descriptor)} with no
+         * occurrence cell for a declared function export of a STDLIB-kind
+         * import (its surface is once-only per resolved module); and
+         * {@code ExternalFunction(resolvedModule, exportName, descriptor,
+         * owner)} with the route-derived execution owner for an
+         * IMPLEMENTATION-kind import — all keyed by the published cell. A
+         * non-function descriptor produces the read with no
          * registration.</p>
          *
          * <p><b>The STDLIB branch (R2).</b> The closed
