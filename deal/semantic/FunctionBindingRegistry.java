@@ -1,6 +1,7 @@
 package deal.semantic;
 
 import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.CaptureMode;
@@ -126,13 +127,28 @@ public final class FunctionBindingRegistry {
      * is the function-value materialization seam, and a
      * function-typed materialization whose producer facts do not pin a
      * function descriptor fails explicitly (never silently skipped).
+     *
+     * <p>{@code importCell} is the owning source import occurrence's alias
+     * cell (a host-module fact): the read's {@code MODULE_IMPORT}
+     * completion cell, so the recorded {@code HostFunction} binding selects
+     * the exact occurrence surface at every call form. A host fact without
+     * a cell is the namespace-surface dynamic class's shape (no import
+     * occurrence exists); a unit whose import-read registration carries no
+     * cell fails the bindings admission's correlation rule.</p>
      */
     public record FunctionValueImportFacts(
         ModuleId hostModuleId,
         ModuleId importedModuleId,
         String exportName,
-        RuntimeDescriptor descriptor
+        RuntimeDescriptor descriptor,
+        BindingId importCell
     ) {
+
+        /** The no-occurrence-cell form (a host callable that is not an import read). */
+        public FunctionValueImportFacts(ModuleId hostModuleId, ModuleId importedModuleId,
+                                        String exportName, RuntimeDescriptor descriptor) {
+            this(hostModuleId, importedModuleId, exportName, descriptor, null);
+        }
 
         public FunctionValueImportFacts {
             if ((hostModuleId == null) == (importedModuleId == null)) {
@@ -143,6 +159,11 @@ public final class FunctionBindingRegistry {
             }
             Objects.requireNonNull(exportName, "exportName must not be null");
             Objects.requireNonNull(descriptor, "descriptor must not be null");
+            if (importCell != null && hostModuleId == null) {
+                throw new IllegalArgumentException(
+                    "an import-occurrence cell is a host-module fact: the imported-module "
+                        + "form (a COMPILED cross-module read) carries no occurrence surface");
+            }
         }
 
         /** The facts' owning module id (host or imported, whichever is present). */
@@ -291,7 +312,8 @@ public final class FunctionBindingRegistry {
         FunctionValueMaterialization classification;
         if (facts.hostModuleId() != null) {
             register(identity, new FunctionExecutionBinding.HostFunction(
-                facts.hostModuleId(), facts.exportName(), funcDescriptor));
+                facts.hostModuleId(), facts.exportName(), funcDescriptor,
+                facts.importCell()));
             classification = new FunctionValueMaterialization(identity,
                 FunctionValueMaterializationSource.HOST_EXPORT, facts.hostModuleId(),
                 facts.exportName(), funcDescriptor, producingKind, null);

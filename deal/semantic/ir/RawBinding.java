@@ -26,7 +26,9 @@ import java.util.Objects;
  *       {@code sourceRef}, {@code sourceSignature},
  *       {@code targetSignature}.</li>
  *   <li>{@code hostFunction}: {@code hostModuleId} (as {@link #modulePath()}),
- *       {@code exportName}, {@code descriptor}.</li>
+ *       {@code exportName}, {@code descriptor}, and the nullable
+ *       {@code importCellId} (the owning source import occurrence's alias
+ *       cell).</li>
  *   <li>{@code hostFunctionValue}: {@code hostModuleId},
  *       {@code materializingBoundaryOpId}, {@code descriptor}.</li>
  *   <li>{@code externalFunction}: {@code moduleId} (as {@link #modulePath()}),
@@ -54,7 +56,8 @@ public record RawBinding(
     FunctionId functionId,
     BlockId blockId,
     OpId adaptOpId,
-    RawSourceRef sourceRef
+    RawSourceRef sourceRef,
+    BindingId importCell
 ) {
 
     public RawBinding {

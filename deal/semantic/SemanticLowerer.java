@@ -6892,14 +6892,17 @@ public final class SemanticLowerer {
         /**
          * {@code FOR_EACH(ARRAY_VALUES)} — the array for-of arm (C-D5):
          * the iterable operand completes exactly once before START as one
-         * prior step in the enclosing block; the op snapshots the array
-         * reference and the initial length and visits slot indices
-         * {@code 0..initialLength-1} in increasing order with the op's
-         * own {@code TYPE_DESCRIPTOR} terminal check against the element
-         * descriptor derived from the recorded array operand type
-         * ({@code [T]} → element {@code T}) — a missing element fails
-         * E8001 {@code expected {T}, got missing} at the {@code FOR_EACH}
-         * origin before the body runs; then a fresh binding per iteration
+         * prior step in the enclosing block; the op evaluates the iterable
+         * once, retains its reference, and visits increasing live positions
+         * with the op's own {@code TYPE_DESCRIPTOR} terminal check against
+         * the element descriptor derived from the recorded array operand
+         * type ({@code [T]} → element {@code T}): each step re-reads the
+         * carrier's live element count, so a contiguous append is visited;
+         * the first position that reads absent (a deleted slot or a
+         * position past the live end) stops the iteration, and a present
+         * element — including a wrong one — is checked, never skipped
+         * (a wrong element fails E8001 at the {@code FOR_EACH} origin before
+         * the body runs); then a fresh binding per iteration
          * (mechanics E6 — the payload pins the binding identity and the
          * initial generation) and the body block executes.
          * {@code BREAK}/{@code CONTINUE} target this op's {@code OpId}.
@@ -8201,7 +8204,10 @@ public final class SemanticLowerer {
             // the stdlib module's export host function identity, recorded
             // through the registry child's host-export seam (B5 — the
             // same seam every function-typed host export read registers
-            // through).
+            // through). The STDLIB surface is once-only per resolved module
+            // (the closed catalog's callable is one value per module/name),
+            // so no source-occurrence cell is recorded: the occurrence-owned
+            // correlation is a HOST-module fact.
             registry.registerHostOrExternalImport(
                 new FunctionAllocationIdentity(exportValue.id()),
                 new KindPayload.ExportReadPayload(stdlibModule, field,
@@ -9388,8 +9394,26 @@ public final class SemanticLowerer {
             }
             FunctionBindingRegistry.FunctionValueImportFacts facts = null;
             if (descriptor instanceof RuntimeDescriptor.Func functionDescriptor) {
+                // The owning source import occurrence (the alias cell of the
+                // import declaration the read materialized through): the
+                // recorded HostFunction binding carries it, so every direct,
+                // stored, namespace, adapter and async call form selects this
+                // occurrence's typed surface and never a module/name fallback.
+                // A STDLIB read's surface is once-only per resolved module, so
+                // it records no occurrence cell.
+                BindingId importCell = importFact.kind() == ExternalModuleKind.HOST
+                    ? importAliasCells.get(alias.name()) : null;
+                if (importFact.kind() == ExternalModuleKind.HOST && importCell == null) {
+                    throw new ConstructUnlowered("import alias '" + alias.name()
+                        + "' of '" + alias.name() + "." + access.field()
+                        + " without a hoisted alias cell (a missing hoist fact is a "
+                        + "producer defect)", access.span());
+                }
                 facts = switch (importFact.kind()) {
-                    case HOST, STDLIB -> new FunctionBindingRegistry
+                    case HOST -> new FunctionBindingRegistry
+                        .FunctionValueImportFacts(importFact.resolvedModuleId(), null,
+                            access.field(), functionDescriptor, importCell);
+                    case STDLIB -> new FunctionBindingRegistry
                         .FunctionValueImportFacts(importFact.resolvedModuleId(), null,
                             access.field(), functionDescriptor);
                     case IMPLEMENTATION -> new FunctionBindingRegistry

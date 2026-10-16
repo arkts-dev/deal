@@ -163,35 +163,36 @@ public record RawUnit(
         return switch (binding) {
             case FunctionExecutionBinding.LoweredBody body ->
                 new RawBinding(allocationId, "loweredBody", null, null, null, null, null,
-                    null, null, null, null, body.functionId(), body.blockId(), null, null);
+                    null, null, null, null, body.functionId(), body.blockId(), null, null,
+                    null);
             case FunctionExecutionBinding.AdapterBinding adapter ->
                 new RawBinding(allocationId, "adapter", null, null, null,
                     adapter.captureMode().name(), null,
                     adapter.sourceSignature().canonicalSpecText(),
                     adapter.targetSignature().canonicalSpecText(), null, null, null, null,
                     adapter.adaptOpId(),
-                    ContractSnapshotCanonicalizer.rawSourceRefOf(adapter.sourceRef()));
+                    ContractSnapshotCanonicalizer.rawSourceRefOf(adapter.sourceRef()), null);
             case FunctionExecutionBinding.HostFunction host ->
                 new RawBinding(allocationId, "hostFunction", host.hostModuleId().path(),
                     host.exportName(), null, null, host.descriptor().canonicalSpecText(), null,
-                    null, null, null, null, null, null, null);
+                    null, null, null, null, null, null, null, host.importCell());
             case FunctionExecutionBinding.HostFunctionValue hostValue ->
                 new RawBinding(allocationId, "hostFunctionValue", hostValue.hostModuleId().path(),
                     null, null, null, hostValue.descriptor().canonicalSpecText(), null, null,
-                    hostValue.materializingBoundaryOpId(), null, null, null, null, null);
+                    hostValue.materializingBoundaryOpId(), null, null, null, null, null, null);
             case FunctionExecutionBinding.ExternalFunction external ->
                 new RawBinding(allocationId, "externalFunction", external.moduleId().path(),
                     external.exportName(), external.executionOwner().name(), null,
                     external.descriptor().canonicalSpecText(), null, null, null, null, null,
-                    null, null, null);
+                    null, null, null, null);
             case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
                 new RawBinding(allocationId, "intrinsicFunction", null, null, null, null,
                     intrinsic.descriptor().canonicalSpecText(), null, null, null,
-                    intrinsic.kind().name(), null, null, null, null);
+                    intrinsic.kind().name(), null, null, null, null, null);
             case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                 new RawBinding(allocationId, "dynamicFunctionValue", null, null, null, null,
                     dynamic.descriptor().canonicalSpecText(), null, null,
-                    dynamic.materializingOpId(), null, null, null, null, null);
+                    dynamic.materializingOpId(), null, null, null, null, null, null);
         };
     }
 

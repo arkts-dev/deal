@@ -74,9 +74,9 @@ import java.util.stream.Stream;
  * production pipeline on the oracle, the LuaJIT artifact under
  * {@code luajit}, and the JVM artifact under {@code javac --release 25
  * -proc:none} plus {@code java}; the per-arm three-consumer tuple
- * identity; the {@code FOR_EACH} terminal check over a deleted
- * array-element slot; the row/arm completeness and single-source
- * negatives; and the unchanged-surface accounting.
+ * identity; the {@code FOR_EACH} live-position traversal over a deleted
+ * and an appended array-element slot; the row/arm completeness and
+ * single-source negatives; and the unchanged-surface accounting.
  *
  * <ol>
  *   <li><b>The named divergences.</b> Five corpus fixtures compile
@@ -138,10 +138,10 @@ import java.util.stream.Stream;
  *       {@code null} or nullable return and never collapses into absence;
  *       the corpus-pinned {@code host-empty-return-bad} cell additionally
  *       drives the full program on all three consumers.</li>
- *   <li><b>The {@code FOR_EACH} terminal check.</b> A deleted
- *       array-element slot inside a typed for-of publishes the kind arm's
- *       suffix-less text with expected {@code int} and actual {@code nil}
- *       at the op's own origin on all three consumers.</li>
+ *   <li><b>The {@code FOR_EACH} traversal.</b> A deleted
+ *       array-element slot inside a typed for-of stops the live-position
+ *       traversal (the deleted-stop rule), and an element appended
+ *       inside the body is visited, on all three consumers.</li>
  *   <li><b>The array-literal element cells.</b> Every
  *       {@code ARRAY_LITERAL_ELEMENT} child's recorded
  *       {@code ARRAY_ELEMENT_DESCRIPTOR} policy renders the canonical
@@ -7681,15 +7681,41 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
-    // 4. The FOR_EACH terminal check over a deleted array-element slot
+    // 4. The FOR_EACH traversal over a deleted and an appended slot
     // =========================================================================
 
-    /** The deleted-slot seed: the FOR_EACH op's terminal element check. */
+    /**
+     * The deleted-slot seed: the selected array traversal stops at the
+     * first absent position — the deleted slot — instead of failing its
+     * terminal element check. The continuation probe makes the stop
+     * observable: a traversal that skipped the deleted slot would visit
+     * element 3 and raise the probe's E8005, so the deleted-stop and the
+     * never-skip rules are discriminated by the same seed.
+     */
     private static final String FOREACH_DELETED_SLOT_SOURCE = """
+        function main(): null {
+          let xs: int[] = [1, 2, 3];
+          for (let e: int of xs) {
+            if (e === 1) { delete xs[1]; }
+            if (e === 3) { let z: int = 1 / (e - 3); z = z + 1; }
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The appended-slot seed: the traversal re-reads the carrier's live
+     * element count each step, so the element appended inside the body is
+     * visited (the continuation probe raises E8005 when the traversal
+     * reaches it); a traversal bounded by the initial length would end
+     * after element 2 and return null.
+     */
+    private static final String FOREACH_APPENDED_SLOT_SOURCE = """
         function main(): null {
           let xs: int[] = [1, 2];
           for (let e: int of xs) {
-            if (e === 1) { delete xs[1]; }
+            if (e === 1) { xs[xs.length] = 7; }
+            if (e === 7) { let z: int = 1 / (e - 7); z = z + 1; }
           }
           return null;
         }
@@ -7817,9 +7843,9 @@ public class CanonicalProjectionParityTest {
     }
 
     private static void testForEachDeletedSlot() throws Exception {
-        System.out.println("-- the FOR_EACH terminal element check over a deleted "
-            + "array-element slot: the corrected tuple at the op's own origin on "
-            + "all three consumers --");
+        System.out.println("-- the FOR_EACH traversal over a deleted array-element slot: "
+            + "the selected deletion-stop on all three consumers (the live-position "
+            + "traversal never resumes past the absent slot) --");
         Seed seed = lowerSeed(FOREACH_DELETED_SLOT_SOURCE, "the FOR_EACH seed");
         if (seed == null) {
             return;
@@ -7828,36 +7854,49 @@ public class CanonicalProjectionParityTest {
         try {
             SemanticDifferentialHarness.Verdict verdict =
                 SemanticDifferentialHarness.run(seed.unit(), seed.table(),
-                    SemanticDifferentialHarness.Expectation.failure(
-                        "the FOR_EACH deleted-element check", List.of(), "E8001",
-                        "test.deal:3:3"), workspace);
+                    SemanticDifferentialHarness.Expectation.success(
+                        "the FOR_EACH deleted-element stop", List.of(), "null"),
+                    workspace);
             checkEq(3, verdict.runs().size(), "the FOR_EACH drive produced the three "
                 + "consumers: " + verdict.failures());
             check(verdict.pass(), "the FOR_EACH three-consumer verdict passes: "
                 + verdict.failures() + "\n" + verdict.report());
             for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
-                check(run.terminal()
-                        instanceof SemanticRuntimeModel.Terminal.DealFailure,
-                    run.consumer() + ": the FOR_EACH drive fails: " + run.terminal());
-                if (!(run.terminal()
-                        instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
-                    continue;
-                }
-                SemanticRuntimeModel.ErrorSnapshot error = failure.error();
-                System.out.println("   " + run.consumer() + ": " + error.code()
-                    + " | " + error.message() + " | " + error.origin() + " | "
-                    + error.expected() + " | " + error.actual());
-                checkEq("expected int", error.message(), run.consumer()
-                    + ": the suffix-less kind text");
-                checkEq("int", error.expected(), run.consumer()
-                    + ": the expected token");
-                checkEq("nil", error.actual(), run.consumer()
-                    + ": the absent marker's nil token");
-                checkEq("test.deal:3:3", error.origin(), run.consumer()
-                    + ": the op's own for-of origin");
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    run.consumer() + ": the traversal stops at the deleted slot and "
+                        + "main returns null: " + run.terminal());
             }
         } finally {
             deleteRecursively(workspace);
+        }
+
+        System.out.println("-- the FOR_EACH traversal over an appended array-element "
+            + "slot: the live-position traversal visits the appended element on all "
+            + "three consumers --");
+        Seed appendSeed = lowerSeed(FOREACH_APPENDED_SLOT_SOURCE,
+            "the FOR_EACH appended seed");
+        if (appendSeed == null) {
+            return;
+        }
+        Path appendWorkspace = Files.createTempDirectory("projection-foreach-append");
+        try {
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.run(appendSeed.unit(), appendSeed.table(),
+                    SemanticDifferentialHarness.Expectation.failure(
+                        "the FOR_EACH appended-element visit", List.of(), "E8005",
+                        "test.deal:5:33"), appendWorkspace);
+            checkEq(3, verdict.runs().size(), "the appended-slot drive produced the "
+                + "three consumers: " + verdict.failures());
+            check(verdict.pass(), "the appended-slot three-consumer verdict passes: "
+                + verdict.failures() + "\n" + verdict.report());
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                check(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.DealFailure,
+                    run.consumer() + ": the appended element was visited (the "
+                        + "continuation probe threw): " + run.terminal());
+            }
+        } finally {
+            deleteRecursively(appendWorkspace);
         }
     }
 

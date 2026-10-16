@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 
 public record HostDeclarationSurface(
         Map<ModuleId, DeclarationFacts> modules) {
@@ -88,6 +89,19 @@ public record HostDeclarationSurface(
         /** The declared class of one class name, or null when absent. */
         public DeclaredClass declaredClass(String name) {
             return classes.get(name);
+        }
+
+        /**
+         * The declared export names in ascending Java String order — the
+         * JS declared-export validation/raw-read selection (equivalently
+         * the retained {@code JsBackend}'s {@code TreeMap}). The shared
+         * compatibility prerequisite owns this selection, so the renderer
+         * never selects or rediscovers it; the declaration-ordered
+         * {@link #exports()} map stays the original provider fact and no
+         * other consumer's order changes.
+         */
+        public Map<String, Type> exportsByName() {
+            return sortedByName(exports);
         }
     }
 
@@ -206,6 +220,18 @@ public record HostDeclarationSurface(
             }
         }
         return new Production(new HostDeclarationSurface(modules), List.of());
+    }
+
+    /**
+     * The ascending Java String order of one declared export map — the
+     * single selection owner of the JS declared-export validation/raw-read
+     * order (the retained AST emitter and the future declaration
+     * projection consume the same helper, so the selection is never
+     * rediscovered per consumer).
+     */
+    public static Map<String, Type> sortedByName(Map<String, Type> exports) {
+        Objects.requireNonNull(exports, "exports must not be null");
+        return Collections.unmodifiableMap(new TreeMap<>(exports));
     }
 
     /**

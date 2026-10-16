@@ -54,6 +54,7 @@ import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.codegen.HostModuleDeclarations;
+import deal.semantic.HostDeclarationSurface;
 import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
@@ -945,8 +946,12 @@ public final class JsBackend {
     private String renderHostDeclaredMap(HostModuleDeclarations decls) {
         StringBuilder sb = new StringBuilder("{");
         boolean first = true;
+        // The shared ascending-name selection of the compatibility
+        // prerequisite (HostDeclarationSurface.sortedByName): the JS
+        // declared-export validation/raw-read order, never rediscovered
+        // here.
         for (Map.Entry<String, Type> e
-                : new TreeMap<>(decls.exports()).entrySet()) {
+                : HostDeclarationSurface.sortedByName(decls.exports()).entrySet()) {
             if (!first) {
                 sb.append(", ");
             }
@@ -2532,7 +2537,8 @@ public final class JsBackend {
     }
 
     /**
-     * For-of. Array iteration (js-backend-architecture D6): index-based
+     * For-of. Array iteration (js-backend-architecture D6; the shared
+     * selected traversal, ISSUE-0797): index-based
      * via the generated {@code $i} loop variable, the iterable hoisted
      * to a generated {@code $iter} local for single evaluation, and the
      * element at each 0-based position read through {@code $rt.arrayAt}

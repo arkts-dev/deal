@@ -186,6 +186,22 @@ public class HostModuleLoadEmissionTest {
         }
         """;
 
+    /**
+     * The host-read fixture (ISSUE-0797): two source aliases of one host
+     * module, both read (one direct call each), so the two occurrences and
+     * their read registrations are exercised together.
+     */
+    private static final String HOST_READ_APP_SOURCE = """
+        import * as first from "host/abi_probe";
+        import * as second from "host/abi_probe";
+
+        export function main(): null {
+          let a: int = first.echoInt(1);
+          let b: int = second.echoInt(2);
+          return null;
+        }
+        """;
+
     private static final String MISSING_DECLARATION_APP_SOURCE = MISSING_APP_SOURCE;
 
     /** The deployed LuaJIT host implementation of host/abi_probe. */
@@ -531,6 +547,69 @@ public class HostModuleLoadEmissionTest {
     // 1. The LuaJIT load: the artifact text
     // =========================================================================
 
+    /**
+     * The occurrence-owned HOST read correlation (ISSUE-0797): every
+     * function-typed host import read's recorded binding names the alias
+     * cell of the MODULE_IMPORT occurrence that materialized it, and that
+     * occurrence resolves the same host module. Two source aliases of one
+     * host module produce two occurrences with two distinct cells, so a
+     * module/name lookup could never select between them.
+     */
+    private static void testHostReadCorrelation(Baseline fixture) {
+        System.out.println("-- the occurrence-owned HOST read correlation: each "
+            + "read's binding names its own import occurrence's alias cell --");
+        check(fixture.result().project() != null,
+            "the host-read fixture lowers: " + fixture.result().diagnostics());
+        if (fixture.result().project() == null) {
+            return;
+        }
+        java.util.Set<deal.semantic.ir.BindingId> readCells =
+            new java.util.LinkedHashSet<>();
+        int reads = 0;
+        for (LoweredModuleUnit unit : fixture.result().project().modules().values()) {
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.EXPORT_READ
+                        || !(op.payload()
+                            instanceof KindPayload.ExportReadPayload read)
+                        || !(op.result()
+                            instanceof deal.semantic.ir.ValueId valueId)) {
+                    continue;
+                }
+                deal.semantic.ir.FunctionExecutionBinding binding =
+                    unit.functionBindings().get(
+                        new deal.semantic.ir.FunctionAllocationIdentity(valueId.id()));
+                if (!(binding instanceof deal.semantic.ir.FunctionExecutionBinding
+                        .HostFunction host)) {
+                    continue;
+                }
+                reads++;
+                check(host.importCell() != null,
+                    "the host read of '" + read.name() + "' records its owning "
+                        + "import-occurrence cell");
+                if (host.importCell() != null) {
+                    readCells.add(host.importCell());
+                }
+                int occurrences = 0;
+                for (SemanticOp importOp : unit.ops()) {
+                    if (importOp.kind() == SemanticOpKind.MODULE_IMPORT
+                            && importOp.payload() instanceof
+                                KindPayload.ModuleImportPayload importPayload
+                            && importPayload.aliasCells().contains(host.importCell())
+                            && importPayload.resolvedModule().equals(read.module())) {
+                        occurrences++;
+                    }
+                }
+                checkEq(1, occurrences, "exactly one MODULE_IMPORT completion of the "
+                    + "unit initializes the read's occurrence cell and resolves "
+                    + read.module().path());
+            }
+        }
+        checkEq(2, reads, "the host-read fixture carries one registered read per "
+            + "source alias");
+        checkEq(2, readCells.size(), "the two source aliases' reads carry two distinct "
+            + "occurrence cells");
+    }
+
     private static void testLuaArtifactText(Baseline fixture, Baseline aliases)
             throws Exception {
         System.out.println("-- the LuaJIT load: the inline load with the declared map "
@@ -579,6 +658,29 @@ public class HostModuleLoadEmissionTest {
                             + "__exportSurfaces[\"" + aliasModule.path() + "\"] or"),
                     "both aliases write the one module-keyed registry entry through "
                         + "the identity guard");
+
+                // The occurrence-owned HOST import instance (ISSUE-0797):
+                // the two source aliases of one host module are two
+                // occurrences with their own alias cells, so a module/name
+                // lookup could never select between them.
+                java.util.Set<deal.semantic.ir.BindingId> aliasCells =
+                    new java.util.LinkedHashSet<>();
+                int aliasImports = 0;
+                for (LoweredModuleUnit unit : aliasProject.modules().values()) {
+                    for (SemanticOp op : unit.ops()) {
+                        if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                                && op.payload() instanceof
+                                    KindPayload.ModuleImportPayload importPayload
+                                && importPayload.resolvedModule().equals(aliasModule)) {
+                            aliasImports++;
+                            aliasCells.addAll(importPayload.aliasCells());
+                        }
+                    }
+                }
+                checkEq(2, aliasImports, "the two source aliases are two MODULE_IMPORT "
+                    + "occurrences of one host module");
+                checkEq(2, aliasCells.size(), "each source import occurrence owns its "
+                    + "own alias cell");
             }
 
             checkEq(lua, LuaSemanticEmitter.emitProductionProject(project,
@@ -1689,11 +1791,13 @@ public class HostModuleLoadEmissionTest {
         try {
             Baseline abi = prepare(abiFixture(ABI_APP_SOURCE), true, roots);
             Baseline aliases = prepare(abiFixture(TWO_ALIAS_APP_SOURCE), false, roots);
+            Baseline hostReads = prepare(abiFixture(HOST_READ_APP_SOURCE), false, roots);
             Baseline missing = prepare(missingFixture(), true, roots);
             Baseline cfg = prepare(cfgOnlyFixture(), true, roots);
             Baseline array = prepare(arrayFixture(), true, roots);
             Baseline errors = prepare(errorFixture(), false, roots);
             testLuaArtifactText(abi, aliases);
+            testHostReadCorrelation(hostReads);
             testLuaExecution(aliases, missing, cfg);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);

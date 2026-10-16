@@ -227,7 +227,8 @@ public final class RawUnitMaterializer {
             case "hostFunction" -> new FunctionExecutionBinding.HostFunction(
                 moduleId(binding.modulePath(), where + " hostModuleId"),
                 requireNonNull(binding.exportName(), where + " exportName"),
-                funcSignature(binding.descriptor(), where + " descriptor"));
+                funcSignature(binding.descriptor(), where + " descriptor"),
+                binding.importCell());
             case "hostFunctionValue" -> new FunctionExecutionBinding.HostFunctionValue(
                 moduleId(binding.modulePath(), where + " hostModuleId"),
                 requireNonNull(binding.materializingBoundaryOpId(),
@@ -647,7 +648,8 @@ public final class RawUnitMaterializer {
             case "hostFunction" -> new FunctionExecutionBinding.HostFunction(
                 moduleIdAt(binding, "hostModuleId", where),
                 stringAt(binding, "exportName", where),
-                funcSignatureAt(binding, "descriptor", where));
+                funcSignatureAt(binding, "descriptor", where),
+                optionalBindingIdAt(binding, "importCellId", where));
             case "hostFunctionValue" -> new FunctionExecutionBinding.HostFunctionValue(
                 moduleIdAt(binding, "hostModuleId", where),
                 opIdAt(binding, "materializingBoundaryOpId", where),
@@ -861,6 +863,13 @@ public final class RawUnitMaterializer {
 
     private static BindingId bindingIdAt(CanonicalJson.Obj payload, String key, String where) {
         return ContractSnapshotCanonicalizer.parseBindingId(objectAt(payload, key, where));
+    }
+
+    /** The nullable binding-id position (the host function's import-occurrence cell). */
+    private static BindingId optionalBindingIdAt(CanonicalJson.Obj payload, String key,
+                                                 String where) {
+        CanonicalJson.Obj obj = optionalObjectAt(payload, key, where);
+        return obj == null ? null : ContractSnapshotCanonicalizer.parseBindingId(obj);
     }
 
     private static List<BindingId> bindingIds(CanonicalJson.Obj payload, String key,

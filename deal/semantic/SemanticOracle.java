@@ -2209,8 +2209,12 @@ public final class SemanticOracle {
                 return;
             }
             if (bindingsByValue.get(entry) == null) {
+                // The value-keyed dynamic class of one namespace surface
+                // entry carries no import-occurrence cell: the surface is
+                // entered through the namespace value, not through a source
+                // import read (the module-keyed shared lane).
                 bindingsByValue.put(entry, new FunctionExecutionBinding.HostFunction(
-                    module, key, func));
+                    module, key, func, null));
             }
         }
 
@@ -6457,15 +6461,29 @@ public final class SemanticOracle {
             Value iterable = valueOf(payload.iterable());
             switch (payload.mode()) {
                 case ARRAY_VALUES -> {
+                    // The selected array traversal (the shared compatibility
+                    // prerequisite's refinement): the iterable is evaluated
+                    // once and the alias is retained, the loop advances one
+                    // slot at a time and re-reads the carrier's live element
+                    // count each step, so a contiguous append is visited; the
+                    // first position that reads absent (a deleted slot or a
+                    // position past the live end) stops the iteration — never
+                    // an E8001 and never a skipped continuation. Present
+                    // elements keep the op's own terminal check, so a wrong
+                    // element is still rejected rather than skipped.
                     Value.ArrayValue array = (Value.ArrayValue) iterable;
-                    int initialLength = array.elements().size();
                     RuntimeDescriptor elementDescriptor = elementDescriptorOf(op);
-                    for (int i = 0; i < initialLength; i++) {
-                        Value element = i < array.elements().size()
-                            ? array.elements().get(i) : Value.MissingValue.INSTANCE;
+                    for (int i = 0; ; i++) {
+                        if (i >= array.elements().size()) {
+                            break;
+                        }
+                        Value element = array.elements().get(i);
+                        if (element instanceof Value.MissingValue) {
+                            break;
+                        }
                         // The op's own terminal check: TYPE_DESCRIPTOR over the
-                        // element descriptor (a missing element fails E8001
-                        // at the FOR_EACH origin before the body runs).
+                        // element descriptor (a wrong element fails E8001 at the
+                        // FOR_EACH origin before the body runs).
                         Value checked = checkForEachElement(op, element, elementDescriptor);
                         // Fresh binding per iteration.
                         Cell cell = freshCellOf(payload.binding(), payload.generation());
@@ -6654,6 +6672,12 @@ public final class SemanticOracle {
             Value value;
             switch (kind) {
                 case COMPILED, HOST -> {
+                    // The shared lanes' surface is module-keyed (the LuaJIT
+                    // and JVM emitters' one load per resolved module), so the
+                    // two consumers agree. The recorded HostFunction
+                    // occurrence cell is the JS renderer's selection input
+                    // (each source HOST import owns a fresh typed surface,
+                    // ISSUE-0797); it never changes this module-keyed model.
                     Map<String, Value> surface = exportSurfaces.get(payload.module());
                     Value entry = surface == null ? null : surface.get(payload.name());
                     if (entry == null && kind == ModuleImportKind.HOST && responder != null) {
@@ -6856,7 +6880,7 @@ public final class SemanticOracle {
             }
             if (bindingsByValue.get(callable) == null) {
                 bindingsByValue.put(callable, new FunctionExecutionBinding.HostFunction(
-                    module, row.exportName(), row.declaredDescriptor()));
+                    module, row.exportName(), row.declaredDescriptor(), null));
             }
             return callable;
         }

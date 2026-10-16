@@ -136,6 +136,7 @@ public class JsBackendTest {
             testUnsupportedConstructsRejected();
             testHostAbiEmissionPins();
             testHostAbiOrchestratorNode();
+            testHostOccurrenceAndTraversalNode();
             testSourceMapSidecarsEmitted();
             testIntArithmeticEdgeCodes();
             testInt32RuntimeGateEmission();
@@ -3058,6 +3059,273 @@ public class JsBackendTest {
     /** The quote character as a string (emission-pin assertions). */
     private static String q() {
         return "\"";
+    }
+
+    // =========================================================================
+    // ISSUE-0797: occurrence-owned host imports, name-sorted reads, the
+    // unlocated raw-shape guard, and live-position traversal
+    // =========================================================================
+
+    /**
+     * The shared compatibility prerequisite's selected behaviors on the real
+     * JS chain: (1) the deployed runtime's per-call typed surfaces — fresh
+     * wrappers and synthesized {@code C$new}/{@code C$fields}, retained raw
+     * META/default references, identical same-import reads, unequal
+     * cross-import functions, declaration-order first-failure stop, and the
+     * complete unlocated raw-shape E8011 tuple — probed through the deployed
+     * {@code $rt} surface; (2) the full orchestrator project with two
+     * same-file aliases and one cross-unit import: the raw Node require runs
+     * exactly once, the declared reads follow ascending export-name order
+     * (the declaration file names them out of order), and the typed calls
+     * cross both units; (3) the array for-of live-position traversal
+     * (deleted-slot stop, appended-element visit, one iterable evaluation)
+     * through a real emitted artifact under node.
+     */
+    private static void testHostOccurrenceAndTraversalNode() throws Exception {
+        System.out.println("-- ISSUE-0797: occurrence-owned host imports, name-sorted "
+            + "declared reads, the unlocated raw-shape guard, and the live-position "
+            + "array traversal --");
+
+        if (!nodeAvailable) {
+            skipNode("ISSUE-0797 host-occurrence and traversal node drive");
+            return;
+        }
+
+        // (0) The shared ascending-name declared-export selection: the
+        // declaration-ordered provider map stays untouched while the
+        // selected view is export-name-sorted (the JS read order).
+        Map<String, Type> declared = new java.util.LinkedHashMap<>();
+        declared.put("zeta", new Type.Func(List.of(), Type.Int.INSTANCE));
+        declared.put("alpha", new Type.Func(List.of(), Type.Int.INSTANCE));
+        Map<String, Type> selected =
+            deal.semantic.HostDeclarationSurface.sortedByName(declared);
+        check(List.of("alpha", "zeta").equals(List.copyOf(selected.keySet())),
+            "the shared ascending-name selection sorts the declared exports by "
+                + "Java String name: " + selected.keySet());
+        check(List.of("zeta", "alpha").equals(List.copyOf(declared.keySet())),
+            "the declaration-ordered provider fact is not reordered in place: "
+                + declared.keySet());
+
+        // (1) The deployed runtime surface: two loadHost calls over one raw
+        // export table model two source HOST imports of one resolved file.
+        String probe = String.join("\n",
+            "\"use strict\";",
+            "const $rt = require(\"./deal/runtime\");",
+            "function say(s) { process.stdout.write(s + \"\\n\"); }",
+            "const decl = { alpha: { $k: \"function\", $d: \"()->int\" },",
+            "  zeta: { $k: \"function\", $d: \"()->int\" } };",
+            "const order = [];",
+            "const raw = {};",
+            "Object.defineProperty(raw, \"alpha\", { enumerable: true,",
+            "  get: function () { order.push(\"alpha\"); return function () { return 7; }; } });",
+            "Object.defineProperty(raw, \"zeta\", { enumerable: true,",
+            "  get: function () { order.push(\"zeta\"); return function () { return 9; }; } });",
+            "const s1 = $rt.loadHost(raw, decl, \"host/echo\", \"main.deal\", 1, 1);",
+            "const s2 = $rt.loadHost(raw, decl, \"host/echo\", \"main.deal\", 2, 1);",
+            "say(\"read-order=\" + order.join(\",\"));",
+            "say(\"same-import-identity=\" + (s1.alpha === s1.alpha));",
+            "say(\"cross-import-inequality=\" + (s1.alpha !== s2.alpha));",
+            "say(\"typed-call=\" + s1.alpha.$f() + s2.zeta.$f());",
+            "const rawClass = { $kind: \"class\", $classname: \"@$external/host/echo/Echo\" };",
+            "const rawClassDefaults = { v: 1 };",
+            "const classRaw = { Echo: rawClass, Echo_defaults: rawClassDefaults };",
+            "const classDecl = { Echo: { $k: \"class\",",
+            "  $d: \"@$external/host/echo/Echo\", $fields: [] } };",
+            "const c1 = $rt.loadHost(classRaw, classDecl, \"host/echo\", \"main.deal\", 1, 1);",
+            "const c2 = $rt.loadHost(classRaw, classDecl, \"host/echo\", \"main.deal\", 2, 1);",
+            "say(\"meta-identity=\" + (c1.Echo === rawClass && c2.Echo === rawClass));",
+            "say(\"fresh-new=\" + (c1.Echo$new !== c2.Echo$new));",
+            "say(\"fresh-fields=\" + (c1.Echo$fields !== c2.Echo$fields));",
+            // The first invalid export stops later reads: alpha (ascending
+            // first) fails, so zeta is never read.
+            "const failOrder = [];",
+            "const rawFail = {};",
+            "Object.defineProperty(rawFail, \"alpha\", { enumerable: true,",
+            "  get: function () { failOrder.push(\"alpha\"); return 17; } });",
+            "Object.defineProperty(rawFail, \"zeta\", { enumerable: true,",
+            "  get: function () { failOrder.push(\"zeta\"); return function () { return 9; }; } });",
+            "try {",
+            "  $rt.loadHost(rawFail, decl, \"host/echo\", \"main.deal\", 1, 1);",
+            "  say(\"first-failure=none\");",
+            "} catch (e) {",
+            "  say(\"first-failure=\" + e.code + \" \" + e.message);",
+            "}",
+            "say(\"failure-read-order=\" + failOrder.join(\",\"));",
+            // The raw non-object guard: the complete unlocated tuple.
+            "try {",
+            "  $rt.loadHost(17, decl, \"host/echo\", \"main.deal\", 1, 1);",
+            "  say(\"raw-shape=none\");",
+            "} catch (e) {",
+            "  say(\"raw-shape=\" + e.code + \"|\" + e.message + \"|\" + e.expected",
+            "    + \"|\" + e.actual",
+            "    + \"|file=\" + (e.file === undefined ? \"<absent>\" : e.file)",
+            "    + \"|line=\" + (e.line === undefined ? \"<absent>\" : e.line)",
+            "    + \"|column=\" + (e.column === undefined ? \"<absent>\" : e.column));",
+            "}",
+            "");
+        NodeResult probeResult = runRuntimeProbe("host_occurrence", probe);
+        check(probeResult.exitCode() == 0,
+            "the host-occurrence runtime probe exits 0: exit "
+                + probeResult.exitCode() + ", output '"
+                + probeResult.output() + "'");
+        String probeOut = probeResult.output();
+        check(probeOut.contains("read-order=alpha,zeta"),
+            "the loader reads the supplied declaration order: " + probeOut);
+        check(probeOut.contains("same-import-identity=true"),
+            "repeated reads from one surface are identical: " + probeOut);
+        check(probeOut.contains("cross-import-inequality=true"),
+            "different source imports' typed functions are unequal: " + probeOut);
+        check(probeOut.contains("typed-call=79"),
+            "both typed surfaces call through their own wrappers: " + probeOut);
+        check(probeOut.contains("meta-identity=true"),
+            "the raw class META reference is preserved, never cloned: " + probeOut);
+        check(probeOut.contains("fresh-new=true"),
+            "each import synthesizes a fresh C$new: " + probeOut);
+        check(probeOut.contains("fresh-fields=true"),
+            "each import synthesizes a fresh C$fields: " + probeOut);
+        check(probeOut.contains("first-failure=E8011 host export 'alpha' "
+                + "in module 'host/echo' is not a function"),
+            "the first invalid export fails at its own name: " + probeOut);
+        check(probeOut.contains("failure-read-order=alpha"),
+            "the first invalid export stops later reads: " + probeOut);
+        check(probeOut.contains("raw-shape=E8011|host module did not return a "
+                + "module object|table|number|file=<absent>|line=<absent>|column=<absent>"),
+            "the raw non-object guard renders the complete unlocated tuple: "
+                + probeOut);
+
+        // (2) The full orchestrator project: two same-file aliases and one
+        // cross-unit import of one resolved host file.
+        writeFile("occ_proj/deal.json",
+            "{\"languageVersion\": \"1.3\", \"backend\": \"js\",\n"
+            + " \"externals\": {\"host/echo\": {\"declaration\": "
+            + "\"../bindings/echo.d.deal\"}}}\n");
+        writeFile("occ_proj/bindings/echo.d.deal", """
+            export function zeta(): int;
+            export function alpha(): int;
+            export function values(): int[];
+            """);
+        writeFile("occ_proj/src/occ_util.deal", """
+            import * as e from "host/echo";
+            export function read(): int { return e.alpha(); }
+            """);
+        writeFile("occ_proj/src/occ_main.deal", """
+            import * as h1 from "host/echo";
+            import * as h2 from "host/echo";
+            import * as util from "./occ_util";
+            export function main(): null {
+              if (h1.alpha !== h1.alpha) {
+                throw { code: "SAME_IMPORT_IDENTITY", message: "same import" };
+              }
+              if (h1.alpha === h2.alpha) {
+                throw { code: "CROSS_IMPORT_INEQUALITY", message: "imports" };
+              }
+              if (h1.alpha() !== 7 || h2.alpha() !== 7) {
+                throw { code: "HOST_CALL", message: "direct" };
+              }
+              if (util.read() !== 7) {
+                throw { code: "CROSS_UNIT_CALL", message: "cross unit" };
+              }
+              let xs: int[] = [1, 2, 3];
+              let sum: int = 0;
+              for (let e: int of xs) {
+                sum = sum + e;
+                if (e === 1) { delete xs[1]; }
+              }
+              if (sum !== 1) {
+                throw { code: "DELETE_STOP", message: "deleted slot" };
+              }
+              let ys: int[] = [1, 2];
+              let appended: int = 0;
+              for (let e: int of ys) {
+                appended = appended + e;
+                if (e === 1) { ys[ys.length] = 7; }
+              }
+              if (appended !== 10) {
+                throw { code: "APPEND_VISIT", message: "appended element" };
+              }
+              let once: int = 0;
+              for (let e: int of h1.values()) {
+                once = once + e;
+              }
+              if (once !== 3) {
+                throw { code: "ITERABLE_ONCE", message: "iterable" };
+              }
+              return null;
+            }
+            """);
+        Path entryFile = tmpDir.resolve(
+            "occ_proj/src/occ_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("occ_proj/build/js");
+        List<Path> roots = List.of(tmpDir.resolve(
+            "occ_proj/src").toAbsolutePath());
+        Map<String, String> externals = Map.of(
+            "host/echo", "../bindings/echo.d.deal");
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JS,
+            externals, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "the occurrence project compiles: "
+            + orchestrator.diagnostics());
+        if (!success) {
+            return;
+        }
+
+        String entryJs = Files.readString(outputDir.resolve("occ_main.js"));
+        check(entryJs.contains("$rt.loadHost($require(" + q() + "./host/echo"
+                + q() + "), {" + q() + "alpha" + q() + ":"),
+            "the emitted declared map is export-name-sorted: " + entryJs);
+        check(entryJs.indexOf(q() + "alpha" + q() + ":") < entryJs.indexOf(
+                q() + "values" + q() + ":")
+                && entryJs.indexOf(q() + "values" + q() + ":") < entryJs.indexOf(
+                    q() + "zeta" + q() + ":"),
+            "the declared map carries ascending alpha, values, zeta: " + entryJs);
+
+        writeFile("occ_proj/build/js/host/echo.js", """
+            "use strict";
+            globalThis.__echoInit = (globalThis.__echoInit || 0) + 1;
+            const order = [];
+            globalThis.__readOrder = order;
+            const calls = { n: 0 };
+            globalThis.__valuesCalls = calls;
+            module.exports = {};
+            Object.defineProperty(module.exports, "zeta", { enumerable: true,
+              get: function () { order.push("zeta"); return function () { return 9; }; } });
+            Object.defineProperty(module.exports, "alpha", { enumerable: true,
+              get: function () { order.push("alpha"); return function () { return 7; }; } });
+            Object.defineProperty(module.exports, "values", { enumerable: true,
+              get: function () {
+                order.push("values");
+                return function () {
+                  calls.n = calls.n + 1;
+                  return calls.n === 1 ? [1, 2] : [100, 200];
+                };
+              } });
+            """);
+        writeFile("occ_proj/build/js/occ_runner.js", String.join("\n",
+            "\"use strict\";",
+            "const $entry = require(\"./occ_main\");",
+            "$entry.main.$f();",
+            "process.stdout.write(\"init=\" + globalThis.__echoInit + \"\\n\");",
+            "process.stdout.write(\"read-order=\" + globalThis.__readOrder.join(\",\")",
+            "  + \"\\n\");",
+            "process.stdout.write(\"values-calls=\" + globalThis.__valuesCalls.n",
+            "  + \"\\n\");",
+            ""));
+        ProcessBuilder node = new ProcessBuilder("node", "occ_runner.js");
+        node.directory(outputDir.toFile());
+        node.redirectErrorStream(true);
+        Process np = node.start();
+        String nout = new String(np.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8).trim();
+        int nrc = np.waitFor();
+        check(nrc == 0, "the occurrence project runs to completion under node: "
+            + "exit " + nrc + ", output '" + nout + "'");
+        check(nout.contains("init=1"), "the raw host file is required exactly "
+            + "once across the same-file aliases and the cross-unit import: " + nout);
+        check(nout.contains("read-order=alpha,values,zeta"),
+            "the declared reads run in ascending export-name order: " + nout);
+        check(nout.contains("values-calls=1"),
+            "the for-of iterable is evaluated exactly once: " + nout);
     }
 
     private static void testSourceMapSidecarsEmitted() throws Exception {

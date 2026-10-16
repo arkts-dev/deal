@@ -889,6 +889,27 @@ public class StdlibCallLoweringTest {
                     && host.descriptor().equals(rowDescriptor),
                 "exactly one HostFunction(std.console, log, row descriptor) registration "
                     + "keyed by the read's result identity; got " + binding);
+            if (binding instanceof FunctionExecutionBinding.HostFunction host) {
+                // The occurrence discipline (ISSUE-0797): a STDLIB surface is
+                // once-only per resolved module, so the recorded binding
+                // carries no source-occurrence cell — only a HOST-module read
+                // is occurrence-owned. The unit's own MODULE_IMPORT
+                // completion resolves the read's module.
+                check(host.importCell() == null,
+                    "the STDLIB HostFunction binding records no occurrence cell "
+                        + "(the once-only module-keyed surface); got " + host.importCell());
+                boolean resolved = false;
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                            && op.payload() instanceof KindPayload.ModuleImportPayload
+                                importPayload
+                            && importPayload.resolvedModule().equals(payload.module())) {
+                        resolved = true;
+                    }
+                }
+                check(resolved, "the unit's MODULE_IMPORT completion resolves the read's "
+                    + "STDLIB module");
+            }
 
             boolean indirect = unit.ops().stream().anyMatch(op ->
                 op.kind() == SemanticOpKind.CALL

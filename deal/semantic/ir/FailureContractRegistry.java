@@ -180,6 +180,7 @@ public final class FailureContractRegistry {
         rows.put(FailurePolicyId.HOST_LOAD, makeRow(FailurePolicyId.HOST_LOAD,
             DiagnosticCode.E8011,
             List.of("failed to load host module '{module}': {reason}",
+                "host module did not return a module object",
                 "host module '{module}' did not return a module object",
                 "missing host export '{name}' in module '{module}'",
                 "host export '{name}' in module '{module}' has signature mismatch: "
@@ -188,7 +189,7 @@ public final class FailureContractRegistry {
                     + "expected {expected}, got {actual}",
                 "host class '{name}' in module '{module}' has invalid {defaults|fields} metadata"),
             List.of("module", "reason", "name", "expected", "actual", "defaults|fields"),
-            "import origin", CAUSE_NONE, FRAMES_ACTIVE,
+            "import origin (the raw-shape arm carries none)", CAUSE_NONE, FRAMES_ACTIVE,
             "first declaration-order defect wins"));
 
         rows.put(FailurePolicyId.CLASS_CONSTRUCTION,
@@ -448,24 +449,20 @@ public final class FailureContractRegistry {
             FailureArm.OriginConvention.IMPORT_STATEMENT, FailureArm.RenderScope.TOP_LEVEL,
             "module", FailureArm.ParameterSource.MODULE,
             "reason", FailureArm.ParameterSource.REASON));
-        declared.add(arm(FailureArmId.HOST_LOAD_NOT_A_MODULE, FailurePolicyId.HOST_LOAD, 1,
+        declared.add(arm(FailureArmId.HOST_LOAD_RAW_SHAPE, FailurePolicyId.HOST_LOAD, 1,
+            FailureArm.ExpectedSource.PINNED_TEXT, "table",
+            FailureArm.ActualProjection.CARRIER_KIND,
+            FailureArm.OriginConvention.NO_ORIGIN, FailureArm.RenderScope.TOP_LEVEL));
+        declared.add(arm(FailureArmId.HOST_LOAD_NOT_A_MODULE, FailurePolicyId.HOST_LOAD, 2,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.IMPORT_STATEMENT, FailureArm.RenderScope.TOP_LEVEL,
             "module", FailureArm.ParameterSource.MODULE));
-        declared.add(arm(FailureArmId.HOST_LOAD_MISSING_EXPORT, FailurePolicyId.HOST_LOAD, 2,
+        declared.add(arm(FailureArmId.HOST_LOAD_MISSING_EXPORT, FailurePolicyId.HOST_LOAD, 3,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.IMPORT_STATEMENT, FailureArm.RenderScope.TOP_LEVEL,
             "name", FailureArm.ParameterSource.NAME,
             "module", FailureArm.ParameterSource.MODULE));
         declared.add(arm(FailureArmId.HOST_LOAD_SIGNATURE_MISMATCH,
-            FailurePolicyId.HOST_LOAD, 3,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.IMPORT_STATEMENT, FailureArm.RenderScope.TOP_LEVEL,
-            "name", FailureArm.ParameterSource.NAME,
-            "module", FailureArm.ParameterSource.MODULE,
-            "expected", FailureArm.ParameterSource.EXPECTED,
-            "actual", FailureArm.ParameterSource.ACTUAL));
-        declared.add(arm(FailureArmId.HOST_LOAD_IDENTITY_MISMATCH,
             FailurePolicyId.HOST_LOAD, 4,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.IMPORT_STATEMENT, FailureArm.RenderScope.TOP_LEVEL,
@@ -473,8 +470,16 @@ public final class FailureContractRegistry {
             "module", FailureArm.ParameterSource.MODULE,
             "expected", FailureArm.ParameterSource.EXPECTED,
             "actual", FailureArm.ParameterSource.ACTUAL));
-        declared.add(arm(FailureArmId.HOST_LOAD_INVALID_METADATA,
+        declared.add(arm(FailureArmId.HOST_LOAD_IDENTITY_MISMATCH,
             FailurePolicyId.HOST_LOAD, 5,
+            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
+            FailureArm.OriginConvention.IMPORT_STATEMENT, FailureArm.RenderScope.TOP_LEVEL,
+            "name", FailureArm.ParameterSource.NAME,
+            "module", FailureArm.ParameterSource.MODULE,
+            "expected", FailureArm.ParameterSource.EXPECTED,
+            "actual", FailureArm.ParameterSource.ACTUAL));
+        declared.add(arm(FailureArmId.HOST_LOAD_INVALID_METADATA,
+            FailurePolicyId.HOST_LOAD, 6,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.IMPORT_STATEMENT, FailureArm.RenderScope.TOP_LEVEL,
             "name", FailureArm.ParameterSource.NAME,

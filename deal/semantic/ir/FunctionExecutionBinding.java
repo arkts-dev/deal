@@ -70,9 +70,25 @@ public sealed interface FunctionExecutionBinding
         }
     }
 
-    /** An imported host function value. */
-    record HostFunction(ModuleId hostModuleId, String exportName, RuntimeDescriptor.Func descriptor)
+    /**
+     * An imported host function value. The {@code importCell} is the owning
+     * source import occurrence: the alias cell of the {@code MODULE_IMPORT}
+     * completion the read materialized through (the correlation every direct,
+     * stored, namespace, adapter and async call form resolves to), or
+     * {@code null} for a host callable that is not an import read (the
+     * namespace-surface dynamic class). One host module may be imported by
+     * several occurrences of one source file; the cell — never a module/name
+     * lookup — selects the occurrence's typed surface.
+     */
+    record HostFunction(ModuleId hostModuleId, String exportName,
+                        RuntimeDescriptor.Func descriptor, BindingId importCell)
         implements FunctionExecutionBinding {
+
+        /** The no-occurrence-cell form (a host callable that is not an import read). */
+        public HostFunction(ModuleId hostModuleId, String exportName,
+                            RuntimeDescriptor.Func descriptor) {
+            this(hostModuleId, exportName, descriptor, null);
+        }
 
         public HostFunction {
             Objects.requireNonNull(hostModuleId, "hostModuleId must not be null");

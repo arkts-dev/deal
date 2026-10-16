@@ -465,6 +465,9 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("descriptor", descriptorText(b.descriptor())),
                 CanonicalJson.e("exportName", CanonicalJson.str(b.exportName())),
                 CanonicalJson.e("hostModuleId", semanticIdJson(b.hostModuleId())),
+                CanonicalJson.e("importCellId", b.importCell() == null
+                    ? CanonicalJson.nullValue()
+                    : semanticIdJson(b.importCell())),
                 CanonicalJson.e("type", CanonicalJson.str("hostFunction")));
             case FunctionExecutionBinding.HostFunctionValue b -> CanonicalJson.obj(
                 CanonicalJson.e("descriptor", descriptorText(b.descriptor())),
@@ -1970,6 +1973,9 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
                 CanonicalJson.e("exportName", CanonicalJson.str(binding.exportName())),
                 CanonicalJson.e("hostModuleId", moduleIdJson(binding.modulePath())),
+                CanonicalJson.e("importCellId", binding.importCell() == null
+                    ? CanonicalJson.nullValue()
+                    : semanticIdJson(binding.importCell())),
                 CanonicalJson.e("type", CanonicalJson.str("hostFunction")));
             case "hostFunctionValue" -> CanonicalJson.obj(
                 CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
@@ -2069,6 +2075,7 @@ public final class ContractSnapshotCanonicalizer {
         BlockId blockId = null;
         OpId adaptOpId = null;
         RawSourceRef sourceRef = null;
+        BindingId importCellId = null;
         switch (shape) {
             case "loweredBody" -> {
                 checkKeys(binding, "blockId", "functionId", "type");
@@ -2085,10 +2092,19 @@ public final class ContractSnapshotCanonicalizer {
                 targetSignature = requireString(binding, "targetSignature");
             }
             case "hostFunction" -> {
-                checkKeys(binding, "descriptor", "exportName", "hostModuleId", "type");
+                checkKeys(binding, "descriptor", "exportName", "hostModuleId",
+                    "importCellId", "type");
                 modulePath = modulePathOf(requireObject(binding, "hostModuleId"));
                 exportName = requireString(binding, "exportName");
                 descriptor = requireString(binding, "descriptor");
+                CanonicalJson.Value importCell = entryValue(binding, "importCellId");
+                if (importCell instanceof CanonicalJson.Obj importCellObj) {
+                    importCellId = parseBindingId(importCellObj);
+                } else if (!(importCell instanceof CanonicalJson.Null)) {
+                    throw new SemanticIrTextDecodeException(
+                        "functionBindings \"importCellId\" must be null or a binding-id "
+                            + "object, got " + jsonKindName(importCell));
+                }
             }
             case "hostFunctionValue" -> {
                 checkKeys(binding, "descriptor", "hostModuleId", "materializingBoundaryOpId",
@@ -2136,7 +2152,8 @@ public final class ContractSnapshotCanonicalizer {
         }
         return new RawBinding(allocationId, shape, modulePath, exportName, executionOwner,
             captureMode, descriptor, sourceSignature, targetSignature,
-            materializingBoundaryOpId, intrinsicKind, functionId, blockId, adaptOpId, sourceRef);
+            materializingBoundaryOpId, intrinsicKind, functionId, blockId, adaptOpId, sourceRef,
+            importCellId);
     }
 
     private static CanonicalJson.Value opJson(RawOp op) {

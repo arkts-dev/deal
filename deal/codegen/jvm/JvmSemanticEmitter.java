@@ -5641,18 +5641,29 @@ public final class JvmSemanticEmitter {
             emitStart(op, indent);
             switch (payload.mode()) {
                 case ARRAY_VALUES -> {
+                    // The selected array traversal (the shared compatibility
+                    // prerequisite's refinement): the iterable is evaluated
+                    // once into a block-local carrier, and the loop advances
+                    // one slot at a time against the carrier's live element
+                    // count, so a contiguous append is visited; the first
+                    // position that reads absent (a deleted slot's MISSING or
+                    // a position past the live end) stops the iteration —
+                    // never an E8001 and never a skipped continuation. Present
+                    // elements keep the op's own terminal check, so a wrong
+                    // element is still rejected rather than skipped. The
+                    // block-local carrier and loop locals survive a nested
+                    // for-of inside the body.
                     String iterable = slot(payload.iterable());
                     String cellName = cell(payload.binding(), payload.generation());
                     out.append(indent(indent)).append("{\n");
                     out.append(indent(indent)).append("  JvmRuntime.Array __it = (JvmRuntime.Array) ")
                         .append(iterable).append(";\n");
-                    out.append(indent(indent)).append("  int __itn = __it.length;\n");
                     out.append(indent(indent)).append("  FE").append(op.opId().id())
-                        .append(": for (int __i = 0; __i < __itn; __i++) {\n");
-                    out.append(indent(indent)).append("    Object __elem = JvmRuntime.MISSING;\n");
-                    out.append(indent(indent)).append("    if (__i < __it.length && __i < __it.elements.size()) {\n");
-                    out.append(indent(indent)).append("      __elem = __it.elements.get(__i);\n");
-                    out.append(indent(indent)).append("    }\n");
+                        .append(": for (int __i = 0; ; __i++) {\n");
+                    out.append(indent(indent)).append("    if (__i >= __it.length) break;\n");
+                    out.append(indent(indent)).append("    Object __elem = __i < __it.elements.size()"
+                        + " ? __it.elements.get(__i) : JvmRuntime.MISSING;\n");
+                    out.append(indent(indent)).append("    if (__elem == JvmRuntime.MISSING) break;\n");
                     out.append(indent(indent)).append("    JvmRuntime.foreachCheck(")
                         .append(javaString(opKey(op.opId()))).append(", ")
                         .append(javaString(op.contract().canonicalDigest())).append(", ")

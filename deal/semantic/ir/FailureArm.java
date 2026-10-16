@@ -179,6 +179,13 @@ public record FailureArm(
         CLASS_LITERAL,
         /** The import statement. */
         IMPORT_STATEMENT,
+        /**
+         * The failure carries no location at all: the JS raw host-shape
+         * guard's projection (the raw non-object result is a shape defect
+         * of the loaded file, never a source position of the importing
+         * statement), so file/line/column stay absent.
+         */
+        NO_ORIGIN,
         /** The for-of statement span (the op's own origin). */
         FOR_OF_STATEMENT,
         /** The exporting/invoking unit's program span. */

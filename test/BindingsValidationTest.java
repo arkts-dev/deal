@@ -1805,6 +1805,204 @@ public class BindingsValidationTest {
     }
 
     // =========================================================================
+    // IMPORT_OCCURRENCE_CORRELATION
+    // =========================================================================
+
+    /** One kind-pinned MODULE_IMPORT completion naming the given alias cells. */
+    private static SemanticOp importOp(ModuleId module,
+            deal.semantic.ir.ModuleImportKind kind, BindingId... aliasCells) {
+        return op(SemanticOpKind.MODULE_IMPORT,
+            new KindPayload.ModuleImportPayload(module.path(), module, kind,
+                List.of(aliasCells)),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+    }
+
+    /** One HOST-kind MODULE_IMPORT completion naming the given alias cells. */
+    private static SemanticOp hostImportOp(ModuleId host, BindingId... aliasCells) {
+        return importOp(host, deal.semantic.ir.ModuleImportKind.HOST, aliasCells);
+    }
+
+    /** One function-typed EXPORT_READ of a host export. */
+    private static SemanticOp hostReadOp(ModuleId host, String name, ValueId value) {
+        return opWith(nextOpId(), SemanticOpKind.EXPORT_READ,
+            new KindPayload.ExportReadPayload(host, name, SIG1, value),
+            value, SIG1, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
+    }
+
+    /**
+     * The host import read's occurrence correlation: a recorded cell that
+     * matches the read's own {@code MODULE_IMPORT} completion passes; a
+     * missing cell, an uncorrelated cell and a cell whose completion
+     * resolves another module each fail closed with the offending read's
+     * own origin — never a first-alias fallback.
+     */
+    private static void testImportOccurrenceCorrelation() {
+        System.out.println("-- IMPORT_OCCURRENCE_CORRELATION: the host import read's "
+            + "owning occurrence cell --");
+        ModuleId host = new ModuleId("host/echo");
+
+        // The positive control: the binding names the read's own
+        // completion cell.
+        BindingId cell = nextBindingId();
+        ValueId value = nextValue();
+        SemanticOp alloc = allocOp(cell, INIT_BLOCK, 0);
+        SemanticOp completion = hostImportOp(host, cell);
+        SemanticOp read = hostReadOp(host, "g", value);
+        LoweredModuleUnit correlated = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(value.id()),
+                new FunctionExecutionBinding.HostFunction(host, "g", SIG1, cell)),
+            List.of(alloc, completion, read));
+        StructuredBodyTable correlatedTable = tableOf(Map.of(INIT_BLOCK,
+            List.of(alloc, completion, read)));
+        assertPass(BindingsProductionValidator.validate(correlated, correlatedTable),
+            "the correlated host import read");
+
+        // The occurrence cell is a complete transported fact: the typed ->
+        // raw -> canonical text -> typed roundtrip preserves it byte-exactly
+        // (the canonical binding mapping, both directions).
+        {
+            String text = deal.semantic.ir.SemanticIrValidator.toUnitText(correlated);
+            deal.semantic.ir.RawUnit reparsed =
+                deal.semantic.ir.ContractSnapshotCanonicalizer.parseUnit(
+                    (deal.semantic.ir.CanonicalJson.Obj)
+                        deal.semantic.ir.CanonicalJson.parse(text));
+            check(deal.semantic.ir.RawUnit.fromTyped(correlated).equals(reparsed),
+                "the occurrence-correlated unit round-trips through the raw "
+                    + "transport");
+            check(correlated.equals(
+                    deal.semantic.ir.RawUnitMaterializer.materialize(reparsed)),
+                "the materialized text carries the occurrence cell");
+            check(text.equals(deal.semantic.ir.CanonicalJson.serializeText(
+                    deal.semantic.ir.ContractSnapshotCanonicalizer.toJson(reparsed))),
+                "the canonical text is byte-stable across a repeat encoding");
+        }
+
+        // A missing cell: the binding records no occurrence.
+        ValueId missingValue = nextValue();
+        BindingId missingCell = nextBindingId();
+        SemanticOp missingAlloc = allocOp(missingCell, INIT_BLOCK, 0);
+        SemanticOp missingCompletion = hostImportOp(host, missingCell);
+        SemanticOp missingRead = hostReadOp(host, "g", missingValue);
+        LoweredModuleUnit uncorrelated = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(missingValue.id()),
+                new FunctionExecutionBinding.HostFunction(host, "g", SIG1)),
+            List.of(missingAlloc, missingCompletion, missingRead));
+        StructuredBodyTable uncorrelatedTable = tableOf(Map.of(INIT_BLOCK,
+            List.of(missingAlloc, missingCompletion, missingRead)));
+        Optional<CompilerDiagnostic> missingFailure = BindingsProductionValidator
+            .validate(uncorrelated, uncorrelatedTable);
+        assertE6005(missingFailure, "IMPORT_OCCURRENCE_CORRELATION",
+            "a host import read without its occurrence cell",
+            "records no owning import-occurrence cell");
+        check(missingFailure.isPresent() && missingFailure.get().range()
+                .equals(missingRead.origin().span().range()),
+            "the missing-correlation failure carries the offending read's own range");
+
+        // An uncorrelated cell: the binding names a BindingId no
+        // completion of the unit initializes.
+        ValueId strayValue = nextValue();
+        BindingId strayCell = nextBindingId();
+        BindingId strayAlias = nextBindingId();
+        SemanticOp strayAlloc = allocOp(strayAlias, INIT_BLOCK, 0);
+        SemanticOp strayCompletion = hostImportOp(host, strayAlias);
+        SemanticOp strayRead = hostReadOp(host, "g", strayValue);
+        LoweredModuleUnit stray = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(strayValue.id()),
+                new FunctionExecutionBinding.HostFunction(host, "g", SIG1, strayCell)),
+            List.of(strayAlloc, strayCompletion, strayRead));
+        StructuredBodyTable strayTable = tableOf(Map.of(INIT_BLOCK,
+            List.of(strayAlloc, strayCompletion, strayRead)));
+        assertE6005(BindingsProductionValidator.validate(stray, strayTable),
+            "IMPORT_OCCURRENCE_CORRELATION",
+            "a host import read naming an uninitialized cell",
+            "no MODULE_IMPORT completion of the unit initializes");
+
+        // An uncorrelated module: the read and its binding name one host
+        // module while the named cell's completion resolves another.
+        ValueId mismatchValue = nextValue();
+        BindingId mismatchCell = nextBindingId();
+        BindingId mismatchAlias = nextBindingId();
+        SemanticOp mismatchAlloc = allocOp(mismatchAlias, INIT_BLOCK, 0);
+        SemanticOp mismatchOwnCellAlloc = allocOp(mismatchCell, INIT_BLOCK, 0);
+        SemanticOp mismatchOwnCompletion = hostImportOp(host, mismatchAlias);
+        SemanticOp mismatchCompletion = hostImportOp(new ModuleId("host/other"),
+            mismatchCell);
+        SemanticOp mismatchRead = hostReadOp(host, "g", mismatchValue);
+        LoweredModuleUnit mismatch = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(mismatchValue.id()),
+                new FunctionExecutionBinding.HostFunction(host, "g", SIG1,
+                    mismatchCell)),
+            List.of(mismatchAlloc, mismatchOwnCellAlloc, mismatchOwnCompletion,
+                mismatchCompletion, mismatchRead));
+        StructuredBodyTable mismatchTable = tableOf(Map.of(INIT_BLOCK,
+            List.of(mismatchAlloc, mismatchOwnCellAlloc, mismatchOwnCompletion,
+                mismatchCompletion, mismatchRead)));
+        assertE6005(BindingsProductionValidator.validate(mismatch, mismatchTable),
+            "IMPORT_OCCURRENCE_CORRELATION",
+            "a host import read whose occurrence resolves another module",
+            "does not resolve that host module");
+
+        // A read of a module with no import occurrence at all: the read
+        // names no MODULE_IMPORT of its resolved module.
+        ValueId unknownValue = nextValue();
+        BindingId unknownCell = nextBindingId();
+        BindingId unknownAlias = nextBindingId();
+        SemanticOp unknownAlloc = allocOp(unknownAlias, INIT_BLOCK, 0);
+        SemanticOp unknownCompletion = hostImportOp(host, unknownAlias);
+        SemanticOp unknownRead = hostReadOp(new ModuleId("host/unimported"), "g",
+            unknownValue);
+        LoweredModuleUnit unknown = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(unknownValue.id()),
+                new FunctionExecutionBinding.HostFunction(new ModuleId("host/unimported"),
+                    "g", SIG1, unknownCell)),
+            List.of(unknownAlloc, unknownCompletion, unknownRead));
+        StructuredBodyTable unknownTable = tableOf(Map.of(INIT_BLOCK,
+            List.of(unknownAlloc, unknownCompletion, unknownRead)));
+        assertE6005(BindingsProductionValidator.validate(unknown, unknownTable),
+            "IMPORT_OCCURRENCE_CORRELATION",
+            "a host import read of a module with no import occurrence",
+            "names no MODULE_IMPORT occurrence");
+
+        // A STDLIB read records no occurrence cell (the once-only
+        // module-keyed surface): a recorded cell there is a producer
+        // defect.
+        ModuleId stdlib = new ModuleId("std.json");
+        ValueId stdlibValue = nextValue();
+        BindingId stdlibCell = nextBindingId();
+        SemanticOp stdlibAlloc = allocOp(stdlibCell, INIT_BLOCK, 0);
+        SemanticOp stdlibCompletion = importOp(stdlib,
+            deal.semantic.ir.ModuleImportKind.STDLIB, stdlibCell);
+        SemanticOp stdlibRead = hostReadOp(stdlib, "parse", stdlibValue);
+        LoweredModuleUnit stdlibUnit = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(stdlibValue.id()),
+                new FunctionExecutionBinding.HostFunction(stdlib, "parse", SIG1,
+                    stdlibCell)),
+            List.of(stdlibAlloc, stdlibCompletion, stdlibRead));
+        StructuredBodyTable stdlibTable = tableOf(Map.of(INIT_BLOCK,
+            List.of(stdlibAlloc, stdlibCompletion, stdlibRead)));
+        assertE6005(BindingsProductionValidator.validate(stdlibUnit, stdlibTable),
+            "IMPORT_OCCURRENCE_CORRELATION",
+            "a STDLIB read carrying an occurrence cell",
+            "records no occurrence cell");
+
+        // The STDLIB control: the same read without a cell passes.
+        ValueId stdlibOkValue = nextValue();
+        BindingId stdlibOkCell = nextBindingId();
+        SemanticOp stdlibOkAlloc = allocOp(stdlibOkCell, INIT_BLOCK, 0);
+        SemanticOp stdlibOkCompletion = importOp(stdlib,
+            deal.semantic.ir.ModuleImportKind.STDLIB, stdlibOkCell);
+        SemanticOp stdlibOkRead = hostReadOp(stdlib, "parse", stdlibOkValue);
+        LoweredModuleUnit stdlibOk = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(stdlibOkValue.id()),
+                new FunctionExecutionBinding.HostFunction(stdlib, "parse", SIG1)),
+            List.of(stdlibOkAlloc, stdlibOkCompletion, stdlibOkRead));
+        StructuredBodyTable stdlibOkTable = tableOf(Map.of(INIT_BLOCK,
+            List.of(stdlibOkAlloc, stdlibOkCompletion, stdlibOkRead)));
+        assertPass(BindingsProductionValidator.validate(stdlibOk, stdlibOkTable),
+            "the STDLIB read without an occurrence cell");
+    }
+
+    // =========================================================================
     // Runner
     // =========================================================================
 
@@ -1819,6 +2017,7 @@ public class BindingsValidationTest {
         testIrLevelPositives();
         testFailureOriginProjection();
         testGroupShapeOffenderOrigins();
+        testImportOccurrenceCorrelation();
 
         System.out.println("\nBindings production validation: " + passed + " passed, "
             + failed + " failed");

@@ -5121,28 +5121,39 @@ public final class LuaSemanticEmitter {
             String exit = loopExit(op.opId());
             switch (payload.mode()) {
                 case ARRAY_VALUES -> {
+                    // The selected array traversal (the shared compatibility
+                    // prerequisite's refinement): the iterable is evaluated
+                    // once into a block-local slot, and the loop advances one
+                    // slot at a time against the carrier's live element count,
+                    // so a contiguous append is visited; the first position
+                    // that reads absent (a deleted slot's raw nil or a
+                    // position past the live end) stops the iteration — never
+                    // an E8001 and never a skipped continuation. Present
+                    // elements keep the op's own terminal check, so a wrong
+                    // element is still rejected rather than skipped. The
+                    // block-local iterable/index locals survive a nested
+                    // for-of inside the body (the shared scratch temps would
+                    // otherwise be clobbered).
                     String iterable = slot(payload.iterable());
                     String cellName = cell(payload.binding(), payload.generation());
                     String cont = loopCont(op.opId());
                     out.append("do\n");
-                    out.append("  __itT = ").append(iterable).append("\n");
-                    out.append("  __itnT = __itT.__n\n");
-                    out.append("  for __i = 0, __itnT - 1 do\n");
-                    out.append("    __elemT = __MISSING\n");
-                    out.append("    if __i < __itT.__n then\n");
+                    out.append("  local __aitT = ").append(iterable).append("\n");
+                    out.append("  local __aiT = 0\n");
+                    out.append("  while true do\n");
+                    out.append("    if __aiT >= __aitT.__n then break end\n");
                     // The element read is a typed position: the admitted
                     // int/number variant materializes exactly as at
                     // __arrayRead (the element's own slot mark and the
                     // iterable's declared element descriptor), so the
                     // loop cell carries the value's own variant.
-                    out.append("      __elemT = __readVar(__itT, __i + 1, ")
-                        .append("__itT[__i + 1], ")
+                    out.append("    __elemT = __readVar(__aitT, __aiT + 1, ")
+                        .append("__aitT[__aiT + 1], ")
                         .append(isNumberKind(staticKind(elementDescriptorOf(op)))
                             ? "true" : "false")
                         .append(")\n");
-                    out.append("      if __elemT == __NULL then __elemT = nil\n");
-                    out.append("      elseif __elemT == nil then __elemT = __MISSING end\n");
-                    out.append("    end\n");
+                    out.append("    if __elemT == __NULL then __elemT = nil\n");
+                    out.append("    elseif __elemT == nil then break end\n");
                     out.append("    __foreachCheck(")
                         .append(luaString(opKey(op.opId()))).append(", ")
                         .append(luaString(op.contract().canonicalDigest())).append(", ")
@@ -5155,6 +5166,7 @@ public final class LuaSemanticEmitter {
                     out.append("    ").append(cellName).append(" = {__elemT}\n");
                     emitLabeledBlock(payload.body());
                     out.append("    ::").append(cont).append("::\n");
+                    out.append("    __aiT = __aiT + 1\n");
                     out.append("  end\n");
                     // The loop op's exit label (the FOR_EACH form a
                     // BREAK/CONTINUE targets defines both labels its body's

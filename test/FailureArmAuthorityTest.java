@@ -106,6 +106,7 @@ public class FailureArmAuthorityTest {
         arrayBoundaryRows = null;
         testClosedProjections();
         testRendersAndMarkedArms();
+        testRawHostShapeArm();
         testCarrierKindStringActual();
         testCompletionFamilyDrive();
         testCompletionSignatureDrive();
@@ -419,6 +420,47 @@ public class FailureArmAuthorityTest {
      * the artifact legs of the named fixture run in
      * {@code HostCallRealizationTest}'s pinned fixture set.
      */
+    /**
+     * The JS raw host-shape arm (ISSUE-0797): the raw non-object host
+     * result projects E8011 {@code host module did not return a module
+     * object} with the pinned {@code table} expected, a carrier-kind actual
+     * and no location at all — distinct from the located, module-clause
+     * declared arms; a foreign expected text fails the arm's own field
+     * contract closed.
+     */
+    static void testRawHostShapeArm() {
+        System.out.println("-- the raw host-shape arm: the unlocated carrier-kind "
+            + "tuple --");
+        FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_LOAD_RAW_SHAPE);
+        checkEq(FailurePolicyId.HOST_LOAD, arm.policy(), "the arm renders the HOST_LOAD "
+            + "row");
+        checkEq(1, arm.templateIndex(), "the arm binds the row's raw-shape template");
+        checkEq(FailureArm.OriginConvention.NO_ORIGIN, arm.origin(), "the arm carries "
+            + "no location convention");
+        checkEq(FailureArm.RenderScope.TOP_LEVEL, arm.scope(), "the arm renders a "
+            + "top-level tuple");
+        checkEq(FailureArm.ExpectedSource.PINNED_TEXT, arm.expectedSource(),
+            "the expected token is the arm's own pinned text");
+        checkEq("table", arm.pinnedExpectedText(), "the pinned expected text is table");
+        checkEq(FailureArm.ActualProjection.CARRIER_KIND, arm.actualProjection(),
+            "the actual is the carrier-kind projection");
+        checkEq("E8011", FailureContractRegistry.codeOf(arm), "the arm's code is E8011");
+        BoundaryFailure rendered = FailureContractRegistry.render(
+            FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "table",
+            FailureProjections.carrierKindToken(FailureProjections.CarrierKind.NUMBER),
+            null);
+        checkEq("E8011", rendered.code().name(), "the rendered tuple carries E8011");
+        checkEq("host module did not return a module object", rendered.message(),
+            "the rendered message is the module-less raw-shape text");
+        checkEq("table", rendered.expected(), "the rendered expected is table");
+        checkEq("number", rendered.actual(), "the rendered actual is the numeric "
+            + "carrier kind");
+        checkEq(null, rendered.cause(), "the raw-shape tuple carries no cause");
+        expectDefect(() -> FailureContractRegistry.render(
+                FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "function", "number", null),
+            "a foreign expected text fails the arm's field contract");
+    }
+
     static void testCarrierKindStringActual() {
         System.out.println("-- the carrier-kind string member (the host string actual) --");
         checkEq("string", FailureProjections.carrierKindToken(

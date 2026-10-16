@@ -68,6 +68,18 @@ public final class BindingsProductionValidator {
 
     public static final String REGISTRY_ONE_TO_ONE = "REGISTRY_ONE_TO_ONE";
 
+    /**
+     * The import-occurrence-correlation rule: a host import read's recorded
+     * {@code HostFunction} binding must name the owning source import
+     * occurrence's alias cell, and that cell's {@code MODULE_IMPORT}
+     * completion must resolve the same host module — the exact occurrence
+     * a direct, stored, namespace, adapter or async call form selects,
+     * never a module/name fallback. A missing or mismatched correlation
+     * fails with the offending read's own origin.
+     */
+    public static final String IMPORT_OCCURRENCE_CORRELATION =
+        "IMPORT_OCCURRENCE_CORRELATION";
+
     /** The no-adapter-at-boundary rule (B9/B6): the adapter result wires into its own position only. */
     public static final String NO_ADAPTER_AT_BOUNDARY = "NO_ADAPTER_AT_BOUNDARY";
 
@@ -125,6 +137,10 @@ public final class BindingsProductionValidator {
             return failure;
         }
         failure = checkBindingInitOnce(model);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        failure = checkImportOccurrenceCorrelation(model);
         if (failure.isPresent()) {
             return failure;
         }
@@ -1792,6 +1808,106 @@ public final class BindingsProductionValidator {
                 return fail(null, model, BINDING_INIT_ONCE, "the import-alias allocation " + alias
                     + " is named by no MODULE_IMPORT completion (the completion write is "
                     + "the import alias's pinned initializing write)");
+            }
+        }
+        return Optional.empty();
+    }
+
+    // =========================================================================
+    // IMPORT_OCCURRENCE_CORRELATION
+    // =========================================================================
+
+    /**
+     * The host import read's occurrence correlation: every function-typed
+     * host import read records its owning source import occurrence — the
+     * alias cell whose {@code MODULE_IMPORT} completion initializes it —
+     * on its {@code HostFunction} registration, and that occurrence
+     * resolves the same host module as the read. A missing cell, a cell
+     * named by no completion of this unit, or a module disagreement fails
+     * closed at the offending read's own origin (never a first-alias or
+     * module/name fallback). A unit with no {@code MODULE_IMPORT} op
+     * (the intermediate class/binding windows) carries no import-alias
+     * recording surface and is exempt, like the completion agreement.
+     */
+    private static Optional<CompilerDiagnostic> checkImportOccurrenceCorrelation(Model model) {
+        if (model.moduleImports.isEmpty()) {
+            return Optional.empty();
+        }
+        for (SemanticOp op : model.unit.ops()) {
+            if (op.kind() != SemanticOpKind.EXPORT_READ
+                    || !(op.payload()
+                        instanceof KindPayload.ExportReadPayload read)
+                    || !(op.result() instanceof ValueId valueId)) {
+                continue;
+            }
+            FunctionExecutionBinding binding = model.unit.functionBindings().get(
+                new FunctionAllocationIdentity(valueId.id()));
+            if (!(binding instanceof FunctionExecutionBinding.HostFunction host)) {
+                continue;
+            }
+            // The read's own import occurrences of the read's module: a HOST
+            // module is imported per source declaration (each declaration is
+            // one occurrence with its own surface), a STDLIB module is a
+            // once-only surface whose occurrence cell is not recorded.
+            List<SemanticOp> occurrences = new ArrayList<>();
+            boolean hostKind = false;
+            for (SemanticOp importOp : model.moduleImports) {
+                if (!(importOp.payload()
+                        instanceof KindPayload.ModuleImportPayload payload)
+                        || !payload.resolvedModule().equals(read.module())) {
+                    continue;
+                }
+                occurrences.add(importOp);
+                if (payload.kind() == deal.semantic.ir.ModuleImportKind.HOST) {
+                    hostKind = true;
+                }
+            }
+            if (occurrences.isEmpty()) {
+                return fail(op, model, IMPORT_OCCURRENCE_CORRELATION,
+                    "the host import read of '" + read.name() + "' of module '"
+                        + read.module().path() + "' names no MODULE_IMPORT occurrence "
+                        + "of its resolved module (a read resolves through the import "
+                        + "declaration that materialized its alias; a module/name "
+                        + "lookup is never a fallback)");
+            }
+            if (!hostKind) {
+                if (host.importCell() != null) {
+                    return fail(op, model, IMPORT_OCCURRENCE_CORRELATION,
+                        "the STDLIB import read of '" + read.name() + "' of module '"
+                            + read.module().path() + "' records the occurrence cell "
+                            + host.importCell() + " (a STDLIB surface is once-only per "
+                            + "resolved module and records no occurrence cell)");
+                }
+                continue;
+            }
+            if (host.importCell() == null) {
+                return fail(op, model, IMPORT_OCCURRENCE_CORRELATION,
+                    "the host import read of '" + read.name() + "' of module '"
+                        + read.module().path() + "' records no owning import-occurrence "
+                        + "cell (a host import read correlates to the MODULE_IMPORT "
+                        + "completion that initializes its alias cell; a module/name "
+                        + "lookup is never a fallback)");
+            }
+            List<SemanticOp> completions = model.completionsByCell.get(host.importCell());
+            if (completions == null || completions.isEmpty()) {
+                return fail(op, model, IMPORT_OCCURRENCE_CORRELATION,
+                    "the host import read of '" + read.name() + "' of module '"
+                        + read.module().path() + "' names the import-occurrence cell "
+                        + host.importCell() + " which no MODULE_IMPORT completion of the "
+                        + "unit initializes (a missing correlation is a producer defect, "
+                        + "never a first-alias fallback)");
+            }
+            if (!(completions.get(0).payload()
+                    instanceof KindPayload.ModuleImportPayload importPayload)
+                    || !importPayload.resolvedModule().equals(read.module())
+                    || !importPayload.resolvedModule().equals(host.hostModuleId())) {
+                return fail(op, model, IMPORT_OCCURRENCE_CORRELATION,
+                    "the host import read of '" + read.name() + "' of module '"
+                        + read.module().path() + "' names the import-occurrence cell "
+                        + host.importCell() + " whose MODULE_IMPORT completion does not "
+                        + "resolve that host module (the occurrence correlation "
+                        + "disagrees with the read — a module/name-only lookup is never "
+                        + "a fallback)");
             }
         }
         return Optional.empty();
