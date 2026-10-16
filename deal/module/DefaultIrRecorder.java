@@ -739,7 +739,7 @@ final class DefaultIrRecorder {
 
     /**
      * The provider one qualified class annotation names: for this
-     * walk's own program,this module's import of the alias; for a
+     * walk's own program, this module's import of the alias; for a
      * foreign declaring program (an imported declaration's own field,
      * parameter or return annotation), that module's own import
      * routing — the alias's declared class symbol in the module's
