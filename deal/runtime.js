@@ -1802,7 +1802,13 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) 
     $rt.fail("E8001", "value at " + $fieldPath + " is not JSON serializable: "
       + $token, $file, $line, $column, $undefined, $token);
   };
-  if ($value === null) {
+  // Language null has the two representations the boundary knows: the
+  // JS null and the std/json decoded-null marked Map. A decoded JSON
+  // array legally stores the second in a nullable-element slot (the
+  // carrier-aware element check of checkArray admits it and returns the
+  // carrier unchanged), so both encode as JSON null here — the same
+  // null leaf the native path stores.
+  if ($value === null || $rt.isJsonNullTable($value)) {
     if ($entry.nullable || $entry.jtype === "null") {
       return "null";
     }
@@ -1864,7 +1870,16 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) 
         $path.pop();
       }
     case "array":
-      if (!$Array.isArray($value)) {
+      // The declared array reads through the carrier-agnostic members,
+      // exactly like every emitted array read and the boundary's own
+      // checkArray: a native Array and the std/json decoded-array
+      // marked Map both encode, so a decoded JSON array stored in a
+      // declared array field serializes as its declared DEAL array and
+      // performs identically on the JS lane and the LuaJIT/JVM lanes.
+      // The length is read once (the reference's 1..#v bound) and each
+      // position through $rt.arrayAt, so the walk never reads an
+      // invisible native property off the carrier.
+      if (!$Array.isArray($value) && !$rt.isJsonArrayTable($value)) {
         $walkFail();
       }
       if ($entry.element === null || typeof $entry.element !== "object") {
@@ -1876,8 +1891,9 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) 
       $path.push($value);
       try {
         const $parts = [];
-        for (let $i = 0; $i < $value.length; $i++) {
-          const $element = $value[$i];
+        const $length = $rt.arrayLength($value);
+        for (let $i = 0; $i < $length; $i++) {
+          const $element = $rt.arrayAt($value, $i);
           const $elementPath = $fieldPath + "[" + $i + "]";
           if ($element === $undefined) {
             $parts.push("null");

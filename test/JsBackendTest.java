@@ -169,6 +169,7 @@ public class JsBackendTest {
             testStdJsonRoundTrips();
             testJsonDecodedArrayElementKindNode();
             testJsonDecodedArrayReadLengthNode();
+            testJsonableDecodedArrayFieldNode();
             testJsonStoredFunctionE8001();
             testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
@@ -5736,6 +5737,67 @@ public class JsBackendTest {
                 + " observes it through another and through the JSON encode"
                 + " walk, deletes to the nil-equivalent without changing the"
                 + " length, and gates the beyond-length read with E8002: "
+                + run.output() + " (exit " + run.exitCode() + ")");
+    }
+
+    /**
+     * The @jsonable class-walk serializer and the decoded-array carrier
+     * (the ISSUE-0827 review's blocking finding): a decoded JSON array
+     * (the std/json array-marked Map) stored in a declared array field
+     * through the checker-admitted dynamic table read — the carrier
+     * {@code $rt.checkArray} returns unchanged — serializes as its
+     * declared DEAL array. The walk reads the length and every element
+     * through the carrier-agnostic runtime members and projects the
+     * decoded-null carrier as language null, so the JS lane matches the
+     * Oracle/LuaJIT/JVM lanes for a flat field, a nested
+     * (array-of-array) field, an empty decoded array, a nullable element
+     * holding a decoded JSON null, and an alias write observed by the
+     * walk.
+     */
+    private static void testJsonableDecodedArrayFieldNode() throws Exception {
+        System.out.println("-- Node: @jsonable declared array field holding a"
+            + " decoded JSON array --");
+        if (!nodeAvailable) { skipNode("jsonable decoded-array field"); return; }
+
+        NodeResult run = runDealNode("""
+            import * as json from "std/json";
+
+            // @jsonable
+            export class Box {
+              nums: int[] = [];
+              tags: string[][] = [];
+              maybe: (int|null)[] = [];
+            }
+
+            export function test(): int {
+              let t: table = json.parse("{\\"values\\":[1,2]}");
+              let b: Box = {};
+              b.nums = t.values;
+              if (Box$toJson(b) !== "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[]}") { return 0; }
+              let n: table = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
+              let c: Box = {};
+              c.tags = n.values;
+              if (Box$toJson(c) !== "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[]}") { return 0; }
+              let alias: int[] = b.nums;
+              alias[0] = 7;
+              if (Box$toJson(b) !== "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[]}") { return 0; }
+              let empty: table = json.parse("{\\"values\\":[]}");
+              let e: Box = {};
+              e.nums = empty.values;
+              if (Box$toJson(e) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[]}") { return 0; }
+              let mixed: table = json.parse("{\\"values\\":[1,null]}");
+              let m: Box = {};
+              m.maybe = mixed.values;
+              if (Box$toJson(m) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null]}") { return 0; }
+              return 1;
+            }
+            """, "jsonable-decoded-array-field");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "the production artifact serializes a declared array field holding"
+                + " a decoded JSON array (flat, nested, empty and a nullable"
+                + " element holding a decoded JSON null) as the DEAL array text,"
+                + " matching the Oracle/LuaJIT/JVM walk, and observes an alias"
+                + " write through the walk: "
                 + run.output() + " (exit " + run.exitCode() + ")");
     }
 
