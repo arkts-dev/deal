@@ -575,6 +575,41 @@ test("json round-trip: stringify of the array-marked decode carrier === \"[1,2]\
     "the array boundary admits the decoded array unchanged");
 });
 
+// The array-element arm's reference-kind projection (the decoded-array
+// mark, B3): a decoded JSON array appearing as a failing array element
+// renders the reference value model's `table` kind — never the `array`
+// token its table-descriptor projection carries — while a real array
+// carrier keeps `array`. This is the pinned production tuple of the
+// bytes-dynamic-nested-first-element-e8003 fixture (expected "[bytes]",
+// actual "table") and mirrors JvmRuntime.elementActualOf, the emitted
+// LuaJIT prelude's __elemRefKind and BoundaryExecutor's elementReferenceToken.
+test("an array-element failure reports a decoded-array element as table", function() {
+  const doc = json.parse.$f('{"values":[["x"],["y"]]}', "f.js", 1, 1);
+  const err = assertErrorMessage(function() {
+    rt.checkType("[[bytes]]", doc.get("values"), "f.js", 10, 11);
+  }, "E8003", "array element 1 type mismatch");
+  assertEqual(err.expected, "[bytes]", "the failing element's descriptor");
+  assertEqual(err.actual, "table", "the decoded-array element's reference kind");
+  assertSpan(err, "f.js", 10, 11);
+});
+
+test("the element-arm projection also covers a decoded-array element of a native array", function() {
+  const doc = json.parse.$f('{"a":["x"]}', "f.js", 1, 1);
+  const err = assertErrorMessage(function() {
+    rt.checkType("[[bytes]]", [doc.get("a")], "f.js", 2, 5);
+  }, "E8003", "array element 1 type mismatch");
+  assertEqual(err.expected, "[bytes]", "the failing element's descriptor");
+  assertEqual(err.actual, "table", "the decoded-array element's reference kind");
+});
+
+test("a real nested array element keeps the array reference kind", function() {
+  const err = assertErrorMessage(function() {
+    rt.checkType("[[int]]", [[3], [1.5]], "f.js", 1, 1);
+  }, "E8003", "array element 2 type mismatch");
+  assertEqual(err.expected, "[int]", "the failing element's descriptor");
+  assertEqual(err.actual, "array", "a real array carrier keeps the refined array token");
+});
+
 test("json round-trip: an empty decoded array stays the JSON array", function() {
   const parsed = rt.jsonParseValue([], "f.js", 1, 1);
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[]", "empty array round-trip");

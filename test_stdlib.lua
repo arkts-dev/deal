@@ -1008,6 +1008,42 @@ test("json.stringify rejects the absent marker with the closed nil token", funct
   assert(err.actual == "nil", "absent marker actual token, got: " .. tostring(err.actual))
 end)
 
+-- The emitted chunk's own carrier marks (the __stdJsonKind vocabulary the
+-- emitted stringify walker classifies): a class instance tagged with
+-- __c/__id, the builtin Error value tagged with __d, and a function
+-- carrier tagged with __fn/__f/__csig are rejected through the same
+-- closed arm with the same tokens, so the shipped std/json.lua and the
+-- emitted walker agree on every carrier form a caller can hand over.
+test("json.stringify rejects the emitted chunk carrier marks with the pinned arm (v1.3)", function()
+  local __rt = require("deal.runtime")
+  local carriers = {
+    { name = "emitted class instance", actual = "table",
+      value = { __c = true, __id = "@m/C", __f = {}, __p = {} } },
+    { name = "emitted Error value", actual = "table",
+      value = { __d = true, code = "E1", m = "boom", o = nil, e = nil, a = nil } },
+    { name = "emitted function carrier", actual = "function",
+      value = { __fn = function() end, __csig = "()->null", __fid = nil } },
+    { name = "emitted function instance", actual = "function",
+      value = { __f = {}, __sig = "()->null" } },
+  }
+  for _, carrier in ipairs(carriers) do
+    local err = assert_error_code(function()
+      json.stringify.f({ payload = carrier.value })
+    end, "E8001")
+    assert(err.message == "unsupported type for JSON encoding: " .. carrier.actual,
+      carrier.name .. ": message mismatch: " .. tostring(err.message))
+    assert(err.expected == "string, number, boolean, or table",
+      carrier.name .. ": expected mismatch: " .. tostring(err.expected))
+    assert(err.actual == carrier.actual,
+      carrier.name .. ": actual mismatch: " .. tostring(err.actual))
+  end
+  -- The valid JSON-shaped carriers are unchanged by the marker arm.
+  assert(json.stringify.f({ ok = 1 }) == '{"ok":1}', "a plain table still serializes")
+  assert(json.stringify.f({ 1, 2 }) == '[1,2]', "an array table still serializes")
+  assert(json.stringify.f({ v = __rt.__NULL }) == '{"v":null}',
+    "a nested null mark still serializes")
+end)
+
 test("json int/number document round-trip", function()
   local doc = { count = 42, ratio = 2.5 }
   local encoded = json.stringify.f(doc)
