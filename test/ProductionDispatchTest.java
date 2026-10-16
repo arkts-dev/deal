@@ -4135,33 +4135,6 @@ public class ProductionDispatchTest {
             "-cp", out + File.pathSeparator + classpath, "Main"));
     }
 
-
-    // =========================================================================
-    // ISSUE-0756: the v1.2 corner-case corpus production drive
-    // =========================================================================
-
-    /**
-     * The registered v1.2 corner-case corpus under
-     * {@code test/conformance/backend-runtime/v12-snippets}. Each fixture
-     * carries its Structured Expectation Sidecar with the three-backend
-     * uniform runtime-ok expectation; this drive executes the LuaJIT and
-     * JVM legs through the release-owned production CLI on the real
-     * {@code luajit}/{@code java} processes and compares the exact
-     * transcript bytes and exit code through the landed comparator, so a
-     * LuaJIT/JVM semantic divergence is a named failure rather than an
-     * unexecuted pin. The discovered fixture set is the membership
-     * authority: the drive pins no fixed inventory count. Each fixture's
-     * original classification metadata is validated against the production
-     * profile before anything is stripped, materialized or compiled (CD3):
-     * a nonproduction, unknown, duplicate or late declaration is the named
-     * {@link ConformanceHarnessMetadata#HARNESS_DEFECT} outcome naming the
-     * fixture and the profile with no backend leg — no compile, no pass and
-     * no skip. Every child runs through the landed shared bounded-process
-     * helper ({@code deal.test.BoundedProcess}): each stream is capped at
-     * 1 MiB and drained concurrently to EOF, and a truncated or
-     * over-limit observation is refused before any comparison instead
-     * of being read as a transcript.
-     */
     // =========================================================================
     // ISSUE-0791: the boundary fixtures whose pin lives in a driven export
     // =========================================================================
@@ -4574,6 +4547,32 @@ public class ProductionDispatchTest {
             java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     }
 
+    // =========================================================================
+    // ISSUE-0756: the v1.2 corner-case corpus production drive
+    // =========================================================================
+
+    /**
+     * The registered v1.2 corner-case corpus under
+     * {@code test/conformance/backend-runtime/v12-snippets}. Each fixture
+     * carries its Structured Expectation Sidecar with the three-backend
+     * uniform runtime-ok expectation; this drive executes the LuaJIT and
+     * JVM legs through the release-owned production CLI on the real
+     * {@code luajit}/{@code java} processes and compares the exact
+     * transcript bytes and exit code through the landed comparator, so a
+     * LuaJIT/JVM semantic divergence is a named failure rather than an
+     * unexecuted pin. The discovered fixture set is the membership
+     * authority: the drive pins no fixed inventory count. Each fixture's
+     * original classification metadata is validated against the production
+     * profile before anything is stripped, materialized or compiled (CD3):
+     * a nonproduction, unknown, duplicate or late declaration is the named
+     * {@link ConformanceHarnessMetadata#HARNESS_DEFECT} outcome naming the
+     * fixture and the profile with no backend leg — no compile, no pass and
+     * no skip. Every child runs through the landed shared bounded-process
+     * helper ({@code deal.test.BoundedProcess}): each stream is capped at
+     * 1 MiB and drained concurrently to EOF, and a truncated or
+     * over-limit observation is refused before any comparison instead
+     * of being read as a transcript.
+     */
     private static void testV12CornerCaseCorpusProductionDrive()
             throws Exception {
         System.out.println("-- the v1.2 corner-case corpus through the"
