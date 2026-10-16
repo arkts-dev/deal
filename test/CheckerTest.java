@@ -461,6 +461,7 @@ public class CheckerTest {
         testJsonableImportedClass_valid();
         testJsonableImportedClass_invalid();
         testJsonableImportedSameNameDistinctIdentity();
+        testImportedClassProviderWithSameNamedLocal();
         testJsonableImportedThroughArrayAndNullable();
         testJsonableLocalCycleWithSameNamedImported();
 
@@ -4082,6 +4083,56 @@ public class CheckerTest {
      * class is a valid field type and neither class creates a false
      * dependency edge on the other (ISSUE-0784).
      */
+
+    /**
+     * An imported class whose spelling the importing module also declares
+     * locally resolves to the imported provider's declaration (ISSUE-0809):
+     * the construction, the field read and the {@code has} check all read
+     * the imported declaration, never the same-spelled local one.
+     */
+    static void testImportedClassProviderWithSameNamedLocal() {
+        System.out.println("-- imported class provider with a same-named local "
+            + "declaration --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        deal.ast.Span span = new deal.ast.Span("test.deal", 1, 1, 1, 5);
+        Symbol.ClassSymbol foreign = new Symbol.ClassSymbol("Point",
+            List.of(new ClassField(span, "x", false, false,
+                    new deal.ast.NamedType(span, "int"), java.util.Optional.empty()),
+                new ClassField(span, "tag", true, false,
+                    new deal.ast.NamedType(span, "string"), java.util.Optional.empty())),
+            "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point"));
+        resolver.registerClassSymbol("./foreign", foreign);
+        Map<String, Type> exports = new HashMap<>();
+        exports.put("Point", IdentityTestFixtures.classType("Point", "./foreign"));
+        resolver.register("./foreign", exports);
+
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n" +
+            "\n" +
+            "class Point {\n" +
+            "  y: string = \"\";\n" +
+            "}\n" +
+            "\n" +
+            "export function main(): null {\n" +
+            "  let a: Other.Point = { x: 1 };\n" +
+            "  let x: int = a.x;\n" +
+            "  let tag: boolean = has(a.tag);\n" +
+            "  let p: Point = { y: \"s\" };\n" +
+            "  let y: string = p.y;\n" +
+            "  return null;\n" +
+            "}\n",
+            resolver);
+        assertNoErrors(out, "the imported provider's declaration owns its "
+            + "construction, field read and has check while the local "
+            + "same-named class stays local");
+        boolean sawForeign = out.result.typeMap().values().stream()
+            .anyMatch(t -> t instanceof Type.Class cls
+                && cls.identity().equals(
+                    IdentityTestFixtures.identityOf("./foreign", "Point")));
+        check(sawForeign, "the imported construction carries the imported "
+            + "provider's canonical identity");
+    }
+
     static void testJsonableImportedSameNameDistinctIdentity() {
         System.out.println("-- @jsonable: distinct same-named imported class identity --");
         StubModuleResolver resolver = new StubModuleResolver();

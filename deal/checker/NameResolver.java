@@ -332,6 +332,9 @@ public final class NameResolver {
             modulesInProgress.add(path);
             Map<String, Type> exports = moduleResolver.resolveModule(
                 path, modulePath, modulesInProgress);
+            Map<String, Symbol.ClassSymbol> importedClasses =
+                moduleResolver.resolveModuleClassSymbols(
+                    path, modulePath, modulesInProgress);
             // An import binding named `bytes` shadows the lowest-tier
             // bytes intrinsic (imports resolve at step 4, intrinsics at
             // step 5); the intrinsic root binding must be removed before
@@ -339,7 +342,8 @@ public final class NameResolver {
             if (isShadowableIntrinsic(alias)) {
                 root.remove(alias);
             }
-            root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span()));
+            root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span(),
+                importedClasses));
         } catch (ModuleResolver.CffiImportWithoutNativeLibraryException e) {
             // The C FFI manifest policy (docs/spec-v1.3.md §Package manifest):
             // importing a C FFI declaration file without an externals

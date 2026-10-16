@@ -12,14 +12,17 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 import deal.identity.CanonicalClassIdentity;
 import deal.types.Type;
 import deal.types.Types;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -165,6 +168,7 @@ public final class DeclarationSemanticAnalyzer {
         List<CompilerDiagnostic> classDiagnostics = new ArrayList<>();
         List<CompilerClassDefaultEntry> entries = new ArrayList<>();
         List<DefaultResourceOccurrence> occurrences = new ArrayList<>();
+        Map<DiagnosticRange, String> classLiteralProviders = new LinkedHashMap<>();
         Set<SemanticResourceIdentity> seen = new LinkedHashSet<>();
         Set<String> fieldNames = new LinkedHashSet<>();
 
@@ -265,6 +269,7 @@ public final class DeclarationSemanticAnalyzer {
                 },
                 DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()));
             DefaultIrNode ir = recorder.record(def, root, fieldType);
+            classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());
             if (!recorder.awaitDiagnostics().isEmpty()) {
                 failed = true;
@@ -291,7 +296,8 @@ public final class DeclarationSemanticAnalyzer {
         CompilerClassDefaultPlan plan = new CompilerClassDefaultPlan(
             classIdentity, input.location().semanticModuleIdentity(),
             entries, Set.of());
-        return new PlannedDefaultClass(plan, cd, occurrences);
+        return new PlannedDefaultClass(plan, cd, occurrences,
+            classLiteralProviders);
     }
 
 }

@@ -1,8 +1,11 @@
 package deal.semantic;
 
+import deal.diagnostics.DiagnosticRange;
 import deal.semantic.ir.ModuleId;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -44,5 +47,29 @@ public record CheckedProjectInput(
                     + "verbatim (parent D2): recorded by the builder as a copy of the "
                     + "invocation field, never a recomputation");
         }
+    }
+
+    /**
+     * This input with each module's recorded contextual class-literal
+     * provider aliases replaced by the supplied per-module map: the
+     * dependency graph publishes the recorded provider occurrences after
+     * the checked-project build, so the one lowering consumes the
+     * complete facts through this copy. A module absent from the supplied
+     * map keeps no recorded provider.
+     */
+    public CheckedProjectInput withClassLiteralProviders(
+            Map<ModuleId, Map<DiagnosticRange, String>> classLiteralProviders) {
+        Objects.requireNonNull(classLiteralProviders,
+            "classLiteralProviders must not be null");
+        List<CheckedModuleInput> enriched = new ArrayList<>(modules.size());
+        for (CheckedModuleInput module : modules) {
+            enriched.add(new CheckedModuleInput(module.moduleId(), module.sourceId(),
+                module.sourcePath(), module.ast(), module.checks(), module.imports(),
+                module.exports(), module.kind(),
+                classLiteralProviders.getOrDefault(module.moduleId(),
+                    module.classLiteralProviders())));
+        }
+        return new CheckedProjectInput(invocation, entryModule, enriched,
+            releaseStateHash);
     }
 }

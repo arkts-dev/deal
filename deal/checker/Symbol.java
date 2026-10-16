@@ -66,8 +66,22 @@ public sealed interface Symbol
      * A module imported via {@code import * as Name from "path"}.
      * Includes the import's source span for source-order collision detection
      * (E2006 vs E2007).
+     *
+     * <p>{@code classSymbols} carries the imported module's own declared
+     * class symbols by declared name: two same-named classes of sibling
+     * modules in one directory share one canonical class identity, so a
+     * qualified annotation's exact declaration — never an identity-first
+     * match or a first alias — resolves through the import's own symbol
+     * surface. An empty map (declaration modules, unsupported resolvers)
+     * keeps the identity-keyed route.</p>
      */
-    record ModuleSymbol(String name, Map<String, Type> exports, Span importSpan) implements Symbol {}
+    record ModuleSymbol(String name, Map<String, Type> exports, Span importSpan,
+                        Map<String, ClassSymbol> classSymbols) implements Symbol {
+        /** The class-symbol-free import symbol (retained constructors). */
+        public ModuleSymbol(String name, Map<String, Type> exports, Span importSpan) {
+            this(name, exports, importSpan, Map.of());
+        }
+    }
 
     /**
      * A built-in / intrinsic function or value (e.g. {@code int}, {@code number}, {@code has}).

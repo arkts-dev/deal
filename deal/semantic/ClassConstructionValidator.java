@@ -80,6 +80,27 @@ public final class ClassConstructionValidator {
             ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses) {
+        return validate(unit, table, factories, jsonDefaults, ownInterface,
+            sharedFactories, declarationClasses, Map.of());
+    }
+
+    /**
+     * The composed per-module production admission with the supplied
+     * provider-keyed shared-factory facts: two same-named classes of
+     * distinct sibling modules in one directory share one canonical
+     * class identity, so the recorded construction entry — never the
+     * identity-keyed first match — selects the exact declaring provider
+     * of a {@code CLASS_NEW(SHARED_FACTORY)}.
+     */
+    public static Optional<CompilerDiagnostic> validate(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            ClassFactoryRegistry factories,
+            JsonDefaultChildTable jsonDefaults,
+            ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
@@ -88,8 +109,10 @@ public final class ClassConstructionValidator {
         Objects.requireNonNull(sharedFactories, "sharedFactories must not be null");
         Objects.requireNonNull(declarationClasses,
             "declarationClasses must not be null");
+        Objects.requireNonNull(providerFactoryFacts,
+            "providerFactoryFacts must not be null");
         Context context = new Context(unit, table, factories, jsonDefaults, ownInterface,
-            sharedFactories, declarationClasses);
+            sharedFactories, declarationClasses, providerFactoryFacts);
         Optional<CompilerDiagnostic> failure = context.checkFactoryCoherence();
         if (failure.isPresent()) {
             return failure;
@@ -671,6 +694,15 @@ public final class ClassConstructionValidator {
         private final ExternalModuleInterface ownInterface;
         private final Map<ClassId, SharedFactoryFacts> sharedFactories;
         /**
+         * The provider-keyed shared-factory facts of the accumulated
+         * project closure (the declared class occurrence's construction
+         * entry to its facts): a {@code CLASS_NEW(SHARED_FACTORY)}
+         * resolves its exact declaring provider through its recorded
+         * construction entry, never through the (possibly ambiguous)
+         * canonical class identity alone.
+         */
+        private final Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts;
+        /**
          * The declaration classes' registered layouts and owner members of
          * the project's class registration seeds (K10): a host declaration
          * class's payload layout and its field operations resolve through
@@ -694,7 +726,8 @@ public final class ClassConstructionValidator {
                 ClassFactoryRegistry factories, JsonDefaultChildTable jsonDefaults,
                 ExternalModuleInterface ownInterface,
                 Map<ClassId, SharedFactoryFacts> sharedFactories,
-                Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses) {
+                Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+                Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts) {
             this.unit = unit;
             this.table = table;
             this.factories = factories;
@@ -702,6 +735,7 @@ public final class ClassConstructionValidator {
             this.ownInterface = ownInterface;
             this.sharedFactories = Map.copyOf(sharedFactories);
             this.declarationClasses = Map.copyOf(declarationClasses);
+            this.providerFactoryFacts = Map.copyOf(providerFactoryFacts);
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
             }
@@ -715,8 +749,24 @@ public final class ClassConstructionValidator {
             layoutContext.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
             for (Map.Entry<ClassId, SharedFactoryFacts> entry : this.sharedFactories
                     .entrySet()) {
-                layoutContext.put(entry.getKey(), entry.getValue().layout());
-                interfaceContext.put(entry.getKey(), entry.getValue().interfaceEntry());
+                // A unit's own layout (and a declaration class's registered
+                // layout) wins over an accumulated foreign provider's for
+                // the same canonical identity: two same-named siblings in
+                // one directory share it, and the unit-local consumer's
+                // own declaration is the lexical one.
+                layoutContext.putIfAbsent(entry.getKey(), entry.getValue().layout());
+                interfaceContext.putIfAbsent(entry.getKey(),
+                    entry.getValue().interfaceEntry());
+            }
+            for (SharedFactoryFacts facts : this.providerFactoryFacts.values()) {
+                // The exact declaring provider's layout/interface entry of
+                // one construction occurrence; a same-identity sibling's
+                // facts never overwrite the identity view a unit-local
+                // consumer resolves (the recorded construction entry is
+                // the selection fact).
+                layoutContext.putIfAbsent(facts.classId(), facts.layout());
+                interfaceContext.putIfAbsent(facts.classId(),
+                    facts.interfaceEntry());
             }
             for (ClassInterface entry : ownInterface.classes()) {
                 interfaceContext.put(entry.classId(), entry);
@@ -823,6 +873,22 @@ public final class ClassConstructionValidator {
         /** The shared factory facts of one imported class, or {@code null}. */
         private SharedFactoryFacts factsOf(ClassId classId) {
             return sharedFactories.get(classId);
+        }
+
+        /**
+         * The shared factory facts of one exact declaring provider,
+         * selected by the recorded construction entry, or the
+         * identity-keyed fallback when no provider-keyed facts carry the
+         * entry (the single-provider case).
+         */
+        private SharedFactoryFacts factsOf(ClassId classId, ClassFactoryId entry) {
+            if (entry != null) {
+                SharedFactoryFacts provider = providerFactoryFacts.get(entry);
+                if (provider != null) {
+                    return provider;
+                }
+            }
+            return factsOf(classId);
         }
 
         /**
@@ -1140,6 +1206,16 @@ public final class ClassConstructionValidator {
                     + "payload's classId", op);
             }
             ClassLayout resolved = layoutContext.get(payload.classId());
+            // The recorded construction entry of a SHARED_FACTORY
+            // construction selects the exact declaring provider's layout:
+            // a same-identity sibling's layout never masks the payload's
+            // (the two declarations share one canonical ClassId).
+            SharedFactoryFacts exactProvider = payload.classFactoryRef() == null
+                ? null : providerFactoryFacts.get(payload.classFactoryRef());
+            if (exactProvider != null
+                    && exactProvider.layout().equals(payload.layout())) {
+                resolved = exactProvider.layout();
+            }
             if (resolved == null) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                     + " classId " + payload.classId() + " does not resolve in the "
@@ -1153,7 +1229,8 @@ public final class ClassConstructionValidator {
                     + payload.classId() + ": the payload's layout must be exactly the "
                     + "resolved layout", op);
             }
-            boolean own = unit.classLayouts().containsKey(payload.classId());
+            boolean own = unit.classLayouts().containsKey(payload.classId())
+                && exactProvider == null;
 
             // The closed default-owner shape.
             List<String> providedNames = new ArrayList<>();
@@ -1229,7 +1306,8 @@ public final class ClassConstructionValidator {
                             + ": the pinned imported shape carries an empty child list "
                             + "(defaults transfer to the owner's factory)", op);
                     }
-                    SharedFactoryFacts facts = factsOf(payload.classId());
+                    SharedFactoryFacts facts = factsOf(payload.classId(),
+                        payload.classFactoryRef());
                     if (facts == null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of imported class " + payload.classId() + " has no "
@@ -1662,11 +1740,12 @@ public final class ClassConstructionValidator {
             KindPayload.FieldWritePayload payload =
                 (KindPayload.FieldWritePayload) op.payload();
             // The CLASS_FIELD_ASSIGNMENT descriptor is the field's
-            // declared descriptor from the unit's local layout (the
-            // lowerer produces class-field writes of locally declared
-            // classes, of the compiler-owned builtin Error class, and of
-            // the project's declaration classes — the host declaration
-            // class's registered layout is the same entry K10 resolves).
+            // declared descriptor from the unit's layout context: the
+            // unit's own layout, the compiler-owned builtin Error layout,
+            // the project's declaration classes' registered layouts, or
+            // the imported implementation provider's shared-factory facts
+            // (the exact provider the SHARED_FACTORY transfer
+            // registers).
             ClassLayout layout = unit.classLayouts().get(payload.classId());
             if (layout == null && ClassId.ERROR.equals(payload.classId())) {
 
@@ -1680,14 +1759,21 @@ public final class ClassConstructionValidator {
                     layout = declaration.layout();
                 }
             }
+            if (layout == null) {
+                SharedFactoryFacts shared = sharedFactories.get(payload.classId());
+                if (shared != null) {
+                    layout = shared.layout();
+                }
+            }
             ClassLayout.FieldLayout fieldLayout = layout == null
                 ? null : fieldOf(layout, payload.field());
             if (fieldLayout == null) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_WRITE " + op.opId()
                     + " of " + payload.classId() + "." + payload.field()
                     + " violates the pinned shape: the class must resolve in the unit's "
-                    + "own classLayouts, the builtin Error layout, or the declaration "
-                    + "classes' registered layouts and the field must be a declared "
+                    + "own classLayouts, the builtin Error layout, the declaration "
+                    + "classes' registered layouts, or the imported providers' "
+                    + "shared-factory facts and the field must be a declared "
                     + "field (the CLASS_FIELD_ASSIGNMENT descriptor is the field's "
                     + "declared descriptor from that layout)", op);
             }

@@ -24,6 +24,23 @@ public interface ModuleResolver {
         throws ModuleNotFoundException, CffiImportWithoutNativeLibraryException;
 
     /**
+     * Resolves the imported module's declared class symbols by the raw
+     * import specifier (the exact declaring occurrence route): the
+     * alias's module supplies its own class declarations, so two
+     * same-named classes of sibling modules in one directory — one
+     * canonical class identity — stay two declarations. The default
+     * returns an empty map (unsupported by non-production resolvers);
+     * callers keep the identity-keyed route then.
+     */
+    default Map<String, Symbol.ClassSymbol> resolveModuleClassSymbols(
+            String modulePath, String importingModule,
+            Set<String> modulesInProgress)
+            throws ModuleNotFoundException,
+                CffiImportWithoutNativeLibraryException {
+        return Map.of();
+    }
+
+    /**
      * Resolve a class symbol from an imported module.
      *
      * <p>Used by the type checker and code generator to look up class field

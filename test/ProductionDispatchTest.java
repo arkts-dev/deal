@@ -1243,6 +1243,69 @@ public class ProductionDispatchTest {
         }
     }
 
+
+    /**
+     * The same-name sibling pair on the shared-IR production lanes
+     * (ISSUE-0809): {@code src/m/ir.deal} and {@code src/m/codec.deal}
+     * both export {@code Ir} with different defaults, so one canonical
+     * class identity covers two declarations. The recorded contextual
+     * provider selects the exact declaring provider, so the released
+     * LuaJIT and JVM artifacts construct the demanded default (7, never
+     * the sibling's 93) and print {@code ok} with an empty stderr and
+     * exit 0.
+     */
+    private static void testProductionSameNameSiblingSharedIr()
+            throws Exception {
+        System.out.println("-- public compilation: same-name sibling class"
+            + " declarations on the shared-IR production lanes --");
+        for (boolean codecFirst : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = "same-name sibling " + backend
+                    + (codecFirst ? " (codec first)" : " (ir first)");
+                Path project = Files.createTempDirectory(
+                    "production-same-name-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/m/ir.deal", CONTEXTUAL_IR_SOURCE);
+                    write(project, "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE);
+                    write(project, "src/main.deal", codecFirst
+                        ? CONTEXTUAL_BODY_CODEC_FIRST
+                        : CONTEXTUAL_BODY_IR_FIRST);
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
     private static void testProductionSiblingModuleProviderIdentity()
             throws Exception {
         System.out.println("-- public compilation: sibling class-declaring"
@@ -5664,6 +5727,7 @@ public class ProductionDispatchTest {
         testProductionJvmTwoModule();
         testProductionLuaJitTwoModuleSurfaces();
         testProductionSiblingModuleProviderIdentity();
+        testProductionSameNameSiblingSharedIr();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionShadowedLocalCalleeCollision();

@@ -154,21 +154,29 @@ public final class CheckedProjectBuilder {
         // The dependency-ordered module list is also the allocator's
         // pinned module order (S7): constructionEntry ids are handed out
         // in dependency order, then exported classes in declaration
-        // (source) order, role CLASS_FACTORY, synthetic ordinal 0.
+        // (source) order, role CLASS_FACTORY, synthetic ordinal 0. The
+        // allocation is per declared class occurrence, keyed by the
+        // declaring module: two same-named classes of distinct sibling
+        // modules in one directory share one canonical ClassId but stay
+        // two declarations with their own construction entry (the one
+        // owner binding of each module's factory registry).
         List<ModuleId> moduleIds = facts.stream().map(ModuleFact::moduleId).toList();
         SemanticIdAllocator allocator = SemanticIdAllocator.over(moduleIds);
-        Map<ClassId, ClassFactoryId> constructionEntries = new LinkedHashMap<>();
+        Map<ModuleId, Map<ClassId, ClassFactoryId>> constructionEntries =
+            new LinkedHashMap<>();
         for (ModuleFact fact : facts) {
             long sourceOrdinal = 0;
+            Map<ClassId, ClassFactoryId> byClass = new LinkedHashMap<>();
             for (StatementNode stmt : fact.ast().statements()) {
                 if (stmt instanceof ExportDeclaration ed
                         && ed.declaration() instanceof ClassDeclaration cd) {
                     ClassId classId = classIdOf(fact, cd);
-                    constructionEntries.put(classId,
+                    byClass.put(classId,
                         allocator.nextClassFactoryId(fact.moduleId(), sourceOrdinal, 0));
                 }
                 sourceOrdinal++;
             }
+            constructionEntries.put(fact.moduleId(), byClass);
         }
 
         // Index entries: every module in the dependency closure.
@@ -213,7 +221,7 @@ public final class CheckedProjectBuilder {
             }
             inputs.add(new CheckedModuleInput(fact.moduleId(), fact.sourcePath(),
                 Path.of(fact.sourcePath()), fact.ast(), checks, imports, exports,
-                CheckedModuleKind.IMPLEMENTATION));
+                CheckedModuleKind.IMPLEMENTATION, fact.classLiteralProviders()));
         }
 
         CheckedProjectInput input = new CheckedProjectInput(invocation, entryModule,
@@ -280,7 +288,7 @@ public final class CheckedProjectBuilder {
                                                            ExternalModuleKind kind,
                                                            CanonicalTypeText.Context context,
                                                            Map<String, ModuleFact> bySourcePath,
-                                                           Map<ClassId, ClassFactoryId> constructionEntries) {
+                                                           Map<ModuleId, Map<ClassId, ClassFactoryId>> constructionEntries) {
         List<ResolvedImport> imports = buildImports(fact, bySourcePath);
         List<ExportInterface> exports;
         List<ClassInterface> classes;
@@ -378,7 +386,7 @@ public final class CheckedProjectBuilder {
      */
     private static List<ClassInterface> buildImplementationClasses(ModuleFact fact,
                                                                    CanonicalTypeText.Context context,
-                                                                   Map<ClassId, ClassFactoryId> constructionEntries) {
+                                                                   Map<ModuleId, Map<ClassId, ClassFactoryId>> constructionEntries) {
         SymbolTable table = fact.symbolTable();
         if (table == null) {
             throw new CanonicalTypeText.Defect(
@@ -402,7 +410,8 @@ public final class CheckedProjectBuilder {
                     fields.add(buildFieldInterface(field, context));
                 }
                 classes.add(new ClassInterface(classId, fields,
-                    requireConstructionEntry(classId, constructionEntries)));
+                    requireConstructionEntry(fact.moduleId(), classId,
+                        constructionEntries)));
             }
         }
         return classes;
@@ -472,7 +481,7 @@ public final class CheckedProjectBuilder {
      */
     private static List<ClassInterface> buildDeclarationClasses(ModuleFact fact,
                                                                 CanonicalTypeText.Context context,
-                                                                Map<ClassId, ClassFactoryId> constructionEntries) {
+                                                                Map<ModuleId, Map<ClassId, ClassFactoryId>> constructionEntries) {
         List<ClassInterface> classes = new ArrayList<>();
         for (StatementNode stmt : fact.ast().statements()) {
             if (stmt instanceof ExportDeclaration ed
@@ -483,7 +492,8 @@ public final class CheckedProjectBuilder {
                     fields.add(buildFieldInterface(field, context));
                 }
                 classes.add(new ClassInterface(classId, fields,
-                    requireConstructionEntry(classId, constructionEntries)));
+                    requireConstructionEntry(fact.moduleId(), classId,
+                        constructionEntries)));
             }
         }
         return classes;
@@ -506,11 +516,16 @@ public final class CheckedProjectBuilder {
     /**
      * The F2 completeness invariant: an absent {@code constructionEntry}
      * is a producer defect (E6005), never a legitimate state — the index
-     * build allocates one per exported class before routing.
+     * build allocates one per exported class occurrence of the declaring
+     * module before routing (the same canonical class identity may
+     * appear in two sibling modules' entries with distinct construction
+     * entries).
      */
-    private static ClassFactoryId requireConstructionEntry(ClassId classId,
-                                                           Map<ClassId, ClassFactoryId> constructionEntries) {
-        ClassFactoryId entry = constructionEntries.get(classId);
+    private static ClassFactoryId requireConstructionEntry(ModuleId moduleId,
+                                                           ClassId classId,
+                                                           Map<ModuleId, Map<ClassId, ClassFactoryId>> constructionEntries) {
+        Map<ClassId, ClassFactoryId> byClass = constructionEntries.get(moduleId);
+        ClassFactoryId entry = byClass == null ? null : byClass.get(classId);
         if (entry == null) {
             throw new CanonicalTypeText.Defect(
                 "exported class '" + classId.text()

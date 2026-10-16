@@ -765,6 +765,7 @@ public final class CompilationOrchestrator {
         log("Phase 3.85: Runtime dependency graph and plan publication");
         evaluateDependencyGraph();
         if (hasErrors) { printDiagnostics(); return false; }
+        enrichCheckedProjectProviders();
 
         log("Phase 3.9: C FFI declaration validation and metadata");
         validateCffiDeclarations();
@@ -1358,6 +1359,34 @@ public final class CompilationOrchestrator {
         }
     }
 
+    /**
+     * Re-publishes the checked project with the dependency graph's
+     * recorded contextual class-literal provider aliases: the graph runs
+     * after the checked-project build (it consumes the planned default
+     * classes), so the one lowering receives the recorded provider
+     * occurrence — the exact declaring module of a contextual
+     * imported-class literal — through this copy. An unrecorded literal
+     * keeps no alias and resolves by the checked identity route.
+     */
+    private void enrichCheckedProjectProviders() {
+        CheckedProjectBuildResult checked = checkedProjectBuild;
+        if (checked == null || checked.input() == null) {
+            return; // the graph phase runs only after a successful build
+        }
+        if (classLiteralProvidersByModulePath.isEmpty()) {
+            return;
+        }
+        Map<ModuleId, Map<DiagnosticRange, String>> providers = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<DiagnosticRange, String>> entry
+                : classLiteralProvidersByModulePath.entrySet()) {
+            providers.put(new ModuleId(entry.getKey()), entry.getValue());
+        }
+        checkedProjectBuild = new CheckedProjectBuildResult(
+            checked.input().withClassLiteralProviders(providers),
+            checked.index(), checked.diagnostics());
+    }
+
+
     private void computeRequirementManifests() {
         CheckedProjectBuildResult checked = this.checkedProjectBuild;
         if (checked == null || checked.hasErrors()) {
@@ -1689,6 +1718,27 @@ public final class CompilationOrchestrator {
                 literalProviders.put(info.modulePath, entry.getValue());
             }
         }
+        // The planned class-field defaults record their own contextual
+        // class-literal provider aliases (the field's declared annotation
+        // names the exact declaring provider): the one lowering consumes
+        // them too, so a same-directory sibling pair's default
+        // construction names its exact provider.
+        for (Map.Entry<String, List<PlannedDefaultClass>> entry
+                : plannedDefaultClasses.entrySet()) {
+            ModuleInfo info = modules.get(entry.getKey());
+            if (info == null) {
+                continue;
+            }
+            for (PlannedDefaultClass planned : entry.getValue()) {
+                if (planned.classLiteralProviders().isEmpty()) {
+                    continue;
+                }
+                literalProviders
+                    .computeIfAbsent(info.modulePath,
+                        key -> new LinkedHashMap<>())
+                    .putAll(planned.classLiteralProviders());
+            }
+        }
         classLiteralProvidersByModulePath = literalProviders;
         dependencyOrder = free.initializationOrder();
         log("  Runtime graph: " + runtimeDependencies.size()
@@ -1861,7 +1911,8 @@ public final class CompilationOrchestrator {
         return new ModuleFact(info.sourcePath, new ModuleId(info.modulePath),
             info.isDeclarationFile, isSpecStdlibModuleInfo(info), info.rawAst,
             info.exports != null ? info.exports : Map.of(),
-            info.symbolTable, info.checkResult, imports);
+            info.symbolTable, info.checkResult, imports,
+            classLiteralProvidersByModulePath.getOrDefault(info.modulePath, Map.of()));
     }
 
     // =========================================================================
@@ -2761,21 +2812,55 @@ public final class CompilationOrchestrator {
                                                 Set<String> modulesInProgress)
                 throws ModuleNotFoundException,
                     CffiImportWithoutNativeLibraryException {
-            // Direct internal-name match first: the checker passes dotted
-            // module paths carried by Type.Class values (e.g. an
-            // externals module's "host.x\y"), which are internal names,
-            // never import specifiers.
-            for (ModuleInfo info : modules.values()) {
-                if (info.modulePath.equals(modulePath)) {
-                    return cffiManifestCheckedExports(info, modulePath);
+            return cffiManifestCheckedExports(
+                targetModule(modulePath, importingModule), modulePath);
+        }
+
+        /**
+         * The imported module's own declared class symbols by name (the
+         * exact declaring occurrence route): a qualified annotation's
+         * provider resolves through the alias's own symbol surface, so
+         * two same-named classes of sibling modules in one directory —
+         * one canonical class identity — stay two declarations. A
+         * declaration module carries no checked symbol table: its classes
+         * resolve through the identity-keyed declaration route.
+         */
+        @Override
+        public Map<String, Symbol.ClassSymbol> resolveModuleClassSymbols(
+                String modulePath, String importingModule,
+                Set<String> modulesInProgress)
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
+            ModuleInfo target = targetModule(modulePath, importingModule);
+            if (target.symbolTable == null) {
+                return Map.of();
+            }
+            Map<String, Symbol.ClassSymbol> classes = new LinkedHashMap<>();
+            for (Map.Entry<String, Symbol> entry
+                    : target.symbolTable.symbols().entrySet()) {
+                if (entry.getValue() instanceof Symbol.ClassSymbol classSymbol) {
+                    classes.put(entry.getKey(), classSymbol);
                 }
             }
-            // Otherwise modulePath is the import specifier exactly as
-            // written (e.g. "./lib", "std/console", "host/cfg");
-            // importingModule is the importing module's internal dotted
-            // module name. The T6 resolver derives the resolved source
-            // from the importer's source path, so the importer must be
-            // located by its internal name first.
+            return classes;
+        }
+
+        /**
+         * The imported module's {@link ModuleInfo}: a direct internal-name
+         * match first (the checker passes dotted module paths carried by
+         * Type.Class values, which are internal names, never import
+         * specifiers), otherwise the import specifier exactly as written
+         * resolved from the importing module's source path through the T6
+         * resolver.
+         */
+        private ModuleInfo targetModule(String modulePath,
+                                        String importingModule)
+                throws ModuleNotFoundException {
+            for (ModuleInfo info : modules.values()) {
+                if (info.modulePath.equals(modulePath)) {
+                    return info;
+                }
+            }
             String importerSource = sourcePathForInternalName(importingModule);
             if (importerSource == null && modules.containsKey(importingModule)) {
                 // Defensive: an importingModule spelled as a source path.
@@ -2791,7 +2876,7 @@ public final class CompilationOrchestrator {
                 ModuleInfo target = modules.get(
                     r.location().normalizedSourcePath());
                 if (target != null) {
-                    return cffiManifestCheckedExports(target, modulePath);
+                    return target;
                 }
             }
             throw new ModuleNotFoundException("Module not found: " + modulePath);

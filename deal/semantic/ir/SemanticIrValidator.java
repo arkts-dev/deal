@@ -744,6 +744,8 @@ public final class SemanticIrValidator {
             closure.put(unit.modulePath(), unit);
         }
         Map<ClassId, SharedFactoryFacts> sharedFactories = new LinkedHashMap<>();
+        Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts =
+            new LinkedHashMap<>();
         Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses =
             classSeeds.registrations();
         for (RawUnit unit : units) {
@@ -772,12 +774,13 @@ public final class SemanticIrValidator {
                 failure = ClassConstructionValidator.validate(typed,
                     typed.bodyTable(), typed.classFactories(),
                     typed.jsonDefaults(), ownInterface, sharedFactories,
-                    declarationClasses);
+                    declarationClasses, providerFactoryFacts);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
-            accumulateSharedFactoryFacts(ownInterface, typed, sharedFactories);
+            accumulateSharedFactoryFacts(ownInterface, typed, sharedFactories,
+                providerFactoryFacts);
         }
         return checkProjectClassFacts(interfaceIndex, classSeeds, units, entryModule, facts);
     }
@@ -829,7 +832,8 @@ public final class SemanticIrValidator {
      */
     private static void accumulateSharedFactoryFacts(ExternalModuleInterface ownInterface,
                                                      LoweredModuleUnit unit,
-                                                     Map<ClassId, SharedFactoryFacts> accumulated) {
+                                                     Map<ClassId, SharedFactoryFacts> accumulated,
+                                                     Map<ClassFactoryId, SharedFactoryFacts> providerAccumulated) {
         if (ownInterface == null) {
             return;
         }
@@ -853,8 +857,13 @@ public final class SemanticIrValidator {
             if (factoryOp == null || !(factoryOp.result() instanceof ValueId result)) {
                 continue;
             }
-            accumulated.put(classEntry.classId(), new SharedFactoryFacts(
-                classEntry.classId(), classEntry, layout, factoryOpId, result));
+            SharedFactoryFacts facts = new SharedFactoryFacts(
+                classEntry.classId(), classEntry, layout, factoryOpId, result);
+            accumulated.put(classEntry.classId(), facts);
+            // The exact declared occurrence's facts: the construction entry
+            // is unique per declaration, so two same-named siblings sharing
+            // one canonical identity never overwrite each other here.
+            providerAccumulated.put(classEntry.constructionEntry(), facts);
         }
     }
 

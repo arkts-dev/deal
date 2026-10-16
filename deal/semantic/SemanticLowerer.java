@@ -1264,6 +1264,16 @@ public final class SemanticLowerer {
 
         Map<ClassId, SharedFactoryFacts> inProjectFactoryFacts =
             new LinkedHashMap<>();
+        // The provider-keyed view of the same accumulated facts (the
+        // declared class occurrence's construction entry to its facts):
+        // two same-named classes of distinct sibling modules in one
+        // directory share one canonical ClassId, so the recorded
+        // construction entry — never the identity-keyed first match —
+        // selects the exact declaring provider of a construction.
+        Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+            inProjectProviderFacts = new LinkedHashMap<>();
+        Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
+            providerConstructionEntries = constructionEntriesOf(interfaceIndex);
 
         // (4b) The declared-parameter-annotation index of the one lowering
         // (canonical failure-projection authority P3): built once from the
@@ -1297,7 +1307,8 @@ public final class SemanticLowerer {
                 invocation.semanticProfile(), interfaceHash, capabilityRegistryHash, allocator,
                 calleeExternalEntries, callbackExports, seeds.seeds(),
                 conversionIntrinsics, ownInterface, comparisonFacts,
-                inProjectFactoryFacts, declaredParameterAnnotations);
+                inProjectFactoryFacts, inProjectProviderFacts,
+                providerConstructionEntries, declaredParameterAnnotations);
             if (lowered.hasErrors()) {
                 return projectFailureResult(lowered.diagnostics());
             }
@@ -1313,7 +1324,7 @@ public final class SemanticLowerer {
                 calleeExternalEntries.put(module.moduleId(), lowered.externalEntries());
             }
             accumulateInProjectFactoryFacts(ownInterface, lowered,
-                inProjectFactoryFacts);
+                inProjectFactoryFacts, inProjectProviderFacts);
         }
 
         // (5) The project-form gate over the complete closure: the
@@ -1411,6 +1422,10 @@ public final class SemanticLowerer {
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             SemanticIrValidator.ComparisonFacts comparisonFacts,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+                providerFactoryFacts,
+            Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
+                providerConstructionEntries,
             Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations) {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
@@ -1420,6 +1435,8 @@ public final class SemanticLowerer {
         lowerer.setModuleImports(module.imports());
         lowerer.setRegistrationSeeds(seeds);
         lowerer.setDeclaredConversionIntrinsics(conversionIntrinsics);
+        lowerer.setProviderFactoryFacts(Map.copyOf(providerFactoryFacts),
+            providerConstructionEntries, module.classLiteralProviders());
         lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
@@ -1450,7 +1467,8 @@ public final class SemanticLowerer {
         Optional<CompilerDiagnostic> unitChain = validateProjectUnit(unit,
             unit.bodyTable(), comparisonFacts, unit.classBindingFacts(),
             unit.classFactories(), unit.jsonDefaults(), ownInterface,
-            Map.copyOf(sharedFactories), seeds.registrations());
+            Map.copyOf(sharedFactories), seeds.registrations(),
+            Map.copyOf(providerFactoryFacts));
         if (unitChain.isPresent()) {
             return LoweredProjectModule.failure(List.of(unitChain.get()));
         }
@@ -1460,7 +1478,9 @@ public final class SemanticLowerer {
     private static void accumulateInProjectFactoryFacts(
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             LoweredProjectModule lowered,
-            Map<ClassId, SharedFactoryFacts> accumulated) {
+            Map<ClassId, SharedFactoryFacts> accumulated,
+            Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+                providerAccumulated) {
         for (deal.semantic.ir.ClassInterface classEntry : ownInterface.classes()) {
             deal.semantic.ir.ClassLayout layout =
                 lowered.unit().classLayouts().get(classEntry.classId());
@@ -1476,9 +1496,38 @@ public final class SemanticLowerer {
             if (factoryOp == null || !(factoryOp.result() instanceof ValueId result)) {
                 continue;
             }
-            accumulated.put(classEntry.classId(), new SharedFactoryFacts(
-                classEntry.classId(), classEntry, layout, factoryOpId, result));
+            SharedFactoryFacts facts = new SharedFactoryFacts(classEntry.classId(),
+                classEntry, layout, factoryOpId, result);
+            accumulated.put(classEntry.classId(), facts);
+            // The exact declaring occurrence's facts: the construction
+            // entry is unique per declared class occurrence, so two
+            // same-named siblings never overwrite each other here.
+            providerAccumulated.put(classEntry.constructionEntry(), facts);
         }
+    }
+
+    /**
+     * The declared-class construction entries of the project interface
+     * index, keyed by declaring module then canonical class identity: the
+     * exact occurrence a recorded provider alias selects. Two same-named
+     * classes of distinct sibling modules in one directory share one
+     * canonical class identity but hold distinct entries.
+     */
+    private static Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
+            constructionEntriesOf(deal.semantic.ir.ProjectInterfaceIndex index) {
+        Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>> entries =
+            new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, deal.semantic.ir.ExternalModuleInterface> module
+                : index.modules().entrySet()) {
+            Map<ClassId, deal.semantic.ir.ClassFactoryId> byClass =
+                new LinkedHashMap<>();
+            for (deal.semantic.ir.ClassInterface classEntry
+                    : module.getValue().classes()) {
+                byClass.put(classEntry.classId(), classEntry.constructionEntry());
+            }
+            entries.put(module.getKey(), byClass);
+        }
+        return entries;
     }
 
     /** The unit's op named by the id, or {@code null}. */
@@ -1530,6 +1579,30 @@ public final class SemanticLowerer {
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses) {
+        return validateProjectUnit(unit, table, facts, bindingFacts, factories,
+            jsonDefaults, ownInterface, sharedFactories, declarationClasses,
+            Map.of());
+    }
+
+    /**
+     * The composed per-module production admission over the supplied
+     * provider-keyed shared-factory facts: the recorded construction
+     * entry of a {@code CLASS_NEW(SHARED_FACTORY)} selects the exact
+     * declaring provider when two same-named classes of sibling modules
+     * share one canonical class identity.
+     */
+    public static Optional<CompilerDiagnostic> validateProjectUnit(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            SemanticIrValidator.ComparisonFacts facts,
+            ClassBindingFacts bindingFacts,
+            deal.semantic.ir.ClassFactoryRegistry factories,
+            deal.semantic.ir.JsonDefaultChildTable jsonDefaults,
+            deal.semantic.ir.ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+                providerFactoryFacts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
@@ -1540,6 +1613,8 @@ public final class SemanticLowerer {
         Objects.requireNonNull(sharedFactories, "sharedFactories must not be null");
         Objects.requireNonNull(declarationClasses,
             "declarationClasses must not be null");
+        Objects.requireNonNull(providerFactoryFacts,
+            "providerFactoryFacts must not be null");
         Optional<CompilerDiagnostic> viewMismatch = checkSuppliedViews(unit, table,
             bindingFacts, factories, jsonDefaults, facts);
         if (viewMismatch.isPresent()) {
@@ -1569,7 +1644,8 @@ public final class SemanticLowerer {
             return bindings;
         }
         return ClassConstructionValidator.validate(unit, ownedTable, ownedFactories,
-            ownedJsonDefaults, ownInterface, sharedFactories, declarationClasses);
+            ownedJsonDefaults, ownInterface, sharedFactories, declarationClasses,
+            providerFactoryFacts);
     }
 
     /**
@@ -2482,6 +2558,30 @@ public final class SemanticLowerer {
         private final deal.semantic.ir.ExternalModuleInterface ownInterface;
 
         private final Map<ClassId, SharedFactoryFacts> sharedFactories;
+        /**
+         * The provider-keyed shared-factory facts of the accumulated
+         * project closure (declared class occurrence's construction entry
+         * to its facts) and the index's declared-class construction
+         * entries keyed by declaring module then canonical class identity:
+         * two same-named classes of distinct sibling modules in one
+         * directory share one canonical class identity, so the recorded
+         * provider alias — never the identity-keyed first match — selects
+         * the exact declaring provider of a construction.
+         */
+        private Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+            providerFactoryFacts = Map.of();
+        private Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
+            providerConstructionEntries = Map.of();
+        private Map<DiagnosticRange, String> recordedClassLiteralProviders = Map.of();
+        /**
+         * The canonical class identities carried by more than one
+         * accumulating provider declaration (a same-directory sibling
+         * pair): an unrecorded literal of such an identity has no
+         * unambiguous provider and fails closed rather than selecting a
+         * first alias.
+         */
+        private java.util.Set<ClassId> ambiguousProviderClassIds =
+            java.util.Set.of();
 
         private ClassRegistrationSeeds registrationSeeds =
             ClassRegistrationSeeds.builtinErrorOnly();
@@ -4535,6 +4635,45 @@ public final class SemanticLowerer {
             return jsonOpId;
         }
 
+        /**
+         * The exact declaring provider's facts of one class literal,
+         * selected by the recorded contextual provider alias: the alias
+         * names the import whose exact declaration supplied the literal's
+         * construction context, the import's resolved module names the
+         * provider, and the provider's declared-class construction entry
+         * selects the occurrence's facts. {@code null} when the recorder
+         * records no contextual imported provider for the literal (a
+         * same-module or non-contextual construction) or when the
+         * recorded provider carries no accumulated facts (the fail-closed
+         * deferral path).
+         */
+        private SharedFactoryFacts recordedProviderFacts(ObjectLiteralExpr literal,
+                                                         ClassId classId) {
+            if (recordedClassLiteralProviders.isEmpty()) {
+                return null;
+            }
+            String alias = recordedClassLiteralProviders.get(literal.span().range());
+            if (alias == null) {
+                return null;
+            }
+            for (ResolvedImport importFact : moduleImports) {
+                if (!importFact.alias().equals(alias)) {
+                    continue;
+                }
+                Map<ClassId, deal.semantic.ir.ClassFactoryId> byClass =
+                    providerConstructionEntries.get(importFact.resolvedModuleId());
+                if (byClass == null) {
+                    return null;
+                }
+                deal.semantic.ir.ClassFactoryId entry = byClass.get(classId);
+                if (entry == null) {
+                    return null;
+                }
+                return providerFactoryFacts.get(entry);
+            }
+            return null;
+        }
+
         private ValueId lowerClassLiteral(ObjectLiteralExpr literal, ValueId slot) {
             Type type = checkedType(literal);
             if (!(type instanceof Type.Class classType)) {
@@ -4545,28 +4684,43 @@ public final class SemanticLowerer {
             ClassId classId = new ClassId(
                 DescriptorService.semanticModulePath(classType.identity()), classType.name());
 
+            // The exact declaring provider first: the recorded contextual
+            // provider alias (the literal's own construction context) names
+            // the imported declaration's construction entry, so two
+            // same-named classes of sibling modules in one directory — one
+            // canonical class identity — never collapse into a first
+            // alias.
+            SharedFactoryFacts sharedFacts =
+                recordedProviderFacts(literal, classId);
             deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
+            if (sharedFacts == null && layout == null
+                    && ambiguousProviderClassIds.contains(classId)) {
+                throw new ConstructUnlowered("class literal of imported class "
+                    + classId + " resolves more than one declared provider sharing "
+                    + "the canonical class identity (same-directory sibling "
+                    + "declarations): the recorded provider context is required and "
+                    + "a first alias is never selected", literal.span());
+            }
+            if (sharedFacts == null && layout == null) {
+                sharedFacts = sharedFactories.get(classId);
+            }
             DefaultOwner defaultOwner = DefaultOwner.LOCAL;
             deal.semantic.ir.ClassFactoryId classFactoryRef = null;
             ValueId sharedFactoryResult = null;
-            SharedFactoryFacts sharedFacts = null;
-            if (layout == null) {
-                sharedFacts = sharedFactories.get(classId);
-                if (sharedFacts != null) {
-                    layout = sharedFacts.layout();
-                    defaultOwner = DefaultOwner.SHARED_FACTORY;
-                    classFactoryRef = sharedFacts.interfaceEntry().constructionEntry();
-                    sharedFactoryResult = sharedFacts.factoryResult();
-                } else {
-                    ClassRegistrationSeeds.ClassRegistration seed =
-                        registrationSeeds.registrationFor(classId);
-                    if (seed == null) {
-                        throw new RetainedAbiDeferred(classId.text(), literal.span());
-                    }
-
-                    layout = seed.layout();
-                    defaultOwner = seed.owner();
+            if (sharedFacts != null) {
+                layout = sharedFacts.layout();
+                defaultOwner = DefaultOwner.SHARED_FACTORY;
+                classFactoryRef = sharedFacts.interfaceEntry().constructionEntry();
+                sharedFactoryResult = sharedFacts.factoryResult();
+            } else if (layout == null) {
+                ClassRegistrationSeeds.ClassRegistration seed =
+                    registrationSeeds.registrationFor(classId);
+                if (seed == null) {
+                    throw new RetainedAbiDeferred(classId.text(), literal.span());
                 }
+
+                layout = seed.layout();
+                defaultOwner = seed.owner();
             }
 
             List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
@@ -7638,6 +7792,18 @@ public final class SemanticLowerer {
             if (classCore) {
                 deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
                 if (layout == null) {
+                    // The imported implementation provider's registered
+                    // layout (the SharedFactoryFacts the owner factory
+                    // transfer carries): a field write on an imported class
+                    // selects the declaring provider's layout through the
+                    // project's accumulated factory facts — never a local
+                    // layout, a first alias, or a textual class-name search.
+                    SharedFactoryFacts shared = sharedFactories.get(classId);
+                    if (shared != null) {
+                        layout = shared.layout();
+                    }
+                }
+                if (layout == null) {
                     // The registration seeds (the compiler-owned builtin
                     // Error included, K13's field surface): a seeded class's
                     // declared field descriptor comes from the seed layout
@@ -7651,10 +7817,11 @@ public final class SemanticLowerer {
                 }
                 if (layout == null) {
                     throw new ConstructUnlowered("class field write '" + access.field()
-                        + "' on " + classId + " without a local layout (the declared field "
-                        + "descriptor comes from the unit's classLayouts; an imported "
-                        + "class's field write is outside this epic's unit-level window)",
-                            access.span());
+                        + "' on " + classId + " without a resolvable provider layout "
+                        + "(the declared field descriptor comes from the unit's own "
+                        + "classLayouts, the imported provider's shared-factory facts, "
+                        + "or the declaration seeds; an unresolved required fact stays "
+                        + "fail closed)", access.span());
                 }
                 deal.semantic.ir.ClassLayout.FieldLayout fieldLayout = null;
                 for (deal.semantic.ir.ClassLayout.FieldLayout candidate : layout.fields()) {
@@ -8089,6 +8256,57 @@ public final class SemanticLowerer {
          */
         public void setModuleImports(List<ResolvedImport> imports) {
             this.moduleImports = List.copyOf(imports);
+        }
+
+        /**
+         * Installs the project lowering's provider-resolution context: the
+         * provider-keyed shared-factory facts of the preceding closure
+         * modules, the declared-class construction entries of the project
+         * interface index (declaring module, then canonical class
+         * identity), and the module's recorded contextual class-literal
+         * provider aliases (the literal's source range to the import
+         * alias whose exact declaration supplied its construction
+         * context).
+         */
+        public void setProviderFactoryFacts(
+                Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+                    providerFactoryFacts,
+                Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
+                    providerConstructionEntries,
+                Map<DiagnosticRange, String> recordedClassLiteralProviders) {
+            java.util.Objects.requireNonNull(providerFactoryFacts,
+                "providerFactoryFacts must not be null");
+            java.util.Objects.requireNonNull(providerConstructionEntries,
+                "providerConstructionEntries must not be null");
+            java.util.Objects.requireNonNull(recordedClassLiteralProviders,
+                "recordedClassLiteralProviders must not be null");
+            this.providerFactoryFacts = java.util.Collections.unmodifiableMap(
+                new java.util.LinkedHashMap<>(providerFactoryFacts));
+            java.util.Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
+                copiedEntries = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<ModuleId,
+                    Map<ClassId, deal.semantic.ir.ClassFactoryId>> entry
+                    : providerConstructionEntries.entrySet()) {
+                copiedEntries.put(entry.getKey(), java.util.Collections
+                    .unmodifiableMap(new java.util.LinkedHashMap<>(
+                        entry.getValue())));
+            }
+            this.providerConstructionEntries = java.util.Collections
+                .unmodifiableMap(copiedEntries);
+            this.recordedClassLiteralProviders = java.util.Collections
+                .unmodifiableMap(new java.util.LinkedHashMap<>(
+                    recordedClassLiteralProviders));
+            java.util.Map<ClassId, deal.semantic.ir.ClassFactoryId> unique =
+                new java.util.LinkedHashMap<>();
+            java.util.Set<ClassId> ambiguous = new java.util.LinkedHashSet<>();
+            for (SharedFactoryFacts facts : providerFactoryFacts.values()) {
+                if (unique.putIfAbsent(facts.classId(),
+                        facts.interfaceEntry().constructionEntry()) != null) {
+                    ambiguous.add(facts.classId());
+                }
+            }
+            this.ambiguousProviderClassIds =
+                java.util.Collections.unmodifiableSet(ambiguous);
         }
 
         public void setRegistrationSeeds(ClassRegistrationSeeds seeds) {

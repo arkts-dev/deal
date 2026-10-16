@@ -20,7 +20,9 @@ import deal.semantic.CompilerProfileProvider;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
+import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.LoweredFunction;
@@ -323,6 +325,108 @@ public class ProjectLoweringTest {
           let p: u.Point = {x: 5};
           let s: u.Segment = {length: 3};
           let q: u.Point = u.makePoint(7);
+          return null;
+        }
+        """;
+
+
+    /**
+     * The same-spelled provider pair of distinct module identities (the
+     * ISSUE-0809 acceptance): two modules declare a class named
+     * {@code Point} with different declared fields; the consuming module
+     * imports both and constructs, reads, writes and deletes through the
+     * exact provider each spelling names.
+     */
+    private static final String SAME_SPELLED_ALPHA_SOURCE = """
+        export class Point {
+          x: int = 0;
+          nick?: string;
+        }
+        """;
+
+    private static final String SAME_SPELLED_BETA_SOURCE = """
+        export class Point {
+          y: string = "";
+        }
+        """;
+
+    private static final String SAME_SPELLED_APP_SOURCE = """
+        import * as alpha from "./alpha/util";
+        import * as beta from "./beta/util";
+
+        export function main(): null {
+          let a: alpha.Point = { x: 1 };
+          a.x = 5;
+          a.nick = "n";
+          let hadNick: boolean = has(a.nick);
+          delete a.nick;
+          if (a.x !== 5) { throw { code: "WRONG_X", message: "x" }; }
+          if (!hadNick || has(a.nick)) {
+            throw { code: "WRONG_PRESENCE", message: "nick" };
+          }
+          let b: beta.Point = { y: "s" };
+          let xs: beta.Point[] = [{ y: "a" }];
+          if (xs[0].y !== "a") { throw { code: "WRONG_ARRAY", message: "array" }; }
+          let n: alpha.Point | null = { x: 2 };
+          if (n === null) { throw { code: "WRONG_NULLABLE", message: "n" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The same-directory sibling pair of one canonical class identity:
+     * {@code src/m/ir.deal} and {@code src/m/codec.deal} both export
+     * {@code Ir} with different defaults, so the recorded contextual
+     * provider — never an identity-first match — must select the exact
+     * declaring provider of every construction.
+     */
+    private static final String SIBLING_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    private static final String SIBLING_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        export class Codec { b: int = 9; }
+        export function useCodec(y: Codec): int { return y.b; }
+        """;
+
+    private static final String SIBLING_APP_SOURCE = """
+        import * as ir from "./m/ir";
+        import * as codec from "./m/codec";
+
+        class Holder {
+          inner: ir.Ir = {};
+          items: ir.Ir[] = [{}];
+        }
+
+        export function main(): null {
+          let direct: ir.Ir = {};
+          if (direct.a !== 7) { throw { code: "WRONG_DIRECT", message: "a" }; }
+          if (ir.useIr({}) !== 7) { throw { code: "WRONG_CALL", message: "a" }; }
+          let h: Holder = {};
+          if (h.inner.a !== 7) { throw { code: "WRONG_NESTED", message: "a" }; }
+          if (h.items[0].a !== 7) { throw { code: "WRONG_ARRAY", message: "a" }; }
+          let xs: ir.Ir[] = [{}];
+          if (xs[0].a !== 7) { throw { code: "WRONG_LITERAL_ARRAY", message: "a" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The malformed-provider negative fixture: the entry writes a field
+     * of an imported class whose implementation owner is removed from the
+     * lowering closure (the checker-valid source stays).
+     */
+    private static final String IMPORTED_FIELD_WRITE_APP_SOURCE = """
+        import * as u from "util";
+
+        export function poke(p: u.Point): null {
+          p.x = 1;
+          return null;
+        }
+
+        export function main(): null {
           return null;
         }
         """;
@@ -1782,6 +1886,308 @@ public class ProjectLoweringTest {
                         + "EXTERNAL_ENTRY (the accumulated in-project record)");
             }
         }
+    }
+
+
+    private static void testSameSpelledProviderResolution() throws Exception {
+        System.out.println("-- same-spelled classes of distinct providers: the "
+            + "construction, field, default and JSON links resolve the exact "
+            + "declared provider --");
+        RealProject project = compileProject(SAME_SPELLED_APP_SOURCE,
+            Map.of("src/alpha/util.deal", SAME_SPELLED_ALPHA_SOURCE,
+                "src/beta/util.deal", SAME_SPELLED_BETA_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the same-spelled provider project lowers through the one project "
+                    + "entry: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            ModuleId alpha = new ModuleId("alpha.util");
+            ModuleId beta = new ModuleId("beta.util");
+            ClassId alphaPoint = new ClassId("src/alpha", "Point");
+            ClassId betaPoint = new ClassId("src/beta", "Point");
+            LoweredModuleUnit alphaUnit = lowered.modules().get(alpha);
+            LoweredModuleUnit betaUnit = lowered.modules().get(beta);
+            LoweredModuleUnit app = lowered.modules().get(APP);
+            check(alphaUnit != null && betaUnit != null && app != null,
+                "the closure carries both providers and the consumer");
+            if (alphaUnit == null || betaUnit == null || app == null) {
+                return;
+            }
+            check(alphaUnit.classLayouts().containsKey(alphaPoint)
+                    && betaUnit.classLayouts().containsKey(betaPoint)
+                    && !alphaPoint.equals(betaPoint),
+                "the two providers keep distinct layouts under distinct class ids");
+            ClassFactoryId alphaEntry = factoryEntryOf(alphaUnit, alphaPoint);
+            ClassFactoryId betaEntry = factoryEntryOf(betaUnit, betaPoint);
+            check(alphaEntry != null && betaEntry != null
+                    && !alphaEntry.equals(betaEntry),
+                "the two providers register distinct construction entries");
+
+            Map<ClassId, KindPayload.ClassNewPayload> constructions =
+                new LinkedHashMap<>();
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_NEW
+                        && op.payload() instanceof KindPayload.ClassNewPayload payload) {
+                    constructions.put(payload.classId(), payload);
+                }
+            }
+            KindPayload.ClassNewPayload alphaLiteral = constructions.get(alphaPoint);
+            KindPayload.ClassNewPayload betaLiteral = constructions.get(betaPoint);
+            check(alphaLiteral != null && betaLiteral != null,
+                "the consumer lowers one CLASS_NEW per distinct provider");
+            if (alphaLiteral == null || betaLiteral == null) {
+                return;
+            }
+            checkEq(DefaultOwner.SHARED_FACTORY, alphaLiteral.defaultOwner(),
+                "the imported alpha literal carries SHARED_FACTORY");
+            checkEq(alphaEntry, alphaLiteral.classFactoryRef(),
+                "the alpha literal references the alpha provider's construction entry");
+            checkEq(DefaultOwner.SHARED_FACTORY, betaLiteral.defaultOwner(),
+                "the imported beta literal carries SHARED_FACTORY");
+            checkEq(betaEntry, betaLiteral.classFactoryRef(),
+                "the beta literal references the beta provider's construction entry");
+            checkEq(alphaUnit.classLayouts().get(alphaPoint), alphaLiteral.layout(),
+                "the alpha literal carries the alpha provider's layout");
+            checkEq(betaUnit.classLayouts().get(betaPoint), betaLiteral.layout(),
+                "the beta literal carries the beta provider's layout");
+
+            // The field operations select the declaring field's descriptor
+            // from the provider layout.
+            List<SemanticOp> writes = new ArrayList<>();
+            List<SemanticOp> deletes = new ArrayList<>();
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() == SemanticOpKind.FIELD_WRITE) {
+                    writes.add(op);
+                }
+                if (op.kind() == SemanticOpKind.FIELD_DELETE) {
+                    deletes.add(op);
+                }
+            }
+            checkEq(2, writes.size(), "the consumer lowers two FIELD_WRITEs");
+            checkEq(1, deletes.size(), "the consumer lowers one FIELD_DELETE");
+            for (SemanticOp write : writes) {
+                KindPayload.FieldWritePayload payload =
+                    (KindPayload.FieldWritePayload) write.payload();
+                checkEq(alphaPoint, payload.classId(),
+                    "every FIELD_WRITE names the alpha provider's class");
+                checkEq("src/alpha", payload.classId().modulePath(),
+                    "the field write's class id carries the provider's module path");
+            }
+            if (!deletes.isEmpty()
+                    && deletes.get(0).payload()
+                        instanceof KindPayload.FieldDeletePayload deletePayload) {
+                checkEq("nick", deletePayload.field(),
+                    "the FIELD_DELETE names the optional provider field");
+            }
+
+            // The lowered project admits on both project surfaces and its
+            // own records reassemble from the dump.
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_3_INT32,
+                    invocation().capabilityRegistryHash());
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the same-spelled provider project passes the typed project surface");
+            String text = SemanticIrValidator.toProjectText(lowered);
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                "the same-spelled provider project passes the text project surface");
+            SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
+            checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
+                    text.getBytes(StandardCharsets.UTF_8))),
+                SemanticIrDumper.reassembleProject(dump.manifest(),
+                    documentsOf(dump)),
+                "the same-spelled provider project reassembles exactly");
+
+            // The Oracle executes the probe: the per-construction defaults,
+            // the provider field write and delete, the array and nullable
+            // constructions all hold, so the terminal is the probe's success.
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(lowered, result.tables(),
+                    result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle completes the same-spelled provider probe: "
+                    + run.comparisonReport());
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    private static void testSameNameSiblingProviderResolution() throws Exception {
+        System.out.println("-- same-named sibling providers of one canonical "
+            + "identity: the recorded contextual provider selects the exact "
+            + "declaring declaration --");
+        RealProject project = compileProject(SIBLING_APP_SOURCE,
+            Map.of("src/m/ir.deal", SIBLING_IR_SOURCE,
+                "src/m/codec.deal", SIBLING_CODEC_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the same-named sibling project lowers through the one project "
+                    + "entry: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            ModuleId ir = new ModuleId("m.ir");
+            ModuleId codec = new ModuleId("m.codec");
+            LoweredModuleUnit irUnit = lowered.modules().get(ir);
+            LoweredModuleUnit codecUnit = lowered.modules().get(codec);
+            LoweredModuleUnit app = lowered.modules().get(APP);
+            check(irUnit != null && codecUnit != null && app != null,
+                "the closure carries both siblings and the consumer");
+            if (irUnit == null || codecUnit == null || app == null) {
+                return;
+            }
+            ClassId irId = new ClassId("src/m", "Ir");
+            ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+            ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
+            check(irEntry != null && codecEntry != null
+                    && !irEntry.equals(codecEntry),
+                "the sibling declarations carry distinct construction entries");
+            check(lowered.classSeeds().registrationFor(irId) == null,
+                "the implementation sibling pair acquires no declaration seed");
+
+            Map<ClassFactoryId, Integer> constructionCounts = new LinkedHashMap<>();
+            int irConstructions = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_NEW
+                        && op.payload() instanceof KindPayload.ClassNewPayload payload
+                        && payload.classId().equals(irId)) {
+                    irConstructions++;
+                    checkEq(DefaultOwner.SHARED_FACTORY, payload.defaultOwner(),
+                        "every sibling construction transfers to the provider factory");
+                    if (payload.classFactoryRef() != null) {
+                        constructionCounts.merge(payload.classFactoryRef(), 1,
+                            Integer::sum);
+                    }
+                }
+            }
+            checkEq(Set.of(irEntry), constructionCounts.keySet(),
+                "every app construction references the recorded ir sibling's "
+                    + "construction entry (never the codec sibling's)");
+            checkEq(5, irConstructions,
+                "all five recorded contexts construct the ir sibling "
+                    + "(literal, call argument, nested field default, nested array "
+                    + "default, literal array)");
+
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_3_INT32,
+                    invocation().capabilityRegistryHash());
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the same-named sibling project passes the typed project surface");
+            String text = SemanticIrValidator.toProjectText(lowered);
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                "the same-named sibling project passes the text project surface");
+            SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
+            checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
+                    text.getBytes(StandardCharsets.UTF_8))),
+                SemanticIrDumper.reassembleProject(dump.manifest(),
+                    documentsOf(dump)),
+                "the same-named sibling project reassembles exactly");
+
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(lowered, result.tables(),
+                    result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle completes the sibling probe (the demanded default 7, "
+                    + "never 93): " + run.comparisonReport());
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    private static void testImportedFieldWriteProviderDeferral() throws Exception {
+        System.out.println("-- the malformed-provider negative: a field write "
+            + "whose imported owner carries no facts fails closed with a named "
+            + "E6005 and no partial project --");
+        RealProject project = compileProject(IMPORTED_FIELD_WRITE_APP_SOURCE,
+            Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());
+        try {
+            // The same real project with the owner module removed from the
+            // closure and the index: the checked type remains, but no
+            // lowered provider layout covers the imported class.
+            List<CheckedModuleInput> modules = new ArrayList<>();
+            for (CheckedModuleInput module : project.checkedProject().modules()) {
+                if (!module.moduleId().equals(UTIL)) {
+                    modules.add(module);
+                }
+            }
+            Map<ModuleId, ExternalModuleInterface> indexModules = new LinkedHashMap<>();
+            for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                    : project.index().modules().entrySet()) {
+                if (!entry.getKey().equals(UTIL)) {
+                    indexModules.put(entry.getKey(), entry.getValue());
+                }
+            }
+            ProjectInterfaceIndex strippedIndex = new ProjectInterfaceIndex(
+                ProjectInterfaceIndex.FORMAT_VERSION, indexModules);
+            List<SemanticRequirementManifest> manifests = new ArrayList<>();
+            for (SemanticRequirementManifest manifest : project.manifests()) {
+                if (!manifest.moduleId().equals(UTIL)) {
+                    manifests.add(manifest);
+                }
+            }
+            CompilerInvocation invocation = invocation();
+            CheckedProjectInput stripped = new CheckedProjectInput(invocation,
+                project.checkedProject().entryModule(), modules,
+                invocation.releaseStateHash());
+            SemanticLowerer.ProjectLoweringResult result =
+                SemanticLowerer.lowerProject(invocation, stripped, strippedIndex,
+                    manifests, project.surface(), project.declarationIdentities(),
+                    project.externCModules(),
+                    BuiltinErrorDeclaration.synthesized(
+                        modules.get(0).ast().span()),
+                    List.of(IntrinsicKind.INT_CONVERT,
+                        IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
+                    Set.of());
+            check(result.hasErrors() && result.project() == null,
+                "the stripped provider produces no project: "
+                    + result.diagnostics());
+            check(result.tables().isEmpty() && result.registries().isEmpty()
+                    && result.seeds() == null && result.namespaces() == null,
+                "the stripped provider produces no tables, no registries, no "
+                    + "seeds, and no registrations");
+            if (!result.diagnostics().isEmpty()) {
+                CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+                check("E6005".equals(diagnostic.code())
+                        && diagnostic.message().contains("CONSTRUCT_UNLOWERED"),
+                    "the first E6005 is the named CONSTRUCT_UNLOWERED class-fact "
+                        + "failure; got " + diagnostic.message());
+                check(diagnostic.range() != null
+                        && diagnostic.range().file() != null
+                        && diagnostic.range().file().endsWith("app.deal")
+                        && diagnostic.range().startLine() == 4,
+                    "the failure keeps the field write's own source origin; got "
+                        + diagnostic.range());
+            }
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * The construction entry the unit's factory registry binds to the
+     * declared class of one class id, or null.
+     */
+    private static ClassFactoryId factoryEntryOf(LoweredModuleUnit unit,
+                                                 ClassId classId) {
+        for (Map.Entry<ClassFactoryId, OpId> binding
+                : unit.classFactories().factories().entrySet()) {
+            SemanticOp factory = opOf(unit, binding.getValue());
+            if (factory != null
+                    && factory.payload() instanceof KindPayload.ClassFactoryPayload payload
+                    && payload.classId().equals(classId)) {
+                return binding.getKey();
+            }
+        }
+        return null;
     }
 
     private static void testInconsistentFactSeed(LoweredProject imported)
@@ -4570,6 +4976,9 @@ public class ProjectLoweringTest {
             testExternCDeclarationClassConstruction();
             testProjectSeedNominalClassReference();
             testSeedImplementationReferenceAndPrivateFieldRead();
+            testSameSpelledProviderResolution();
+            testSameNameSiblingProviderResolution();
+            testImportedFieldWriteProviderDeferral();
             testCorruptedUnitSeed(baseline);
             testMissingModuleSeed(baseline);
             testUnresolvedAliasSeed(baseline);

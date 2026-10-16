@@ -283,9 +283,17 @@ public final class TypeChecker {
             ExpressionNode def = cf.defaultExpr().get();
             Type fieldType = nameResolver.resolveTypeNode(cf.type());
             Type savedExpected = expectedType;
+            Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
             expectedType = fieldType;
+            // The field's declared annotation is the default expression's
+            // construction context: a qualified spelling names the exact
+            // declaring provider (two same-named siblings share one
+            // canonical identity, never a first alias).
+            contextualClassDecl = exactAnnotationClassSymbol(currentScope,
+                cf.type());
             Type defType = checkExpression(def);
             expectedType = savedExpected;
+            contextualClassDecl = savedContextualClass;
             if (fieldType != Type.Error.INSTANCE
                     && defType != Type.Error.INSTANCE
                     && !isAssignable(fieldType, defType)) {
@@ -406,17 +414,94 @@ public final class TypeChecker {
     }
 
     /**
-     * Resolves the class symbol a {@link Type.Class} names: the local
-     * scope first (byte-for-byte today's behavior for local classes),
-     * then the identity-keyed cross-module routing
-     * (descriptor-identity-propagation D1).
+     * Resolves the class symbol a {@link Type.Class} names: the exact
+     * local declaration when the lexical class-symbol named
+     * {@code cls.name()} carries {@code cls}'s canonical identity, then
+     * the identity-keyed cross-module routing
+     * (descriptor-identity-propagation D1). A same-named declaration of
+     * another identity never captures the lookup (no textual class-name
+     * search: an imported class stays the imported provider's
+     * declaration even when the importing module declares its own class
+     * of that spelling).
      */
     private Symbol.ClassSymbol resolveClassSymbol(Type.Class cls) {
-        Symbol sym = currentScope.resolve(cls.name());
-        if (sym instanceof Symbol.ClassSymbol cs) {
-            return cs;
+        Symbol.ClassSymbol local = exactLocalClassSymbol(cls);
+        if (local != null) {
+            return local;
         }
         return nameResolver.resolveClassSymbol(cls);
+    }
+
+    /**
+     * The current scope's class symbol for {@code cls.name()} exactly
+     * when it is the declaration {@code cls}'s canonical identity names,
+     * or {@code null}: a local class of the same spelling but a distinct
+     * identity is never the resolved declaration of a construction, a
+     * field access, or a {@code has} check.
+     */
+    private Symbol.ClassSymbol exactLocalClassSymbol(Type.Class cls) {
+        Symbol sym = currentScope.resolve(cls.name());
+        if (sym instanceof Symbol.ClassSymbol cs
+                && cs.identity() != null
+                && cs.identity().equals(cls.identity())) {
+            return cs;
+        }
+        return null;
+    }
+
+    /**
+     * The exact declaration a class-typed receiver's own binding
+     * annotation names, or {@code null}: a qualified annotation carries
+     * the alias's declared class symbol, so a member access or
+     * {@code has} check on a sibling-pair class selects the declared
+     * provider's declaration rather than an identity-first match.
+     */
+    private Symbol.ClassSymbol exactReceiverClassSymbol(ExpressionNode receiver,
+                                                        Type.Class cls) {
+        if (!(receiver instanceof IdentifierExpr id)) {
+            return null;
+        }
+        Symbol sym = resolveVisibleBinding(id.name());
+        if (!(sym instanceof Symbol.VariableSymbol variable)) {
+            return null;
+        }
+        Symbol.ClassSymbol exact = variable.declaredClass() != null
+            ? variable.declaredClass()
+            : exactAnnotationClassSymbol(currentScope, variable.declaredType());
+        if (exact != null && cls.identity() != null
+                && exact.identity().equals(cls.identity())) {
+            return exact;
+        }
+        return null;
+    }
+
+    /**
+     * The exact declaration one type annotation names in the given scope,
+     * or {@code null} for primitive/function/foreign-surfaceless
+     * annotations: a qualified spelling resolves the alias's own declared
+     * class symbol (two same-named siblings in one directory share one
+     * canonical identity, so the alias — never an identity-first match —
+     * selects the declaration), a bare name its local symbol.
+     */
+    private Symbol.ClassSymbol exactAnnotationClassSymbol(SymbolTable scope,
+                                                          TypeNode tn) {
+        if (scope == null || tn == null) {
+            return null;
+        }
+        return switch (tn) {
+            case NamedType nt -> {
+                Symbol sym = scope.resolve(nt.name());
+                yield sym instanceof Symbol.ClassSymbol cs ? cs : null;
+            }
+            case QualifiedType qt -> {
+                Symbol sym = scope.resolve(qt.moduleName());
+                yield sym instanceof Symbol.ModuleSymbol ms
+                    ? ms.classSymbols().get(qt.typeName()) : null;
+            }
+            case NullableType nt -> exactAnnotationClassSymbol(scope, nt.innerType());
+            case ArrayType at -> exactAnnotationClassSymbol(scope, at.elementType());
+            default -> null;
+        };
     }
 
     /**
@@ -569,7 +654,9 @@ public final class TypeChecker {
         if (vd.typeAnnotation().isPresent()) {
             Symbol declSym = currentScope.resolveLocal(vd.name());
             if (declSym instanceof Symbol.VariableSymbol vs) {
-                contextualClassDecl = vs.declaredClass();
+                contextualClassDecl = vs.declaredClass() != null
+                    ? vs.declaredClass()
+                    : exactAnnotationClassSymbol(currentScope, vd.typeAnnotation().get());
             }
         }
         Type exprType = checkExpression(vd.initializer());
@@ -1630,16 +1717,23 @@ public final class TypeChecker {
         // declared nullable type is never unwrapped here.
         Type classTarget = objType;
         if (classTarget instanceof Type.Class cls) {
-            Symbol sym = currentScope.resolve(cls.name());
-            // If not found locally, try identity-keyed cross-module
-            // resolution
-            if (!(sym instanceof Symbol.ClassSymbol)) {
+            // The receiver's own declared annotation names the exact
+            // declaring provider first (two same-named siblings share one
+            // canonical identity), then the exact local declaration, then
+            // the identity-keyed cross-module resolution (never a textual
+            // class-name search that would pick a same-spelled local or
+            // first-aliased class).
+            Symbol.ClassSymbol sym = exactReceiverClassSymbol(mae.object(), cls);
+            if (sym == null) {
+                sym = exactLocalClassSymbol(cls);
+            }
+            if (sym == null) {
                 sym = resolveClassSymbol(cls);
             }
-            if (sym instanceof Symbol.ClassSymbol cs) {
-                ClassField cf = IntrinsicResolvers.findField(cs.fields(), field);
+            if (sym != null) {
+                ClassField cf = IntrinsicResolvers.findField(sym.fields(), field);
                 if (cf != null) {
-                    Type fieldType = resolveFieldTypeInClassModule(cs, cf.type());
+                    Type fieldType = resolveFieldTypeInClassModule(sym, cf.type());
                     if (cf.optional() && !cf.nullable() && !assignmentTargetMode) {
                         // A read of an omitted optional field yields null;
                         // a write target keeps the declared field type.
@@ -1874,10 +1968,12 @@ public final class TypeChecker {
                 && contextual.identity().equals(cls.identity())) {
             sym = contextual;
         } else {
-            sym = currentScope.resolve(cls.name());
-            // If not found locally, try identity-keyed cross-module
-            // resolution
-            if (!(sym instanceof Symbol.ClassSymbol)) {
+            sym = exactLocalClassSymbol(cls);
+            // If the local scope names no exact-identity declaration, try
+            // the identity-keyed cross-module resolution (never a textual
+            // class-name search that would pick a same-spelled local or
+            // first-aliased class).
+            if (sym == null) {
                 sym = resolveClassSymbol(cls);
             }
         }
@@ -2051,18 +2147,23 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        Symbol sym = currentScope.resolve(cls.name());
-        // If not found locally, try identity-keyed cross-module
-        // resolution
-        if (!(sym instanceof Symbol.ClassSymbol)) {
+        Symbol.ClassSymbol sym = exactReceiverClassSymbol(has.object(), cls);
+        if (sym == null) {
+            sym = exactLocalClassSymbol(cls);
+        }
+        // If neither the receiver's declared annotation nor the local
+        // scope names an exact declaration, try the identity-keyed
+        // cross-module resolution (never a textual class-name search that
+        // would pick a same-spelled local or first-aliased class).
+        if (sym == null) {
             sym = resolveClassSymbol(cls);
         }
-        if (!(sym instanceof Symbol.ClassSymbol cs)) {
+        if (sym == null) {
             error(DiagnosticCode.E4005, "Class '" + cls.name() + "' not found", has.span());
             return Type.Error.INSTANCE;
         }
 
-        ClassField field = IntrinsicResolvers.findField(cs.fields(), has.field());
+        ClassField field = IntrinsicResolvers.findField(sym.fields(), has.field());
         if (field == null) {
             error(DiagnosticCode.E4005,
                 "Field '" + has.field() + "' not declared in class '" + cls.name() + "'",
@@ -2150,7 +2251,9 @@ public final class TypeChecker {
         if (assign.target() instanceof IdentifierExpr targetId) {
             Symbol targetSym = resolveVisibleBinding(targetId.name());
             if (targetSym instanceof Symbol.VariableSymbol vs) {
-                contextualClassDecl = vs.declaredClass();
+                contextualClassDecl = vs.declaredClass() != null
+                    ? vs.declaredClass()
+                    : exactAnnotationClassSymbol(currentScope, vs.declaredType());
             }
         }
         Type valueType = checkExpression(assign.value());

@@ -6,12 +6,14 @@ import deal.ast.ExpressionNode;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticCode;
 import deal.identity.CanonicalClassIdentity;
 import deal.types.Type;
 import deal.types.Types;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -101,6 +103,11 @@ public final class DefaultSemanticPlanner {
         List<CompilerDiagnostic> classDiagnostics = new ArrayList<>();
         List<CompilerClassDefaultEntry> entries = new ArrayList<>();
         List<DefaultResourceOccurrence> occurrences = new ArrayList<>();
+        // The recorded contextual class-literal provider aliases of every
+        // default expression (literal range to import alias): the one
+        // lowering consumes them so a same-directory sibling pair's
+        // construction names its exact declaring provider.
+        Map<DiagnosticRange, String> classLiteralProviders = new LinkedHashMap<>();
         Set<SemanticResourceIdentity> seen = new LinkedHashSet<>();
 
         // Field type resolution runs against the class declaration's
@@ -199,6 +206,7 @@ public final class DefaultSemanticPlanner {
                 },
                 DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()));
             DefaultIrNode ir = recorder.record(def, scope, fieldType);
+            classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());
             if (!recorder.awaitDiagnostics().isEmpty()) {
                 failed = true;
@@ -238,7 +246,8 @@ public final class DefaultSemanticPlanner {
         CompilerClassDefaultPlan plan = new CompilerClassDefaultPlan(
             classIdentity, input.location().semanticModuleIdentity(),
             entries, Set.of());
-        return new PlannedDefaultClass(plan, cd, occurrences);
+        return new PlannedDefaultClass(plan, cd, occurrences,
+            classLiteralProviders);
     }
 
     /**

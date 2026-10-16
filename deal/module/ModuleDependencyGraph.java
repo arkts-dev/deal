@@ -798,7 +798,7 @@ public final class ModuleDependencyGraph {
                         planDependencies);
                 moduleCompleted.add(new PlannedDefaultClass(
                     completedPlan, planned.declaration(),
-                    planned.occurrences()));
+                    planned.occurrences(), planned.classLiteralProviders()));
             }
             completed.put(sourcePath, List.copyOf(moduleCompleted));
         }
