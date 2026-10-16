@@ -5085,7 +5085,21 @@ public final class SemanticLowerer {
                         providerEntryOf(declaring, classId);
                     sharedFacts = entry == null ? null
                         : providerFactoryFacts.get(entry);
-                    if (sharedFacts == null) {
+                    if (sharedFacts == null
+                            && !ambiguousFieldIdentity(classId)) {
+                        // A single declaration of the canonical identity:
+                        // the identity-keyed route resolves it exactly (a
+                        // symbol module-path spelling that differs from the
+                        // session's, or a declaration the interface index
+                        // does not carry). A multiple-declaration identity
+                        // never falls back.
+                        sharedFacts = recordedProviderFacts(literal, classId);
+                        layout = classLayouts.get(classId);
+                        if (sharedFacts == null && layout == null) {
+                            sharedFacts = sharedFactories.get(classId);
+                        }
+                    }
+                    if (sharedFacts == null && layout == null) {
                         throw new ConstructUnlowered("class literal of "
                             + classId + " is attributed to the declaration of"
                             + " module '" + declaring + "', but the project"
