@@ -207,12 +207,33 @@ public final class ModuleDependencyGraph {
             Map<String, List<PlannedDefaultClass>> plannedClasses,
             Map<String, Map<String, Span>> importEdgeSpans,
             Map<String, Span> programSpans) {
+        return digestFreePass(modules, plannedClasses, importEdgeSpans,
+            programSpans, Map.of());
+    }
+
+    /**
+     * The whole-project overload: {@code projectProviders} is every
+     * resolved module's own planning snapshot, keyed by its dotted
+     * module path (ISSUE-0809 exact provider carriage). An ordinary
+     * occurrence whose exact checked declaration lives in a module the
+     * consuming unit reaches only through an imported declaration
+     * resolves that module's snapshot, so the occurrence and its
+     * runtime edge name the exact declaration's provider, never an
+     * identity-equal sibling import.
+     */
+    public static DigestFreeResult digestFreePass(
+            Map<String, ModuleInput> modules,
+            Map<String, List<PlannedDefaultClass>> plannedClasses,
+            Map<String, Map<String, Span>> importEdgeSpans,
+            Map<String, Span> programSpans,
+            Map<String, DefaultPlanImport> projectProviders) {
         Objects.requireNonNull(modules, "modules");
         Objects.requireNonNull(plannedClasses, "plannedClasses");
         Objects.requireNonNull(importEdgeSpans, "importEdgeSpans");
         Objects.requireNonNull(programSpans, "programSpans");
+        Objects.requireNonNull(projectProviders, "projectProviders");
         return new Pass(modules, plannedClasses, importEdgeSpans,
-            programSpans).run();
+            programSpans, projectProviders).run();
     }
 
     /** The internal digest-free pass. */
@@ -224,6 +245,14 @@ public final class ModuleDependencyGraph {
             plannedClasses = new LinkedHashMap<>();
         private final Map<String, Map<String, Span>> importEdgeSpans;
         private final Map<String, Span> programSpans;
+
+        /**
+         * Every resolved module's own planning snapshot, keyed by its
+         * dotted module path: an ordinary occurrence's exact declared
+         * provider, reached through an imported declaration rather than
+         * a direct import, resolves here.
+         */
+        private final Map<String, DefaultPlanImport> projectProviders;
 
         /** source path &rarr; the module's resolved import targets in
          * import-declaration order (the type-level edge structure). */
@@ -258,11 +287,13 @@ public final class ModuleDependencyGraph {
         Pass(Map<String, ModuleInput> modules,
                 Map<String, List<PlannedDefaultClass>> plannedClasses,
                 Map<String, Map<String, Span>> importEdgeSpans,
-                Map<String, Span> programSpans) {
+                Map<String, Span> programSpans,
+                Map<String, DefaultPlanImport> projectProviders) {
             this.modules.putAll(modules);
             this.plannedClasses.putAll(plannedClasses);
             this.importEdgeSpans = importEdgeSpans;
             this.programSpans = programSpans;
+            this.projectProviders = Map.copyOf(projectProviders);
             for (Map.Entry<String, ModuleInput> entry : modules.entrySet()) {
                 ModuleInput input = entry.getValue();
                 List<String> targets = new ArrayList<>();
@@ -319,7 +350,8 @@ public final class ModuleDependencyGraph {
                             .resolveTypeNode(typeNode);
                     },
                     Map.of(),
-                    input.checkResult().exactClassDeclarations());
+                    input.checkResult().exactClassDeclarations(),
+                    projectProviders);
                 for (StatementNode stmt : input.program().statements()) {
                     StatementNode declaration =
                         stmt instanceof ExportDeclaration ed

@@ -12,6 +12,7 @@ import deal.diagnostics.RangeOrigin;
 import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
+import deal.module.RuntimeImportDependency;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedProjectBuildResult;
@@ -2609,37 +2610,108 @@ public class ProjectLoweringTest {
             deleteRecursively(proj);
         }
 
-        // The nested-call crossing (ISSUE-0809 review cycle 2): the
-        // enclosing annotation lays the innermost literal out by the
-        // consumer's own declaration, so that declaration's provider
-        // travels with the value and the sibling-parameter call refuses
-        // it — the shape previously published an artifact whose callee
-        // read the other declaration's field set and failed E8001.
-        Path nested = Files.createTempDirectory("project-lowering-crossing");
+        // The nested-call literal beside a same-identity local declaration
+        // (ISSUE-0809 review cycle 2 finding 1): the argument's own
+        // expectation names the callee parameter's provider, so the literal
+        // is laid out by the imported declaration and is never captured by
+        // the enclosing annotation's identity-equal local declaration. The
+        // legal shape lowers and executes the imported provider's
+        // construction (previously the literal was attributed to the local
+        // declaration and the sibling-parameter call was refused).
+        RealProject nestedProject = compileProject(NESTED_CALL_APP_SOURCE,
+            Map.of("src/ir.deal", NESTED_CALL_IR_SOURCE), Map.of());
         try {
-            writeFileIn(nested, "src/ir.deal", """
-                export class Ir { a: int = 7; }
-                export function g(x: Ir): Ir { return x; }
-                """);
-            writeFileIn(nested, "src/app.deal", """
-                import * as ir from "./ir";
-
-                class Ir { b: string = "local"; }
-
-                function f(x: ir.Ir): Ir { return {}; }
-
-                export function main(): null {
-                  let p: Ir = f(ir.g({}));
-                  if (p.b !== "local") { throw { code: "WRONG", message: "b" }; }
-                  return null;
+            SemanticLowerer.ProjectLoweringResult result =
+                lower(nestedProject, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the nested-call literal beside a same-identity local "
+                    + "declaration lowers: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            LoweredModuleUnit irUnit = lowered.modules()
+                .get(new ModuleId("ir"));
+            LoweredModuleUnit app = lowered.modules().get(APP);
+            check(irUnit != null && app != null,
+                "the nested-call closure carries the provider and the consumer");
+            if (irUnit == null || app == null) {
+                return;
+            }
+            ClassId irId = new ClassId("src", "Ir");
+            ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+            check(irEntry != null,
+                "the nested-call provider registers its construction entry");
+            if (irEntry == null) {
+                return;
+            }
+            int shared = 0;
+            int local = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.CLASS_NEW
+                        || !(op.payload()
+                            instanceof KindPayload.ClassNewPayload payload)
+                        || !payload.classId().equals(irId)) {
+                    continue;
                 }
-                """);
-            assertCrossingRejected(nested,
-                "the nested-call crossing");
+                if (payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                    shared++;
+                    checkEq(irEntry, payload.classFactoryRef(),
+                        "the nested-call argument literal references the "
+                            + "callee parameter provider's entry");
+                    checkEq(irUnit.classLayouts().get(irId), payload.layout(),
+                        "the nested-call argument literal carries the "
+                            + "provider's layout");
+                } else {
+                    local++;
+                    checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
+                        "the declared-return literal stays LOCAL");
+                }
+            }
+            checkEq(2, shared,
+                "both nested-call argument literals construct the imported "
+                    + "provider (never the enclosing same-identity local "
+                    + "declaration)");
+            checkEq(1, local,
+                "the local declared-return literal constructs the unit's own "
+                    + "declaration");
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(lowered, result.tables(),
+                    result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle executes the nested-call program: "
+                    + run.comparisonReport());
         } finally {
-            deleteRecursively(nested);
+            deleteRecursively(nestedProject.root());
         }
     }
+
+    /**
+     * The nested-call literal fixture (ISSUE-0809 review cycle 2 finding
+     * 1): the enclosing annotation names the local declaration while the
+     * callee parameter names the identity-equal imported one; the
+     * argument literal must be laid out by the parameter's declaration.
+     */
+    private static final String NESTED_CALL_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function g(x: Ir): Ir { return x; }
+        """;
+
+    private static final String NESTED_CALL_APP_SOURCE = """
+        import * as ir from "./ir";
+
+        class Ir { b: string = "local"; }
+
+        function f(x: ir.Ir): Ir { return {}; }
+
+        export function main(): null {
+          let p: Ir = f(ir.g({}));
+          let n: int = ir.g({}).a;
+          if (n !== 7) { throw { code: "WRONG_N", message: "n" }; }
+          if (p.b !== "local") { throw { code: "WRONG_B", message: "b" }; }
+          return null;
+        }
+        """;
 
     /**
      * Compiles the project at its {@code src/app.deal} entry through the
@@ -2679,6 +2751,266 @@ public class ProjectLoweringTest {
             return entries.findAny().isEmpty();
         } catch (java.io.IOException defect) {
             return false;
+        }
+    }
+
+    /**
+     * The nested-field provider fixture (ISSUE-0809 review cycle 2
+     * finding 1): the enclosing class's field names the identity-equal
+     * sibling provider, so the nested literal must be laid out by the
+     * field's declaration, never by the enclosing literal's contextual
+     * declaration.
+     */
+    private static final String NESTED_FIELD_IR_SOURCE = """
+        import * as codec from "./codec";
+        export class Ir { inner: codec.Ir = {}; a: int = 7; }
+        """;
+
+    private static final String NESTED_FIELD_CODEC_SOURCE = """
+        export class Ir { b: int = 93; }
+        """;
+
+    private static final String NESTED_FIELD_APP_SOURCE = """
+        import * as ir from "./m/ir";
+        export function main(): null {
+          let x: ir.Ir = { inner: {} };
+          let b: int = x.inner.b;
+          if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
+          let a: int = x.a;
+          if (a !== 7) { throw { code: "WRONG_A", message: "a" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The nested class-literal provider (ISSUE-0809 review cycle 2
+     * finding 1): the enclosing class's field declared as the identity-
+     * equal sibling owns the nested literal, so the nested construction
+     * (and its per-construction default) comes from that declaration even
+     * when the enclosing construction's contextual declaration shares the
+     * canonical identity. The enclosing literal keeps its own provider.
+     */
+    private static void testNestedFieldProviderBesideSameIdentityLocal()
+            throws Exception {
+        System.out.println("-- the class-typed field's declaring provider owns its "
+            + "nested literal beside a same-identity sibling --");
+        RealProject project = compileProject(NESTED_FIELD_APP_SOURCE,
+            Map.of("src/m/ir.deal", NESTED_FIELD_IR_SOURCE,
+                "src/m/codec.deal", NESTED_FIELD_CODEC_SOURCE),
+            Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result =
+                lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the nested-field provider project lowers: "
+                    + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            LoweredModuleUnit irUnit = lowered.modules().get(new ModuleId("m.ir"));
+            LoweredModuleUnit codecUnit = lowered.modules()
+                .get(new ModuleId("m.codec"));
+            LoweredModuleUnit app = lowered.modules().get(APP);
+            check(irUnit != null && codecUnit != null && app != null,
+                "the nested-field closure carries both providers and the "
+                    + "consumer");
+            if (irUnit == null || codecUnit == null || app == null) {
+                return;
+            }
+            ClassId irId = new ClassId("src/m", "Ir");
+            ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
+            ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
+            check(irEntry != null && codecEntry != null
+                    && !irEntry.equals(codecEntry),
+                "both same-identity declarations register distinct entries");
+            if (irEntry == null || codecEntry == null) {
+                return;
+            }
+            int irConstructions = 0;
+            int codecConstructions = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.CLASS_NEW
+                        || !(op.payload()
+                            instanceof KindPayload.ClassNewPayload payload)
+                        || !payload.classId().equals(irId)) {
+                    continue;
+                }
+                if (irEntry.equals(payload.classFactoryRef())) {
+                    irConstructions++;
+                    checkEq(irUnit.classLayouts().get(irId), payload.layout(),
+                        "the enclosing literal carries the ir provider's layout");
+                } else if (codecEntry.equals(payload.classFactoryRef())) {
+                    codecConstructions++;
+                    checkEq(codecUnit.classLayouts().get(irId), payload.layout(),
+                        "the nested literal carries the codec provider's layout");
+                }
+            }
+            checkEq(1, irConstructions,
+                "the enclosing construction references the ir provider");
+            checkEq(1, codecConstructions,
+                "the nested field literal references the codec provider (never "
+                    + "the enclosing contextual declaration)");
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_3_INT32,
+                    invocation().capabilityRegistryHash());
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the nested-field provider project passes the typed project "
+                    + "surface");
+            String text = SemanticIrValidator.toProjectText(lowered);
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                "the nested-field provider project passes the text project "
+                    + "surface");
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(lowered, result.tables(),
+                    result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle executes the nested-field provider project: "
+                    + run.comparisonReport());
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * The transitive-provider fixture (ISSUE-0809 review cycle 2 finding
+     * 2): the consumer imports only the intermediate module, whose field
+     * declaration names the identity-equal sibling provider's class; both
+     * same-directory modules declare {@code Part}.
+     */
+    private static final String TRANSITIVE_IR_SOURCE = """
+        import * as codec from "./codec";
+        export class Part { z: string = "ir"; }
+        export class Outer { inner: codec.Part = {}; }
+        """;
+
+    private static final String TRANSITIVE_CODEC_SOURCE = """
+        export class Part { b: int = 93; }
+        """;
+
+    private static final String TRANSITIVE_APP_SOURCE = """
+        import * as ir from "./m/ir";
+        export function main(): null {
+          let x: ir.Outer = { inner: {} };
+          let b: int = x.inner.b;
+          if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The transitive provider literal (ISSUE-0809 review cycle 2 finding
+     * 2): the consumer's nested literal is attributed to the sibling
+     * declaration the imported field annotation names, whose snapshot the
+     * whole-project provider index carries — never to the identity-equal
+     * import that happens to share the canonical module identity. The
+     * construction, the recorded plan occurrence and the runtime edge all
+     * name the exact declaration, and the artifact executes its default.
+     */
+    private static void testTransitiveProviderLiteralBesideSameIdentitySibling()
+            throws Exception {
+        System.out.println("-- a transitive provider literal resolves the "
+            + "declaring module's exact declaration, never an identity-equal "
+            + "sibling import --");
+        RealProject project = compileProject(TRANSITIVE_APP_SOURCE,
+            Map.of("src/m/ir.deal", TRANSITIVE_IR_SOURCE,
+                "src/m/codec.deal", TRANSITIVE_CODEC_SOURCE),
+            Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result =
+                lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the transitive provider project lowers: "
+                    + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            ModuleId codecModule = new ModuleId("m.codec");
+            LoweredModuleUnit codecUnit = lowered.modules().get(codecModule);
+            LoweredModuleUnit app = lowered.modules().get(APP);
+            check(codecUnit != null && app != null,
+                "the transitive closure carries the provider and the "
+                    + "consumer");
+            if (codecUnit == null || app == null) {
+                return;
+            }
+            ClassId partId = new ClassId("src/m", "Part");
+            ClassFactoryId codecEntry = factoryEntryOf(codecUnit, partId);
+            check(codecEntry != null,
+                "the transitive provider registers its construction entry");
+            if (codecEntry == null) {
+                return;
+            }
+            int codecConstructions = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_NEW
+                        && op.payload()
+                            instanceof KindPayload.ClassNewPayload payload
+                        && payload.classId().equals(partId)
+                        && codecEntry.equals(payload.classFactoryRef())) {
+                    codecConstructions++;
+                    checkEq(codecUnit.classLayouts().get(partId), payload.layout(),
+                        "the transitive literal carries the codec provider's "
+                            + "layout");
+                }
+            }
+            checkEq(1, codecConstructions,
+                "the consumer's nested literal references the transitive "
+                    + "provider's entry");
+            List<RuntimeImportDependency> partEdges = new ArrayList<>();
+            List<RuntimeImportDependency> appPartEdges = new ArrayList<>();
+            for (RuntimeImportDependency edge
+                    : project.orchestrator().runtimeDependencies()) {
+                if (!edge.semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().declaredName()
+                        .equals("Part")) {
+                    continue;
+                }
+                partEdges.add(edge);
+                // Every Part edge names the codec declaration the field
+                // annotation resolved — never the identity-equal sibling
+                // import of the same canonical module identity.
+                check(edge.toSemanticModuleIdentity()
+                        .canonicalResolvedSourceUri().contains("/m/codec.deal"),
+                    "every Part runtime edge names the codec provider: "
+                        + edge.toSemanticModuleIdentity()
+                            .canonicalResolvedSourceUri());
+                if (edge.fromSemanticModuleIdentity()
+                        .canonicalResolvedSourceUri().contains("/src/app.deal")) {
+                    appPartEdges.add(edge);
+                }
+            }
+            checkEq(1, appPartEdges.size(),
+                "the consumer records exactly one Part runtime edge: "
+                    + appPartEdges);
+            if (appPartEdges.size() == 1) {
+                checkEq(RuntimeImportDependency.Reason.RUNTIME_USE,
+                    appPartEdges.get(0).reason(),
+                    "the consumer's Part edge is the ordinary runtime use");
+            }
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_3_INT32,
+                    invocation().capabilityRegistryHash());
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the transitive provider project passes the typed project "
+                    + "surface");
+            String text = SemanticIrValidator.toProjectText(lowered);
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                "the transitive provider project passes the text project "
+                    + "surface");
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(lowered, result.tables(),
+                    result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle executes the transitive provider project: "
+                    + run.comparisonReport());
+        } finally {
+            deleteRecursively(project.root());
         }
     }
 
@@ -6544,6 +6876,8 @@ public class ProjectLoweringTest {
             testSameSpelledProviderResolution();
             testSameNameSiblingProviderResolution();
             testSameIdentityProviderCrossingRejected();
+            testNestedFieldProviderBesideSameIdentityLocal();
+            testTransitiveProviderLiteralBesideSameIdentitySibling();
             testSameIdentityFieldOperationResolution();
             testAmbiguousFieldOperationFailClosed();
             testAmbiguousJsonNestedLinkFailClosed();

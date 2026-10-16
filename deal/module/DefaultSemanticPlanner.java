@@ -58,8 +58,23 @@ public final class DefaultSemanticPlanner {
      */
     public static Result plan(DefaultPlanModuleInput input,
                               ModuleIdentityAssembly identityAssembly) {
+        return plan(input, identityAssembly, Map.of());
+    }
+
+    /**
+     * The whole-project overload: {@code projectProviders} is every
+     * resolved module's own planning snapshot, keyed by its dotted
+     * module path (ISSUE-0809 exact provider carriage). A class-valued
+     * default whose declared type lives in a module this one imports
+     * only through an imported declaration resolves that module's own
+     * snapshot, never an identity-equal sibling import.
+     */
+    public static Result plan(DefaultPlanModuleInput input,
+                              ModuleIdentityAssembly identityAssembly,
+                              Map<String, DefaultPlanImport> projectProviders) {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(identityAssembly, "identityAssembly");
+        Objects.requireNonNull(projectProviders, "projectProviders");
         List<CompilerDiagnostic> diagnostics = new ArrayList<>();
         List<PlannedDefaultClass> planned = new ArrayList<>();
 
@@ -82,7 +97,8 @@ public final class DefaultSemanticPlanner {
                 ((ModuleIdentityAssembly.ClassIdentityResult.Identity)
                     identityResult).identity();
             PlannedDefaultClass plannedClass = planClass(cd, scope,
-                classIdentity, input, declaringContext, diagnostics);
+                classIdentity, input, declaringContext, projectProviders,
+                diagnostics);
             if (plannedClass != null) {
                 planned.add(plannedClass);
             }
@@ -99,6 +115,7 @@ public final class DefaultSemanticPlanner {
             SymbolTable scope, CanonicalClassIdentity classIdentity,
             DefaultPlanModuleInput input,
             DefaultDeclaringContext declaringContext,
+            Map<String, DefaultPlanImport> projectProviders,
             List<CompilerDiagnostic> diagnostics) {
         List<CompilerDiagnostic> classDiagnostics = new ArrayList<>();
         List<CompilerClassDefaultEntry> entries = new ArrayList<>();
@@ -205,7 +222,8 @@ public final class DefaultSemanticPlanner {
                     return input.nameResolver().resolveTypeNode(typeNode);
                 },
                 DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()),
-                input.checkResult().exactClassDeclarations());
+                input.checkResult().exactClassDeclarations(),
+                projectProviders);
             DefaultIrNode ir = recorder.record(def, scope, fieldType);
             classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());

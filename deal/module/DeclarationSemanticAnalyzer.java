@@ -63,8 +63,23 @@ public final class DeclarationSemanticAnalyzer {
      */
     public static Result analyze(DefaultDeclarationModuleInput input,
                                  ModuleIdentityAssembly identityAssembly) {
+        return analyze(input, identityAssembly, Map.of());
+    }
+
+    /**
+     * The whole-project overload: {@code projectProviders} is every
+     * resolved module's own planning snapshot, keyed by its dotted
+     * module path (ISSUE-0809 exact provider carriage): an extern-C
+     * declaration default whose class-valued annotation resolves in a
+     * module this declaration reaches through its own imports resolves
+     * that module's snapshot, never an identity-equal sibling.
+     */
+    public static Result analyze(DefaultDeclarationModuleInput input,
+                                 ModuleIdentityAssembly identityAssembly,
+                                 Map<String, DefaultPlanImport> projectProviders) {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(identityAssembly, "identityAssembly");
+        Objects.requireNonNull(projectProviders, "projectProviders");
         List<CompilerDiagnostic> diagnostics = new ArrayList<>();
 
         // 1. Hoist declaration symbols over the declaration's own AST:
@@ -147,7 +162,7 @@ public final class DeclarationSemanticAnalyzer {
                     identityResult).identity();
             PlannedDefaultClass plannedClass = planStructClass(cd, root,
                 classIdentity, input, checked, resolver, declaringContext,
-                diagnostics);
+                projectProviders, diagnostics);
             if (plannedClass != null) {
                 planned.add(plannedClass);
             }
@@ -164,6 +179,7 @@ public final class DeclarationSemanticAnalyzer {
             CanonicalClassIdentity classIdentity,
             DefaultDeclarationModuleInput input, CheckResult checked,
             NameResolver resolver, DefaultDeclaringContext declaringContext,
+            Map<String, DefaultPlanImport> projectProviders,
             List<CompilerDiagnostic> diagnostics) {
         List<CompilerDiagnostic> classDiagnostics = new ArrayList<>();
         List<CompilerClassDefaultEntry> entries = new ArrayList<>();
@@ -268,7 +284,8 @@ public final class DeclarationSemanticAnalyzer {
                     return resolver.resolveTypeNode(typeNode);
                 },
                 DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()),
-                checked.exactClassDeclarations());
+                checked.exactClassDeclarations(),
+                projectProviders);
             DefaultIrNode ir = recorder.record(def, root, fieldType);
             classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());

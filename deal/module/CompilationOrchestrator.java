@@ -1450,6 +1450,8 @@ public final class CompilationOrchestrator {
             modulePathClassification();
         ModuleResolverImpl moduleResolver = new ModuleResolverImpl(modules,
             diagnostics);
+        Map<String, DefaultPlanImport> projectProviders =
+            projectPlanProviders();
 
         for (String sourcePath : dependencyOrder) {
             ModuleInfo info = modules.get(sourcePath);
@@ -1473,7 +1475,7 @@ public final class CompilationOrchestrator {
                         moduleResolver, classification);
                 DeclarationSemanticAnalyzer.Result result =
                     DeclarationSemanticAnalyzer.analyze(input,
-                        identityAssembly);
+                        identityAssembly, projectProviders);
                 diagnostics.addAll(result.diagnostics());
                 if (result.hasErrors()) {
                     hasErrors = true;
@@ -1491,7 +1493,8 @@ public final class CompilationOrchestrator {
                 info.location, info.checkResult, info.nameResolver,
                 imports, descriptors, classification);
             DefaultSemanticPlanner.Result result =
-                DefaultSemanticPlanner.plan(input, identityAssembly);
+                DefaultSemanticPlanner.plan(input, identityAssembly,
+                    projectProviders);
             diagnostics.addAll(result.diagnostics());
             if (result.hasErrors()) {
                 hasErrors = true;
@@ -1500,6 +1503,30 @@ public final class CompilationOrchestrator {
                     result.plannedClasses());
             }
         }
+    }
+
+    /**
+     * Every resolved module's own planning snapshot, keyed by its dotted
+     * module path (ISSUE-0809 exact provider carriage): the whole-project
+     * provider index each recorder seat consumes so an exact checked
+     * declaration reached through an imported declaration — never a
+     * same-directory sibling import sharing the canonical identity —
+     * supplies the construction's resource, plan and occurrence.
+     */
+    private Map<String, DefaultPlanImport> projectPlanProviders() {
+        Map<String, DefaultPlanImport> providers = new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.rawAst == null || info.location == null) {
+                continue;
+            }
+            providers.put(info.modulePath, new DefaultPlanImport(
+                info.sourcePath, info.modulePath, info.rawAst,
+                info.location,
+                info.exports != null ? info.exports : Map.of(),
+                info.symbolTable, info.isDeclarationFile,
+                isExternCModuleInfo(info)));
+        }
+        return providers;
     }
 
     /**
@@ -1674,7 +1701,8 @@ public final class CompilationOrchestrator {
 
         ModuleDependencyGraph.DigestFreeResult free =
             ModuleDependencyGraph.digestFreePass(inputs,
-                plannedDefaultClasses, edgeSpans, programSpans);
+                plannedDefaultClasses, edgeSpans, programSpans,
+                projectPlanProviders());
         if (free.failed()) {
             // E2005: a cyclic import component (defensive — the phase-2
             // complete-graph admission already rejects every cyclic
@@ -1694,7 +1722,7 @@ public final class CompilationOrchestrator {
         DefaultSemanticSerializer.Result serialized =
             DefaultSemanticSerializer.serialize(
                 defaultSerializerModuleInputs(), plannedDefaultClasses,
-                free.ordinaryOccurrences());
+                free.ordinaryOccurrences(), projectPlanProviders());
         diagnostics.addAll(serialized.diagnostics());
         if (serialized.hasErrors()) {
             hasErrors = true;

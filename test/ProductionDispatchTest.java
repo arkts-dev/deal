@@ -1516,6 +1516,125 @@ public class ProductionDispatchTest {
     }
 
     /**
+     * The class-field nested literal (finding 1): the enclosing class's
+     * field declares the identity-equal sibling provider, and the entry
+     * provides a nested literal whose expectation names that field's
+     * declaration.
+     */
+    private static final String NESTED_FIELD_PROVIDER_IR_SOURCE = """
+        import * as codec from "./codec";
+        export class Ir { inner: codec.Ir = {}; a: int = 7; }
+        """;
+
+    private static final String NESTED_FIELD_PROVIDER_CODEC_SOURCE = """
+        export class Ir { b: int = 93; }
+        """;
+
+    private static final String NESTED_FIELD_PROVIDER_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        export function main(): null {
+          let x: ir.Ir = { inner: {} };
+          if (x.inner.b === 93 && x.a === 7) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /**
+     * The transitive provider literal (finding 2): the entry imports
+     * only the intermediate module, whose field declaration names the
+     * identity-equal sibling provider's class in the same directory.
+     */
+    private static final String TRANSITIVE_PROVIDER_IR_SOURCE = """
+        import * as codec from "./codec";
+        export class Part { z: string = "ir"; }
+        export class Outer { inner: codec.Part = {}; }
+        """;
+
+    private static final String TRANSITIVE_PROVIDER_CODEC_SOURCE = """
+        export class Part { b: int = 93; }
+        """;
+
+    private static final String TRANSITIVE_PROVIDER_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        export function main(): null {
+          let x: ir.Outer = { inner: {} };
+          if (x.inner.b === 93) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /**
+     * The class-field and transitive provider lanes (review cycle 2
+     * findings 1 and 2): the field's declared provider owns the nested
+     * literal, and a declaration reached only through an imported
+     * declaration resolves through the whole-project provider index —
+     * never the identity-equal sibling that shares the canonical module
+     * identity. Both run through the release-owned production invocation
+     * on the real LuaJIT and JVM lanes, printing {@code ok} with an empty
+     * stderr and exit 0.
+     */
+    private static void testProductionNestedFieldAndTransitiveProviders()
+            throws Exception {
+        System.out.println("-- public compilation: the class-field and "
+            + "transitive same-identity providers own their nested literals on "
+            + "the shared-IR production lanes --");
+        for (String backend : List.of("luajit", "jvm")) {
+            record Scenario(String label, String irSource, String codecSource,
+                            String mainSource) {}
+            List<Scenario> scenarios = List.of(
+                new Scenario("class-field provider " + backend,
+                    NESTED_FIELD_PROVIDER_IR_SOURCE,
+                    NESTED_FIELD_PROVIDER_CODEC_SOURCE,
+                    NESTED_FIELD_PROVIDER_MAIN_SOURCE),
+                new Scenario("transitive provider " + backend,
+                    TRANSITIVE_PROVIDER_IR_SOURCE,
+                    TRANSITIVE_PROVIDER_CODEC_SOURCE,
+                    TRANSITIVE_PROVIDER_MAIN_SOURCE));
+            for (Scenario scenario : scenarios) {
+                Path project = Files.createTempDirectory(
+                    "production-nested-provider-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/m/ir.deal", scenario.irSource());
+                    write(project, "src/m/codec.deal", scenario.codecSource());
+                    write(project, "src/main.deal", scenario.mainSource());
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + scenario.label() + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + scenario.label() + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(scenario.label(), out);
+                    } else {
+                        checkSiblingJvmRun(scenario.label(), project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /**
      * The plan-imported/non-plan-local same-identity JSON fixture (review
      * cycle 4, finding 1): the imported sibling is the only plan-bearing
      * ({@code @jsonable}) declaration while the entry's own same-identity
@@ -6096,6 +6215,7 @@ public class ProductionDispatchTest {
         testProductionSameNameSiblingSharedIr();
         testProductionLocalDeclarationBesideCalleeProvider();
         testProductionCallReceiverProviderBesideSameIdentityLocal();
+        testProductionNestedFieldAndTransitiveProviders();
         testProductionPlanOwnerJsonLinks();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();

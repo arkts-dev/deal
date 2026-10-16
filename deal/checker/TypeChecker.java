@@ -2315,7 +2315,8 @@ public final class TypeChecker {
         boolean contextualSelection = false;
         if (contextual != null
                 && contextual.name().equals(cls.name())
-                && contextual.identity().equals(cls.identity())) {
+                && contextual.identity().equals(cls.identity())
+                && providerAgrees(contextual, cls)) {
             sym = contextual;
             contextualSelection = true;
         } else {
@@ -2337,16 +2338,19 @@ public final class TypeChecker {
         // one lowering's exact-provider selection.
         constructedClassDecls.put(obj, cs);
         // The construction context is published through CheckResult when
-        // - and only when - an enclosing annotation, a callee parameter or
-        // a declared return annotation named this exact declaration: the
-        // one lowering attributes the literal's resources and plan to that
+        // an enclosing annotation, a callee parameter or a declared
+        // return annotation named this exact declaration, or when the
+        // expectation's own carrier bound this declaration's provider
+        // (the provider-authoritative route: a qualified annotation, an
+        // imported field/parameter/return type). The one lowering
+        // attributes the literal's resources and plan to that
         // declaration, so a same-identity sibling or an imported callee's
         // parameter provider never captures the construction. A literal
-        // without such a context (the scope's own declaration or the
-        // identity-keyed route) publishes nothing: the lowering must not
-        // silently lay it out by a unit-local same-identity declaration
-        // when the identity carries more than one declaration.
-        if (contextualSelection) {
+        // without such a context (an unbound carrier, the scope's own
+        // declaration) publishes nothing: the lowering must not silently
+        // lay it out by a unit-local same-identity declaration when the
+        // identity carries more than one declaration.
+        if (contextualSelection || providerBoundSelection(cls, cs)) {
             recordExactClassDecl(obj, cls, cs);
         }
         // The declaration's AST node, when the symbol is this module's own
@@ -2384,9 +2388,21 @@ public final class TypeChecker {
 
             if (prop != null) {
                 Type savedExpected = expectedType;
+                Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
                 expectedType = fieldType;
+                // The field's declared annotation is the value's
+                // construction context: a class-typed field names its
+                // own declaring provider (the same resolution the
+                // field-default path uses), so a nested literal of a
+                // same-name sibling declaration is laid out by the
+                // field's provider and never by the enclosing literal's
+                // contextual declaration that shares the canonical
+                // identity (ISSUE-0809 field/construction agreement).
+                contextualClassDecl = exactFieldClassSymbol(cs, cf.type(),
+                    fieldType);
                 Type valueType = checkExpression(prop.value());
                 expectedType = savedExpected;
+                contextualClassDecl = savedContextualClass;
                 if (valueType != Type.Error.INSTANCE) {
                     if (!isAssignable(fieldType, valueType)) {
                         if (!reportClassProviderCrossing(fieldType, valueType,
@@ -2421,6 +2437,38 @@ public final class TypeChecker {
         // declaration (never a silent first-alias selection). The builtin
         // Error module path is the unbound provider.
         return contextualSelection ? classTypeOf(cs) : cls;
+    }
+
+    /**
+     * Whether one contextual declaration may lay out a construction of
+     * the checked class carrier {@code cls}: the carrier names the same
+     * defining provider, or it is unbound (public descriptor synthesis,
+     * retained harnesses) and the contextual declaration is the only
+     * named declaration. A bound carrier of another provider is never
+     * captured by a same-identity contextual declaration (its own
+     * provider resolves the declaration instead).
+     */
+    private static boolean providerAgrees(Symbol.ClassSymbol decl,
+                                          Type.Class cls) {
+        String provider = cls.providerModule();
+        return provider == null
+            || provider.equals(Types.providerModule(decl.modulePath()));
+    }
+
+    /**
+     * Whether the expectation's own carrier bound the selected
+     * declaration's provider: the class carrier names the declaration's
+     * defining module, so the selection is exact (a qualified
+     * annotation, an imported field/parameter/return type) even when no
+     * enclosing construction context named it. An unbound carrier
+     * (public descriptor synthesis, retained harnesses) binds nothing.
+     */
+    private static boolean providerBoundSelection(Type.Class cls,
+                                                  Symbol.ClassSymbol decl) {
+        String provider = cls.providerModule();
+        String declared = Types.providerModule(decl.modulePath());
+        return provider != null && declared != null
+            && provider.equals(declared);
     }
 
     /**

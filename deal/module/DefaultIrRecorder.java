@@ -108,6 +108,15 @@ final class DefaultIrRecorder {
     private final Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations;
 
     /**
+     * Every resolved module's own planning snapshot, keyed by its dotted
+     * module path (empty for the retained project-less constructors):
+     * the exact checked declaration that lives in a module this walk
+     * reaches only through an imported declaration resolves its
+     * provider here — never through an identity-equal sibling import.
+     */
+    private final Map<String, DefaultPlanImport> projectProviders;
+
+    /**
      * Class name &rarr; the import alias the declaring field type
      * annotation names for that class (collected from the field's type
      * node): the importer-local alias a contextual class literal
@@ -187,7 +196,7 @@ final class DefaultIrRecorder {
             Map<String, String> qualifiedClassAliases) {
         this(typeMap, scopeMap, imports, classification, location,
             modulePath, program, typeResolver, qualifiedClassAliases,
-            Map.of());
+            Map.of(), Map.of());
     }
 
     /**
@@ -211,6 +220,34 @@ final class DefaultIrRecorder {
             TypeNodeResolver typeResolver,
             Map<String, String> qualifiedClassAliases,
             Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations) {
+        this(typeMap, scopeMap, imports, classification, location,
+            modulePath, program, typeResolver, qualifiedClassAliases,
+            exactClassDeclarations, Map.of());
+    }
+
+    /**
+     * The whole-project constructor: {@code projectProviders} is every
+     * resolved module's own planning snapshot, keyed by its dotted
+     * module path. A construction whose exact checked declaration lives
+     * in a module this walk does not import directly — the declared
+     * field/parameter/return type of an imported declaration — resolves
+     * that provider through this index, so the same-directory sibling
+     * that shares the canonical identity is never selected (ISSUE-0809
+     * exact provider carriage). The project-less constructors above
+     * keep the direct-import/routing behavior for retained harnesses.
+     */
+    DefaultIrRecorder(
+            Map<ExpressionNode, Type> typeMap,
+            Map<StatementNode, SymbolTable> scopeMap,
+            Map<String, DefaultPlanImport> imports,
+            Map<String, deal.identity.CanonicalModuleIdentity> classification,
+            SourceModuleLocation location,
+            String modulePath,
+            ProgramNode program,
+            TypeNodeResolver typeResolver,
+            Map<String, String> qualifiedClassAliases,
+            Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations,
+            Map<String, DefaultPlanImport> projectProviders) {
         this.typeMap = Objects.requireNonNull(typeMap, "typeMap");
         this.scopeMap = Objects.requireNonNull(scopeMap, "scopeMap");
         Map<SymbolTable, StatementNode> owners =
@@ -232,6 +269,8 @@ final class DefaultIrRecorder {
             qualifiedClassAliases, "qualifiedClassAliases"));
         this.exactClassDeclarations = Map.copyOf(Objects.requireNonNull(
             exactClassDeclarations, "exactClassDeclarations"));
+        this.projectProviders = Map.copyOf(Objects.requireNonNull(
+            projectProviders, "projectProviders"));
     }
 
     /** The insertion-ordered resolved bindings (read-only view). */
@@ -680,8 +719,8 @@ final class DefaultIrRecorder {
     private DefaultPlanImport providerForTypeNode(TypeNode typeNode,
             DefaultPlanImport owner) {
         return switch (typeNode) {
-            case QualifiedType qualified -> owner == null
-                ? imports.get(qualified.moduleName()) : null;
+            case QualifiedType qualified -> qualifiedProvider(qualified,
+                owner);
             case NamedType named -> owner != null
                     && AstDeclarations.findClassDeclaration(owner.program(),
                         named.name()) != null
@@ -696,6 +735,45 @@ final class DefaultIrRecorder {
             case FunctionType function -> providerForTypeNode(
                 function.returnType(), owner);
         };
+    }
+
+    /**
+     * The provider one qualified class annotation names: for this
+     * walk's own program,this module's import of the alias; for a
+     * foreign declaring program (an imported declaration's own field,
+     * parameter or return annotation), that module's own import
+     * routing — the alias's declared class symbol in the module's
+     * checked symbol surface names the provider module, whose planning
+     * snapshot the project-wide provider index carries. Null when the
+     * declaring module's surface is absent or the alias names no class
+     * declaration (never an identity-equal sibling selection).
+     */
+    private DefaultPlanImport qualifiedProvider(QualifiedType qualified,
+            DefaultPlanImport owner) {
+        if (owner == null) {
+            return imports.get(qualified.moduleName());
+        }
+        SymbolTable surface = owner.symbolTable();
+        if (surface == null) {
+            return null;
+        }
+        Symbol sym = surface.resolve(qualified.moduleName());
+        if (!(sym instanceof Symbol.ModuleSymbol module)) {
+            return null;
+        }
+        Symbol.ClassSymbol declared = module.classSymbols()
+            .get(qualified.typeName());
+        if (declared == null || declared.modulePath() == null) {
+            return null;
+        }
+        DefaultPlanImport provider = projectProviders
+            .get(declared.modulePath());
+        if (provider == null
+                || AstDeclarations.findClassDeclaration(provider.program(),
+                    qualified.typeName()) == null) {
+            return null;
+        }
+        return provider;
     }
 
     private DefaultIrNode recordMemberAccess(MemberAccessExpr mae,
@@ -770,6 +848,7 @@ final class DefaultIrRecorder {
             Symbol.ClassSymbol sameModule = null;
             boolean sameModuleConstruction = false;
             DefaultPlanImport exactProvider = null;
+            boolean exactForeignUnresolved = false;
             if (exact != null
                     && exact.name().equals(cls.name())
                     && cls.identity().equals(exact.identity())) {
@@ -778,9 +857,18 @@ final class DefaultIrRecorder {
                     sameModuleConstruction = true;
                 } else {
                     exactProvider = providerForDeclaringModule(exact, cls);
+                    // The checker recorded the exact declaring
+                    // declaration, but this walk cannot reach that
+                    // module's snapshot: a same-identity sibling import
+                    // must never stand in for it (no target; the one
+                    // lowering selects the recorded declaration's
+                    // construction entry through the project interface
+                    // index).
+                    exactForeignUnresolved = exactProvider == null;
                 }
             }
             if (!sameModuleConstruction && exactProvider == null
+                    && !exactForeignUnresolved
                     && !contextNamesImport(cls, contextProvider)) {
                 Symbol sym = scope.resolve(cls.name());
                 if (sym instanceof Symbol.ClassSymbol cs
@@ -809,6 +897,7 @@ final class DefaultIrRecorder {
             } else {
                 DefaultPlanImport provider = exactProvider != null
                     ? exactProvider
+                    : exactForeignUnresolved ? null
                     : providerForClass(cls, contextProvider);
                 if (provider != null) {
                     SemanticResourceIdentity resource = importedResource(
@@ -825,15 +914,21 @@ final class DefaultIrRecorder {
                         // module records the class default plan at the
                         // literal range. Host-declared classes produce
                         // no plan (the host supplies defaults at load)
-                        // and publish no occurrence.
+                        // and publish no occurrence. The literal-range
+                        // alias map carries this module's import alias
+                        // only: a provider the walk reaches transitively
+                        // has no alias in this module's import surface,
+                        // and its occurrence is resource-identified.
                         String alias = aliasFor(provider, cls.name());
                         recordOccurrence(
                             RuntimeResourceReference.Kind
                                 .IMPORTED_CLASS_DEFAULT_PLAN,
                             provider, alias, resource,
                             obj.span().range());
-                        classLiteralProviders.put(obj.span().range(),
-                            alias);
+                        if (moduleAliasOf(provider) != null) {
+                            classLiteralProviders.put(obj.span().range(),
+                                alias);
+                        }
                     }
                 }
             }
@@ -1284,7 +1379,15 @@ final class DefaultIrRecorder {
             if (!target.equals(providerIdentity)) {
                 continue;
             }
-            if (identityMatch == null) {
+            // An identity-equal import that carries no declaration of
+            // the demanded class is never selected: two sibling modules
+            // in one directory share the canonical identity, so the
+            // module-identity match alone proves no ownership (the
+            // checker's recorded exact declaration and the qualified
+            // alias/export surface resolve the provider instead).
+            if (identityMatch == null
+                    && AstDeclarations.findClassDeclaration(
+                        provider.program(), cls.name()) != null) {
                 identityMatch = provider;
             }
             if (!exportsClass(provider, cls)) {
@@ -1300,6 +1403,18 @@ final class DefaultIrRecorder {
             }
         }
         return exportedMatch != null ? exportedMatch : identityMatch;
+    }
+
+    /**
+     * The module's own planning snapshot of one dotted module path (the
+     * whole-project provider index), or null for a module outside the
+     * project or an index-less retained harness: the exact checked
+     * declaration of a provider this walk reaches only transitively
+     * resolves here.
+     */
+    private DefaultPlanImport projectProvider(String modulePath) {
+        return modulePath == null || modulePath.isEmpty()
+            ? null : projectProviders.get(modulePath);
     }
 
     /**
@@ -1323,6 +1438,22 @@ final class DefaultIrRecorder {
                         cls.identity().moduleIdentity())) {
                 return provider;
             }
+        }
+        // A declaration module this walk reaches only through an
+        // imported declaration (the declared field/parameter/return
+        // type of an imported class or function): the whole-project
+        // provider index carries that module's own snapshot, so the
+        // same-directory sibling that shares the canonical identity is
+        // never selected in its place. An unmapped module keeps the
+        // no-provider result (the one lowering resolves the recorded
+        // declaration through the project interface index).
+        DefaultPlanImport project = projectProvider(decl.modulePath());
+        if (project != null
+                && AstDeclarations.findClassDeclaration(project.program(),
+                    cls.name()) != null
+                && ownsClass(project, cls,
+                    cls.identity().moduleIdentity())) {
+            return project;
         }
         return null;
     }
@@ -1537,6 +1668,22 @@ final class DefaultIrRecorder {
             if (field.name().equals(fieldName)) {
                 return providerForTypeNode(field.type(),
                     declaringProvider);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The import alias of this module naming the provider snapshot, or
+     * null when the provider is reached only transitively (the
+     * whole-project index) and this module's import surface carries no
+     * alias for it.
+     */
+    private String moduleAliasOf(DefaultPlanImport provider) {
+        for (Map.Entry<String, DefaultPlanImport> entry
+                : imports.entrySet()) {
+            if (entry.getValue().sourcePath().equals(provider.sourcePath())) {
+                return entry.getKey();
             }
         }
         return null;

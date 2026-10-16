@@ -4326,13 +4326,12 @@ public class CheckerTest {
             "an imported value at a same-identity class-literal field is "
                 + "E3019");
 
-        // A literal an explicit enclosing annotation laid out by the
-        // local declaration keeps that declaration's provider even when
-        // the narrower callee parameter names the identity-equal sibling:
-        // the argument boundary sees the crossing, so a same-identity
-        // sibling never receives a value whose layout belongs to the
-        // other declaration (the nested-call shape previously compiled
-        // into a wrong-layout artifact).
+        // A literal whose expectation's own carrier binds the callee
+        // parameter's provider is laid out by that declaration: the
+        // enclosing annotation's same-identity declaration never
+        // captures it (ISSUE-0809 review cycle 2 finding 1), so the
+        // legal nested-call shape constructs the parameter declaration
+        // instead of reporting a false crossing.
         CheckerOutput nested = checkProgramWithModule(local
             + "function f(x: Other.Point): Point { return {}; }\n"
             + "function g(x: Other.Point): Other.Point { return x; }\n"
@@ -4340,9 +4339,10 @@ public class CheckerTest {
             + "  let p: Point = f(g({}));\n"
             + "  return null;\n"
             + "}\n", resolver);
-        assertError(nested, "E3019",
-            "the contextual declaration's literal at a nested sibling "
-                + "parameter is E3019");
+        assertNoErrors(nested,
+            "the nested-call literal is laid out by the callee parameter's "
+                + "declaration, never captured by the enclosing same-identity "
+                + "annotation");
 
         // Same-provider values stay compatible: the imported declaration
         // initializing itself and the local declaration within itself are
