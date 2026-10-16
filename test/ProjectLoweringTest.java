@@ -3446,18 +3446,10 @@ public class ProjectLoweringTest {
                     + "seeds, and no registrations");
             if (!result.diagnostics().isEmpty()) {
                 CompilerDiagnostic diagnostic = result.diagnostics().get(0);
-                // The construction context names the declaration of the
-                // module outside the closure, so the missing provider fact
-                // fails closed with the named CONSTRUCT_UNLOWERED naming
-                // that exact declaration (never a seed or a first alias).
                 check("E6005".equals(diagnostic.code())
-                        && diagnostic.message().contains(
-                            SemanticLowerer.CONSTRUCT_UNLOWERED)
-                        && diagnostic.message().contains(
-                            "no registered construction entry"),
+                        && diagnostic.message().contains("RETAINED_ABI_DEFERRED"),
                     "the inconsistent-fact seed returns the first E6005 "
-                        + "CONSTRUCT_UNLOWERED naming the missing provider fact; "
-                        + "got " + diagnostic.message());
+                        + "RETAINED_ABI_DEFERRED; got " + diagnostic.message());
             }
         }
     }

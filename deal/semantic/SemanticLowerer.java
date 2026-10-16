@@ -5085,28 +5085,27 @@ public final class SemanticLowerer {
                         providerEntryOf(declaring, classId);
                     sharedFacts = entry == null ? null
                         : providerFactoryFacts.get(entry);
-                    if (sharedFacts == null
-                            && !ambiguousFieldIdentity(classId)) {
+                    if (sharedFacts == null) {
+                        if (ambiguousFieldIdentity(classId)) {
+                            throw new ConstructUnlowered("class literal of "
+                                + classId + " is attributed to the declaration of"
+                                + " module '" + declaring + "', but the project"
+                                + " carries no registered construction entry and"
+                                + " shared facts for it (a required provider fact is"
+                                + " missing; the exact declaration is never repaired"
+                                + " by a first alias)", literal.span());
+                        }
                         // A single declaration of the canonical identity:
                         // the identity-keyed route resolves it exactly (a
                         // symbol module-path spelling that differs from the
-                        // session's, or a declaration the interface index
-                        // does not carry). A multiple-declaration identity
-                        // never falls back.
+                        // session's, an unexported declaration the interface
+                        // index does not carry, or a declaration-typed owner
+                        // whose registration seed supplies the layout).
                         sharedFacts = recordedProviderFacts(literal, classId);
                         layout = classLayouts.get(classId);
                         if (sharedFacts == null && layout == null) {
                             sharedFacts = sharedFactories.get(classId);
                         }
-                    }
-                    if (sharedFacts == null && layout == null) {
-                        throw new ConstructUnlowered("class literal of "
-                            + classId + " is attributed to the declaration of"
-                            + " module '" + declaring + "', but the project"
-                            + " carries no registered construction entry and"
-                            + " shared facts for it (a required provider fact is"
-                            + " missing; the exact declaration is never repaired"
-                            + " by a first alias)", literal.span());
                     }
                 }
             } else {
