@@ -4,9 +4,14 @@
 // The single hand-written CommonJS runtime module exporting $rt, the JS
 // analog of deal/runtime.lua (js-backend-runtime D1-D9, pinned by
 // js-backend-runtime-artifact), plus the shared D9 JSON conversion and
-// the @jsonable runtime walkers (js-v12-jsonable-completion D2-D5), and
-// the production async-export invoker (js-v12-async-export-invocation D1-D4). It
-// loads standalone under node v24 from "./deal/runtime" and from any
+// the @jsonable runtime walkers (js-v12-jsonable-completion D2-D5), the
+// production async-export invoker (js-v12-async-export-invocation D1-D4),
+// and the implementation-module registry the JavaScript semantic-IR renderer
+// links through (initModule/moduleSurface/moduleState/publishModule/
+// readModule/callExport/throwValue): output-runtime-scoped private records,
+// the recorded THROW transport, and representation adapters only — no literal
+// semantic authority. It loads standalone under node v24 from
+// "./deal/runtime" and from any
 // "<relpath>/deal/runtime" require path —
 // no require call anywhere in the file (js-backend-runtime-artifact D1/D10).
 
@@ -1894,6 +1899,29 @@ function $asyncReturnDescriptor($descriptor) {
   return null;
 }
 
+// ===== Implementation-module registry records (semantic-IR renderer) =====
+// The output-runtime-scoped private records keyed by the recorded module
+// id: one record per rendered implementation module, created on first
+// reference (the artifact registers its record before requiring any
+// implementation dependency). Different outputs load different runtime
+// copies, so records are never shared across outputs; a module's record is
+// never a HOST typed surface and never an extra enumerable CommonJS key.
+const $executions = new $Map();
+
+function $executionRecord($id) {
+  let $record = $executions.get($id);
+  if ($record === $undefined) {
+    $record = {
+      $id: $id,
+      $state: "UNINITIALIZED",
+      $surface: {},
+      $failure: $undefined,
+    };
+    $executions.set($id, $record);
+  }
+  return $record;
+}
+
 const $rt = {
   MISSING: $MISSING,
   NULL: null,
@@ -3304,6 +3332,102 @@ const $rt = {
       return $ib >= $lb ? 0 : -1;
     }
     return 1;
+  },
+
+  // throwValue: the recorded THROW transport. A tagged Error value that
+  // carries no location is a constructed Error being thrown: the failure is
+  // synthesized at the THROW site's own origin (code/message preserved,
+  // expected/actual/cause absent — absence stays absence, never null). An
+  // already-transported value — a caught error, or one that crossed a
+  // return/parameter boundary — is rethrown unchanged, so its origin,
+  // expected/actual, frames and recursive cause survive catch/rethrow.
+  throwValue: function $throwValue(v, file, line, column) {
+    if (v !== null && typeof v === "object" && v.$kind === "class"
+        && v.$classname === "Error" && v.file === $undefined
+        && v.line === $undefined && v.column === $undefined) {
+      return $rt.errorValue(v.code, v.message, file, line, column,
+        v.expected, v.actual, v.frames, v.cause);
+    }
+    return v;
+  },
+
+  // ===== Implementation-module registry (semantic-IR renderer) =====
+  // The private per-output runtime records of the semantic-IR renderer
+  // (wiki:javascript-semantic-ir-emission, "module_linkage"): one
+  // output-runtime-scoped record per recorded module identity, keyed by the
+  // recorded module id, carrying the UNINITIALIZED | INITIALIZING |
+  // INITIALIZED | FAILED state, the published export surface, and the saved
+  // failure. The records replace no public CommonJS surface: the artifact's
+  // module.exports is the identical object the record publishes, and the
+  // records carry no enumerable linkage key. A successful initialization
+  // returns the identical published surface; a failed one stays sticky —
+  // later loads rethrow the saved failure without executing again, and the
+  // unpublished exports are discarded while completed source effects remain.
+  // Module init registers the record before any implementation dependency is
+  // required, so the state machine is observable from the first import.
+  initModule: function $initModule(id, body) {
+    const $record = $executionRecord(id);
+    if ($record.$state === "INITIALIZED") {
+      return $record.$surface;
+    }
+    if ($record.$state === "FAILED") {
+      throw $record.$failure;
+    }
+    $record.$state = "INITIALIZING";
+    try {
+      body();
+    } catch ($e) {
+      $record.$state = "FAILED";
+      $record.$failure = $e;
+      // The unpublished exports are discarded; completed source and host
+      // effects stay exactly as they happened.
+      $record.$surface = {};
+      throw $e;
+    }
+    $record.$state = "INITIALIZED";
+    return $record.$surface;
+  },
+
+  // moduleSurface: the published CommonJS surface of one module record. A
+  // module that has not initialized reads the present-empty surface (never
+  // a fabricated export); the importer's require initialized the owner
+  // first.
+  moduleSurface: function $moduleSurface(id) {
+    return $executionRecord(id).$surface;
+  },
+
+  // moduleState: the record's closed state name (the sticky-failure
+  // observation seam).
+  moduleState: function $moduleState(id) {
+    return $executionRecord(id).$state;
+  },
+
+  // publishModule: one EXPORT_PUBLISH write of one module's init walk, via
+  // the own-property-safe setProp (a legal __proto__ export name creates an
+  // own property).
+  publishModule: function $publishModule(id, name, value) {
+    return $rt.setProp($executionRecord(id).$surface, name, value);
+  },
+
+  // callExport: the one cross-module SHARED_BODY invocation (the recorded
+  // export name is the callee's published function value). The caller-side
+  // EXTERNAL_PARAMETER boundaries already ran; the callee's source RETURN
+  // executes the single EXTERNAL_RETURN cell, so the CALL re-checks nothing.
+  callExport: function $callExport(id, name, args) {
+    const $fn = $rt.readModule(id, name);
+    if ($fn === $undefined || $fn === null || $fn.$kind !== "function") {
+      $rt.fail("E8001", "expected function", $undefined, $undefined,
+        $undefined, "function", $kindOf($fn));
+    }
+    return $fn.$f(...args);
+  },
+
+  // readModule: the checked read of one published export of one module
+  // (the EXPORT_READ row). The reading module required the owner during its
+  // own init walk, so the owner's surface is complete; an absent name reads
+  // the nil-equivalent undefined, exactly like a missing table entry.
+  readModule: function $readModule(id, name) {
+    return $executionRecord(id).$surface[name];
   },
 };
 

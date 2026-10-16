@@ -44,6 +44,7 @@ TEST_MAINS=(
   'fg|=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311/0314) ===|java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest'
   'fg|=== Running Runtime Type Matcher Tests (ISSUE-0312) ===|java -ea -cp build deal.test.RuntimeTypeMatcherTest'
   'fg|=== Running JS Backend Unit Tests ===|java -ea -cp build deal.test.JsBackendTest'
+  'fg|=== Running JS Semantic-IR Emitter Tests (ISSUE-0798) ===|java -ea -cp build deal.test.JsSemanticEmitterTest'
   'fg|=== Running Source Module Resolver Tests (ISSUE-0267 T6) ===|java -ea -cp build deal.module.SourceModuleResolverTest'
   'luajit|=== Running Runtime Library Tests ===|luajit test_runtime.lua
 luajit test_runtime_int32.lua
