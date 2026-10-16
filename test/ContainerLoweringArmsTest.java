@@ -2115,8 +2115,8 @@ public class ContainerLoweringArmsTest {
             ConstructKind.IDENTIFIER, ConstructKind.IDENTIFIER.mappedOpKinds(),
             ConstructKind.ARRAY_OBJECT_LITERAL, ConstructKind.ARRAY_OBJECT_LITERAL.mappedOpKinds(),
             ConstructKind.SCALAR_LITERAL, ConstructKind.SCALAR_LITERAL.mappedOpKinds());
-        LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(), INTERFACE_HASH,
-            REGISTRY_HASH);
+        LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(),
+            SemanticProfile.DEAL_V1_3_INT32, INTERFACE_HASH, REGISTRY_HASH);
         // The slice opens value frames for the parameters without lowering
         // the declaration arm, so its binding cells are absent; the
         // common-admission head is the applicable closed-rule gate of this

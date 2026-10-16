@@ -2824,6 +2824,17 @@ public class ProjectLoweringTest {
             "the project text carries the interface index under its unchanged format");
         check(text.contains("\"classSeeds\":[{\"key\":"),
             "the project text carries the class registration seeds");
+        check(text.contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+            "the project text carries the owner profile explicitly");
+        check(!text.contains("DEAL_V1_2_INT32") && !text.contains("LEGACY_SAFE_INT"),
+            "no removed profile value appears in the project transport");
+        for (LoweredModuleUnit carried : lowered.modules().values()) {
+            checkEq(SemanticProfile.DEAL_V1_3_INT32, carried.semanticProfile(),
+                "unit " + carried.moduleId() + " carries the owner profile");
+            check(SemanticIrValidator.toUnitText(carried)
+                    .contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+                "unit " + carried.moduleId() + " transports the owner profile");
+        }
         ContractSnapshotCanonicalizer.ParsedProject parsed =
             ContractSnapshotCanonicalizer.parseProject(
                 (CanonicalJson.Obj) CanonicalJson.parse(text));
@@ -2936,6 +2947,18 @@ public class ProjectLoweringTest {
             "the manifest carries the complete interface index and the class seeds");
         check(manifestText.contains("\"modules\":[\"util\",\"app\"]"),
             "the manifest modules field stays the ordered module-path list");
+        check(!manifestText.contains("DEAL_V1_2_INT32")
+                && !manifestText.contains("LEGACY_SAFE_INT"),
+            "no removed profile value appears in the dump manifest");
+        for (SemanticIrDumper.ModuleDump module : dump.modules()) {
+            check(!module.text().contains("DEAL_V1_2_INT32")
+                    && !module.text().contains("LEGACY_SAFE_INT"),
+                "no removed profile value appears in the dump of module "
+                    + module.moduleId());
+            check(module.text().contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+                "the dump of module " + module.moduleId()
+                    + " carries the owner profile explicitly");
+        }
         CanonicalJson.Obj manifest = objOf(dump.manifest());
         for (String unitFact : List.of("bodyTable", "classLayouts", "functions", "ops",
                 "classFactories", "jsonDefaults", "classBindingFacts", "moduleInit",

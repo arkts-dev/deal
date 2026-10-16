@@ -1286,8 +1286,8 @@ public class AddressChainLoweringTest {
             ConstructKind.IDENTIFIER, ConstructKind.IDENTIFIER.mappedOpKinds(),
             ConstructKind.ASSIGNMENT, ConstructKind.ASSIGNMENT.mappedOpKinds(),
             ConstructKind.DELETE, ConstructKind.DELETE.mappedOpKinds());
-        LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(), INTERFACE_HASH,
-            REGISTRY_HASH);
+        LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(),
+            SemanticProfile.DEAL_V1_3_INT32, INTERFACE_HASH, REGISTRY_HASH);
         // The manual chain slice lowers no declaration arm, so its binding
         // cells are absent; the common-admission head is the applicable
         // closed-rule gate of this partial slice (the complete admission of
@@ -1558,7 +1558,8 @@ public class AddressChainLoweringTest {
 
     private static LoweredModuleUnit protocolUnit(List<SemanticOp> ops) {
         LoweredModuleUnit unit = lowerer(checks(Map.of(), new SymbolTable()))
-            .buildUnit(Map.of(), List.of(), INTERFACE_HASH, REGISTRY_HASH);
+            .buildUnit(Map.of(), List.of(), SemanticProfile.DEAL_V1_3_INT32,
+                INTERFACE_HASH, REGISTRY_HASH);
         // The membership of the detached fixture ops: one block that is the
         // plan's init block (a root of the block tree), so the protocol and
         // rule-family fixtures exercise exactly their subject op.
