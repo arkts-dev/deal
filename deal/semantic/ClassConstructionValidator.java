@@ -125,6 +125,46 @@ public final class ClassConstructionValidator {
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
             Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
             Set<ClassId> ambiguousJsonPlanClassIds) {
+        return validate(unit, table, factories, jsonDefaults, ownInterface,
+            sharedFactories, declarationClasses, providerFactoryFacts,
+            ambiguousJsonPlanClassIds, Map.of());
+    }
+
+    /**
+     * The declaration one canonical class identity's generated JSON plan
+     * carries (the plan owner): its declaring module and, when that
+     * declaration is exported, its construction entry. Two same-named
+     * declarations of sibling modules in one directory share one canonical
+     * identity, so a nested JSON link resolves through this recorded owner
+     * — never through the unit-local sibling layout an identity-keyed
+     * lookup would mask it with.
+     */
+    public record ClassPlanOwner(ModuleId module, ClassFactoryId constructionEntry) {
+        public ClassPlanOwner {
+            Objects.requireNonNull(module, "module must not be null");
+        }
+    }
+
+    /**
+     * The composed per-module production admission with the recorded plan
+     * owners of the project-wide multiple-declaration class identities:
+     * the generated JSON plan table is keyed by the canonical class
+     * identity and carries exactly the owner declaration's layout (the
+     * unique plan-bearing declaration when one exists, the emission
+     * order's last declaration otherwise), so every nested JSON link
+     * validates that layout instead of the unit-local sibling.
+     */
+    public static Optional<CompilerDiagnostic> validate(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            ClassFactoryRegistry factories,
+            JsonDefaultChildTable jsonDefaults,
+            ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
+            Set<ClassId> ambiguousJsonPlanClassIds,
+            Map<ClassId, ClassPlanOwner> jsonPlanOwners) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
@@ -137,9 +177,11 @@ public final class ClassConstructionValidator {
             "providerFactoryFacts must not be null");
         Objects.requireNonNull(ambiguousJsonPlanClassIds,
             "ambiguousJsonPlanClassIds must not be null");
+        Objects.requireNonNull(jsonPlanOwners,
+            "jsonPlanOwners must not be null");
         Context context = new Context(unit, table, factories, jsonDefaults, ownInterface,
             sharedFactories, declarationClasses, providerFactoryFacts,
-            ambiguousJsonPlanClassIds);
+            ambiguousJsonPlanClassIds, jsonPlanOwners);
         Optional<CompilerDiagnostic> failure = context.checkFactoryCoherence();
         if (failure.isPresent()) {
             return failure;
@@ -737,6 +779,15 @@ public final class ClassConstructionValidator {
          */
         private final Set<ClassId> ambiguousJsonPlanClassIds;
         /**
+         * The recorded plan owners of the project-wide
+         * multiple-declaration class identities: the declaration the
+         * generated JSON plan table carries under the canonical key. A
+         * nested JSON link validates this owner's layout rather than the
+         * unit-local sibling the identity-keyed context would mask it
+         * with.
+         */
+        private final Map<ClassId, ClassPlanOwner> jsonPlanOwners;
+        /**
          * The declaration classes' registered layouts and owner members of
          * the project's class registration seeds (K10): a host declaration
          * class's payload layout and its field operations resolve through
@@ -762,7 +813,8 @@ public final class ClassConstructionValidator {
                 Map<ClassId, SharedFactoryFacts> sharedFactories,
                 Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
                 Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
-                Set<ClassId> ambiguousJsonPlanClassIds) {
+                Set<ClassId> ambiguousJsonPlanClassIds,
+                Map<ClassId, ClassPlanOwner> jsonPlanOwners) {
             this.unit = unit;
             this.table = table;
             this.factories = factories;
@@ -772,6 +824,7 @@ public final class ClassConstructionValidator {
             this.declarationClasses = Map.copyOf(declarationClasses);
             this.providerFactoryFacts = Map.copyOf(providerFactoryFacts);
             this.ambiguousJsonPlanClassIds = Set.copyOf(ambiguousJsonPlanClassIds);
+            this.jsonPlanOwners = Map.copyOf(jsonPlanOwners);
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
             }
@@ -2414,6 +2467,62 @@ public final class ClassConstructionValidator {
                             + " cannot select the exact declaration, so the link"
                             + " fails closed with no partial project");
                     }
+                    ClassPlanOwner planOwner = jsonPlanOwners.get(nested);
+                    if (planOwner != null) {
+                        // The recorded plan owner of a multiple-declaration
+                        // identity: the generated plan table carries exactly
+                        // this declaration's layout, so the nested link
+                        // validates the owner's own layout (this unit's
+                        // declaration) or the owner's exact
+                        // shared-factory facts — never the unit-local
+                        // sibling an identity-keyed lookup would select.
+                        if (planOwner.module().equals(unit.moduleId())) {
+                            ClassLayout ownLayout = unit.classLayouts().get(nested);
+                            if (ownLayout == null) {
+                                yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                    + owner + " field '" + field + "' nested class "
+                                    + nested + " is the recorded plan owner of this"
+                                    + " unit but the unit declares no such layout (a"
+                                    + " fact defect)");
+                            }
+                            ClassInterface ownEntry = ownClassEntry(nested);
+                            if (ownEntry != null
+                                    && factories.factoryFor(
+                                        ownEntry.constructionEntry()) == null) {
+                                yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                    + owner + " field '" + field + "' nested class "
+                                    + nested + " is exported but has no registered "
+                                    + "factory under its constructionEntry: the nested "
+                                    + "JSON decode triggers the nested CLASS_FACTORY");
+                            }
+                            yield checkNestedJsonable(ownLayout, visited);
+                        }
+                        SharedFactoryFacts ownerFacts = factsOf(nested,
+                            planOwner.constructionEntry());
+                        if (ownerFacts == null) {
+                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                + owner + " field '" + field + "' references imported"
+                                + " nested class " + nested + " without shared-factory"
+                                + " facts: the SharedFactoryFacts context must cover"
+                                + " every imported class the unit's class constructs"
+                                + " reference");
+                        }
+                        if (planOwner.constructionEntry() != null
+                                && !planOwner.constructionEntry().equals(
+                                    ownerFacts.interfaceEntry().constructionEntry())) {
+                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                + owner + " field '" + field + "' nested class "
+                                + nested + " resolves shared-factory facts of"
+                                + " construction entry "
+                                + ownerFacts.interfaceEntry().constructionEntry()
+                                + ", not the recorded plan owner's "
+                                + planOwner.constructionEntry() + " (same-directory"
+                                + " sibling declarations): the nested link fails"
+                                + " closed rather than selecting another"
+                                + " declaration's plan");
+                        }
+                        yield checkNestedJsonable(ownerFacts.layout(), visited);
+                    }
                     ClassLayout nestedLayout = layoutContext.get(nested);
                     if (nestedLayout == null) {
                         yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
@@ -2430,7 +2539,7 @@ public final class ClassConstructionValidator {
                                 + " resolves to a layout that differs from the unit's "
                                 + "own layout");
                         }
-                        ClassInterface ownEntry = interfaceContext.get(nested);
+                        ClassInterface ownEntry = ownClassEntry(nested);
                         if (ownEntry != null) {
 
                             if (factories.factoryFor(ownEntry.constructionEntry())

@@ -1290,9 +1290,11 @@ public final class SemanticLowerer {
         // The plan-bearing (jsonable) declarations of the same identity:
         // only a genuine two-plan collision makes the generated JSON plan
         // key ambiguous; a single plan-bearing declaration keeps every
-        // nested link exact.
-        java.util.Set<ClassId> ambiguousJsonPlanClassIds =
-            ambiguousJsonPlanClassIds(checkedProject);
+        // nested link exact. The plan owner resolves the declaration the
+        // generated plan table carries under the canonical key (the
+        // unique plan-bearing declaration when one exists, the emission
+        // order's last declaration otherwise).
+        JsonPlanFacts jsonPlanFacts = jsonPlanFacts(checkedProject, interfaceIndex);
 
         for (CheckedModuleInput module : checkedProject.modules()) {
             SemanticRequirementManifest manifest =
@@ -1320,7 +1322,7 @@ public final class SemanticLowerer {
                 conversionIntrinsics, ownInterface, comparisonFacts,
                 inProjectFactoryFacts, inProjectProviderFacts,
                 providerConstructionEntries, declaredParameterAnnotations,
-                projectAmbiguousClassIds, ambiguousJsonPlanClassIds);
+                projectAmbiguousClassIds, jsonPlanFacts);
             if (lowered.hasErrors()) {
                 return projectFailureResult(lowered.diagnostics());
             }
@@ -1401,18 +1403,40 @@ public final class SemanticLowerer {
     }
 
     /**
-     * The project-wide canonical class identities carrying more than one
-     * plan-bearing ({@code @jsonable}) declaration: the generated JSON
-     * plan table is keyed by the canonical class identity, so exactly one
-     * plan-bearing declaration resolves a nested JSON link exactly, while
-     * a same-identity declaration without a generated plan registers none
-     * and cannot collide with it. A declaration file's {@code @jsonable}
-     * directive has no effect (its classes generate no plan), so only
-     * implementation modules contribute counts.
+     * The generated-JSON-plan facts of the project's class identities
+     * (the canonical plan key is the class identity):
+     *
+     * <ul>
+     *   <li>{@code ambiguous} — the identities carrying more than one
+     *   plan-bearing ({@code @jsonable}) declaration: the generated plan
+     *   table can carry only one declaration's plan under the key, so such
+     *   a project fails closed (the generated helpers themselves are
+     *   ambiguous, not only the nested links);</li>
+     *   <li>{@code owners} — for every identity carrying more than one
+     *   declaration, the declaration whose layout and defaults the
+     *   generated plan table carries: the unique plan-bearing declaration
+     *   when exactly one exists, the emission order's last declaration
+     *   otherwise;</li>
+     *   <li>{@code ownerEntries} — the owner's construction entry when the
+     *   owner is exported, so the nested-link admission and the per-module
+     *   validation resolve the owner's exact shared-factory facts.</li>
+     * </ul>
+     *
+     * <p>A declaration file's {@code @jsonable} directive has no effect
+     * (its classes generate no plan), so only implementation modules
+     * contribute; the checked project's module list covers exactly those,
+     * in dependency order — the order the emitters merge the project's
+     * class layouts in.</p>
      */
-    private static java.util.Set<ClassId> ambiguousJsonPlanClassIds(
-            CheckedProjectInput checkedProject) {
-        Map<ClassId, Integer> counts = new LinkedHashMap<>();
+    private record JsonPlanFacts(java.util.Set<ClassId> ambiguous,
+                                 Map<ClassId, ModuleId> owners,
+                                 Map<ClassId, deal.semantic.ir.ClassFactoryId>
+                                     ownerEntries) {}
+
+    private static JsonPlanFacts jsonPlanFacts(CheckedProjectInput checkedProject,
+            deal.semantic.ir.ProjectInterfaceIndex interfaceIndex) {
+        Map<ClassId, java.util.List<ModuleId>> declarations = new LinkedHashMap<>();
+        Map<ClassId, java.util.List<ModuleId>> planBearers = new LinkedHashMap<>();
         for (CheckedModuleInput module : checkedProject.modules()) {
             SymbolTable table = module.checks() == null
                 ? null : module.checks().symbolTable();
@@ -1422,8 +1446,7 @@ public final class SemanticLowerer {
             for (StatementNode statement : module.ast().statements()) {
                 StatementNode declaration = statement instanceof ExportDeclaration export
                     ? export.declaration() : statement;
-                if (!(declaration instanceof ClassDeclaration classDeclaration)
-                        || !classDeclaration.isJsonable()) {
+                if (!(declaration instanceof ClassDeclaration classDeclaration)) {
                     continue;
                 }
                 Symbol symbol = table.resolve(classDeclaration.name());
@@ -1434,16 +1457,68 @@ public final class SemanticLowerer {
                 ClassId classId = new ClassId(
                     DescriptorService.semanticModulePath(classSymbol.identity()),
                     classSymbol.name());
-                counts.merge(classId, 1, Integer::sum);
+                if (classId.equals(ClassId.ERROR)) {
+                    continue;
+                }
+                declarations.computeIfAbsent(classId,
+                    key -> new java.util.ArrayList<>()).add(module.moduleId());
+                if (classDeclaration.isJsonable()) {
+                    planBearers.computeIfAbsent(classId,
+                        key -> new java.util.ArrayList<>()).add(module.moduleId());
+                }
             }
         }
         java.util.Set<ClassId> ambiguous = new java.util.LinkedHashSet<>();
-        for (Map.Entry<ClassId, Integer> entry : counts.entrySet()) {
-            if (entry.getValue() > 1) {
+        Map<ClassId, ModuleId> owners = new LinkedHashMap<>();
+        for (Map.Entry<ClassId, java.util.List<ModuleId>> entry
+                : declarations.entrySet()) {
+            java.util.List<ModuleId> bearers = planBearers.get(entry.getKey());
+            int bearerCount = bearers == null ? 0 : bearers.size();
+            if (bearerCount > 1) {
                 ambiguous.add(entry.getKey());
             }
+            if (entry.getValue().size() > 1) {
+                owners.put(entry.getKey(), bearerCount == 1
+                    ? bearers.get(0)
+                    : entry.getValue().get(entry.getValue().size() - 1));
+            }
         }
-        return java.util.Collections.unmodifiableSet(ambiguous);
+        Map<ClassId, deal.semantic.ir.ClassFactoryId> ownerEntries =
+            new LinkedHashMap<>();
+        Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>> moduleEntries =
+            constructionEntriesOf(interfaceIndex);
+        for (Map.Entry<ClassId, ModuleId> owner : owners.entrySet()) {
+            Map<ClassId, deal.semantic.ir.ClassFactoryId> byClass =
+                moduleEntries.get(owner.getValue());
+            if (byClass == null) {
+                continue;
+            }
+            deal.semantic.ir.ClassFactoryId entry =
+                byClass.get(owner.getKey());
+            if (entry != null) {
+                ownerEntries.put(owner.getKey(), entry);
+            }
+        }
+        return new JsonPlanFacts(
+            java.util.Collections.unmodifiableSet(ambiguous),
+            java.util.Collections.unmodifiableMap(owners),
+            java.util.Collections.unmodifiableMap(ownerEntries));
+    }
+
+    /**
+     * The validator-facing plan-owner facts of the project's
+     * multiple-declaration class identities (the owner declaration and its
+     * construction entry when exported).
+     */
+    private static Map<ClassId, ClassConstructionValidator.ClassPlanOwner> jsonPlanOwners(
+            JsonPlanFacts facts) {
+        Map<ClassId, ClassConstructionValidator.ClassPlanOwner> owners =
+            new LinkedHashMap<>();
+        for (Map.Entry<ClassId, ModuleId> entry : facts.owners().entrySet()) {
+            owners.put(entry.getKey(), new ClassConstructionValidator.ClassPlanOwner(
+                entry.getValue(), facts.ownerEntries().get(entry.getKey())));
+        }
+        return java.util.Collections.unmodifiableMap(owners);
     }
 
     /**
@@ -1527,7 +1602,7 @@ public final class SemanticLowerer {
                 providerConstructionEntries,
             Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations,
             java.util.Set<ClassId> projectAmbiguousClassIds,
-            java.util.Set<ClassId> ambiguousJsonPlanClassIds) {
+            JsonPlanFacts jsonPlanFacts) {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), true, true, ownInterface,
@@ -1539,7 +1614,9 @@ public final class SemanticLowerer {
         lowerer.setProviderFactoryFacts(Map.copyOf(providerFactoryFacts),
             providerConstructionEntries, module.classLiteralProviders());
         lowerer.setProjectAmbiguousClassIds(projectAmbiguousClassIds);
-        lowerer.setAmbiguousJsonPlanClassIds(ambiguousJsonPlanClassIds);
+        lowerer.setAmbiguousJsonPlanClassIds(jsonPlanFacts.ambiguous());
+        lowerer.setJsonPlanOwners(jsonPlanFacts.owners(),
+            jsonPlanFacts.ownerEntries());
         lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
@@ -1572,7 +1649,7 @@ public final class SemanticLowerer {
             unit.classFactories(), unit.jsonDefaults(), ownInterface,
             Map.copyOf(sharedFactories), seeds.registrations(),
             Map.copyOf(providerFactoryFacts),
-            ambiguousJsonPlanClassIds);
+            jsonPlanFacts.ambiguous(), jsonPlanOwners(jsonPlanFacts));
         if (unitChain.isPresent()) {
             return LoweredProjectModule.failure(List.of(unitChain.get()));
         }
@@ -1733,6 +1810,34 @@ public final class SemanticLowerer {
             Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
                 providerFactoryFacts,
             java.util.Set<ClassId> ambiguousJsonPlanClassIds) {
+        return validateProjectUnit(unit, table, facts, bindingFacts, factories,
+            jsonDefaults, ownInterface, sharedFactories, declarationClasses,
+            providerFactoryFacts, ambiguousJsonPlanClassIds, Map.of());
+    }
+
+    /**
+     * The composed per-module production admission over the supplied
+     * provider-keyed shared-factory facts, the project-wide ambiguous
+     * plan-key identities and the recorded plan owners of the
+     * multiple-declaration class identities: every nested JSON link of an
+     * identity the generated plan table carries under the canonical key
+     * validates the owner declaration's layout — never the unit-local
+     * sibling an identity-keyed lookup would mask it with.
+     */
+    public static Optional<CompilerDiagnostic> validateProjectUnit(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            SemanticIrValidator.ComparisonFacts facts,
+            ClassBindingFacts bindingFacts,
+            deal.semantic.ir.ClassFactoryRegistry factories,
+            deal.semantic.ir.JsonDefaultChildTable jsonDefaults,
+            deal.semantic.ir.ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+                providerFactoryFacts,
+            java.util.Set<ClassId> ambiguousJsonPlanClassIds,
+            Map<ClassId, ClassConstructionValidator.ClassPlanOwner> jsonPlanOwners) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
@@ -1747,6 +1852,7 @@ public final class SemanticLowerer {
             "providerFactoryFacts must not be null");
         Objects.requireNonNull(ambiguousJsonPlanClassIds,
             "ambiguousJsonPlanClassIds must not be null");
+        Objects.requireNonNull(jsonPlanOwners, "jsonPlanOwners must not be null");
         Optional<CompilerDiagnostic> viewMismatch = checkSuppliedViews(unit, table,
             bindingFacts, factories, jsonDefaults, facts);
         if (viewMismatch.isPresent()) {
@@ -1777,7 +1883,7 @@ public final class SemanticLowerer {
         }
         return ClassConstructionValidator.validate(unit, ownedTable, ownedFactories,
             ownedJsonDefaults, ownInterface, sharedFactories, declarationClasses,
-            providerFactoryFacts, ambiguousJsonPlanClassIds);
+            providerFactoryFacts, ambiguousJsonPlanClassIds, jsonPlanOwners);
     }
 
     /**
@@ -2724,6 +2830,18 @@ public final class SemanticLowerer {
          */
         private java.util.Set<ClassId> ambiguousJsonPlanClassIds =
             java.util.Set.of();
+        /**
+         * The recorded plan owner of every canonical identity carrying
+         * more than one declaration (the unique plan-bearing declaration
+         * when one exists, the emission order's last declaration
+         * otherwise) and the owner's construction entry when exported.
+         * The generated JSON plan table carries exactly this declaration's
+         * layout under the canonical key, so the nested-link admission and
+         * the per-module validation resolve through it.
+         */
+        private Map<ClassId, ModuleId> jsonPlanOwners = Map.of();
+        private Map<ClassId, deal.semantic.ir.ClassFactoryId> jsonPlanOwnerEntries =
+            Map.of();
         /**
          * The canonical class identities carried by more than one
          * accumulating provider declaration (a same-directory sibling
@@ -4441,6 +4559,7 @@ public final class SemanticLowerer {
 
             List<deal.semantic.ir.ClassLayout.FieldLayout> fields = new ArrayList<>();
             Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
+            Map<String, ModuleId> fieldProviders = new LinkedHashMap<>();
             for (ClassField field : declaration.fields()) {
                 Type fieldType = fieldTypeOf(field.type());
                 RuntimeDescriptor descriptor;
@@ -4455,6 +4574,21 @@ public final class SemanticLowerer {
                 fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(field.name(),
                     descriptor, !field.optional(), DefaultOwner.LOCAL));
                 descriptors.put(field.name(), descriptor);
+                // The field's exact declaring declaration (the checked
+                // annotation's own class symbol): a bare name is the
+                // module's own declaration, a qualified name the
+                // imported module's own declared symbol. The generated
+                // JSON plan table is keyed by the canonical class
+                // identity, so this recorded provider selects the exact
+                // declaration of every nested JSON link.
+                Symbol.ClassSymbol annotationSymbol =
+                    deal.checker.NameResolver.classSymbolInScope(
+                        currentCheckerScope(), field.type());
+                if (annotationSymbol != null
+                        && !annotationSymbol.modulePath().isEmpty()) {
+                    fieldProviders.put(field.name(),
+                        new ModuleId(annotationSymbol.modulePath()));
+                }
             }
             deal.semantic.ir.ClassLayout layout =
                 new deal.semantic.ir.ClassLayout(classId, fields);
@@ -4518,7 +4652,19 @@ public final class SemanticLowerer {
             classDefaults.put(classId, defaults);
 
             if (declaration.isJsonable()) {
-                lowerJsonFunctions(declaration, classId, layout, classDefaultOpIds);
+                if (ambiguousJsonPlanClassIds.contains(classId)) {
+                    throw new ConstructUnlowered("the @jsonable class '"
+                        + declaration.name() + "' carries canonical class identity "
+                        + classId + " together with another plan-bearing"
+                        + " (@jsonable) declaration in the project (same-directory"
+                        + " sibling declarations): the generated JSON plan table is"
+                        + " keyed by the canonical identity, so the generated JSON"
+                        + " plan key cannot select the exact declaration — the"
+                        + " project fails closed with no partial project",
+                        declaration.span());
+                }
+                lowerJsonFunctions(declaration, classId, layout, classDefaultOpIds,
+                    fieldProviders);
             }
 
             if (!exported) {
@@ -4557,8 +4703,9 @@ public final class SemanticLowerer {
 
         private void lowerJsonFunctions(ClassDeclaration declaration, ClassId classId,
                                         deal.semantic.ir.ClassLayout layout,
-                                        List<OpId> classDefaultOpIds) {
-            rejectAmbiguousJsonNestedClasses(declaration, layout);
+                                        List<OpId> classDefaultOpIds,
+                                        Map<String, ModuleId> fieldProviders) {
+            rejectAmbiguousJsonNestedClasses(declaration, layout, fieldProviders);
             // The generated signatures flow from the checker's synthetic
             // C$fromJson/C$toJson function symbols through the single
             // DescriptorService producer (the producer-singularity rule:
@@ -4609,10 +4756,14 @@ public final class SemanticLowerer {
          * plan and cannot collide with it.
          */
         private void rejectAmbiguousJsonNestedClasses(ClassDeclaration declaration,
-                                                      deal.semantic.ir.ClassLayout layout) {
+                                                      deal.semantic.ir.ClassLayout layout,
+                                                      Map<String, ModuleId> fieldProviders) {
             for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
                 ClassId nested = nestedClassIdOf(field.descriptor());
-                if (nested != null && ambiguousJsonPlanClassIds.contains(nested)) {
+                if (nested == null) {
+                    continue;
+                }
+                if (ambiguousJsonPlanClassIds.contains(nested)) {
                     throw new ConstructUnlowered("the @jsonable class '"
                         + declaration.name() + "' field '" + field.name()
                         + "' references nested class " + nested + " whose canonical"
@@ -4623,6 +4774,29 @@ public final class SemanticLowerer {
                         + " partial project",
                         declaration.span());
                 }
+                ModuleId owner = jsonPlanOwners.get(nested);
+                if (owner == null) {
+                    // A single declaration: the canonical plan key is exact.
+                    continue;
+                }
+                ModuleId provider = fieldProviders.get(field.name());
+                if (owner.equals(provider)) {
+                    // The generated JSON plan table carries exactly this
+                    // field's declaring declaration under the canonical key.
+                    continue;
+                }
+                throw new ConstructUnlowered("the @jsonable class '"
+                    + declaration.name() + "' field '" + field.name()
+                    + "' references nested class " + nested + " whose generated"
+                    + " JSON plan key carries the declaration of module '"
+                    + owner.path() + "' while the field's declared type resolves"
+                    + (provider == null
+                        ? " no recorded declaring module"
+                        : " the declaration of module '" + provider.path() + "'")
+                    + " (same-directory sibling declarations): the generated JSON"
+                    + " plan key cannot select the exact declaration, so the link"
+                    + " fails closed with no partial project",
+                    declaration.span());
             }
         }
 
@@ -8534,6 +8708,26 @@ public final class SemanticLowerer {
                 "ambiguous must not be null");
             this.ambiguousJsonPlanClassIds = java.util.Collections
                 .unmodifiableSet(new java.util.LinkedHashSet<>(ambiguous));
+        }
+
+        /**
+         * Installs the recorded plan owners of the project's
+         * multiple-declaration class identities (the unique plan-bearing
+         * declaration when one exists, the emission order's last
+         * declaration otherwise) and the owner's construction entry when
+         * exported: every nested JSON link and its validation resolves
+         * the owner declaration's own layout.
+         */
+        public void setJsonPlanOwners(Map<ClassId, ModuleId> owners,
+                Map<ClassId, deal.semantic.ir.ClassFactoryId> ownerEntries) {
+            java.util.Objects.requireNonNull(owners,
+                "owners must not be null");
+            java.util.Objects.requireNonNull(ownerEntries,
+                "ownerEntries must not be null");
+            this.jsonPlanOwners = java.util.Collections
+                .unmodifiableMap(new java.util.LinkedHashMap<>(owners));
+            this.jsonPlanOwnerEntries = java.util.Collections
+                .unmodifiableMap(new java.util.LinkedHashMap<>(ownerEntries));
         }
 
         /**

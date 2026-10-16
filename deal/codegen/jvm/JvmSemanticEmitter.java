@@ -692,7 +692,7 @@ public final class JvmSemanticEmitter {
             // canonical class identity.
             emitClassCarriers();
 
-            for (ClassLayout layout : classLayouts.values()) {
+            for (ClassLayout layout : jsonPlanLayouts.values()) {
                 emitJsonPlan(layout);
             }
             // The module-init walk, exposed as the deferred-main entry (the
@@ -942,7 +942,7 @@ public final class JvmSemanticEmitter {
          * && p == true} — never conflated with a missing field.
          */
         private void emitClassCarriers() {
-            for (ClassLayout layout : classLayouts.values()) {
+            for (ClassLayout layout : carrierLayouts.values()) {
                 ClassId classId = layout.classId();
                 out.append("  static final class ").append(carrierName(classId))
                     .append(" implements JvmRuntime.ClassInstance {\n");
@@ -1028,7 +1028,9 @@ public final class JvmSemanticEmitter {
                 .append(javaString(layout.classId().text())).append(",\n");
             out.append("    new JvmJson.Field[]{\n");
             for (ClassLayout.FieldLayout field : layout.fields()) {
-                SemanticOp defaultOp = classDefaultOpOf(layout.classId(), field.name());
+                SemanticOp defaultOp = classDefaultOpOf(
+                    jsonPlanOwners.get(layout.classId()), layout.classId(),
+                    field.name());
                 out.append("      new JvmJson.Field(").append(javaString(field.name()))
                     .append(", ").append(javaString(jsonDescriptorText(field.descriptor())))
                     .append(", ").append(field.required() ? "false" : "true")
@@ -4856,7 +4858,7 @@ public final class JvmSemanticEmitter {
             }
 
             for (KindPayload.ProvidedField field : payload.providedFields()) {
-                if (fieldOf(layout, field.name()) == null) {
+                if (fieldOf(payload.layout(), field.name()) == null) {
                     String errName = "__ee_" + op.opId().id() + "_"
                         + Integer.toHexString(field.name().hashCode() & 0x7fffffff);
                     // The static extra-key check always fires at this

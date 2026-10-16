@@ -1306,6 +1306,133 @@ public class ProductionDispatchTest {
         }
     }
 
+    /**
+     * The plan-imported/non-plan-local same-identity JSON fixture (review
+     * cycle 4, finding 1): the imported sibling is the only plan-bearing
+     * ({@code @jsonable}) declaration while the entry's own same-identity
+     * sibling generates none, so the emitted plan table carries the
+     * imported declaration's layout and the nested JSON round trip walks
+     * its fields. The construction and the nested link must agree on the
+     * imported declaration under the real backends.
+     */
+    private static final String PLAN_IMPORTED_OTHER_SOURCE = """
+        // @jsonable
+        export class Point { a: int = 7; }
+        """;
+
+    private static final String PLAN_IMPORTED_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as other from "./other";
+
+        export class Point { nick: string = "local"; }
+
+        // @jsonable
+        export class Wrap { p: other.Point = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
+            throw { code: "WRONG", message: s };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The local-plan mirror (review cycle 2): the entry's own declaration
+     * is the only plan-bearing declaration while the imported sibling
+     * generates none, so the local declaration owns the plan and the
+     * nested round trip — the production lanes must keep both directions
+     * exact.
+     */
+    private static final String PLAN_LOCAL_OTHER_SOURCE = """
+        export class Point { nick: string = ""; }
+        """;
+
+    private static final String PLAN_LOCAL_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as other from "./other";
+
+        // @jsonable
+        export class Point { nick: string = "l"; }
+
+        // @jsonable
+        export class Wrap { p: Point = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
+            throw { code: "WRONG", message: s };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The plan-imported/non-plan-local same-identity JSON link and its
+     * local-plan mirror on the shared-IR production lanes (review cycle
+     * 4, finding 1): the generated plan table carries the unique
+     * plan-bearing declaration's layout under the canonical identity in
+     * both directions, so the nested construction, plan walk and emitted
+     * artifact agree and the real LuaJIT and JVM artifacts print
+     * {@code ok} with an empty stderr and exit 0.
+     */
+    private static void testProductionPlanOwnerJsonLinks()
+            throws Exception {
+        System.out.println("-- public compilation: the plan-imported/"
+            + "non-plan-local and local-plan same-identity JSON links"
+            + " execute the exact plan-bearing declaration --");
+        for (boolean importedPlan : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = (importedPlan ? "imported plan" : "local plan")
+                    + " " + backend;
+                Path project = Files.createTempDirectory(
+                    "production-plan-owner-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/other.deal", importedPlan
+                        ? PLAN_IMPORTED_OTHER_SOURCE : PLAN_LOCAL_OTHER_SOURCE);
+                    write(project, "src/main.deal", importedPlan
+                        ? PLAN_IMPORTED_MAIN_SOURCE : PLAN_LOCAL_MAIN_SOURCE);
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
     private static void testProductionSiblingModuleProviderIdentity()
             throws Exception {
         System.out.println("-- public compilation: sibling class-declaring"
@@ -5728,6 +5855,7 @@ public class ProductionDispatchTest {
         testProductionLuaJitTwoModuleSurfaces();
         testProductionSiblingModuleProviderIdentity();
         testProductionSameNameSiblingSharedIr();
+        testProductionPlanOwnerJsonLinks();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionShadowedLocalCalleeCollision();

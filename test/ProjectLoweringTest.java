@@ -589,6 +589,56 @@ public class ProjectLoweringTest {
         """;
 
     /**
+     * The plan-imported/non-plan-local same-identity fixture (review
+     * cycle 4, finding 1): the imported sibling carries the only
+     * plan-bearing ({@code @jsonable}) declaration while the unit-local
+     * sibling declares no generated plan, so the generated plan table
+     * carries the imported declaration's layout and the nested link
+     * resolves it exactly — the local sibling's own layout never masks it.
+     */
+    private static final String PLAN_IMPORTED_OTHER_SOURCE = """
+        // @jsonable
+        export class Point { a: int = 7; }
+        """;
+
+    private static final String PLAN_IMPORTED_APP_SOURCE = """
+        import * as other from "./other";
+
+        export class Point { nick: string = "local"; }
+
+        // @jsonable
+        export class Wrap { p: other.Point = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
+            throw { code: "WRONG", message: s };
+          }
+          return null;
+        }
+        """;
+
+    /** The same plan-imported fixture with the local sibling non-exported. */
+    private static final String PLAN_IMPORTED_APP_NONEXPORTED_SOURCE = """
+        import * as other from "./other";
+
+        class Point { nick: string = "local"; }
+
+        // @jsonable
+        export class Wrap { p: other.Point = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
+            throw { code: "WRONG", message: s };
+          }
+          return null;
+        }
+        """;
+
+    /**
      * The annotated-local + imported-callee-argument fixture (review
      * cycle 2, finding 1): the consumer declares its own {@code Ir} in the
      * sibling directory, so the annotation's construction context is a
@@ -2641,6 +2691,92 @@ public class ProjectLoweringTest {
                     + run.comparisonReport());
         } finally {
             deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * The plan-imported/non-plan-local same-identity JSON link (review
+     * cycle 4, finding 1): the imported sibling carries the only
+     * plan-bearing declaration, so the generated plan table carries the
+     * imported declaration's layout (the unique plan-bearing declaration
+     * wins over the emission order's local sibling) and the nested link
+     * resolves it exactly — the construction, the nested link and the
+     * oracle walk agree with no wrong-sibling plan. Both the exported and
+     * the non-exported local sibling shapes admit.
+     */
+    private static void testPlanImportedBesideNonPlanLocal() throws Exception {
+        System.out.println("-- the plan-imported/non-plan-local same-identity JSON "
+            + "link resolves the imported plan-bearing declaration and "
+            + "executes --");
+        for (boolean exported : new boolean[] { true, false }) {
+            String label = exported ? "local exported" : "local non-exported";
+            RealProject project = compileProject(
+                exported ? PLAN_IMPORTED_APP_SOURCE
+                    : PLAN_IMPORTED_APP_NONEXPORTED_SOURCE,
+                Map.of("src/other.deal", PLAN_IMPORTED_OTHER_SOURCE), Map.of());
+            try {
+                SemanticLowerer.ProjectLoweringResult result =
+                    lower(project, invocation());
+                check(!result.hasErrors() && result.project() != null,
+                    "the " + label + " plan-imported project lowers through the "
+                        + "one project entry: " + result.diagnostics());
+                if (result.project() == null) {
+                    return;
+                }
+                ExecutableLoweredProject lowered = result.project();
+                LoweredModuleUnit appUnit = lowered.modules().get(APP);
+                ClassId point = new ClassId("src", "Point");
+                check(appUnit != null && appUnit.classLayouts().containsKey(point),
+                    "the consumer unit declares the same-identity local sibling "
+                        + "(" + label + ")");
+                if (appUnit != null) {
+                    checkEq("nick",
+                        appUnit.classLayouts().get(point).fields().get(0).name(),
+                        "the consumer unit's own layout of the identity stays the "
+                            + "local declaration's (" + label + ")");
+                    KindPayload.ClassNewPayload literal = null;
+                    for (SemanticOp op : appUnit.ops()) {
+                        if (op.kind() == SemanticOpKind.CLASS_NEW
+                                && op.payload()
+                                    instanceof KindPayload.ClassNewPayload payload
+                                && payload.classId().equals(point)) {
+                            literal = payload;
+                        }
+                    }
+                    check(literal != null, "the Wrap.p default lowers one "
+                        + "CLASS_NEW of the identity (" + label + ")");
+                    if (literal != null) {
+                        checkEq(DefaultOwner.SHARED_FACTORY, literal.defaultOwner(),
+                            "the default literal constructs the imported "
+                                + "plan-bearing declaration (" + label + ")");
+                        checkEq("a", literal.layout().fields().get(0).name(),
+                            "the construction carries the imported plan-bearing "
+                                + "declaration's layout (" + label + ")");
+                    }
+                }
+                SemanticIrValidator.ComparisonFacts facts =
+                    new SemanticIrValidator.ComparisonFacts(
+                        project.index().interfaceIndexDigest(),
+                        SemanticProfile.DEAL_V1_3_INT32,
+                        invocation().capabilityRegistryHash());
+                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                    "the " + label + " plan-imported project passes the typed "
+                        + "project surface");
+                String text = SemanticIrValidator.toProjectText(lowered);
+                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                    "the " + label + " plan-imported project passes the text "
+                        + "project surface");
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.executeProjectInits(lowered, result.tables(),
+                        result.registries(), null);
+                check(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the oracle executes the nested JSON round trip through the "
+                        + "imported plan-bearing declaration (" + label + "): "
+                        + run.comparisonReport());
+            } finally {
+                deleteRecursively(project.root());
+            }
         }
     }
 
@@ -5741,6 +5877,7 @@ public class ProjectLoweringTest {
             testAmbiguousFieldOperationFailClosed();
             testAmbiguousJsonNestedLinkFailClosed();
             testSinglePlanJsonNestedLinkResolves();
+            testPlanImportedBesideNonPlanLocal();
             testLocalDeclarationBesideImportedCalleeArgument();
             testImportedContextBesideCalleeArgumentProvider();
             testImportedFieldWriteProviderDeferral();

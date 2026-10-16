@@ -1115,6 +1115,17 @@ public final class SemanticOracle {
          */
         final Map<ModuleId, ModuleInitLifecycle> moduleInitLifecycles =
             new LinkedHashMap<>();
+        /**
+         * The generated JSON plan entries of the closure keyed by the
+         * canonical class identity: the emitted plan table carries the
+         * unique plan-bearing declaration's layout when one exists (the
+         * emission order's last declaration otherwise), so the JSON walks
+         * resolve the same declaration the emitted plan table carries —
+         * never a first-declaration or order-dependent sibling.
+         */
+        final Map<ClassId, ClassLayout> jsonPlanLayouts = new LinkedHashMap<>();
+        /** The declaring unit of each {@link #jsonPlanLayouts} entry. */
+        private final Map<ClassId, ModuleId> jsonPlanOwners = new LinkedHashMap<>();
 
         Execution(LoweredModuleUnit unit, StructuredBodyTable table, HostResponder responder) {
             this(unit, table, responder, Map.of());
@@ -1156,6 +1167,76 @@ public final class SemanticOracle {
             classLayouts.putAll(this.declarationLayouts);
 
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
+            resolveJsonPlanLayouts();
+        }
+
+        /**
+         * Resolves the closure's generated JSON plan entries with the same
+         * selection the shared emitters apply: a canonical identity the
+         * closure declares more than once carries the unique plan-bearing
+         * declaration's layout under the key (the emission order's last
+         * declaration otherwise).
+         */
+        private void resolveJsonPlanLayouts() {
+            for (UnitState state : units.values()) {
+                for (Map.Entry<ClassId, ClassLayout> entry
+                        : state.unit.classLayouts().entrySet()) {
+                    ClassId classId = entry.getKey();
+                    ModuleId previous = jsonPlanOwners.get(classId);
+                    UnitState previousState =
+                        previous == null ? null : units.get(previous);
+                    if (previous == null
+                            || jsonPlanBearing(state.unit, classId)
+                            || !jsonPlanBearing(previousState == null
+                                ? null : previousState.unit, classId)) {
+                        jsonPlanLayouts.put(classId, entry.getValue());
+                        jsonPlanOwners.put(classId, state.unit.moduleId());
+                    }
+                }
+            }
+            ClassLayout error = classLayouts.get(ClassId.ERROR);
+            if (error != null) {
+                jsonPlanLayouts.put(ClassId.ERROR, error);
+            }
+        }
+
+        /**
+         * Whether one unit's own declaration of a canonical class identity
+         * is plan-bearing (the unit generates the generated JSON helper
+         * ops of the identity).
+         */
+        private static boolean jsonPlanBearing(LoweredModuleUnit unit,
+                                               ClassId classId) {
+            if (unit == null) {
+                return false;
+            }
+            for (SemanticOp op : unit.ops()) {
+                KindPayload payload = op.payload();
+                if (payload instanceof KindPayload.JsonFromClassPayload from
+                        && from.layout().classId().equals(classId)) {
+                    return true;
+                }
+                if (payload instanceof KindPayload.JsonToClassPayload to
+                        && to.layout().classId().equals(classId)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The JSON walk's layout-resolution view of one JSON op: the
+         * closure's plan-owner layouts with the executing unit's own
+         * declaration of the op's class overlaid (the walk validates the
+         * payload layout against the map's entry of its own class).
+         */
+        private Map<ClassId, ClassLayout> jsonLayoutView(SemanticOp op,
+                                                         ClassId classId) {
+            ClassLayout exact = stateOf(op.opId()).unit.classLayouts().get(classId);
+            if (exact == null || exact.equals(jsonPlanLayouts.get(classId))) {
+                return jsonPlanLayouts;
+            }
+            return new ExactLayoutMap(jsonPlanLayouts, classId, exact);
         }
 
         Execution(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
@@ -1231,6 +1312,7 @@ public final class SemanticOracle {
             classLayouts.putAll(this.declarationLayouts);
 
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
+            resolveJsonPlanLayouts();
         }
 
         /** One module's validated execution state (ops, children, ownership). */
@@ -2463,7 +2545,8 @@ public final class SemanticOracle {
             List<OpId> defaultChildIds = jsonDefaultChildrenOf(state,
                 payload.layout());
             Value produced = oracleValueOf(ClassOpsExecutor.executeJsonFromClass(op,
-                priorValues, defaultChildIds, defaultOps, classLayouts,
+                priorValues, defaultChildIds, defaultOps,
+                jsonLayoutView(op, payload.layout().classId()),
                 JsonClassAlgorithmAdapter.parser(), nestedClassFactory(op),
                 bodyRunner(op)));
             return publish(op, produced);
@@ -2476,13 +2559,15 @@ public final class SemanticOracle {
             priorValues.put(payload.classValue(),
                 executorValueOf(valueOf(payload.classValue())));
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-                ClassOpsExecutor.executeJsonToClass(op, priorValues, classLayouts,
+                ClassOpsExecutor.executeJsonToClass(op, priorValues,
+                    jsonLayoutView(op, payload.layout().classId()),
                     JsonClassAlgorithmAdapter.stringifier(), activeCallOriginOf(op));
             return switch (outcome) {
                 case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success -> {
                     Value published = oracleValueOf(success.value());
                     recordInstanceLayout(published,
-                        classLayouts.get(payload.layout().classId()));
+                        jsonLayoutView(op, payload.layout().classId())
+                            .get(payload.layout().classId()));
                     yield publish(op, published);
                 }
                 case ClassOpsExecutor.Outcome.Failure<ClassOpsExecutor.Value> failure ->
