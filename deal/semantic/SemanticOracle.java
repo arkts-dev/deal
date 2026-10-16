@@ -2600,8 +2600,18 @@ public final class SemanticOracle {
 
         private ClassOpsExecutor.NestedClassFactory nestedClassFactory(SemanticOp triggering) {
             return (classId, providedFields) -> {
+                // The plan owner of a multiple-declaration identity: the
+                // generated plan table carries exactly that declaration's
+                // layout and defaults, so the nested decode's default
+                // filling resolves the owner module's CLASS_FACTORY — never
+                // a unit-order-first sibling's.
+                ModuleId planOwner = jsonPlanOwners.get(classId);
                 SemanticOp factoryOp = null;
                 for (UnitState candidateState : units.values()) {
+                    if (planOwner != null
+                            && !candidateState.unit.moduleId().equals(planOwner)) {
+                        continue;
+                    }
                     for (SemanticOp candidate : candidateState.unit.ops()) {
                         if (candidate.kind() != SemanticOpKind.CLASS_FACTORY) {
                             continue;

@@ -601,7 +601,18 @@ public class ProjectLoweringTest {
         export class Point { a: int = 7; }
         """;
 
+    /**
+     * An earlier same-identity non-plan sibling in the emission order (the
+     * nested decode's factory-resolution probe): the oracle's nested
+     * default filling must resolve the plan owner's CLASS_FACTORY, never
+     * this sibling's.
+     */
+    private static final String PLAN_IMPORTED_CODEC_SOURCE = """
+        export class Point { nick: string = "c"; }
+        """;
+
     private static final String PLAN_IMPORTED_APP_SOURCE = """
+        import * as codec from "./codec";
         import * as other from "./other";
 
         export class Point { nick: string = "local"; }
@@ -615,12 +626,19 @@ public class ProjectLoweringTest {
           if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
             throw { code: "WRONG", message: s };
           }
+          let w2: Wrap | null = Wrap$fromJson("{\\\"p\\\":{}}");
+          if (w2 !== null) {
+            if (w2.p.a !== 7) { throw { code: "WRONG_A", message: "a" }; }
+          } else {
+            throw { code: "WRONG_NULL", message: "null" };
+          }
           return null;
         }
         """;
 
     /** The same plan-imported fixture with the local sibling non-exported. */
     private static final String PLAN_IMPORTED_APP_NONEXPORTED_SOURCE = """
+        import * as codec from "./codec";
         import * as other from "./other";
 
         class Point { nick: string = "local"; }
@@ -633,6 +651,12 @@ public class ProjectLoweringTest {
           let s: string = Wrap$toJson(w);
           if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
             throw { code: "WRONG", message: s };
+          }
+          let w2: Wrap | null = Wrap$fromJson("{\\\"p\\\":{}}");
+          if (w2 !== null) {
+            if (w2.p.a !== 7) { throw { code: "WRONG_A", message: "a" }; }
+          } else {
+            throw { code: "WRONG_NULL", message: "null" };
           }
           return null;
         }
@@ -2713,7 +2737,8 @@ public class ProjectLoweringTest {
             RealProject project = compileProject(
                 exported ? PLAN_IMPORTED_APP_SOURCE
                     : PLAN_IMPORTED_APP_NONEXPORTED_SOURCE,
-                Map.of("src/other.deal", PLAN_IMPORTED_OTHER_SOURCE), Map.of());
+                Map.of("src/other.deal", PLAN_IMPORTED_OTHER_SOURCE,
+                    "src/codec.deal", PLAN_IMPORTED_CODEC_SOURCE), Map.of());
             try {
                 SemanticLowerer.ProjectLoweringResult result =
                     lower(project, invocation());
