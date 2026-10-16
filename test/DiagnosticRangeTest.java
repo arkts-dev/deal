@@ -110,8 +110,8 @@ public class DiagnosticRangeTest {
         testCheckerProducerRanges();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
-        testV12CorpusFrontendGate();
-        testV12CorpusCompilePins();
+        testV13CorpusFrontendGate();
+        testV13CorpusCompilePins();
         testV12CompilePinProfileDiscrimination();
 
         testCarrierRecords();
@@ -1569,7 +1569,7 @@ public class DiagnosticRangeTest {
      * must not shift the scalar coordinate system — cannot pass on a
      * code-only or start-only verdict. Both raw adapted sources are
      * compiled through the real frontend pipeline
-     * ({@link #frontendErrors}) with the corpus metadata's v1.2 profile
+     * ({@link #frontendErrors}) with the corpus metadata's v1.3 profile
      * and the classification headers stripped exactly as the corpus gate
      * does.
      */
@@ -1797,7 +1797,7 @@ public class DiagnosticRangeTest {
      * pin, a wrong profile, code, line, column or message is a named
      * failure instead of an unexecuted expectation.
      */
-    private static void testV12CorpusCompilePins() throws Exception {
+    private static void testV13CorpusCompilePins() throws Exception {
         System.out.println("-- the corpus Compile Expectation Sidecars"
             + " against the profile-aware frontend --");
         Path corpus = Path.of("test", "conformance");
@@ -1904,13 +1904,13 @@ public class DiagnosticRangeTest {
      * module resolver — a {@code compile-ok} fixture must compile clean, a
      * {@code compile-error} fixture must emit its classified code (the
      * pinned fixtures are additionally compared field-exact by
-     * {@link #testV12CorpusCompilePins}). The discovered corpus is the
+     * {@link #testV13CorpusCompilePins}). The discovered corpus is the
      * membership authority (no fixed inventory count); discovery,
      * classification and every verdict fail closed, so a fixture whose
      * expected outcome no longer holds is a named failure rather than an
      * unexecuted file.
      */
-    private static void testV12CorpusFrontendGate() throws Exception {
+    private static void testV13CorpusFrontendGate() throws Exception {
         System.out.println("-- the corpus frontend gate (compile-ok/"
             + "compile-error) with the per-fixture validated profile --");
         Path corpus = Path.of("test", "conformance");
@@ -1928,7 +1928,7 @@ public class DiagnosticRangeTest {
         // verdict, and a reject fixture mutated into an accepted form must
         // lose its compile-error verdict. A gate that ignored the profile
         // compilation or accepted every fixture would fail these controls.
-        Path scratch = Files.createTempDirectory("v12-frontend-gate-");
+        Path scratch = Files.createTempDirectory("v13-frontend-gate-");
         try {
             writeScratchFixture(scratch, "probe/accept-mutated.deal",
                 "// @spec: Type system\n"

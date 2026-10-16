@@ -11,9 +11,8 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
- * The typed structured-expectation model of the v1.2 sidecar schema
- * (corpus {@code v12-three-backend-conformance-corpus} C2) as consumed by
- * the gate's comparators and lanes.
+ * The typed structured-expectation model of the corpus sidecar schema
+ * (version 1) as consumed by the gate's comparators and lanes.
  *
  * <p>This is the parse surface, not the validation surface: the gate
  * validates every sidecar with T1's {@link SidecarSchemaValidator} before
