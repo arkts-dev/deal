@@ -166,6 +166,7 @@ public class JsBackendTest {
             testArrayElementDeleteSemantics();
             testSpanParameterCollisionExecution();
             testStdJsonRoundTrips();
+            testJsonDecodedArrayElementKindNode();
             testJsonStoredFunctionE8001();
             testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
@@ -5137,6 +5138,50 @@ public class JsBackendTest {
                     + "\ntest_null: E8001|expected table|table|null"),
             "the emitted JS artifact rejects both top-level decode carriers "
                 + "with the shared expected/actual tokens: " + tuple.output());
+    }
+
+    /**
+     * The array-element arm's reference-kind projection (the decoded-array
+     * mark, B3) through the production JS lane: the
+     * bytes-dynamic-nested-first-element-e8003 fixture shape — a decoded
+     * JSON array crossing the recursive {@code [[bytes]]} descriptor —
+     * reports the reference value model's {@code table} element token,
+     * never the {@code array} token its table-descriptor projection
+     * carries. The direct suite pins the runtime surface; this pin
+     * executes the emitted artifact through the deployed runtime.
+     */
+    private static void testJsonDecodedArrayElementKindNode() throws Exception {
+        System.out.println("-- Node: the decoded-array element reference-kind"
+            + " projection --");
+        if (!nodeAvailable) { skipNode("decoded-array element kind"); return; }
+
+        JsBackend.JsCodegenResult res = checkedEmission(prepareJs("""
+            import * as json from "std/json";
+
+            export function test(): int {
+              let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
+              let xs: bytes[][] = t.values;
+              return xs[0].length;
+            }
+            """, "json-element-kind"));
+        NodeResult result = runArtifactScript(res, String.join("\n",
+            "\"use strict\";",
+            "const $rt = require(\"./deal/runtime\");",
+            "const $entry = require(\"./Main\");",
+            "try {",
+            "  $entry.test.$f();",
+            "  process.stdout.write(\"ELEMENT: no error\");",
+            "} catch (e) {",
+            "  const $err = $rt.reifyError(e);",
+            "  process.stdout.write(\"ELEMENT: \" + $err.code + \"|\" + $err.message",
+            "    + \"|\" + $err.expected + \"|\" + $err.actual);",
+            "}",
+            ""));
+        check(result.exitCode() == 0 && result.output().equals(
+                "ELEMENT: E8003|array element 1 type mismatch|[bytes]|table"),
+            "the emitted artifact reports the failing decoded-array element"
+                + " as the reference `table` kind (the fixture's pinned"
+                + " tuple): " + result.output());
     }
 
     private static void testJsonStoredFunctionE8001() throws Exception {
