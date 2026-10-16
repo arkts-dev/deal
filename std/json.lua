@@ -18,11 +18,13 @@
 -- quote). stringify raises Error on non-JSON-shaped values through the
 -- closed unsupported-carrier arm: the bytes carrier keeps its pinned
 -- bytes token (the same explicit bytes arm the JS runtime landed,
--- js-v12-int32-bytes D3), and the reference runtime's other __kind-tagged
--- carriers — a function wrapper (function), a class or Error instance
--- and a decoded async handle (table) — plus the internal absent marker
--- (nil) all render that arm's own text with their closed carrier-kind
--- token instead of encoding private carrier fields; a path-local
+-- js-v12-int32-bytes D3), and every other unsupported carrier — the
+-- reference runtime's __kind-tagged function wrapper (function), class
+-- or Error instance and decoded async handle (table), the emitted
+-- chunk's own __c/__d class and Error marks (table) and __fn/__f/__csig
+-- function marks (function), plus the internal absent marker (nil) —
+-- renders that arm's own text with its closed carrier-kind token
+-- instead of encoding private carrier fields; a path-local
 -- container re-entry keeps the closed "cyclic value cannot be encoded as
 -- JSON" arm. There is no fixed nesting-depth bound. Object key order
 -- follows Lua iteration order.
@@ -179,20 +181,30 @@ local function json_int_or_nil(text)
 end
 
 -- The closed carrier-kind projection of one non-JSON value (the shared
--- JSON_STRINGIFY_UNSUPPORTED arm's actual token, the reference runtime's
--- own __kind vocabulary): the absent marker is nil, the language-null
--- sentinel keeps its Lua type() shape table, a function wrapper is
--- function, the bytes carrier is bytes, and every other __kind-tagged
--- table-carried value (a class instance, the builtin Error instance, a
--- decoded async handle) is table. A plain table — the JSON object/array
--- shape — is table too, so the projection alone never selects.
+-- JSON_STRINGIFY_UNSUPPORTED arm's actual token, the emitted prelude's
+-- __stdJsonKind vocabulary): the absent marker is nil, the language-null
+-- sentinel keeps its Lua type() shape table, a function carrier — the
+-- runtime's __kind == "function" wrapper and the emitted chunk's
+-- __fn/__f/__csig marks — is function, the bytes carrier is bytes, and
+-- every other table-carried value (a class instance in either the
+-- runtime __kind == "class" form or the emitted __c/__id form, the
+-- builtin Error instance and its __d form, a decoded async handle) is
+-- table. A plain table — the JSON object/array shape — is table too, so
+-- the projection alone never selects.
 local function json_carrier_kind(v)
   if v == __rt.__MISSING or v == nil then return 'nil' end
   if v == __rt.__NULL then return 'table' end
   local t = type(v)
   if t == 'table' then
     if v.__kind == 'bytes' then return 'bytes' end
-    if v.__kind == 'function' then return 'function' end
+    -- A class or Error carrier is table even when it also carries the
+    -- function markers: an emitted class instance holds both __c/__id
+    -- and its field map __f, and the emitted prelude's projection reads
+    -- the class marker first.
+    if v.__c or v.__d then return 'table' end
+    if v.__fn ~= nil or v.__f or v.__csig ~= nil or v.__kind == 'function' then
+      return 'function'
+    end
     return 'table'
   end
   return t
@@ -250,12 +262,17 @@ local function encode_value(v, file, line, column, path)
     elseif t == 'table' then
       -- The closed carrier rejection (the emitted chunk's sfValue arm order):
       -- a bytes carrier, a function wrapper, a class instance, the builtin
-      -- Error instance (both tagged __kind == "class"), and a decoded async
-      -- handle are never JSON-shaped table contents — each renders the
-      -- JSON_STRINGIFY_UNSUPPORTED arm with its own closed token instead of
-      -- encoding private carrier fields.
+      -- Error instance, and a decoded async handle are never JSON-shaped
+      -- table contents — each renders the JSON_STRINGIFY_UNSUPPORTED arm
+      -- with its own closed token instead of encoding private carrier
+      -- fields. Both carrier vocabularies select: the reference runtime's
+      -- __kind tags (bytes/function/class/async) and the emitted chunk's
+      -- own marks — __c/__id for a class instance, __d for the Error
+      -- value, __fn/__f/__csig for a function carrier — exactly the
+      -- markers the emitted prelude's __stdJsonKind classifies.
       if val.__kind == "bytes" or val.__kind == "function" or val.__kind == "class"
-          or val.__kind == "async" then
+          or val.__kind == "async" or val.__c or val.__d
+          or val.__fn ~= nil or val.__f or val.__csig ~= nil then
         unsupported(val, file, line, column)
       end
       -- The path-local cycle guard (the walk family's closed cycle arm):
