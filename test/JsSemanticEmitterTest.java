@@ -46,14 +46,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
  * The JavaScript semantic-IR renderer foundation acceptance drives
  * (ISSUE-0798): one artifact per implementation unit in dependency order,
  * the structural declaration projection, local value/cell/control
- * execution under the real Node binary, the private module registry's
- * repeat identity and sticky failure, coordinate-only maps, the
+ * execution under the real Node binary, the nullable equality pair's
+ * shared nil-equivalence rule, the private module registry's repeat
+ * identity and sticky failure, coordinate-only maps, the
  * malformed/no-frontend seam assertions, independent determinism, and the
  * fail-closed unsupported-slice contract with the offending operation's own
  * origin.
@@ -104,6 +106,7 @@ public class JsSemanticEmitterTest {
             testArtifactSetAndDeterminism(tmpRoot);
             testSourceMapCoordinates(tmpRoot);
             testValuesContainersAndControl(tmpRoot, node);
+            testNullableEqualityNilEquivalence(tmpRoot, node);
             testCellsClosuresAndAdapters(tmpRoot, node);
             testFailureTuples(tmpRoot, node);
             testModuleRegistry(tmpRoot, node);
@@ -527,6 +530,106 @@ public class JsSemanticEmitterTest {
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the values/containers program exits 0: "
             + run.output());
+    }
+
+    // =========================================================================
+    // 2b. The nullable equality pair and the shared nil-equivalence rule
+    // =========================================================================
+
+    private static void testNullableEqualityNilEquivalence(Path tmpRoot,
+            boolean node) throws Exception {
+        System.out.println("-- the nullable equality pair applies the shared"
+            + " nil-equivalence rule (null vs absent) --");
+        Path root = Files.createTempDirectory(tmpRoot, "nullable-eq");
+        Fixture fixture = compileFixture(root, """
+            export function eq(a: int | null, b: int | null): boolean {
+              return a === b;
+            }
+
+            export function ne(a: int | null, b: int | null): boolean {
+              return a !== b;
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """);
+        Path out = stage(fixture, "nullable-eq", false);
+        String artifact = Files.readString(out.resolve("app.js"),
+            StandardCharsets.UTF_8);
+        // The equality arm composes strict identity with the shared
+        // nil-equivalence clause — byte-identical to the inequality arm's
+        // inner form and to the reference nil-aware emission.
+        Pattern equalityForm = Pattern.compile(
+            "\\$s\\d+ = \\(\\(\\$s\\d+ === \\$s\\d+\\) \\|\\| "
+                + "\\(\\$rt\\.isNilEquivalent\\(\\$s\\d+\\) && "
+                + "\\$rt\\.isNilEquivalent\\(\\$s\\d+\\)\\)\\);");
+        check(equalityForm.matcher(artifact).find(),
+            "the nullable equality arm carries the shared nil-equivalence"
+                + " clause; the emitted arm was: " + equalityLineOf(artifact));
+        if (!node) {
+            skip("nullable nil-equivalence drive needs node");
+            return;
+        }
+        Files.writeString(out.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const app = require("./app.js");
+            const absent = undefined;
+            console.log(JSON.stringify({
+              eqAbsentNull: app.eq.$f(absent, null),
+              neAbsentNull: app.ne.$f(absent, null),
+              eqMissingNull: app.eq.$f($rt.MISSING, null),
+              neMissingNull: app.ne.$f($rt.MISSING, null),
+              eqMissingAbsent: app.eq.$f($rt.MISSING, absent),
+              neMissingAbsent: app.ne.$f($rt.MISSING, absent),
+              eqNullNull: app.eq.$f(null, null),
+              eqSame: app.eq.$f(3, 3),
+              neSame: app.ne.$f(3, 3),
+              eqDifferent: app.eq.$f(3, 4),
+              neDifferent: app.ne.$f(3, 4),
+            }));
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the nullable-equality driver exits 0: "
+            + run.output());
+        check(run.output().contains("\"eqAbsentNull\":true"),
+            "an absent operand compares equal to null: " + run.output());
+        check(run.output().contains("\"neAbsentNull\":false"),
+            "the inequality arm stays the complement: " + run.output());
+        check(run.output().contains("\"eqMissingNull\":true"),
+            "the absence sentinel compares equal to null: " + run.output());
+        check(run.output().contains("\"neMissingNull\":false"),
+            "the inequality arm stays the complement for the sentinel: "
+                + run.output());
+        check(run.output().contains("\"eqMissingAbsent\":true"),
+            "two differently represented nil-equivalent operands compare"
+                + " equal: " + run.output());
+        check(run.output().contains("\"neMissingAbsent\":false"),
+            "the inequality arm stays the complement for that pair: "
+                + run.output());
+        check(run.output().contains("\"eqNullNull\":true"),
+            "null compares equal to null: " + run.output());
+        check(run.output().contains("\"eqSame\":true"),
+            "the inner int equality still applies: " + run.output());
+        check(run.output().contains("\"neSame\":false"),
+            "the inner int inequality stays the complement: "
+                + run.output());
+        check(run.output().contains("\"eqDifferent\":false"),
+            "different non-nil operands compare unequal: " + run.output());
+        check(run.output().contains("\"neDifferent\":true"),
+            "different non-nil operands stay complementary: "
+                + run.output());
+    }
+
+    /** The emitted equality-arm line for diagnostics, or null when absent. */
+    private static String equalityLineOf(String artifact) {
+        for (String line : artifact.split("\n", -1)) {
+            if (line.contains("$rt.isNilEquivalent(")
+                    && !line.contains("!((")) {
+                return line.trim();
+            }
+        }
+        return null;
     }
 
     private static void testCellsClosuresAndAdapters(Path tmpRoot, boolean node)

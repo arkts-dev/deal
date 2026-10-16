@@ -590,7 +590,7 @@ public final class JsSemanticEmitter {
                 case NUMBER_MUL -> "(" + left + " * " + right + ")";
                 case NUMBER_DIV_IEEE -> "(" + left + " / " + right + ")";
                 case INT32_EQ, NUMBER_EQ, BOOLEAN_EQ, REFERENCE_EQ, STRING_EQ,
-                     BYTES_EQ, NULLABLE_EQ -> "(" + left + " === " + right + ")";
+                     BYTES_EQ -> "(" + left + " === " + right + ")";
                 case INT32_NE, NUMBER_NE, BOOLEAN_NE, REFERENCE_NE, STRING_NE,
                      BYTES_NE -> "(" + left + " !== " + right + ")";
                 case INT32_LT, NUMBER_LT -> "(" + left + " < " + right + ")";
@@ -607,6 +607,12 @@ public final class JsSemanticEmitter {
                     + ") >= 0)";
                 case NULL_EQ -> "(" + left + " === null)";
                 case NULL_NE -> "(" + left + " !== null)";
+                // Nullable-vs-nullable equality: nil-equivalent pairs
+                // compare equal (the shared ComparisonExecutor rule and
+                // the reference nil-aware form).
+                case NULLABLE_EQ -> "((" + left + " === " + right
+                    + ") || ($rt.isNilEquivalent(" + left
+                    + ") && $rt.isNilEquivalent(" + right + ")))";
                 case NULLABLE_NE -> "!((" + left + " === " + right
                     + ") || ($rt.isNilEquivalent(" + left
                     + ") && $rt.isNilEquivalent(" + right + ")))";
