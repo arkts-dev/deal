@@ -99,6 +99,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
 public class ProjectLoweringTest {
 
@@ -547,6 +548,11 @@ public class ProjectLoweringTest {
 
     private record LoweredProject(RealProject project,
                                   SemanticLowerer.ProjectLoweringResult result) {
+    }
+
+    private static SemanticIrValidator.ComparisonFacts comparisonFacts(RealProject project) {
+        return new SemanticIrValidator.ComparisonFacts(project.index().interfaceIndexDigest(),
+            SemanticProfile.DEAL_V1_3_INT32, invocation().capabilityRegistryHash());
     }
 
     private static CompilerInvocation invocation() {
@@ -1329,10 +1335,7 @@ public class ProjectLoweringTest {
                 return;
             }
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
+                comparisonFacts(project);
             check(SemanticIrValidator.validate(result.project(), facts).isEmpty(),
                 "the project passes the project-form closed gate");
             for (LoweredModuleUnit unit : result.project().modules().values()) {
@@ -1552,10 +1555,7 @@ public class ProjectLoweringTest {
 
             // The composed chain re-runs over the class-carrying unit.
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
+                comparisonFacts(project);
             check(SemanticIrValidator.validate(util, facts).isEmpty(),
                 "the class-carrying unit passes the closed 14 rules");
             check(AddressChainProtocol.validate(util).isEmpty(),
@@ -1941,10 +1941,7 @@ public class ProjectLoweringTest {
             // inventing the provider context, and the complete project
             // supplies exactly that context.
             SemanticIrValidator.ComparisonFacts standaloneFacts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
+                comparisonFacts(project);
             Optional<CompilerDiagnostic> standalone =
                 SemanticIrValidator.validate(app, standaloneFacts);
             assertMutationRule("the standalone host construction", standalone,
@@ -1972,6 +1969,7 @@ public class ProjectLoweringTest {
                         ClassConstructionValidator.CONSTRUCTION_COHERENCE),
                 "a differing supplied seed view rejects through E6005: "
                     + seedView.map(CompilerDiagnostic::message).orElse("admitted"));
+            testProjectSeedModuleJoinAndAdmission(new LoweredProject(project, result));
         } finally {
             deleteRecursively(project.root());
         }
@@ -2176,10 +2174,7 @@ public class ProjectLoweringTest {
             // plan seed — the standalone surfaces reject it at the referring
             // CLASS_NEW; the complete project supplies the seed.
             SemanticIrValidator.ComparisonFacts standaloneFacts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
+                comparisonFacts(project);
             assertMutationRule("the standalone C-struct construction",
                 SemanticIrValidator.validate(app, standaloneFacts),
                 ClassConstructionValidator.CONSTRUCTION_COHERENCE,
@@ -2348,10 +2343,7 @@ public class ProjectLoweringTest {
                 SemanticProfile.DEAL_V1_3_INT32, project.index(), shortened, APP,
                 result.project().classSeeds());
             Optional<CompilerDiagnostic> failure = SemanticIrValidator.validate(
-                missing, new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash()));
+                missing, comparisonFacts(project));
             check(failure.isPresent(),
                 "the project with the missing callee module fails the project-form "
                     + "gate");
@@ -2457,11 +2449,51 @@ public class ProjectLoweringTest {
         return null;
     }
 
+    private static RawUnit assertUnitTransport(LoweredModuleUnit unit, String text) {
+        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
+            (CanonicalJson.Obj) CanonicalJson.parse(text));
+        assertUnitFacts(unit, reparsed);
+        checkEq(text, CanonicalJson.serializeText(ContractSnapshotCanonicalizer.toJson(reparsed)),
+            unit.moduleId() + ": canonical text is byte-stable");
+        return reparsed;
+    }
+
+    private static void assertUnitFacts(LoweredModuleUnit unit, RawUnit reparsed) {
+        String what = unit.moduleId() + ": ";
+        checkEq(RawUnit.fromTyped(unit), reparsed, what + "every unit fact round-trips");
+        checkEq(unit.bodyTable(), reparsed.bodyTable(), what + "both membership directions survive");
+        checkEq(unit.classFactories(), reparsed.classFactories(), what + "factory registry survives");
+        checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(), what + "JSON-default rows survive");
+        checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(),
+            what + "parameter/import facts survive");
+        checkEq(unit, RawUnitMaterializer.materialize(reparsed),
+            what + "transport materializes to the exact typed unit");
+    }
+
+    private static void assertStandaloneAdmission(LoweredModuleUnit unit, String text,
+            RawUnit reparsed, SemanticIrValidator.ComparisonFacts facts) {
+        boolean needsProvider = requiresProviderContext(reparsed);
+        checkEq(needsProvider, SemanticIrValidator.validate(unit, facts).isPresent(),
+            unit.moduleId() + ": standalone typed admission requires exactly the provider context");
+        checkEq(needsProvider, SemanticIrValidator.validateText(text, facts).isPresent(),
+            unit.moduleId() + ": standalone text admission requires exactly the provider context");
+    }
+
+    private static ContractSnapshotCanonicalizer.ParsedProject assertProjectTransport(
+            ExecutableLoweredProject lowered, SemanticIrValidator.ComparisonFacts facts) {
+        String text = SemanticIrValidator.toProjectText(lowered);
+        ContractSnapshotCanonicalizer.ParsedProject parsed =
+            ContractSnapshotCanonicalizer.parseProject((CanonicalJson.Obj) CanonicalJson.parse(text));
+        checkEq(lowered.interfaceIndex(), parsed.interfaceIndex(), "project transport keeps the index");
+        checkEq(lowered.classSeeds(), parsed.classSeeds(), "project transport keeps the seeds");
+        check(SemanticIrValidator.validate(lowered, facts).isEmpty(), "typed project admits");
+        check(SemanticIrValidator.validateText(text, facts).isEmpty(), "text project admits");
+        return parsed;
+    }
+
     private static void testCompleteUnitTransport(RealProject project,
             ExecutableLoweredProject lowered) {
-        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
-            project.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
-            invocation().capabilityRegistryHash());
+        SemanticIrValidator.ComparisonFacts facts = comparisonFacts(project);
         boolean sawCaptures = false;
         boolean sawImportAliases = false;
         boolean sawClassLayout = false;
@@ -2469,32 +2501,8 @@ public class ProjectLoweringTest {
             String text = SemanticIrValidator.toUnitText(unit);
             checkEq(SemanticIrDumper.dumpModuleText(unit), text,
                 unit.moduleId() + ": dump uses canonical unit mapping");
-            RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
-                (CanonicalJson.Obj) CanonicalJson.parse(text));
-            checkEq(RawUnit.fromTyped(unit), reparsed,
-                unit.moduleId() + ": every unit fact round-trips");
-            checkEq(unit.bodyTable(), reparsed.bodyTable(),
-                unit.moduleId() + ": both membership directions survive");
-            checkEq(unit.classFactories(), reparsed.classFactories(),
-                unit.moduleId() + ": factory registry survives");
-            checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(),
-                unit.moduleId() + ": JSON-default rows survive");
-            checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(),
-                unit.moduleId() + ": parameter/import facts survive");
-            checkEq(text, CanonicalJson.serializeText(ContractSnapshotCanonicalizer.toJson(reparsed)),
-                unit.moduleId() + ": canonical text is byte-stable");
-            checkEq(unit, RawUnitMaterializer.materialize(reparsed),
-                unit.moduleId() + ": the transported facts materialize back to the exact "
-                    + "typed unit");
-            Optional<CompilerDiagnostic> readmitted = SemanticIrValidator.validateText(text, facts);
-            if (requiresProviderContext(reparsed)) {
-                check(readmitted.isPresent(),
-                    unit.moduleId() + ": a unit whose facts refer to a foreign provider"
-                        + " never admits on the standalone surface");
-            } else {
-                check(readmitted.isEmpty(), unit.moduleId() + ": text re-admits: "
-                    + readmitted.map(CompilerDiagnostic::message).orElse(""));
-            }
+            RawUnit reparsed = assertUnitTransport(unit, text);
+            assertStandaloneAdmission(unit, text, reparsed, facts);
             sawCaptures |= reparsed.functions().stream().anyMatch(f -> !f.captures().isEmpty());
             sawClassLayout |= !reparsed.classLayouts().isEmpty();
             sawImportAliases |= !reparsed.classBindingFacts().importAliases().isEmpty();
@@ -2528,9 +2536,7 @@ public class ProjectLoweringTest {
         if (lowered == null) {
             return;
         }
-        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
-            project.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
-            invocation().capabilityRegistryHash());
+        SemanticIrValidator.ComparisonFacts facts = comparisonFacts(project);
         LoweredModuleUnit util = lowered.modules().get(UTIL);
         LoweredModuleUnit app = lowered.modules().get(APP);
         check(util != null && app != null,
@@ -2677,47 +2683,30 @@ public class ProjectLoweringTest {
 
         check(!baselineApp.bodyTable().blockOps().isEmpty(),
             "the view fixture carries a non-empty body table");
-        Optional<CompilerDiagnostic> tableMismatch = SemanticLowerer.validateProjectUnit(
-            baselineApp, new StructuredBodyTable(Map.of(), Map.of()), baselineFacts,
-            baselineApp.classBindingFacts(), baselineApp.classFactories(),
-            baselineApp.jsonDefaults(), appInterface, noSharedFactories, seeds);
-        expectProjectAdmissionFailure(tableMismatch, SemanticLowerer.PROJECT_VIEW_MISMATCH,
-            "body table", "a differing supplied body-table view rejects through E6005");
-
-        Set<BindingId> parameters =
-            new LinkedHashSet<>(baselineApp.classBindingFacts().parameters());
+        Set<BindingId> parameters = new LinkedHashSet<>(baselineApp.classBindingFacts().parameters());
         parameters.add(new BindingId(9_000_001));
-        Optional<CompilerDiagnostic> bindingsMismatch = SemanticLowerer.validateProjectUnit(
-            baselineApp, baselineApp.bodyTable(), baselineFacts,
-            new ClassBindingFacts(parameters,
-                baselineApp.classBindingFacts().importAliases()),
-            baselineApp.classFactories(), baselineApp.jsonDefaults(), appInterface,
-            noSharedFactories, seeds);
-        expectProjectAdmissionFailure(bindingsMismatch,
-            SemanticLowerer.PROJECT_VIEW_MISMATCH, "binding facts",
-            "a differing supplied binding-facts view rejects through E6005");
-
-        Map<ClassFactoryId, OpId> factories =
-            new LinkedHashMap<>(baselineApp.classFactories().factories());
+        Map<ClassFactoryId, OpId> factories = new LinkedHashMap<>(baselineApp.classFactories().factories());
         factories.put(new ClassFactoryId(9_000_001), new OpId(APP, 9_000_001));
-        Optional<CompilerDiagnostic> factoriesMismatch = SemanticLowerer.validateProjectUnit(
-            baselineApp, baselineApp.bodyTable(), baselineFacts,
-            baselineApp.classBindingFacts(), new ClassFactoryRegistry(factories),
-            baselineApp.jsonDefaults(), appInterface, noSharedFactories, seeds);
-        expectProjectAdmissionFailure(factoriesMismatch,
-            SemanticLowerer.PROJECT_VIEW_MISMATCH, "class-factory registry",
-            "a differing supplied class-factory view rejects through E6005");
-
-        Map<OpId, List<OpId>> defaults =
-            new LinkedHashMap<>(baselineApp.jsonDefaults().defaultChildren());
+        Map<OpId, List<OpId>> defaults = new LinkedHashMap<>(baselineApp.jsonDefaults().defaultChildren());
         defaults.put(new OpId(APP, 9_000_002), List.of());
-        Optional<CompilerDiagnostic> defaultsMismatch = SemanticLowerer.validateProjectUnit(
-            baselineApp, baselineApp.bodyTable(), baselineFacts,
-            baselineApp.classBindingFacts(), baselineApp.classFactories(),
-            new JsonDefaultChildTable(defaults), appInterface, noSharedFactories, seeds);
-        expectProjectAdmissionFailure(defaultsMismatch,
-            SemanticLowerer.PROJECT_VIEW_MISMATCH, "JSON-default table",
-            "a differing supplied JSON-default view rejects through E6005");
+        record ViewCase(String name, StructuredBodyTable table, ClassBindingFacts bindings,
+                        ClassFactoryRegistry factories, JsonDefaultChildTable defaults) { }
+        for (ViewCase row : List.of(
+                new ViewCase("body table", new StructuredBodyTable(Map.of(), Map.of()),
+                    baselineApp.classBindingFacts(), baselineApp.classFactories(), baselineApp.jsonDefaults()),
+                new ViewCase("binding facts", baselineApp.bodyTable(),
+                    new ClassBindingFacts(parameters, baselineApp.classBindingFacts().importAliases()),
+                    baselineApp.classFactories(), baselineApp.jsonDefaults()),
+                new ViewCase("class-factory registry", baselineApp.bodyTable(),
+                    baselineApp.classBindingFacts(), new ClassFactoryRegistry(factories), baselineApp.jsonDefaults()),
+                new ViewCase("JSON-default table", baselineApp.bodyTable(),
+                    baselineApp.classBindingFacts(), baselineApp.classFactories(), new JsonDefaultChildTable(defaults)))) {
+            Optional<CompilerDiagnostic> mismatch = SemanticLowerer.validateProjectUnit(baselineApp,
+                row.table(), baselineFacts, row.bindings(), row.factories(), row.defaults(),
+                appInterface, noSharedFactories, seeds);
+            expectProjectAdmissionFailure(mismatch, SemanticLowerer.PROJECT_VIEW_MISMATCH, row.name(),
+                "a differing supplied " + row.name() + " view rejects through E6005");
+        }
 
         // (7) The project framing admission: a module-map key that disagrees
         // with the contained unit's identity, a closure module without its
@@ -2728,51 +2717,26 @@ public class ProjectLoweringTest {
         Map<ModuleId, LoweredModuleUnit> renamedKeys = new LinkedHashMap<>();
         renamedKeys.put(new ModuleId("util.alias"), lowered.modules().get(UTIL));
         renamedKeys.put(APP, lowered.modules().get(APP));
-        expectProjectAdmissionFailure(SemanticIrValidator.validate(
-                new ExecutableLoweredProject(lowered.semanticProfile(),
-                    lowered.interfaceIndex(), renamedKeys, APP, lowered.classSeeds()), facts),
-            SemanticIrValidator.R_IDENTITY_LINK, "module-map key",
-            "the typed project rejects a module-map key that disagrees with the "
-                + "contained unit's identity");
-
-        ProjectInterfaceIndex withoutUtil = withoutIndexModule(
-            lowered.interfaceIndex(), UTIL);
-        expectProjectAdmissionFailure(SemanticIrValidator.validate(
-                new ExecutableLoweredProject(lowered.semanticProfile(), withoutUtil,
-                    lowered.modules(), lowered.entryModule(), lowered.classSeeds()), facts),
-            SemanticIrValidator.R_IDENTITY_LINK, "no module silently disappears",
-            "the typed project rejects a closure module without its index entry "
-                + "(no module silently disappears)");
-
-        ProjectInterfaceIndex misclassified = withImportKind(
-            lowered.interfaceIndex(), APP, "u", ExternalModuleKind.HOST);
-        expectProjectAdmissionFailure(SemanticIrValidator.validate(
-                new ExecutableLoweredProject(lowered.semanticProfile(), misclassified,
-                    lowered.modules(), lowered.entryModule(), lowered.classSeeds()), facts),
-            SemanticIrValidator.R_IDENTITY_LINK, "classified",
-            "the typed project rejects an import whose kind disagrees with the "
-                + "provider's index classification");
-
-        ProjectInterfaceIndex hostAsImplementation = withIndexKind(
-            lowered.interfaceIndex(), UTIL, ExternalModuleKind.HOST);
-        expectProjectAdmissionFailure(SemanticIrValidator.validate(
-                new ExecutableLoweredProject(lowered.semanticProfile(),
-                    hostAsImplementation, lowered.modules(), lowered.entryModule(),
-                    lowered.classSeeds()), facts),
-            SemanticIrValidator.R_IDENTITY_LINK, "a closure unit is an implementation "
-                + "provider",
-            "the typed project rejects a closure unit whose index entry is "
-                + "classified HOST");
-
         Map<ModuleId, LoweredModuleUnit> reordered = new LinkedHashMap<>();
         reordered.put(APP, lowered.modules().get(APP));
         reordered.put(UTIL, lowered.modules().get(UTIL));
-        expectProjectAdmissionFailure(SemanticIrValidator.validate(
-                new ExecutableLoweredProject(lowered.semanticProfile(),
-                    lowered.interfaceIndex(), reordered, lowered.entryModule(),
-                    lowered.classSeeds()), facts),
-            SemanticIrValidator.R_IDENTITY_LINK, "dependency order",
-            "the typed project rejects a closure that is not in dependency order");
+        record FramingCase(String detail, ProjectInterfaceIndex index,
+                           Map<ModuleId, LoweredModuleUnit> modules) { }
+        for (FramingCase row : List.of(
+                new FramingCase("module-map key", lowered.interfaceIndex(), renamedKeys),
+                new FramingCase("no module silently disappears",
+                    withoutIndexModule(lowered.interfaceIndex(), UTIL), lowered.modules()),
+                new FramingCase("classified",
+                    withImportKind(lowered.interfaceIndex(), APP, "u", ExternalModuleKind.HOST), lowered.modules()),
+                new FramingCase("a closure unit is an implementation provider",
+                    withIndexKind(lowered.interfaceIndex(), UTIL, ExternalModuleKind.HOST), lowered.modules()),
+                new FramingCase("dependency order", lowered.interfaceIndex(), reordered))) {
+            expectProjectAdmissionFailure(SemanticIrValidator.validate(
+                    new ExecutableLoweredProject(lowered.semanticProfile(), row.index(),
+                        row.modules(), lowered.entryModule(), lowered.classSeeds()), facts),
+                SemanticIrValidator.R_IDENTITY_LINK, row.detail(),
+                "the typed project rejects invalid framing: " + row.detail());
+        }
 
         CanonicalJson.Obj projectObj = (CanonicalJson.Obj) CanonicalJson.parse(
             SemanticIrValidator.toProjectText(lowered));
@@ -2809,9 +2773,7 @@ public class ProjectLoweringTest {
         if (lowered == null) {
             return;
         }
-        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
-            baseline.project().index().interfaceIndexDigest(),
-            SemanticProfile.DEAL_V1_3_INT32, invocation().capabilityRegistryHash());
+        SemanticIrValidator.ComparisonFacts facts = comparisonFacts(baseline.project());
 
         // ----- the project text: the complete framing and the unit mapping -----
         String text = SemanticIrValidator.toProjectText(lowered);
@@ -2900,19 +2862,7 @@ public class ProjectLoweringTest {
         checkEq(units.size(), parsed.modules().size(),
             "every project module is carried");
         for (int i = 0; i < Math.min(units.size(), parsed.modules().size()); i++) {
-            checkEq(RawUnit.fromTyped(units.get(i)), parsed.modules().get(i),
-                "module " + units.get(i).moduleId()
-                    + " round-trips every complete unit fact");
-            checkEq(units.get(i).bodyTable(), parsed.modules().get(i).bodyTable(),
-                "module " + units.get(i).moduleId() + " keeps both membership directions");
-            checkEq(units.get(i).classFactories(), parsed.modules().get(i).classFactories(),
-                "module " + units.get(i).moduleId() + " keeps its factory registry");
-            checkEq(units.get(i).jsonDefaults(), parsed.modules().get(i).jsonDefaults(),
-                "module " + units.get(i).moduleId() + " keeps its JSON-default rows");
-            checkEq(units.get(i).classBindingFacts(),
-                parsed.modules().get(i).classBindingFacts(),
-                "module " + units.get(i).moduleId()
-                    + " keeps its parameter/import facts");
+            assertUnitFacts(units.get(i), parsed.modules().get(i));
         }
         checkEq(text, CanonicalJson.serializeText(
                 ContractSnapshotCanonicalizer.toJson(parsed)),
@@ -2925,7 +2875,12 @@ public class ProjectLoweringTest {
 
         // ----- the dump manifest and the ordered module documents -----
         SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
-        SemanticIrDumper.ProjectDump repeated = SemanticIrDumper.dumpProject(lowered);
+        SemanticLowerer.ProjectLoweringResult rebuilt = lower(baseline.project(), invocation());
+        check(rebuilt.project() != null, "the dump determinism fixture lowers independently");
+        if (rebuilt.project() == null) {
+            return;
+        }
+        SemanticIrDumper.ProjectDump repeated = SemanticIrDumper.dumpProject(rebuilt.project());
         check(java.util.Arrays.equals(dump.manifest(), repeated.manifest()),
             "repeated project manifests are byte-identical");
         checkEq(dump.modules().size(), repeated.modules().size(),
@@ -2998,23 +2953,7 @@ public class ProjectLoweringTest {
             "the reassembled module order is the dependency order");
         List<byte[]> documents = documentsOf(dump);
         for (int i = 0; i < Math.min(units.size(), reassembled.modules().size()); i++) {
-            checkEq(RawUnit.fromTyped(units.get(i)), reassembled.modules().get(i),
-                "module " + units.get(i).moduleId()
-                    + " reassembles every complete unit fact");
-            checkEq(units.get(i).bodyTable(), reassembled.modules().get(i).bodyTable(),
-                "module " + units.get(i).moduleId()
-                    + " reassembles both membership directions");
-            checkEq(units.get(i).classFactories(),
-                reassembled.modules().get(i).classFactories(),
-                "module " + units.get(i).moduleId() + " reassembles its factory registry");
-            checkEq(units.get(i).jsonDefaults(),
-                reassembled.modules().get(i).jsonDefaults(),
-                "module " + units.get(i).moduleId()
-                    + " reassembles its JSON-default rows");
-            checkEq(units.get(i).classBindingFacts(),
-                reassembled.modules().get(i).classBindingFacts(),
-                "module " + units.get(i).moduleId()
-                    + " reassembles its parameter/import facts");
+            assertUnitFacts(units.get(i), reassembled.modules().get(i));
         }
 
         // The written dump (existing file naming and LF framing) reassembles too.
@@ -3125,12 +3064,12 @@ public class ProjectLoweringTest {
      * carried index digest. Each rejected case yields no project record
      * and, on admission, exactly the first responsible E6005.
      */
-    private static void testProjectSeedModuleJoinAndAdmission() throws Exception {
+    private static void testProjectSeedModuleJoinAndAdmission(LoweredProject fixture) {
         System.out.println("-- the project seed/module join: the checked reassembly "
             + "and the typed/text admission of the carried class facts --");
-        RealProject project = compileProject(HOST_CLASS_APP_SOURCE, Map.of(), Map.of());
-        try {
-            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+        RealProject project = fixture.project();
+        {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
             check(!result.hasErrors() && result.project() != null,
                 "the host-class transport project lowers: " + result.diagnostics());
             if (result.project() == null) {
@@ -3138,10 +3077,7 @@ public class ProjectLoweringTest {
             }
             ExecutableLoweredProject lowered = result.project();
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
+                comparisonFacts(project);
 
             // The unmutated project admits on both surfaces.
             check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
@@ -3224,8 +3160,6 @@ public class ProjectLoweringTest {
                     facts),
                 SemanticIrValidator.R_PROFILE, "interface index digest",
                 "the typed project surface rejects a mutated carried interface index");
-        } finally {
-            deleteRecursively(project.root());
         }
     }
 
@@ -3253,10 +3187,7 @@ public class ProjectLoweringTest {
             }
             ExecutableLoweredProject lowered = result.project();
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
+                comparisonFacts(project);
             check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
                 "the class-reference project passes the typed project surface");
             String text = SemanticIrValidator.toProjectText(lowered);
@@ -3491,72 +3422,50 @@ public class ProjectLoweringTest {
      */
     private static ProjectInterfaceIndex withIndexExportType(
             ProjectInterfaceIndex index, ModuleId moduleId, String declaredType) {
-        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
-        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
-                : index.modules().entrySet()) {
-            ExternalModuleInterface original = entry.getValue();
-            List<ExportInterface> exports = new ArrayList<>();
-            for (int i = 0; i < original.exports().size(); i++) {
-                ExportInterface export = original.exports().get(i);
-                exports.add(entry.getKey().equals(moduleId) && i == 0
-                    ? new ExportInterface(export.name(), declaredType) : export);
+        return mutateIndexModule(index, moduleId, original -> {
+            List<ExportInterface> exports = new ArrayList<>(original.exports());
+            if (!exports.isEmpty()) {
+                exports.set(0, new ExportInterface(exports.get(0).name(), declaredType));
             }
-            modules.put(entry.getKey(), new ExternalModuleInterface(original.moduleId(),
-                original.kind(), original.imports(), exports, original.classes(),
-                original.initialization()));
-        }
+            return new ExternalModuleInterface(original.moduleId(), original.kind(),
+                original.imports(), exports, original.classes(), original.initialization());
+        });
+    }
+
+    private static ProjectInterfaceIndex mutateIndexModule(ProjectInterfaceIndex index,
+            ModuleId moduleId, UnaryOperator<ExternalModuleInterface> mutation) {
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>(index.modules());
+        modules.put(moduleId, mutation.apply(modules.get(moduleId)));
         return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
     }
 
     /** The interface index without one module's entry. */
     private static ProjectInterfaceIndex withoutIndexModule(
             ProjectInterfaceIndex index, ModuleId moduleId) {
-        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
-        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
-                : index.modules().entrySet()) {
-            if (!entry.getKey().equals(moduleId)) {
-                modules.put(entry.getKey(), entry.getValue());
-            }
-        }
+        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>(index.modules());
+        modules.remove(moduleId);
         return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
     }
 
     /** The interface index with one module's named import reclassified. */
     private static ProjectInterfaceIndex withImportKind(ProjectInterfaceIndex index,
             ModuleId moduleId, String alias, ExternalModuleKind kind) {
-        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
-        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
-                : index.modules().entrySet()) {
-            ExternalModuleInterface original = entry.getValue();
-            List<ResolvedImport> imports = new ArrayList<>();
-            for (ResolvedImport importFact : original.imports()) {
-                imports.add(entry.getKey().equals(moduleId)
-                        && importFact.alias().equals(alias)
+        return mutateIndexModule(index, moduleId, original -> {
+            List<ResolvedImport> imports = original.imports().stream()
+                .map(importFact -> importFact.alias().equals(alias)
                     ? new ResolvedImport(importFact.alias(), importFact.modulePath(),
-                        importFact.resolvedModuleId(), kind)
-                    : importFact);
-            }
-            modules.put(entry.getKey(), new ExternalModuleInterface(original.moduleId(),
-                original.kind(), imports, original.exports(), original.classes(),
-                original.initialization()));
-        }
-        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+                        importFact.resolvedModuleId(), kind) : importFact).toList();
+            return new ExternalModuleInterface(original.moduleId(), original.kind(),
+                imports, original.exports(), original.classes(), original.initialization());
+        });
     }
 
     /** The interface index with one module entry's kind reclassified. */
     private static ProjectInterfaceIndex withIndexKind(ProjectInterfaceIndex index,
             ModuleId moduleId, ExternalModuleKind kind) {
-        Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
-        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
-                : index.modules().entrySet()) {
-            ExternalModuleInterface original = entry.getValue();
-            modules.put(entry.getKey(), entry.getKey().equals(moduleId)
-                ? new ExternalModuleInterface(original.moduleId(), kind,
-                    original.imports(), original.exports(), original.classes(),
-                    original.initialization())
-                : original);
-        }
-        return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
+        return mutateIndexModule(index, moduleId, original -> new ExternalModuleInterface(
+            original.moduleId(), kind, original.imports(), original.exports(),
+            original.classes(), original.initialization()));
     }
 
     /**
@@ -3603,23 +3512,12 @@ public class ProjectLoweringTest {
 
     /** One payload member of a raw operation payload, or null. */
     private static CanonicalJson.Value payloadField(CanonicalJson.Obj payload, String key) {
-        for (CanonicalJson.Entry entry : payload.entries()) {
-            if (entry.key().equals(key)) {
-                return entry.value();
-            }
-        }
-        return null;
+        return at(payload, key);
     }
 
     /** The module path of a canonical module-identity object, or null. */
     private static String modulePathOf(CanonicalJson.Obj moduleId) {
-        CanonicalJson.Value path = null;
-        for (CanonicalJson.Entry entry : moduleId.entries()) {
-            if (entry.key().equals("path")) {
-                path = entry.value();
-            }
-        }
-        return path instanceof CanonicalJson.Str str ? str.value() : null;
+        return at(moduleId, "path") instanceof CanonicalJson.Str str ? str.value() : null;
     }
 
     // ---- manifest/document mutation helpers (checked reassembly negatives) ----
@@ -3746,19 +3644,36 @@ public class ProjectLoweringTest {
     /** The manifest with the named class seed's owner member replaced. */
     private static byte[] manifestWithSeedOwner(byte[] manifest, String className,
             String owner) {
+        return mutateSeed(manifest, className,
+            row -> withEntry(row, "owner", CanonicalJson.str(owner)));
+    }
+
+    private static byte[] mutateSeed(byte[] manifest, String className,
+            UnaryOperator<CanonicalJson.Obj> mutation) {
         CanonicalJson.Obj root = objOf(manifest);
         CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
         List<CanonicalJson.Value> rows = new ArrayList<>();
         for (CanonicalJson.Value item : seeds.items()) {
             CanonicalJson.Obj row = (CanonicalJson.Obj) item;
             CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
-            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
-                row = withEntry(row, "owner", CanonicalJson.str(owner));
+            CanonicalJson.Obj updated = className.equals(((CanonicalJson.Str) at(key, "name")).value())
+                ? mutation.apply(row) : row;
+            if (updated != null) {
+                rows.add(updated);
             }
-            rows.add(row);
         }
-        return CanonicalJson.serializeBytes(
-            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+        return CanonicalJson.serializeBytes(withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+    }
+
+    private static CanonicalJson.Obj mutateSeedFields(CanonicalJson.Obj row,
+            UnaryOperator<CanonicalJson.Obj> mutation) {
+        CanonicalJson.Obj layout = (CanonicalJson.Obj) at(row, "layout");
+        CanonicalJson.Arr fields = (CanonicalJson.Arr) at(layout, "fields");
+        List<CanonicalJson.Value> updated = new ArrayList<>();
+        for (CanonicalJson.Value field : fields.items()) {
+            updated.add(mutation.apply((CanonicalJson.Obj) field));
+        }
+        return withEntry(row, "layout", withEntry(layout, "fields", CanonicalJson.arr(updated)));
     }
 
     /**
@@ -3769,94 +3684,29 @@ public class ProjectLoweringTest {
      */
     private static byte[] manifestWithSeedOwnerAndFieldOwners(byte[] manifest,
             String className, String owner) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
-        List<CanonicalJson.Value> rows = new ArrayList<>();
-        for (CanonicalJson.Value item : seeds.items()) {
-            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
-            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
-            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
-                row = withEntry(row, "owner", CanonicalJson.str(owner));
-                CanonicalJson.Obj layout = (CanonicalJson.Obj) at(row, "layout");
-                CanonicalJson.Arr fields = (CanonicalJson.Arr) at(layout, "fields");
-                List<CanonicalJson.Value> updated = new ArrayList<>();
-                for (CanonicalJson.Value fieldItem : fields.items()) {
-                    updated.add(withEntry((CanonicalJson.Obj) fieldItem, "defaultOwner",
-                        CanonicalJson.str(owner)));
-                }
-                row = withEntry(row, "layout", withEntry(layout, "fields",
-                    CanonicalJson.arr(updated)));
-            }
-            rows.add(row);
-        }
-        return CanonicalJson.serializeBytes(
-            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+        return mutateSeed(manifest, className, row -> mutateSeedFields(
+            withEntry(row, "owner", CanonicalJson.str(owner)),
+            field -> withEntry(field, "defaultOwner", CanonicalJson.str(owner))));
     }
 
     /** The manifest with one seed field's canonical descriptor text replaced. */
     private static byte[] manifestWithSeedFieldDescriptor(byte[] manifest,
             String className, String fieldName, String descriptor) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
-        List<CanonicalJson.Value> rows = new ArrayList<>();
-        for (CanonicalJson.Value item : seeds.items()) {
-            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
-            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
-            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
-                CanonicalJson.Obj layout = (CanonicalJson.Obj) at(row, "layout");
-                CanonicalJson.Arr fields = (CanonicalJson.Arr) at(layout, "fields");
-                List<CanonicalJson.Value> updated = new ArrayList<>();
-                for (CanonicalJson.Value fieldItem : fields.items()) {
-                    CanonicalJson.Obj field = (CanonicalJson.Obj) fieldItem;
-                    if (fieldName.equals(
-                            ((CanonicalJson.Str) at(field, "name")).value())) {
-                        field = withEntry(field, "descriptor",
-                            CanonicalJson.str(descriptor));
-                    }
-                    updated.add(field);
-                }
-                row = withEntry(row, "layout", withEntry(layout, "fields",
-                    CanonicalJson.arr(updated)));
-            }
-            rows.add(row);
-        }
-        return CanonicalJson.serializeBytes(
-            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+        return mutateSeed(manifest, className, row -> mutateSeedFields(row,
+            field -> fieldName.equals(((CanonicalJson.Str) at(field, "name")).value())
+                ? withEntry(field, "descriptor", CanonicalJson.str(descriptor)) : field));
     }
 
     /** The manifest with one seed's registration key renamed. */
     private static byte[] manifestWithSeedKey(byte[] manifest, String className,
             String newName) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
-        List<CanonicalJson.Value> rows = new ArrayList<>();
-        for (CanonicalJson.Value item : seeds.items()) {
-            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
-            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
-            if (className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
-                row = withEntry(row, "key",
-                    withEntry(key, "name", CanonicalJson.str(newName)));
-            }
-            rows.add(row);
-        }
-        return CanonicalJson.serializeBytes(
-            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+        return mutateSeed(manifest, className, row -> withEntry(row, "key",
+            withEntry((CanonicalJson.Obj) at(row, "key"), "name", CanonicalJson.str(newName))));
     }
 
     /** The manifest with the named class's registration removed. */
     private static byte[] manifestWithoutSeed(byte[] manifest, String className) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
-        List<CanonicalJson.Value> rows = new ArrayList<>();
-        for (CanonicalJson.Value item : seeds.items()) {
-            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
-            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
-            if (!className.equals(((CanonicalJson.Str) at(key, "name")).value())) {
-                rows.add(row);
-            }
-        }
-        return CanonicalJson.serializeBytes(
-            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+        return mutateSeed(manifest, className, row -> null);
     }
 
     /** The canonical document with one unknown framing member added. */
@@ -3915,49 +3765,17 @@ public class ProjectLoweringTest {
         if (lowered == null) {
             return;
         }
-        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
-            baseline.project().index().interfaceIndexDigest(),
-            SemanticProfile.DEAL_V1_3_INT32, invocation().capabilityRegistryHash());
+        SemanticIrValidator.ComparisonFacts facts = comparisonFacts(baseline.project());
 
         // T1/T2: the dependency-ordered units travel typed -> raw -> text -> raw
         // and the unchanged content admits on both surfaces.
         for (LoweredModuleUnit unit : lowered.modules().values()) {
-            RawUnit raw = RawUnit.fromTyped(unit);
             String text = SemanticIrValidator.toUnitText(unit);
-            RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
-                (CanonicalJson.Obj) CanonicalJson.parse(text));
-            checkEq(raw, reparsed, unit.moduleId() + ": the unit facts round-trip "
-                + "typed -> raw -> text -> raw");
-            Optional<CompilerDiagnostic> standaloneTyped =
-                SemanticIrValidator.validate(unit, facts);
-            Optional<CompilerDiagnostic> standaloneText =
-                SemanticIrValidator.validateText(text, facts);
-            if (requiresProviderContext(raw)) {
-                check(standaloneTyped.isPresent() && standaloneText.isPresent(),
-                    unit.moduleId() + ": a unit whose facts refer to a foreign provider"
-                        + " rejects on the standalone surfaces (the required provider"
-                        + " context is supplied by the complete project closure only)");
-            } else {
-                check(standaloneTyped.isEmpty(),
-                    unit.moduleId() + ": the unchanged unit admits on the typed surface");
-                check(standaloneText.isEmpty(),
-                    unit.moduleId() + ": the unchanged unit admits on the text surface");
-            }
+            assertStandaloneAdmission(unit, text, assertUnitTransport(unit, text), facts);
         }
         // T3: the project transport keeps the complete project and admits on
         // both surfaces.
-        String projectText = SemanticIrValidator.toProjectText(lowered);
-        ContractSnapshotCanonicalizer.ParsedProject reparsedProject =
-            ContractSnapshotCanonicalizer.parseProject(
-                (CanonicalJson.Obj) CanonicalJson.parse(projectText));
-        checkEq(lowered.interfaceIndex(), reparsedProject.interfaceIndex(),
-            "the project transport keeps the interface index");
-        checkEq(lowered.classSeeds(), reparsedProject.classSeeds(),
-            "the project transport keeps the class registration seeds");
-        check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-            "the unchanged project admits on the typed surface");
-        check(SemanticIrValidator.validateText(projectText, facts).isEmpty(),
-            "the unchanged project admits on the text surface");
+        assertProjectTransport(lowered, facts);
 
         // The membership mutation: the entry module loses one inverse row
         // while its block list keeps the op.
@@ -3997,62 +3815,8 @@ public class ProjectLoweringTest {
                     .anyMatch(ids -> ids.contains(removed)),
             "the transported mutation keeps the block row and drops the inverse row");
 
-        Optional<CompilerDiagnostic> typedUnit = SemanticIrValidator.validate(mutated, facts);
-        Optional<CompilerDiagnostic> textUnit =
-            SemanticIrValidator.validateText(mutatedText, facts);
-        check(typedUnit.isPresent() && "E6005".equals(typedUnit.get().code())
-                && typedUnit.get().message().contains("CONTROL_BLOCK_TREE")
-                && typedUnit.get().message().contains("no inverse membership entry"),
-            "the mutated unit rejects on the typed surface: "
-                + typedUnit.map(CompilerDiagnostic::message).orElse("admitted"));
-        check(textUnit.isPresent() && textUnit.get().message().contains("CONTROL_BLOCK_TREE")
-                && textUnit.get().message().contains("no inverse membership entry"),
-            "the mutated unit rejects on the unit text surface: "
-                + textUnit.map(CompilerDiagnostic::message).orElse("admitted"));
-        check(typedUnit.isPresent() && textUnit.isPresent()
-                && typedUnit.get().message().equals(textUnit.get().message()),
-            "the mutated unit reports the identical first failure on both surfaces");
-        if (typedUnit.isPresent() && textUnit.isPresent()) {
-            checkEq(typedUnit.get().range(), textUnit.get().range(),
-                "the mutated unit keeps the same failing range on both surfaces");
-        }
-
-        // The mutated project: both admission surfaces reject identically and
-        // expose no project record.
-        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>(lowered.modules());
-        modules.put(APP, mutated);
-        ExecutableLoweredProject mutatedProject = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_3_INT32, lowered.interfaceIndex(), modules,
-            lowered.entryModule(), lowered.classSeeds());
-        Optional<CompilerDiagnostic> typedProject =
-            SemanticIrValidator.validate(mutatedProject, facts);
-        Optional<CompilerDiagnostic> textProject = SemanticIrValidator.validateText(
-            SemanticIrValidator.toProjectText(mutatedProject), facts);
-        check(typedProject.isPresent() && textProject.isPresent(),
-            "the mutated project rejects on both project surfaces");
-        check(typedProject.isPresent() && textProject.isPresent()
-                && typedProject.get().message().equals(textProject.get().message()),
-            "the mutated project reports the identical first failure on both surfaces");
-        if (typedUnit.isPresent() && typedProject.isPresent() && textProject.isPresent()) {
-            checkEq(typedUnit.get().message(), typedProject.get().message(),
-                "the unit and project admissions report the identical first failure");
-            checkEq(typedUnit.get().range(), typedProject.get().range(),
-                "the unit and project admissions keep the same failing range");
-            checkEq(typedProject.get().range(), textProject.get().range(),
-                "the typed and text project admissions keep the same failing range");
-        }
-
-        // The composed production admission (the lowering entry's own chain)
-        // rejects the same mutation with the same first failure and produces
-        // no companion view.
-        Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
-            mutatedTable, facts, mutated.classBindingFacts(), mutated.classFactories(),
-            mutated.jsonDefaults(), lowered.interfaceIndex().modules().get(APP), Map.of(),
-            lowered.classSeeds().registrations());
-        check(composed.isPresent() && typedUnit.isPresent()
-                && composed.get().message().equals(typedUnit.get().message()),
-            "the composed typed production admission rejects the mutation with the same "
-                + "first failure: " + composed.map(CompilerDiagnostic::message).orElse("admitted"));
+        expectBindingGraphMutationRejects("a missing inverse membership row", lowered, facts,
+            mutated, "CONTROL_BLOCK_TREE", "no inverse membership entry");
 
         // T4: the module dump still shows the mutation, and the unmutated dump
         // differs from it.
@@ -4092,9 +3856,7 @@ public class ProjectLoweringTest {
                 return;
             }
             ExecutableLoweredProject lowered = result.project();
-            SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
-                project.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
-                invocation().capabilityRegistryHash());
+            SemanticIrValidator.ComparisonFacts facts = comparisonFacts(project);
             LoweredModuleUnit util = lowered.modules().get(UTIL);
             LoweredModuleUnit app = lowered.modules().get(APP);
             check(util != null && app != null,
@@ -4109,26 +3871,8 @@ public class ProjectLoweringTest {
             Set<String> variants = new LinkedHashSet<>();
             LoweredFunction twoCapture = null;
             for (LoweredModuleUnit unit : lowered.modules().values()) {
-                RawUnit raw = RawUnit.fromTyped(unit);
                 String transport = SemanticIrValidator.toUnitText(unit);
-                RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
-                    (CanonicalJson.Obj) CanonicalJson.parse(transport));
-                checkEq(raw, reparsed, unit.moduleId() + ": the unit facts round-trip "
-                    + "typed -> raw -> text -> raw");
-                Optional<CompilerDiagnostic> standaloneTyped =
-                    SemanticIrValidator.validate(unit, facts);
-                Optional<CompilerDiagnostic> standaloneText =
-                    SemanticIrValidator.validateText(transport, facts);
-                if (requiresProviderContext(raw)) {
-                    check(standaloneTyped.isPresent() && standaloneText.isPresent(),
-                        unit.moduleId() + ": a unit whose facts refer to a foreign"
-                            + " provider rejects on the standalone surfaces");
-                } else {
-                    check(standaloneTyped.isEmpty(),
-                        unit.moduleId() + ": the unchanged unit admits on the typed surface");
-                    check(standaloneText.isEmpty(),
-                        unit.moduleId() + ": the unchanged unit admits on the text surface");
-                }
+                assertStandaloneAdmission(unit, transport, assertUnitTransport(unit, transport), facts);
                 for (FunctionExecutionBinding binding : unit.functionBindings().values()) {
                     variants.add(bindingName(binding));
                 }
@@ -4165,18 +3909,7 @@ public class ProjectLoweringTest {
 
             // T3: the project transport keeps the complete project and admits
             // on both surfaces; the result views are the owned records.
-            String projectText = SemanticIrValidator.toProjectText(lowered);
-            ContractSnapshotCanonicalizer.ParsedProject reparsedProject =
-                ContractSnapshotCanonicalizer.parseProject(
-                    (CanonicalJson.Obj) CanonicalJson.parse(projectText));
-            checkEq(lowered.interfaceIndex(), reparsedProject.interfaceIndex(),
-                "the project transport keeps the interface index");
-            checkEq(lowered.classSeeds(), reparsedProject.classSeeds(),
-                "the project transport keeps the class registration seeds");
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the unchanged project admits on the typed surface");
-            check(SemanticIrValidator.validateText(projectText, facts).isEmpty(),
-                "the unchanged project admits on the text surface");
+            assertProjectTransport(lowered, facts);
             check(lowered.classSeeds() == result.seeds(),
                 "result.seeds() is exactly project.classSeeds()");
             for (LoweredModuleUnit unit : lowered.modules().values()) {
@@ -4242,59 +3975,27 @@ public class ProjectLoweringTest {
                     "payload position", "is absent");
             }
 
-            // Mutation (1): drop a capture from the closure payload and the
-            // function record together; the body reference to it is then
-            // outside the captures list.
-            {
-                List<BindingGeneration> shortened = List.of(twoCapture.captures().get(0));
-                LoweredModuleUnit mutated = withClosureCaptures(
-                    withFunction(util, twoCapture, shortened), twoCapture.functionId(),
-                    shortened);
-                expectBindingGraphMutationRejects("a dropped capture", lowered, facts,
-                    mutated, "CAPTURE_RESOLUTION", "outside the captures list");
-            }
-            // Mutation (1b): duplicate a capture binding in the record and
-            // the payload together; a capture set names each binding once.
-            {
-                List<BindingGeneration> duplicated = new ArrayList<>(twoCapture.captures());
-                duplicated.add(duplicated.get(0));
-                LoweredModuleUnit mutated = withClosureCaptures(
-                    withFunction(util, twoCapture, duplicated), twoCapture.functionId(),
-                    duplicated);
-                expectBindingGraphMutationRejects("a duplicated capture binding", lowered,
-                    facts, mutated, "CAPTURE_RESOLUTION", "more than once");
-            }
-            // Mutation (2): change a capture generation in the function
-            // record alone; the closure/record capture link rejects.
-            {
-                List<BindingGeneration> changed = new ArrayList<>(twoCapture.captures());
-                BindingGeneration first = changed.get(0);
-                changed.set(0, new BindingGeneration(first.binding(),
-                    first.generation() + 1));
-                LoweredModuleUnit mutated = withFunction(util, twoCapture, changed);
-                expectBindingGraphMutationRejects("a changed capture generation", lowered,
-                    facts, mutated, "CAPTURE_RESOLUTION", "publishes captures");
-            }
-            // Mutation (3): change the capture order (the record alone).
-            {
-                List<BindingGeneration> reversed = List.of(twoCapture.captures().get(1),
-                    twoCapture.captures().get(0));
-                LoweredModuleUnit mutated = withFunction(util, twoCapture, reversed);
-                expectBindingGraphMutationRejects("a reordered capture list", lowered,
-                    facts, mutated, "CAPTURE_RESOLUTION", "publishes captures");
-            }
-            // Mutation (4): a stale capture generation in the record and the
-            // payload together: the creation site still resolves the previous
-            // generation.
-            {
-                List<BindingGeneration> stale = new ArrayList<>(twoCapture.captures());
-                BindingGeneration first = stale.get(0);
-                stale.set(0, new BindingGeneration(first.binding(),
-                    first.generation() + 1));
-                LoweredModuleUnit mutated = withClosureCaptures(
-                    withFunction(util, twoCapture, stale), twoCapture.functionId(), stale);
-                expectBindingGraphMutationRejects("a stale capture generation", lowered,
-                    facts, mutated, "CAPTURE_RESOLUTION", "names generation");
+            List<BindingGeneration> captures = twoCapture.captures();
+            BindingGeneration first = captures.get(0);
+            List<BindingGeneration> changed = new ArrayList<>(captures);
+            changed.set(0, new BindingGeneration(first.binding(), first.generation() + 1));
+            List<BindingGeneration> duplicated = new ArrayList<>(captures);
+            duplicated.add(first);
+            record CaptureCase(String name, List<BindingGeneration> values,
+                               boolean payloadToo, String detail) { }
+            for (CaptureCase row : List.of(
+                    new CaptureCase("a dropped capture", List.of(first), true, "outside the captures list"),
+                    new CaptureCase("a duplicated capture binding", duplicated, true, "more than once"),
+                    new CaptureCase("a changed capture generation", changed, false, "publishes captures"),
+                    new CaptureCase("a reordered capture list",
+                        List.of(captures.get(1), first), false, "publishes captures"),
+                    new CaptureCase("a stale capture generation", changed, true, "names generation"))) {
+                LoweredModuleUnit mutated = withFunction(util, twoCapture, row.values());
+                if (row.payloadToo()) {
+                    mutated = withClosureCaptures(mutated, twoCapture.functionId(), row.values());
+                }
+                expectBindingGraphMutationRejects(row.name(), lowered, facts,
+                    mutated, "CAPTURE_RESOLUTION", row.detail());
             }
             // Mutation (5): break the function body link (the record's body
             // block differs from the closure's registered body).
@@ -4328,43 +4029,26 @@ public class ProjectLoweringTest {
                     lowered, facts, mutated, "REGISTRY_ONE_TO_ONE",
                     "does not match its LoweredBody payload");
             }
-            // Mutation (7): retarget the adapter registration's target
-            // signature (the registry alone).
-            {
-                FunctionAllocationIdentity key = adapterKey(app);
-                FunctionExecutionBinding.AdapterBinding adapter =
-                    (FunctionExecutionBinding.AdapterBinding) app.functionBindings().get(key);
+            FunctionAllocationIdentity adapterId = adapterKey(app);
+            FunctionExecutionBinding.AdapterBinding adapter =
+                (FunctionExecutionBinding.AdapterBinding) app.functionBindings().get(adapterId);
+            AdaptSourceRef.SharedCell shared = (AdaptSourceRef.SharedCell) adapter.sourceRef();
+            record AdapterCase(String name, AdaptSourceRef source,
+                               RuntimeDescriptor.Func target, String detail) { }
+            for (AdapterCase row : List.of(
+                    new AdapterCase("signature", adapter.sourceRef(),
+                        new RuntimeDescriptor.Func(Collections.nCopies(3, RuntimeDescriptor.Int.INSTANCE),
+                            RuntimeDescriptor.Int.INSTANCE), "registration carries signatures"),
+                    new AdapterCase("sourceRef",
+                        new AdaptSourceRef.SharedCell(shared.binding(), shared.generation() + 1),
+                        adapter.targetSignature(), "registration carries mode"))) {
                 Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
                     new LinkedHashMap<>(app.functionBindings());
-                bindings.put(key, new FunctionExecutionBinding.AdapterBinding(
-                    adapter.adaptOpId(), adapter.captureMode(), adapter.sourceRef(),
-                    adapter.sourceSignature(),
-                    new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE,
-                        RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-                        RuntimeDescriptor.Int.INSTANCE)));
-                LoweredModuleUnit mutated = withBindings(app, bindings);
-                expectBindingGraphMutationRejects("a retargeted adapter signature",
-                    lowered, facts, mutated, "REGISTRY_ONE_TO_ONE",
-                    "registration carries signatures");
-            }
-            // Mutation (8): retarget the adapter registration's sourceRef (the
-            // registry alone).
-            {
-                FunctionAllocationIdentity key = adapterKey(app);
-                FunctionExecutionBinding.AdapterBinding adapter =
-                    (FunctionExecutionBinding.AdapterBinding) app.functionBindings().get(key);
-                AdaptSourceRef.SharedCell shared =
-                    (AdaptSourceRef.SharedCell) adapter.sourceRef();
-                Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
-                    new LinkedHashMap<>(app.functionBindings());
-                bindings.put(key, new FunctionExecutionBinding.AdapterBinding(
-                    adapter.adaptOpId(), adapter.captureMode(),
-                    new AdaptSourceRef.SharedCell(shared.binding(), shared.generation() + 1),
-                    adapter.sourceSignature(), adapter.targetSignature()));
-                LoweredModuleUnit mutated = withBindings(app, bindings);
-                expectBindingGraphMutationRejects("a retargeted adapter sourceRef",
-                    lowered, facts, mutated, "REGISTRY_ONE_TO_ONE",
-                    "registration carries mode");
+                bindings.put(adapterId, new FunctionExecutionBinding.AdapterBinding(
+                    adapter.adaptOpId(), adapter.captureMode(), row.source(),
+                    adapter.sourceSignature(), row.target()));
+                expectBindingGraphMutationRejects("a retargeted adapter " + row.name(),
+                    lowered, facts, withBindings(app, bindings), "REGISTRY_ONE_TO_ONE", row.detail());
             }
             // Mutation (9): mis-resolve the host-function-value materializing
             // boundary op (the registry alone).
@@ -4386,42 +4070,27 @@ public class ProjectLoweringTest {
                         mutated, "R-FUNCTION-BINDING", "does not resolve");
                 }
             }
-            // Mutation (10): contradict a parameter/import initialization
-            // fact: a local declaration cell is declared a parameter.
-            {
-                BindingId local = null;
-                for (BindingGeneration capture : twoCapture.captures()) {
-                    if (!util.classBindingFacts().parameters().contains(capture.binding())
-                            && !util.classBindingFacts().importAliases()
-                                .contains(capture.binding())) {
-                        local = capture.binding();
-                    }
-                }
-                check(local != null, "the fixture carries a captured local declaration cell");
-                if (local != null) {
-                    Set<BindingId> parameters =
-                        new LinkedHashSet<>(util.classBindingFacts().parameters());
-                    parameters.add(local);
-                    LoweredModuleUnit mutated = withClassBindingFacts(util,
-                        new ClassBindingFacts(parameters,
-                            util.classBindingFacts().importAliases()));
-                    expectBindingGraphMutationRejects(
-                        "a contradicted parameter initialization fact", lowered, facts,
-                        mutated, "BINDING_INIT_ONCE", "targets a parameter cell");
+            BindingId local = null;
+            for (BindingGeneration capture : captures) {
+                if (!util.classBindingFacts().parameters().contains(capture.binding())
+                        && !util.classBindingFacts().importAliases().contains(capture.binding())) {
+                    local = capture.binding();
                 }
             }
-            // Mutation (10b): a parameter fact names a binding with no
-            // producing allocation.
-            {
-                Set<BindingId> parameters =
-                    new LinkedHashSet<>(util.classBindingFacts().parameters());
-                parameters.add(new BindingId(9001));
-                LoweredModuleUnit mutated = withClassBindingFacts(util,
-                    new ClassBindingFacts(parameters,
-                        util.classBindingFacts().importAliases()));
-                expectBindingGraphMutationRejects(
-                    "a parameter fact naming no allocation", lowered, facts, mutated,
-                    "BINDING_INIT_ONCE", "names no producing allocation");
+            check(local != null, "the fixture carries a captured local declaration cell");
+            record ParameterCase(String name, BindingId binding, String detail) { }
+            for (ParameterCase row : List.of(
+                    new ParameterCase("a contradicted parameter initialization fact", local, "targets a parameter cell"),
+                    new ParameterCase("a parameter fact naming no allocation", new BindingId(9001),
+                        "names no producing allocation"))) {
+                if (row.binding() != null) {
+                    Set<BindingId> parameters = new LinkedHashSet<>(util.classBindingFacts().parameters());
+                    parameters.add(row.binding());
+                    LoweredModuleUnit mutated = withClassBindingFacts(util,
+                        new ClassBindingFacts(parameters, util.classBindingFacts().importAliases()));
+                    expectBindingGraphMutationRejects(row.name(), lowered, facts, mutated,
+                        "BINDING_INIT_ONCE", row.detail());
+                }
             }
             // Mutation (11): retarget a factory registration to a non-factory
             // op (the class facts need the carried interface context, so the
@@ -4655,12 +4324,7 @@ public class ProjectLoweringTest {
     /** The unit rebuilt with another operation list. */
     private static LoweredModuleUnit withOperationList(LoweredModuleUnit unit,
             List<SemanticOp> ops) {
-        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
-            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
-            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            ops, unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+        return withOps(unit, ops);
     }
 
     /** The unit rebuilt with another function registry. */
@@ -4782,53 +4446,7 @@ public class ProjectLoweringTest {
     private static void expectBindingGraphMutationRejects(String what,
             ExecutableLoweredProject lowered, SemanticIrValidator.ComparisonFacts facts,
             LoweredModuleUnit mutated, String rule, String... contains) {
-        RawUnit raw = RawUnit.fromTyped(mutated);
-        String text = SemanticIrValidator.toUnitText(mutated);
-        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
-            (CanonicalJson.Obj) CanonicalJson.parse(text));
-        checkEq(raw, reparsed, what + ": the mutation survives typed -> raw -> text -> raw");
-        check(!text.equals(SemanticIrValidator.toUnitText(
-                lowered.modules().get(mutated.moduleId()))),
-            what + ": the mutation stays visible in the transported unit text");
-        checkEq(text, CanonicalJson.serializeText(
-                ContractSnapshotCanonicalizer.toJson(reparsed)),
-            what + ": re-serializing the transported mutation is byte-stable");
-        for (RawOp op : raw.ops()) {
-            checkEq(op.canonicalDigest(),
-                ContractSnapshotCanonicalizer.recomputeSnapshotDigest(op.snapshot()),
-                what + ": op " + op.opId() + " keeps a valid contract digest");
-        }
-        Optional<CompilerDiagnostic> typedUnit = SemanticIrValidator.validate(mutated, facts);
-        Optional<CompilerDiagnostic> textUnit = SemanticIrValidator.validateText(text, facts);
-        assertMutationRule(what + " (typed unit)", typedUnit, rule, contains);
-        assertMutationRule(what + " (unit text)", textUnit, rule, contains);
-        assertMutationRule(what + " (typed project)", projectAdmission(lowered, mutated, facts),
-            rule, contains);
-        Optional<CompilerDiagnostic> textProject = SemanticIrValidator.validateText(
-            SemanticIrValidator.toProjectText(mutatedProject(lowered, mutated)), facts);
-        assertMutationRule(what + " (project text)", textProject, rule, contains);
-        check(typedUnit.isPresent() && textUnit.isPresent()
-                && typedUnit.get().message().equals(textUnit.get().message()),
-            what + ": the unit surfaces report the identical first failure");
-        check(typedUnit.isPresent() && textProject.isPresent()
-                && typedUnit.get().message().equals(textProject.get().message()),
-            what + ": the unit and project surfaces report the identical first failure");
-        if (typedUnit.isPresent() && textUnit.isPresent() && textProject.isPresent()) {
-            checkEq(typedUnit.get().range(), textUnit.get().range(),
-                what + ": the unit surfaces keep the same failing range");
-            checkEq(typedUnit.get().range(), textProject.get().range(),
-                what + ": the project surfaces keep the same failing range");
-        }
-        Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
-            mutated.bodyTable(), facts, mutated.classBindingFacts(), mutated.classFactories(),
-            mutated.jsonDefaults(), lowered.interfaceIndex().modules().get(mutated.moduleId()),
-            Map.of(), lowered.classSeeds().registrations());
-        check(composed.isPresent() && typedUnit.isPresent()
-                && composed.get().message().equals(typedUnit.get().message())
-                && composed.get().range().equals(typedUnit.get().range()),
-            what + ": the composed production admission reports the same first failure "
-                + "and range: " + composed.map(CompilerDiagnostic::message)
-                    .orElse("admitted"));
+        expectGraphMutationRejects(what, lowered, facts, mutated, false, rule, contains);
     }
 
     /**
@@ -4840,40 +4458,54 @@ public class ProjectLoweringTest {
     private static void expectClassGraphMutationRejects(String what,
             ExecutableLoweredProject lowered, SemanticIrValidator.ComparisonFacts facts,
             LoweredModuleUnit mutated, String rule, String... contains) {
-        RawUnit raw = RawUnit.fromTyped(mutated);
+        expectGraphMutationRejects(what, lowered, facts, mutated, true, rule, contains);
+    }
+
+    private static void expectGraphMutationRejects(String what,
+            ExecutableLoweredProject lowered, SemanticIrValidator.ComparisonFacts facts,
+            LoweredModuleUnit mutated, boolean standaloneAdmits, String rule, String... contains) {
         String text = SemanticIrValidator.toUnitText(mutated);
-        RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(
-            (CanonicalJson.Obj) CanonicalJson.parse(text));
-        checkEq(raw, reparsed, what + ": the mutation survives typed -> raw -> text -> raw");
+        RawUnit reparsed = assertUnitTransport(mutated, text);
         check(!text.equals(SemanticIrValidator.toUnitText(
                 lowered.modules().get(mutated.moduleId()))),
-            what + ": the mutation stays visible in the transported unit text");
-        check(SemanticIrValidator.validate(mutated, facts).isEmpty(),
-            what + ": the standalone unit carries no provider context, so its applicable "
-                + "predicates pass");
-        check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-            what + ": the standalone unit text carries no provider context");
+            what + ": mutation stays visible in transported text");
+        for (RawOp op : reparsed.ops()) {
+            checkEq(op.canonicalDigest(),
+                ContractSnapshotCanonicalizer.recomputeSnapshotDigest(op.snapshot()),
+                what + ": op " + op.opId() + " keeps a valid contract digest");
+        }
+        Optional<CompilerDiagnostic> typedUnit = SemanticIrValidator.validate(mutated, facts);
+        Optional<CompilerDiagnostic> textUnit = SemanticIrValidator.validateText(text, facts);
         Optional<CompilerDiagnostic> typedProject = projectAdmission(lowered, mutated, facts);
         Optional<CompilerDiagnostic> textProject = SemanticIrValidator.validateText(
             SemanticIrValidator.toProjectText(mutatedProject(lowered, mutated)), facts);
+        if (standaloneAdmits) {
+            check(typedUnit.isEmpty(), what + ": standalone typed predicates pass without provider context");
+            check(textUnit.isEmpty(), what + ": standalone text predicates pass without provider context");
+        } else {
+            assertMutationRule(what + " (typed unit)", typedUnit, rule, contains);
+            assertMutationRule(what + " (unit text)", textUnit, rule, contains);
+            assertSameFailure(what + " unit surfaces", typedUnit, textUnit);
+            assertSameFailure(what + " unit/project surfaces", typedUnit, typedProject);
+        }
         assertMutationRule(what + " (typed project)", typedProject, rule, contains);
         assertMutationRule(what + " (project text)", textProject, rule, contains);
-        if (typedProject.isPresent() && textProject.isPresent()) {
-            checkEq(typedProject.get().message(), textProject.get().message(),
-                what + ": the project surfaces report the identical first failure");
-            checkEq(typedProject.get().range(), textProject.get().range(),
-                what + ": the project surfaces keep the same failing range");
-        }
+        assertSameFailure(what + " project surfaces", typedProject, textProject);
         Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
             mutated.bodyTable(), facts, mutated.classBindingFacts(), mutated.classFactories(),
             mutated.jsonDefaults(), lowered.interfaceIndex().modules().get(mutated.moduleId()),
             Map.of(), lowered.classSeeds().registrations());
-        check(composed.isPresent() && typedProject.isPresent()
-                && composed.get().message().equals(typedProject.get().message())
-                && composed.get().range().equals(typedProject.get().range()),
-            what + ": the composed production admission reports the same first failure "
-                + "and range: " + composed.map(CompilerDiagnostic::message)
-                    .orElse("admitted"));
+        assertSameFailure(what + " composed production admission", typedProject, composed);
+    }
+
+    private static void assertSameFailure(String what, Optional<CompilerDiagnostic> expected,
+            Optional<CompilerDiagnostic> actual) {
+        check(expected.isPresent() && actual.isPresent(), what + ": both reject");
+        if (expected.isPresent() && actual.isPresent()) {
+            checkEq(expected.get().code(), actual.get().code(), what + ": same code");
+            checkEq(expected.get().message(), actual.get().message(), what + ": identical first failure");
+            checkEq(expected.get().range(), actual.get().range(), what + ": identical origin range");
+        }
     }
 
     private static ExecutableLoweredProject mutatedProject(ExecutableLoweredProject lowered,
@@ -4936,7 +4568,6 @@ public class ProjectLoweringTest {
             testDeclarationClassConstruction();
             testBuiltinErrorConstruction();
             testExternCDeclarationClassConstruction();
-            testProjectSeedModuleJoinAndAdmission();
             testProjectSeedNominalClassReference();
             testSeedImplementationReferenceAndPrivateFieldRead();
             testCorruptedUnitSeed(baseline);

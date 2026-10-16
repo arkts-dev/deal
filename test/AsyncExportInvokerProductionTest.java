@@ -1518,9 +1518,8 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(caused, "run", "int");
                 checkEq("OUTER", errorCode(result), backend + ": outer failure survives");
-                AsyncExportEnvelope.ErrorDetail cause =
-                    result instanceof LuaJitAsyncExportInvoker.Result.DealError e ? e.cause()
-                    : result instanceof JvmAsyncExportInvoker.Result.DealError j ? j.cause() : null;
+                AsyncExportEnvelope.ErrorDetail detail = errorDetail(result);
+                AsyncExportEnvelope.ErrorDetail cause = detail == null ? null : detail.cause();
                 check(cause != null, backend + ": actual public invocation retains cause");
                 if (cause != null) {
                     checkEq("E8001", cause.code(), backend + ": cause code");
@@ -1673,40 +1672,31 @@ public class AsyncExportInvokerProductionTest {
 
         // Wrong-typed and unknown fields on the closed deal-error arm fail
         // closed (never a partial acceptance).
-        checkRefusedEnvelope(prefix + "{\"status\":\"deal-error\","
-            + "\"code\":\"E8001\",\"message\":\"m\",\"frames\":3}",
-            prefix, "a non-string frames field");
-        checkRefusedEnvelope(prefix + "{\"status\":\"deal-error\","
-            + "\"code\":\"E8001\",\"message\":\"m\",\"expected\":7}",
-            prefix, "a non-string expected field");
-        checkRefusedEnvelope(prefix + "{\"status\":\"deal-error\","
-            + "\"code\":\"E8001\",\"message\":\"m\",\"cause\":{}}",
-            prefix, "an incomplete cause");
-        checkRefusedEnvelope(prefix + "{\"status\":\"deal-error\","
-            + "\"code\":\"E8001\",\"message\":\"m\",\"cause\":null}",
-            prefix, "null is not an absent cause");
-        checkRefusedEnvelope(prefix + "{\"status\":\"deal-error\","
-            + "\"code\":\"E8001\",\"message\":\"m\",\"cause\":{"
-            + "\"code\":\"E8001\",\"message\":\"m\",\"unknown\":1}}",
-            prefix, "an unknown nested error field");
+        for (String field : List.of(
+                "\"frames\":3",
+                "\"expected\":7",
+                "\"cause\":{}",
+                "\"cause\":null",
+                "\"cause\":{\"code\":\"E8001\",\"message\":\"m\",\"unknown\":1}")) {
+            checkRefusedEnvelope("{\"status\":\"deal-error\",\"code\":\"E8001\","
+                + "\"message\":\"m\"," + field + "}", field);
+        }
 
         // The retained five-argument public constructors stay constructible
         // from an external package (this suite's package differs from the
         // invokers'), with the absent optional metadata null.
-        Object luaCompat = new LuaJitAsyncExportInvoker.Result.DealError(
-            "E8001", "expected int", "/abs/src/helper.deal", 3, 16);
-        Object jvmCompat = new JvmAsyncExportInvoker.Result.DealError(
-            "E8001", "expected int", "/abs/src/helper.deal", 3, 16);
-        checkEq("E8001", errorCode(luaCompat),
-            "the LuaJIT five-argument DealError constructor stays public");
-        checkEq("E8001", errorCode(jvmCompat),
-            "the JVM five-argument DealError constructor stays public");
-        check(errorExpected(luaCompat) == null && errorActual(luaCompat) == null
-                && errorFrames(luaCompat) == null,
-            "the compatibility constructor leaves the optional detail null");
-        check(errorExpected(jvmCompat) == null && errorActual(jvmCompat) == null
-                && errorFrames(jvmCompat) == null,
-            "the compatibility constructor leaves the optional detail null");
+        for (Object compat : List.of(
+                new LuaJitAsyncExportInvoker.Result.DealError(
+                    "E8001", "expected int", "/abs/src/helper.deal", 3, 16),
+                new JvmAsyncExportInvoker.Result.DealError(
+                    "E8001", "expected int", "/abs/src/helper.deal", 3, 16))) {
+            checkEq("E8001", errorCode(compat),
+                compat.getClass() + ": the five-argument DealError constructor stays public");
+            AsyncExportEnvelope.ErrorDetail metadata = errorDetail(compat);
+            check(metadata.expected() == null && metadata.actual() == null
+                    && metadata.frames() == null,
+                compat.getClass() + ": the compatibility constructor leaves optional detail null");
+        }
 
         // A non-DEAL status keeps its existing projection and never maps to
         // a DealError.
@@ -1721,11 +1711,10 @@ public class AsyncExportInvokerProductionTest {
     }
 
     /** A malformed deal-error envelope line is refused by the codec. */
-    private static void checkRefusedEnvelope(String line, String prefix,
-            String what) {
+    private static void checkRefusedEnvelope(String json, String what) {
         boolean refused = false;
         try {
-            AsyncExportEnvelope.decodeEnvelope(line.substring(prefix.length()));
+            AsyncExportEnvelope.decodeEnvelope(json);
         } catch (LuaJitAsyncExportInvoker.EnvelopeJson.ParseException expected) {
             refused = true;
         }
@@ -1951,32 +1940,16 @@ public class AsyncExportInvokerProductionTest {
         return null;
     }
 
-    private static String errorExpected(Object result) {
+    private static AsyncExportEnvelope.ErrorDetail errorDetail(Object result) {
         if (result instanceof LuaJitAsyncExportInvoker.Result.DealError error) {
-            return error.expected();
+            return new AsyncExportEnvelope.ErrorDetail(error.code(), error.message(),
+                error.file(), error.line(), error.column(), error.expected(),
+                error.actual(), error.frames(), error.cause());
         }
         if (result instanceof JvmAsyncExportInvoker.Result.DealError error) {
-            return error.expected();
-        }
-        return null;
-    }
-
-    private static String errorActual(Object result) {
-        if (result instanceof LuaJitAsyncExportInvoker.Result.DealError error) {
-            return error.actual();
-        }
-        if (result instanceof JvmAsyncExportInvoker.Result.DealError error) {
-            return error.actual();
-        }
-        return null;
-    }
-
-    private static String errorFrames(Object result) {
-        if (result instanceof LuaJitAsyncExportInvoker.Result.DealError error) {
-            return error.frames();
-        }
-        if (result instanceof JvmAsyncExportInvoker.Result.DealError error) {
-            return error.frames();
+            return new AsyncExportEnvelope.ErrorDetail(error.code(), error.message(),
+                error.file(), error.line(), error.column(), error.expected(),
+                error.actual(), error.frames(), error.cause());
         }
         return null;
     }
@@ -1990,54 +1963,33 @@ public class AsyncExportInvokerProductionTest {
      * fails with the typed-kind arm at the read's own check anchor
      * (column 16 — never the later annotation check at column 10).
      */
-    private static final String CORNER_HELPER_SYNC = """
-        export function fail(): int {
+    private static final String CORNER_HELPER = """
+        export %sfunction fail(): int {
           let t: table = {value: "bad"};
           let x: int = t.value;
           return x;
         }
         """;
 
-    /** The awaited companion of subjects 6 and 8. */
-    private static final String CORNER_HELPER_ASYNC = """
-        export async function fail(): int {
-          let t: table = {value: "bad"};
-          let x: int = t.value;
-          return x;
+    private static final String CORNER_MAIN = """
+        import * as c from "std/console";
+        import * as helper from "./helper";
+        export function main(): null {return null;}
+        export %sfunction run(): int {%s}
+        """;
+
+    private static Project compileCorner(String name, String backend,
+            boolean async, boolean rethrow) throws Exception {
+        String body = "return " + (async ? "await " : "") + "helper.fail();";
+        if (rethrow) {
+            body = "try {" + body + "} catch(e) {throw e;}";
         }
-        """;
-
-    /** Subject 7: the public-companion-direct entry. */
-    private static final String CORNER_MAIN_DIRECT = """
-        import * as c from "std/console";
-        import * as helper from "./helper";
-        export function main(): null {return null;}
-        export function run(): int {return helper.fail();}
-        """;
-
-    /** Subject 5: the public-companion-rethrow entry. */
-    private static final String CORNER_MAIN_RETHROW = """
-        import * as c from "std/console";
-        import * as helper from "./helper";
-        export function main(): null {return null;}
-        export function run(): int {try {return helper.fail();} catch(e) {throw e;}}
-        """;
-
-    /** Subject 8: the public-await-direct entry. */
-    private static final String CORNER_MAIN_AWAIT_DIRECT = """
-        import * as c from "std/console";
-        import * as helper from "./helper";
-        export function main(): null {return null;}
-        export async function run(): int {return await helper.fail();}
-        """;
-
-    /** Subject 6: the public-await-rethrow entry. */
-    private static final String CORNER_MAIN_AWAIT_RETHROW = """
-        import * as c from "std/console";
-        import * as helper from "./helper";
-        export function main(): null {return null;}
-        export async function run(): int {try {return await helper.fail();} catch(e) {throw e;}}
-        """;
+        String modifier = async ? "async " : "";
+        Path root = Files.createTempDirectory("async-export-" + name + "-");
+        writeFile(root, "src/helper.deal", CORNER_HELPER.formatted(modifier));
+        return compileAt(root, name, backend, PLAIN_MANIFEST.formatted(backend),
+            CORNER_MAIN.formatted(modifier, body), null, null);
+    }
 
     /**
      * The published two-module corner-case project of one async subject,
@@ -2056,60 +2008,20 @@ public class AsyncExportInvokerProductionTest {
             for (boolean rethrow : new boolean[] {false, true}) {
                 String name = "corner-await-" + (rethrow ? "rethrow" : "direct")
                     + "-" + backend;
-                Project project = compileModules(name, backend,
-                    String.format(PLAIN_MANIFEST, backend),
-                    CORNER_HELPER_ASYNC, rethrow
-                        ? CORNER_MAIN_AWAIT_RETHROW : CORNER_MAIN_AWAIT_DIRECT);
+                Project project = compileCorner(name, backend, true, rethrow);
                 try {
                     Object result = invoke(project, "run", "int");
-                    checkCornerError(name, result,
-                        project.root().resolve("src/helper.deal"));
-
-                    // The program's own streams stay empty: the only
-                    // stdout record is the host control envelope, decoded
-                    // separately through the shared wire codec.
-                    ProcessOutcome transcript =
-                        productionHostTranscript(project, "run", "int");
-                    checkEq(0, transcript.exitCode(), name
-                        + ": the production host exits 0: " + transcript.output());
-                    checkEq("", transcript.stderr(), name
-                        + ": the program stderr stays empty: " + transcript.output());
-                    String marker = LuaJitAsyncExportInvoker.RESULT_PREFIX;
-                    check(transcript.stdout().startsWith(marker)
-                            && transcript.stdout().endsWith("\n")
-                            && transcript.stdout().indexOf('\n')
-                                == transcript.stdout().length() - 1,
-                        name + ": the program stdout is exactly the host"
-                            + " control envelope: <" + transcript.stdout() + ">");
-                    if (transcript.stdout().startsWith(marker)
-                            && transcript.stdout().endsWith("\n")) {
-                        AsyncExportEnvelope.Envelope envelope =
-                            AsyncExportEnvelope.decodeEnvelope(
-                                transcript.stdout().substring(marker.length(),
-                                    transcript.stdout().length() - 1));
-                        checkEq(AsyncExportEnvelope.STATUS_DEAL_ERROR,
-                            envelope.status, name + ": the wire status is"
-                                + " deal-error");
-                        checkEq("E8001", envelope.code, name
-                            + ": the wire code");
-                        checkEq("expected int", envelope.message, name
-                            + ": the wire message");
-                        checkEq(Integer.valueOf(3), envelope.line, name
-                            + ": the wire line");
-                        checkEq(Integer.valueOf(16), envelope.column, name
-                            + ": the wire column");
-                        checkEq("int", envelope.expected, name
-                            + ": the wire expected");
-                        checkEq("string", envelope.actual, name
-                            + ": the wire actual");
-                        check(envelope.cause == null, name + ": no invented wire cause");
-                        check(envelope.frames != null
-                                && envelope.frames.indexOf("fail@F") >= 0
-                                && envelope.frames.indexOf("fail@F")
-                                    < envelope.frames.indexOf("run@F"),
-                            name + ": the wire frames name the original and"
-                                + " generated fail/run functions: "
-                                + envelope.frames);
+                    Path companion = project.root().resolve("src/helper.deal");
+                    checkCornerError(name, errorDetail(result), companion);
+                    AsyncExportEnvelope.Envelope envelope =
+                        quietHostEnvelope(name, project);
+                    if (envelope != null) {
+                        checkEq(AsyncExportEnvelope.STATUS_DEAL_ERROR, envelope.status,
+                            name + ": the wire status is deal-error");
+                        checkCornerError(name + " wire", new AsyncExportEnvelope.ErrorDetail(
+                            envelope.code, envelope.message, envelope.file, envelope.line,
+                            envelope.column, envelope.expected, envelope.actual,
+                            envelope.frames, envelope.cause), companion);
                     }
                 } finally {
                     deleteRecursively(project.root());
@@ -2130,73 +2042,53 @@ public class AsyncExportInvokerProductionTest {
     private static void testCornerCaseSyncErrorsBothTargets() throws Exception {
         System.out.println("-- the retained corner-case public sync errors"
             + " (direct and rethrow) through the exported wrapper --");
-        for (String backend : List.of("luajit", "jvm")) {
-            for (boolean rethrow : new boolean[] {false, true}) {
-                String name = "corner-sync-" + (rethrow ? "rethrow" : "direct")
-                    + "-" + backend;
-                Project project = compileModules(name, backend,
-                    String.format(PLAIN_MANIFEST, backend),
-                    CORNER_HELPER_SYNC, rethrow
-                        ? CORNER_MAIN_RETHROW : CORNER_MAIN_DIRECT);
-                try {
-                    ProcessOutcome observation =
-                        "luajit".equals(backend)
-                            ? runLuaSyncWrapperHost(project)
-                            : runJvmSyncWrapperHost(project, name);
-                    checkEq(0, observation.exitCode(), name
-                        + ": the exported-wrapper host exits 0: "
-                        + observation.output());
-                    checkEq("", observation.stdout(), name
-                        + ": the program stdout stays empty: "
-                        + observation.output());
-                    checkEq("", observation.stderr(), name
-                        + ": the program stderr stays empty: "
-                        + observation.output());
-                    Path observed = "luajit".equals(backend)
-                        ? project.root().resolve("out/corner_error.txt")
-                        : project.classes().resolve("corner_error.txt");
-                    checkCornerObservation(name,
-                        readObservation(observed), backend);
-                } finally {
-                    deleteRecursively(project.root());
+        Path drivers = Files.createTempDirectory("corner-sync-hosts-");
+        try {
+            writeFile(drivers, "corner_host.lua", CORNER_LUA_SYNC_HOST);
+            writeFile(drivers, "CornerCaseHost.java", CORNER_JVM_SYNC_HOST);
+            for (String backend : List.of("luajit", "jvm")) {
+                for (boolean rethrow : new boolean[] {false, true}) {
+                    String name = "corner-sync-" + (rethrow ? "rethrow" : "direct")
+                        + "-" + backend;
+                    Project project = compileCorner(name, backend, false, rethrow);
+                    try {
+                        if ("jvm".equals(backend) && !rethrow) {
+                            StringWriter messages = new StringWriter();
+                            boolean compiled = javacPreparation.compile(
+                                List.of(drivers.resolve("CornerCaseHost.java")),
+                                drivers, project.classes(), messages);
+                            check(compiled, name + ": the JVM exported-wrapper host compiles: "
+                                + messages);
+                            if (!compiled) {
+                                throw new IllegalStateException(name + ": " + messages);
+                            }
+                        }
+                        Path directory = "luajit".equals(backend)
+                            ? project.root().resolve("out") : project.classes();
+                        List<String> command = "luajit".equals(backend)
+                            ? List.of("luajit", drivers.resolve("corner_host.lua").toString())
+                            : List.of("java", "-cp", project.classes() + File.pathSeparator
+                                + drivers + File.pathSeparator + absoluteClasspath(),
+                                "CornerCaseHost");
+                        ProcessOutcome observation = runProcess(command, directory);
+                        checkEq(0, observation.exitCode(), name
+                            + ": the exported-wrapper host exits 0: " + observation.output());
+                        checkEq("", observation.stdout(), name
+                            + ": the program stdout stays empty: " + observation.output());
+                        checkEq("", observation.stderr(), name
+                            + ": the program stderr stays empty: " + observation.output());
+                        Path observed = directory.resolve("corner_error.txt");
+                        check(Files.isRegularFile(observed), name
+                            + ": the exported-wrapper host records the observed error");
+                        checkCornerObservation(name, readObservation(observed), backend);
+                    } finally {
+                        deleteRecursively(project.root());
+                    }
                 }
             }
+        } finally {
+            deleteRecursively(drivers);
         }
-    }
-
-    /** The LuaJIT sync exported-wrapper host: the chunk's returned surface. */
-    private static ProcessOutcome runLuaSyncWrapperHost(Project project)
-            throws Exception {
-        Path out = project.root().resolve("out");
-        writeFile(project.root(), "corner_host.lua", CORNER_LUA_SYNC_HOST);
-        ProcessOutcome run = runProcess(
-            List.of("luajit", "../corner_host.lua"), out);
-        check(Files.isRegularFile(out.resolve("corner_error.txt")),
-            "the LuaJIT exported-wrapper host records the observed error");
-        return run;
-    }
-
-    /** The JVM sync exported-wrapper host: the emitted export surface. */
-    private static ProcessOutcome runJvmSyncWrapperHost(Project project,
-            String name) throws Exception {
-        Path classes = project.classes();
-        Path host = project.root().resolve("CornerCaseHost.java");
-        Files.writeString(host, CORNER_JVM_SYNC_HOST, StandardCharsets.UTF_8);
-        StringWriter messages = new StringWriter();
-        boolean compiled = javacPreparation.compile(List.of(host), classes,
-            messages);
-        check(compiled, name + ": the JVM exported-wrapper host compiles: "
-            + messages);
-        if (!compiled) {
-            throw new IllegalStateException(name
-                + ": the JVM exported-wrapper host did not compile: " + messages);
-        }
-        ProcessOutcome run = runProcess(List.of("java", "-cp",
-            classes + File.pathSeparator + absoluteClasspath(),
-            "CornerCaseHost"), classes);
-        check(Files.isRegularFile(classes.resolve("corner_error.txt")),
-            "the JVM exported-wrapper host records the observed error");
-        return run;
     }
 
     /**
@@ -2274,31 +2166,22 @@ public class AsyncExportInvokerProductionTest {
      * observation file: the exact ErrorDetail and the original
      * check-anchor origin.
      */
-    private static void checkCornerError(String name, Object result,
-                                         Path companionSource) {
-        check(result instanceof LuaJitAsyncExportInvoker.Result.DealError
-                || result instanceof JvmAsyncExportInvoker.Result.DealError,
-            name + ": the language failure reaches the public result: "
-                + result);
-        checkEq("E8001", errorCode(result), name + ": the error code");
-        checkEq("expected int", errorMessage(result), name
-            + ": the typed-kind message");
-        checkEq("int", errorExpected(result), name + ": expected");
-        checkEq("string", errorActual(result), name + ": actual");
-        checkEq(companionSource.toAbsolutePath().toString(),
-            errorFile(result), name + ": the companion origin file");
-        checkEq(Integer.valueOf(3), errorLine(result), name + ": the origin line");
-        checkEq(Integer.valueOf(16), errorColumn(result), name
-            + ": the contextual read check column");
-        check(result instanceof LuaJitAsyncExportInvoker.Result.DealError e
-                ? e.cause() == null
-                : result instanceof JvmAsyncExportInvoker.Result.DealError j && j.cause() == null,
-            name + ": direct/rethrow error has no invented cause");
-        String frames = errorFrames(result);
+    private static void checkCornerError(String name,
+            AsyncExportEnvelope.ErrorDetail detail, Path companionSource) {
+        check(detail != null, name + ": the language failure reaches the public result");
+        if (detail == null) {
+            return;
+        }
+        checkEq(new AsyncExportEnvelope.ErrorDetail("E8001", "expected int",
+            companionSource.toAbsolutePath().toString(), 3, 16, "int", "string",
+            detail.frames(), null), detail, name + ": the complete corner error metadata");
+        checkCornerFrames(name, detail.frames());
+    }
+
+    private static void checkCornerFrames(String name, String frames) {
         check(frames != null && frames.indexOf("fail@F") >= 0
                 && frames.indexOf("fail@F") < frames.indexOf("run@F"),
-            name + ": frames name the original and generated fail/run"
-                + " functions: " + frames);
+            name + ": frames name the original and generated fail/run functions: " + frames);
     }
 
     /**
@@ -2313,31 +2196,17 @@ public class AsyncExportInvokerProductionTest {
         checkEq("E8001", observed.get("code"), name + ": the observed code");
         checkEq("expected int", observed.get("message"), name
             + ": the observed typed-kind message");
-        if ("luajit".equals(backend)) {
-            String origin = observed.get("origin") == null ? ""
-                : observed.get("origin").replace('\\', '/');
-            check(origin.endsWith("/src/helper.deal:3:16"),
-                name + ": the observed origin is the companion line 3"
-                    + " contextual read anchor: " + origin);
-        } else {
-            String origin = observed.get("origin") == null ? ""
-                : observed.get("origin").replace('\\', '/');
-            check(origin.endsWith("/src/helper.deal:3:16"),
-                name + ": the observed origin is the companion line 3"
-                    + " contextual read anchor: " + origin);
-        }
+        String origin = observed.getOrDefault("origin", "").replace('\\', '/');
+        check(origin.endsWith("/src/helper.deal:3:16"),
+            name + ": the observed origin is the companion line 3 contextual read anchor: "
+                + origin);
         checkEq("int", observed.get("expected"), name
             + ": the observed expected type");
         checkEq("string", observed.get("actual"), name
             + ": the observed actual type");
-        String frames = observed.get("frames") == null ? ""
-            : observed.get("frames");
         checkEq("luajit".equals(backend) ? "nil" : "null", observed.get("cause"),
             name + ": direct/rethrow error has no invented cause");
-        check(frames.indexOf("fail@F") >= 0
-                && frames.indexOf("fail@F") < frames.indexOf("run@F"),
-            name + ": the observed frames name the original and generated"
-                + " fail/run functions: " + frames);
+        checkCornerFrames(name, observed.get("frames"));
     }
 
     /**
@@ -2388,34 +2257,12 @@ public class AsyncExportInvokerProductionTest {
                     name + ": the public completion is 1 (the RIV/bounds/"
                         + "no-write/append oracle passed)");
 
-                // The published artifact through the same host surface the
-                // invoker drives: the program's own streams stay empty and
-                // the only stdout record is the host value envelope.
-                ProcessOutcome transcript =
-                    productionHostTranscript(project, "run", "int");
-                checkEq(0, transcript.exitCode(), name + ": the production"
-                    + " host exits 0: " + transcript.output());
-                checkEq("", transcript.stderr(), name + ": the program"
-                    + " stderr stays empty: " + transcript.output());
-                String marker = LuaJitAsyncExportInvoker.RESULT_PREFIX;
-                check(transcript.stdout().startsWith(marker)
-                        && transcript.stdout().endsWith("\n")
-                        && transcript.stdout().indexOf('\n')
-                            == transcript.stdout().length() - 1,
-                    name + ": the program stdout is exactly the host value"
-                        + " envelope: <" + transcript.stdout() + ">");
-                if (transcript.stdout().startsWith(marker)
-                        && transcript.stdout().endsWith("\n")) {
-                    AsyncExportEnvelope.Envelope envelope =
-                        AsyncExportEnvelope.decodeEnvelope(
-                            transcript.stdout().substring(marker.length(),
-                                transcript.stdout().length() - 1));
+                AsyncExportEnvelope.Envelope envelope = quietHostEnvelope(name, project);
+                if (envelope != null) {
                     checkEq(AsyncExportEnvelope.STATUS_VALUE, envelope.status,
                         name + ": the wire status is value");
-                    checkEq("int", envelope.descriptor, name
-                        + ": the wire descriptor is int");
-                    checkEq("1", envelope.value, name
-                        + ": the wire value is 1");
+                    checkEq("int", envelope.descriptor, name + ": the wire descriptor is int");
+                    checkEq("1", envelope.value, name + ": the wire value is 1");
                 }
             } finally {
                 deleteRecursively(project.root());
@@ -2423,39 +2270,21 @@ public class AsyncExportInvokerProductionTest {
         }
     }
 
-    /**
-     * Compiles one two-module corner-case project through the public
-     * {@code deal compile} entry (the companion plus the entry).
-     */
-    private static Project compileModules(String name, String backend,
-            String manifest, String helperSource, String mainSource)
-            throws Exception {
-        Path root = Files.createTempDirectory("async-export-" + name + "-");
-        writeFile(root, "deal.json", manifest);
-        writeFile(root, "src/helper.deal", helperSource);
-        writeFile(root, "src/main.deal", mainSource);
-        int exit = deal.Main.run(new String[] {"compile",
-            root.resolve("src/main.deal").toAbsolutePath().toString()});
-        checkEq(0, exit, name + ": the public deal compile succeeds");
-        if (exit != 0) {
-            throw new IllegalStateException(name + ": the corner-case"
-                + " project did not compile through the public entry");
-        }
-        if ("luajit".equals(backend)) {
-            return new Project(root, backend, root.resolve("out/main.lua"), null);
-        }
-        Path classes = root.resolve("classes");
-        Files.createDirectories(classes);
-        StringWriter messages = new StringWriter();
-        boolean compiled = javacPreparation.compile(
-            List.of(root.resolve("out/Main.java")), classes, messages);
-        check(compiled, name + ": the emitted JVM artifact compiles: "
-            + messages);
-        if (!compiled) {
-            throw new IllegalStateException(name + ": the emitted JVM"
-                + " artifact did not compile: " + messages);
-        }
-        return new Project(root, backend, classes.resolve("Main.class"), classes);
+    private static AsyncExportEnvelope.Envelope quietHostEnvelope(String name,
+            Project project) throws Exception {
+        ProcessOutcome transcript = productionHostTranscript(project, "run", "int");
+        checkEq(0, transcript.exitCode(), name + ": the production host exits 0: "
+            + transcript.output());
+        checkEq("", transcript.stderr(), name + ": the program stderr stays empty: "
+            + transcript.output());
+        String stdout = transcript.stdout();
+        String marker = LuaJitAsyncExportInvoker.RESULT_PREFIX;
+        boolean singleEnvelope = stdout.startsWith(marker) && stdout.endsWith("\n")
+            && stdout.indexOf('\n') == stdout.length() - 1;
+        check(singleEnvelope, name + ": stdout is exactly the host control envelope: <"
+            + stdout + ">");
+        return singleEnvelope ? AsyncExportEnvelope.decodeEnvelope(
+            stdout.substring(marker.length(), stdout.length() - 1)) : null;
     }
 
     /** One observed exported-wrapper error record (k=v lines). */
@@ -2494,10 +2323,15 @@ public class AsyncExportInvokerProductionTest {
         }
 
         boolean compile(List<Path> sources, Path classes, StringWriter messages) {
+            return compile(sources, classes, classes, messages);
+        }
+
+        boolean compile(List<Path> sources, Path classes, Path dependencies,
+                StringWriter messages) {
             DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
             Boolean compiled = compiler.getTask(messages, fileManager, diagnostics,
                 List.of("--release", "25", "-proc:none", "-encoding", "UTF-8",
-                    "-sourcepath", "", "-cp", classes + File.pathSeparator + classpath,
+                    "-sourcepath", "", "-cp", dependencies + File.pathSeparator + classpath,
                     "-d", classes.toString()), null,
                 fileManager.getJavaFileObjectsFromPaths(sources)).call();
             for (var diagnostic : diagnostics.getDiagnostics()) {

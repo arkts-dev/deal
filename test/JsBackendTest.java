@@ -462,9 +462,11 @@ public class JsBackendTest {
 
     /** Executes a node script in {@code dir} and returns the combined
      * output and exit code. */
-    private static NodeResult runNodeScript(Path dir, String scriptFile)
-            throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("node", scriptFile);
+    private static NodeResult runNodeScript(Path dir, String scriptFile,
+            String... args) throws Exception {
+        List<String> command = new ArrayList<>(List.of("node", scriptFile));
+        command.addAll(List.of(args));
+        ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(dir.toFile());
         pb.redirectErrorStream(true);
         Process p = pb.start();
@@ -487,14 +489,7 @@ public class JsBackendTest {
      */
     private static NodeResult runDealNode(String source, String name)
             throws Exception {
-        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
-        if (!f.errors().isEmpty()) {
-            throw new RuntimeException("frontend errors: " + f.errors());
-        }
-        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), false);
-        return runDealArtifact(new PreparedJs(f, res));
+        return runDealArtifact(prepareJs(source, name));
     }
 
     private static JsBackend.JsCodegenResult checkedEmission(PreparedJs prepared) {
@@ -545,17 +540,8 @@ public class JsBackendTest {
      */
     private static NodeResult runInvokerNode(String source, String name,
             String exportName, String returnDescriptor) throws Exception {
-        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
-        if (!f.errors().isEmpty()) {
-            throw new RuntimeException("frontend errors: " + f.errors());
-        }
-        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), false);
-        if (res.hasErrors()) {
-            throw new RuntimeException("codegen errors: " + res.diagnostics());
-        }
-        return runInvokerArtifact(res, exportName, returnDescriptor);
+        return runInvokerArtifact(checkedEmission(prepareJs(source, name)),
+            exportName, returnDescriptor);
     }
 
     /**
@@ -588,14 +574,19 @@ public class JsBackendTest {
     private static NodeResult runInvokerArtifact(
             JsBackend.JsCodegenResult res, String exportName,
             String returnDescriptor) throws Exception {
+        return runArtifactScript(res, INVOKER_RUNNER_SOURCE,
+            exportName, returnDescriptor);
+    }
+
+    private static NodeResult runArtifactScript(JsBackend.JsCodegenResult res,
+            String script, String... args) throws Exception {
         Path dir = deployArtifacts(res, "Main.js");
-        String runner = INVOKER_RUNNER_SOURCE
-            .replace("EXPORT_NAME", exportName)
-            .replace("RETURN_DESCRIPTOR", returnDescriptor);
-        Files.writeString(dir.resolve("invoker_runner.js"), runner);
-        NodeResult result = runNodeScript(dir, "invoker_runner.js");
-        deleteDir(dir);
-        return result;
+        try {
+            Files.writeString(dir.resolve("runner.js"), script);
+            return runNodeScript(dir, "runner.js", args);
+        } finally {
+            deleteDir(dir);
+        }
     }
 
     /**
@@ -610,7 +601,7 @@ public class JsBackendTest {
         "\"use strict\";",
         "const $rt = require(\"./deal/runtime\");",
         "const $entry = require(\"./Main\");",
-        "$rt.invokeAsyncExport($entry, \"EXPORT_NAME\", \"RETURN_DESCRIPTOR\").then((r) => {",
+        "$rt.invokeAsyncExport($entry, process.argv[2], process.argv[3]).then((r) => {",
         "  if (r.$ok === true) {",
         "    process.stdout.write(\"INVOKE_OK: \" + r.$value + \"\\n\");",
         "  } else if (typeof r.$failure === \"string\") {",
@@ -634,22 +625,8 @@ public class JsBackendTest {
      */
     private static NodeResult runCounterNode(String source, String name)
             throws Exception {
-        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
-        if (!f.errors().isEmpty()) {
-            throw new RuntimeException("frontend errors: " + f.errors());
-        }
-        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), false);
-        if (res.hasErrors()) {
-            throw new RuntimeException("codegen errors: " + res.diagnostics());
-        }
-        Path dir = deployArtifacts(res, "Main.js");
-        Files.writeString(dir.resolve("counter_runner.js"),
+        return runArtifactScript(checkedEmission(prepareJs(source, name)),
             COUNTER_RUNNER_SOURCE);
-        NodeResult result = runNodeScript(dir, "counter_runner.js");
-        deleteDir(dir);
-        return result;
     }
 
     private static final String COUNTER_RUNNER_SOURCE = String.join("\n",
@@ -743,7 +720,7 @@ public class JsBackendTest {
             skipNode("async error detail transport");
             return;
         }
-        Frontend f = compileFrontend("""
+        JsBackend.JsCodegenResult res = checkedEmission(prepareJs("""
             async function fail(): int {
               let t: table = {value: "bad"};
               let x: int = t.value;
@@ -751,18 +728,8 @@ public class JsBackendTest {
             }
             export function main(): null { return null; }
             export async function oracle(): int { return await fail(); }
-            """, "jstest-async-detail.deal");
-        if (!f.errors().isEmpty()) {
-            throw new RuntimeException("frontend errors: " + f.errors());
-        }
-        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-async-detail.deal", "Main", Map.of(),
-            Map.of(), false);
-        if (res.hasErrors()) {
-            throw new RuntimeException("codegen errors: " + res.diagnostics());
-        }
-        Path dir = deployArtifacts(res, "Main.js");
-        Files.writeString(dir.resolve("detail_runner.js"), String.join("\n",
+            """, "async-detail"));
+        NodeResult result = runArtifactScript(res, String.join("\n",
             "\"use strict\";",
             "const $rt = require(\"./deal/runtime\");",
             "const $entry = require(\"./Main\");",
@@ -777,8 +744,6 @@ public class JsBackendTest {
             "    + \"|\" + e.actual + \"|\" + e.frames);",
             "});",
             ""));
-        NodeResult result = runNodeScript(dir, "detail_runner.js");
-        deleteDir(dir);
         String expected = "DETAIL: E8001|expected int|3:16|int|string";
         check(result.exitCode() == 0
                 && result.output().startsWith(expected)
@@ -804,70 +769,27 @@ public class JsBackendTest {
         System.out.println("-- Node: the retained corner-case public errors"
             + " (sync/async, direct/rethrow) --");
         if (!nodeAvailable) { skipNode("corner-case public errors"); return; }
-        for (boolean rethrow : new boolean[] {false, true}) {
-            String suffix = rethrow ? "rethrow" : "direct";
-
-            // Subjects 5 and 7: the sync companion through the public
-            // exported-function wrapper.
-            Path syncRoot = publishCornerCaseProject("sync-" + suffix,
-                CORNER_CASE_SYNC_HELPER,
-                String.join("\n",
-                    "import * as c from \"std/console\";",
-                    "import * as helper from \"./helper\";",
-                    "export function main(): null {return null;}",
-                    "export function run(): int {"
-                        + (rethrow
-                            ? "try {return helper.fail();} catch(e) {throw e;}"
-                            : "return helper.fail();")
-                        + "}",
-                    ""));
-            try {
-                assertCornerCasePublished("sync " + suffix, syncRoot,
-                    CORNER_CASE_SYNC_HOST_SOURCE);
-            } finally {
-                deleteDir(syncRoot);
-            }
-
-            // Subjects 6 and 8: the awaited companion through the public
-            // async API (exportName run, returnDescriptor int).
-            Path asyncRoot = publishCornerCaseProject("async-" + suffix,
-                CORNER_CASE_ASYNC_HELPER,
-                String.join("\n",
-                    "import * as c from \"std/console\";",
-                    "import * as helper from \"./helper\";",
-                    "export function main(): null {return null;}",
-                    "export async function run(): int {"
-                        + (rethrow
-                            ? "try {return await helper.fail();} catch(e) {throw e;}"
-                            : "return await helper.fail();")
-                        + "}",
-                    ""));
-            try {
-                assertCornerCasePublished("async " + suffix, asyncRoot,
-                    CORNER_CASE_ASYNC_HOST_SOURCE);
-            } finally {
-                deleteDir(asyncRoot);
+        for (boolean rethrow : List.of(false, true)) {
+            for (boolean async : List.of(false, true)) {
+                String mode = async ? "async" : "sync";
+                String name = mode + "-" + (rethrow ? "rethrow" : "direct");
+                String prefix = async ? "async " : "";
+                String call = "return " + (async ? "await " : "") + "helper.fail();";
+                Path root = publishCornerCaseProject(name,
+                    COMPANION_DIRECT_HELPER_SOURCE.replace("export function",
+                        "export " + prefix + "function"),
+                    COMPANION_DIRECT_MAIN_SOURCE
+                        .replace("export function run", "export " + prefix + "function run")
+                        .replace("return helper.fail();", rethrow
+                            ? "try {" + call + "} catch(e) {throw e;}" : call));
+                try {
+                    assertCornerCasePublished(name, root, mode);
+                } finally {
+                    deleteDir(root);
+                }
             }
         }
     }
-
-    /** The sync companion of subjects 5 and 7 (the type-failing read on line 3). */
-    private static final String CORNER_CASE_SYNC_HELPER = String.join("\n",
-        "export function fail(): int {",
-        "  let t: table = {value: \"bad\"};",
-        "  let x: int = t.value;",
-        "  return x;",
-        "}",
-        "");
-
-    /** The awaited companion of subjects 6 and 8 (the same line 3 read). */
-    private static final String CORNER_CASE_ASYNC_HELPER = String.join("\n",
-        "export async function fail(): int {",
-        "  let t: table = {value: \"bad\"};",
-        "  let x: int = t.value;",
-        "  return x;",
-        "}",
-        "");
 
     /**
      * The exported-function-wrapper host of the sync subjects: it
@@ -876,65 +798,46 @@ public class JsBackendTest {
      * error and records the complete ErrorDetail in a private file, so both
      * program streams remain the program's own.
      */
-    private static final String CORNER_CASE_SYNC_HOST_SOURCE = String.join("\n",
-        "\"use strict\";",
-        "const fs = require(\"fs\");",
-        "const $entry = require(\"./main\");",
-        "$entry.main.$f();",
-        "let error;",
-        "try { $entry.run.$f(); } catch (caught) { error = caught; }",
-        "if (!error || typeof error !== \"object\") {",
-        "  fs.writeFileSync(\"corner_error.txt\", \"NO_ERROR\\n\");",
-        "  process.exit(4);",
-        "}",
-        "fs.writeFileSync(\"corner_error.txt\", [",
-        "  \"code=\" + error.code,",
-        "  \"message=\" + error.message,",
-        "  \"file=\" + error.file,",
-        "  \"line=\" + error.line,",
-        "  \"column=\" + error.column,",
-        "  \"expected=\" + error.expected,",
-        "  \"actual=\" + error.actual,",
-        "  \"frames=\" + error.frames,",
-        "  \"cause=\" + Object.hasOwn(error, \"cause\"),",
-        "].join(\"\\n\") + \"\\n\");",
-        "");
-
-    /**
-     * The production async-API host of the awaited subjects: the single
-     * {@code $rt.invokeAsyncExport} call with exportName {@code run} and
-     * returnDescriptor {@code int} records the {@code $ok:false,$error}
-     * detail (never a code/location-only record) in a private file; the
-     * process writes nothing to stdout or stderr.
-     */
-    private static final String CORNER_CASE_ASYNC_HOST_SOURCE = String.join("\n",
-        "\"use strict\";",
-        "const fs = require(\"fs\");",
-        "const $rt = require(\"./deal/runtime\");",
-        "const $entry = require(\"./main\");",
-        "$rt.invokeAsyncExport($entry, \"run\", \"int\").then((r) => {",
-        "  if (r.$ok === true) {",
-        "    fs.writeFileSync(\"corner_error.txt\", \"value=\" + r.$value + \"\\n\");",
-        "    return;",
-        "  }",
-        "  if (typeof r.$failure === \"string\") {",
-        "    fs.writeFileSync(\"corner_error.txt\", \"failure=\" + r.$failure + \"\\n\");",
-        "    return;",
-        "  }",
-        "  const e = r.$error;",
-        "  fs.writeFileSync(\"corner_error.txt\", [",
-        "    \"code=\" + e.code,",
-        "    \"message=\" + e.message,",
-        "    \"file=\" + e.file,",
-        "    \"line=\" + e.line,",
-        "    \"column=\" + e.column,",
-        "    \"expected=\" + e.expected,",
-        "    \"actual=\" + e.actual,",
-        "    \"frames=\" + e.frames,",
-        "    \"cause=\" + Object.hasOwn(e, \"cause\"),",
-        "  ].join(\"\\n\") + \"\\n\");",
-        "});",
-        "");
+    private static final String CORNER_CASE_HOST_SOURCE = """
+        "use strict";
+        const fs = require("fs");
+        const $rt = require("./deal/runtime");
+        const $entry = require("./main");
+        const signal = process.argv[3];
+        function record(error) {
+          if (!error || typeof error !== "object") {
+            fs.writeFileSync(signal, "NO_ERROR\\n");
+            process.exit(4);
+          }
+          fs.writeFileSync(signal, [
+            "code=" + error.code,
+            "message=" + error.message,
+            "file=" + error.file,
+            "line=" + error.line,
+            "column=" + error.column,
+            "expected=" + error.expected,
+            "actual=" + error.actual,
+            "frames=" + error.frames,
+            "cause=" + Object.hasOwn(error, "cause"),
+          ].join("\\n") + "\\n");
+        }
+        if (process.argv[2] === "async") {
+          $rt.invokeAsyncExport($entry, "run", "int").then((r) => {
+            if (r.$ok === true) {
+              fs.writeFileSync(signal, "value=" + r.$value + "\\n");
+            } else if (typeof r.$failure === "string") {
+              fs.writeFileSync(signal, "failure=" + r.$failure + "\\n");
+            } else {
+              record(r.$error);
+            }
+          });
+        } else {
+          $entry.main.$f();
+          let error;
+          try { $entry.run.$f(); } catch (caught) { error = caught; }
+          record(error);
+        }
+        """;
 
     /** Publishes one two-module corner-case project through the public
      * {@code deal compile} entry and returns the project root. */
@@ -968,16 +871,16 @@ public class JsBackendTest {
      * controls of the shared verdict.
      */
     private static void assertCornerCasePublished(String name, Path root,
-            String hostSource) throws Exception {
+            String mode) throws Exception {
         Path out = root.resolve("out");
         boolean v12Profile = !Files.readString(out.resolve("main.js"),
             StandardCharsets.UTF_8).contains("setInt32Mode");
         check(v12Profile, name + ": the published artifact carries no profile"
             + " switch under the sole v1.3 profile");
-        Files.writeString(out.resolve("corner_host.js"), hostSource,
+        Files.writeString(out.resolve("corner_host.js"), CORNER_CASE_HOST_SOURCE,
             StandardCharsets.UTF_8);
         ProductionNodeRun run = runNodeSplit(out, "corner_host.js",
-            "corner_error.txt", v12Profile);
+            "corner_error.txt", v12Profile, mode, "corner_error.txt");
         check(run.exitCode() == 0, name + ": the public host exits 0: exit="
             + run.exitCode() + " stderr=<" + run.stderr() + ">");
         check(run.stdout().isEmpty(), name + ": the program stdout stays"
@@ -1068,27 +971,9 @@ public class JsBackendTest {
             skipNode("production public-companion-direct");
             return;
         }
-        Path root = Files.createTempDirectory("jstest_companion_direct_");
+        Path root = publishCornerCaseProject("public-companion-direct",
+            COMPANION_DIRECT_HELPER_SOURCE, COMPANION_DIRECT_MAIN_SOURCE);
         try {
-            Files.createDirectories(root.resolve("src"));
-            Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\": \"1.3\","
-                    + " \"moduleRoots\": [\"src\"],"
-                    + " \"output\": \"out\","
-                    + " \"backend\": \"js\"}\n",
-                StandardCharsets.UTF_8);
-            Files.writeString(root.resolve("src/helper.deal"),
-                COMPANION_DIRECT_HELPER_SOURCE, StandardCharsets.UTF_8);
-            Path entry = root.resolve("src/main.deal");
-            Files.writeString(entry, COMPANION_DIRECT_MAIN_SOURCE,
-                StandardCharsets.UTF_8);
-            int exit = deal.Main.run(new String[] {"compile",
-                entry.toAbsolutePath().toString()});
-            check(exit == 0, "the public deal compile of the two-module"
-                + " public-companion-direct project succeeds: exit=" + exit);
-            if (exit != 0) {
-                return;
-            }
             Path out = root.resolve("out");
             Path artifact = out.resolve("main.js");
             check(Files.isRegularFile(artifact), "the public compile"
@@ -1101,9 +986,9 @@ public class JsBackendTest {
             check(v12Profile, "the published artifact carries no profile"
                 + " selector (the signed-32 gate is active from load)");
             Files.writeString(out.resolve("companion_host.js"),
-                COMPANION_DIRECT_HOST_SOURCE, StandardCharsets.UTF_8);
+                CORNER_CASE_HOST_SOURCE, StandardCharsets.UTF_8);
             ProductionNodeRun run = runNodeSplit(out, "companion_host.js",
-                "companion_error.txt", v12Profile);
+                "companion_error.txt", v12Profile, "sync", "companion_error.txt");
             check(run.exitCode() == 0, "the exported-wrapper host process"
                 + " exits 0: exit=" + run.exitCode() + " stderr=<"
                 + run.stderr() + ">");
@@ -1291,40 +1176,6 @@ public class JsBackendTest {
             "import * as helper from \"./helper\";",
             "export function main(): null {return null;}",
             "export function run(): int {return helper.fail();}",
-            "");
-
-    /**
-     * The exported-wrapper host of the subject: it requires the published
-     * entry and the deployed runtime, initializes the module by invoking
-     * the exported {@code main} wrapper, invokes the exported throwing
-     * {@code run} wrapper and catches the escaped companion error, then
-     * writes the observed fields to {@code companion_error.txt}. It writes
-     * nothing to stdout or stderr, so both remain the program's own
-     * streams.
-     */
-    private static final String COMPANION_DIRECT_HOST_SOURCE =
-        String.join("\n",
-            "\"use strict\";",
-            "const fs = require(\"fs\");",
-            "const $rt = require(\"./deal/runtime\");",
-            "const $entry = require(\"./main\");",
-            "$entry.main.$f();",
-            "let error;",
-            "try { $entry.run.$f(); } catch (caught) { error = caught; }",
-            "if (!error || typeof error !== \"object\") {",
-            "  fs.writeFileSync(\"companion_error.txt\", \"NO_ERROR\\n\");",
-            "  process.exit(4);",
-            "}",
-            "fs.writeFileSync(\"companion_error.txt\", [",
-            "  \"code=\" + error.code,",
-            "  \"message=\" + error.message,",
-            "  \"file=\" + error.file,",
-            "  \"line=\" + error.line,",
-            "  \"column=\" + error.column,",
-            "  \"expected=\" + error.expected,",
-            "  \"actual=\" + error.actual,",
-            "  \"frames=\" + error.frames,",
-            "].join(\"\\n\") + \"\\n\");",
             "");
 
     /** One observed public-companion-direct error field record. */
@@ -1560,10 +1411,12 @@ public class JsBackendTest {
      * prefix or truncation marker is never read as a production transcript.
      */
     private static ProductionNodeRun runNodeSplit(Path dir,
-            String scriptFile, String signalFile, boolean v12Profile)
-            throws Exception {
+            String scriptFile, String signalFile, boolean v12Profile,
+            String... args) throws Exception {
+        List<String> command = new ArrayList<>(List.of("node", scriptFile));
+        command.addAll(List.of(args));
         BoundedProcess.BoundedResult capture = BoundedProcess.runCaptured(
-            List.of("node", scriptFile), dir);
+            command, dir);
         Optional<String> refused = nodeCaptureRefusal(capture);
         if (refused.isPresent()) {
             throw new AssertionError(refused.get());
@@ -5447,36 +5300,26 @@ public class JsBackendTest {
             export async function takes(i: int): int { return i; }
             """, "invoker-wrong-name");
         JsBackend.JsCodegenResult negativeEmission = checkedEmission(negatives);
-        NodeResult wrongName = runInvokerArtifact(negativeEmission,
-            "nope", "null");
-        check(wrongName.exitCode() == 0 && wrongName.output().equals(
-                "INVOKE_FAILURE: export not found: nope"),
-            "a wrong export name yields the pinned missing-export host "
-                + "failure: " + wrongName.output());
-        NodeResult syncExport = runInvokerArtifact(negativeEmission,
-            "main", "null");
-        check(syncExport.exitCode() == 0 && syncExport.output().equals(
-                "INVOKE_FAILURE: sync export: expected async()->null, got ()->null"),
-            "a sync export yields the pinned sync host failure: "
-                + syncExport.output());
-        NodeResult paramExport = runInvokerArtifact(negativeEmission,
-            "takes", "int");
-        check(paramExport.exitCode() == 0 && paramExport.output().equals(
-                "INVOKE_FAILURE: parameterized export: expected async()->int, got async(int)->int"),
-            "a parameterized export yields the pinned parameterized host "
-                + "failure: " + paramExport.output());
-        NodeResult mismatch = runInvokerArtifact(negativeEmission,
-            "oracle", "int");
-        check(mismatch.exitCode() == 0 && mismatch.output().equals(
-                "INVOKE_FAILURE: descriptor mismatch: expected async()->int, got async()->null"),
-            "a descriptor-mismatched returnDescriptor yields the pinned "
-                + "descriptor-mismatch host failure: " + mismatch.output());
-        NodeResult nonWrapper = runInvokerArtifact(negativeEmission,
-            "Payload", "null");
-        check(nonWrapper.exitCode() == 0 && nonWrapper.output().equals(
-                "INVOKE_FAILURE: export is not a function: expected async()->null"),
-            "a non-wrapper export value (an exported class) yields the "
-                + "pinned non-function host failure: " + nonWrapper.output());
+        Path negativeDir = deployArtifacts(negativeEmission, "Main.js");
+        try {
+            Files.writeString(negativeDir.resolve("invoker_runner.js"),
+                INVOKER_RUNNER_SOURCE);
+            for (List<String> c : List.of(
+                    List.of("nope", "null", "export not found: nope"),
+                    List.of("main", "null", "sync export: expected async()->null, got ()->null"),
+                    List.of("takes", "int", "parameterized export: expected async()->int, got async(int)->int"),
+                    List.of("oracle", "int", "descriptor mismatch: expected async()->int, got async()->null"),
+                    List.of("Payload", "null", "export is not a function: expected async()->null"))) {
+                NodeResult result = runNodeScript(negativeDir,
+                    "invoker_runner.js", c.get(0), c.get(1));
+                check(result.exitCode() == 0 && result.output().equals(
+                        "INVOKE_FAILURE: " + c.get(2)),
+                    c.get(0) + ": the invoker yields the pinned host failure: "
+                        + result.output());
+            }
+        } finally {
+            deleteDir(negativeDir);
+        }
         NodeResult noMain = runInvokerNodeNoMain("""
             export async function oracle(): null { return null; }
             """, "invoker-no-main", "oracle", "null");

@@ -252,6 +252,46 @@ public class SemanticIrValidatorTest {
             SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
     }
 
+    private static ExecutableLoweredProject profileProject() {
+        Map<ModuleId, ExternalModuleInterface> interfaces = new LinkedHashMap<>();
+        for (ModuleId module : List.of(MOD, MOD_B)) {
+            interfaces.put(module, new ExternalModuleInterface(module, ExternalModuleKind.IMPLEMENTATION,
+                List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES));
+        }
+        ProjectInterfaceIndex index = new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, interfaces);
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        for (ModuleId module : interfaces.keySet()) {
+            modules.put(module, withInterfaceHash(unit(module.path(), Set.of(), Map.of(), Map.of(),
+                List.of(constOp())), index.interfaceIndexDigest()));
+        }
+        return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_3_INT32, index, modules,
+            MOD, ClassRegistrationSeeds.builtinErrorOnly());
+    }
+
+    private static void assertUnitPass(LoweredModuleUnit unit,
+            SemanticIrValidator.ComparisonFacts facts, String what) {
+        assertPass(SemanticIrValidator.validate(unit, facts), what + " (typed)");
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(unit), facts),
+            what + " (unit text)");
+    }
+
+    private static void assertProjectPass(ExecutableLoweredProject project, String what) {
+        SemanticIrValidator.ComparisonFacts facts = projectFacts(project.interfaceIndex());
+        assertPass(SemanticIrValidator.validate(project, facts), what + " (typed)");
+        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(project), facts),
+            what + " (project text)");
+    }
+
+    private static void assertSameFailure(Optional<CompilerDiagnostic> expected,
+            Optional<CompilerDiagnostic> actual, String what) {
+        check(expected.isPresent() && actual.isPresent()
+                && expected.get().message().equals(actual.get().message()),
+            what + ": identical first failure");
+        if (expected.isPresent() && actual.isPresent()) {
+            checkEq(expected.get().range(), actual.get().range(), what + ": identical range");
+        }
+    }
+
     private static void assertPass(Optional<CompilerDiagnostic> diagnostic, String what) {
         check(diagnostic.isEmpty(), what + " passes validation"
             + (diagnostic.isPresent() ? ": " + diagnostic.get().message() : ""));
@@ -474,9 +514,7 @@ public class SemanticIrValidatorTest {
     private static void assertAdmission(String what, List<SemanticOp> ops,
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
         LoweredModuleUnit unit = unit(Set.of(), Map.of(), bindings, ops);
-        assertPass(SemanticIrValidator.validate(unit, FACTS), what);
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(unit), FACTS),
-            what + " through the text surface");
+        assertUnitPass(unit, FACTS, what);
     }
 
     /** The same positive admission with the unit's function records supplied. */
@@ -487,18 +525,14 @@ public class SemanticIrValidatorTest {
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), bindings, ops,
             membership(ops, bindings), new ClassFactoryRegistry(Map.of()),
             new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
-        assertPass(SemanticIrValidator.validate(unit, FACTS), what);
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(unit), FACTS),
-            what + " through the text surface");
+        assertUnitPass(unit, FACTS, what);
     }
 
     private static void testConstructCoverage() {
         Map<ConstructKind, List<SemanticOpKind>> scalarCoverage =
             Map.of(ConstructKind.SCALAR_LITERAL, List.of(SemanticOpKind.CONST));
         LoweredModuleUnit covered = unit(Set.of(), scalarCoverage, Map.of(), List.of(constOp()));
-        assertPass(SemanticIrValidator.validate(covered, FACTS), "covered scalar literal");
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(covered), FACTS),
-            "covered scalar literal through the text surface");
+        assertUnitPass(covered, FACTS, "covered scalar literal");
         LoweredModuleUnit uncovered = unit(Set.of(), scalarCoverage, Map.of(), List.of());
         assertE6005(SemanticIrValidator.validate(uncovered, FACTS),
             "R-COVERAGE", "SCALAR_LITERAL");
@@ -760,56 +794,26 @@ public class SemanticIrValidatorTest {
                 "R-RESERVED-NAME", reserved);
         }
 
-        // R-PROFILE: the semanticProfile string LEGACY_SAFE_INT in a unit
-        // otherwise identical to a valid one.
-        {
-            LoweredModuleUnit base = unit(List.of(constOp()));
-            String text = substituteUnitLeaf(SemanticIrValidator.toUnitText(base),
-                "semanticProfile", "DEAL_V1_3_INT32", "LEGACY_SAFE_INT");
-            assertE6005(SemanticIrValidator.validateText(text, FACTS),
-                "R-PROFILE", "LEGACY_SAFE_INT");
-        }
-
-        // R-PROFILE: the removed v1.2 profile name is rejected in an
-        // otherwise valid unit — persisted older executable data is never
-        // interpreted with an alias profile.
-        {
-            LoweredModuleUnit base = unit(List.of(constOp()));
-            String text = substituteUnitLeaf(SemanticIrValidator.toUnitText(base),
-                "semanticProfile", "DEAL_V1_3_INT32", "DEAL_V1_2_INT32");
-            assertE6005(SemanticIrValidator.validateText(text, FACTS),
-                "R-PROFILE", "DEAL_V1_2_INT32");
+        String profileText = SemanticIrValidator.toUnitText(unit(List.of(constOp())));
+        for (String profile : List.of("LEGACY_SAFE_INT", "DEAL_V1_2_INT32")) {
+            assertE6005(SemanticIrValidator.validateText(substituteUnitLeaf(profileText,
+                    "semanticProfile", "DEAL_V1_3_INT32", profile), FACTS),
+                "R-PROFILE", profile);
         }
 
         // R-PROFILE: cross-unit profile mismatch through project-level
         // canonical-JSON injection.
         {
-            ProjectInterfaceIndex index = new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION,
-                Map.of(MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
-                        List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES),
-                    MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
-                        List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
-            LoweredModuleUnit unitA = withInterfaceHash(unit("mod.a", Set.of(), Map.of(),
-                Map.of(), List.of(constOp())), index.interfaceIndexDigest());
-            LoweredModuleUnit unitB = withInterfaceHash(unit("mod.b", Set.of(), Map.of(),
-                Map.of(), List.of(constOp())), index.interfaceIndexDigest());
-            ExecutableLoweredProject project = new ExecutableLoweredProject(
-                SemanticProfile.DEAL_V1_3_INT32, index,
-                new LinkedHashMap<>() {{
-                    put(MOD, unitA);
-                    put(MOD_B, unitB);
-                }}, MOD, ClassRegistrationSeeds.builtinErrorOnly());
+            ExecutableLoweredProject project = profileProject();
+            ProjectInterfaceIndex index = project.interfaceIndex();
             assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
                 "project injection base");
-            String text = substituteProjectUnitLeaf(SemanticIrValidator.toProjectText(project),
-                1, "semanticProfile", "DEAL_V1_3_INT32", "LEGACY_SAFE_INT");
-            assertE6005(SemanticIrValidator.validateText(text, projectFacts(index)),
-                "R-PROFILE", "LEGACY_SAFE_INT");
-            String removed = substituteProjectUnitLeaf(
-                SemanticIrValidator.toProjectText(project), 1,
-                "semanticProfile", "DEAL_V1_3_INT32", "DEAL_V1_2_INT32");
-            assertE6005(SemanticIrValidator.validateText(removed, projectFacts(index)),
-                "R-PROFILE", "DEAL_V1_2_INT32");
+            String text = SemanticIrValidator.toProjectText(project);
+            for (String profile : List.of("LEGACY_SAFE_INT", "DEAL_V1_2_INT32")) {
+                assertE6005(SemanticIrValidator.validateText(substituteProjectUnitLeaf(text,
+                        1, "semanticProfile", "DEAL_V1_3_INT32", profile), projectFacts(index)),
+                    "R-PROFILE", profile);
+            }
         }
 
         // Transport-level decode failures are never E6005 and never a rule.
@@ -846,24 +850,8 @@ public class SemanticIrValidatorTest {
         return CanonicalJson.obj(entries);
     }
 
-    private static CanonicalJson.Obj withoutEntry(CanonicalJson.Obj obj, String key) {
-        List<CanonicalJson.Entry> entries = new ArrayList<>();
-        for (CanonicalJson.Entry entry : obj.entries()) {
-            if (!entry.key().equals(key)) {
-                entries.add(entry);
-            }
-        }
-        return CanonicalJson.obj(entries);
-    }
-
     private static String recomputeContractDigest(CanonicalJson.Obj contract) {
-        List<CanonicalJson.Entry> eight = new ArrayList<>();
-        for (CanonicalJson.Entry entry : contract.entries()) {
-            if (!"canonicalDigest".equals(entry.key())) {
-                eight.add(entry);
-            }
-        }
-        return CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(CanonicalJson.obj(eight)));
+        return CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(withoutKey(contract, "canonicalDigest")));
     }
 
     private static CanonicalJson.Obj contractWith(CanonicalJson.Obj contract, String key,
@@ -873,49 +861,36 @@ public class SemanticIrValidatorTest {
         return withEntry(updated, "canonicalDigest", CanonicalJson.str(digest));
     }
 
-    private static String substitutePolicy(String text, String from, String to) {
+    private static String substituteMirrored(String text, String opKey, String contractKey,
+            CanonicalJson.Value value, boolean selector) {
         CanonicalJson.Obj root = parseObj(text);
         CanonicalJson.Obj op = firstOp(root);
         CanonicalJson.Obj contract = (CanonicalJson.Obj) at(op, "contract");
-        CanonicalJson.Obj contract2 = contractWith(contract, "failurePolicy", CanonicalJson.str(to));
-        CanonicalJson.Obj op2 = withEntry(op, "failurePolicy", CanonicalJson.str(to));
-        op2 = withEntry(op2, "contract", contract2);
-        return serialize(withOps(root, op2));
+        if (selector) {
+            contract = withEntry(contract, "selector", at((CanonicalJson.Obj) value, "function"));
+        }
+        return serialize(withOps(root, withEntry(withEntry(op, opKey, value), "contract",
+            contractWith(contract, contractKey, value))));
+    }
+
+    private static String substitutePolicy(String text, String from, String to) {
+        return substituteMirrored(text, "failurePolicy", "failurePolicy", CanonicalJson.str(to), false);
     }
 
     private static String substitutePayloadLeaf(String text, String key, String from, String to) {
-        CanonicalJson.Obj root = parseObj(text);
-        CanonicalJson.Obj op = firstOp(root);
-        CanonicalJson.Obj payload = (CanonicalJson.Obj) at(op, "payload");
-        CanonicalJson.Obj payload2 = withEntry(payload, key, CanonicalJson.str(to));
-        CanonicalJson.Obj contract = (CanonicalJson.Obj) at(op, "contract");
-        CanonicalJson.Obj contract2 = contractWith(contract, "payload", payload2);
-        CanonicalJson.Obj op2 = withEntry(op, "payload", payload2);
-        op2 = withEntry(op2, "contract", contract2);
-        return serialize(withOps(root, op2));
+        CanonicalJson.Obj payload = (CanonicalJson.Obj) at(firstOp(parseObj(text)), "payload");
+        return substituteMirrored(text, "payload", "payload",
+            withEntry(payload, key, CanonicalJson.str(to)), false);
     }
 
     private static String substituteOpKind(String text, String from, String to) {
-        CanonicalJson.Obj root = parseObj(text);
-        CanonicalJson.Obj op = firstOp(root);
-        CanonicalJson.Obj contract = (CanonicalJson.Obj) at(op, "contract");
-        CanonicalJson.Obj contract2 = contractWith(contract, "opKind", CanonicalJson.str(to));
-        CanonicalJson.Obj op2 = withEntry(op, "kind", CanonicalJson.str(to));
-        op2 = withEntry(op2, "contract", contract2);
-        return serialize(withOps(root, op2));
+        return substituteMirrored(text, "kind", "opKind", CanonicalJson.str(to), false);
     }
 
     private static String substituteStdlibFunction(String text, String from, String to) {
-        CanonicalJson.Obj root = parseObj(text);
-        CanonicalJson.Obj op = firstOp(root);
-        CanonicalJson.Obj payload = (CanonicalJson.Obj) at(op, "payload");
-        CanonicalJson.Obj payload2 = withEntry(payload, "function", CanonicalJson.str(to));
-        CanonicalJson.Obj contract = (CanonicalJson.Obj) at(op, "contract");
-        CanonicalJson.Obj contract2 = contractWith(contract, "payload", payload2);
-        contract2 = contractWith(contract2, "selector", CanonicalJson.str(to));
-        CanonicalJson.Obj op2 = withEntry(op, "payload", payload2);
-        op2 = withEntry(op2, "contract", contract2);
-        return serialize(withOps(root, op2));
+        CanonicalJson.Obj payload = (CanonicalJson.Obj) at(firstOp(parseObj(text)), "payload");
+        return substituteMirrored(text, "payload", "payload",
+            withEntry(payload, "function", CanonicalJson.str(to)), true);
     }
 
     private static String substituteUnitLeaf(String text, String key, String from, String to) {
@@ -1265,6 +1240,15 @@ public class SemanticIrValidatorTest {
             classFactories, jsonDefaults, classBindingFacts);
     }
 
+    private static LoweredModuleUnit transportUnit(Map<ClassId, ClassLayout> layouts,
+            Map<FunctionId, LoweredFunction> functions,
+            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
+        return completeUnit(layouts, functions, new ModuleInitPlan(List.of(), new BlockId(0)),
+            ExportPlan.empty(), bindings, List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
+            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
+            ClassBindingFacts.empty());
+    }
+
     private static CanonicalJson.Value blockIdJson(long id) {
         return CanonicalJson.obj(
             CanonicalJson.e("id", CanonicalJson.intValue((int) id)),
@@ -1425,11 +1409,7 @@ public class SemanticIrValidatorTest {
         Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
         functions.put(keyFunction, new LoweredFunction(containedFunction, SIG_II, List.of(),
             new BlockId(7), "inc"));
-        LoweredModuleUnit unit = completeUnit(layouts, functions,
-            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
-            List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty());
+        LoweredModuleUnit unit = transportUnit(layouts, functions, Map.of());
 
         RawUnit raw = RawUnit.fromTyped(unit);
         checkEq(FOREIGN_CLASS, raw.classLayouts().get(0).key(),
@@ -1462,20 +1442,10 @@ public class SemanticIrValidatorTest {
         assertE6005(typed, "R-IDENTITY-LINK", "Other", "Point");
         Optional<CompilerDiagnostic> textSurface = SemanticIrValidator.validateText(text, FACTS);
         assertE6005(textSurface, "R-IDENTITY-LINK");
-        check(typed.isPresent() && textSurface.isPresent()
-                && typed.get().message().equals(textSurface.get().message()),
-            "both surfaces report the identical first failure for the disagreement");
-        if (typed.isPresent() && textSurface.isPresent()) {
-            checkEq(typed.get().range(), textSurface.get().range(),
-                "the disagreement failure keeps the same originless range on both surfaces");
-        }
+        assertSameFailure(typed, textSurface, "the transported key/record disagreement");
 
         // The function-only disagreement rejects through the same rule.
-        LoweredModuleUnit functionOnly = completeUnit(Map.of(), functions,
-            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
-            List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty());
+        LoweredModuleUnit functionOnly = transportUnit(Map.of(), functions, Map.of());
         Optional<CompilerDiagnostic> functionFailure =
             SemanticIrValidator.validate(functionOnly, FACTS);
         assertE6005(functionFailure, "R-IDENTITY-LINK", "function registry key",
@@ -1487,11 +1457,7 @@ public class SemanticIrValidatorTest {
 
     private static void testTransportMandatoryEmptiesAndNegatives(String complete) {
 
-        LoweredModuleUnit empty = completeUnit(Map.of(), Map.of(),
-            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
-            List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty());
+        LoweredModuleUnit empty = transportUnit(Map.of(), Map.of(), Map.of());
         String text = SemanticIrValidator.toUnitText(empty);
         for (String fact : List.of("\"classLayouts\":[]", "\"functions\":[]",
                 "\"exportPlan\":[]", "\"classFactories\":[]", "\"jsonDefaults\":[]",
@@ -1514,34 +1480,21 @@ public class SemanticIrValidatorTest {
                 ContractSnapshotCanonicalizer.toJson(reparsed)),
             "the present-empty unit re-serializes byte-identically");
 
-        // The /1 envelope is never filled or repaired.
-        expectDecodeFailure(text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/1\""),
-            "a /1 envelope rejects with SemanticIrTextDecodeException");
-        expectDecodeFailure(text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/3\""),
-            "any other envelope version rejects");
-        // An absent mandatory companion is a decode failure, never empty.
-        expectDecodeFailure(withoutKey(text, "classLayouts"),
-            "an absent classLayouts companion rejects");
-        expectDecodeFailure(withoutKey(text, "bodyTable"),
-            "an absent bodyTable companion rejects");
-        expectDecodeFailure(withoutKey(text, "classBindingFacts"),
-            "an absent classBindingFacts companion rejects");
-        // Unknown framing fields reject.
-        expectDecodeFailure(withNewEntry(text, "futureFact", CanonicalJson.str("x")),
-            "an unknown unit field rejects");
-        // A mistyped mandatory field rejects.
-        expectDecodeFailure(serialize(withEntry(parseObj(text), "classLayouts",
-                CanonicalJson.str("not-an-array"))),
-            "a mistyped mandatory companion rejects");
-        // Duplicate entry identities reject before map construction.
-        expectDecodeFailure(duplicateArrayEntry(complete, "classLayouts"),
-            "a duplicate classLayouts key rejects");
-        expectDecodeFailure(duplicateArrayEntry(complete, "functions"),
-            "a duplicate functions key rejects");
-        expectDecodeFailure(duplicateArrayEntry(complete, "functionBindings"),
-            "a duplicate functionBindings allocationId rejects");
-        expectDecodeFailure(duplicateArrayEntry(complete, "exportPlan"),
-            "a duplicate exportPlan name rejects");
+        assertDecodeFailures(text, false,
+            new TextCorruption("a /1 envelope rejects with SemanticIrTextDecodeException",
+                input -> input.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/1\"")),
+            new TextCorruption("any other envelope version rejects",
+                input -> input.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/3\"")),
+            new TextCorruption("an unknown unit field rejects",
+                input -> withNewEntry(input, "futureFact", CanonicalJson.str("x"))),
+            new TextCorruption("a mistyped mandatory companion rejects",
+                input -> withEntryAt(input, "classLayouts", CanonicalJson.str("not-an-array"))));
+        for (String field : List.of("classLayouts", "bodyTable", "classBindingFacts")) {
+            expectDecodeFailure(withoutKey(text, field), "an absent " + field + " companion rejects");
+        }
+        for (String field : List.of("classLayouts", "functions", "functionBindings", "exportPlan")) {
+            expectDecodeFailure(duplicateArrayEntry(complete, field), "a duplicate " + field + " identity rejects");
+        }
         expectDecodeFailure(withEntryAt(duplicateArrayEntry(complete, "exportPlan"),
                 "descriptor", CanonicalJson.str("i32"), "exportPlan", 2),
             "a same-name export row with a different descriptor rejects");
@@ -1616,12 +1569,8 @@ public class SemanticIrValidatorTest {
         // a duplicated identity yields no decoded result there either.
         for (String duplicate : List.of(duplicateArrayEntry(complete, "ops"),
                 duplicateArrayEntry(coveredText, "constructCoverage"))) {
-            try {
-                SemanticIrValidator.validateText(duplicate, FACTS);
-                fail("a duplicate entry identity is a decode failure on the validation surface");
-            } catch (SemanticIrTextDecodeException expected) {
-                passed++;
-            }
+            expectDecodeFailure(() -> SemanticIrValidator.validateText(duplicate, FACTS),
+                "a duplicate entry identity is a decode failure on the validation surface");
         }
         // A recognized binding shape keeps its exact member set.
         expectDecodeFailure(withoutKeyAt(complete, "sourceSignature", "functionBindings", 1, "binding"),
@@ -1702,14 +1651,31 @@ public class SemanticIrValidatorTest {
     }
 
     private static void expectDecodeFailure(String text, String message) {
+        expectDecodeFailure(() -> ContractSnapshotCanonicalizer.parseUnit(parseObj(text)), message);
+    }
+
+    private static void expectDecodeFailure(Runnable action, String message) {
         try {
-            ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
+            action.run();
             fail(message + " (no decode failure)");
         } catch (SemanticIrTextDecodeException expected) {
             passed++;
         } catch (RuntimeException other) {
-            fail(message + " (expected SemanticIrTextDecodeException, got " + other
-                + ")");
+            fail(message + " (expected SemanticIrTextDecodeException, got " + other + ")");
+        }
+    }
+
+    private record TextCorruption(String message, java.util.function.UnaryOperator<String> edit) {}
+
+    private static void assertDecodeFailures(String text, boolean project, TextCorruption... cases) {
+        for (TextCorruption scenario : cases) {
+            String corrupted = scenario.edit().apply(text);
+            check(!text.equals(corrupted), scenario.message() + " changes the input");
+            if (project) {
+                expectProjectDecodeFailure(corrupted, scenario.message());
+            } else {
+                expectDecodeFailure(corrupted, scenario.message());
+            }
         }
     }
 
@@ -2028,56 +1994,38 @@ public class SemanticIrValidatorTest {
             detachedModA == null ? null : detachedModA.classLayouts(),
             "the unit keeps exactly its own declared classLayouts beside the seeds");
 
-        // The /1 envelope is never filled or repaired.
-        expectProjectDecodeFailure(
-            text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/1\""),
-            "a /1 project envelope rejects");
-        expectProjectDecodeFailure(
-            text.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/3\""),
-            "any other project envelope version rejects");
-        // Missing and unknown project framing fields reject.
-        expectProjectDecodeFailure(withoutKey(text, "formatVersion"),
-            "an absent project formatVersion rejects");
-        expectProjectDecodeFailure(withoutKey(text, "interfaceIndex"),
-            "an absent interfaceIndex rejects");
-        expectProjectDecodeFailure(withoutKey(text, "classSeeds"),
-            "an absent classSeeds rejects");
-        expectProjectDecodeFailure(withNewEntry(text, "futureProjectFact",
-                CanonicalJson.str("x")),
-            "an unknown project field rejects");
-        // The module identity is the entry identity.
-        expectProjectDecodeFailure(duplicateArrayEntry(text, "modules"),
-            "a duplicate project module identity rejects");
-        expectProjectDecodeFailure(serialize(withEntry(parseObj(text), "entryModule",
-                CanonicalJson.str("mod.absent"))),
-            "an entry module outside the carried modules rejects");
-        expectProjectDecodeFailure(serialize(withEntry(parseObj(text), "modules",
-                CanonicalJson.str("not-an-array"))),
-            "a mistyped project modules field rejects");
-        // The interface index keeps its closed shapes and exact members.
-        expectProjectDecodeFailure(withEntryAt(text, "formatVersion",
-                CanonicalJson.str("deal.semantic-interface/2"), "interfaceIndex"),
-            "an interface format bump rejects");
-        expectProjectDecodeFailure(withEntryAt(text, "kind",
-                CanonicalJson.str("NOT_A_KIND"), "interfaceIndex", "modules", 0),
-            "an unknown interface kind rejects");
-        expectProjectDecodeFailure(withoutKeyAt(text, "declaredType", "interfaceIndex",
-                "modules", 0, "exports", 0),
-            "an interface export without its declared type rejects");
-        expectProjectDecodeFailure(withoutKeyAt(text, "optional", "interfaceIndex",
-                "modules", 0, "classes", 0, "fields", 0),
-            "an interface field without its optional member rejects");
-        // The class seeds keep their exact shape and one owner per registration.
-        expectProjectDecodeFailure(withEntryAt(text, "owner",
-                CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0),
-            "an unknown seed owner rejects");
-        expectProjectDecodeFailure(withEntryAt(text, "defaultOwner",
-                CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0, "layout", "fields", 0),
-            "an unknown seed field owner rejects");
-        expectProjectDecodeFailure(withoutKeyAt(text, "owner", "classSeeds", 0),
-            "a seed without its owner member rejects");
-        expectProjectDecodeFailure(duplicateArrayEntry(text, "classSeeds"),
-            "a duplicate class-seed registration key rejects");
+        for (String field : List.of("formatVersion", "interfaceIndex", "classSeeds")) {
+            expectProjectDecodeFailure(withoutKey(text, field), "an absent project " + field + " rejects");
+        }
+        assertDecodeFailures(text, true,
+            new TextCorruption("a /1 project envelope rejects",
+                input -> input.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/1\"")),
+            new TextCorruption("any other project envelope version rejects",
+                input -> input.replace("\"deal.semantic-ir/2\"", "\"deal.semantic-ir/3\"")),
+            new TextCorruption("an unknown project field rejects",
+                input -> withNewEntry(input, "futureProjectFact", CanonicalJson.str("x"))),
+            new TextCorruption("a duplicate project module identity rejects",
+                input -> duplicateArrayEntry(input, "modules")),
+            new TextCorruption("an entry module outside the carried modules rejects",
+                input -> withEntryAt(input, "entryModule", CanonicalJson.str("mod.absent"))),
+            new TextCorruption("a mistyped project modules field rejects",
+                input -> withEntryAt(input, "modules", CanonicalJson.str("not-an-array"))),
+            new TextCorruption("an interface format bump rejects", input -> withEntryAt(input,
+                "formatVersion", CanonicalJson.str("deal.semantic-interface/2"), "interfaceIndex")),
+            new TextCorruption("an unknown interface kind rejects", input -> withEntryAt(input,
+                "kind", CanonicalJson.str("NOT_A_KIND"), "interfaceIndex", "modules", 0)),
+            new TextCorruption("an interface export without its declared type rejects", input ->
+                withoutKeyAt(input, "declaredType", "interfaceIndex", "modules", 0, "exports", 0)),
+            new TextCorruption("an interface field without its optional member rejects", input ->
+                withoutKeyAt(input, "optional", "interfaceIndex", "modules", 0, "classes", 0, "fields", 0)),
+            new TextCorruption("an unknown seed owner rejects", input ->
+                withEntryAt(input, "owner", CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0)),
+            new TextCorruption("an unknown seed field owner rejects", input -> withEntryAt(input,
+                "defaultOwner", CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0, "layout", "fields", 0)),
+            new TextCorruption("a seed without its owner member rejects", input ->
+                withoutKeyAt(input, "owner", "classSeeds", 0)),
+            new TextCorruption("a duplicate class-seed registration key rejects", input ->
+                duplicateArrayEntry(input, "classSeeds")));
         // A malformed seed descriptor text is a transport decode failure, not
         // an unchecked parser failure: truncated parameter-list forms
         // normalize to SemanticIrTextDecodeException at the descriptor owner.
@@ -2093,26 +2041,13 @@ public class SemanticIrValidatorTest {
                 duplicateArrayEntry(text, "modules"),
                 withEntryAt(text, "descriptor", CanonicalJson.str("("),
                     "classSeeds", 0, "layout", "fields", 0))) {
-            try {
-                SemanticIrValidator.validateText(rejected, FACTS);
-                fail("a malformed project framing is a decode failure on the validation "
-                    + "surface, never an admission result");
-            } catch (SemanticIrTextDecodeException expected) {
-                passed++;
-            }
+            expectDecodeFailure(() -> SemanticIrValidator.validateText(rejected, FACTS),
+                "malformed project framing is a decode failure on the validation surface, never an admission result");
         }
     }
 
     private static void expectProjectDecodeFailure(String text, String message) {
-        try {
-            ContractSnapshotCanonicalizer.parseProject(parseObj(text));
-            fail(message + " (no decode failure)");
-        } catch (SemanticIrTextDecodeException expected) {
-            passed++;
-        } catch (RuntimeException other) {
-            fail(message + " (expected SemanticIrTextDecodeException, got " + other
-                + ")");
-        }
+        expectDecodeFailure(() -> ContractSnapshotCanonicalizer.parseProject(parseObj(text)), message);
     }
 
     // =========================================================================
@@ -2180,9 +2115,21 @@ public class SemanticIrValidatorTest {
     }
 
     private static ExportPlan batteryExportPlan() {
+        return retargetedExportPlan("main", BATTERY_PUBLISH_MAIN);
+    }
+
+    private static ExportPlan retargetedExportPlan(String name, OpId publishOp) {
         return new ExportPlan(List.of(
-            new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_MAIN),
+            new ExportPlan.ExportPlanEntry(name, SIG_II, publishOp),
             new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
+    }
+
+    private static List<SemanticOp> retargetedPublication(ModuleId module, String name) {
+        List<SemanticOp> ops = batteryOps();
+        ops.set(0, userOp(opWith(BATTERY_PUBLISH_MAIN, SemanticOpKind.EXPORT_PUBLISH,
+            new KindPayload.ExportPublishPayload(module, name, SIG_II, new ValueId(41)),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null)));
+        return ops;
     }
 
     private static StructuredBodyTable batteryTable(List<OpId> initOps, List<OpId> bodyOps) {
@@ -2225,11 +2172,29 @@ public class SemanticIrValidatorTest {
             ClassBindingFacts.empty());
     }
 
-    private static LoweredModuleUnit batteryUnit(String interfaceHash) {
-        return batteryUnit(interfaceHash, Map.of(), batteryLayouts(), batteryFunctions(),
-            new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK), batteryExportPlan(),
-            batteryOps(), batteryBaseTable());
+    private static final class BatteryMutation {
+        Map<ClassId, ClassLayout> layouts = batteryLayouts();
+        Map<FunctionId, LoweredFunction> functions = batteryFunctions();
+        ModuleInitPlan moduleInit = new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK);
+        ExportPlan exportPlan = batteryExportPlan();
+        List<SemanticOp> ops = batteryOps();
+        StructuredBodyTable table = batteryBaseTable();
     }
+
+    private static LoweredModuleUnit batteryUnit(String interfaceHash,
+            java.util.function.Consumer<BatteryMutation> mutation) {
+        BatteryMutation fixture = new BatteryMutation();
+        mutation.accept(fixture);
+        return batteryUnit(interfaceHash, Map.of(), fixture.layouts, fixture.functions,
+            fixture.moduleInit, fixture.exportPlan, fixture.ops, fixture.table);
+    }
+
+    private static LoweredModuleUnit batteryUnit(String interfaceHash) {
+        return batteryUnit(interfaceHash, fixture -> {});
+    }
+
+    private record AdmissionCase(String what, java.util.function.Consumer<BatteryMutation> mutation,
+            String rule, String detail) {}
 
     private static LoweredModuleUnit batteryDependencyUnit(String interfaceHash) {
         OpId constOp = new OpId(MOD_B, 91);
@@ -2282,29 +2247,15 @@ public class SemanticIrValidatorTest {
         Optional<CompilerDiagnostic> unitText = SemanticIrValidator.validateText(text, facts);
         assertE6005(typed, rule, contains);
         assertE6005(unitText, rule, contains);
-        check(typed.isPresent() && unitText.isPresent()
-                && typed.get().message().equals(unitText.get().message()),
-            what + ": unit text admission reports the identical first failure");
-        if (typed.isPresent() && unitText.isPresent()) {
-            checkEq(typed.get().range(), unitText.get().range(),
-                what + ": unit text admission reports the identical range");
-        }
+        assertSameFailure(typed, unitText, what + ": unit text admission");
         ExecutableLoweredProject project = batteryProject(mutated, index);
         Optional<CompilerDiagnostic> typedProject = SemanticIrValidator.validate(project, facts);
         Optional<CompilerDiagnostic> projectText = SemanticIrValidator.validateText(
             SemanticIrValidator.toProjectText(project), facts);
         assertE6005(typedProject, rule, contains);
         assertE6005(projectText, rule, contains);
-        if (typed.isPresent() && typedProject.isPresent() && projectText.isPresent()) {
-            checkEq(typed.get().message(), typedProject.get().message(),
-                what + ": typed project admission reports the identical first failure");
-            checkEq(typed.get().range(), typedProject.get().range(),
-                what + ": typed project admission reports the identical range");
-            checkEq(typed.get().message(), projectText.get().message(),
-                what + ": project text admission reports the identical first failure");
-            checkEq(typed.get().range(), projectText.get().range(),
-                what + ": project text admission reports the identical range");
-        }
+        assertSameFailure(typed, typedProject, what + ": typed project admission");
+        assertSameFailure(typed, projectText, what + ": project text admission");
         // The composed typed production admission (the lowering entry's own
         // chain) rejects the same content with the same first failure, so no
         // production path can expose a project or a companion view for it.
@@ -2325,154 +2276,57 @@ public class SemanticIrValidatorTest {
         String hash = index.interfaceIndexDigest();
         SemanticIrValidator.ComparisonFacts facts = projectFacts(index);
         LoweredModuleUnit base = batteryUnit(hash);
-        assertPass(SemanticIrValidator.validate(base, facts),
-            "the common-admission base unit (typed)");
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(base), facts),
-            "the common-admission base unit (unit text)");
-        ExecutableLoweredProject baseProject = batteryProject(base, index);
-        assertPass(SemanticIrValidator.validate(baseProject, facts),
-            "the common-admission base project (typed)");
-        assertPass(SemanticIrValidator.validateText(
-                SemanticIrValidator.toProjectText(baseProject), facts),
-            "the common-admission base project (project text)");
+        assertUnitPass(base, facts, "the common-admission base unit");
+        assertProjectPass(batteryProject(base, index), "the common-admission base project");
 
-        // Membership: the two directions are exact inverses and the listed
-        // operations are the unit's produced operations.
-        {
-            Map<OpId, BlockId> inverse = new LinkedHashMap<>(
-                batteryBaseTable().opBlocks());
-            inverse.remove(BATTERY_PUBLISH_OTHER);
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
-                new StructuredBodyTable(batteryBaseTable().blockOps(), inverse));
-            assertCommonAdmissionRejects("a deleted opBlocks inverse row", mutated, index,
-                "CONTROL_BLOCK_TREE", "has no inverse membership entry");
-        }
-        {
-            // The converse: the block list loses a row while the inverse map
-            // still names it.
-            Map<BlockId, List<OpId>> blocks = new LinkedHashMap<>(
-                batteryBaseTable().blockOps());
-            blocks.put(BATTERY_INIT_BLOCK, List.of(BATTERY_PUBLISH_MAIN));
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
-                new StructuredBodyTable(blocks, batteryBaseTable().opBlocks()));
-            assertCommonAdmissionRejects("a deleted blockOps row", mutated, index,
-                "CONTROL_BLOCK_TREE", "listed in no block");
-        }
-        {
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
-                batteryTable(List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_MAIN,
-                    BATTERY_PUBLISH_OTHER), List.of(BATTERY_BODY_CONST)));
-            assertCommonAdmissionRejects("an op listed twice in one block", mutated, index,
-                "CONTROL_BLOCK_TREE", "listed twice in one block");
-        }
-        {
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
-                batteryTable(List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER,
-                    BATTERY_UNPRODUCED), List.of(BATTERY_BODY_CONST)));
-            assertCommonAdmissionRejects("an op the unit does not produce", mutated, index,
-                "CONTROL_BLOCK_TREE", "not a produced op");
-        }
-        {
-            // The function root disappears from the table entirely (the
-            // block and its ops' membership rows).
-            Map<BlockId, List<OpId>> blocks = new LinkedHashMap<>();
-            blocks.put(BATTERY_INIT_BLOCK,
-                List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER));
-            Map<OpId, BlockId> inverse = new LinkedHashMap<>();
-            inverse.put(BATTERY_PUBLISH_MAIN, BATTERY_INIT_BLOCK);
-            inverse.put(BATTERY_PUBLISH_OTHER, BATTERY_INIT_BLOCK);
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), batteryExportPlan(), batteryOps(),
-                new StructuredBodyTable(blocks, inverse));
-            assertCommonAdmissionRejects("a missing function root", mutated, index,
-                "CONTROL_BLOCK_TREE", "is not a block of the table");
-        }
-
-        // Registry identity: a key/record disagreement survives transport
-        // and rejects on the same raw facts.
-        {
-            Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>(batteryLayouts());
-            layouts.put(FOREIGN_CLASS, layouts.remove(BATTERY_CLASS));
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), layouts, batteryFunctions(),
-                new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK),
-                batteryExportPlan(), batteryOps(), batteryBaseTable());
-            assertCommonAdmissionRejects("a class-layout key disagreement", mutated, index,
-                "R-IDENTITY-LINK", "class-layout registry key");
-        }
-        {
-            Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
-            functions.put(new FunctionId(4), batteryFunctions().get(BATTERY_FUNCTION));
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(), functions,
-                new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK),
-                batteryExportPlan(), batteryOps(), batteryBaseTable());
-            assertCommonAdmissionRejects("a function key disagreement", mutated, index,
-                "R-IDENTITY-LINK", "function registry key");
-        }
-
-        // Plans: the module-init plan agrees with its initialization
-        // operation, and every export entry names its actual publication.
-        {
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_BODY_BLOCK), batteryExportPlan(), batteryOps(),
-                batteryBaseTable());
-            assertCommonAdmissionRejects("a retargeted moduleInit.initBlock", mutated, index,
-                "R-IDENTITY-LINK", "module-init plan names init block");
-        }
-        {
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B), BATTERY_INIT_BLOCK),
-                batteryExportPlan(), batteryOps(), batteryBaseTable());
-            assertCommonAdmissionRejects("retargeted moduleInit.imports", mutated, index,
-                "R-IDENTITY-LINK", "ordered resolved imports");
-        }
-        {
-            ExportPlan plan = new ExportPlan(List.of(
-                new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_OTHER),
-                new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), plan, batteryOps(), batteryBaseTable());
-            assertCommonAdmissionRejects("a retargeted export publish op", mutated, index,
-                "R-IDENTITY-LINK", "whose export name is");
-        }
-        {
-            ExportPlan plan = new ExportPlan(List.of(
-                new ExportPlan.ExportPlanEntry("mainElsewhere", SIG_II, BATTERY_PUBLISH_MAIN),
-                new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), plan, batteryOps(), batteryBaseTable());
-            assertCommonAdmissionRejects("a retargeted export name", mutated, index,
-                "R-IDENTITY-LINK", "whose export name is");
-        }
-        {
-            // The publication names a foreign module (the op is rebuilt so
-            // its contract digest stays valid): a recomputed digest is not
-            // proof that the plan link is valid.
-            List<SemanticOp> ops = new ArrayList<>();
-            for (SemanticOp op : batteryOps()) {
-                ops.add(op.opId().equals(BATTERY_PUBLISH_MAIN)
-                    ? userOp(opWith(BATTERY_PUBLISH_MAIN, SemanticOpKind.EXPORT_PUBLISH,
-                        new KindPayload.ExportPublishPayload(MOD_B, "main", SIG_II,
-                            new ValueId(41)),
-                        null, null, FailurePolicyId.NO_DEAL_FAILURE, null))
-                    : op);
-            }
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), batteryExportPlan(), ops, batteryBaseTable());
-            assertCommonAdmissionRejects("a foreign publication", mutated, index,
-                "R-IDENTITY-LINK", "foreign publication");
+        for (AdmissionCase scenario : List.of(
+                new AdmissionCase("a deleted opBlocks inverse row", fixture -> {
+                    Map<OpId, BlockId> inverse = new LinkedHashMap<>(fixture.table.opBlocks());
+                    inverse.remove(BATTERY_PUBLISH_OTHER);
+                    fixture.table = new StructuredBodyTable(fixture.table.blockOps(), inverse);
+                }, "CONTROL_BLOCK_TREE", "has no inverse membership entry"),
+                new AdmissionCase("a deleted blockOps row", fixture -> {
+                    Map<BlockId, List<OpId>> blocks = new LinkedHashMap<>(fixture.table.blockOps());
+                    blocks.put(BATTERY_INIT_BLOCK, List.of(BATTERY_PUBLISH_MAIN));
+                    fixture.table = new StructuredBodyTable(blocks, fixture.table.opBlocks());
+                }, "CONTROL_BLOCK_TREE", "listed in no block"),
+                new AdmissionCase("an op listed twice in one block", fixture ->
+                    fixture.table = batteryTable(List.of(BATTERY_PUBLISH_MAIN,
+                        BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER), List.of(BATTERY_BODY_CONST)),
+                    "CONTROL_BLOCK_TREE", "listed twice in one block"),
+                new AdmissionCase("an op the unit does not produce", fixture ->
+                    fixture.table = batteryTable(List.of(BATTERY_PUBLISH_MAIN,
+                        BATTERY_PUBLISH_OTHER, BATTERY_UNPRODUCED), List.of(BATTERY_BODY_CONST)),
+                    "CONTROL_BLOCK_TREE", "not a produced op"),
+                new AdmissionCase("a missing function root", fixture ->
+                    fixture.table = new StructuredBodyTable(
+                        Map.of(BATTERY_INIT_BLOCK, List.of(BATTERY_PUBLISH_MAIN, BATTERY_PUBLISH_OTHER)),
+                        Map.of(BATTERY_PUBLISH_MAIN, BATTERY_INIT_BLOCK,
+                            BATTERY_PUBLISH_OTHER, BATTERY_INIT_BLOCK)),
+                    "CONTROL_BLOCK_TREE", "is not a block of the table"),
+                new AdmissionCase("a class-layout key disagreement", fixture ->
+                    fixture.layouts.put(FOREIGN_CLASS, fixture.layouts.remove(BATTERY_CLASS)),
+                    "R-IDENTITY-LINK", "class-layout registry key"),
+                new AdmissionCase("a function key disagreement", fixture ->
+                    fixture.functions = Map.of(new FunctionId(4), fixture.functions.get(BATTERY_FUNCTION)),
+                    "R-IDENTITY-LINK", "function registry key"),
+                new AdmissionCase("a retargeted moduleInit.initBlock", fixture ->
+                    fixture.moduleInit = new ModuleInitPlan(List.of(MOD_B, MOD_B), BATTERY_BODY_BLOCK),
+                    "R-IDENTITY-LINK", "module-init plan names init block"),
+                new AdmissionCase("retargeted moduleInit.imports", fixture ->
+                    fixture.moduleInit = new ModuleInitPlan(List.of(MOD_B), BATTERY_INIT_BLOCK),
+                    "R-IDENTITY-LINK", "ordered resolved imports"),
+                new AdmissionCase("a retargeted export publish op", fixture ->
+                    fixture.exportPlan = retargetedExportPlan("main", BATTERY_PUBLISH_OTHER),
+                    "R-IDENTITY-LINK", "whose export name is"),
+                new AdmissionCase("a retargeted export name", fixture ->
+                    fixture.exportPlan = retargetedExportPlan("mainElsewhere", BATTERY_PUBLISH_MAIN),
+                    "R-IDENTITY-LINK", "whose export name is"),
+                new AdmissionCase("a foreign publication", fixture ->
+                    fixture.ops = retargetedPublication(MOD_B, "main"),
+                    "R-IDENTITY-LINK", "foreign publication"))) {
+            assertCommonAdmissionRejects(scenario.what(), batteryUnit(hash, scenario.mutation()),
+                index, scenario.rule(), scenario.detail());
         }
         {
             // A duplicate export name is the entry identity: the typed
@@ -2481,9 +2335,7 @@ public class SemanticIrValidatorTest {
             ExportPlan plan = new ExportPlan(List.of(
                 new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_MAIN),
                 new ExportPlan.ExportPlanEntry("main", SIG_II, BATTERY_PUBLISH_MAIN)));
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), plan, batteryOps(), batteryBaseTable());
+            LoweredModuleUnit mutated = batteryUnit(hash, fixture -> fixture.exportPlan = plan);
             assertE6005(SemanticIrValidator.validate(mutated, facts),
                 "R-IDENTITY-LINK", "more than once");
             expectDecodeFailure(SemanticIrValidator.toUnitText(mutated),
@@ -2494,21 +2346,10 @@ public class SemanticIrValidatorTest {
         // admission cannot approve it, the complete project admission rejects
         // it on both surfaces.
         {
-            ExportPlan plan = new ExportPlan(List.of(
-                new ExportPlan.ExportPlanEntry("notDeclared", SIG_II, BATTERY_PUBLISH_MAIN),
-                new ExportPlan.ExportPlanEntry("other", INT, BATTERY_PUBLISH_OTHER)));
-            List<SemanticOp> ops = new ArrayList<>();
-            for (SemanticOp op : batteryOps()) {
-                ops.add(op.opId().equals(BATTERY_PUBLISH_MAIN)
-                    ? userOp(opWith(BATTERY_PUBLISH_MAIN, SemanticOpKind.EXPORT_PUBLISH,
-                        new KindPayload.ExportPublishPayload(MOD, "notDeclared", SIG_II,
-                            new ValueId(41)),
-                        null, null, FailurePolicyId.NO_DEAL_FAILURE, null))
-                    : op);
-            }
-            LoweredModuleUnit mutated = batteryUnit(hash, Map.of(), batteryLayouts(),
-                batteryFunctions(), new ModuleInitPlan(List.of(MOD_B, MOD_B),
-                    BATTERY_INIT_BLOCK), plan, ops, batteryBaseTable());
+            LoweredModuleUnit mutated = batteryUnit(hash, fixture -> {
+                fixture.exportPlan = retargetedExportPlan("notDeclared", BATTERY_PUBLISH_MAIN);
+                fixture.ops = retargetedPublication(MOD, "notDeclared");
+            });
             assertPass(SemanticIrValidator.validate(mutated, facts),
                 "the standalone unit admission carries no own-interface context");
             ExecutableLoweredProject project = batteryProject(mutated, index);
@@ -2608,17 +2449,11 @@ public class SemanticIrValidatorTest {
         ProjectInterfaceIndex index = batteryIndex();
         SemanticIrValidator.ComparisonFacts facts = projectFacts(index);
         LoweredModuleUnit base = returnTargetUnit(index.interfaceIndexDigest());
-        assertPass(SemanticIrValidator.validate(base, facts),
-            "the function-attached RETURN unit (typed)");
+        assertUnitPass(base, facts, "the function-attached RETURN unit");
         String text = SemanticIrValidator.toUnitText(base);
-        assertPass(SemanticIrValidator.validateText(text, facts),
-            "the function-attached RETURN unit (unit text)");
         ExecutableLoweredProject project = batteryProject(base, index);
-        assertPass(SemanticIrValidator.validate(project, facts),
-            "the function-attached RETURN project (typed)");
+        assertProjectPass(project, "the function-attached RETURN project");
         String projectText = SemanticIrValidator.toProjectText(project);
-        assertPass(SemanticIrValidator.validateText(projectText, facts),
-            "the function-attached RETURN project (project text)");
         int returnIndex = opIndexOf(base, BATTERY_RETURN);
         int projectModule = moduleIndexOf(projectText, MOD);
         check(returnIndex >= 0 && projectModule >= 0,
@@ -2647,21 +2482,14 @@ public class SemanticIrValidatorTest {
         // the responsible rule for the malformed position.
         Optional<CompilerDiagnostic> rawFailure = ControlFlowValidator.validate(
             ContractSnapshotCanonicalizer.parseUnit(parseObj(nullFunction)));
-        check(nullFailure.isPresent() && rawFailure.isPresent()
-                && nullFailure.get().message().equals(rawFailure.get().message())
-                && nullFailure.get().range().equals(rawFailure.get().range()),
-            "the mutated raw facts report the identical first failure: "
-                + rawFailure.map(CompilerDiagnostic::message).orElse("admitted"));
+        assertSameFailure(nullFailure, rawFailure, "the mutated raw RETURN facts");
 
         // The project text path carries the same fact to the same rule.
         String malformedProject = withEntryAt(projectText, "function",
             CanonicalJson.nullValue(), "modules", projectModule, "ops", returnIndex, "payload");
         Optional<CompilerDiagnostic> projectFailure = textAdmission(malformedProject, facts);
         assertE6005(projectFailure, "CONTROL_EXIT", "names no function");
-        check(nullFailure.isPresent() && projectFailure.isPresent()
-                && nullFailure.get().message().equals(projectFailure.get().message())
-                && nullFailure.get().range().equals(projectFailure.get().range()),
-            "the project text admission reports the identical first failure");
+        assertSameFailure(nullFailure, projectFailure, "the project text RETURN admission");
     }
 
     private static final OpId DYNAMIC_CALL_OP = new OpId(MOD, 60);
@@ -2722,102 +2550,48 @@ public class SemanticIrValidatorTest {
      * identically on both surfaces: the layout-only CLASS_DECLARATION
      * coverage and the dynamic DEAL-body cell form.
      */
-    private static void testCommonAdmissionCorrelations() {
-        System.out.println("-- Common admission: the typed-only correlations run on both "
-            + "surfaces (ISSUE-0819) --");
-        Map<ConstructKind, List<SemanticOpKind>> classCoverage = Map.of(
-            ConstructKind.CLASS_DECLARATION, ConstructKind.CLASS_DECLARATION.mappedOpKinds());
-        StructuredBodyTable emptyTable = new StructuredBodyTable(
-            Map.of(BATTERY_INIT_BLOCK, List.of()), Map.of());
-        LoweredModuleUnit layoutOnly = batteryUnit(IFACE, classCoverage, batteryLayouts(),
-            Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(),
-            List.of(), emptyTable);
-        assertPass(SemanticIrValidator.validate(layoutOnly, FACTS),
-            "the layout-only class unit (typed)");
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(layoutOnly),
-                FACTS),
-            "the layout-only class unit (unit text)");
-        LoweredModuleUnit layoutMissing = batteryUnit(IFACE, classCoverage, Map.of(),
-            Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(),
-            List.of(), emptyTable);
-        Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(layoutMissing, FACTS);
-        Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
-            SemanticIrValidator.toUnitText(layoutMissing), FACTS);
-        assertE6005(typed, "R-COVERAGE", "no class layout record");
-        assertE6005(text, "R-COVERAGE", "no class layout record");
-        check(typed.isPresent() && text.isPresent()
-                && typed.get().message().equals(text.get().message()),
-            "the layout-only correlation reports the identical first failure on both surfaces");
-        if (typed.isPresent() && text.isPresent()) {
-            checkEq(typed.get().range(), text.get().range(),
-                "the layout-only correlation keeps the same range on both surfaces");
-        }
+    private static LoweredModuleUnit layoutCoverageUnit(String hash, boolean present) {
+        return batteryUnit(hash, Map.of(ConstructKind.CLASS_DECLARATION,
+                ConstructKind.CLASS_DECLARATION.mappedOpKinds()),
+            present ? batteryLayouts() : Map.of(), Map.of(),
+            new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(), List.of(),
+            new StructuredBodyTable(Map.of(BATTERY_INIT_BLOCK, List.of()), Map.of()));
+    }
 
-        LoweredModuleUnit cellPass = dynamicCellUnit(IFACE, Map.of());
-        assertPass(SemanticIrValidator.validate(cellPass, FACTS),
-            "the call-owned DEAL-body cell form (typed)");
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(cellPass),
-                FACTS),
-            "the call-owned DEAL-body cell form (unit text)");
+    private record CorrelationCase(String what,
+            java.util.function.Function<String, LoweredModuleUnit> positive,
+            java.util.function.Function<String, LoweredModuleUnit> negative,
+            String rule, List<String> details) {}
+
+    private static void testCommonAdmissionCorrelations() {
+        System.out.println("-- Common admission: the typed-only correlations run on both surfaces (ISSUE-0819) --");
         Map<FunctionId, LoweredFunction> declared = Map.of(new FunctionId(1),
             new LoweredFunction(new FunctionId(1), SIG_II, List.of(), BATTERY_INIT_BLOCK, "f"));
-        LoweredModuleUnit cellFail = dynamicCellUnit(IFACE, declared);
-        Optional<CompilerDiagnostic> typedCell = SemanticIrValidator.validate(cellFail, FACTS);
-        Optional<CompilerDiagnostic> textCell = SemanticIrValidator.validateText(
-            SemanticIrValidator.toUnitText(cellFail), FACTS);
-        assertE6005(typedCell, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell",
-            "no same-walk loweredBody registration");
-        assertE6005(textCell, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell",
-            "no same-walk loweredBody registration");
-        check(typedCell.isPresent() && textCell.isPresent()
-                && typedCell.get().message().equals(textCell.get().message()),
-            "the dynamic cell form reports the identical first failure on both surfaces");
-        if (typedCell.isPresent() && textCell.isPresent()) {
-            checkEq(typedCell.get().range(), textCell.get().range(),
-                "the dynamic cell form keeps the same range on both surfaces");
-        }
-
-        // The same two correlations on the project paths: the project text
-        // and the typed project admission agree with the unit surfaces.
         ProjectInterfaceIndex index = batteryIndex();
-        String hash = index.interfaceIndexDigest();
-        LoweredModuleUnit layoutOnlyProject = batteryUnit(hash, classCoverage,
-            batteryLayouts(), Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK),
-            ExportPlan.empty(), List.of(), emptyTable);
-        assertPass(SemanticIrValidator.validate(batteryProject(layoutOnlyProject, index),
-                projectFacts(index)),
-            "the layout-only class project (typed)");
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
-                batteryProject(layoutOnlyProject, index)), projectFacts(index)),
-            "the layout-only class project (project text)");
-        LoweredModuleUnit layoutMissingProject = batteryUnit(hash, classCoverage, Map.of(),
-            Map.of(), new ModuleInitPlan(List.of(), BATTERY_INIT_BLOCK), ExportPlan.empty(),
-            List.of(), emptyTable);
-        assertE6005(SemanticIrValidator.validate(batteryProject(layoutMissingProject, index),
-                projectFacts(index)),
-            "R-COVERAGE", "no class layout record");
-        assertE6005(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
-                batteryProject(layoutMissingProject, index)), projectFacts(index)),
-            "R-COVERAGE", "no class layout record");
-        LoweredModuleUnit cellPassProject = dynamicCellUnit(hash, Map.of());
-        assertPass(SemanticIrValidator.validate(batteryProject(cellPassProject, index),
-                projectFacts(index)),
-            "the call-owned DEAL-body cell project (typed)");
-        assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
-                batteryProject(cellPassProject, index)), projectFacts(index)),
-            "the call-owned DEAL-body cell project (project text)");
-        LoweredModuleUnit cellFailProject = dynamicCellUnit(hash, declared);
-        Optional<CompilerDiagnostic> typedCellProject = SemanticIrValidator.validate(
-            batteryProject(cellFailProject, index), projectFacts(index));
-        Optional<CompilerDiagnostic> textCellProject = SemanticIrValidator.validateText(
-            SemanticIrValidator.toProjectText(batteryProject(cellFailProject, index)),
-            projectFacts(index));
-        assertE6005(typedCellProject, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell");
-        assertE6005(textCellProject, "R-BOUNDARY-TRIPLE", "callee-owned DEAL-body cell");
-        check(typedCellProject.isPresent() && textCellProject.isPresent()
-                && typedCellProject.get().message().equals(textCellProject.get().message())
-                && typedCellProject.get().range().equals(textCellProject.get().range()),
-            "the project paths report the identical dynamic cell failure");
+        for (CorrelationCase scenario : List.of(
+                new CorrelationCase("layout-only class", hash -> layoutCoverageUnit(hash, true),
+                    hash -> layoutCoverageUnit(hash, false), "R-COVERAGE", List.of("no class layout record")),
+                new CorrelationCase("call-owned DEAL-body cell", hash -> dynamicCellUnit(hash, Map.of()),
+                    hash -> dynamicCellUnit(hash, declared), "R-BOUNDARY-TRIPLE",
+                    List.of("callee-owned DEAL-body cell", "no same-walk loweredBody registration")))) {
+            assertUnitPass(scenario.positive().apply(IFACE), FACTS, scenario.what());
+            assertProjectPass(batteryProject(scenario.positive().apply(index.interfaceIndexDigest()), index),
+                scenario.what());
+            LoweredModuleUnit negative = scenario.negative().apply(IFACE);
+            Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(negative, FACTS);
+            Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
+                SemanticIrValidator.toUnitText(negative), FACTS);
+            ExecutableLoweredProject project = batteryProject(
+                scenario.negative().apply(index.interfaceIndexDigest()), index);
+            Optional<CompilerDiagnostic> typedProject = SemanticIrValidator.validate(project, projectFacts(index));
+            Optional<CompilerDiagnostic> projectText = SemanticIrValidator.validateText(
+                SemanticIrValidator.toProjectText(project), projectFacts(index));
+            for (Optional<CompilerDiagnostic> diagnostic : List.of(typed, text, typedProject, projectText)) {
+                assertE6005(diagnostic, scenario.rule(), scenario.details().toArray(String[]::new));
+            }
+            assertSameFailure(typed, text, scenario.what() + " unit paths");
+            assertSameFailure(typedProject, projectText, scenario.what() + " project paths");
+        }
     }
 
     // =========================================================================
@@ -2834,6 +2608,17 @@ public class SemanticIrValidatorTest {
      * R-PROFILE rule. Removing the carried profile is a decode failure,
      * never a silent substitution.
      */
+    private static void assertProfileText(String text, SemanticIrValidator.ComparisonFacts facts,
+            String surface) {
+        check(text.contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+            surface + " text carries the owner profile");
+        check(!text.contains("DEAL_V1_2_INT32") && !text.contains("LEGACY_SAFE_INT"),
+            surface + " transport contains no removed profile");
+        assertPass(SemanticIrValidator.validateText(text, facts), surface + " owner profile admits");
+        expectDecodeFailure(() -> SemanticIrValidator.validateText(withoutKey(text, "semanticProfile"), facts),
+            surface + " without semanticProfile is a decode failure, never a substitution");
+    }
+
     private static void testExplicitProfileTransport() {
         System.out.println("-- Explicit semanticProfile transport and the v1.3 owner --");
 
@@ -2862,24 +2647,9 @@ public class SemanticIrValidatorTest {
         // The unit text carries the owner value, and nothing in the
         // admission/transport output mentions a removed profile.
         String text = SemanticIrValidator.toUnitText(base);
-        check(text.contains("\"semanticProfile\":\""
-                + SemanticProfile.DEAL_V1_3_INT32.name() + "\""),
-            "the unit text carries the owner profile");
-        check(!text.contains("DEAL_V1_2_INT32") && !text.contains("LEGACY_SAFE_INT"),
-            "no removed profile value appears in the unit transport");
-        assertPass(SemanticIrValidator.validateText(text, FACTS),
-            "the owner-profile unit text admits");
+
         checkEq(LCH, LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY),
             "the carried loweringContextHash is the owner/capability derivation");
-
-        // Omission is a transport decode failure, never a silent substitution.
-        String omitted = serialize(withoutEntry(parseObj(text), "semanticProfile"));
-        try {
-            SemanticIrValidator.validateText(omitted, FACTS);
-            fail("a unit text without semanticProfile must not decode");
-        } catch (SemanticIrTextDecodeException expected) {
-            check(true, "an omitted carried profile is a decode failure, never a substitution");
-        }
 
         // A carried removed v1.2 value whose loweringContextHash equals the
         // owner derivation still rejects by profile name: the carried value is
@@ -2906,22 +2676,8 @@ public class SemanticIrValidatorTest {
         // The project surface: the typed project and each of its units carry
         // the owner profile, the text carries it explicitly, and the output
         // mentions no removed value.
-        ProjectInterfaceIndex index = new ProjectInterfaceIndex(
-            ProjectInterfaceIndex.FORMAT_VERSION,
-            Map.of(MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
-                    List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES),
-                MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
-                    List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
-        LoweredModuleUnit unitA = withInterfaceHash(unit("mod.a", Set.of(), Map.of(),
-            Map.of(), List.of(constOp())), index.interfaceIndexDigest());
-        LoweredModuleUnit unitB = withInterfaceHash(unit("mod.b", Set.of(), Map.of(),
-            Map.of(), List.of(constOp())), index.interfaceIndexDigest());
-        ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_3_INT32, index,
-            new LinkedHashMap<>() {{
-                put(MOD, unitA);
-                put(MOD_B, unitB);
-            }}, MOD, ClassRegistrationSeeds.builtinErrorOnly());
+        ExecutableLoweredProject project = profileProject();
+        ProjectInterfaceIndex index = project.interfaceIndex();
         assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
             "the owner-profile project admits");
         checkEq(SemanticProfile.DEAL_V1_3_INT32, project.semanticProfile(),
@@ -2931,21 +2687,8 @@ public class SemanticIrValidatorTest {
                 "unit " + carried.moduleId() + " carries the owner profile");
         }
         String projectText = SemanticIrValidator.toProjectText(project);
-        check(projectText.contains("\"semanticProfile\":\""
-                + SemanticProfile.DEAL_V1_3_INT32.name() + "\""),
-            "the project text carries the owner profile");
-        check(!projectText.contains("DEAL_V1_2_INT32")
-                && !projectText.contains("LEGACY_SAFE_INT"),
-            "no removed profile value appears in the project transport");
-        assertPass(SemanticIrValidator.validateText(projectText, projectFacts(index)),
-            "the owner-profile project text admits");
-        try {
-            SemanticIrValidator.validateText(serialize(withoutEntry(parseObj(projectText),
-                "semanticProfile")), projectFacts(index));
-            fail("a project text without semanticProfile must not decode");
-        } catch (SemanticIrTextDecodeException expected) {
-            check(true, "an omitted project profile is a decode failure, never a substitution");
-        }
+        assertProfileText(text, FACTS, "unit");
+        assertProfileText(projectText, projectFacts(index), "project");
     }
 
     // =========================================================================

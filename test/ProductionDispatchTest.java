@@ -116,15 +116,8 @@ public class ProductionDispatchTest {
         """;
 
     /** The same program with the two provider imports reversed. */
-    private static final String SIBLING_MAIN_SOURCE_REVERSED = """
-        import * as console from "std/console";
-        import * as codec from "./m/codec";
-        import * as ir from "./m/ir";
-        export function main(): null {
-          if (ir.useIr({}) === 0 && codec.useCodec({}) === 0) { console.log("ok"); }
-          return null;
-        }
-        """;
+    private static final String SIBLING_MAIN_SOURCE_REVERSED =
+        reverseSiblingImports(SIBLING_MAIN_SOURCE);
 
     private static final String SIBLING_IR_SOURCE = """
         export class Ir { a: int = 0; }
@@ -170,17 +163,8 @@ public class ProductionDispatchTest {
         """;
 
     /** The collision consumer with the two provider imports reversed. */
-    private static final String COLLISION_MAIN_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
-        export function main(): null {
-          let o: Outer = {};
-          if (o.r.a === 7 && o.c.b === 9) { console.log("ok"); }
-          return null;
-        }
-        """;
+    private static final String COLLISION_MAIN_IR_FIRST =
+        reverseSiblingImports(COLLISION_MAIN_CODEC_FIRST);
 
     /**
      * The contextual-call collision (review cycle 2): the class context
@@ -217,17 +201,8 @@ public class ProductionDispatchTest {
         """;
 
     /** The contextual collision consumer with the imports reversed. */
-    private static final String CONTEXTUAL_MAIN_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        export class Outer { x: int = ir.useIr({}); c: codec.Codec = {}; }
-        export function main(): null {
-          let o: Outer = {};
-          if (o.x === 7 && o.c.b === 9) { console.log("ok"); }
-          return null;
-        }
-        """;
+    private static final String CONTEXTUAL_MAIN_IR_FIRST =
+        reverseSiblingImports(CONTEXTUAL_MAIN_CODEC_FIRST);
 
     /** The original reproducer shape (a body call) under the exported
      * same-name sibling collision: the construction sits outside a
@@ -242,15 +217,8 @@ public class ProductionDispatchTest {
         }
         """;
 
-    private static final String CONTEXTUAL_BODY_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        export function main(): null {
-          if (ir.useIr({}) === 7) { console.log("ok"); }
-          return null;
-        }
-        """;
+    private static final String CONTEXTUAL_BODY_IR_FIRST =
+        reverseSiblingImports(CONTEXTUAL_BODY_CODEC_FIRST);
 
     /**
      * The shadowed-local-callee collision (review cycle 4): a nested
@@ -274,18 +242,8 @@ public class ProductionDispatchTest {
         """;
 
     /** The shadowed-local-callee collision with the imports reversed. */
-    private static final String SHADOWED_CALLEE_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        function consume(x: codec.Ir): int { return x.a; }
-        export function main(): null {
-          function consume(x: ir.Ir): int { return x.a; }
-          if (consume({}) === 7) { console.log("ok"); }
-          else { console.log("wrong"); }
-          return null;
-        }
-        """;
+    private static final String SHADOWED_CALLEE_IR_FIRST =
+        reverseSiblingImports(SHADOWED_CALLEE_CODEC_FIRST);
 
     /**
      * The nested-literal control (review cycle 2): the demanded class
@@ -349,22 +307,8 @@ public class ProductionDispatchTest {
         }
         """;
 
-    private static final String RETURN_MAIN_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        function make(): ir.Ir { return {}; }
-        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
-        export function main(): null {
-          let o: Outer = {};
-          o.r = {};
-          let xs: ir.Ir[] = [{}];
-          let m: ir.Ir = make();
-          if (o.r.a === 7 && xs[0].a === 7 && m.a === 7 && o.c.b === 9)
-            { console.log("ok"); }
-          return null;
-        }
-        """;
+    private static final String RETURN_MAIN_IR_FIRST =
+        reverseSiblingImports(RETURN_MAIN_CODEC_FIRST);
 
     /**
      * The identifier-assignment collision (review cycle 5): the
@@ -405,25 +349,8 @@ public class ProductionDispatchTest {
         }
         """;
 
-    private static final String ASSIGN_MAIN_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        function set(p: ir.Ir): int { p = {}; return p.a; }
-        export function main(): null {
-          let x: ir.Ir = {};
-          x = {};
-          let xs: ir.Ir[] = [{}];
-          xs[0] = {};
-          let y = ir.make();
-          y = {};
-          let c: codec.Codec = {};
-          if (x.a === 7 && xs[0].a === 7 && y.a === 7 && set({}) === 7
-              && c.b === 9) { console.log("ok"); }
-          else { console.log("wrong"); }
-          return null;
-        }
-        """;
+    private static final String ASSIGN_MAIN_IR_FIRST =
+        reverseSiblingImports(ASSIGN_MAIN_CODEC_FIRST);
 
     /**
      * The member-assignment collision (review cycle 5): the assigned
@@ -468,28 +395,8 @@ public class ProductionDispatchTest {
         }
         """;
 
-    private static final String ASSIGN_MEMBER_MAIN_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        class Holder { w: ir.Wrap = {}; }
-        function setParam(w: ir.Wrap): int { w.inner = {}; return w.inner.a; }
-        export function main(): null {
-          let w: ir.Wrap = {};
-          w.inner = {};
-          let v = ir.makeWrap();
-          v.inner = {};
-          let h: Holder = {};
-          h.w.inner = {};
-          let xs: ir.Wrap[] = [{}];
-          xs[0].inner = {};
-          if (w.inner.a === 7 && v.inner.a === 7 && h.w.inner.a === 7
-              && xs[0].inner.a === 7 && setParam({}) === 7) {
-            console.log("ok");
-          } else { console.log("wrong"); }
-          return null;
-        }
-        """;
+    private static final String ASSIGN_MEMBER_MAIN_IR_FIRST =
+        reverseSiblingImports(ASSIGN_MEMBER_MAIN_CODEC_FIRST);
 
     /**
      * The shadowing-initializer assignment collision (review 0005): the
@@ -525,18 +432,20 @@ public class ProductionDispatchTest {
         }
         """;
 
-    private static final String SHADOW_MAIN_IR_FIRST = """
-        import * as console from "std/console";
-        import * as ir from "./m/ir";
-        import * as codec from "./m/codec";
-        export function main(): null {
-          let x: ir.Ir = {};
-          { let x: codec.Ir = (x = {}); }
-          for (let x: codec.Ir = (x = {}); false; ) { }
-          if (x.a === 7) { console.log("ok"); } else { console.log("wrong"); }
-          return null;
+    private static final String SHADOW_MAIN_IR_FIRST =
+        reverseSiblingImports(SHADOW_MAIN_CODEC_FIRST);
+
+    private static String reverseSiblingImports(String source) {
+        String ir = "import * as ir from \"./m/ir\";\n";
+        String codec = "import * as codec from \"./m/codec\";\n";
+        if (source.contains(ir + codec)) {
+            return source.replace(ir + codec, codec + ir);
         }
-        """;
+        if (source.contains(codec + ir)) {
+            return source.replace(codec + ir, ir + codec);
+        }
+        throw new IllegalArgumentException("missing adjacent sibling imports");
+    }
 
     private static final String DEAL_JSON_JS = """
         {
@@ -1054,25 +963,6 @@ public class ProductionDispatchTest {
     // The bounded real-toolchain runner (the retained release contract)
     // =========================================================================
 
-    /**
-     * The bounded real-toolchain runner of the focused acceptance drive:
-     * the retained {@link BoundedProcess} helper. Every artifact
-     * invocation drains stdout and stderr separately with the canonical
-     * 1 MiB cap, runs under one monotonic deadline that covers the child
-     * and both drains, and owns its whole process tree on every exit
-     * path (descendants, the owned process group, the direct child, then
-     * a bounded drain and reap). A missing toolchain or an exceeded
-     * deadline is the named hard
-     * {@link BoundedProcess.BoundedProcessTimeoutException}, never a
-     * skip, so a run that cannot produce the demanded artifact outcome
-     * fails the drive.
-     */
-    private static BoundedProcess.BoundedResult boundedRun(Path directory,
-            String... command) throws Exception {
-        return BoundedProcess.runCaptured(Arrays.asList(command),
-            directory);
-    }
-
     /** The one-line stream transcript of a bounded invocation. */
     private static String boundedOutput(BoundedProcess.BoundedResult run) {
         return "stdout=" + run.stdout().replace("\n", "\\n")
@@ -1123,18 +1013,8 @@ public class ProductionDispatchTest {
 
     private static void checkTreeIdentical(Map<String, byte[]> before,
             Path root, String context) throws Exception {
-        Map<String, byte[]> after = snapshotTree(root);
-        boolean same = before.keySet().equals(after.keySet());
-        if (same) {
-            for (Map.Entry<String, byte[]> entry : before.entrySet()) {
-                same = Arrays.equals(entry.getValue(),
-                    after.get(entry.getKey()));
-                if (!same) {
-                    break;
-                }
-            }
-        }
-        check(same, context + ": the previous artifact set is byte-identical");
+        check(treeEquals(before, snapshotTree(root)),
+            context + ": the previous artifact set is byte-identical");
     }
 
     // =========================================================================
@@ -1432,7 +1312,7 @@ public class ProductionDispatchTest {
     private static void checkJsArtifactRun(String label, Path out,
             String artifact) throws Exception {
         checkSiblingStdout(label, "node",
-            boundedRun(out, "node", artifact));
+            runBounded(out, "node", artifact));
     }
 
     /** The LuaJIT artifact of the sibling project under the real luajit
@@ -1440,7 +1320,7 @@ public class ProductionDispatchTest {
     private static void checkSiblingLuaRun(String label, Path out)
             throws Exception {
         checkSiblingStdout(label, "luajit",
-            boundedRun(out, "luajit", "main.lua"));
+            runBounded(out, "luajit", "main.lua"));
     }
 
     /**
@@ -1452,7 +1332,7 @@ public class ProductionDispatchTest {
     private static void checkSiblingJvmRun(String label, Path project,
             Path out) throws Exception {
         String classpath = absoluteClasspath();
-        BoundedProcess.BoundedResult javac = boundedRun(project, "javac",
+        BoundedProcess.BoundedResult javac = runBounded(project, "javac",
             "--release", "25", "-proc:none", "-cp", classpath, "-d",
             out.toString(), out.resolve("Main.java").toString());
         check(javac.exitCode() == 0, "the " + label + " JVM artifact"
@@ -1460,7 +1340,7 @@ public class ProductionDispatchTest {
         if (javac.exitCode() != 0) {
             return;
         }
-        checkSiblingStdout(label, "java", boundedRun(out, "java", "-cp",
+        checkSiblingStdout(label, "java", runBounded(out, "java", "-cp",
             out + File.pathSeparator + classpath, "Main"));
     }
 
@@ -4107,32 +3987,14 @@ public class ProductionDispatchTest {
                 }
                 Path out = project.resolve("out");
                 switch (backend) {
-                    case "js" -> checkSiblingStdout("v1.3 array read", "node",
-                        boundedRun(out, "node", "main.js"));
-                    case "luajit" -> checkSiblingStdout("v1.3 array read", "luajit",
-                        boundedRun(out, "luajit", "main.lua"));
-                    default -> checkArrayReadJvmRun(project, out);
+                    case "js" -> checkSiblingJsRun("v1.3 array read", out);
+                    case "luajit" -> checkSiblingLuaRun("v1.3 array read", out);
+                    default -> checkSiblingJvmRun("v1.3 array read", project, out);
                 }
             } finally {
                 deleteRecursively(project);
             }
         }
-    }
-
-    /** The v1.3 array-read JVM leg: javac then java on the published artifact. */
-    private static void checkArrayReadJvmRun(Path project, Path out)
-            throws Exception {
-        String classpath = absoluteClasspath();
-        BoundedProcess.BoundedResult javac = boundedRun(project, "javac",
-            "--release", "25", "-proc:none", "-cp", classpath, "-d",
-            out.toString(), out.resolve("Main.java").toString());
-        check(javac.exitCode() == 0, "the v1.3 array read JVM artifact"
-            + " compiles: " + boundedOutput(javac));
-        if (javac.exitCode() != 0) {
-            return;
-        }
-        checkSiblingStdout("v1.3 array read", "java", boundedRun(out, "java",
-            "-cp", out + File.pathSeparator + classpath, "Main"));
     }
 
     // =========================================================================
@@ -4160,11 +4022,27 @@ public class ProductionDispatchTest {
             throws Exception {
         System.out.println("-- the runtime-corpus boundary fixtures through"
             + " the release-owned production CLI on LuaJIT and JVM");
-        driveBoundaryCorpusFixture("stdlib/table/keys-nonstring-exclusion",
-            "test_table_keys_decimal_string_names", false);
-        driveBoundaryCorpusFixture(
-            "class-runtime-errors/dynamic-bad-class-array-element-e8001",
-            "test_dynamic_bad_class_array_element", true);
+        Path drivers = Files.createTempDirectory("boundary-drivers-");
+        try {
+            write(drivers, "probe.lua", """
+                local surface = dofile(arg[1])
+                local ok, err = __dealMain()
+                if ok then ok, err = pcall(surface[arg[2]].f) end
+                if not ok then
+                  if type(err) ~= 'table' or not err.__d then error(err, 0) end
+                  print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o
+                    .. '|' .. (err.e or '') .. '|' .. (err.a or ''))
+                  os.exit(1)
+                end
+                """);
+            driveBoundaryCorpusFixture("stdlib/table/keys-nonstring-exclusion",
+                "test_table_keys_decimal_string_names", false, drivers);
+            driveBoundaryCorpusFixture(
+                "class-runtime-errors/dynamic-bad-class-array-element-e8001",
+                "test_dynamic_bad_class_array_element", true, drivers);
+        } finally {
+            deleteRecursively(drivers);
+        }
     }
 
     /**
@@ -4177,7 +4055,7 @@ public class ProductionDispatchTest {
      * before anything is stripped, materialized or compiled (CD3).
      */
     private static void driveBoundaryCorpusFixture(String corpusRel,
-            String export, boolean failure) throws Exception {
+            String export, boolean failure, Path drivers) throws Exception {
         Path fixture = REPO_ROOT.resolve("test/conformance/backend-runtime")
             .resolve(corpusRel + ".deal");
         String locator = "backend-runtime/" + corpusRel + ".deal";
@@ -4230,6 +4108,7 @@ public class ProductionDispatchTest {
                 if (compile.exitCode() != 0) {
                     continue;
                 }
+                String expected = "";
                 if (failure) {
                     deal.test.conformance.SidecarExpectations.ErrorExpectation
                         pin = executed.error();
@@ -4238,15 +4117,12 @@ public class ProductionDispatchTest {
                     if (pin == null) {
                         continue;
                     }
-                    String expected = "ERR:" + pin.code() + "|"
+                    expected = "ERR:" + pin.code() + "|"
                         + pin.message() + "|"
                         + project.resolve(entryRel).toAbsolutePath()
                         + ":" + (pin.line() - strippedHeaders) + ":"
                         + pin.column() + "|" + pin.expected().orElse("")
                         + "|" + pin.actual().orElse("") + "\n";
-                    BoundedProcess.BoundedResult run = boundaryArtifactRun(
-                        project, backend, entryRel, moduleKey, export);
-                    checkEqualCapture(locator, backend, run, 1, expected);
                 } else {
                     check(executed.error() == null, locator + " [" + backend
                         + "]: a runtime-ok pin carries no error");
@@ -4258,10 +4134,10 @@ public class ProductionDispatchTest {
                         + "]: the pinned runtime-ok stderr is empty");
                     checkEq(0, executed.exitCode(), locator + " [" + backend
                         + "]: the pinned runtime-ok exit code");
-                    BoundedProcess.BoundedResult run = boundaryArtifactRun(
-                        project, backend, entryRel, moduleKey, export);
-                    checkEqualCapture(locator, backend, run, 0, "");
                 }
+                BoundedProcess.BoundedResult run = boundaryArtifactRun(
+                    project, backend, moduleKey, export, drivers);
+                checkEqualCapture(locator, backend, run, failure ? 1 : 0, expected);
             } finally {
                 deleteRecursively(project);
             }
@@ -4278,9 +4154,27 @@ public class ProductionDispatchTest {
      * export produces no output at all, so the runtime-ok comparison stays
      * byte-exact against the fixture's own transcript.
      */
+    public static final class BoundaryCorpusChild {
+        public static void main(String[] args) throws Throwable {
+            try {
+                java.lang.invoke.MethodHandles.publicLookup().findStatic(
+                    Class.forName(args[0]), "dealMain",
+                    java.lang.invoke.MethodType.methodType(void.class)).invokeExact();
+                ((deal.codegen.jvm.JvmRuntime.FunctionValue)
+                    deal.codegen.jvm.JvmRuntime.exportSurface(args[1]).read(args[2]))
+                    .fn.invoke(new Object[0]);
+            } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                System.out.println("ERR:" + error.code + "|" + error.msg + "|"
+                    + error.origin + "|" + (error.expected == null ? "" : error.expected)
+                    + "|" + (error.actual == null ? "" : error.actual));
+                System.exit(1);
+            }
+        }
+    }
+
     private static BoundedProcess.BoundedResult boundaryArtifactRun(
-            Path project, String backend, String entryRel, String moduleKey,
-            String export) throws Exception {
+            Path project, String backend, String moduleKey, String export,
+            Path drivers) throws Exception {
         Path out = project.resolve("out");
         if ("luajit".equals(backend)) {
             // The emitted chunk path is the canonical module path with its
@@ -4292,22 +4186,9 @@ public class ProductionDispatchTest {
             if (!Files.isRegularFile(artifact)) {
                 return runBounded(project, "luajit", artifact.toString());
             }
-            Path probe = out.resolve("__boundary_probe.lua");
-            Files.writeString(probe,
-                "local surface = dofile(\"" + artifact.toAbsolutePath()
-                    + "\")\n"
-                + "local ok, err = __dealMain()\n"
-                + "if ok then ok, err = pcall(surface[\"" + export
-                    + "\"].f) end\n"
-                + "if not ok then\n"
-                + "  if type(err) ~= 'table' or not err.__d then error(err, 0) end\n"
-                + "  print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o"
-                + " .. '|' .. (err.e or '') .. '|' .. (err.a or ''))\n"
-                + "  os.exit(1)\n"
-                + "end\n",
-                StandardCharsets.UTF_8);
             return runBounded(REPO_ROOT, "luajit",
-                probe.toAbsolutePath().toString());
+                drivers.resolve("probe.lua").toString(),
+                artifact.toAbsolutePath().toString(), export);
         }
         String className = deal.codegen.jvm.JvmNames.classNameFor(moduleKey);
         Path artifact = out.resolve(className + ".java");
@@ -4316,37 +4197,17 @@ public class ProductionDispatchTest {
         if (!Files.isRegularFile(artifact)) {
             return runBounded(project, "java", "-version");
         }
-        String probeName = "BoundaryProbe_" + java.util.UUID.randomUUID()
-            .toString().replace("-", "");
-        Files.writeString(out.resolve(probeName + ".java"),
-            "final class " + probeName + " { public static void main(String[]"
-                + " args) { try { " + className + ".dealMain();"
-                + "((deal.codegen.jvm.JvmRuntime.FunctionValue)"
-                + "deal.codegen.jvm.JvmRuntime.exportSurface(\"" + moduleKey
-                + "\").read(\"" + export + "\")).fn.invoke(new Object[]{});"
-                + " } catch (deal.codegen.jvm.JvmRuntime.DealError e) {"
-                + " System.out.println(\"ERR:\" + e.code + \"|\" + e.msg"
-                + " + \"|\" + e.origin + \"|\" + (e.expected == null ? \"\""
-                + " : e.expected) + \"|\" + (e.actual == null ? \"\""
-                + " : e.actual)); System.exit(1); } } }",
-            StandardCharsets.UTF_8);
-        Path classes = out.resolve("classes");
-        Files.createDirectories(classes);
         String classpath = absoluteClasspath();
-        List<String> javas;
-        try (var walk = Files.list(out)) {
-            javas = walk.filter(p -> p.toString().endsWith(".java"))
-                .map(Path::toString).sorted().toList();
-        }
         BoundedProcess.BoundedResult javac = runBounded(project,
-            javacCommand(classpath, out, javas));
+            javacCommand(classpath, out, List.of(artifact.toString())));
         check(javac.exitCode() == 0, "the emitted JVM artifacts accept the"
             + " probe: " + javac.stderr());
         if (javac.exitCode() != 0) {
             return javac;
         }
         return runBounded(project, "java", "-cp",
-            out + File.pathSeparator + classpath, probeName);
+            out + File.pathSeparator + classpath, BoundaryCorpusChild.class.getName(),
+            className, moduleKey, export);
     }
 
     /**
@@ -4421,47 +4282,20 @@ public class ProductionDispatchTest {
                 copyRepoFile(Path.of(runtime), partial.resolve(runtime));
             }
 
-            // (1) LuaJIT: the omitted std/time.lua fails the compile with the
-            // pinned diagnostic; the absent output root stays absent.
-            ProcessOutcome luaMissing = runCliSubprocess(project, partial,
-                emptyHome, "compile",
-                project.resolve("src/main.deal").toAbsolutePath().toString(),
-                "--backend", "luajit", "--output",
-                project.resolve("out-lua-missing").toAbsolutePath().toString());
-            check(luaMissing.exitCode() == 1,
-                "the incomplete LuaJIT distribution fails the compile: exit="
-                    + luaMissing.exitCode() + " output=" + luaMissing.output());
-            check(luaMissing.output().contains(
-                    "E6000: Stdlib module not found: std/time.lua"),
-                "the failure is the pinned missing-stdlib E6000: "
-                    + luaMissing.output());
-            check(!Files.exists(project.resolve("out-lua-missing")),
-                "the missing-content failure publishes nothing (the absent "
-                    + "root stays absent)");
-
-            // (2) JavaScript: the same contract at the .js spelling.
-            ProcessOutcome jsMissing = runCliSubprocess(project, partial,
-                emptyHome, "compile",
-                project.resolve("src/main.deal").toAbsolutePath().toString(),
-                "--backend", "js", "--output",
-                project.resolve("out-js-missing").toAbsolutePath().toString());
-            check(jsMissing.exitCode() == 1,
-                "the incomplete JavaScript distribution fails the compile: "
-                    + "exit=" + jsMissing.exitCode() + " output="
-                    + jsMissing.output());
-            check(jsMissing.output().contains(
-                    "E6000: Stdlib module not found: std/time.js"),
-                "the JavaScript failure is the pinned missing-stdlib E6000: "
-                    + jsMissing.output());
-            check(!Files.exists(project.resolve("out-js-missing")),
-                "the JavaScript missing-content failure publishes nothing");
-
-            // (3) The complete distribution: both targets publish the whole
-            // set — artifact, default sidecar, runtime and all six stdlib
-            // implementations, each implementation byte-matching the deployed
-            // distribution resource.
             for (String backend : List.of("luajit", "js")) {
                 String extension = backend.equals("luajit") ? "lua" : "js";
+                Path missingOut = project.resolve("out-" + extension + "-missing");
+                ProcessOutcome missing = runCliSubprocess(project, partial,
+                    emptyHome, "compile",
+                    project.resolve("src/main.deal").toAbsolutePath().toString(),
+                    "--backend", backend, "--output", missingOut.toString());
+                checkEq(1, missing.exitCode(), "the incomplete " + backend
+                    + " distribution fails the compile: " + missing.output());
+                check(missing.output().contains(
+                        "E6000: Stdlib module not found: std/time." + extension),
+                    backend + ": the pinned missing-stdlib E6000: " + missing.output());
+                check(!Files.exists(missingOut), backend
+                    + ": missing content publishes nothing (the absent root stays absent)");
                 Path out = project.resolve("build/" + backend);
                 ProcessOutcome compiled = runCliSubprocess(project, complete,
                     emptyHome, "compile",
@@ -4480,11 +4314,6 @@ public class ProductionDispatchTest {
                         && published.contains("deal/runtime." + extension),
                     "the " + backend + " artifact set carries the artifact, its "
                         + "default sidecar and the runtime: " + published);
-                for (String stdlibModule : stdlibModules) {
-                    check(published.contains(stdlibModule + "." + extension),
-                        "the complete " + backend + " set carries "
-                            + stdlibModule + "." + extension + ": " + published);
-                }
                 List<String> deploymentCopies = new ArrayList<>(
                     List.of("deal/runtime." + extension));
                 for (String stdlibModule : stdlibModules) {
@@ -4691,13 +4520,18 @@ public class ProductionDispatchTest {
                     .StructuredExpectationSidecar.parse(Files.readString(
                         fixture.resolveSibling(name + ".expect.json")));
             List<V12CorpusLeg> legs = new ArrayList<>();
-            for (String backend : List.of("luajit", "jvm")) {
+            boolean entryContract = "exact-main-and-export-output".equals(name);
+            for (String backend : jsEntry && entryContract
+                    ? List.of("luajit", "jvm", "js") : List.of("luajit", "jvm")) {
                 Path project = Files.createTempDirectory(
                     "v12-corner-case-" + name + "-" + backend + "-");
                 try {
                     write(project, "src/main.deal", source);
-                    write(project, "deal.json", "jvm".equals(backend)
-                        ? DEAL_JSON_JVM : DEAL_JSON_LUA);
+                    write(project, "deal.json", switch (backend) {
+                        case "js" -> DEAL_JSON_JS;
+                        case "jvm" -> DEAL_JSON_JVM;
+                        default -> DEAL_JSON_LUA;
+                    });
                     ProjectOutcome compile = productionCompile(project,
                         "src/main.deal", "out");
                     if (compile.exitCode() != 0) {
@@ -4714,6 +4548,8 @@ public class ProductionDispatchTest {
                         // every retained real-luajit test executes it.
                         executed = runBounded(REPO_ROOT, "luajit",
                             out.resolve("main.lua").toString());
+                    } else if ("js".equals(backend)) {
+                        executed = runBounded(out, "node", "main.js");
                     } else {
                         String classpath = absoluteClasspath();
                         List<String> javas;
@@ -4752,7 +4588,7 @@ public class ProductionDispatchTest {
                     Optional<String> refused = transcriptRefusal(executed);
                     if (refused.isPresent()) {
                         mismatch = refused;
-                    } else if ("exact-main-and-export-output".equals(name)) {
+                    } else if (entryContract) {
                         mismatch = mismatchAgainst(name, backend,
                             executed, "main\n", "diagnostic \u03b2\n", 0);
                     } else {
@@ -4768,39 +4604,6 @@ public class ProductionDispatchTest {
                             .map(deal.test.conformance.GateMismatch::message);
                     }
                     legs.add(new V12CorpusLeg(backend, null, mismatch));
-                } finally {
-                    deleteRecursively(project);
-                }
-            }
-            if (jsEntry && "exact-main-and-export-output".equals(name)) {
-                // The JS production-entry surface: the published entry
-                // artifact executed directly under real node — the entry
-                // contract runs main() once and never the unrelated
-                // exports, so the independent package transcript
-                // (stdout "main\n", stderr the diagnostic, exit 0) is
-                // observed on the artifact the production CLI published.
-                // The JS lane keeps the separate corpus-adapter
-                // transcript (main then alpha/beta), so a regression in
-                // the require.main entry guard fails here and not only
-                // through the corpus-order pin.
-                Path project = Files.createTempDirectory(
-                    "v12-corner-case-" + name + "-js-");
-                try {
-                    write(project, "src/main.deal", source);
-                    write(project, "deal.json", DEAL_JSON_JS);
-                    ProjectOutcome compile = productionCompile(project,
-                        "src/main.deal", "out");
-                    if (compile.exitCode() != 0) {
-                        legs.add(new V12CorpusLeg("js", "the production"
-                            + " compile succeeds: " + compile.stderr(),
-                            Optional.empty()));
-                    } else {
-                        BoundedProcess.BoundedResult executed = runBounded(
-                            project.resolve("out"), "node", "main.js");
-                        legs.add(new V12CorpusLeg("js", null,
-                            mismatchAgainst(name, "js", executed, "main\n",
-                                "diagnostic \u03b2\n", 0)));
-                    }
                 } finally {
                     deleteRecursively(project);
                 }
@@ -5238,32 +5041,21 @@ public class ProductionDispatchTest {
     public static final class SplitCaptureChild {
 
         public static void main(String[] args) throws Exception {
-            if ("pressure".equals(args[0])) {
+            if ("pressure".equals(args[0]) || "stdout-pressure".equals(args[0])) {
+                boolean stdout = "stdout-pressure".equals(args[0]);
+                PrintStream flood = stdout ? System.out : System.err;
+                PrintStream marker = stdout ? System.err : System.out;
                 int remaining = Integer.parseInt(args[1]);
                 byte[] block = new byte[1024];
-                Arrays.fill(block, (byte) 'x');
+                Arrays.fill(block, (byte) (stdout ? 'y' : 'x'));
                 while (remaining > 0) {
                     int chunk = Math.min(block.length, remaining);
-                    System.err.write(block, 0, chunk);
+                    flood.write(block, 0, chunk);
                     remaining -= chunk;
                 }
-                System.err.flush();
-                System.out.print("PRESSURE-OK\n");
-                System.out.flush();
-                return;
-            }
-            if ("stdout-pressure".equals(args[0])) {
-                int remaining = Integer.parseInt(args[1]);
-                byte[] block = new byte[1024];
-                Arrays.fill(block, (byte) 'y');
-                while (remaining > 0) {
-                    int chunk = Math.min(block.length, remaining);
-                    System.out.write(block, 0, chunk);
-                    remaining -= chunk;
-                }
-                System.out.flush();
-                System.err.print("STDOUT-PRESSURE-OK\n");
-                System.err.flush();
+                flood.flush();
+                marker.print(stdout ? "STDOUT-PRESSURE-OK\n" : "PRESSURE-OK\n");
+                marker.flush();
                 return;
             }
             if ("late".equals(args[0])) {
@@ -5559,14 +5351,7 @@ public class ProductionDispatchTest {
         """;
 
     /** The diamond's right arm: constructs the shared seed class. */
-    private static final String DIAMOND_RIGHT = """
-        import * as c from "std/console";
-        import * as seed from "./seed";
-        function value(): int {c.log("right-default"); return 0;}
-        export class Node {value:int=value();}
-        export function read(): int {let x:seed.Seed={}; return x.value;}
-        export function main(): null {c.log("forbidden-right-main"); return null;}
-        """;
+    private static final String DIAMOND_RIGHT = DIAMOND_LEFT.replace("left", "right");
 
     /** The diamond's seed: the default evaluated once per construction. */
     private static final String DIAMOND_SEED = """
@@ -5589,53 +5374,15 @@ public class ProductionDispatchTest {
         for (String backend : List.of("luajit", "jvm", "js")) {
             Path project = Files.createTempDirectory("production-diamond-");
             try {
-                write(project, "deal.json", """
-                    {
-                      "languageVersion": "1.3",
-                      "moduleRoots": ["src"],
-                      "output": "out",
-                      "backend": "%s"
-                    }
-                    """.formatted(backend));
+                write(project, "deal.json", retainedManifest(backend));
                 write(project, "src/main.deal", DIAMOND_MAIN);
                 write(project, "src/left.deal", DIAMOND_LEFT);
                 write(project, "src/right.deal", DIAMOND_RIGHT);
                 write(project, "src/seed.deal", DIAMOND_SEED);
-                ProjectOutcome compile = productionCompile(project,
-                    "src/main.deal", "out");
-                check(compile.exitCode() == 0, backend + ": the diamond"
-                    + " compiles: " + compile.stderr());
-                check(compile.stderr().isEmpty(), backend + ": the diamond"
-                    + " compile emits no diagnostic: " + compile.stderr());
-                if (compile.exitCode() != 0) {
-                    continue;
+                if (compileRetainedSubject(project, backend + ": diamond", true)) {
+                    checkRetainedSubjectRun(project, backend, "diamond",
+                        "seed-default\nseed-default\nentry-main\n");
                 }
-                Path out = project.resolve("out");
-                String classpath = absoluteClasspath();
-                BoundedProcess.BoundedResult run;
-                if ("luajit".equals(backend)) {
-                    run = boundedRun(out, "luajit", "main.lua");
-                } else if ("js".equals(backend)) {
-                    run = boundedRun(out, "node", "main.js");
-                } else {
-                    BoundedProcess.BoundedResult javac = boundedRun(project,
-                        "javac", "--release", "25", "-proc:none", "-cp",
-                        classpath, "-d", out.toString(),
-                        out.resolve("Main.java").toString());
-                    checkEq(0, javac.exitCode(), backend + ": the diamond"
-                        + " artifact compiles: " + boundedOutput(javac));
-                    if (javac.exitCode() != 0) {
-                        continue;
-                    }
-                    run = boundedRun(out, "java", "-cp",
-                        out + File.pathSeparator + classpath, "Main");
-                }
-                checkEq(0, run.exitCode(), backend + ": the diamond exits 0: "
-                    + boundedOutput(run));
-                checkEq("seed-default\nseed-default\nentry-main\n",
-                    run.stdout(), backend + ": the exact diamond transcript");
-                checkEq("", run.stderr(), backend + ": the empty diamond"
-                    + " stderr");
             } finally {
                 deleteRecursively(project);
             }
@@ -5718,49 +5465,12 @@ public class ProductionDispatchTest {
             // The legal control completes normally on every target.
             Path legal = Files.createTempDirectory("production-legal-try-");
             try {
-                write(legal, "deal.json", """
-                    {
-                      "languageVersion": "1.3",
-                      "moduleRoots": ["src"],
-                      "output": "out",
-                      "backend": "%s"
-                    }
-                    """.formatted(backend));
+                write(legal, "deal.json", retainedManifest(backend));
                 write(legal, "src/main.deal", LEGAL_THROWING_TRY_CONTROL);
-                ProjectOutcome compile = productionCompile(legal,
-                    "src/main.deal", "out");
-                check(compile.exitCode() == 0, backend + ": the legal"
-                    + " throwing-try control compiles: " + compile.stderr());
-                if (compile.exitCode() != 0) {
-                    continue;
+                if (compileRetainedSubject(legal, backend + ": legal throwing-try", false)) {
+                    checkRetainedSubjectRun(legal, backend, "legal throwing-try",
+                        "legal-throwing-try\n");
                 }
-                Path out = legal.resolve("out");
-                String classpath = absoluteClasspath();
-                BoundedProcess.BoundedResult run;
-                if ("luajit".equals(backend)) {
-                    run = boundedRun(out, "luajit", "main.lua");
-                } else if ("js".equals(backend)) {
-                    run = boundedRun(out, "node", "main.js");
-                } else {
-                    BoundedProcess.BoundedResult javac = boundedRun(legal,
-                        "javac", "--release", "25", "-proc:none", "-cp",
-                        classpath, "-d", out.toString(),
-                        out.resolve("Main.java").toString());
-                    checkEq(0, javac.exitCode(), backend + ": the legal"
-                        + " throwing-try artifact compiles: "
-                        + boundedOutput(javac));
-                    if (javac.exitCode() != 0) {
-                        continue;
-                    }
-                    run = boundedRun(out, "java", "-cp",
-                        out + File.pathSeparator + classpath, "Main");
-                }
-                checkEq(0, run.exitCode(), backend + ": the legal"
-                    + " throwing-try control exits 0: " + boundedOutput(run));
-                checkEq("legal-throwing-try\n", run.stdout(), backend
-                    + ": the legal throwing-try control completes normally");
-                checkEq("", run.stderr(), backend + ": the legal"
-                    + " throwing-try control keeps stderr empty");
             } finally {
                 deleteRecursively(legal);
             }
@@ -5783,28 +5493,12 @@ public class ProductionDispatchTest {
             for (Map.Entry<String, String> source : sources.entrySet()) {
                 write(project, source.getKey(), source.getValue());
             }
-            write(project, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "moduleRoots": ["src"],
-                  "output": "out",
-                  "backend": "%s"
-                }
-                """.formatted(backend));
+            write(project, "deal.json", retainedManifest(backend));
             Path out = project.resolve("out");
             write(out, "main.prior", "-- previously published artifact\n");
             Map<String, byte[]> before = snapshotTree(out);
-            ArmCompile arm;
-            try {
-                arm = compileWithInvocation(project, "src/main.deal",
-                    productionInvocation());
-            } catch (IllegalStateException locateFailure) {
-                // A failure before the orchestrator is a harness defect,
-                // never a pass.
-                check(false, name + " [" + backend + "]: locate failed: "
-                    + locateFailure.getMessage());
-                return;
-            }
+            ArmCompile arm = compileWithInvocation(project, "src/main.deal",
+                productionInvocation());
             String context = name + " [" + backend + "]";
             check(!arm.success(), context + ": the compile fails closed");
             List<CompilerDiagnostic> errors = arm.orchestrator().diagnostics()
@@ -5857,15 +5551,15 @@ public class ProductionDispatchTest {
             throws Exception {
         System.out.println("-- the legal module-level default-call witness on"
             + " LuaJIT and JVM --");
-        String witness = deal.test.ConformanceHarnessMetadata
-            .productionCorpusSource(Files.readString(Path.of(
-                "test/conformance/backend-runtime/defaults/"
-                    + "default-call-shared-reference.deal")),
-                "backend-runtime/defaults/default-call-shared-reference.deal");
-        String declaration = deal.test.ConformanceHarnessMetadata
-            .productionCorpusSource(Files.readString(Path.of(
-                "test/conformance/host-fixtures/retained_default.d.deal")),
-                "host-fixtures/retained_default.d.deal");
+        Path corpus = Path.of("test/conformance");
+        String witnessPath = "backend-runtime/defaults/default-call-shared-reference.deal";
+        String declarationPath = "host-fixtures/retained_default.d.deal";
+        String witness = ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(corpus.resolve(witnessPath)), witnessPath);
+        String declaration = ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(corpus.resolve(declarationPath)), declarationPath);
+        String hostLua = Files.readString(corpus.resolve("host-fixtures/retained_default.lua"));
+        String hostJava = Files.readString(corpus.resolve("host-fixtures/retained_default.java"));
         for (String backend : List.of("luajit", "jvm")) {
             Path project = Files.createTempDirectory(
                 "production-default-witness-");
@@ -5884,61 +5578,71 @@ public class ProductionDispatchTest {
                       }
                     }
                     """.formatted(backend));
-                ProjectOutcome compile = productionCompile(project,
-                    "src/main.deal", "out");
-                check(compile.exitCode() == 0, backend + ": the default-call"
-                    + " witness compiles: " + compile.stderr());
-                check(compile.stderr().isEmpty(), backend + ": the"
-                    + " default-call witness compile emits no diagnostic: "
-                    + compile.stderr());
-                if (compile.exitCode() != 0) {
+                if (!compileRetainedSubject(project, backend + ": default-call witness", true)) {
                     continue;
                 }
-                Path out = project.resolve("out");
                 if ("luajit".equals(backend)) {
-                    write(project, "out/host/retained_default.lua",
-                        Files.readString(Path.of(
-                            "test/conformance/host-fixtures/"
-                                + "retained_default.lua")));
-                    BoundedProcess.BoundedResult run = boundedRun(out,
-                        "luajit", "main.lua");
-                    checkEq(0, run.exitCode(), backend + ": the default-call"
-                        + " witness exits 0: " + boundedOutput(run));
-                    checkEq("default-call-shared-reference\n", run.stdout(),
-                        backend + ": the exact witness stdout");
-                    checkEq("", run.stderr(), backend + ": the empty witness"
-                        + " stderr");
+                    write(project, "out/host/retained_default.lua", hostLua);
+                    checkRetainedSubjectRun(project, backend, "default-call witness",
+                        "default-call-shared-reference\n");
                 } else {
-                    Path hostJava = project.resolve(
-                        "HostRetained_default.java");
-                    Files.writeString(hostJava, Files.readString(Path.of(
-                        "test/conformance/host-fixtures/retained_default.java")),
-                        StandardCharsets.UTF_8);
-                    String classpath = absoluteClasspath();
-                    BoundedProcess.BoundedResult javac = boundedRun(project,
-                        "javac", "--release", "25", "-proc:none", "-cp",
-                        classpath, "-d", out.toString(),
-                        out.resolve("Main.java").toString(),
-                        hostJava.toString());
-                    checkEq(0, javac.exitCode(), backend + ": the default-call"
-                        + " witness artifact compiles: " + boundedOutput(javac));
-                    if (javac.exitCode() != 0) {
-                        continue;
-                    }
-                    BoundedProcess.BoundedResult run = boundedRun(out,
-                        "java", "-cp",
-                        out + File.pathSeparator + classpath, "Main");
-                    checkEq(0, run.exitCode(), backend + ": the default-call"
-                        + " witness exits 0: " + boundedOutput(run));
-                    checkEq("default-call-shared-reference\n", run.stdout(),
-                        backend + ": the exact witness stdout");
-                    checkEq("", run.stderr(), backend + ": the empty witness"
-                        + " stderr");
+                    write(project, "HostRetained_default.java", hostJava);
+                    checkRetainedSubjectRun(project, backend, "default-call witness",
+                        "default-call-shared-reference\n",
+                        project.resolve("HostRetained_default.java"));
                 }
             } finally {
                 deleteRecursively(project);
             }
         }
+    }
+
+    private static String retainedManifest(String backend) {
+        return switch (backend) {
+            case "luajit" -> DEAL_JSON_LUA;
+            case "jvm" -> DEAL_JSON_JVM;
+            case "js" -> DEAL_JSON_JS;
+            default -> throw new IllegalArgumentException("unknown backend: " + backend);
+        };
+    }
+
+    private static boolean compileRetainedSubject(Path project, String context,
+            boolean quiet) throws Exception {
+        ProjectOutcome compile = productionCompile(project, "src/main.deal", "out");
+        checkEq(0, compile.exitCode(), context + ": compiles: " + compile.stderr());
+        if (quiet) {
+            checkEq("", compile.stderr(), context + ": compile emits no diagnostic");
+        }
+        return compile.exitCode() == 0;
+    }
+
+    private static void checkRetainedSubjectRun(Path project, String backend,
+            String name, String stdout, Path... hostSources) throws Exception {
+        Path out = project.resolve("out");
+        String context = backend + ": " + name;
+        BoundedProcess.BoundedResult run;
+        if ("jvm".equals(backend)) {
+            String classpath = absoluteClasspath();
+            List<String> sources = new ArrayList<>(List.of(out.resolve("Main.java").toString()));
+            for (Path host : hostSources) {
+                sources.add(host.toString());
+            }
+            List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
+                "-proc:none", "-cp", out + File.pathSeparator + classpath, "-d", out.toString()));
+            command.addAll(sources);
+            BoundedProcess.BoundedResult javac = runBounded(project, command.toArray(String[]::new));
+            checkEq(0, javac.exitCode(), context + ": artifact compiles: " + boundedOutput(javac));
+            if (javac.exitCode() != 0) {
+                return;
+            }
+            run = runBounded(out, "java", "-cp", out + File.pathSeparator + classpath, "Main");
+        } else {
+            run = "luajit".equals(backend) ? runBounded(out, "luajit", "main.lua")
+                : runBounded(out, "node", "main.js");
+        }
+        checkEq(0, run.exitCode(), context + ": exits 0: " + boundedOutput(run));
+        checkEq(stdout, run.stdout(), context + ": exact stdout");
+        checkEq("", run.stderr(), context + ": empty stderr");
     }
 
     public static void main(String[] args) throws Exception {
