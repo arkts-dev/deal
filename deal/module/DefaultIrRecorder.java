@@ -96,6 +96,16 @@ final class DefaultIrRecorder {
     private final String modulePath;
     private final ProgramNode program;
     private final TypeNodeResolver typeResolver;
+    /**
+     * The checker's recorded construction declaration of every object
+     * literal whose construction context was exact
+     * ({@code CheckResult.exactClassDeclarations()}): the contextual
+     * declaration or the scope's own exact-identity declaration. The
+     * literal's resources and plan are that declaration's, so a
+     * same-identity sibling or an imported callee's parameter provider
+     * never captures a contextually declared construction.
+     */
+    private final Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations;
 
     /**
      * Class name &rarr; the import alias the declaring field type
@@ -175,6 +185,32 @@ final class DefaultIrRecorder {
             ProgramNode program,
             TypeNodeResolver typeResolver,
             Map<String, String> qualifiedClassAliases) {
+        this(typeMap, scopeMap, imports, classification, location,
+            modulePath, program, typeResolver, qualifiedClassAliases,
+            Map.of());
+    }
+
+    /**
+     * The production constructor with the checker's exact construction
+     * declarations ({@code CheckResult.exactClassDeclarations()}): a
+     * literal the checker laid out by its construction context keeps
+     * that declaration's resource/plan even when the checked route that
+     * introduced the literal's position names another provider (an
+     * imported callee's parameter). The construct-less constructor above
+     * (synthetic checked facts, retained test harnesses) keeps the
+     * contextual-provider fallback for every literal.
+     */
+    DefaultIrRecorder(
+            Map<ExpressionNode, Type> typeMap,
+            Map<StatementNode, SymbolTable> scopeMap,
+            Map<String, DefaultPlanImport> imports,
+            Map<String, deal.identity.CanonicalModuleIdentity> classification,
+            SourceModuleLocation location,
+            String modulePath,
+            ProgramNode program,
+            TypeNodeResolver typeResolver,
+            Map<String, String> qualifiedClassAliases,
+            Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations) {
         this.typeMap = Objects.requireNonNull(typeMap, "typeMap");
         this.scopeMap = Objects.requireNonNull(scopeMap, "scopeMap");
         Map<SymbolTable, StatementNode> owners =
@@ -194,6 +230,8 @@ final class DefaultIrRecorder {
             "typeResolver");
         this.qualifiedClassAliases = Map.copyOf(Objects.requireNonNull(
             qualifiedClassAliases, "qualifiedClassAliases"));
+        this.exactClassDeclarations = Map.copyOf(Objects.requireNonNull(
+            exactClassDeclarations, "exactClassDeclarations"));
     }
 
     /** The insertion-ordered resolved bindings (read-only view). */
@@ -719,24 +757,45 @@ final class DefaultIrRecorder {
         ProgramNode declaringProgram = null;
         DefaultPlanImport declaringProvider = null;
         if (resolvedType instanceof Type.Class cls) {
-            // The import the literal's checked context names is the exact
-            // declaring provider (the declared annotation's qualified
-            // spelling, the resolved imported callee's parameter context,
-            // or the enclosing field's declaring provider): a same-identity
-            // local declaration of the same name must never capture the
-            // construction of an imported context, so the textual
-            // same-module lookup runs only when the context names no
-            // import.
+            // The checker's recorded exact construction declaration first
+            // (the contextual declaration or the scope's own
+            // exact-identity declaration): the literal's resources and plan
+            // are that declaration's, so a call-argument provider never
+            // captures a contextually declared construction and a
+            // same-identity sibling never captures a locally declared one.
+            // A literal the checker selected by the identity-keyed route
+            // (no published exact fact) keeps the contextual/alias
+            // attribution below exactly as before.
+            Symbol.ClassSymbol exact = exactClassDeclarations.get(obj);
             Symbol.ClassSymbol sameModule = null;
-            if (!contextNamesImport(cls, contextProvider)) {
+            boolean sameModuleConstruction = false;
+            DefaultPlanImport exactProvider = null;
+            if (exact != null
+                    && exact.name().equals(cls.name())
+                    && cls.identity().equals(exact.identity())) {
+                if (modulePath.equals(exact.modulePath())) {
+                    sameModule = exact;
+                    sameModuleConstruction = true;
+                } else {
+                    exactProvider = providerForDeclaringModule(exact, cls);
+                }
+            }
+            if (!sameModuleConstruction && exactProvider == null
+                    && !contextNamesImport(cls, contextProvider)) {
                 Symbol sym = scope.resolve(cls.name());
                 if (sym instanceof Symbol.ClassSymbol cs
                         && cs.identity().equals(cls.identity())) {
                     sameModule = cs;
+                    sameModuleConstruction = true;
                 }
             }
-            if (sameModule != null) {
-                bindings.putIfAbsent(cls.name(), sameModule);
+            if (sameModuleConstruction) {
+                // The unit's own declaration supplies the literal's layout
+                // and per-construction defaults; the recorded exact symbol
+                // (or the walk scope's resolution) is the bindings entry.
+                if (sameModule != null) {
+                    bindings.putIfAbsent(cls.name(), sameModule);
+                }
                 target = DefaultIrNode.Target.sameModuleResource(
                     cls.name(),
                     sameModuleResource(
@@ -748,8 +807,9 @@ final class DefaultIrRecorder {
                 // The intrinsic Error class construction.
                 target = DefaultIrNode.Target.intrinsic(cls.name());
             } else {
-                DefaultPlanImport provider =
-                    providerForClass(cls, contextProvider);
+                DefaultPlanImport provider = exactProvider != null
+                    ? exactProvider
+                    : providerForClass(cls, contextProvider);
                 if (provider != null) {
                     SemanticResourceIdentity resource = importedResource(
                         provider,
@@ -1240,6 +1300,31 @@ final class DefaultIrRecorder {
             }
         }
         return exportedMatch != null ? exportedMatch : identityMatch;
+    }
+
+    /**
+     * The import whose own program declares the checker's exact
+     * construction declaration (the declaration's module path, the class
+     * name and the provider classification all agree): a contextually
+     * declared literal of an imported class is attributed to that exact
+     * provider, never to a same-identity sibling or to the literal's
+     * position provider.
+     */
+    private DefaultPlanImport providerForDeclaringModule(
+            Symbol.ClassSymbol decl, Type.Class cls) {
+        if (decl.modulePath() == null || decl.modulePath().isEmpty()) {
+            return null;
+        }
+        for (DefaultPlanImport provider : imports.values()) {
+            if (provider.modulePath().equals(decl.modulePath())
+                    && AstDeclarations.findClassDeclaration(provider.program(),
+                        cls.name()) != null
+                    && ownsClass(provider, cls,
+                        cls.identity().moduleIdentity())) {
+                return provider;
+            }
+        }
+        return null;
     }
 
     /**

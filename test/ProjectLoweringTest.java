@@ -559,6 +559,107 @@ public class ProjectLoweringTest {
         """;
 
     /**
+     * The single-plan same-identity JSON fixture: the imported sibling
+     * declares no {@code @jsonable} plan, so exactly one plan-bearing
+     * declaration carries the canonical identity and the nested link is
+     * exact (a same-identity declaration without a generated plan
+     * registers none and cannot collide with it).
+     */
+    private static final String SINGLE_PLAN_OTHER_SOURCE = """
+        export class Point { nick: string = ""; }
+        """;
+
+    private static final String SINGLE_PLAN_APP_SOURCE = """
+        import * as other from "./other";
+
+        // @jsonable
+        export class Point { nick: string = "l"; }
+
+        // @jsonable
+        export class Wrap { p: Point = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
+            throw { code: "WRONG", message: s };
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The annotated-local + imported-callee-argument fixture (review
+     * cycle 2, finding 1): the consumer declares its own {@code Ir} in the
+     * sibling directory, so the annotation's construction context is a
+     * same-module declaration while the literal is an argument of the
+     * imported {@code ir.id}. The checker laid both literals out by the
+     * consumer's own {@code Ir}; the per-construction default must be that
+     * declaration's 5 — never the imported sibling's 7 or 93.
+     */
+    private static final String LOCAL_ATTRIBUTION_IR_SOURCE = """
+        export class Ir { a: int = 7; }
+        export function id(x: Ir): Ir { return x; }
+        """;
+
+    private static final String LOCAL_ATTRIBUTION_CODEC_SOURCE = """
+        export class Ir { a: int = 93; }
+        """;
+
+    private static final String LOCAL_ATTRIBUTION_APP_SOURCE = """
+        import * as ir from "./ir";
+        import * as codec from "./codec";
+
+        class Ir { a: int = 5; }
+
+        class Holder { f: Ir = ir.id({}); }
+
+        export function main(): null {
+          let p: Ir = ir.id({});
+          let q: Holder = {};
+          if (p.a !== 5) { throw { code: "WRONG_P", message: "p.a" }; }
+          if (q.f.a !== 5) { throw { code: "WRONG_F", message: "q.f.a" }; }
+          return null;
+        }
+        """;
+
+    private static final String LOCAL_ATTRIBUTION_APP_REVERSED_SOURCE = """
+        import * as codec from "./codec";
+        import * as ir from "./ir";
+
+        class Ir { a: int = 5; }
+
+        class Holder { f: Ir = ir.id({}); }
+
+        export function main(): null {
+          let p: Ir = ir.id({});
+          let q: Holder = {};
+          if (p.a !== 5) { throw { code: "WRONG_P", message: "p.a" }; }
+          if (q.f.a !== 5) { throw { code: "WRONG_F", message: "q.f.a" }; }
+          return null;
+        }
+        """;
+
+    /**
+     * The annotated-import + imported-callee-argument fixture: the
+     * annotation's qualified spelling names {@code codec}'s declaration
+     * while the literal is an argument of {@code ir.id}. The checker's
+     * recorded construction context is the annotation's declaration, so
+     * the construction must use codec's 93 — never the callee's
+     * parameter provider 7.
+     */
+    private static final String IMPORTED_CONTEXT_PROBE_SOURCE = """
+        import * as ir from "./ir";
+        import * as codec from "./codec";
+
+        export function main(): null {
+          let p: codec.Ir = ir.id({});
+          if (p.a !== 93) { throw { code: "WRONG_CODEC", message: "p.a" }; }
+          return null;
+        }
+        """;
+
+    /**
      * The malformed-provider negative fixture: the entry writes a field
      * of an imported class whose implementation owner is removed from the
      * lowering closure (the checker-valid source stays).
@@ -730,14 +831,29 @@ public class ProjectLoweringTest {
     private static RealProject compileProject(String appSource,
             Map<String, String> extraSources,
             Map<String, String> extraExternals) throws Exception {
+        return compileProject("src/app.deal", appSource, extraSources,
+            extraExternals);
+    }
+
+    /**
+     * The harness with an explicit entry path: a fixture whose consumer
+     * must live in the same directory as its sibling providers (the module
+     * identity excludes the file stem, so only the directory decides the
+     * canonical class identity) writes the entry at that path and keeps
+     * its module roots at {@code src}.
+     */
+    private static RealProject compileProject(String entryRelativePath,
+            String appSource,
+            Map<String, String> extraSources,
+            Map<String, String> extraExternals) throws Exception {
         Path proj = Files.createTempDirectory("project-lowering");
         writeFileIn(proj, "src/cfg.d.deal", HOST_DECLARATION);
         writeFileIn(proj, "src/util.deal", UTIL_SOURCE);
-        writeFileIn(proj, "src/app.deal", appSource);
+        writeFileIn(proj, entryRelativePath, appSource);
         for (Map.Entry<String, String> extra : extraSources.entrySet()) {
             writeFileIn(proj, extra.getKey(), extra.getValue());
         }
-        Path entry = proj.resolve("src/app.deal").toAbsolutePath();
+        Path entry = proj.resolve(entryRelativePath).toAbsolutePath();
         Path output = proj.resolve("out").toAbsolutePath();
         Map<String, String> externals = new LinkedHashMap<>();
         externals.put(HOST_CFG_SPECIFIER,
@@ -2481,6 +2597,239 @@ public class ProjectLoweringTest {
                                 + "declaration"),
                     "the " + label + " ambiguous JSON nested link fails with a "
                         + "named E6005; got " + diagnostic.message());
+            }
+        }
+    }
+
+    /**
+     * The single-plan same-identity JSON link (review cycle 2, finding 2):
+     * a same-identity declaration without a generated plan registers none,
+     * so the nested link resolves the one plan-bearing declaration exactly
+     * and the project compiles and runs the round trip.
+     */
+    private static void testSinglePlanJsonNestedLinkResolves() throws Exception {
+        System.out.println("-- the single-plan same-identity JSON nested link "
+            + "resolves: an identity with one plan-bearing declaration keeps "
+            + "its exact nested link --");
+        RealProject project = compileProject(SINGLE_PLAN_APP_SOURCE,
+            Map.of("src/other.deal", SINGLE_PLAN_OTHER_SOURCE), Map.of());
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the single-plan project lowers through the one project entry: "
+                    + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            ExecutableLoweredProject lowered = result.project();
+            SemanticIrValidator.ComparisonFacts facts =
+                new SemanticIrValidator.ComparisonFacts(
+                    project.index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_3_INT32,
+                    invocation().capabilityRegistryHash());
+            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                "the single-plan project passes the typed project surface");
+            String text = SemanticIrValidator.toProjectText(lowered);
+            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                "the single-plan project passes the text project surface");
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(lowered, result.tables(),
+                    result.registries(), null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle completes the single-plan JSON round trip (the one "
+                    + "plan-bearing declaration's own plan): "
+                    + run.comparisonReport());
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * The annotated-local + imported-callee-argument shape (review cycle 2,
+     * finding 1): the checker's recorded construction declaration is the
+     * consumer's own {@code Ir} even though the literal is an argument of
+     * the imported {@code ir.id}, so the literal keeps the same-module
+     * resource and per-construction default (5), independent of the import
+     * order.
+     */
+    private static void testLocalDeclarationBesideImportedCalleeArgument()
+            throws Exception {
+        System.out.println("-- the annotated-local + imported-callee-argument "
+            + "shape: the checker's recorded construction declaration owns the "
+            + "literal's plan and per-construction default --");
+        for (boolean reversed : new boolean[] { false, true }) {
+            String label = reversed ? "reversed imports" : "ir imported first";
+            RealProject project = compileProject("src/m/app.deal",
+                reversed ? LOCAL_ATTRIBUTION_APP_REVERSED_SOURCE
+                    : LOCAL_ATTRIBUTION_APP_SOURCE,
+                Map.of("src/m/ir.deal", LOCAL_ATTRIBUTION_IR_SOURCE,
+                    "src/m/codec.deal", LOCAL_ATTRIBUTION_CODEC_SOURCE),
+                Map.of());
+            try {
+                // The checker laid both literals out by the consumer's own
+                // Ir (the annotation is the construction context), so the
+                // recorder records no imported provider alias for them.
+                for (CheckedModuleInput module : project.checkedProject().modules()) {
+                    if (module.moduleId().path().equals("m.app")) {
+                        check(module.classLiteralProviders().isEmpty(),
+                            "the locally constructed literals record no imported "
+                                + "provider alias (" + label + "): "
+                                + module.classLiteralProviders());
+                    }
+                }
+                SemanticLowerer.ProjectLoweringResult result =
+                    lower(project, invocation());
+                check(!result.hasErrors() && result.project() != null,
+                    "the annotated-local project lowers through the one project "
+                        + "entry (" + label + "): " + result.diagnostics());
+                if (result.project() == null) {
+                    return;
+                }
+                ExecutableLoweredProject lowered = result.project();
+                ModuleId appModule = new ModuleId("m.app");
+                LoweredModuleUnit app = lowered.modules().get(appModule);
+                check(app != null, "the consumer unit is lowered (" + label + ")");
+                if (app == null) {
+                    return;
+                }
+                ClassId localIr = new ClassId("src/m", "Ir");
+                int constructions = 0;
+                for (SemanticOp op : app.ops()) {
+                    if (op.kind() != SemanticOpKind.CLASS_NEW
+                            || !(op.payload()
+                                instanceof KindPayload.ClassNewPayload payload)
+                            || !payload.classId().equals(localIr)) {
+                        continue;
+                    }
+                    constructions++;
+                    checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
+                        "the local Ir construction carries the unit's own defaults ("
+                            + label + ")");
+                    checkEq(null, payload.classFactoryRef(),
+                        "the local Ir construction references no imported provider "
+                            + "(" + label + ")");
+                    checkEq(app.classLayouts().get(localIr), payload.layout(),
+                        "the local Ir construction carries the unit's own layout ("
+                            + label + ")");
+                }
+                checkEq(2, constructions,
+                    "both recorded literals construct the local Ir (the variable "
+                        + "initializer and the field default) (" + label + ")");
+                SemanticIrValidator.ComparisonFacts facts =
+                    new SemanticIrValidator.ComparisonFacts(
+                        project.index().interfaceIndexDigest(),
+                        SemanticProfile.DEAL_V1_3_INT32,
+                        invocation().capabilityRegistryHash());
+                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
+                    "the annotated-local project passes the typed project surface ("
+                        + label + ")");
+                String text = SemanticIrValidator.toProjectText(lowered);
+                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
+                    "the annotated-local project passes the text project surface ("
+                        + label + ")");
+                SemanticIrDumper.ProjectDump dump =
+                    SemanticIrDumper.dumpProject(lowered);
+                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
+                        text.getBytes(StandardCharsets.UTF_8))),
+                    SemanticIrDumper.reassembleProject(dump.manifest(),
+                        documentsOf(dump)),
+                    "the annotated-local project reassembles exactly (" + label + ")");
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.executeProjectInits(lowered, result.tables(),
+                        result.registries(), null);
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the oracle completes the probe with the local default 5, never "
+                        + "the sibling's 7 or 93 (" + label + "): "
+                        + run.comparisonReport());
+            } finally {
+                deleteRecursively(project.root());
+            }
+        }
+    }
+
+    /**
+     * The annotated-import + imported-callee-argument shape: the
+     * checker's recorded construction context is the annotation's
+     * imported declaration, so the literal's resources and plan are its
+     * own and the callee's parameter provider never captures the
+     * construction.
+     */
+    private static void testImportedContextBesideCalleeArgumentProvider()
+            throws Exception {
+        System.out.println("-- the annotated-import + imported-callee-argument "
+            + "shape: the checker's recorded construction context owns the "
+            + "literal's provider and per-construction default --");
+        for (boolean reversed : new boolean[] { false, true }) {
+            String label = reversed ? "reversed imports" : "ir imported first";
+            RealProject project = compileProject("src/m/probe.deal",
+                IMPORTED_CONTEXT_PROBE_SOURCE,
+                Map.of("src/m/ir.deal", LOCAL_ATTRIBUTION_IR_SOURCE,
+                    "src/m/codec.deal", LOCAL_ATTRIBUTION_CODEC_SOURCE),
+                Map.of());
+            try {
+                // The literal is an argument of ir.id but the annotation
+                // names codec.Ir: the recorder records codec as the
+                // construction provider.
+                for (CheckedModuleInput module : project.checkedProject().modules()) {
+                    if (module.moduleId().path().equals("m.probe")) {
+                        checkEq(1, module.classLiteralProviders().size(),
+                            "the contextually declared literal records exactly one "
+                                + "provider alias (" + label + ")");
+                        checkEq("codec", module.classLiteralProviders().values()
+                                .iterator().next(),
+                            "the recorded provider alias is the annotation's own "
+                                + "declaration, never the callee's parameter provider ("
+                                + label + ")");
+                    }
+                }
+                SemanticLowerer.ProjectLoweringResult result =
+                    lower(project, invocation());
+                check(!result.hasErrors() && result.project() != null,
+                    "the annotated-import project lowers through the one project "
+                        + "entry (" + label + "): " + result.diagnostics());
+                if (result.project() == null) {
+                    return;
+                }
+                ExecutableLoweredProject lowered = result.project();
+                ModuleId probe = new ModuleId("m.probe");
+                ModuleId codec = new ModuleId("m.codec");
+                LoweredModuleUnit probeUnit = lowered.modules().get(probe);
+                LoweredModuleUnit codecUnit = lowered.modules().get(codec);
+                check(probeUnit != null && codecUnit != null,
+                    "the closure carries the probe and its providers (" + label + ")");
+                if (probeUnit == null || codecUnit == null) {
+                    return;
+                }
+                ClassId irId = new ClassId("src/m", "Ir");
+                ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
+                boolean constructionSeen = false;
+                for (SemanticOp op : probeUnit.ops()) {
+                    if (op.kind() != SemanticOpKind.CLASS_NEW
+                            || !(op.payload()
+                                instanceof KindPayload.ClassNewPayload payload)
+                            || !payload.classId().equals(irId)) {
+                        continue;
+                    }
+                    constructionSeen = true;
+                    checkEq(DefaultOwner.SHARED_FACTORY, payload.defaultOwner(),
+                        "the contextually declared construction transfers to the "
+                            + "annotation provider's factory (" + label + ")");
+                    checkEq(codecEntry, payload.classFactoryRef(),
+                        "the construction references codec's construction entry, "
+                            + "never the callee's ir entry (" + label + ")");
+                }
+                check(constructionSeen,
+                    "the probe carries the contextually declared construction ("
+                        + label + ")");
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.executeProjectInits(lowered, result.tables(),
+                        result.registries(), null);
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the oracle completes the probe with the annotation's 93, never "
+                        + "the callee's 7 (" + label + "): "
+                        + run.comparisonReport());
+            } finally {
+                deleteRecursively(project.root());
             }
         }
     }
@@ -5391,6 +5740,9 @@ public class ProjectLoweringTest {
             testSameIdentityFieldOperationResolution();
             testAmbiguousFieldOperationFailClosed();
             testAmbiguousJsonNestedLinkFailClosed();
+            testSinglePlanJsonNestedLinkResolves();
+            testLocalDeclarationBesideImportedCalleeArgument();
+            testImportedContextBesideCalleeArgumentProvider();
             testImportedFieldWriteProviderDeferral();
             testCorruptedUnitSeed(baseline);
             testMissingModuleSeed(baseline);

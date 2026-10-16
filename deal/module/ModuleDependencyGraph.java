@@ -318,7 +318,8 @@ public final class ModuleDependencyGraph {
                         return input.nameResolver()
                             .resolveTypeNode(typeNode);
                     },
-                    Map.of());
+                    Map.of(),
+                    input.checkResult().exactClassDeclarations());
                 for (StatementNode stmt : input.program().statements()) {
                     StatementNode declaration =
                         stmt instanceof ExportDeclaration ed

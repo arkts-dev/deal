@@ -1627,7 +1627,8 @@ public final class DefaultSemanticSerializer {
                     return input.nameResolver().resolveTypeNode(
                         typeNode);
                 },
-                Map.of());
+                Map.of(),
+                input.checkResult().exactClassDeclarations());
             List<DefaultIrNode> statements = recorder.recordFunctionBody(
                 fd, moduleScope);
             Set<Site> siteSet = new LinkedHashSet<>();

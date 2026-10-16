@@ -1287,6 +1287,12 @@ public final class SemanticLowerer {
         // provider and fails closed without one (never a first alias).
         java.util.Set<ClassId> projectAmbiguousClassIds =
             ambiguousProjectClassIds(checkedProject);
+        // The plan-bearing (jsonable) declarations of the same identity:
+        // only a genuine two-plan collision makes the generated JSON plan
+        // key ambiguous; a single plan-bearing declaration keeps every
+        // nested link exact.
+        java.util.Set<ClassId> ambiguousJsonPlanClassIds =
+            ambiguousJsonPlanClassIds(checkedProject);
 
         for (CheckedModuleInput module : checkedProject.modules()) {
             SemanticRequirementManifest manifest =
@@ -1314,7 +1320,7 @@ public final class SemanticLowerer {
                 conversionIntrinsics, ownInterface, comparisonFacts,
                 inProjectFactoryFacts, inProjectProviderFacts,
                 providerConstructionEntries, declaredParameterAnnotations,
-                projectAmbiguousClassIds);
+                projectAmbiguousClassIds, ambiguousJsonPlanClassIds);
             if (lowered.hasErrors()) {
                 return projectFailureResult(lowered.diagnostics());
             }
@@ -1382,6 +1388,52 @@ public final class SemanticLowerer {
                     // The compiler-owned builtin class: one declaration.
                     continue;
                 }
+                counts.merge(classId, 1, Integer::sum);
+            }
+        }
+        java.util.Set<ClassId> ambiguous = new java.util.LinkedHashSet<>();
+        for (Map.Entry<ClassId, Integer> entry : counts.entrySet()) {
+            if (entry.getValue() > 1) {
+                ambiguous.add(entry.getKey());
+            }
+        }
+        return java.util.Collections.unmodifiableSet(ambiguous);
+    }
+
+    /**
+     * The project-wide canonical class identities carrying more than one
+     * plan-bearing ({@code @jsonable}) declaration: the generated JSON
+     * plan table is keyed by the canonical class identity, so exactly one
+     * plan-bearing declaration resolves a nested JSON link exactly, while
+     * a same-identity declaration without a generated plan registers none
+     * and cannot collide with it. A declaration file's {@code @jsonable}
+     * directive has no effect (its classes generate no plan), so only
+     * implementation modules contribute counts.
+     */
+    private static java.util.Set<ClassId> ambiguousJsonPlanClassIds(
+            CheckedProjectInput checkedProject) {
+        Map<ClassId, Integer> counts = new LinkedHashMap<>();
+        for (CheckedModuleInput module : checkedProject.modules()) {
+            SymbolTable table = module.checks() == null
+                ? null : module.checks().symbolTable();
+            if (table == null) {
+                continue;
+            }
+            for (StatementNode statement : module.ast().statements()) {
+                StatementNode declaration = statement instanceof ExportDeclaration export
+                    ? export.declaration() : statement;
+                if (!(declaration instanceof ClassDeclaration classDeclaration)
+                        || !classDeclaration.isJsonable()) {
+                    continue;
+                }
+                Symbol symbol = table.resolve(classDeclaration.name());
+                if (!(symbol instanceof Symbol.ClassSymbol classSymbol)
+                        || classSymbol.identity() == null) {
+                    continue;
+                }
+                ClassId classId = new ClassId(
+                    DescriptorService.semanticModulePath(classSymbol.identity()),
+                    classSymbol.name());
                 counts.merge(classId, 1, Integer::sum);
             }
         }
@@ -1474,7 +1526,8 @@ public final class SemanticLowerer {
             Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
                 providerConstructionEntries,
             Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations,
-            java.util.Set<ClassId> projectAmbiguousClassIds) {
+            java.util.Set<ClassId> projectAmbiguousClassIds,
+            java.util.Set<ClassId> ambiguousJsonPlanClassIds) {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), true, true, ownInterface,
@@ -1486,6 +1539,7 @@ public final class SemanticLowerer {
         lowerer.setProviderFactoryFacts(Map.copyOf(providerFactoryFacts),
             providerConstructionEntries, module.classLiteralProviders());
         lowerer.setProjectAmbiguousClassIds(projectAmbiguousClassIds);
+        lowerer.setAmbiguousJsonPlanClassIds(ambiguousJsonPlanClassIds);
         lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
@@ -1517,7 +1571,8 @@ public final class SemanticLowerer {
             unit.bodyTable(), comparisonFacts, unit.classBindingFacts(),
             unit.classFactories(), unit.jsonDefaults(), ownInterface,
             Map.copyOf(sharedFactories), seeds.registrations(),
-            Map.copyOf(providerFactoryFacts));
+            Map.copyOf(providerFactoryFacts),
+            ambiguousJsonPlanClassIds);
         if (unitChain.isPresent()) {
             return LoweredProjectModule.failure(List.of(unitChain.get()));
         }
@@ -1652,6 +1707,32 @@ public final class SemanticLowerer {
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
             Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
                 providerFactoryFacts) {
+        return validateProjectUnit(unit, table, facts, bindingFacts, factories,
+            jsonDefaults, ownInterface, sharedFactories, declarationClasses,
+            providerFactoryFacts, java.util.Set.of());
+    }
+
+    /**
+     * The composed per-module production admission over the supplied
+     * provider-keyed shared-factory facts and the project-wide set of
+     * class identities carrying more than one plan-bearing
+     * ({@code @jsonable}) declaration: only such an identity's generated
+     * JSON plan key is ambiguous, so only its nested JSON links fail
+     * closed.
+     */
+    public static Optional<CompilerDiagnostic> validateProjectUnit(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            SemanticIrValidator.ComparisonFacts facts,
+            ClassBindingFacts bindingFacts,
+            deal.semantic.ir.ClassFactoryRegistry factories,
+            deal.semantic.ir.JsonDefaultChildTable jsonDefaults,
+            deal.semantic.ir.ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
+                providerFactoryFacts,
+            java.util.Set<ClassId> ambiguousJsonPlanClassIds) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
@@ -1664,6 +1745,8 @@ public final class SemanticLowerer {
             "declarationClasses must not be null");
         Objects.requireNonNull(providerFactoryFacts,
             "providerFactoryFacts must not be null");
+        Objects.requireNonNull(ambiguousJsonPlanClassIds,
+            "ambiguousJsonPlanClassIds must not be null");
         Optional<CompilerDiagnostic> viewMismatch = checkSuppliedViews(unit, table,
             bindingFacts, factories, jsonDefaults, facts);
         if (viewMismatch.isPresent()) {
@@ -1694,7 +1777,7 @@ public final class SemanticLowerer {
         }
         return ClassConstructionValidator.validate(unit, ownedTable, ownedFactories,
             ownedJsonDefaults, ownInterface, sharedFactories, declarationClasses,
-            providerFactoryFacts);
+            providerFactoryFacts, ambiguousJsonPlanClassIds);
     }
 
     /**
@@ -2630,6 +2713,16 @@ public final class SemanticLowerer {
          * alias, a unit-local mask or an identity-keyed first match.
          */
         private java.util.Set<ClassId> projectAmbiguousClassIds =
+            java.util.Set.of();
+        /**
+         * The canonical class identities carrying more than one
+         * plan-bearing ({@code @jsonable}) declaration in the project: the
+         * generated JSON plan key is the canonical identity, so only such
+         * an identity has no single nested plan and its JSON links fail
+         * closed. A same-identity declaration without a generated plan
+         * registers none and never makes the key ambiguous.
+         */
+        private java.util.Set<ClassId> ambiguousJsonPlanClassIds =
             java.util.Set.of();
         /**
          * The canonical class identities carried by more than one
@@ -4505,24 +4598,29 @@ public final class SemanticLowerer {
 
         /**
          * The fail-closed rejection of a generated JSON link whose nested
-         * class identity has more than one declaration in the project (the
+         * class identity carries more than one plan-bearing
+         * ({@code @jsonable}) declaration in the project (the
          * same-directory sibling pair): the emitted plan table is keyed by
-         * the canonical class identity, so no exact declaration can be
-         * selected for the nested walk — a named E6005 with no partial
-         * project, never a first alias or a sibling's plan.
+         * the canonical class identity, so two generated plans cannot
+         * select one — a named E6005 with no partial project, never a first
+         * alias or a sibling's plan. An identity whose only plan-bearing
+         * declaration is unique keeps its nested link exact: a
+         * same-identity declaration without a generated plan registers no
+         * plan and cannot collide with it.
          */
         private void rejectAmbiguousJsonNestedClasses(ClassDeclaration declaration,
                                                       deal.semantic.ir.ClassLayout layout) {
             for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
                 ClassId nested = nestedClassIdOf(field.descriptor());
-                if (nested != null && ambiguousFieldIdentity(nested)) {
+                if (nested != null && ambiguousJsonPlanClassIds.contains(nested)) {
                     throw new ConstructUnlowered("the @jsonable class '"
                         + declaration.name() + "' field '" + field.name()
                         + "' references nested class " + nested + " whose canonical"
-                        + " identity has more than one declaration in the project"
-                        + " (same-directory sibling declarations): the generated JSON"
-                        + " plan key cannot select the exact declaration, so the link"
-                        + " fails closed with no partial project",
+                        + " identity carries more than one plan-bearing (@jsonable)"
+                        + " declaration in the project (same-directory sibling"
+                        + " declarations): the generated JSON plan key cannot select"
+                        + " the exact declaration, so the link fails closed with no"
+                        + " partial project",
                         declaration.span());
                 }
             }
@@ -8420,6 +8518,21 @@ public final class SemanticLowerer {
             java.util.Objects.requireNonNull(ambiguous,
                 "ambiguous must not be null");
             this.projectAmbiguousClassIds = java.util.Collections
+                .unmodifiableSet(new java.util.LinkedHashSet<>(ambiguous));
+        }
+
+        /**
+         * Installs the project-wide set of canonical class identities
+         * carrying more than one plan-bearing ({@code @jsonable})
+         * declaration: only such an identity's generated JSON plan key is
+         * ambiguous, so only its nested JSON links fail closed. A
+         * same-identity declaration without a generated plan registers no
+         * plan and keeps the single-plan link exact.
+         */
+        public void setAmbiguousJsonPlanClassIds(java.util.Set<ClassId> ambiguous) {
+            java.util.Objects.requireNonNull(ambiguous,
+                "ambiguous must not be null");
+            this.ambiguousJsonPlanClassIds = java.util.Collections
                 .unmodifiableSet(new java.util.LinkedHashSet<>(ambiguous));
         }
 

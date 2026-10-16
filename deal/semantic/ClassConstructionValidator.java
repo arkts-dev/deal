@@ -101,6 +101,30 @@ public final class ClassConstructionValidator {
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
             Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts) {
+        return validate(unit, table, factories, jsonDefaults, ownInterface,
+            sharedFactories, declarationClasses, providerFactoryFacts, Set.of());
+    }
+
+    /**
+     * The composed per-module production admission with the project-wide
+     * set of canonical class identities that carry more than one
+     * plan-bearing ({@code @jsonable}) declaration: the generated JSON
+     * plan key is the canonical class identity, so exactly one
+     * plan-bearing declaration resolves the nested link exactly while a
+     * same-identity declaration without a generated plan registers no
+     * plan and never makes the key ambiguous. Only the genuine two-plan
+     * collision fails the nested link closed.
+     */
+    public static Optional<CompilerDiagnostic> validate(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            ClassFactoryRegistry factories,
+            JsonDefaultChildTable jsonDefaults,
+            ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
+            Set<ClassId> ambiguousJsonPlanClassIds) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
@@ -111,8 +135,11 @@ public final class ClassConstructionValidator {
             "declarationClasses must not be null");
         Objects.requireNonNull(providerFactoryFacts,
             "providerFactoryFacts must not be null");
+        Objects.requireNonNull(ambiguousJsonPlanClassIds,
+            "ambiguousJsonPlanClassIds must not be null");
         Context context = new Context(unit, table, factories, jsonDefaults, ownInterface,
-            sharedFactories, declarationClasses, providerFactoryFacts);
+            sharedFactories, declarationClasses, providerFactoryFacts,
+            ambiguousJsonPlanClassIds);
         Optional<CompilerDiagnostic> failure = context.checkFactoryCoherence();
         if (failure.isPresent()) {
             return failure;
@@ -703,6 +730,13 @@ public final class ClassConstructionValidator {
          */
         private final Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts;
         /**
+         * The project-wide canonical class identities carrying more than
+         * one plan-bearing ({@code @jsonable}) declaration: only those make
+         * the generated JSON plan key (the canonical identity) unable to
+         * select one plan.
+         */
+        private final Set<ClassId> ambiguousJsonPlanClassIds;
+        /**
          * The declaration classes' registered layouts and owner members of
          * the project's class registration seeds (K10): a host declaration
          * class's payload layout and its field operations resolve through
@@ -727,7 +761,8 @@ public final class ClassConstructionValidator {
                 ExternalModuleInterface ownInterface,
                 Map<ClassId, SharedFactoryFacts> sharedFactories,
                 Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
-                Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts) {
+                Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
+                Set<ClassId> ambiguousJsonPlanClassIds) {
             this.unit = unit;
             this.table = table;
             this.factories = factories;
@@ -736,6 +771,7 @@ public final class ClassConstructionValidator {
             this.sharedFactories = Map.copyOf(sharedFactories);
             this.declarationClasses = Map.copyOf(declarationClasses);
             this.providerFactoryFacts = Map.copyOf(providerFactoryFacts);
+            this.ambiguousJsonPlanClassIds = Set.copyOf(ambiguousJsonPlanClassIds);
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
             }
@@ -927,6 +963,18 @@ public final class ClassConstructionValidator {
                 count++;
             }
             return count > 1;
+        }
+
+        /**
+         * Whether one canonical class identity carries more than one
+         * plan-bearing ({@code @jsonable}) declaration in the project: the
+         * generated JSON plan key is the canonical class identity, so
+         * exactly one plan-bearing declaration resolves the nested link
+         * exactly, while a same-identity declaration without a generated
+         * plan registers no plan and cannot collide with it.
+         */
+        private boolean jsonPlanIdentityAmbiguous(ClassId classId) {
+            return ambiguousJsonPlanClassIds.contains(classId);
         }
 
         /**
@@ -2336,19 +2384,23 @@ public final class ClassConstructionValidator {
                     checkJsonableDescriptor(owner, field, nullable.inner(), visited);
                 case RuntimeDescriptor.Class classDescriptor -> {
                     ClassId nested = classDescriptor.classId();
-                    if (identityAmbiguous(nested)) {
+                    if (jsonPlanIdentityAmbiguous(nested)) {
                         // The generated JSON plan table is keyed by the
-                        // canonical class identity, so a multiple-declaration
-                        // identity has no single nested plan: the link fails
+                        // canonical class identity and more than one of the
+                        // identity's declarations generates a plan, so no
+                        // single nested plan is selectable: the link fails
                         // closed rather than emitting a project whose nested
-                        // walk may consume a sibling declaration's plan.
+                        // walk may consume a sibling declaration's plan. A
+                        // same-identity declaration without a generated plan
+                        // registers none and keeps the single-plan link
+                        // exact.
                         yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
                             + " field '" + field + "' references nested class " + nested
-                            + " whose canonical identity has more than one declared"
-                            + " provider (same-directory sibling declarations): the"
-                            + " generated JSON plan key cannot select the exact"
-                            + " declaration, so the link fails closed with no partial"
-                            + " project");
+                            + " whose canonical identity carries more than one"
+                            + " plan-bearing (@jsonable) declaration (same-directory"
+                            + " sibling declarations): the generated JSON plan key"
+                            + " cannot select the exact declaration, so the link"
+                            + " fails closed with no partial project");
                     }
                     ClassLayout nestedLayout = layoutContext.get(nested);
                     if (nestedLayout == null) {

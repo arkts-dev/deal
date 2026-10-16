@@ -748,7 +748,51 @@ public final class SemanticIrValidator {
             new LinkedHashMap<>();
         Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses =
             classSeeds.registrations();
+        // The complete project's materialized units and the generated
+        // plan-bearing ({@code @jsonable}) declaration counts: the
+        // generated JSON plan key is the canonical class identity, so only
+        // an identity carrying more than one plan-bearing declaration is
+        // ambiguous. A unit whose facts do not materialize contributes
+        // nothing to the counts; its own admission below reports its defect
+        // at the pinned position (the materialization runs before the unit
+        // loop so the counts cover later modules too, and its result is
+        // reused — never recomputed).
+        List<LoweredModuleUnit> materialized =
+            new ArrayList<>(units.size());
+        List<RawUnitMaterializer.Defect> materializationDefects =
+            new ArrayList<>(units.size());
+        Map<ClassId, Integer> planCounts = new LinkedHashMap<>();
         for (RawUnit unit : units) {
+            LoweredModuleUnit typed;
+            try {
+                typed = RawUnitMaterializer.materialize(unit);
+                materializationDefects.add(null);
+            } catch (RawUnitMaterializer.Defect defect) {
+                typed = null;
+                materializationDefects.add(defect);
+            }
+            materialized.add(typed);
+            if (typed == null) {
+                continue;
+            }
+            for (SemanticOp op : typed.ops()) {
+                if (op.kind() != SemanticOpKind.JSON_FROM_CLASS
+                        || !(op.payload()
+                            instanceof KindPayload.JsonFromClassPayload payload)) {
+                    continue;
+                }
+                planCounts.merge(payload.layout().classId(), 1,
+                    Integer::sum);
+            }
+        }
+        Set<ClassId> ambiguousJsonPlanClassIds = new LinkedHashSet<>();
+        for (Map.Entry<ClassId, Integer> entry : planCounts.entrySet()) {
+            if (entry.getValue() > 1) {
+                ambiguousJsonPlanClassIds.add(entry.getKey());
+            }
+        }
+        for (int index = 0; index < units.size(); index++) {
+            RawUnit unit = units.get(index);
             ExternalModuleInterface ownInterface =
                 interfaceIndex.modules().get(new ModuleId(unit.modulePath()));
             Optional<CompilerDiagnostic> failure =
@@ -760,11 +804,10 @@ public final class SemanticIrValidator {
             if (failure.isPresent()) {
                 return failure;
             }
-            LoweredModuleUnit typed;
-            try {
-                typed = RawUnitMaterializer.materialize(unit);
-            } catch (RawUnitMaterializer.Defect defect) {
-                return materializationFailure(unit, facts, defect);
+            LoweredModuleUnit typed = materialized.get(index);
+            if (typed == null) {
+                return materializationFailure(unit, facts,
+                    materializationDefects.get(index));
             }
             failure = checkBindings(typed);
             if (failure.isPresent()) {
@@ -774,7 +817,8 @@ public final class SemanticIrValidator {
                 failure = ClassConstructionValidator.validate(typed,
                     typed.bodyTable(), typed.classFactories(),
                     typed.jsonDefaults(), ownInterface, sharedFactories,
-                    declarationClasses, providerFactoryFacts);
+                    declarationClasses, providerFactoryFacts,
+                    ambiguousJsonPlanClassIds);
                 if (failure.isPresent()) {
                     return failure;
                 }

@@ -204,7 +204,8 @@ public final class DefaultSemanticPlanner {
                     input.nameResolver().setCurrentScope(resolutionScope);
                     return input.nameResolver().resolveTypeNode(typeNode);
                 },
-                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()));
+                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()),
+                input.checkResult().exactClassDeclarations());
             DefaultIrNode ir = recorder.record(def, scope, fieldType);
             classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());

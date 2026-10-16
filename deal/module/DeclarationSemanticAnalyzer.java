@@ -267,7 +267,8 @@ public final class DeclarationSemanticAnalyzer {
                     resolver.setCurrentScope(resolutionScope);
                     return resolver.resolveTypeNode(typeNode);
                 },
-                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()));
+                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()),
+                checked.exactClassDeclarations());
             DefaultIrNode ir = recorder.record(def, root, fieldType);
             classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());

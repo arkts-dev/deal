@@ -2104,17 +2104,26 @@ public final class TypeChecker {
         // declaration the lexical scope resolves instead.
         Symbol sym;
         Symbol.ClassSymbol contextual = contextualClassDecl;
+        // Whether the selection is exact (the contextual declaration or
+        // the scope's own exact-identity declaration) rather than the
+        // identity-keyed cross-module route: only an exact selection is a
+        // construction context the one lowering may attribute a literal's
+        // resources to.
+        boolean exactSelection = false;
         if (contextual != null
                 && contextual.name().equals(cls.name())
                 && contextual.identity().equals(cls.identity())) {
             sym = contextual;
+            exactSelection = true;
         } else {
             sym = exactLocalClassSymbol(cls);
-            // If the local scope names no exact-identity declaration, try
-            // the identity-keyed cross-module resolution (never a textual
-            // class-name search that would pick a same-spelled local or
-            // first-aliased class).
-            if (sym == null) {
+            if (sym != null) {
+                exactSelection = true;
+            } else {
+                // If the local scope names no exact-identity declaration,
+                // try the identity-keyed cross-module resolution (never a
+                // textual class-name search that would pick a same-spelled
+                // local or first-aliased class).
                 sym = resolveClassSymbol(cls);
             }
         }
@@ -2127,6 +2136,17 @@ public final class TypeChecker {
         // initialization and assignment-expression boundaries, and by the
         // one lowering's exact-provider selection.
         constructedClassDecls.put(obj, cs);
+        // The exact construction context (the contextual declaration or
+        // the scope's own declaration) is published through CheckResult:
+        // the one lowering attributes the literal's resources and plan to
+        // that declaration, so a same-identity sibling or an imported
+        // callee's parameter provider never captures the construction.
+        // The identity-keyed route stays unpublished: it is not a
+        // construction context, and the lowering's recorded contextual
+        // provider supplies the callee-argument attribution instead.
+        if (exactSelection) {
+            recordExactClassDecl(obj, cls, cs);
+        }
         // The declaration's AST node, when the symbol is this module's own
         // (a hoisted module-level or nested block declaration): published
         // through CheckResult so the emitters select that exact
