@@ -1414,19 +1414,21 @@ public class ProductionDispatchTest {
      * (7 and the written 11), never the sibling's 93.
      */
     private static final String CALL_RECEIVER_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: int = 7; nick?: string; }
         export function make(): Ir { return { a: 7 }; }
         export function useIr(x: Ir): int { return x.a; }
         """;
 
     private static final String CALL_RECEIVER_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
+        export class Ir { a: int = 93; nick: int = 1; }
         """;
 
     private static String callReceiverBody(String firstImport,
             String secondImport) {
         return "import * as console from \"std/console\";\n"
             + firstImport + secondImport
+            + "\n"
+            + "function wrap(): ir.Ir { return { a: 7 }; }\n"
             + "\n"
             + "export function main(): null {\n"
             + "  let v: int = ir.make().a;\n"
@@ -1435,7 +1437,11 @@ public class ProductionDispatchTest {
             + "  let y = ir.make();\n"
             + "  y.a = 11;\n"
             + "  let w: int = y.a;\n"
-            + "  if (v === 7 && n === 7 && w === 11) {\n"
+            + "  let q: int = wrap().a;\n"
+            + "  let z = ir.make();\n"
+            + "  let had: boolean = has(z.nick);\n"
+            + "  delete z.nick;\n"
+            + "  if (v === 7 && n === 7 && w === 11 && q === 7 && !had) {\n"
             + "    console.log(\"ok\");\n"
             + "  } else {\n"
             + "    console.log(\"wrong\");\n"

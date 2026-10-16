@@ -764,25 +764,28 @@ public class ProjectLoweringTest {
      * an entry whose parameter names it.
      */
     private static final String CALL_RECEIVER_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: int = 7; nick?: string; }
         export function make(): Ir { return { a: 7 }; }
         export function useIr(x: Ir): int { return x.a; }
         """;
 
     /** The same-identity sibling of the call-receiver provider (93). */
     private static final String CALL_RECEIVER_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
+        export class Ir { a: int = 93; nick: int = 1; }
         """;
 
     /**
      * The call-result receiver consumer: the callee's declared return
-     * carries the provider, so the chained read, the inferred binding's
-     * read/write and the function-typed argument literal all select that
+     * carries the provider, so the chained read, the local wrapper's
+     * call-result read, the inferred binding's read/write, the has/delete
+     * decision and the function-typed argument literal all select that
      * declaration (7 and the written 11), never the sibling's 93.
      */
     private static final String CALL_RECEIVER_APP_SOURCE = """
         import * as ir from "./m/ir";
         import * as codec from "./m/codec";
+
+        function wrap(): ir.Ir { return { a: 7 }; }
 
         export function main(): null {
           let v: int = ir.make().a;
@@ -791,7 +794,11 @@ public class ProjectLoweringTest {
           let y = ir.make();
           y.a = 11;
           let w: int = y.a;
-          if (v !== 7 || n !== 7 || w !== 11) {
+          let q: int = wrap().a;
+          let z = ir.make();
+          let had: boolean = has(z.nick);
+          delete z.nick;
+          if (v !== 7 || n !== 7 || w !== 11 || q !== 7 || had) {
             throw { code: "WRONG", message: "call receiver" };
           }
           return null;
@@ -803,6 +810,8 @@ public class ProjectLoweringTest {
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
 
+        function wrap(): ir.Ir { return { a: 7 }; }
+
         export function main(): null {
           let v: int = ir.make().a;
           let f: (x: ir.Ir) => int = ir.useIr;
@@ -810,7 +819,11 @@ public class ProjectLoweringTest {
           let y = ir.make();
           y.a = 11;
           let w: int = y.a;
-          if (v !== 7 || n !== 7 || w !== 11) {
+          let q: int = wrap().a;
+          let z = ir.make();
+          let had: boolean = has(z.nick);
+          delete z.nick;
+          if (v !== 7 || n !== 7 || w !== 11 || q !== 7 || had) {
             throw { code: "WRONG", message: "call receiver" };
           }
           return null;
@@ -3502,16 +3515,16 @@ public class ProjectLoweringTest {
     /**
      * The call-result receiver (review cycle 1 findings 1 and 2): a
      * receiver whose type is the callee's declared return carries the
-     * declaring provider, so the field read/write resolve that
-     * declaration's layout — never the same-identity sibling's — and the
-     * identity-keyed lowering fail-close is not reached for a legal
-     * program.
+     * declaring provider, so the field read/write/delete and the has
+     * check resolve that declaration's layout — never the same-identity
+     * sibling's — and the identity-keyed lowering fail-close is not
+     * reached for a legal program.
      */
     private static void testCallReceiverProviderBesideSameIdentityLocal()
             throws Exception {
         System.out.println("-- the call-result receiver's declared return "
-            + "provider owns its field read/write beside a same-identity "
-            + "sibling, independent of the import order --");
+            + "provider owns its field read/write/delete and has check beside a "
+            + "same-identity sibling, independent of the import order --");
         for (boolean reversed : new boolean[] { false, true }) {
             String label = reversed ? "reversed imports" : "ir imported first";
             RealProject project = compileProject("src/app.deal",
@@ -3549,6 +3562,7 @@ public class ProjectLoweringTest {
                 }
                 int reads = 0;
                 int writes = 0;
+                int deletes = 0;
                 int shared = 0;
                 for (SemanticOp op : app.ops()) {
                     switch (op.payload()) {
@@ -3568,6 +3582,14 @@ public class ProjectLoweringTest {
                                         + "the declared return provider's entry");
                             }
                         }
+                        case KindPayload.FieldDeletePayload delete -> {
+                            if (delete.classId().equals(irId)) {
+                                deletes++;
+                                checkEq(irEntry, delete.classFactoryRef(),
+                                    "the " + label + " call-result delete names "
+                                        + "the declared return provider's entry");
+                            }
+                        }
                         case KindPayload.ClassNewPayload ctor -> {
                             if (ctor.classId().equals(irId)
                                     && ctor.defaultOwner()
@@ -3583,14 +3605,17 @@ public class ProjectLoweringTest {
                         }
                     }
                 }
-                checkEq(2, reads,
-                    "the " + label + " call-result and inferred-binding reads "
-                        + "lower two FIELD_READs");
+                checkEq(3, reads,
+                    "the " + label + " call-result, chained and inferred-binding "
+                        + "reads lower three FIELD_READs");
                 checkEq(1, writes,
                     "the " + label + " call-result write lowers one FIELD_WRITE");
-                checkEq(1, shared,
-                    "the " + label + " function-typed argument literal "
-                        + "constructs the parameter provider's declaration");
+                checkEq(1, deletes,
+                    "the " + label + " call-result delete lowers one FIELD_DELETE");
+                checkEq(2, shared,
+                    "the " + label + " function-typed argument literal and the "
+                        + "declared-return literal both construct the provider's "
+                        + "declaration");
                 SemanticIrValidator.ComparisonFacts facts =
                     new SemanticIrValidator.ComparisonFacts(
                         project.index().interfaceIndexDigest(),
