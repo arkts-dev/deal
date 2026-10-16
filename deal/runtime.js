@@ -475,7 +475,7 @@ function $scanSurrogates($s, $file, $line, $column) {
   }
 }
 
-// $fromJsonConvert: recursive conversion of a native $JSON.parse result
+// $fromJsonConvert: stack-safe conversion of a native $JSON.parse result
 // into the runtime's table representation. JSON null -> a fresh empty
 // Map registered via $rt.markJsonNullTable at every depth (the
 // reference's __NULL, std/json.lua:226); JSON array -> a fresh Map with
@@ -493,35 +493,86 @@ function $scanSurrogates($s, $file, $line, $column) {
 // by construction. Fresh Maps, independent of inputs; a parsed JSON null
 // never aliases a shared sentinel.
 function $fromJsonConvert($value, $file, $line, $column) {
-  if ($value === null) {
-    return $rt.markJsonNullTable($rt.makeTable({}));
-  }
-  if (typeof $value === "string") {
-    $scanSurrogates($value, $file, $line, $column);
-    return $value;
-  }
-  if ($Array.isArray($value)) {
-    const $t = $rt.makeTable({});
-    for (let $i = 0; $i < $value.length; $i++) {
-      const $key = String($i + 1);
-      $t.set($key, $fromJsonConvert($value[$i], $file, $line, $column));
-      if ($isNumberVariant($value, String($i))) $markNumberVariant($t, $key);
+  const $stack = [];
+  let $completed = null;
+  let $haveCompleted = false;
+  const $start = function ($input) {
+    if ($input === null) {
+      $completed = $rt.markJsonNullTable($rt.makeTable({}));
+      $haveCompleted = true;
+      return;
     }
-    return $rt.markJsonArrayTable($t);
-  }
-  if (typeof $value === "object") {
-    const $t = $rt.makeTable({});
-    const $keys = Object.keys($value);
-    for (let $i = 0; $i < $keys.length; $i++) {
-      const $key = $keys[$i];
-      $scanSurrogates($key, $file, $line, $column);
-      $t.set($key, $fromJsonConvert($value[$key], $file, $line, $column));
-      if ($isNumberVariant($value, $key)) $markNumberVariant($t, $key);
+    if (typeof $input === "string") {
+      $scanSurrogates($input, $file, $line, $column);
+      $completed = $input;
+      $haveCompleted = true;
+      return;
     }
-    return $t;
+    if ($Array.isArray($input)) {
+      $stack.push({ array: true, source: $input, index: 0,
+        table: $rt.makeTable({}), keys: null });
+      return;
+    }
+    if (typeof $input === "object") {
+      // JSON object: fresh Map iterating own enumerable string keys
+      // (Object.keys — never for...in, which walks the prototype chain;
+      // $JSON.parse creates __proto__ as an own data property, so a
+      // __proto__ key converts like any other).
+      $stack.push({ array: false, source: $input, index: 0,
+        table: $rt.makeTable({}), keys: Object.keys($input) });
+      return;
+    }
+    // number / boolean scalars pass through.
+    $completed = $input;
+    $haveCompleted = true;
+  };
+  $start($value);
+  while (true) {
+    if ($haveCompleted) {
+      if ($stack.length === 0) {
+        return $completed;
+      }
+      const $frame = $stack[$stack.length - 1];
+      if ($frame.array) {
+        const $key = String($frame.index + 1);
+        $frame.table.set($key, $completed);
+        if ($isNumberVariant($frame.source, String($frame.index))) {
+          $markNumberVariant($frame.table, $key);
+        }
+        $frame.index++;
+      } else {
+        const $key = $frame.keys[$frame.index];
+        $frame.table.set($key, $completed);
+        if ($isNumberVariant($frame.source, $key)) {
+          $markNumberVariant($frame.table, $key);
+        }
+        $frame.index++;
+      }
+      $completed = null;
+      $haveCompleted = false;
+      continue;
+    }
+    const $frame = $stack[$stack.length - 1];
+    if ($frame.array) {
+      if ($frame.index >= $frame.source.length) {
+        $stack.pop();
+        $completed = $rt.markJsonArrayTable($frame.table);
+        $haveCompleted = true;
+        continue;
+      }
+      $start($frame.source[$frame.index]);
+      continue;
+    }
+    if ($frame.index >= $frame.keys.length) {
+      $stack.pop();
+      $completed = $frame.table;
+      $haveCompleted = true;
+      continue;
+    }
+    const $key = $frame.keys[$frame.index];
+    $scanSurrogates($key, $file, $line, $column);
+    $start($frame.source[$key]);
   }
-  // number / boolean scalars pass through.
-  return $value;
 }
 
 // $arrayFormIndex: the array-form key predicate — returns the integer
@@ -704,7 +755,9 @@ function $jsonIntOrNil($text) {
 }
 
 // $parseJsonText: the conforming RFC-8259 scanner over the code points of
-// one scalar-valid string. It builds native null/boolean/number/string +
+// one scalar-valid string (an explicit container stack, so a finite
+// nested document has no call-stack bound). It builds native
+// null/boolean/number/string +
 // null-prototype-object + Array documents and records every number-variant
 // slot in the container marks; a syntax defect — decoded-key duplicates
 // included, positioned at the second key's opening quote — raises the
@@ -873,12 +926,24 @@ function $parseJsonText($text, $file, $line, $column) {
   };
   // $parseValue: one value plus its own scalar number variant (false for
   // every container and non-number leaf), so a member mark never observes
-  // a nested member's variant.
-  const $parseValue = function () {
+  // a nested member's variant. The explicit container frames make the
+  // traversal stack-safe: a finite nested document has no call-stack
+  // bound.
+  const $OPENED = { opened: true };
+  const $parseScalarOrOpen = function ($stack) {
     if ($atEnd()) $fail("unexpected end of input");
     const $c = $peek();
-    if ($c === 0x7b) return { value: $parseObject(), variant: false };
-    if ($c === 0x5b) return { value: $parseArray(), variant: false };
+    if ($c === 0x7b) {
+      $advance();
+      $stack.push({ arr: null, obj: Object.create(null), seen: new $Map(),
+        state: 0, key: null });
+      return $OPENED;
+    }
+    if ($c === 0x5b) {
+      $advance();
+      $stack.push({ arr: [], obj: null, seen: null, state: 4, key: null });
+      return $OPENED;
+    }
     if ($c === 0x22) return { value: $parseString(), variant: false };
     if ($c === 0x74) return { value: $parseLiteral("true", true), variant: false };
     if ($c === 0x66) return { value: $parseLiteral("false", false), variant: false };
@@ -886,71 +951,120 @@ function $parseJsonText($text, $file, $line, $column) {
     if ($c === 0x2d || ($c >= 0x30 && $c <= 0x39)) return $parseNumber();
     $fail("unexpected character");
   };
-  const $parseObject = function () {
-    $advance();
-    const $obj = Object.create(null);
-    const $seen = new $Map();
-    $skipWs();
-    if (!$atEnd() && $peek() === 0x7d) {
-      $advance();
-      return $obj;
-    }
+  const $parseValue = function () {
+    const $stack = [];
+    let $completed = null;
+    let $haveCompleted = false;
     while (true) {
-      $skipWs();
-      if ($atEnd()) $fail("unexpected end of input");
-      if ($peek() !== 0x22) $fail("missing key");
-      const $keyOffset = $bytes + 1;
-      const $key = $parseString();
-      if ($seen.has($key)) $fail("duplicate key", $keyOffset);
-      $seen.set($key, true);
-      $skipWs();
-      if ($atEnd() || $peek() !== 0x3a) $fail("missing colon");
-      $advance();
-      $skipWs();
-      const $member = $parseValue();
-      $obj[$key] = $member.value;
-      if ($member.variant) $markNumberVariant($obj, $key);
-      $skipWs();
-      if ($atEnd()) $fail("unterminated object");
-      const $c = $peek();
-      if ($c === 0x2c) {
-        $advance();
+      if ($haveCompleted) {
+        if ($stack.length === 0) return $completed;
+        const $parent = $stack[$stack.length - 1];
+        if ($parent.arr !== null) {
+          const $index = $parent.arr.length;
+          $parent.arr.push($completed.value);
+          if ($completed.variant) $markNumberVariant($parent.arr, String($index));
+          $parent.state = 5;
+        } else {
+          $parent.obj[$parent.key] = $completed.value;
+          if ($completed.variant) $markNumberVariant($parent.obj, $parent.key);
+          $parent.state = 3;
+        }
+        $completed = null;
+        $haveCompleted = false;
         continue;
       }
-      if ($c === 0x7d) {
-        $advance();
-        return $obj;
+      if ($stack.length === 0) {
+        const $parsed = $parseScalarOrOpen($stack);
+        if ($parsed !== $OPENED) {
+          $completed = $parsed;
+          $haveCompleted = true;
+        }
+        continue;
       }
-      $fail("missing comma");
-    }
-  };
-  const $parseArray = function () {
-    $advance();
-    const $arr = [];
-    $skipWs();
-    if (!$atEnd() && $peek() === 0x5d) {
-      $advance();
-      return $arr;
-    }
-    while (true) {
-      $skipWs();
-      if ($atEnd()) $fail("unexpected end of input");
-      const $member = $parseValue();
-      const $index = $arr.length;
-      $arr.push($member.value);
-      if ($member.variant) $markNumberVariant($arr, String($index));
+      const $frame = $stack[$stack.length - 1];
+      if ($frame.state === 0) {
+        // The object open: an immediate '}' finishes the empty object.
+        $skipWs();
+        if (!$atEnd() && $peek() === 0x7d) {
+          $advance();
+          $completed = { value: $frame.obj, variant: false };
+          $stack.pop();
+          $haveCompleted = true;
+        } else {
+          $frame.state = 1;
+        }
+        continue;
+      }
+      if ($frame.state === 1) {
+        $skipWs();
+        if ($atEnd()) $fail("unexpected end of input");
+        if ($peek() !== 0x22) $fail("missing key");
+        const $keyOffset = $bytes + 1;
+        const $key = $parseString();
+        if ($frame.seen.has($key)) $fail("duplicate key", $keyOffset);
+        $frame.seen.set($key, true);
+        $skipWs();
+        if ($atEnd() || $peek() !== 0x3a) $fail("missing colon");
+        $advance();
+        $frame.key = $key;
+        $frame.state = 2;
+        continue;
+      }
+      if ($frame.state === 2) {
+        $skipWs();
+        if ($atEnd()) $fail("unexpected end of input");
+        const $member = $parseScalarOrOpen($stack);
+        if ($member !== $OPENED) {
+          $completed = $member;
+          $haveCompleted = true;
+        }
+        continue;
+      }
+      if ($frame.state === 3) {
+        $skipWs();
+        if ($atEnd()) $fail("unterminated object");
+        const $after = $peek();
+        if ($after === 0x2c) {
+          $advance();
+          $frame.state = 1;
+        } else if ($after === 0x7d) {
+          $advance();
+          $completed = { value: $frame.obj, variant: false };
+          $stack.pop();
+          $haveCompleted = true;
+        } else {
+          $fail("missing comma");
+        }
+        continue;
+      }
+      if ($frame.state === 4) {
+        // The array open: an immediate ']' finishes the empty array.
+        $skipWs();
+        if (!$atEnd() && $peek() === 0x5d) {
+          $advance();
+          $completed = { value: $frame.arr, variant: false };
+          $stack.pop();
+          $haveCompleted = true;
+        } else {
+          $frame.state = 2;
+        }
+        continue;
+      }
+      // state 5: after an array member.
       $skipWs();
       if ($atEnd()) $fail("unterminated array");
-      const $c = $peek();
-      if ($c === 0x2c) {
+      const $after = $peek();
+      if ($after === 0x2c) {
         $advance();
-        continue;
-      }
-      if ($c === 0x5d) {
+        $frame.state = 2;
+      } else if ($after === 0x5d) {
         $advance();
-        return $arr;
+        $completed = { value: $frame.arr, variant: false };
+        $stack.pop();
+        $haveCompleted = true;
+      } else {
+        $fail("missing comma");
       }
-      $fail("missing comma");
     }
   };
   $skipWs();
@@ -1195,7 +1309,8 @@ function $jsonEscapeText($s) {
   return $out + "\"";
 }
 
-// $encodeJsonText: the shared finite-acyclic JSON text walk. $typed is
+// $encodeJsonText: the shared finite-acyclic JSON text walk (an explicit
+// frame stack, so a finite nested value has no call-stack bound). $typed is
 // false for the std/json row (carrier-kind failures through
 // JSON_STRINGIFY_UNSUPPORTED) and true for the class-walk row
 // (typed-boundary failures through JSON_TO_WALK at the pinned position).
@@ -1205,54 +1320,65 @@ function $jsonEscapeText($s) {
 // through the canonical decimal text; an int-variant or unmarked slot
 // keeps the integer/default spelling.
 function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $variant) {
-  const $unsupported = function () {
+  const $unsupported = function ($value, $valuePath) {
     if ($typed) {
-      const $token = $walkToken($v);
-      $rt.fail("E8001", "value at " + $path + " is not JSON serializable: "
+      const $token = $walkToken($value);
+      $rt.fail("E8001", "value at " + $valuePath + " is not JSON serializable: "
         + $token, $file, $line, $column, $undefined, $token);
     }
-    const $token = $carrierToken($v);
+    const $token = $carrierToken($value);
     $rt.fail("E8001", "unsupported type for JSON encoding: " + $token,
       $file, $line, $column, "string, number, boolean, or table", $token);
   };
-  if ($v === null) {
-    return "null";
-  }
-  const $type = typeof $v;
-  if ($type === "boolean") {
-    return $v ? "true" : "false";
-  }
-  if ($type === "number") {
-    if ($v !== $v || $v === Infinity || $v === -Infinity) {
-      $unsupported();
+  const $out = [];
+  const $stack = [];
+  const $emit = function ($value, $valuePath, $valueVariant) {
+    if ($value === null) {
+      $out.push("null");
+      return;
     }
-    if ($variant === true) {
-      const $text = $numText($v);
-      return $text === null ? $unsupported() : $text;
+    const $type = typeof $value;
+    if ($type === "boolean") {
+      $out.push($value ? "true" : "false");
+      return;
     }
-    return String($v);
-  }
-  if ($type === "string") {
-    if (!$isValidScalars($v)) $unsupported();
-    return $jsonEscapeText($v);
-  }
-  if ($rt.isBytes($v) || $type === "function"
-      || ($type === "object" && $v.$kind === "function")) {
-    $unsupported();
-  }
-  if ($v instanceof $Map && $rt.isJsonNullTable($v)) {
-    return "null";
-  }
-  if ($v instanceof $Map) {
-    if ($active.includes($v)) {
-      $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
+    if ($type === "number") {
+      if ($value !== $value || $value === Infinity || $value === -Infinity) {
+        $unsupported($value, $valuePath);
+      }
+      if ($valueVariant === true) {
+        const $text = $numText($value);
+        if ($text === null) {
+          $unsupported($value, $valuePath);
+        }
+        $out.push($text);
+        return;
+      }
+      $out.push(String($value));
+      return;
     }
-    $active.push($v);
-    try {
-      if ($rt.isJsonArrayTable($v)) {
+    if ($type === "string") {
+      if (!$isValidScalars($value)) $unsupported($value, $valuePath);
+      $out.push($jsonEscapeText($value));
+      return;
+    }
+    if ($rt.isBytes($value) || $type === "function"
+        || ($type === "object" && $value.$kind === "function")) {
+      $unsupported($value, $valuePath);
+    }
+    if ($value instanceof $Map && $rt.isJsonNullTable($value)) {
+      $out.push("null");
+      return;
+    }
+    if ($value instanceof $Map) {
+      if ($active.includes($value)) {
+        $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
+      }
+      $active.push($value);
+      if ($rt.isJsonArrayTable($value)) {
         let $max = 0;
         let $arrayForm = true;
-        for (const $key of $v.keys()) {
+        for (const $key of $value.keys()) {
           const $index = $arrayFormIndex($key);
           if ($index === null) {
             $arrayForm = false;
@@ -1261,70 +1387,107 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
           if ($index > $max) $max = $index;
         }
         if ($arrayForm) {
-          const $parts = [];
-          for (let $i = 1; $i <= $max; $i++) {
-            const $key = String($i);
-            const $element = $v.get($key);
-            const $elementPath = $path === "" ? "[" + ($i - 1) + "]"
-              : $path + "[" + ($i - 1) + "]";
-            if ($element === $undefined) {
-              $parts.push("null");
-            } else {
-              $parts.push($encodeJsonText($element, $active, $file, $line, $column,
-                $typed, $elementPath, $isNumberVariant($v, $key)));
-            }
-          }
-          return "[" + $parts.join(",") + "]";
+          $out.push("[");
+          $stack.push({ map: $value, path: $valuePath, kind: 1, index: 1, max: $max });
+          return;
         }
       }
-      const $parts = [];
-      for (const $key of $v.keys()) {
+      const $keys = [];
+      for (const $key of $value.keys()) {
+        $keys.push($key);
+      }
+      $out.push("{");
+      $stack.push({ map: $value, path: $valuePath, kind: 2, index: 0, keys: $keys });
+      return;
+    }
+    if ($Array.isArray($value)) {
+      if ($active.includes($value)) {
+        $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
+      }
+      $active.push($value);
+      $out.push("[");
+      $stack.push({ array: $value, path: $valuePath, kind: 3, index: 0 });
+      return;
+    }
+    $unsupported($value, $valuePath);
+  };
+  const $base = $active.length;
+  try {
+    $emit($v, $path, $variant);
+    while ($stack.length > 0) {
+      const $frame = $stack[$stack.length - 1];
+      if ($frame.kind === 1) {
+        // A marked array-shaped Map: dense indices 1..max, an absent
+        // element spelling the JSON null.
+        if ($frame.index > $frame.max) {
+          $out.push("]");
+          $active.pop();
+          $stack.pop();
+          continue;
+        }
+        const $i = $frame.index++;
+        if ($i > 1) $out.push(",");
+        const $key = String($i);
+        const $element = $frame.map.get($key);
+        const $elementPath = $frame.path === "" ? "[" + ($i - 1) + "]"
+          : $frame.path + "[" + ($i - 1) + "]";
+        if ($element === $undefined) {
+          $out.push("null");
+          continue;
+        }
+        $emit($element, $elementPath, $isNumberVariant($frame.map, $key));
+        continue;
+      }
+      if ($frame.kind === 2) {
+        if ($frame.index >= $frame.keys.length) {
+          $out.push("}");
+          $active.pop();
+          $stack.pop();
+          continue;
+        }
+        const $i = $frame.index++;
+        const $key = $frame.keys[$i];
         if (typeof $key !== "string" || !$isValidScalars($key)) {
           // An invalid scalar sequence is still a string carrier on the
           // carrier-kind projection (and invalid-unicode on the typed
           // one).
           if ($typed) {
-            $rt.fail("E8001", "value at " + $path
+            $rt.fail("E8001", "value at " + $frame.path
               + " is not JSON serializable: invalid-unicode",
               $file, $line, $column, $undefined, "invalid-unicode");
           }
           $rt.fail("E8001", "unsupported type for JSON encoding: string",
             $file, $line, $column, "string, number, boolean, or table", "string");
         }
-        const $element = $v.get($key);
-        const $elementPath = $path === "" ? $key : $path + "." + $key;
-        $parts.push($jsonEscapeText($key) + ":"
-          + $encodeJsonText($element, $active, $file, $line, $column, $typed,
-            $elementPath, $isNumberVariant($v, $key)));
+        if ($i > 0) $out.push(",");
+        const $element = $frame.map.get($key);
+        const $elementPath = $frame.path === "" ? $key : $frame.path + "." + $key;
+        $out.push($jsonEscapeText($key) + ":");
+        $emit($element, $elementPath, $isNumberVariant($frame.map, $key));
+        continue;
       }
-      return "{" + $parts.join(",") + "}";
-    } finally {
-      $active.pop();
-    }
-  }
-  if ($Array.isArray($v)) {
-    if ($active.includes($v)) {
-      $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
-    }
-    $active.push($v);
-    try {
-      const $parts = [];
-      for (let $i = 0; $i < $v.length; $i++) {
-        const $element = $v[$i];
-        const $elementPath = $path === "" ? "[" + $i + "]" : $path + "[" + $i + "]";
-        if ($element === $undefined) {
-          $parts.push("null");
-        } else {
-          $parts.push($encodeJsonText($element, $active, $file, $line, $column,
-            $typed, $elementPath, $isNumberVariant($v, String($i))));
-        }
+      // A native Array: elements in index order, an absent element
+      // spelling the JSON null.
+      if ($frame.index >= $frame.array.length) {
+        $out.push("]");
+        $active.pop();
+        $stack.pop();
+        continue;
       }
-      return "[" + $parts.join(",") + "]";
-    } finally {
-      $active.pop();
+      const $i = $frame.index++;
+      if ($i > 0) $out.push(",");
+      const $element = $frame.array[$i];
+      const $elementPath = $frame.path === "" ? "[" + $i + "]" : $frame.path + "[" + $i + "]";
+      if ($element === $undefined) {
+        $out.push("null");
+        continue;
+      }
+      $emit($element, $elementPath, $isNumberVariant($frame.array, String($i)));
     }
+    return $out.join("");
+  } finally {
+    $active.length = $base;
   }
-  $unsupported();
 }
 
 // ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====

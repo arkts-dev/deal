@@ -1851,44 +1851,67 @@ function __rt._json_table_shape(v, seen)
   if type(seen) ~= "table" then
     seen = {}
   end
+  -- The stack-safe walk: an explicit frame stack replaces the recursion,
+  -- so a finite nested datum of any depth is validated without a Lua
+  -- call-stack bound. The path-local seen set keeps the cycle verdict
+  -- (pushed on open, popped on close); the first failure's own reason is
+  -- the verdict, exactly as the recursive walker reported it.
+  local frames = {}
+  local function unwind()
+    for i = #frames, 1, -1 do
+      seen[frames[i].value] = nil
+      frames[i] = nil
+    end
+  end
   if seen[v] then
     return false, "cycle"
   end
   seen[v] = true
-  local ok = __rt._json_is_object(v) or __rt._json_is_array(v)
-  local reason = "shape"
-  if ok then
-    for _, val in pairs(v) do
-      if val == __rt.__NULL then
-        -- JSON null leaf: fine
-      elseif type(val) == "boolean" or type(val) == "string" then
-        -- primitive leaf: fine
-      elseif type(val) == "number" then
-        if not __rt._json_is_number(val) then
-          ok = false
-          reason = "shape"
-          break
-        end
-      elseif type(val) == "table" then
-        local nested_ok, nested_reason = __rt._json_table_shape(val, seen)
-        if not nested_ok then
-          ok = false
-          reason = nested_reason or "shape"
-          break
-        end
-      else
-        -- functions and any other non-JSON leaf
-        ok = false
-        reason = "shape"
-        break
+  if not (__rt._json_is_object(v) or __rt._json_is_array(v)) then
+    seen[v] = nil
+    return false, "shape"
+  end
+  frames[1] = {value = v, k = nil}
+  while #frames > 0 do
+    local frame = frames[#frames]
+    local key, val = next(frame.value, frame.k)
+    frame.k = key
+    if key == nil then
+      seen[frame.value] = nil
+      frames[#frames] = nil
+    elseif val == __rt.__NULL then
+      -- JSON null leaf: fine
+    elseif type(val) == "boolean" or type(val) == "string" then
+      -- primitive leaf: fine
+    elseif type(val) == "number" then
+      if not __rt._json_is_number(val) then
+        unwind()
+        return false, "shape"
       end
+    elseif type(val) == "table" then
+      if val.__kind == "function" or val.__kind == "class"
+          or val.__kind == "async" then
+        unwind()
+        return false, "shape"
+      end
+      if seen[val] then
+        unwind()
+        return false, "cycle"
+      end
+      seen[val] = true
+      if not (__rt._json_is_object(val) or __rt._json_is_array(val)) then
+        seen[val] = nil
+        unwind()
+        return false, "shape"
+      end
+      frames[#frames + 1] = {value = val, k = nil}
+    else
+      -- functions and any other non-JSON leaf
+      unwind()
+      return false, "shape"
     end
   end
-  seen[v] = nil
-  if ok then
-    return true
-  end
-  return false, reason
+  return true
 end
 
 --- D2 step 3 defaults identity gate, as a non-throwing predicate:
@@ -1925,24 +1948,48 @@ function __rt._json_defaults_acyclic(t, seen)
   if type(seen) ~= "table" then
     seen = {}
   end
+  -- The stack-safe walk: an explicit frame stack replaces the recursion,
+  -- so a finite nested defaults table of any depth is checked without a
+  -- Lua call-stack bound; sentinels and __kind-tagged tables stay leaves
+  -- and the path-local seen set keeps the cycle verdict.
+  local frames = {}
+  local function isLeaf(x)
+    if x == __rt.__NULL or x == __rt.__MISSING then
+      return true
+    end
+    local k = x.__kind
+    return k == "function" or k == "class" or k == "async"
+  end
   if seen[t] then
     return false
   end
   seen[t] = true
-  local ok = true
-  if t ~= __rt.__NULL and t ~= __rt.__MISSING then
-    local k = t.__kind
-    if k ~= "function" and k ~= "class" and k ~= "async" then
-      for _, v in pairs(t) do
-        if type(v) == "table" and not __rt._json_defaults_acyclic(v, seen) then
-          ok = false
-          break
+  frames[1] = {value = t, k = nil}
+  while #frames > 0 do
+    local frame = frames[#frames]
+    if isLeaf(frame.value) then
+      seen[frame.value] = nil
+      frames[#frames] = nil
+    else
+      local key, v = next(frame.value, frame.k)
+      frame.k = key
+      if key == nil then
+        seen[frame.value] = nil
+        frames[#frames] = nil
+      elseif type(v) == "table" then
+        if seen[v] then
+          for i = #frames, 1, -1 do
+            seen[frames[i].value] = nil
+            frames[i] = nil
+          end
+          return false
         end
+        seen[v] = true
+        frames[#frames + 1] = {value = v, k = nil}
       end
     end
   end
-  seen[t] = nil
-  return ok
+  return true
 end
 
 --- True iff every entry of the fields array satisfies the

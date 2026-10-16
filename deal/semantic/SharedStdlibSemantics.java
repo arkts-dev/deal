@@ -22,9 +22,11 @@ import deal.semantic.ir.StdlibFunctionId;
 import deal.semantic.ir.UnicodeScalars;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -1150,7 +1152,7 @@ public final class SharedStdlibSemantics {
         StringBuilder out = new StringBuilder();
         Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
-            stringifyTable(out, table, "", path);
+            stringifyRoot(out, table, path);
         } catch (JsonStringifyCycle cycle) {
             // The walk family's closed cycle arm: the needle's own fact
             // selects the arm at the call origin, with no parameters and
@@ -1174,66 +1176,163 @@ public final class SharedStdlibSemantics {
         return new Outcome.Success<>(Value.string(out.toString()));
     }
 
-    /** Serializes one table (object) with path-local cycle detection and first-insertion order. */
-    private static void stringifyTable(StringBuilder out, SemanticTable<Value> table,
-                                       String fieldPath, Set<Object> path) {
+    /**
+     * One node of the walk's lazy field path: the parent chain plus this
+     * node's segment. The dot-separated text is rendered only when a
+     * failure projects it, so a deep chain never builds a quadratic path
+     * prefix.
+     */
+    private static final class PathNode {
+
+        final PathNode parent;
+        final String segment;
+
+        PathNode(PathNode parent, String segment) {
+            this.parent = parent;
+            this.segment = segment;
+        }
+    }
+
+    /** Renders one child position's dot-separated path (the root path is empty). */
+    private static String pathText(PathNode parent, String segment) {
+        if (parent == null) {
+            return segment;
+        }
+        ArrayDeque<String> segments = new ArrayDeque<>();
+        for (PathNode node = parent; node != null; node = node.parent) {
+            segments.push(node.segment);
+        }
+        StringBuilder text = new StringBuilder();
+        for (String part : segments) {
+            text.append(part).append('.');
+        }
+        return text.append(segment).toString();
+    }
+
+    /**
+     * One open container of the stack-safe stringify walk: the explicit
+     * work stack replaces recursion, so a finite nested input is never
+     * limited by the JVM stack. Each frame emits its entries in
+     * first-insertion/index order from {@link #index}.
+     */
+    private static final class StringifyFrame {
+
+        final SemanticTable<Value> table;
+        final SemanticArray<Value> array;
+        final List<String> keys;
+        final PathNode path;
+        int index;
+
+        StringifyFrame(SemanticTable<Value> table, List<String> keys,
+                       PathNode path) {
+            this.table = table;
+            this.array = null;
+            this.keys = keys;
+            this.path = path;
+        }
+
+        StringifyFrame(SemanticArray<Value> array, PathNode path) {
+            this.table = null;
+            this.array = array;
+            this.keys = null;
+            this.path = path;
+        }
+    }
+
+    /**
+     * The stack-safe container walk: an explicit work stack replaces the
+     * recursive descent ({@code stringifyTable}/{@code stringifyArray}/
+     * {@code stringifyValue}), so a finite nested input has no stack
+     * bound. The identity set keeps path-local cycle detection (entered
+     * on open, removed on close); entries emit in first-insertion/index
+     * order and the first failure in that order wins unchanged.
+     */
+    private static void stringifyRoot(StringBuilder out, SemanticTable<Value> root,
+                                      Set<Object> path) {
+        Deque<StringifyFrame> stack = new ArrayDeque<>();
+        openTable(out, root, null, path, stack);
+        while (!stack.isEmpty()) {
+            StringifyFrame frame = stack.peek();
+            if (frame.table == null) {
+                if (frame.index < frame.array.size()) {
+                    int i = frame.index++;
+                    if (i > 0) {
+                        out.append(',');
+                    }
+                    stringifyChild(out, frame.array.elementAt(i), frame.path,
+                        Integer.toString(i), path, stack);
+                } else {
+                    out.append(']');
+                    path.remove(frame.array);
+                    stack.pop();
+                }
+                continue;
+            }
+            if (frame.index < frame.keys.size()) {
+                int i = frame.index++;
+                String key = frame.keys.get(i);
+                if (!(UnicodeScalars.validate(key) instanceof UnicodeScalars.Valid)) {
+                    throw new Defect("a semantic-table key must be a valid scalar sequence "
+                        + "(keys are identifier-derived); the key at slot " + i
+                        + " is not — a producer defect, never a projection");
+                }
+                if (i > 0) {
+                    out.append(',');
+                }
+                appendJsonString(out, key);
+                out.append(':');
+                SemanticTable.Lookup<Value> lookup = frame.table.get(key);
+                if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
+                    throw new Defect("a table key returned by keys() is always present; got "
+                        + "Missing for '" + key + "' — a producer defect, never a projection");
+                }
+                stringifyChild(out, present.value(), frame.path, key, path, stack);
+            } else {
+                out.append('}');
+                path.remove(frame.table);
+                stack.pop();
+            }
+        }
+    }
+
+    /** Opens one table on the walk: the path-local cycle check, then the pending frame. */
+    private static void openTable(StringBuilder out, SemanticTable<Value> table,
+                                  PathNode pathNode, Set<Object> path,
+                                  Deque<StringifyFrame> stack) {
         if (!path.add(table)) {
             throw new JsonStringifyCycle();
         }
         out.append('{');
-        List<String> keys = table.keys();
-        for (int i = 0; i < keys.size(); i++) {
-            String key = keys.get(i);
-            if (!(UnicodeScalars.validate(key) instanceof UnicodeScalars.Valid)) {
-                throw new Defect("a semantic-table key must be a valid scalar sequence "
-                    + "(keys are identifier-derived); the key at slot " + i
-                    + " is not — a producer defect, never a projection");
-            }
-            if (i > 0) {
-                out.append(',');
-            }
-            appendJsonString(out, key);
-            out.append(':');
-            SemanticTable.Lookup<Value> lookup = table.get(key);
-            if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
-                throw new Defect("a table key returned by keys() is always present; got "
-                    + "Missing for '" + key + "' — a producer defect, never a projection");
-            }
-            stringifyValue(out, present.value(),
-                fieldPath.isEmpty() ? key : fieldPath + "." + key, path);
-        }
-        out.append('}');
-        path.remove(table);
+        stack.push(new StringifyFrame(table, table.keys(), pathNode));
     }
 
-    /** Serializes one array with path-local cycle detection and index order. */
-    private static void stringifyArray(StringBuilder out, SemanticArray<Value> elements,
-                                       String fieldPath, Set<Object> path) {
-        if (!path.add(elements)) {
+    /** Opens one array on the walk: the path-local cycle check, then the pending frame. */
+    private static void openArray(StringBuilder out, SemanticArray<Value> array,
+                                  PathNode pathNode, Set<Object> path,
+                                  Deque<StringifyFrame> stack) {
+        if (!path.add(array)) {
             throw new JsonStringifyCycle();
         }
         out.append('[');
-        for (int i = 0; i < elements.size(); i++) {
-            if (i > 0) {
-                out.append(',');
-            }
-            stringifyValue(out, elements.elementAt(i),
-                fieldPath.isEmpty() ? Integer.toString(i) : fieldPath + "." + i, path);
-        }
-        out.append(']');
-        path.remove(elements);
+        stack.push(new StringifyFrame(array, pathNode));
     }
 
-    /** Serializes one value: the first declaration-order failure wins (pre-order). */
-    private static void stringifyValue(StringBuilder out, Value value, String fieldPath,
-                                       Set<Object> path) {
+    /**
+     * Appends one child value: a leaf emits its text, a container checks
+     * the path-local identity and opens a frame. The first
+     * declaration-order failure wins (pre-order), exactly as the
+     * recursive walk selected it.
+     */
+    private static void stringifyChild(StringBuilder out, Value value, PathNode parentPath,
+                                       String segment, Set<Object> path,
+                                       Deque<StringifyFrame> stack) {
         switch (value) {
             case Value.Null ignored -> out.append("null");
             case Value.Bool bool -> out.append(bool.value() ? "true" : "false");
             case Value.Int intValue -> out.append(Integer.toString(intValue.value()));
             case Value.Number number -> {
                 if (!Double.isFinite(number.value())) {
-                    throw new JsonStringifyFailure(fieldPath,
+                    throw new JsonStringifyFailure(pathText(parentPath, segment),
                         FailureProjections.CarrierKind.NUMBER);
                 }
                 out.append(Double.toString(number.value()));
@@ -1242,16 +1341,17 @@ public final class SharedStdlibSemantics {
                 if (string.scalar() instanceof UnicodeScalars.Invalid) {
                     // An invalid scalar sequence is still a string carrier
                     // on the carrier-kind projection.
-                    throw new JsonStringifyFailure(fieldPath,
+                    throw new JsonStringifyFailure(pathText(parentPath, segment),
                         FailureProjections.CarrierKind.STRING);
                 }
                 appendJsonString(out, ((UnicodeScalars.Valid) string.scalar()).carrier());
             }
-            case Value.Table table -> stringifyTable(out, table.table(), fieldPath, path);
-            case Value.Array array ->
-                stringifyArray(out, array.elements(), fieldPath, path);
-            case Value.Other other -> throw new JsonStringifyFailure(fieldPath,
-                stringifyCarrierKind(other));
+            case Value.Table table -> openTable(out, table.table(),
+                new PathNode(parentPath, segment), path, stack);
+            case Value.Array array -> openArray(out, array.elements(),
+                new PathNode(parentPath, segment), path, stack);
+            case Value.Other other -> throw new JsonStringifyFailure(
+                pathText(parentPath, segment), stringifyCarrierKind(other));
         }
     }
 
@@ -1301,106 +1401,210 @@ public final class SharedStdlibSemantics {
             return new JsonParseFailure(reason, offsetOfCurrent());
         }
 
-        Value parseValue() {
+        /**
+         * One open container of the stack-safe parser. The frame's
+         * {@code state} drives its member loop and {@code pendingKey}
+         * carries the object member awaiting its value.
+         */
+        private static final class Frame {
+
+            static final int OBJECT_FIRST = 0;
+            static final int OBJECT_KEY = 1;
+            static final int VALUE = 2;
+            static final int OBJECT_AFTER = 3;
+            static final int ARRAY_FIRST = 4;
+            static final int ARRAY_AFTER = 5;
+
+            final boolean array;
+            final SemanticTable<Value> table;
+            final List<Value> elements;
+            final Set<String> decodedKeys;
+            String pendingKey;
+            int state;
+
+            private Frame(boolean array, SemanticTable<Value> table,
+                          List<Value> elements, Set<String> decodedKeys, int state) {
+                this.array = array;
+                this.table = table;
+                this.elements = elements;
+                this.decodedKeys = decodedKeys;
+                this.state = state;
+            }
+
+            static Frame object() {
+                return new Frame(false, new SemanticTable<>(), null, new HashSet<>(),
+                    OBJECT_FIRST);
+            }
+
+            static Frame array() {
+                return new Frame(true, null, new ArrayList<>(), null, ARRAY_FIRST);
+            }
+        }
+
+        /**
+         * Parses one value at the cursor: a scalar returns directly, a
+         * container pushes its frame on {@code stack} and returns
+         * {@code null}. The frame loop of {@link #parseValue()} then
+         * drives the open container.
+         */
+        private Value parseValueAtCursor(Deque<Frame> stack) {
             if (atEnd()) {
                 throw failure(REASON_UNEXPECTED_END);
             }
             int c = peek();
-            return switch (c) {
-                case '{' -> parseObject();
-                case '[' -> parseArray();
-                case '"' -> Value.string(parseString());
-                case 't' -> parseLiteral("true", new Value.Bool(true));
-                case 'f' -> parseLiteral("false", new Value.Bool(false));
-                case 'n' -> parseLiteral("null", Value.Null.INSTANCE);
+            switch (c) {
+                case '{' -> {
+                    advance(); // '{'
+                    stack.push(Frame.object());
+                    return null;
+                }
+                case '[' -> {
+                    advance(); // '['
+                    stack.push(Frame.array());
+                    return null;
+                }
+                case '"' -> {
+                    return Value.string(parseString());
+                }
+                case 't' -> {
+                    return parseLiteral("true", new Value.Bool(true));
+                }
+                case 'f' -> {
+                    return parseLiteral("false", new Value.Bool(false));
+                }
+                case 'n' -> {
+                    return parseLiteral("null", Value.Null.INSTANCE);
+                }
                 default -> {
                     if (c == '-' || (c >= '0' && c <= '9')) {
-                        yield parseNumber();
+                        return parseNumber();
                     }
                     throw failure(REASON_UNEXPECTED_CHARACTER);
                 }
-            };
-        }
-
-        Value parseObject() {
-            advance(); // '{'
-            SemanticTable<Value> table = new SemanticTable<>();
-            Set<String> decodedKeys = new HashSet<>();
-            skipWs();
-            if (!atEnd() && peek() == '}') {
-                advance();
-                return new Value.Table(table);
-            }
-            while (true) {
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNEXPECTED_END);
-                }
-                if (peek() != '"') {
-                    throw failure(REASON_MISSING_KEY);
-                }
-                // The duplicate-key defect's position is the second key's
-                // opening quote (one-based UTF-8 byte offset); decoded
-                // equality makes an escaped spelling of the same key a
-                // duplicate too.
-                long keyOffset = offsetOfCurrent();
-                String key = parseString();
-                if (!decodedKeys.add(key)) {
-                    throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
-                }
-                skipWs();
-                if (atEnd() || peek() != ':') {
-                    throw failure(REASON_MISSING_COLON);
-                }
-                advance(); // ':'
-                skipWs();
-                Value value = parseValue();
-                table.put(key, value);
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNTERMINATED_OBJECT);
-                }
-                int c = peek();
-                if (c == ',') {
-                    advance();
-                    continue;
-                }
-                if (c == '}') {
-                    advance();
-                    return new Value.Table(table);
-                }
-                throw failure(REASON_MISSING_COMMA);
             }
         }
 
-        Value parseArray() {
-            advance(); // '['
-            List<Value> elements = new ArrayList<>();
-            skipWs();
-            if (!atEnd() && peek() == ']') {
-                advance();
-                return Value.array(elements);
-            }
+        /**
+         * The stack-safe parse of one value: an explicit frame stack
+         * replaces the recursive descent, so a finite nested document
+         * has no stack bound. Every transition, defect class, and
+         * 1-based UTF-8 byte offset is the recursive reader's.
+         */
+        Value parseValue() {
+            Deque<Frame> stack = new ArrayDeque<>();
+            Value completed = null;
             while (true) {
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNEXPECTED_END);
-                }
-                elements.add(parseValue());
-                skipWs();
-                if (atEnd()) {
-                    throw failure(REASON_UNTERMINATED_ARRAY);
-                }
-                int c = peek();
-                if (c == ',') {
-                    advance();
+                if (completed != null) {
+                    if (stack.isEmpty()) {
+                        return completed;
+                    }
+                    Frame parent = stack.peek();
+                    if (parent.array) {
+                        parent.elements.add(completed);
+                        parent.state = Frame.ARRAY_AFTER;
+                    } else {
+                        parent.table.put(parent.pendingKey, completed);
+                        parent.state = Frame.OBJECT_AFTER;
+                    }
+                    completed = null;
                     continue;
                 }
-                if (c == ']') {
-                    advance();
-                    return Value.array(elements);
+                if (stack.isEmpty()) {
+                    completed = parseValueAtCursor(stack);
+                    continue;
                 }
-                throw failure(REASON_MISSING_COMMA);
+                Frame frame = stack.peek();
+                switch (frame.state) {
+                    case Frame.OBJECT_FIRST -> {
+                        skipWs();
+                        if (!atEnd() && peek() == '}') {
+                            advance();
+                            completed = new Value.Table(frame.table);
+                            stack.pop();
+                        } else {
+                            frame.state = Frame.OBJECT_KEY;
+                        }
+                    }
+                    case Frame.OBJECT_KEY -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNEXPECTED_END);
+                        }
+                        if (peek() != '"') {
+                            throw failure(REASON_MISSING_KEY);
+                        }
+                        // The duplicate-key defect's position is the
+                        // second key's opening quote (one-based UTF-8
+                        // byte offset); decoded equality makes an
+                        // escaped spelling of the same key a duplicate
+                        // too.
+                        long keyOffset = offsetOfCurrent();
+                        String key = parseString();
+                        if (!frame.decodedKeys.add(key)) {
+                            throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
+                        }
+                        skipWs();
+                        if (atEnd() || peek() != ':') {
+                            throw failure(REASON_MISSING_COLON);
+                        }
+                        advance(); // ':'
+                        frame.pendingKey = key;
+                        frame.state = Frame.VALUE;
+                    }
+                    case Frame.VALUE -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNEXPECTED_END);
+                        }
+                        completed = parseValueAtCursor(stack);
+                    }
+                    case Frame.OBJECT_AFTER -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNTERMINATED_OBJECT);
+                        }
+                        int c = peek();
+                        if (c == ',') {
+                            advance();
+                            frame.state = Frame.OBJECT_KEY;
+                        } else if (c == '}') {
+                            advance();
+                            completed = new Value.Table(frame.table);
+                            stack.pop();
+                        } else {
+                            throw failure(REASON_MISSING_COMMA);
+                        }
+                    }
+                    case Frame.ARRAY_FIRST -> {
+                        skipWs();
+                        if (!atEnd() && peek() == ']') {
+                            advance();
+                            completed = Value.array(frame.elements);
+                            stack.pop();
+                        } else {
+                            frame.state = Frame.VALUE;
+                        }
+                    }
+                    case Frame.ARRAY_AFTER -> {
+                        skipWs();
+                        if (atEnd()) {
+                            throw failure(REASON_UNTERMINATED_ARRAY);
+                        }
+                        int c = peek();
+                        if (c == ',') {
+                            advance();
+                            frame.state = Frame.VALUE;
+                        } else if (c == ']') {
+                            advance();
+                            completed = Value.array(frame.elements);
+                            stack.pop();
+                        } else {
+                            throw failure(REASON_MISSING_COMMA);
+                        }
+                    }
+                    default -> throw new Defect("unknown JSON reader frame state "
+                        + frame.state);
+                }
             }
         }
 

@@ -866,6 +866,94 @@ public class SharedStdlibSemanticsTest {
             "a finite 200-deep shape stringifies without failure");
     }
 
+    /**
+     * The stack-safe container traversal (the acceptance remediation): a
+     * finite nested value has no fixed depth bound and is never limited by
+     * the JVM call stack, so every deep case runs on the suite's default
+     * stack (no {@code -Xss} override). The walk still keeps path-local
+     * cycle detection, the first declaration-order failure, and its
+     * internal {@code fieldPath} at depth.
+     */
+    static void testJsonDeepStackSafeTraversal() {
+        System.out.println("-- JSON: deep finite containers traverse without the "
+            + "call stack --");
+        final int depth = 20000;
+
+        SemanticTable<Value> chain = new SemanticTable<>();
+        SemanticTable<Value> cursor = chain;
+        for (int i = 0; i < depth; i++) {
+            SemanticTable<Value> next = new SemanticTable<>();
+            cursor.put("k", new Value.Table(next));
+            cursor = next;
+        }
+        cursor.put("leaf", new Value.Int(7));
+        StringBuilder expected = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            expected.append("{\"k\":");
+        }
+        expected.append("{\"leaf\":7}");
+        for (int i = 0; i < depth; i++) {
+            expected.append('}');
+        }
+        expectStringify(chain, expected.toString(),
+            "a " + depth + "-deep table chain stringifies on the default stack");
+
+        Outcome<Value> parsed = SharedStdlibSemantics.jsonParse(origin(),
+            valid(expected.toString()));
+        check(parsed instanceof Outcome.Success<Value>,
+            "the same " + depth + "-deep text parses on the default stack");
+        if (parsed instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.Table table) {
+            expectStringify(table.table(), expected.toString(),
+                "the deep parse round-trips through the stack-safe walk");
+        }
+
+        StringBuilder deepArrayText = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            deepArrayText.append('[');
+        }
+        deepArrayText.append('1');
+        for (int i = 0; i < depth; i++) {
+            deepArrayText.append(']');
+        }
+        check(SharedStdlibSemantics.jsonParse(origin(), valid(deepArrayText.toString()))
+                instanceof Outcome.Success<Value>,
+            "a " + depth + "-deep array text parses on the default stack");
+
+        // The first declaration-order failure keeps its deep field path.
+        SemanticTable<Value> failing = new SemanticTable<>();
+        SemanticTable<Value> failingCursor = failing;
+        for (int i = 0; i < depth; i++) {
+            SemanticTable<Value> next = new SemanticTable<>();
+            failingCursor.put("k", new Value.Table(next));
+            failingCursor = next;
+        }
+        failingCursor.put("bad", new Value.Number(Double.NaN));
+        StringBuilder badPath = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            badPath.append("k.");
+        }
+        expectStringifyFailure(failing, badPath + "bad", "number",
+            "the first declaration-order failure keeps its deep fieldPath");
+
+        // A path-local re-entry at depth is still the closed cycle arm.
+        SemanticTable<Value> cyclic = new SemanticTable<>();
+        SemanticTable<Value> cyclicCursor = cyclic;
+        for (int i = 0; i < depth; i++) {
+            SemanticTable<Value> next = new SemanticTable<>();
+            cyclicCursor.put("k", new Value.Table(next));
+            cyclicCursor = next;
+        }
+        cyclicCursor.put("up", new Value.Table(cyclic));
+        expectStringifyCycle(cyclic,
+            "a " + depth + "-deep path-local re-entry selects the cycle arm");
+
+        // The deep parse keeps exact defect offsets too.
+        expectParseFailure(expected + "x", expected.length() + 1,
+            SharedStdlibSemantics.REASON_TRAILING_CONTENT,
+            "trailing content after a deep document keeps its byte offset");
+    }
+
     // =========================================================================
     // 5. Math
     // =========================================================================
@@ -1661,6 +1749,7 @@ public class SharedStdlibSemanticsTest {
         testJsonParseSyntaxFailures();
         testJsonStringifyValues();
         testJsonStringifyFailures();
+        testJsonDeepStackSafeTraversal();
         testMath();
         testConsoleEffects();
         LoweredModuleUnit unit = testCombinedT2T1();

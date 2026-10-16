@@ -147,6 +147,51 @@ public final class JvmJson {
 
         private static final Object FAIL = new Object();
 
+        /** The sentinel a container open returns to the frame loop. */
+        private static final Object OPENED = new Object();
+
+        /**
+         * One open container of the stack-safe parser. The frame's
+         * {@code state} drives its member loop and {@code pendingKey}
+         * carries the object member awaiting its value.
+         */
+        private static final class Frame {
+
+            static final int OBJECT_FIRST = 0;
+            static final int OBJECT_KEY = 1;
+            static final int VALUE = 2;
+            static final int OBJECT_AFTER = 3;
+            static final int ARRAY_FIRST = 4;
+            static final int ARRAY_AFTER = 5;
+
+            final boolean array;
+            final JvmRuntime.Table table;
+            final JvmRuntime.Array elements;
+            final java.util.Set<String> decodedKeys;
+            String pendingKey;
+            int state;
+
+            private Frame(boolean array, JvmRuntime.Table table,
+                          JvmRuntime.Array elements,
+                          java.util.Set<String> decodedKeys, int state) {
+                this.array = array;
+                this.table = table;
+                this.elements = elements;
+                this.decodedKeys = decodedKeys;
+                this.state = state;
+            }
+
+            static Frame object() {
+                return new Frame(false, new JvmRuntime.Table(), null,
+                    new java.util.HashSet<>(), OBJECT_FIRST);
+            }
+
+            static Frame array() {
+                return new Frame(true, null, new JvmRuntime.Array(0), null,
+                    ARRAY_FIRST);
+            }
+        }
+
         private void skipWs() {
             while (pos < s.length()) {
                 char c = s.charAt(pos);
@@ -158,7 +203,13 @@ public final class JvmJson {
             }
         }
 
-        private Object parseValue() {
+        /**
+         * Parses one value at the cursor: a scalar returns directly, a
+         * container pushes its frame on {@code stack} and returns
+         * {@link #OPENED}. The frame loop of {@link #parseValue()} then
+         * drives the open container.
+         */
+        private Object parseValueAtCursor(java.util.Deque<Frame> stack) {
             skipWs();
             if (pos >= s.length()) {
                 return FAIL;
@@ -166,105 +217,178 @@ public final class JvmJson {
             char c = s.charAt(pos);
             if (c == '{') {
                 pos++;
-                JvmRuntime.Table obj = new JvmRuntime.Table();
-                java.util.Set<String> decodedKeys = new java.util.HashSet<>();
-                skipWs();
-                if (pos < s.length() && s.charAt(pos) == '}') {
-                    pos++;
-                    return obj;
-                }
-                while (true) {
-                    skipWs();
-                    if (pos >= s.length() || s.charAt(pos) != '"') {
-                        return FAIL;
-                    }
-                    String key = parseString();
-                    if (key == null) {
-                        return FAIL;
-                    }
-                    // A member key whose decoded scalar text equals an
-                    // earlier member key of the same object is a parse
-                    // defect (the decoded-key duplicate rule).
-                    if (!decodedKeys.add(key)) {
-                        return FAIL;
-                    }
-                    skipWs();
-                    if (pos >= s.length() || s.charAt(pos) != ':') {
-                        return FAIL;
-                    }
-                    pos++;
-                    Object value = parseValue();
-                    if (value == FAIL) {
-                        return FAIL;
-                    }
-                    obj.write(key, value);
-                    skipWs();
-                    if (pos >= s.length()) {
-                        return FAIL;
-                    }
-                    c = s.charAt(pos);
-                    if (c == ',') {
-                        pos++;
-                    } else if (c == '}') {
-                        pos++;
-                        return obj;
-                    } else {
-                        return FAIL;
-                    }
-                }
-            } else if (c == '[') {
+                stack.push(Frame.object());
+                return OPENED;
+            }
+            if (c == '[') {
                 pos++;
-                JvmRuntime.Array arr = new JvmRuntime.Array(0);
-                skipWs();
-                if (pos < s.length() && s.charAt(pos) == ']') {
-                    pos++;
-                    return arr;
-                }
-                while (true) {
-                    Object value = parseValue();
-                    if (value == FAIL) {
-                        return FAIL;
-                    }
-                    arr.elements.add(value);
-                    arr.length = arr.elements.size();
-                    skipWs();
-                    if (pos >= s.length()) {
-                        return FAIL;
-                    }
-                    c = s.charAt(pos);
-                    if (c == ',') {
-                        pos++;
-                    } else if (c == ']') {
-                        pos++;
-                        return arr;
-                    } else {
-                        return FAIL;
-                    }
-                }
-            } else if (c == '"') {
+                stack.push(Frame.array());
+                return OPENED;
+            }
+            if (c == '"') {
                 return parseString();
-            } else if (c == 't') {
+            }
+            if (c == 't') {
                 if (s.startsWith("true", pos)) {
                     pos += 4;
                     return Boolean.TRUE;
                 }
                 return FAIL;
-            } else if (c == 'f') {
+            }
+            if (c == 'f') {
                 if (s.startsWith("false", pos)) {
                     pos += 5;
                     return Boolean.FALSE;
                 }
                 return FAIL;
-            } else if (c == 'n') {
+            }
+            if (c == 'n') {
                 if (s.startsWith("null", pos)) {
                     pos += 4;
                     return JNULL;
                 }
                 return FAIL;
-            } else if (c == '-' || (c >= '0' && c <= '9')) {
+            }
+            if (c == '-' || (c >= '0' && c <= '9')) {
                 return parseNumber();
             }
             return FAIL;
+        }
+
+        /**
+         * The stack-safe parse of one value: an explicit frame stack
+         * replaces the recursive descent, so a finite nested document
+         * has no stack bound. Every transition and failure outcome is
+         * the recursive parser's.
+         */
+        private Object parseValue() {
+            java.util.Deque<Frame> stack = new java.util.ArrayDeque<>();
+            Object completed = null;
+            boolean haveValue = false;
+            while (true) {
+                if (haveValue) {
+                    if (stack.isEmpty()) {
+                        return completed;
+                    }
+                    Frame parent = stack.peek();
+                    if (parent.array) {
+                        parent.elements.elements.add(completed);
+                        parent.elements.length = parent.elements.elements.size();
+                        parent.state = Frame.ARRAY_AFTER;
+                    } else {
+                        parent.table.write(parent.pendingKey, completed);
+                        parent.state = Frame.OBJECT_AFTER;
+                    }
+                    completed = null;
+                    haveValue = false;
+                    continue;
+                }
+                if (stack.isEmpty()) {
+                    completed = parseValueAtCursor(stack);
+                    if (completed == FAIL) {
+                        return FAIL;
+                    }
+                    haveValue = completed != OPENED;
+                    continue;
+                }
+                Frame frame = stack.peek();
+                switch (frame.state) {
+                    case Frame.OBJECT_FIRST -> {
+                        skipWs();
+                        if (pos < s.length() && s.charAt(pos) == '}') {
+                            pos++;
+                            completed = frame.table;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            frame.state = Frame.OBJECT_KEY;
+                        }
+                    }
+                    case Frame.OBJECT_KEY -> {
+                        skipWs();
+                        if (pos >= s.length() || s.charAt(pos) != '"') {
+                            return FAIL;
+                        }
+                        String key = parseString();
+                        if (key == null) {
+                            return FAIL;
+                        }
+                        // A member key whose decoded scalar text equals
+                        // an earlier member key of the same object is a
+                        // parse defect (the decoded-key duplicate rule).
+                        if (!frame.decodedKeys.add(key)) {
+                            return FAIL;
+                        }
+                        skipWs();
+                        if (pos >= s.length() || s.charAt(pos) != ':') {
+                            return FAIL;
+                        }
+                        pos++;
+                        frame.pendingKey = key;
+                        frame.state = Frame.VALUE;
+                    }
+                    case Frame.VALUE -> {
+                        skipWs();
+                        if (pos >= s.length()) {
+                            return FAIL;
+                        }
+                        completed = parseValueAtCursor(stack);
+                        if (completed == FAIL) {
+                            return FAIL;
+                        }
+                        haveValue = completed != OPENED;
+                    }
+                    case Frame.OBJECT_AFTER -> {
+                        skipWs();
+                        if (pos >= s.length()) {
+                            return FAIL;
+                        }
+                        char c = s.charAt(pos);
+                        if (c == ',') {
+                            pos++;
+                            frame.state = Frame.OBJECT_KEY;
+                        } else if (c == '}') {
+                            pos++;
+                            completed = frame.table;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            return FAIL;
+                        }
+                    }
+                    case Frame.ARRAY_FIRST -> {
+                        skipWs();
+                        if (pos < s.length() && s.charAt(pos) == ']') {
+                            pos++;
+                            completed = frame.elements;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            frame.state = Frame.VALUE;
+                        }
+                    }
+                    case Frame.ARRAY_AFTER -> {
+                        skipWs();
+                        if (pos >= s.length()) {
+                            return FAIL;
+                        }
+                        char c = s.charAt(pos);
+                        if (c == ',') {
+                            pos++;
+                            frame.state = Frame.VALUE;
+                        } else if (c == ']') {
+                            pos++;
+                            completed = frame.elements;
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            return FAIL;
+                        }
+                    }
+                    default -> throw new IllegalStateException(
+                        "unknown JSON parser frame state " + frame.state);
+                }
+            }
         }
 
         private String parseString() {
@@ -930,87 +1054,157 @@ public final class JvmJson {
         };
     }
 
-    private static String encodeTable(JvmRuntime.Table table, String path,
-                                      java.util.IdentityHashMap<Object, Boolean> visited) {
-        if (visited.put(table, Boolean.TRUE) != null) {
-            throw Projection.cycle(path);
+    /**
+     * One open container of the stack-safe dynamic-value walk: the
+     * explicit work stack replaces the recursion, so a finite nested
+     * value has no stack bound. Each frame emits its entries in
+     * first-insertion/index order from {@link #index}.
+     */
+    private static final class EncodeFrame {
+
+        final JvmRuntime.Table table;
+        final JvmRuntime.Array array;
+        final List<String> keys;
+        final String path;
+        int index;
+
+        EncodeFrame(JvmRuntime.Table table, List<String> keys, String path) {
+            this.table = table;
+            this.array = null;
+            this.keys = keys;
+            this.path = path;
         }
-        try {
-            // The carrier's first-insertion order (the linked entry map): an
-            // object spells its keys exactly as they were inserted, never in
-            // sorted order.
-            Set<String> keys = table.entries.keySet();
-            StringBuilder out = new StringBuilder("{");
-            boolean first = true;
-            for (String key : keys) {
-                String escapedKey = escapeString(key);
-                if (escapedKey == null) {
-                    throw new Projection(path, actualToken(key));
-                }
-                if (!first) {
-                    out.append(',');
-                }
-                first = false;
-                Object element = table.entries.get(key);
-                String elementPath = path.isEmpty() ? key : path + "." + key;
-                out.append('"').append(escapedKey).append('"').append(':');
-                out.append(encodeLeaf(element, elementPath, visited));
-            }
-            out.append('}');
-            return out.toString();
-        } finally {
-            visited.remove(table);
+
+        EncodeFrame(JvmRuntime.Array array, String path) {
+            this.table = null;
+            this.array = array;
+            this.keys = null;
+            this.path = path;
         }
     }
 
-    /** One table/array interior element (JSON-shaped data, first failure wins). */
-    private static String encodeLeaf(Object value, String path,
-                                     java.util.IdentityHashMap<Object, Boolean> visited) {
+    /**
+     * The stack-safe walk of JSON-shaped tables and arrays (the carrier's
+     * first-insertion order, arrays in index order): an explicit work
+     * stack replaces the recursion, and the path-local identity set keeps
+     * cycle detection (entered on open, removed on close). The first
+     * failure in emission order wins unchanged.
+     */
+    private static String encodeDynamic(Object root, String rootPath,
+            java.util.IdentityHashMap<Object, Boolean> visited) {
+        StringBuilder out = new StringBuilder();
+        java.util.Deque<EncodeFrame> stack = new java.util.ArrayDeque<>();
+        appendDynamicValue(out, root, rootPath, visited, stack);
+        while (!stack.isEmpty()) {
+            EncodeFrame frame = stack.peek();
+            if (frame.array == null) {
+                if (frame.index < frame.keys.size()) {
+                    int i = frame.index++;
+                    String key = frame.keys.get(i);
+                    String escapedKey = escapeString(key);
+                    if (escapedKey == null) {
+                        throw new Projection(frame.path, actualToken(key));
+                    }
+                    if (i > 0) {
+                        out.append(',');
+                    }
+                    Object element = frame.table.entries.get(key);
+                    String elementPath = frame.path.isEmpty() ? key
+                        : frame.path + "." + key;
+                    out.append('"').append(escapedKey).append('"').append(':');
+                    appendDynamicValue(out, element, elementPath, visited, stack);
+                } else {
+                    out.append('}');
+                    visited.remove(frame.table);
+                    stack.pop();
+                }
+                continue;
+            }
+            if (frame.index < frame.array.elements.size()) {
+                int i = frame.index++;
+                if (i > 0) {
+                    out.append(',');
+                }
+                appendDynamicValue(out, frame.array.elements.get(i),
+                    frame.path + "[" + i + "]", visited, stack);
+            } else {
+                out.append(']');
+                visited.remove(frame.array);
+                stack.pop();
+            }
+        }
+        return out.toString();
+    }
+
+    /**
+     * Appends one interior value: a leaf emits its text, a container
+     * checks the path-local identity and opens a frame. The first
+     * declaration-order failure wins (pre-order), exactly as the
+     * recursive walk selected it.
+     */
+    private static void appendDynamicValue(StringBuilder out, Object value, String path,
+            java.util.IdentityHashMap<Object, Boolean> visited,
+            java.util.Deque<EncodeFrame> stack) {
         if (value == null || value == JNULL) {
-            return "null";
+            out.append("null");
+            return;
         }
         if (value instanceof Boolean bool) {
-            return bool ? "true" : "false";
+            out.append(bool ? "true" : "false");
+            return;
         }
         if (value instanceof Long longValue) {
-            return Long.toString(longValue);
+            out.append(Long.toString(longValue));
+            return;
         }
         if (value instanceof Double number) {
             if (!Double.isFinite(number)) {
                 throw new Projection(path, actualToken(number));
             }
-            return Double.toString(number);
+            out.append(Double.toString(number));
+            return;
         }
         if (value instanceof String string) {
             String escaped = escapeString(string);
             if (escaped == null) {
                 throw new Projection(path, actualToken(string));
             }
-            return "\"" + escaped + "\"";
+            out.append('"').append(escaped).append('"');
+            return;
         }
         if (value instanceof JvmRuntime.Table table) {
-            return encodeTable(table, path, visited);
+            if (visited.put(table, Boolean.TRUE) != null) {
+                throw Projection.cycle(path);
+            }
+            out.append('{');
+            // The carrier's first-insertion order (the linked entry map):
+            // an object spells its keys exactly as they were inserted,
+            // never in sorted order.
+            stack.push(new EncodeFrame(table,
+                new ArrayList<>(table.entries.keySet()), path));
+            return;
         }
         if (value instanceof JvmRuntime.Array array) {
             if (visited.put(array, Boolean.TRUE) != null) {
                 throw Projection.cycle(path);
             }
-            try {
-                StringBuilder out = new StringBuilder("[");
-                for (int i = 0; i < array.elements.size(); i++) {
-                    if (i > 0) {
-                        out.append(',');
-                    }
-                    out.append(encodeLeaf(array.elements.get(i), path + "[" + i + "]",
-                        visited));
-                }
-                out.append(']');
-                return out.toString();
-            } finally {
-                visited.remove(array);
-            }
+            out.append('[');
+            stack.push(new EncodeFrame(array, path));
+            return;
         }
         throw new Projection(path, actualToken(value));
+    }
+
+    /** One table (object) of JSON-shaped data: the stack-safe dynamic walk. */
+    private static String encodeTable(JvmRuntime.Table table, String path,
+                                      java.util.IdentityHashMap<Object, Boolean> visited) {
+        return encodeDynamic(table, path, visited);
+    }
+
+    /** One table/array interior element (JSON-shaped data, first failure wins). */
+    private static String encodeLeaf(Object value, String path,
+                                     java.util.IdentityHashMap<Object, Boolean> visited) {
+        return encodeDynamic(value, path, visited);
     }
 
     /**

@@ -162,65 +162,103 @@ local function json_int_or_nil(text)
   return value
 end
 
+-- The stack-safe walk: an explicit frame stack replaces the recursion, so
+-- a finite nested value has no Lua call-stack bound; the path set keeps
+-- the path-local cycle guard (entered on open, removed on close).
 local function encode_value(v, file, line, column, path)
-  if v == __rt.__NULL then
-    return 'null'
-  end
-  if v == nil then
-    return 'null'
-  end
-  local t = type(v)
-  if t == 'string' then
-    return '"' .. escape(v, file, line, column) .. '"'
-  elseif t == 'number' then
-    if v ~= v then
-      error(__rt._err("E8001", "cannot encode NaN as JSON", file, line, column, nil, nil))
+  if type(path) ~= "table" then path = {} end
+  local out = {}
+  local frames = {}
+  local emit = function(val)
+    if val == __rt.__NULL then
+      out[#out + 1] = 'null'
+      return
     end
-    if v == math.huge or v == -math.huge then
-      error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
+    if val == nil then
+      out[#out + 1] = 'null'
+      return
     end
-    return string.format('%.17g', v)
-  elseif t == 'boolean' then
-    return v and 'true' or 'false'
-  elseif t == 'table' then
-    -- v1.2 D5 shape rejection: a bytes-kind object is not jsonable —
-    -- stringify raises the same unsupported-type Error every other
-    -- non-JSON-shaped value raises (spec §JSON serialization "Otherwise,
-    -- it raises Error"; the explicit bytes arm mirrors the JS runtime's
-    -- landed arm, js-v12-int32-bytes D3, message byte-identical).
-    if v.__kind == "bytes" then
-      error(__rt._err("E8001", "unsupported type for JSON encoding: bytes", file, line, column, "string, number, boolean, or table", "bytes"))
-    end
-    -- The path-local cycle guard (the walk family's closed cycle arm): a
-    -- container re-entering its own active path is the E8001 cycle
-    -- failure; a repeated acyclic reference is duplicated, never
-    -- rejected. The active set is local per stringify call and every
-    -- entry is removed on the way out.
-    if type(path) ~= "table" then path = {} end
-    if path[v] then
-      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
-    end
-    path[v] = true
-    -- Check if it's an array (sequential integer keys starting at 1)
-    local isArray = true
-    local maxIdx = 0
-    for k, _ in pairs(v) do
-      if type(k) ~= 'number' or k < 1 or k ~= math.floor(k) then
-        isArray = false
-        break
+    local t = type(val)
+    if t == 'string' then
+      out[#out + 1] = '"' .. escape(val, file, line, column) .. '"'
+      return
+    elseif t == 'number' then
+      if val ~= val then
+        error(__rt._err("E8001", "cannot encode NaN as JSON", file, line, column, nil, nil))
       end
-      if k > maxIdx then maxIdx = k end
-    end
-    if isArray and maxIdx > 0 then
-      local parts = {}
-      for i = 1, maxIdx do
-        parts[#parts + 1] = encode_value(v[i], file, line, column, path)
+      if val == math.huge or val == -math.huge then
+        error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
       end
-      path[v] = nil
-      return '[' .. table.concat(parts, ',') .. ']'
+      out[#out + 1] = string.format('%.17g', val)
+      return
+    elseif t == 'boolean' then
+      out[#out + 1] = val and 'true' or 'false'
+      return
+    elseif t == 'table' then
+      -- v1.2 D5 shape rejection: a bytes-kind object is not jsonable —
+      -- stringify raises the same unsupported-type Error every other
+      -- non-JSON-shaped value raises (spec §JSON serialization "Otherwise,
+      -- it raises Error"; the explicit bytes arm mirrors the JS runtime's
+      -- landed arm, js-v12-int32-bytes D3, message byte-identical).
+      if val.__kind == "bytes" then
+        error(__rt._err("E8001", "unsupported type for JSON encoding: bytes", file, line, column, "string, number, boolean, or table", "bytes"))
+      end
+      -- The path-local cycle guard (the walk family's closed cycle arm):
+      -- a container re-entering its own active path is the E8001 cycle
+      -- failure; a repeated acyclic reference is duplicated, never
+      -- rejected. The active set is local per stringify call and every
+      -- entry is removed on the way out.
+      if path[val] then
+        error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
+      end
+      path[val] = true
+      -- Check if it's an array (sequential integer keys starting at 1)
+      local isArray = true
+      local maxIdx = 0
+      for k, _ in pairs(val) do
+        if type(k) ~= 'number' or k < 1 or k ~= math.floor(k) then
+          isArray = false
+          break
+        end
+        if k > maxIdx then maxIdx = k end
+      end
+      if isArray and maxIdx > 0 then
+        out[#out + 1] = '['
+        frames[#frames + 1] = {kind = 'array', value = val, index = 1, maxIdx = maxIdx}
+        return
+      end
+      local keys = {}
+      for k, _ in pairs(val) do keys[#keys + 1] = k end
+      out[#out + 1] = '{'
+      frames[#frames + 1] = {kind = 'object', value = val, keys = keys, index = 1}
+      return
+    end
+    -- Unsupported types: reject with runtime error
+    error(__rt._err("E8001", "unsupported type for JSON encoding: " .. t, file, line, column, "string, number, boolean, or table", t))
+  end
+  emit(v)
+  while #frames > 0 do
+    local frame = frames[#frames]
+    if frame.kind == 'array' then
+      if frame.index > frame.maxIdx then
+        out[#out + 1] = ']'
+        path[frame.value] = nil
+        frames[#frames] = nil
+      else
+        local i = frame.index
+        frame.index = i + 1
+        if i > 1 then out[#out + 1] = ',' end
+        emit(frame.value[i])
+      end
     else
-      local parts = {}
-      for k, val in pairs(v) do
+      if frame.index > #frame.keys then
+        out[#out + 1] = '}'
+        path[frame.value] = nil
+        frames[#frames] = nil
+      else
+        local k = frame.keys[frame.index]
+        frame.index = frame.index + 1
+        if frame.index > 2 then out[#out + 1] = ',' end
         -- Include both string and numeric keys; numeric keys are
         -- converted to strings via tostring / JSON-compatible formatting.
         local key_str
@@ -231,14 +269,12 @@ local function encode_value(v, file, line, column, path)
         else
           key_str = '"' .. escape(tostring(k), file, line, column) .. '"'
         end
-        parts[#parts + 1] = key_str .. ':' .. encode_value(val, file, line, column, path)
+        out[#out + 1] = key_str .. ':'
+        emit(frame.value[k])
       end
-      path[v] = nil
-      return '{' .. table.concat(parts, ',') .. '}'
     end
   end
-  -- Unsupported types: reject with runtime error
-  error(__rt._err("E8001", "unsupported type for JSON encoding: " .. t, file, line, column, "string, number, boolean, or table", t))
+  return table.concat(out)
 end
 
 --- Encode a value to a JSON string. The trailing span triplet carries
@@ -316,7 +352,7 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     end
   end
 
-  local skip_ws, parse_value, parse_string, parse_number, parse_object, parse_array
+  local skip_ws, parse_value, parse_string, parse_number
 
   function skip_ws()
     while pos <= len do
@@ -329,7 +365,11 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     end
   end
 
-  function parse_value()
+  -- One value at the cursor: a scalar returns directly, a container opens
+  -- a frame on the stack and returns the __OPENED sentinel. The frame loop
+  -- of parse_value then drives the open container.
+  local __OPENED = {}
+  local function parse_scalar_or_open(frames)
     skip_ws()
     if pos > len then
       parse_error("unexpected end of input")
@@ -337,9 +377,13 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     local c = s:sub(pos, pos)
 
     if c == '{' then
-      return parse_object()
+      pos = pos + 1
+      frames[#frames + 1] = {kind = 'object', obj = {}, seen = {}, state = 0}
+      return __OPENED
     elseif c == '[' then
-      return parse_array()
+      pos = pos + 1
+      frames[#frames + 1] = {kind = 'array', arr = {}, state = 4, index = 1}
+      return __OPENED
     elseif c == '"' then
       return parse_string()
     elseif c == 't' then
@@ -355,6 +399,124 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
       return parse_number()
     else
       parse_error("unexpected character '" .. c .. "'")
+    end
+  end
+
+  -- The stack-safe parse: an explicit frame stack replaces the recursive
+  -- descent, so a finite nested document has no Lua call-stack bound.
+  -- Every transition and defect message is the recursive parser's.
+  function parse_value()
+    local frames = {}
+    local completed
+    local have_completed = false
+    while true do
+      if have_completed then
+        if #frames == 0 then
+          return completed
+        end
+        local parent = frames[#frames]
+        if parent.kind == 'array' then
+          parent.arr[parent.index] = completed
+          parent.index = parent.index + 1
+          parent.state = 5
+        else
+          parent.obj[parent.key] = completed
+          parent.state = 3
+        end
+        completed = nil
+        have_completed = false
+      elseif #frames == 0 then
+        local parsed = parse_scalar_or_open(frames)
+        if parsed ~= __OPENED then
+          completed = parsed
+          have_completed = true
+        end
+      else
+        local frame = frames[#frames]
+        if frame.kind == 'object' then
+          if frame.state == 0 then
+            skip_ws()
+            if peek() == '}' then
+              pos = pos + 1
+              completed = frame.obj
+              frames[#frames] = nil
+              have_completed = true
+            else
+              frame.state = 1
+            end
+          elseif frame.state == 1 then
+            skip_ws()
+            if peek() ~= '"' then
+              parse_error("missing key")
+            end
+            -- The duplicate-key defect's position is the second key's
+            -- opening quote; decoded equality makes an escaped spelling
+            -- of the same key a duplicate too.
+            local key_start = pos
+            local key = parse_string()
+            if frame.seen[key] then
+              parse_error_at(key_start, "duplicate key")
+            end
+            frame.seen[key] = true
+            skip_ws()
+            expect_char(':')
+            frame.key = key
+            frame.state = 2
+          elseif frame.state == 2 then
+            local parsed = parse_scalar_or_open(frames)
+            if parsed ~= __OPENED then
+              completed = parsed
+              have_completed = true
+            end
+          else
+            skip_ws()
+            local c = peek()
+            if c == '}' then
+              pos = pos + 1
+              completed = frame.obj
+              frames[#frames] = nil
+              have_completed = true
+            elseif c == ',' then
+              pos = pos + 1
+              frame.state = 1
+            else
+              parse_error("expected ',' or '}' in object, got '" .. (c or "EOF") .. "'")
+            end
+          end
+        else
+          if frame.state == 4 then
+            skip_ws()
+            if peek() == ']' then
+              pos = pos + 1
+              completed = frame.arr
+              frames[#frames] = nil
+              have_completed = true
+            else
+              frame.state = 2
+            end
+          elseif frame.state == 2 then
+            local parsed = parse_scalar_or_open(frames)
+            if parsed ~= __OPENED then
+              completed = parsed
+              have_completed = true
+            end
+          else
+            skip_ws()
+            local c = peek()
+            if c == ']' then
+              pos = pos + 1
+              completed = frame.arr
+              frames[#frames] = nil
+              have_completed = true
+            elseif c == ',' then
+              pos = pos + 1
+              frame.state = 2
+            else
+              parse_error("expected ',' or ']' in array, got '" .. (c or "EOF") .. "'")
+            end
+          end
+        end
+      end
     end
   end
 
@@ -487,70 +649,6 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
       parse_error("invalid number")
     end
     return n
-  end
-
-  function parse_object()
-    pos = pos + 1 -- skip {
-    local obj = {}
-    local seen = {}
-    skip_ws()
-    if peek() == '}' then
-      pos = pos + 1
-      return obj
-    end
-    while true do
-      skip_ws()
-      if peek() ~= '"' then
-        parse_error("missing key")
-      end
-      -- The duplicate-key defect's position is the second key's opening
-      -- quote; decoded equality makes an escaped spelling of the same key
-      -- a duplicate too.
-      local key_start = pos
-      local key = parse_string()
-      if seen[key] then
-        parse_error_at(key_start, "duplicate key")
-      end
-      seen[key] = true
-      skip_ws()
-      expect_char(':')
-      obj[key] = parse_value()
-      skip_ws()
-      local c = peek()
-      if c == '}' then
-        pos = pos + 1
-        return obj
-      elseif c == ',' then
-        pos = pos + 1
-      else
-        parse_error("expected ',' or '}' in object, got '" .. (c or "EOF") .. "'")
-      end
-    end
-  end
-
-  function parse_array()
-    pos = pos + 1 -- skip [
-    local arr = {}
-    skip_ws()
-    if peek() == ']' then
-      pos = pos + 1
-      return arr
-    end
-    local idx = 1
-    while true do
-      arr[idx] = parse_value()
-      idx = idx + 1
-      skip_ws()
-      local c = peek()
-      if c == ']' then
-        pos = pos + 1
-        return arr
-      elseif c == ',' then
-        pos = pos + 1
-      else
-        parse_error("expected ',' or ']' in array, got '" .. (c or "EOF") .. "'")
-      end
-    end
   end
 
   local result = parse_value()
