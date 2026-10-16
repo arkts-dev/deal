@@ -71,22 +71,29 @@ public final class SemanticIrValidator {
      * The R-IDENTITY-LINK rule: a carried link that disagrees with the
      * record it names. It covers a registry key that differs from the
      * contained record's own identity (a class-layout map key differing
-     * from its layout's {@code classId}, or a function map key differing
-     * from its record's {@code functionId}) and the plan/publication
-     * links of the complete facts (the module-init plan versus its
-     * produced {@code MODULE_INIT} operation, its init block and its
-     * ordered resolved imports; an export-plan entry versus its actual
-     * {@code EXPORT_PUBLISH} operation, its declared descriptor and the
-     * carried own interface). The transport retains both sides unchanged
-     * and admission rejects the disagreement; the projection never
-     * selects a winner or repairs the record.
+     * from its layout's {@code classId}, a function map key differing
+     * from its record's {@code functionId}, or a typed project map key
+     * differing from the contained unit's {@code moduleId}), the
+     * plan/publication links of the complete facts (the module-init plan
+     * versus its produced {@code MODULE_INIT} operation, its init block
+     * and its ordered resolved imports; an export-plan entry versus its
+     * actual {@code EXPORT_PUBLISH} operation, its declared descriptor
+     * and the carried own interface), and the project framing links of
+     * the complete closure (the interface-index key versus its entry's
+     * module identity, every closure module versus its implementation
+     * index entry, a provider's closed classification versus the resolved
+     * import's kind, and the supplied dependency order versus the
+     * resolved implementation imports). The transport retains both sides
+     * unchanged and admission rejects the disagreement; the projection
+     * never selects a winner or repairs the record.
      */
     public static final String R_IDENTITY_LINK = "R-IDENTITY-LINK";
 
     /**
      * The closed rule set in the pinned order: the 14 S6 conditions
      * followed by the transport identity-link coherence check (registry
-     * identities and the plan/publication links of the complete facts).
+     * identities, the plan/publication links of the complete facts and
+     * the project framing links of the complete closure).
      */
     public static final List<String> RULES = List.of(
         R_COVERAGE, R_ENUM, R_CAPABILITY, R_POLICY_KIND, R_BOUNDARY_TRIPLE,
@@ -147,8 +154,11 @@ public final class SemanticIrValidator {
      * interface/provider joins are checked at project level by
      * {@link #validate(ExecutableLoweredProject, ComparisonFacts)}: a
      * standalone unit carries no interface index, seeds or surrounding
-     * modules, so its applicable predicates are the local ones and it cannot
-     * approve a required provider link.</p>
+     * modules, so its applicable predicates are the local ones and every
+     * fact that requires that provider context — a {@code CLASS_NEW} under
+     * an imported/declared default owner included — rejects with the first
+     * E6005 at the referring subject instead of being approved unverified.
+     * The provider context itself is never invented.</p>
      *
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit, ComparisonFacts facts) {
@@ -177,24 +187,58 @@ public final class SemanticIrValidator {
 
     /**
      * Validates a complete executable project on the typed record surface:
-     * every module in dependency (map insertion) order with the common
-     * per-module composed sequence — the common-admission head, the
-     * control-flow owner, the bindings-production owner and the
-     * class-construction owner over the module's complete materialized
-     * facts, with the shared-factory provider join accumulated in the same
-     * order as the production lowering — plus the project class-fact
-     * coherence and the cross-unit checks (R-EXTERNAL-ENTRY resolution
-     * across the complete implementation closure). Returns empty on pass and
-     * exactly one E6005 naming the first failing rule on failure.
+     * the project framing admission (module-map key/identity agreement, the
+     * carried profile, index coverage and provider classification, required
+     * in-project implementation providers and the dependency order of the
+     * resolved imports), then every module in dependency (map insertion)
+     * order with the common per-module composed sequence — the
+     * common-admission head, the control-flow owner, the bindings-production
+     * owner and the class-construction owner over the module's complete
+     * materialized facts, with the shared-factory provider join accumulated
+     * in the same order as the production lowering — plus the project
+     * class-fact coherence and the cross-unit checks (R-EXTERNAL-ENTRY
+     * resolution across the complete implementation closure). Returns empty
+     * on pass and exactly one E6005 naming the first failing rule on
+     * failure.
      *
      */
     public static Optional<CompilerDiagnostic> validate(ExecutableLoweredProject project,
                                                         ComparisonFacts facts) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
+        Optional<CompilerDiagnostic> moduleKeys = checkProjectModuleKeys(project, facts);
+        if (moduleKeys.isPresent()) {
+            return moduleKeys;
+        }
         return validateRawProject(List.copyOf(projectClosure(project).values()),
             project.interfaceIndex(), project.classSeeds(), project.entryModule().path(),
-            facts);
+            project.semanticProfile().name(), facts);
+    }
+
+    /**
+     * The typed project's module-map identity agreement: every map key
+     * equals the contained module's own {@code moduleId} (the complete
+     * closure is keyed by the identity its units carry). A disagreement is
+     * retained by the typed record and rejects here, never repaired by a
+     * projection; the text surface carries no separate key, so this check
+     * belongs to the typed entrypoint.
+     */
+    private static Optional<CompilerDiagnostic> checkProjectModuleKeys(
+            ExecutableLoweredProject project, ComparisonFacts facts) {
+        for (Map.Entry<ModuleId, LoweredModuleUnit> entry
+                : project.modules().entrySet()) {
+            if (!entry.getKey().equals(entry.getValue().moduleId())) {
+                RawUnit subject = RawUnit.fromTyped(entry.getValue());
+                return fail(subject, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the project module-map key " + entry.getKey()
+                        + " differs from the contained unit's moduleId "
+                        + entry.getValue().moduleId()
+                        + " (the transport retains both identities; admission"
+                        + " never selects a winning identity or repairs the record)"));
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -209,7 +253,18 @@ public final class SemanticIrValidator {
             ExecutableLoweredProject project, ComparisonFacts facts) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
+        Optional<CompilerDiagnostic> moduleKeys = checkProjectModuleKeys(project, facts);
+        if (moduleKeys.isPresent()) {
+            return moduleKeys;
+        }
         Map<String, RawUnit> closure = projectClosure(project);
+        List<RawUnit> units = List.copyOf(closure.values());
+        Optional<CompilerDiagnostic> structure = checkProjectStructure(units,
+            project.interfaceIndex(), project.entryModule().path(),
+            project.semanticProfile().name(), facts);
+        if (structure.isPresent()) {
+            return structure;
+        }
         for (LoweredModuleUnit unit : project.modules().values()) {
             RawUnit raw = closure.get(unit.moduleId().path());
             Optional<CompilerDiagnostic> failure = validateRawUnitHead(raw, facts, closure,
@@ -219,7 +274,7 @@ public final class SemanticIrValidator {
             }
         }
         return checkProjectClassFacts(project.interfaceIndex(), project.classSeeds(),
-            List.copyOf(closure.values()), project.entryModule().path(), facts);
+            units, project.entryModule().path(), facts);
     }
 
     /** The project's modules as their complete raw facts, in dependency order. */
@@ -288,18 +343,171 @@ public final class SemanticIrValidator {
                                                                     ComparisonFacts facts) {
         ContractSnapshotCanonicalizer.ParsedProject project =
             ContractSnapshotCanonicalizer.parseProject(obj);
-        Map<String, RawUnit> closure = new LinkedHashMap<>();
-        for (RawUnit unit : project.modules()) {
-            closure.put(unit.modulePath(), unit);
-        }
-        if (!ADMITTED_PROFILE.equals(project.semanticProfile())) {
-            return fail(closure.get(project.entryModule()), facts, R_PROFILE,
-                SemanticCapability.FOUNDATION_VALUES,
-                origin(R_PROFILE, "project semanticProfile \"" + project.semanticProfile()
-                    + "\" is not DEAL_V1_3_INT32"));
-        }
         return validateRawProject(project.modules(), project.interfaceIndex(),
-            project.classSeeds(), project.entryModule(), facts);
+            project.classSeeds(), project.entryModule(), project.semanticProfile(), facts);
+    }
+
+    /**
+     * The project-framing admission both project surfaces share: the
+     * carried profile and entry, the module-identity agreement of the
+     * supplied closure with the carried interface index, the closed
+     * classification of every provider entry, the presence of every
+     * required in-project implementation provider and the dependency
+     * order of the resolved imports. Nothing is repaired, inferred or
+     * fabricated: a disagreement is the first E6005 and no module
+     * silently disappears behind a skipped check.
+     *
+     * <p>The checks consume only the supplied records. Module keys and
+     * contained identities stay separate facts (a map key that disagrees
+     * with the contained module's own {@code moduleId} rejects), a
+     * provider's classification is the carried index entry's kind — never
+     * a class-id namespace, an alias spelling or a basename — and a
+     * resolved import of kind IMPLEMENTATION requires the complete
+     * closure to carry that module at an earlier dependency position.
+     * Repeated references to one provider (repeated imports, repeated
+     * constructions) are coherent facts, not duplicate allocations, and
+     * never reject.</p>
+     */
+    private static Optional<CompilerDiagnostic> checkProjectStructure(
+            List<RawUnit> units, ProjectInterfaceIndex interfaceIndex,
+            String entryModule, String projectProfile, ComparisonFacts facts) {
+        if (units.isEmpty()) {
+            return Optional.empty();
+        }
+        RawUnit subject = null;
+        for (RawUnit unit : units) {
+            if (unit.modulePath().equals(entryModule)) {
+                subject = unit;
+                break;
+            }
+        }
+        if (subject == null) {
+            subject = units.get(0);
+        }
+        if (!ADMITTED_PROFILE.equals(projectProfile)
+                || !projectProfile.equals(facts.semanticProfile().name())) {
+            return fail(subject, facts, R_PROFILE, SemanticCapability.FOUNDATION_VALUES,
+                origin(R_PROFILE, "project semanticProfile \"" + projectProfile
+                    + "\" is not \"" + ADMITTED_PROFILE
+                    + "\" (the supplied comparison profile is "
+                    + facts.semanticProfile() + ")"));
+        }
+        if (!entryModule.equals(subject.modulePath())) {
+            return fail(units.get(0), facts, R_IDENTITY_LINK,
+                SemanticCapability.FOUNDATION_VALUES,
+                origin(R_IDENTITY_LINK, "the project entryModule \"" + entryModule
+                    + "\" is not part of the supplied complete implementation"
+                    + " closure"));
+        }
+        Map<String, Integer> positions = new LinkedHashMap<>();
+        for (int i = 0; i < units.size(); i++) {
+            RawUnit unit = units.get(i);
+            if (positions.putIfAbsent(unit.modulePath(), i) != null) {
+                return fail(unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the project carries module \""
+                        + unit.modulePath() + "\" more than once: the module"
+                        + " identity is the entry identity and one module never"
+                        + " overwrites another"));
+            }
+        }
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                : interfaceIndex.modules().entrySet()) {
+            if (!entry.getKey().equals(entry.getValue().moduleId())) {
+                return fail(subject, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the interface-index key " + entry.getKey()
+                        + " differs from the contained entry's moduleId "
+                        + entry.getValue().moduleId()
+                        + " (the transport retains both identities; admission"
+                        + " never selects a winning identity or repairs the record)"));
+            }
+        }
+        for (RawUnit unit : units) {
+            ExternalModuleInterface own =
+                interfaceIndex.modules().get(new ModuleId(unit.modulePath()));
+            if (own == null) {
+                return fail(unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "module \"" + unit.modulePath()
+                        + "\" has no interface-index entry: the index covers every"
+                        + " module of the complete implementation closure, and no"
+                        + " module silently disappears"));
+            }
+            if (own.kind() != ExternalModuleKind.IMPLEMENTATION) {
+                return fail(unit, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "module \"" + unit.modulePath()
+                        + "\" carries a unit in the complete implementation closure"
+                        + " while its interface-index entry is classified "
+                        + own.kind() + ": a closure unit is an implementation"
+                        + " provider"));
+            }
+        }
+        for (Map.Entry<ModuleId, ExternalModuleInterface> entry
+                : interfaceIndex.modules().entrySet()) {
+            if (entry.getValue().kind() == ExternalModuleKind.IMPLEMENTATION
+                    && !positions.containsKey(entry.getKey().path())) {
+                return fail(subject, facts, R_IDENTITY_LINK,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_IDENTITY_LINK, "the interface index classifies "
+                        + entry.getKey() + " as an implementation provider while"
+                        + " the supplied complete closure carries no unit for it"
+                        + " (a required in-project implementation provider is never"
+                        + " silently absent)"));
+            }
+        }
+        for (RawUnit unit : units) {
+            int position = positions.get(unit.modulePath());
+            ExternalModuleInterface own =
+                interfaceIndex.modules().get(new ModuleId(unit.modulePath()));
+            for (ResolvedImport importFact : own.imports()) {
+                ExternalModuleInterface target =
+                    interfaceIndex.modules().get(importFact.resolvedModuleId());
+                if (target == null) {
+                    return fail(unit, facts, R_IDENTITY_LINK,
+                        SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_IDENTITY_LINK, "module \"" + unit.modulePath()
+                            + "\" resolves import \"" + importFact.modulePath()
+                            + "\" to " + importFact.resolvedModuleId()
+                            + ", which has no interface-index entry: the index"
+                            + " covers every provider of the closure"));
+                }
+                if (target.kind() != importFact.kind()) {
+                    return fail(unit, facts, R_IDENTITY_LINK,
+                        SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_IDENTITY_LINK, "module \"" + unit.modulePath()
+                            + "\" resolves import \"" + importFact.modulePath()
+                            + "\" as " + importFact.kind() + " while the provider's"
+                            + " interface-index entry is classified " + target.kind()
+                            + " (a provider carries exactly one closed"
+                            + " classification)"));
+                }
+                if (importFact.kind() != ExternalModuleKind.IMPLEMENTATION) {
+                    continue;
+                }
+                Integer targetPosition = positions.get(importFact.resolvedModuleId().path());
+                if (targetPosition == null) {
+                    return fail(unit, facts, R_IDENTITY_LINK,
+                        SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_IDENTITY_LINK, "module \"" + unit.modulePath()
+                            + "\" requires the in-project implementation provider "
+                            + importFact.resolvedModuleId()
+                            + ", which the supplied complete closure does not"
+                            + " carry (a required implementation provider is never"
+                            + " fabricated)"));
+                }
+                if (targetPosition >= position) {
+                    return fail(unit, facts, R_IDENTITY_LINK,
+                        SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_IDENTITY_LINK, "module \"" + unit.modulePath()
+                            + "\" is supplied before its resolved import "
+                            + importFact.resolvedModuleId()
+                            + ": the complete closure is in dependency order"));
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -382,7 +590,13 @@ public final class SemanticIrValidator {
      * <p>A standalone unit carries no provider context, so the
      * class-construction owner runs on the complete-project surfaces
      * ({@link #validateRawProject}) where the carried interface index,
-     * seeds and surrounding modules supply the exact provider join.</p>
+     * seeds and surrounding modules supply the exact provider join; the
+     * standalone surfaces instead reject every fact that requires that
+     * context (a CLASS_NEW under an imported/declared default owner, a
+     * SHARED_BODY external function of another module and an
+     * externalEntryRef naming another module) through
+     * {@link #checkStandaloneProviderContext}. A unit that carries no
+     * such link admits on every surface.</p>
      */
     private static Optional<CompilerDiagnostic> validateRawUnit(RawUnit unit,
                                                                 ComparisonFacts facts,
@@ -397,7 +611,93 @@ public final class SemanticIrValidator {
         if (failure.isPresent()) {
             return failure;
         }
-        return checkBindings(unit, facts);
+        failure = checkBindings(unit, facts);
+        if (failure.isPresent()) {
+            return failure;
+        }
+        return checkStandaloneProviderContext(unit, facts);
+    }
+
+    /**
+     * The standalone surfaces' required-link rejection: without the
+     * complete project closure a unit carries no provider context, so a
+     * fact that needs one rejects with the first E6005 at the referring
+     * subject instead of being admitted unverified:
+     *
+     * <ul>
+     *   <li>a {@code SHARED_BODY} {@code ExternalFunction} naming another
+     *       module (the callee unit's recorded {@code EXTERNAL_ENTRY} is
+     *       the missing fact);</li>
+     *   <li>a {@code CALL} {@code externalEntryRef} naming another module
+     *       (the resolved {@code EXTERNAL_ENTRY} op is the missing
+     *       fact);</li>
+     *   <li>a {@code CLASS_NEW} under {@code SHARED_FACTORY} (the owner's
+     *       factory facts), {@code HOST_DEFAULTS} or {@code FFI_PLAN}
+     *       (the declaration class registration seeds).</li>
+     * </ul>
+     *
+     * <p>No provider is inferred from a class-id namespace, an alias
+     * spelling or a basename, and no fact is fabricated: the complete
+     * project surfaces ({@link #validateRawProject}) resolve exactly
+     * these links from the supplied closure. The check runs after the
+     * composed local owners, so a unit whose local facts are malformed
+     * still reports the local failure first.</p>
+     */
+    private static Optional<CompilerDiagnostic> checkStandaloneProviderContext(
+            RawUnit unit, ComparisonFacts facts) {
+        // The referring operation first where one exists: a CALL that names
+        // another module's recorded EXTERNAL_ENTRY carries its own origin.
+        for (RawOp op : unit.ops()) {
+            if (enumByName(SemanticOpKind.class, op.kind()) != SemanticOpKind.CALL) {
+                continue;
+            }
+            OpId ref = parseOptionalOpId(op.payload(), "externalEntryRef");
+            if (ref != null && !ref.module().path().equals(unit.modulePath())) {
+                return fail(op, unit, facts, R_EXTERNAL_ENTRY,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_EXTERNAL_ENTRY, "externalEntryRef " + ref
+                        + " names a module outside the unit: standalone admission"
+                        + " carries no implementation closure"));
+            }
+        }
+        for (RawBinding binding : unit.bindings()) {
+            if (!"externalFunction".equals(binding.shape())
+                    || !"SHARED_BODY".equals(binding.executionOwner())
+                    || binding.modulePath() == null
+                    || unit.modulePath().equals(binding.modulePath())) {
+                continue;
+            }
+            return fail((RawOp) null, unit, facts, R_EXTERNAL_ENTRY,
+                SemanticCapability.FOUNDATION_VALUES,
+                origin(R_EXTERNAL_ENTRY, "SHARED_BODY ExternalFunction export \""
+                    + binding.exportName() + "\" names module \""
+                    + binding.modulePath() + "\" outside the unit: standalone admission"
+                    + " carries no implementation closure"));
+        }
+        for (RawOp op : unit.ops()) {
+            if (enumByName(SemanticOpKind.class, op.kind())
+                    != SemanticOpKind.CLASS_NEW) {
+                continue;
+            }
+            String owner = stringPayloadField(op.payload(), "defaultOwner");
+            if (!DefaultOwner.SHARED_FACTORY.name().equals(owner)
+                    && !DefaultOwner.HOST_DEFAULTS.name().equals(owner)
+                    && !DefaultOwner.FFI_PLAN.name().equals(owner)) {
+                continue;
+            }
+            ClassId classId = classIdPayloadField(op.payload(), "classId");
+            return fail(op, unit, facts,
+                ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                SemanticCapability.CLASSES,
+                origin(ClassConstructionValidator.CONSTRUCTION_COHERENCE,
+                    "CLASS_NEW " + op.opId() + " of "
+                        + (classId == null ? "an imported class" : classId)
+                        + " carries defaultOwner " + owner + ": standalone admission"
+                        + " carries no provider context (the owner's factory facts and"
+                        + " the declaration class registration seeds are supplied by"
+                        + " the complete project closure)"));
+        }
+        return Optional.empty();
     }
 
     /**
@@ -418,7 +718,13 @@ public final class SemanticIrValidator {
                                                                    ProjectInterfaceIndex interfaceIndex,
                                                                    ClassRegistrationSeeds classSeeds,
                                                                    String entryModule,
+                                                                   String projectProfile,
                                                                    ComparisonFacts facts) {
+        Optional<CompilerDiagnostic> structure = checkProjectStructure(units,
+            interfaceIndex, entryModule, projectProfile, facts);
+        if (structure.isPresent()) {
+            return structure;
+        }
         Map<String, RawUnit> closure = new LinkedHashMap<>();
         for (RawUnit unit : units) {
             closure.put(unit.modulePath(), unit);
@@ -4099,6 +4405,24 @@ public final class SemanticIrValidator {
     @SuppressWarnings("unchecked")
     private static String optionalString(CanonicalJson.Obj obj, String key) {
         return ContractSnapshotCanonicalizer.optionalString(obj, key);
+    }
+
+    /** One string payload member of a carried payload object, or null. */
+    private static String stringPayloadField(CanonicalJson.Obj payload, String key) {
+        return payloadValue(payload, key) instanceof CanonicalJson.Str str
+            ? str.value() : null;
+    }
+
+    /** One class-identity payload member, or null when absent or malformed. */
+    private static ClassId classIdPayloadField(CanonicalJson.Obj payload, String key) {
+        if (!(payloadValue(payload, key) instanceof CanonicalJson.Obj classId)) {
+            return null;
+        }
+        try {
+            return ContractSnapshotCanonicalizer.parseClassId(classId);
+        } catch (RuntimeException malformed) {
+            return null;
+        }
     }
 
     private static CanonicalJson.Value payloadValue(CanonicalJson.Obj obj, String key) {

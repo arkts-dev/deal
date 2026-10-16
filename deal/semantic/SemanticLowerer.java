@@ -1122,6 +1122,19 @@ public final class SemanticLowerer {
     public static final String PROJECT_INPUT_INCOMPLETE =
         "PROJECT_INPUT_INCOMPLETE";
 
+    /**
+     * The composed production admission's supplied-view disagreement: a
+     * companion view handed to
+     * {@link #validateProjectUnit(LoweredModuleUnit, StructuredBodyTable,
+     * SemanticIrValidator.ComparisonFacts, ClassBindingFacts,
+     * deal.semantic.ir.ClassFactoryRegistry,
+     * deal.semantic.ir.JsonDefaultChildTable,
+     * deal.semantic.ir.ExternalModuleInterface, Map, Map)} differs from the
+     * unit's admitted record. The E6005 is fail-closed: the owner chain
+     * never consumes a competing authority beside the admitted content.
+     */
+    public static final String PROJECT_VIEW_MISMATCH = "PROJECT_VIEW_MISMATCH";
+
     public static ProjectLoweringResult lowerProject(
             CompilerInvocation invocation,
             CheckedProjectInput checkedProject,
@@ -1496,6 +1509,14 @@ public final class SemanticLowerer {
      * block table, the bindings-production owner and the class-construction
      * owner. Each owner runs exactly once; the returned diagnostic is the
      * first failure of that order.
+     *
+     * <p>The supplied companion views are compared with the unit's own
+     * records before the owners run: a supplied {@code table},
+     * {@code bindingFacts}, {@code factories} or {@code jsonDefaults} that
+     * differs from the admitted content is a fail-closed E6005 (a
+     * content-equal detached view is accepted and the unit's owned record
+     * is consumed instead, so no second authority ever describes a
+     * different graph).</p>
      */
     public static Optional<CompilerDiagnostic> validateProjectUnit(
             LoweredModuleUnit unit,
@@ -1517,6 +1538,15 @@ public final class SemanticLowerer {
         Objects.requireNonNull(sharedFactories, "sharedFactories must not be null");
         Objects.requireNonNull(declarationClasses,
             "declarationClasses must not be null");
+        Optional<CompilerDiagnostic> viewMismatch = checkSuppliedViews(unit, table,
+            bindingFacts, factories, jsonDefaults, facts);
+        if (viewMismatch.isPresent()) {
+            return viewMismatch;
+        }
+        StructuredBodyTable ownedTable = unit.bodyTable();
+        ClassBindingFacts ownedBindingFacts = unit.classBindingFacts();
+        deal.semantic.ir.ClassFactoryRegistry ownedFactories = unit.classFactories();
+        deal.semantic.ir.JsonDefaultChildTable ownedJsonDefaults = unit.jsonDefaults();
         Optional<CompilerDiagnostic> validation =
             SemanticIrValidator.validateUnitHead(unit, facts);
         if (validation.isPresent()) {
@@ -1527,17 +1557,51 @@ public final class SemanticLowerer {
             return chainShape;
         }
         Optional<CompilerDiagnostic> controlFlow =
-            ControlFlowValidator.validate(unit, table);
+            ControlFlowValidator.validate(unit, ownedTable);
         if (controlFlow.isPresent()) {
             return controlFlow;
         }
         Optional<CompilerDiagnostic> bindings = BindingsProductionValidator.validate(
-            unit, table, bindingFacts);
+            unit, ownedTable, ownedBindingFacts);
         if (bindings.isPresent()) {
             return bindings;
         }
-        return ClassConstructionValidator.validate(unit, table, factories,
-            jsonDefaults, ownInterface, sharedFactories, declarationClasses);
+        return ClassConstructionValidator.validate(unit, ownedTable, ownedFactories,
+            ownedJsonDefaults, ownInterface, sharedFactories, declarationClasses);
+    }
+
+    /**
+     * The supplied-view agreement of the composed production admission:
+     * each supplied companion must equal the unit's own admitted record.
+     * A differing view is the fail-closed {@code PROJECT_VIEW_MISMATCH}
+     * E6005 of the lowering entry — never a silently consumed competing
+     * authority — and a content-equal detached view is replaced by the
+     * owned record.
+     */
+    private static Optional<CompilerDiagnostic> checkSuppliedViews(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            ClassBindingFacts bindingFacts,
+            deal.semantic.ir.ClassFactoryRegistry factories,
+            deal.semantic.ir.JsonDefaultChildTable jsonDefaults,
+            SemanticIrValidator.ComparisonFacts facts) {
+        String view = !unit.bodyTable().equals(table) ? "body table"
+            : !unit.classBindingFacts().equals(bindingFacts) ? "binding facts"
+            : !unit.classFactories().equals(factories) ? "class-factory registry"
+            : !unit.jsonDefaults().equals(jsonDefaults) ? "JSON-default table"
+            : null;
+        if (view == null) {
+            return Optional.empty();
+        }
+        return Optional.of(FailureContractRegistry.e6005(new LoweringFailureDetail(
+            unit.moduleId().path(), SemanticCapability.FOUNDATION_VALUES,
+            PROJECT_VIEW_MISMATCH, facts.semanticProfile(),
+            LoweredModuleUnit.FORMAT_VERSION,
+            "SemanticLowerer.validateProjectUnit " + PROJECT_VIEW_MISMATCH
+                + " (the supplied " + view + " view of module '"
+                + unit.moduleId().path() + "' differs from the unit's admitted"
+                + " record: the complete admission consumes exactly the unit's"
+                + " owned facts, never a competing authority)")));
     }
 
     /** The requirement manifest of one module, or {@code null} when absent. */

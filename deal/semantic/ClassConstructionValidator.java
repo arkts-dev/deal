@@ -946,6 +946,15 @@ public final class ClassConstructionValidator {
                         + factoryOpId + " of " + entry.classId() + " is not a produced "
                         + "op of the unit");
                 }
+                if (!factory.opId().module().equals(unit.moduleId())) {
+                    return fail(FACTORY_COHERENCE, "the registered factory op "
+                        + factoryOpId + " of " + entry.classId() + " carries module "
+                        + "tag " + factory.opId().module() + ", not the owning module "
+                        + unit.moduleId() + ": a module's factory registry binds an op"
+                        + " of that module (the provider owner is the registry's module"
+                        + " and the operation module tag, never a class-id namespace)",
+                        factory);
+                }
                 Optional<CompilerDiagnostic> shape = checkFactoryShape(factory, entry);
                 if (shape.isPresent()) {
                     return shape;
