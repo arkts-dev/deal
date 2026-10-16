@@ -92,7 +92,7 @@ public final class TypeChecker {
     // -- Saved pre-loop narrowing states of the open loops: a loop body
     //    is checked under a fresh narrowing state, so an await inside a
     //    body must invalidate the enclosing function's saved states too
-    //    (docs/spec-v1.2.md §Nullable semantics: after an await every
+    //    (docs/spec-v1.3.md §Nullable semantics: after an await every
     //    narrowed variable of the enclosing async function reverts to
     //    its declared type, and a loop exit must not restore an entry
     //    the suspension invalidated). The stack is swapped at function
@@ -204,7 +204,7 @@ public final class TypeChecker {
     private void walkStatement(StatementNode stmt) {
         // A block introduces a lexical scope: narrowing entries removed by
         // block-local declarations are restored when the block exits. A
-        // C-style for head is a block-local scope too (docs/spec-v1.2.md
+        // C-style for head is a block-local scope too (docs/spec-v1.3.md
         // §Statement/expression separation: the loop desugars to a
         // block-local scope plus a while loop), so its loop-head let
         // shadows and restores like a block-local declaration.
@@ -585,8 +585,8 @@ public final class TypeChecker {
         // following statements of its block. Only the declaration's own
         // scope stops treating it as pending — an inner block's
         // same-name declaration never makes an enclosing scope's pending
-        // declaration visible early (docs/spec-v1.2.md §Declaration
-        // order: a let declaration is visible only after its declaration
+        // declaration visible early (docs/spec-v1.3.md §Name resolution —
+        // Declaration order: a let declaration is visible only after its declaration
         // and only in its own block).
         for (PendingScope ps : pendingScopes) {
             if (ps.scope == currentScope) {
@@ -627,8 +627,9 @@ public final class TypeChecker {
                     // was laid out by that declaration, so a later
                     // boundary crossing to a distinct same-named
                     // declaration must still be E3019
-                    // (docs/spec-v1.2.md §Classes: one canonical identity,
-                    // distinct declarations).
+                    // (docs/spec-v1.3.md §Nominal typing and
+                    // §Equality and comparison operand rules: class types
+                    // are equal by declared class symbol only).
                     Symbol sym = currentScope.resolve(vd.name());
                     if (sym instanceof Symbol.VariableSymbol vs && vs.type() == null) {
                         Symbol.ClassSymbol provenance = vs.declaredClass() != null
@@ -920,8 +921,8 @@ public final class TypeChecker {
 
     private void checkForStatement(ForStatement fs) {
         // The loop-head let declaration is not visible to its own
-        // initializer (docs/spec-v1.2.md §Declaration order): while the
-        // initializer is checked, the loop-head scope keeps the name
+        // initializer (docs/spec-v1.3.md §Name resolution — Declaration order):
+        // while the initializer is checked, the loop-head scope keeps the name
         // pending, so a self reference resolves to the enclosing scopes
         // (an unresolved self reference is E2001) and a same-named
         // enclosing binding is read through. The name is exposed to the
@@ -1621,7 +1622,7 @@ public final class TypeChecker {
         //
         // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
         // be narrowed before its fields are read. Narrowing is supported
-        // only for local variables and parameters (docs/spec-v1.2.md
+        // only for local variables and parameters (docs/spec-v1.3.md
         // §Nullable semantics — "No property-path narrowing"), so a
         // plain identifier receiver is narrowed by the null-narrowing
         // analysis inside its guarded branch and an unguarded read — a
@@ -1692,9 +1693,9 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
 
         // A-D10 (assignment-delete-address-chains): table index
-        // write/delete keys must have static type string (spec v1.2
-        // table writes). The F5 "allow any index type and skip further
-        // checks" skip is superseded by the static string-key gate.
+        // write/delete keys must have static type string (docs/spec-v1.3.md
+        // §Writing table fields and §Deletion). The F5 "allow any index
+        // type and skip further checks" skip is superseded by the static string-key gate.
         if (arrayType instanceof Type.Table) {
             if (assignmentTargetMode) {
                 if (indexType instanceof Type.String) {
@@ -2399,8 +2400,8 @@ public final class TypeChecker {
 
     /**
      * Resolves a name to the binding the declaration-order rules make
-     * visible at the current statement (docs/spec-v1.2.md §Declaration
-     * order and §Scope): a let declaration is visible only after its
+     * visible at the current statement (docs/spec-v1.3.md §Name resolution —
+     * Declaration order and §Scope): a let declaration is visible only after its
      * declaration, so a reference from inside the declaring block's
      * earlier statements (a forward or self reference) resolves against
      * the enclosing scopes. The same resolution feeds identifier reads,

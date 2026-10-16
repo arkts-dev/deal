@@ -3822,7 +3822,8 @@ public final class SemanticLowerer {
                         // The function-allocation identity of the hoisted
                         // module-level function is pre-allocated here so a
                         // capture of a later-declared module function
-                        // (B1; docs/spec-v1.2.md:1217-1221) — a
+                        // (B1; docs/spec-v1.3.md §Name resolution,
+                        // Declaration order) — a
                         // function-typed load inside an earlier closure
                         // body — can publish the identity the cell will
                         // hold (loads preserve allocation identity; the
@@ -5878,8 +5879,8 @@ public final class SemanticLowerer {
             // Init block: the counter ALLOC, the initializer value ops,
             // the counter INIT, then the first condition production
             // (init-block members — C-D4). The loop-head let is not
-            // visible to its own initializer (docs/spec-v1.2.md
-            // §Declaration order): the counter registers after the
+            // visible to its own initializer (docs/spec-v1.3.md
+            // §Name resolution — Declaration order): the counter registers after the
             // initializer, so a same-named enclosing binding is read
             // through exactly as the checker resolved it.
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,

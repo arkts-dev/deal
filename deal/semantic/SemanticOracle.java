@@ -1693,7 +1693,8 @@ public final class SemanticOracle {
          * so an earlier declaration's closure captures the cell by
          * identity even when the publishing group op runs later in the
          * same module init (the declaration-order-independent forward
-         * reference: docs/spec-v1.2.md:1217-1221, C1 body coverage). The
+         * reference: docs/spec-v1.3.md §Name resolution — Declaration order,
+         * C1 body coverage). The
          * group op's publication phase still writes the member closures
          * into these pre-created cells in one ordered sequence (phase 0's
          * create-or-reuse finds them already present). A nested group's

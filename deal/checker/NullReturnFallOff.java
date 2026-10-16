@@ -59,7 +59,7 @@ import java.util.Set;
 /**
  * The null-return fall-off gate of the public compile surface (ISSUE-0717
  * defect snippets 25/26): the spec's return-type requirements
- * ({@code docs/spec-v1.2.md} §Functions — "The function body must not
+ * ({@code docs/spec-v1.3.md} §Return type requirements — "The function body must not
  * 'fall off' without a return") apply to a {@code : null} body too. The
  * gate walks a checked module's AST and reports one E5002 per
  * null-returning function declaration or function expression whose body

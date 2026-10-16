@@ -241,8 +241,8 @@ public final class NameResolver {
         // (IntrinsicResolvers.BYTES); the backend lowers the call site.
         // `bytes` is not a DEAL keyword, and compiler intrinsics sit at
         // the bottom of the spec's name-resolution order
-        // (spec-v1.2.md: module-level declarations resolve at step 3,
-        // compiler intrinsics only at step 5), so a module-level user
+        // (docs/spec-v1.3.md §Name resolution: module-level declarations
+        // resolve at step 3, compiler intrinsics only at step 5), so a module-level user
         // declaration named `bytes` (class, function, let, or import)
         // shadows this root binding — the declaration sites remove the
         // intrinsic binding before defining their own symbol
@@ -276,7 +276,7 @@ public final class NameResolver {
      * {@code bytes} compiler intrinsic and a user module-level
      * declaration may shadow it.
      *
-     * <p>DEAL v1.2 resolution order (spec-v1.2.md §Name resolution):
+     * <p>DEAL v1.3 resolution order (docs/spec-v1.3.md §Name resolution):
      * module-level declarations resolve at step 3 and imported module
      * bindings at step 4, before the compiler intrinsics
      * ({@code int}/{@code number}/{@code bytes}/{@code has}) at step 5.
@@ -341,7 +341,7 @@ public final class NameResolver {
             }
             root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span()));
         } catch (ModuleResolver.CffiImportWithoutNativeLibraryException e) {
-            // The v1.2 C FFI manifest policy (docs/spec-v1.2.md:1891):
+            // The C FFI manifest policy (docs/spec-v1.3.md §Package manifest):
             // importing a C FFI declaration file without an externals
             // entry specifying nativeLibrary is an invalid project
             // configuration — E2010 at the import span, never a
@@ -836,8 +836,8 @@ public final class NameResolver {
                 Symbol.ClassSymbol declaredClass = decl.typeAnnotation()
                     .map(this::declaredClassSymbolOf).orElse(null);
                 // The loop-head let is visible only after its declaration
-                // (docs/spec-v1.2.md §Declaration order): its initializer
-                // is walked before the loop variable is defined, so the
+                // (docs/spec-v1.3.md §Name resolution — Declaration order):
+                // its initializer is walked before the loop variable is defined, so the
                 // initializer resolves to an enclosing binding of the
                 // same name (the C-style for desugars to block-local
                 // scope plus a while loop).

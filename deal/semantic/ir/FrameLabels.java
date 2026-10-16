@@ -2,9 +2,10 @@ package deal.semantic.ir;
 
 /**
  * The canonical stack-frame label of one lowered function (the
- * {@code DEALRuntimeError} "stack frames" surface, {@code
- * docs/spec-v1.2.md:2045-2075}): every active DEAL call is named by both
- * its original source identity and its generated function name, so a
+ * {@code DEALRuntimeError} "stack frames" surface,
+ * docs/spec-v1.3.md §Host error and debugging and §Source maps and debugging):
+ * every active DEAL call is named by both its original source identity
+ * and its generated function name, so a
  * host-visible error frame is never a bare numeric id.
  *
  * <p>One label is

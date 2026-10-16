@@ -402,7 +402,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding — the pending declaration is not visible there
-     * (docs/spec-v1.2.md §Declaration order) — so the constructed
+     * (docs/spec-v1.3.md §Name resolution — Declaration order) — so the constructed
      * literal keeps the enclosing binding's declared provider. The
      * pre-fix recorder resolved the not-yet-visible inner declaration,
      * so the identity-equal sibling's class was constructed and the
@@ -1578,7 +1578,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding (the pending declaration is not visible there,
-     * docs/spec-v1.2.md §Declaration order), so the literal keeps that
+     * docs/spec-v1.3.md §Name resolution — Declaration order), so the literal keeps that
      * binding's declared provider — the enclosing annotation names
      * {@code ir} even when the not-yet-visible inner declaration names
      * the identity-equal sibling and the import that happens to come

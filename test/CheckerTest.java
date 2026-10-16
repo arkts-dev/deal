@@ -741,7 +741,8 @@ public class CheckerTest {
     /**
      * Equal bytes-containing types and nullable-bytes-vs-null pairs are
      * checker-admitted as {@code boolean} — bytes compare by reference
-     * identity (spec-v1.2 equality semantics). The v1.2 frontend resolves
+     * identity (docs/spec-v1.3.md §Runtime type descriptor format,
+     * Equality semantics). The frontend resolves
      * the {@code bytes} type name and the {@code bytes(n)} intrinsic, so
      * the admission path is driven from real source. The former E3019
      * bytes-comparison gate is lifted; the closed BYTES_EQ/BYTES_NE
@@ -1709,7 +1710,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: the supported null narrowing is binding-based
-     * only (docs/spec-v1.2.md §Nullable semantics — "No property-path
+     * only (docs/spec-v1.3.md §Nullable semantics — "No property-path
      * narrowing"), so a nullable member-path receiver stays rejected even
      * after a {@code path !== null} test, and an assignment to a narrowed
      * binding invalidates its refinement (the later dereference is
@@ -1751,7 +1752,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: only the declaration-owning scope clears its
-     * pending let name (docs/spec-v1.2.md §Declaration order and §Scope),
+     * pending let name (docs/spec-v1.3.md §Name resolution — Declaration order and §Scope),
      * so an inner block's same-name declaration never makes an enclosing
      * block's later declaration visible to an earlier reference.
      */
@@ -1776,8 +1777,8 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a shadowing declaration's initializer is checked
      * before the outer refinement is cleared, so it reads the enclosing
-     * binding with its current narrowing (docs/spec-v1.2.md §Declaration
-     * order and §Nullable semantics).
+     * binding with its current narrowing (docs/spec-v1.3.md §Name resolution —
+     * Declaration order and §Nullable semantics).
      */
     static void testShadowingInitializerReadsEnclosingNarrowing() {
         System.out.println("-- Shadowing initializer reads the enclosing "
@@ -1797,7 +1798,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: an await inside a shadowing block invalidates the
      * enclosing async function's refinements together with the snapshot a
-     * shadowing declaration removed (docs/spec-v1.2.md §Nullable
+     * shadowing declaration removed (docs/spec-v1.3.md §Nullable
      * semantics): the block exit must not resurrect the invalidated
      * refinement. The no-await block exit still restores it, and an await
      * inside a nested function body stays scoped to that function.
@@ -1940,8 +1941,8 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: an assignment inside a shadowing declaration's
-     * initializer targets the enclosing binding (docs/spec-v1.2.md
-     * §Declaration order), so its gate is the enclosing binding's
+     * initializer targets the enclosing binding (docs/spec-v1.3.md
+     * §Name resolution — Declaration order), so its gate is the enclosing binding's
      * declared type — never the not-yet-visible inner declaration's type.
      */
     static void testShadowingInitializerAssignmentTargetsEnclosingBinding() {
@@ -1975,7 +1976,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a loop-local declaration of the same name is a
      * distinct binding, so the loop back-edge invalidates only the
-     * bindings actually assigned in the body (docs/spec-v1.2.md §Nullable
+     * bindings actually assigned in the body (docs/spec-v1.3.md §Nullable
      * semantics): the enclosing refinement survives, while an assignment
      * to the enclosing binding still invalidates it.
      */
@@ -2014,7 +2015,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: an if without else propagates the
      * invalidation an assignment or an await inside its then arm applied
-     * (docs/spec-v1.2.md §Nullable semantics: an assignment invalidates
+     * (docs/spec-v1.3.md §Nullable semantics: an assignment invalidates
      * the refinement and an await invalidates every refinement of the
      * enclosing async function), while a harmless arm leaves the incoming
      * refinement intact. Both the with-else and the without-else joins
@@ -2099,7 +2100,7 @@ public class CheckerTest {
      * ISSUE-0717 review cycle 3: a shadowing declaration's saved
      * refinement survives an if/else join inside the shadowing block but
      * is never restored when a path invalidated it with an await
-     * (docs/spec-v1.2.md §Nullable semantics).
+     * (docs/spec-v1.3.md §Nullable semantics).
      */
     static void testShadowStateSurvivesBranch() {
         System.out.println("-- the shadow snapshot survives a branch join "
@@ -2149,7 +2150,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: the for-of back-edge invalidates every
      * binding assigned in the body exactly like while and C-style for
-     * (docs/spec-v1.2.md §Nullable semantics), and a same-named
+     * (docs/spec-v1.3.md §Nullable semantics), and a same-named
      * iteration binding is a distinct binding that leaves the enclosing
      * refinement intact.
      */
@@ -2187,7 +2188,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review cycle 3: a C-style for's loop-head let is visible
-     * only after its declaration (docs/spec-v1.2.md §Declaration order;
+     * only after its declaration (docs/spec-v1.3.md §Name resolution — Declaration order;
      * the loop desugars to block-local scope plus a while loop): its
      * initializer resolves to an enclosing binding, a self reference is
      * E2001, and the loop-head shadow ends with the loop.
@@ -3368,7 +3369,7 @@ public class CheckerTest {
 
     /**
      * The bytes intrinsic sits at the bottom of the spec's name
-     * resolution order (spec-v1.2.md §Name resolution: module-level
+     * resolution order (docs/spec-v1.3.md §Name resolution: module-level
      * declarations resolve at step 3, compiler intrinsics only at
      * step 5). A user class/function/let named `bytes` is legal and
      * shadows the intrinsic; the `bytes` TYPE annotation keeps its

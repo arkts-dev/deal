@@ -95,12 +95,12 @@ public interface ModuleResolver {
     }
 
     /**
-     * Exception thrown when a module import violates the v1.2 C FFI
+     * Exception thrown when a module import violates the C FFI
      * manifest policy: the imported module is a C FFI declaration file
      * (a {@code .d.deal} file carrying {@code // @extern-c}) that no
      * externals entry declares with {@code nativeLibrary}. The checker
      * maps this rejection to E2010 at the import span
-     * (docs/spec-v1.2.md:1891 — "A C FFI entry must include
+     * (docs/spec-v1.3.md §Package manifest — "A C FFI entry must include
      * nativeLibrary").
      */
     final class CffiImportWithoutNativeLibraryException extends Exception {

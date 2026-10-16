@@ -113,9 +113,9 @@ public final class CompilationOrchestrator {
      * test-only isolated-phase constructors whose context is
      * synthesized from the harness's own declarations map (parent D10:
      * those APIs may omit {@code ProjectContext}, and their externals
-     * map cannot carry {@code nativeLibrary}). The v1.2 C FFI manifest
+     * map cannot carry {@code nativeLibrary}). The C FFI manifest
      * policy's {@code nativeLibrary} authoring rule
-     * (docs/spec-v1.2.md:1891 — "a C FFI entry must include
+     * (docs/spec-v1.3.md §Package manifest — "A C FFI entry must include
      * nativeLibrary") is enforced exactly on manifest-authored
      * contexts; the synthesized test-only entries are the harness's
      * authority channel and count as manifest-backed.
@@ -2798,7 +2798,7 @@ public final class CompilationOrchestrator {
         }
 
         /**
-         * The v1.2 C FFI manifest policy (docs/spec-v1.2.md:1891): a C
+         * The C FFI manifest policy (docs/spec-v1.3.md §Package manifest): a C
          * FFI declaration file — a {@code .d.deal} file whose effective
          * {@link FileDirectives#externC()} holds — may only be imported
          * through a {@code deal.json} externals entry that declares the
@@ -2832,12 +2832,12 @@ public final class CompilationOrchestrator {
 
         /**
          * True when the externals entry that declares the target
-         * (file-keyed classification) satisfies the v1.2 C FFI manifest
+         * (file-keyed classification) satisfies the C FFI manifest
          * policy; false when no entry declares the file, or when a
          * manifest-authored entry omits {@code nativeLibrary}.
          *
          * <p>The {@code nativeLibrary} authoring rule
-         * (docs/spec-v1.2.md:1891 — "a C FFI entry must include
+         * (docs/spec-v1.3.md §Package manifest — "A C FFI entry must include
          * nativeLibrary") applies to manifest-authored contexts: the
          * production locator path parses the entry's classified
          * {@code nativeLibrary}, and an entry that omits it is the

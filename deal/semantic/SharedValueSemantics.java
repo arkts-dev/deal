@@ -112,7 +112,8 @@ public final class SharedValueSemantics {
     /**
      * Truncated remainder: zero divisor E8005 first, then the truncated
      * {@code long} remainder, then the signed32 gate —
-     * {@code -2147483648 % -1} → {@code 0} (spec v1.2:87-98).
+     * {@code -2147483648 % -1} → {@code 0} (docs/spec-v1.3.md
+     * §Numeric overflow, NaN, and Infinity; §Runtime library, int_mod).
      */
     public static Int32Result int32Mod(int a, int b, SourceOrigin origin) {
         Objects.requireNonNull(origin, "origin must not be null");

@@ -3717,7 +3717,7 @@ public class JsBackendTest {
 
     /**
      * The class-symbol-first bytes guard (js-v12-int32-bytes D3/D4,
-     * spec-v1.2.md §Name resolution): `bytes` is not a DEAL keyword and
+     * docs/spec-v1.3.md §Name resolution): `bytes` is not a DEAL keyword and
      * module-level declarations resolve at step 3 (imports at step 4)
      * before the compiler intrinsics at step 5, so a module-level user
      * class/function named `bytes` must stay legal and shadow the

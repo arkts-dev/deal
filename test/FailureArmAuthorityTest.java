@@ -2715,7 +2715,7 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The pinned nullable-inner invariant ({@code docs/spec-v1.2.md:2283};
+     * The nullable-inner invariant (docs/spec-v1.3.md §Runtime type descriptor format;
      * {@code RuntimeDescriptor.Nullable}) holds in both descriptor
      * spellings: {@code ?null} / {@code ??inner} and the dialect
      * {@code nullable(null)} / {@code nullable(nullable(…))} fail closed at
@@ -3452,8 +3452,8 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicTableThenFunction(), "tags", jvmIntArray(1L))));
         // A table-content carrier under a key containing braces or the
-        // literal spelling of a placeholder: docs/spec-v1.2.md permits
-        // arbitrary string keys, so the walk's fieldPath carries the key
+        // literal spelling of a placeholder: docs/spec-v1.3.md
+        // §Writing table fields permits arbitrary string keys, so the walk's fieldPath carries the key
         // verbatim and the arm's parameter substitution must publish it
         // byte-for-byte on every consumer — never a producer defect, never
         // a placeholder reinterpretation.

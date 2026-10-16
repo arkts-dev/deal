@@ -239,7 +239,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             // Arrays / nullables, nested.
             "[int]", "?int", "[?int]", "?[int]", "[[int]]", "[?[?[?[bytes]]]]",
             "[bytes]", "?bytes", "[?bytes]", "?[bytes]",
-            // Spec examples (docs/spec-v1.2.md runtime descriptor format).
+            // Spec examples (docs/spec-v1.3.md §Runtime type descriptor format).
             "?[@src/app/User]", "[?@src/app/User]", "(int,string)->boolean",
             "()->null", "async(int)->string",
             // Exact sync/async functions over bytes at depth.

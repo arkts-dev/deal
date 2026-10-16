@@ -631,9 +631,9 @@ public class ClosureLoweringTest {
 
     /**
      * A closure capturing a later-declared module function: the capture
-     * resolves to the hoisted module-init ALLOC (B1; docs/spec-v1.2.md
-     * :1217-1221), the hoisted ALLOC upgrades to {@code SHARED_CELL},
-     * and the function-typed load inside the earlier closure body
+     * resolves to the hoisted module-init ALLOC (B1; docs/spec-v1.3.md
+     * §Name resolution — Declaration order), the hoisted ALLOC upgrades
+     * to {@code SHARED_CELL}, and the function-typed load inside the earlier closure body
      * publishes the pre-allocated hoist-time identity that the
      * declaration-position {@code CLOSURE_NEW} reuses (loads preserve
      * allocation identity — R-FUNCTION-BINDING holds by construction).
@@ -861,7 +861,7 @@ public class ClosureLoweringTest {
      * signature descriptor only, and a load of a nullable binding inside
      * the body carries the declared nullable descriptor (never a
      * narrowed one — {@code NullNarrowing} state is checker-local,
-     * docs/spec-v1.2.md:1137-1144).
+     * docs/spec-v1.3.md §Closures and captured variables).
      */
     static void testNarrowedFlowTypesNeverCaptured() {
         System.out.println("-- narrowed flow types: capture entries are BindingIds, declared "

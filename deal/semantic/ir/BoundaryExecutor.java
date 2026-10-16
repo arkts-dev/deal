@@ -606,7 +606,7 @@ public final class BoundaryExecutor {
         };
     }
 
-    /** The int path in the pinned normative order (spec v1.2 check_int order). */
+    /** The int path in normative check_int order (docs/spec-v1.3.md §Runtime library). */
     private static CoreResult coreInt(BoundaryValueView view) {
         return switch (view.kind()) {
             case INT -> pass(view);

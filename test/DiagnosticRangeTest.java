@@ -2109,8 +2109,8 @@ public class DiagnosticRangeTest {
                 ? null : corpusByPath.get(resolved);
             if (dependency != null) {
                 ProgramNode dependencyProgram = parse(dependency).program();
-                // The v1.2 C FFI manifest policy: a C FFI declaration file
-                // — a .d.deal file whose effective @extern-c holds — may
+                // The C FFI policy (docs/spec-v1.3.md §Package manifest):
+                // a C FFI declaration file — a .d.deal file whose effective @extern-c holds — may
                 // only be imported through a deal.json externals entry
                 // specifying nativeLibrary. The corpus frontend drive has
                 // no manifest, so such an import is an invalid project

@@ -11,7 +11,8 @@ import java.util.Objects;
  *
  * <ul>
  *   <li>{@code dealName} — the exported DEAL name exactly as declared;
- *       it is by definition the C symbol name (spec-v1.2: each exported
+ *       it is by definition the C symbol name (docs/spec-v1.3.md
+ *       §C FFI declaration files: each exported
  *       function name is its C symbol name), so {@code cSymbol} equals
  *       {@code dealName} byte-for-byte.</li>
  *   <li>{@code privateFunctionPointerType} — the generated private

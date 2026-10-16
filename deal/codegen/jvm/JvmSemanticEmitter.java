@@ -3012,7 +3012,8 @@ public final class JvmSemanticEmitter {
          * op executes, so an earlier declaration's closure captures the
          * cell by identity even when the publishing group op runs later
          * in the same module init — the declaration-order-independent
-         * forward reference of docs/spec-v1.2.md:1217-1221 and C1's body
+         * forward reference of docs/spec-v1.3.md §Name resolution
+         * (Declaration order) and C1's body
          * coverage. A nested group's cells are still created per
          * execution by its own op ({@link #emitRecursiveGroupInit}).
          */

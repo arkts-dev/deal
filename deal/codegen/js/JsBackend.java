@@ -749,7 +749,7 @@ public final class JsBackend {
         // runtime boundary. The seed is emitted only when the module
         // declares no module-level user binding named `bytes`: a
         // checker-accepted module-level class/function/let/import named
-        // `bytes` shadows the lowest-tier intrinsic (spec-v1.2.md Name
+        // `bytes` shadows the lowest-tier intrinsic (docs/spec-v1.3.md §Name
         // resolution — module-level declarations at step 3 and imports
         // at step 4 win over the compiler intrinsics at step 5), and
         // its emitted predeclare (`let bytes;` / `const bytes =
