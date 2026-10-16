@@ -7,7 +7,8 @@
 -- lone surrogates and raw control characters (U+0000-U+001F) are rejected,
 -- and stringify refuses to emit strings that are not scalar-valid UTF-8.
 --
--- Exact decimal classification, decoded-key duplicates, and stringify
+-- Exact decimal classification, decoded-key duplicates, the declared
+-- (string)->table parse exit, and stringify
 -- shape rejection (DEAL v1.3): parse classifies the numeric lexeme's
 -- exact mathematical decimal value before any binary64 rounding — an
 -- integral value inside [-2147483648, 2147483647] becomes DEAL int
@@ -25,6 +26,15 @@
 -- container re-entry keeps the closed "cyclic value cannot be encoded as
 -- JSON" arm. There is no fixed nesting-depth bound. Object key order
 -- follows Lua iteration order.
+--
+-- parse's declared (string)->table exit (ISSUE-0824) rejects the two
+-- non-table decode carriers with the shared typed-boundary tuple
+-- (E8001 "expected table", expected "table", actual "array"/"null") at
+-- the call-site triplet: a top-level decoded array reports the array
+-- carrier and a top-level language null reports null, exactly like the
+-- emitted chunk's table admission and the JS runtime's checkTable — a
+-- decoded array or null never masquerades as a table return. Nested
+-- containers and the top-level scalar results keep their representation.
 
 local __rt = require("deal.runtime")
 
@@ -331,8 +341,8 @@ json.stringify = __rt.function_("(table)->string", function(v, file, line, colum
 end)
 
 --- Decode a JSON string to a Lua table. The trailing span triplet
--- carries the call site (ISSUE-0598): the entry string gate and every
--- parse error report it.
+-- carries the call site (ISSUE-0598): the entry string gate, every
+-- parse error, and the declared (string)->table exit report it.
 json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   __rt.check_string(s, file, line, column)
   -- Simple recursive descent parser
@@ -447,6 +457,11 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     end
   end
 
+  -- The top-level container kind, recorded when the root frame opens:
+  -- the declared (string)->table exit reads it (a top-level array is the
+  -- array carrier, never a table return).
+  local top_kind = nil
+
   -- The stack-safe parse: an explicit frame stack replaces the recursive
   -- descent, so a finite nested document has no Lua call-stack bound.
   -- Every transition and defect message is the recursive parser's.
@@ -475,6 +490,12 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
         if parsed ~= __OPENED then
           completed = parsed
           have_completed = true
+        else
+          -- The root frame: this branch is reached only with an empty
+          -- stack, so the frame just opened is the document root and its
+          -- kind is recorded exactly once (nested frames keep the stack
+          -- non-empty).
+          top_kind = frames[#frames].kind
         end
       else
         local frame = frames[#frames]
@@ -700,6 +721,21 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   skip_ws()
   if pos <= len then
     parse_error("unexpected trailing characters after JSON value")
+  end
+  -- The declared (string)->table exit (ISSUE-0824): the scanner's own
+  -- arms fired above, so a grammar-valid document whose root is the
+  -- language-null sentinel or an array reports the shared table-admission
+  -- tuple with that carrier's own actual token — the emitted chunk's
+  -- table cell and the JS runtime's checkTable publish the identical
+  -- fields. Object roots and the top-level scalar results pass
+  -- unchanged.
+  if result == __rt.__NULL then
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
+      "expected table", file, line, column, "table", "null"))
+  end
+  if top_kind == "array" then
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
+      "expected table", file, line, column, "table", "array"))
   end
   return result
 end)

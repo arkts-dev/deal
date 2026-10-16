@@ -535,12 +535,20 @@ test("json.parse of object", function()
   assert(result["b"] == "hi")
 end)
 
-test("json.parse of array", function()
-  local result = json.parse.f('[1,2,3]')
-  assert(type(result) == "table")
-  assert(result[1] == 1)
-  assert(result[2] == 2)
-  assert(result[3] == 3)
+test("json.parse rejects a top-level array with E8001 expected table (actual array)", function()
+  -- The declared (string)->table exit (ISSUE-0824): a top-level decoded
+  -- array is the array carrier, so it is rejected with the shared
+  -- table-admission tuple — exactly the emitted chunk's table cell and
+  -- the JS runtime's checkTable tuple (E8001 expected table, expected
+  -- table, actual array), never returned as a table.
+  local err = assert_error_code(function()
+    json.parse.f('[1,2,3]', "caller.deal", 9, 18)
+  end, "E8001")
+  assert(err.message == "expected table", "message, got: " .. tostring(err.message))
+  assert(err.expected == "table", "expected token, got: " .. tostring(err.expected))
+  assert(err.actual == "array", "actual token, got: " .. tostring(err.actual))
+  assert(err.file == "caller.deal" and err.line == 9 and err.column == 18,
+    "the tuple carries the call-site triplet")
 end)
 
 test("json.parse of null returns __NULL", function()
@@ -551,8 +559,8 @@ end)
 
 test("json.parse of nested null returns __NULL", function()
   local __rt = require("deal.runtime")
-  local result = json.parse.f('[null]')
-  assert(result[1] == __rt.__NULL, "JSON null in array should parse to __NULL")
+  local result = json.parse.f('{"a":[null]}')
+  assert(result.a[1] == __rt.__NULL, "JSON null in array should parse to __NULL")
 end)
 
 test("json.parse of empty object", function()
@@ -560,9 +568,18 @@ test("json.parse of empty object", function()
   assert(type(result) == "table")
 end)
 
-test("json.parse of empty array", function()
-  local result = json.parse.f('[]')
-  assert(type(result) == "table")
+test("json.parse rejects an empty top-level array with the array token", function()
+  local err = assert_error_code(function() json.parse.f('[]') end, "E8001")
+  assert(err.message == "expected table", "message, got: " .. tostring(err.message))
+  assert(err.expected == "table", "expected token, got: " .. tostring(err.expected))
+  assert(err.actual == "array", "actual token, got: " .. tostring(err.actual))
+end)
+
+test("json.parse of top-level null is rejected as language null (E8001)", function()
+  local err = assert_error_code(function() json.parse.f('null') end, "E8001")
+  assert(err.message == "expected table", "message, got: " .. tostring(err.message))
+  assert(err.expected == "table", "expected token, got: " .. tostring(err.expected))
+  assert(err.actual == "null", "actual token, got: " .. tostring(err.actual))
 end)
 
 test("json.parse rejects invalid JSON: bare word", function()

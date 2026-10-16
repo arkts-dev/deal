@@ -492,9 +492,11 @@ function $scanSurrogates($s, $file, $line, $column) {
 // every depth — crosses $scanSurrogates first, so a lone-surrogate
 // \uXXXX escape reports the parse-side needle. Maps are constructed via
 // $rt.makeTable({}) plus .set calls — the only Map construction path —
-// so the products pass $rt.checkTable and the mark members accept them
-// by construction. Fresh Maps, independent of inputs; a parsed JSON null
-// never aliases a shared sentinel.
+// so the products are the runtime's own Map shapes and the mark members
+// accept them by construction; the boundary members read the marks — a
+// decoded array is the array carrier and a decoded null is language
+// null, so neither passes $rt.checkTable. Fresh Maps, independent of
+// inputs; a parsed JSON null never aliases a shared sentinel.
 function $fromJsonConvert($value, $file, $line, $column) {
   const $stack = [];
   let $completed = null;
