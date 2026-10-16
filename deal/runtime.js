@@ -89,10 +89,12 @@ const $MISSING = {};
 // Unspoofable WeakSets: the exact JSON members
 // (jsonParseText/jsonParseValue/jsonStringifyText — the std/json module
 // and the @jsonable walkers' table branches) consume them, and the
-// language-null / table boundary members (isNilEquivalent, checkNull,
-// checkTable) read them so a decoded JSON null is language null and a
-// decoded JSON array is the array carrier — never a plain table — at
-// every declared boundary. Never exported; no $rt member exposes them.
+// language-null / table / array boundary members (isNilEquivalent,
+// checkNull, checkTable, checkArray and the diagnostic-kind projection)
+// read them so a decoded JSON null is language null and a decoded JSON
+// array is the array carrier — never a plain table — at every declared
+// boundary and through every emitted array read/length/write/delete.
+// Never exported; no $rt member exposes them.
 const $jsonArrayTables = new WeakSet();
 const $jsonNullTables = new WeakSet();
 
@@ -100,21 +102,38 @@ const $jsonNullTables = new WeakSet();
 // $kindOf: the diagnostic "actual" string for every check — the JS mirror
 // of Lua's type() augmented with the runtime's own value forms. undefined
 // (the T1 captured nil-equivalent, compared against $undefined — never the
-// bare spelling) maps to "nil"; null to "null"; wrappers and class
-// instances are identified by their $kind tag before the Map/Array
-// branches; Maps (the T1 $Map capture) are tables; Arrays (the T1 $Array
-// capture) are arrays; Uint8Arrays (the v1.3 bytes carrier,
-// js-v12-int32-bytes D3) are bytes; everything else reports the JS
-// typeof name.
+// bare spelling) maps to "nil"; null to "null"; the two JSON decode
+// carriers project their reference value-model kind before the generic Map
+// branch — a decoded JSON array is the array carrier ("array", never the
+// plain-Map "table" label) and a decoded JSON null is language null
+// ("null") — agreeing with the shared boundary executor and the
+// LuaJIT/JVM realizations; wrappers and class instances are identified by
+// their $kind tag before the Map/Array branches; Maps (the T1 $Map
+// capture) are tables; Arrays (the T1 $Array capture) are arrays;
+// Uint8Arrays (the v1.3 bytes carrier, js-v12-int32-bytes D3) are bytes;
+// everything else reports the JS typeof name.
 function $kindOf($v) {
   if ($v === $undefined) return "nil";
   if ($v === null) return "null";
+  if ($jsonNullTables.has($v)) return "null";
+  if ($jsonArrayTables.has($v)) return "array";
   if ($v.$kind === "function") return "function";
   if ($v.$kind === "class") return "class";
   if ($v instanceof $Map) return "table";
   if ($Array.isArray($v)) return "array";
   if ($v instanceof $Uint8Array) return "bytes";
   return typeof $v;
+}
+
+// $elemKindOf: the array-element arm's reference-kind projection (the
+// decoded-array mark, B3) — an element carrying the std/json decode mark
+// renders the reference value model's kind "table", never the "array"
+// token $kindOf projects for the carrier itself; every other element keeps
+// $kindOf. The LuaJIT prelude's __elemRefKind and the JVM's elementActual
+// apply the same mark projection.
+function $elemKindOf($v) {
+  if (!$Array.isArray($v) && $jsonArrayTables.has($v)) return "table";
+  return $kindOf($v);
 }
 
 // $luaKindOf: the Lua type() projection of a value — the "actual" label
@@ -2374,10 +2393,11 @@ const $rt = {
   // Array. The real-Array walk is 0-based, mirroring the reference's
   // 1..#v walk (deal/runtime.lua:256-285) with the 1-based message
   // index; any element failure is wrapped in E8003 with the per-element
-  // descriptor as expected and the element kind as actual, carrying the
-  // reference's exact message form ("array element N type mismatch",
-  // deal/runtime.lua:788 — no inner-message text is embedded). Success
-  // returns the value unchanged.
+  // descriptor as expected and the element kind as actual ($elemKindOf:
+  // a nested decoded array renders the reference kind "table" at this
+  // projection), carrying the reference's exact message form ("array
+  // element N type mismatch", deal/runtime.lua:788 — no inner-message
+  // text is embedded). Success returns the value unchanged.
   checkArray: function $checkArray(descriptor, v, file, line, column) {
     const $isJsonArrayMap = !$Array.isArray(v) && $rt.isJsonArrayTable(v);
     if (!$Array.isArray(v) && !$isJsonArrayMap) {
@@ -2397,7 +2417,7 @@ const $rt = {
         try {
           $rt.checkType($element, $value, file, line, column);
         } catch ($e) {
-          $rt.fail("E8003", "array element " + $i + " type mismatch", file, line, column, $element, $kindOf($value));
+          $rt.fail("E8003", "array element " + $i + " type mismatch", file, line, column, $element, $elemKindOf($value));
         }
       }
       return v;
@@ -2406,7 +2426,7 @@ const $rt = {
       try {
         $rt.checkType($element, v[$i], file, line, column);
       } catch ($e) {
-        $rt.fail("E8003", "array element " + ($i + 1) + " type mismatch", file, line, column, $element, $kindOf(v[$i]));
+        $rt.fail("E8003", "array element " + ($i + 1) + " type mismatch", file, line, column, $element, $elemKindOf(v[$i]));
       }
     }
     return v;
@@ -2432,6 +2452,61 @@ const $rt = {
       return v.get(String(i + 1));
     }
     return v[i];
+  },
+
+  // arrayLength: the length read of an array value checkArray admitted —
+  // the carrier split is checkArray's own. A native Array reads its
+  // native length; a marked Map — the std/json decode of a JSON array,
+  // whose elements are the string keys "1".."n" in element order —
+  // reads the highest array-form key, exactly the 1..max range the
+  // marked-Map check walk validates, so the count an empty decoded array
+  // reports is 0. The JVM carries the same count on Array.length and the
+  // LuaJIT chunk on the decoded table's __n field. Pure read: no
+  // mutation, no allocation, no materialized copy.
+  arrayLength: function $arrayLength(v) {
+    if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
+      let $max = 0;
+      for (const $key of v.keys()) {
+        const $index = $arrayFormIndex($key);
+        if ($index !== null && $index > $max) {
+          $max = $index;
+        }
+      }
+      return $max;
+    }
+    return v.length;
+  },
+
+  // arraySet: the commit step of an emitted array-element write whose
+  // E8002 bounds gate and element check already ran — a native Array
+  // assigns the slot and a marked Map (the std/json decode of a JSON
+  // array) sets the array-form key "i+1", so a write through one
+  // reference is observed by every alias and by the shared JSON encode
+  // walk. Returns the written value (the assignment's expression value).
+  // The carrier identity is preserved; no copy, no extra mutation.
+  arraySet: function $arraySet(v, i, value) {
+    if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
+      v.set(String(i + 1), value);
+      return value;
+    }
+    v[i] = value;
+    return value;
+  },
+
+  // arrayDelete: the committed step of an emitted array-element delete
+  // whose E8002 bounds gate already ran and whose append-at-length guard
+  // already suppressed the write at i === length. A native Array stores
+  // the T1 nil-equivalent in the slot and a marked Map sets its
+  // array-form key to the same value, the nil-write of the reference
+  // semantics: reads at the slot yield the nil-equivalent and the length
+  // is unchanged. No mutation of any other slot; the carrier identity is
+  // preserved.
+  arrayDelete: function $arrayDelete(v, i) {
+    if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
+      v.set(String(i + 1), $undefined);
+      return;
+    }
+    v[i] = $undefined;
   },
 
   // checkFunctionSig: the named surface member the emitter calls where the

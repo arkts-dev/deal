@@ -168,6 +168,7 @@ public class JsBackendTest {
             testSpanParameterCollisionExecution();
             testStdJsonRoundTrips();
             testJsonDecodedArrayElementKindNode();
+            testJsonDecodedArrayReadLengthNode();
             testJsonStoredFunctionE8001();
             testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
@@ -2512,19 +2513,22 @@ public class JsBackendTest {
         check(js.contains("const $idx = $rt.checkInt(1, "
             + "\"jstest-delemit.deal\", 3, 10);"),
             "the delete index crosses $rt.checkInt");
-        check(js.contains("if ($idx < 0 || $idx > $arr.length) { "
+        check(js.contains("if ($idx < 0 || $idx > $rt.arrayLength($arr)) { "
             + "$rt.fail(\"E8002\", \"array index out of bounds\", "
             + "\"jstest-delemit.deal\", 3, 10); }"),
             "the E8002 bounds gate precedes the write");
-        check(js.contains("if ($idx !== $arr.length) { $arr[$idx] = "
-            + "$rt.undefined; }"),
-            "the nil-out write is guarded by $idx !== $arr.length "
+        check(js.contains("if ($idx !== $rt.arrayLength($arr)) { "
+            + "$rt.arrayDelete($arr, $idx); }"),
+            "the nil-out commit is guarded by $idx !== $rt.arrayLength($arr) "
                 + "(no write emitted at i === length)");
-        check(!js.replace("if ($idx !== $arr.length) { $arr[$idx] = "
-            + "$rt.undefined; }", "").contains("$arr[$idx] = "),
+        check(!js.replace("if ($idx !== $rt.arrayLength($arr)) { "
+            + "$rt.arrayDelete($arr, $idx); }", "").contains("$rt.arrayDelete("),
             "the only element write is the guarded nil-out");
-        check(js.contains("$rt.undefined"),
-            "the nil-equivalent write spells the runtime member");
+        check(js.contains("$rt.arrayDelete($arr, $idx);"),
+            "the nil-equivalent commit routes through the carrier-agnostic "
+                + "runtime member");
+        check(js.contains("$rt.arrayLength(xs)"),
+            "the array .length read routes through $rt.arrayLength");
         check(!js.replace("$rt.undefined", "").contains("undefined"),
             "no bare undefined spelling anywhere in the artifact");
     }
@@ -2558,11 +2562,12 @@ public class JsBackendTest {
         int idxPos = js.indexOf("const $idx = $rt.checkInt(");
         check(arrPos >= 0 && idxPos > arrPos,
             "the read binds the receiver before the checked index");
-        check(js.contains("if ($idx < 0 || $idx >= $arr.length) { "
+        check(js.contains("if ($idx < 0 || $idx >= $rt.arrayLength($arr)) { "
                 + "$rt.fail(\"E8002\", \"array index out of bounds\", "),
             "the read gates both bounds with E8002 'array index out of bounds'");
-        check(js.contains("return $arr[$idx]; })()"),
-            "the read returns the raw element only after the bounds gate");
+        check(js.contains("return $rt.arrayAt($arr, $idx); })()"),
+            "the read returns the carrier-agnostic position only after the "
+                + "bounds gate");
     }
 
     private static void testHostGlobalHygiene() {
@@ -2581,8 +2586,8 @@ public class JsBackendTest {
             """, "hygiene");
         check(plain != null && !plain.hasErrors(), "hygiene codegen clean");
         if (plain != null && !plain.hasErrors()) {
-            check(plain.source().contains("$arr[$idx] = $rt.undefined;"),
-                "the delete write spells $rt.undefined");
+            check(plain.source().contains("$rt.arrayDelete($arr, $idx);"),
+                "the delete commit routes through $rt.arrayDelete");
             check(plain.source().contains("const $el = $rt.arrayAt($iter, $i);"),
                 "the for-of element read routes through $rt.arrayAt");
             check(plain.source().contains("if ($el === $rt.undefined) { break; }"),
@@ -2611,8 +2616,8 @@ public class JsBackendTest {
             String js = shadow.source();
             check(js.contains("let undefined = $rt.checkInt(7, "),
                 "the user binding named undefined emits as declared");
-            check(js.contains("$arr[$idx] = $rt.undefined;"),
-                "the delete write spells $rt.undefined despite the binding");
+            check(js.contains("$rt.arrayDelete($arr, $idx);"),
+                "the delete commit routes through $rt.arrayDelete despite the binding");
             check(js.contains("const $el = $rt.arrayAt($iter, $i);"),
                 "the for-of element read routes through $rt.arrayAt despite the binding");
             check(js.contains("if ($el === $rt.undefined) { break; }"),
@@ -5665,6 +5670,73 @@ public class JsBackendTest {
             "the emitted artifact reports the failing decoded-array element"
                 + " as the reference `table` kind (the fixture's pinned"
                 + " tuple): " + result.output());
+    }
+
+    /**
+     * The decoded-array carrier end to end (ISSUE-0827): a std/json
+     * decoded JSON array crossing an array boundary behaves as its
+     * declared DEAL array on the production JS lane — element reads, the
+     * length read (empty and non-empty), an in-place element write
+     * observed through every alias and through the shared JSON encode
+     * walk, a delete that yields the nil-equivalent without changing the
+     * length, and the E8002 bounds gate for the beyond-length position —
+     * the oracle/LuaJIT/JVM behavior the shared array boundary admits.
+     * The carrier is the runtime's array-marked Map; the emitted reads,
+     * length reads, writes, deletes and bounds gates route through the
+     * carrier-agnostic runtime members
+     * ($rt.arrayAt/arrayLength/arraySet/arrayDelete).
+     */
+    private static void testJsonDecodedArrayReadLengthNode() throws Exception {
+        System.out.println("-- Node: decoded-array element read and length"
+            + " through the production artifact --");
+        if (!nodeAvailable) { skipNode("decoded-array read and length"); return; }
+
+        NodeResult run = runDealNode("""
+            import * as json from "std/json";
+
+            export function test(): int {
+              let t: table = json.parse("{\\"items\\":[[1,2],[3,4]]}");
+              let xs: int[][] = t.items;
+              let first: int[] = xs[0];
+              let alias: int[] = xs[0];
+              if (first !== alias) { return 0; }
+              if (first.length !== 2) { return 0; }
+              if (xs.length !== 2) { return 0; }
+              if (xs[1][0] !== 3) { return 0; }
+              first[1] = 9;
+              if (alias[1] !== 9) { return 0; }
+              if (xs[0][1] !== 9) { return 0; }
+              if (json.stringify(t) !== "{\\"items\\":[[1,9],[3,4]]}") { return 0; }
+              let emptyT: table = json.parse("{\\"items\\":[]}");
+              let empty: int[] = emptyT.items;
+              if (empty.length !== 0) { return 0; }
+              delete xs[0];
+              if (xs.length !== 2) { return 0; }
+              let deleted: boolean = false;
+              try {
+                let gone: int[] = xs[0];
+              } catch (e) {
+                if (e.code === "E8001" && e.message === "expected array") { deleted = true; }
+              }
+              if (!deleted) { return 0; }
+              let caught: boolean = false;
+              try {
+                let oob: int[] = xs[2];
+              } catch (e) {
+                if (e.code === "E8002"
+                    && e.message === "array index out of bounds") { caught = true; }
+              }
+              if (!caught) { return 0; }
+              return 1;
+            }
+            """, "json-decoded-array-read");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "the production artifact reads decoded-array elements and length"
+                + " (empty and non-empty), writes through one alias and"
+                + " observes it through another and through the JSON encode"
+                + " walk, deletes to the nil-equivalent without changing the"
+                + " length, and gates the beyond-length read with E8002: "
+                + run.output() + " (exit " + run.exitCode() + ")");
     }
 
     private static void testJsonStoredFunctionE8001() throws Exception {

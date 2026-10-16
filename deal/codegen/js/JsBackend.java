@@ -2617,8 +2617,10 @@ public final class JsBackend {
      * bounds", an index equal to the length performs no write (a JS
      * write at index {@code length} would append and grow the array —
      * the reference's nil-write to a non-existent key is a no-op), and
-     * any other index writes the runtime-captured nil-equivalent
-     * {@code $rt.undefined}. Class field delete writes
+     * any other index commits the nil-equivalent through the
+     * carrier-agnostic {@code $rt.arrayDelete} (a native Array's slot, a
+     * std/json decoded-array marked Map's array-form key; both keep the
+     * length). Class field delete writes
      * {@code $rt.MISSING} via the own-property-safe {@code $rt.setProp};
      * table delete is the Map {@code .delete} call.
      */
@@ -2632,10 +2634,10 @@ public final class JsBackend {
                 line("const $idx = $rt.checkInt("
                     + emitExpression(idx.index()) + ", "
                     + spanArgs(idx.span()) + ");");
-                line("if ($idx < 0 || $idx > $arr.length) { "
+                line("if ($idx < 0 || $idx > $rt.arrayLength($arr)) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                     + spanArgs(idx.span()) + "); }");
-                line("if ($idx !== $arr.length) { $arr[$idx] = $rt.undefined; }");
+                line("if ($idx !== $rt.arrayLength($arr)) { $rt.arrayDelete($arr, $idx); }");
                 indent--;
                 line("}");
                 return;
@@ -3448,7 +3450,10 @@ public final class JsBackend {
     }
 
     /**
-     * Member access. Array {@code .length} reads the native length;
+     * Member access. Array {@code .length} reads through
+     * {@code $rt.arrayLength} — the carrier-agnostic length of every
+     * carrier {@code checkArray} admits (a native Array's native length,
+     * a std/json decoded-array marked Map's highest array-form key);
      * class field reads are plain own-property reads (every declared
      * field is materialized as an own property at construction), with
      * optional-field reads through {@code $rt.optRead} (MISSING → null);
@@ -3464,7 +3469,7 @@ public final class JsBackend {
         Type objType = typeOf(mae.object());
         String field = mae.field();
         if (field.equals("length") && objType instanceof Type.Array) {
-            return obj + ".length";
+            return "$rt.arrayLength(" + obj + ")";
         }
         // v1.2 bytes length (js-v12-int32-bytes D3/D4): b.length lowers
         // to $rt.bytesLength(b) of static type int — compiler-resolved,
@@ -3540,10 +3545,13 @@ public final class JsBackend {
      * Index expression. Array reads evaluate the receiver, then the index
      * (checked) exactly once, then enforce the strict v1.3 bounds gate
      * E8002 "array index out of bounds" for {@code $idx < 0} or
-     * {@code $idx >= $arr.length} at the read expression, and only then
-     * read the raw element — an in-range deleted/missing slot yields the
-     * nil-equivalent {@code undefined}, which the contextual target check
-     * decides (nullable → DEAL null via {@code $rt.checkNullable};
+     * {@code $idx >= $rt.arrayLength($arr)} at the read expression, and
+     * only then read the position through {@code $rt.arrayAt} — the
+     * carrier-agnostic read of every carrier {@code checkArray} admits
+     * (a native Array's native position, a std/json decoded-array marked
+     * Map's array-form key), so an in-range deleted/missing slot yields
+     * the nil-equivalent {@code undefined}, which the contextual target
+     * check decides (nullable → DEAL null via {@code $rt.checkNullable};
      * non-nullable → E8001) (js-backend-architecture D3/D6). Table
      * reads are Map {@code .get} calls. The arrow IIFE binds the receiver
      * first so the emitted order is DEAL's strict left-to-right evaluation
@@ -3568,15 +3576,15 @@ public final class JsBackend {
             if (!hasAwait) {
                 return "(() => { const $arr = " + arr
                     + "; const $idx = $rt.checkInt(" + index + ", "
-                    + spanArgs(span) + "); if ($idx < 0 || $idx >= $arr.length) { "
+                    + spanArgs(span) + "); if ($idx < 0 || $idx >= $rt.arrayLength($arr)) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
-                    + spanArgs(span) + "); } return $arr[$idx]; })()";
+                    + spanArgs(span) + "); } return $rt.arrayAt($arr, $idx); })()";
             }
             return "(await (async () => { const $arr = " + arr
                 + "; const $idx = $rt.checkInt(" + index + ", "
-                + spanArgs(span) + "); if ($idx < 0 || $idx >= $arr.length) { "
+                + spanArgs(span) + "); if ($idx < 0 || $idx >= $rt.arrayLength($arr)) { "
                 + "$rt.fail(\"E8002\", \"array index out of bounds\", "
-                + spanArgs(span) + "); } return $arr[$idx]; })())";
+                + spanArgs(span) + "); } return $rt.arrayAt($arr, $idx); })())";
         }
         if (containerType instanceof Type.Table) {
             return arr + ".get(" + index + ")";
@@ -3802,18 +3810,22 @@ public final class JsBackend {
      * Assignment expression. Array element writes emit the
      * {@code $rt.checkInt} index check, the E8002 bounds fail for
      * negative or beyond-length indexes, the element-value check against
-     * the element descriptor, and the write (an index equal to the
-     * length appends natively); class field writes route through the
-     * own-property-safe {@code $rt.setProp}; table writes are Map
-     * {@code .set} calls (unchecked, the checker's F5 write-context
-     * rule); plain targets assign natively. The IIFE preserves the
-     * reference's evaluation order (container, checked index, bounds,
-     * checked value, write) in expression position. An await-bearing
-     * container, index, or value cannot land inside a non-async
-     * closure (node rejects {@code await} in non-async function bodies
-     * at load), so the await-bearing form keeps the operands inline
-     * inside an async arrow IIFE that the enclosing level awaits — the
-     * body re-runs the retained LuaJIT AST emitter's pinned
+     * the element descriptor, and the commit through
+     * {@code $rt.arraySet} — the carrier-agnostic write of every carrier
+     * {@code checkArray} admits (an index equal to the
+     * {@code $rt.arrayLength} appends: natively on a native Array, as the
+     * next array-form key on a std/json decoded-array marked Map, so
+     * aliases and the JSON encode walk observe it); class field writes
+     * route through the own-property-safe {@code $rt.setProp}; table
+     * writes are Map {@code .set} calls (unchecked, the checker's F5
+     * write-context rule); plain targets assign natively. The IIFE
+     * preserves the reference's evaluation order (container, checked
+     * index, bounds, checked value, write) in expression position. An
+     * await-bearing container, index, or value cannot land inside a
+     * non-async closure (node rejects {@code await} in non-async function
+     * bodies at load), so the await-bearing form keeps the operands
+     * inline inside an async arrow IIFE that the enclosing level awaits —
+     * the body re-runs the retained LuaJIT AST emitter's pinned
      * {@code emitAssignment} sequence: evaluate the
      * container, evaluate and {@code checkInt} the index, raise E8002
      * on the bounds gate, and only then evaluate and check the value —
@@ -3849,23 +3861,23 @@ public final class JsBackend {
                         + "; const $idx = $rt.checkInt(" + index + ", "
                         + spanArgs(idx.span()) + "); "
                         + "const $rhs = " + value + "; "
-                        + "if ($idx < 0 || $idx > $arr.length) { "
+                        + "if ($idx < 0 || $idx > $rt.arrayLength($arr)) { "
                         + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                         + spanArgs(idx.span()) + "); } "
-                        + "return $arr[$idx] = "
+                        + "return $rt.arraySet($arr, $idx, "
                         + emitCheckExpr("$rhs", arrT.element(), span)
-                        + "; })()";
+                        + "); })()";
                 }
                 return "(await (async () => { const $arr = " + arr
                     + "; const $idx = $rt.checkInt(" + index + ", "
                     + spanArgs(idx.span()) + "); "
                     + "const $rhs = " + value + "; "
-                    + "if ($idx < 0 || $idx > $arr.length) { "
+                    + "if ($idx < 0 || $idx > $rt.arrayLength($arr)) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                     + spanArgs(idx.span()) + "); } "
-                    + "return $arr[$idx] = "
+                    + "return $rt.arraySet($arr, $idx, "
                     + emitCheckExpr("$rhs", arrT.element(), span)
-                    + "; })())";
+                    + "); })())";
             }
             if (containerType instanceof Type.Bytes) {
                 // v1.2 bytes write (js-v12-int32-bytes D4): b[i] = v
