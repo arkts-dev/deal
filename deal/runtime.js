@@ -1780,7 +1780,7 @@ function $jsonToDocument($identity, $v, $fields, $path, $fieldPath, $file, $line
     }
     $parts.push($jsonEscapeText($name) + ":"
       + $jsonToValue($entry, $value, $path, $fieldPathFor($fieldPath, $name),
-        $file, $line, $column));
+        $file, $line, $column, $undefined));
   }
   return "{" + $parts.join(",") + "}";
 }
@@ -1795,8 +1795,12 @@ function $fieldPathFor($base, $name) {
 // {fieldPath} is not JSON serializable: {actual}") through the fail
 // spine with the forwarded location, except the int32 range gate
 // (E8004). Table fields walk the shared finite-acyclic JSON text
-// encoder with the typed-boundary projection.
-function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) {
+// encoder with the typed-boundary projection. $variant is the recorded
+// number variant of a decoded-array slot ($true for the number
+// classification, $false for the int classification, $undefined
+// outside a decoded carrier); the "int" and "number" rows consult it.
+function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
+    $variant) {
   const $walkFail = function () {
     const $token = $walkToken($value);
     $rt.fail("E8001", "value at " + $fieldPath + " is not JSON serializable: "
@@ -1834,12 +1838,35 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) 
           || $value % 1 !== 0) {
         $walkFail();
       }
+      // A decoded slot that carries the number variant is a Value.Number
+      // in the shared model, never a Value.Int, so an int field holding
+      // one fails with the number token even when the stored double is
+      // integral: the exact JSON classification, not the rounded double,
+      // decides (a fractional token like 2147483647.00000001 never
+      // re-renders as an int). The int-classified slot and every
+      // native/scalar position keep the integer row.
+      if ($variant === true) {
+        $rt.fail("E8001", "value at " + $fieldPath
+          + " is not JSON serializable: number", $file, $line, $column,
+          $undefined, "number");
+      }
       // The signed32 range gate keeps its own E8004 projection.
       return String($rt.checkInt($value, $file, $line, $column));
     case "number":
       if (typeof $value !== "number" || $value !== $value
           || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308) {
         $walkFail();
+      }
+      // A decoded-array slot keeps the decoded graph's own
+      // classification: the number-variant slot (a fractional token, or
+      // an integral token written in fraction/exponent form) spells the
+      // canonical decimal text, while the int-classified slot keeps the
+      // integer spelling — exactly the $encodeJsonText rule and exactly
+      // the shared model's Value.Number/Value.Int rows. A native Array
+      // or a declared scalar position records no variant and keeps the
+      // declared number spelling.
+      if ($variant === false) {
+        return String($value);
       }
       return $numText($value);
     case "table":
@@ -1891,6 +1918,7 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) 
       $path.push($value);
       try {
         const $parts = [];
+        const $isDecoded = $rt.isJsonArrayTable($value);
         const $length = $rt.arrayLength($value);
         for (let $i = 0; $i < $length; $i++) {
           const $element = $rt.arrayAt($value, $i);
@@ -1899,8 +1927,16 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column) 
             $parts.push("null");
             continue;
           }
+          // A decoded carrier records its per-slot number variant under
+          // the same 1-based key $rt.arrayAt reads (only the number
+          // variant is marked), so the element row reaches the same
+          // spelling the shared model's Value.Int/Value.Number carry; a
+          // native Array records no variant.
+          const $elementVariant = $isDecoded
+            ? $isNumberVariant($value, String($i + 1))
+            : $undefined;
           $parts.push($jsonToValue($entry.element, $element, $path, $elementPath,
-            $file, $line, $column));
+            $file, $line, $column, $elementVariant));
         }
         return "[" + $parts.join(",") + "]";
       } finally {

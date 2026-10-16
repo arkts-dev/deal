@@ -5767,36 +5767,74 @@ public class JsBackendTest {
               nums: int[] = [];
               tags: string[][] = [];
               maybe: (int|null)[] = [];
+              ns: number[] = [];
+              nmaybe: (number|null)[] = [];
+              nnested: number[][] = [];
             }
 
             export function test(): int {
               let t: table = json.parse("{\\"values\\":[1,2]}");
               let b: Box = {};
               b.nums = t.values;
-              if (Box$toJson(b) !== "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[]}") { return 0; }
+              if (Box$toJson(b) !== "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
               let n: table = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
               let c: Box = {};
               c.tags = n.values;
-              if (Box$toJson(c) !== "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[]}") { return 0; }
+              if (Box$toJson(c) !== "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
               let alias: int[] = b.nums;
               alias[0] = 7;
-              if (Box$toJson(b) !== "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[]}") { return 0; }
+              if (Box$toJson(b) !== "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
               let empty: table = json.parse("{\\"values\\":[]}");
               let e: Box = {};
               e.nums = empty.values;
-              if (Box$toJson(e) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[]}") { return 0; }
+              if (Box$toJson(e) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
               let mixed: table = json.parse("{\\"values\\":[1,null]}");
               let m: Box = {};
               m.maybe = mixed.values;
-              if (Box$toJson(m) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null]}") { return 0; }
+              if (Box$toJson(m) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              // A decoded array's number slots keep the graph's own
+              // classification: 1, 1.0 and -0.0 are int-classified and
+              // spell as integers, 1.5 keeps the number spelling.
+              let numv: table = json.parse("{\\"values\\":[1,1.0,10]}");
+              let nb: Box = {};
+              nb.ns = numv.values;
+              if (Box$toJson(nb) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              let nfrac: table = json.parse("{\\"values\\":[1.5,-0.0]}");
+              let fb: Box = {};
+              fb.ns = nfrac.values;
+              if (Box$toJson(fb) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              let nnull: table = json.parse("{\\"values\\":[1,null,2]}");
+              let nm: Box = {};
+              nm.nmaybe = nnull.values;
+              if (Box$toJson(nm) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}") { return 0; }
+              let nnest: table = json.parse("{\\"values\\":[[1],[2,3]]}");
+              let nn: Box = {};
+              nn.nnested = nnest.values;
+              if (Box$toJson(nn) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}") { return 0; }
+              // A decoded slot carrying the number variant is a number in
+              // the shared classification even when its double is
+              // integral, so the int row fails exactly like the other
+              // lanes instead of re-rendering it as an int.
+              let nv: table = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let vb: Box = {};
+              vb.nums = nv.values;
+              let intnum: string = "";
+              try { intnum = Box$toJson(vb); }
+              catch (e) { intnum = e.code + "|" + e.message; }
+              if (intnum !== "E8001|value at nums[0] is not JSON serializable: number") { return 0; }
               return 1;
             }
             """, "jsonable-decoded-array-field");
         check(run.exitCode() == 0 && run.output().equals("1"),
             "the production artifact serializes a declared array field holding"
-                + " a decoded JSON array (flat, nested, empty and a nullable"
-                + " element holding a decoded JSON null) as the DEAL array text,"
-                + " matching the Oracle/LuaJIT/JVM walk, and observes an alias"
+                + " a decoded JSON array (flat, nested, empty, a nullable"
+                + " element holding a decoded JSON null, and number-classified"
+                + " elements: 1/1.0/10 and -0.0 keep the integer spelling while"
+                + " 1.5 spells the canonical decimal text, and a number-variant"
+                + " element at an int field fails with the shared number token,"
+                + " matching the shared classification the Oracle/LuaJIT/JVM"
+                + " walk renders) as the"
+                + " DEAL array text, and observes an alias"
                 + " write through the walk: "
                 + run.output() + " (exit " + run.exitCode() + ")");
     }
