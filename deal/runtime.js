@@ -8,7 +8,9 @@
 // production async-export invoker (js-v12-async-export-invocation D1-D4),
 // and the implementation-module registry the JavaScript semantic-IR renderer
 // links through (initModule/moduleSurface/moduleState/publishModule/
-// readModule/callExport/throwValue): output-runtime-scoped private records,
+// readModule/callExport/throwValue) and the carrier-neutral table index
+// members of the emitted TABLE_* arms (tableGet/tableSet/tableDelete):
+// output-runtime-scoped private records,
 // the recorded THROW transport, and representation adapters only — no literal
 // semantic authority. It loads standalone under node v24 from
 // "./deal/runtime" and from any
@@ -1950,8 +1952,43 @@ const $rt = {
     });
     return target;
   },
+  // tableGet/tableSet/tableDelete: the carrier-neutral table index members
+  // of the emitted TABLE_* index arms. A declared table value is the
+  // insertion-ordered Map $rt.makeTable built; a module namespace value is
+  // the module's published CommonJS surface — a plain object that is also
+  // the object the PUBLISH/READ rows write and read, so a dynamic write and
+  // a declared export name observe one another exactly like the shared
+  // namespace value. The plain-object arms are own-property-safe (a legal
+  // __proto__ key creates, reads and removes an own property, never the
+  // inherited accessor), a missing key reads the absent marker exactly like
+  // Map.get, and a write follows the publishModule setProp write. Pure
+  // carrier dispatch: no checking, no allocation, no shared state.
+  tableGet: function $tableGet(carrier, key) {
+    if (carrier instanceof $Map) {
+      return carrier.get(key);
+    }
+    return Object.prototype.hasOwnProperty.call(carrier, key)
+      ? carrier[key] : $undefined;
+  },
+  tableSet: function $tableSet(carrier, key, value) {
+    if (carrier instanceof $Map) {
+      carrier.set(key, value);
+      return carrier;
+    }
+    return $rt.setProp(carrier, key, value);
+  },
+  tableDelete: function $tableDelete(carrier, key) {
+    if (carrier instanceof $Map) {
+      return carrier.delete(key);
+    }
+    if (Object.prototype.hasOwnProperty.call(carrier, key)) {
+      delete carrier[key];
+      return true;
+    }
+    return false;
+  },
   // makeTable: the coordinated additive table-construction member
-  // (js-backend-emitter D9) — the single addition to the ISSUE-0190
+  // (js-backend-emitter D9) — an addition to the ISSUE-0190
   // 41-member surface. Returns a fresh Map built through the
   // module-private $Map capture (generated code never spells the bare Map
   // global) carrying the own enumerable string keys of the plain-object

@@ -6,6 +6,7 @@ import deal.diagnostics.DiagnosticRange;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
+import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassLayout;
@@ -93,6 +94,10 @@ public final class JsSemanticEmitter {
     /** One rendering session over one immutable project closure. */
     private static final class Session {
 
+        /** One binding incarnation: the home cell of a seeded carrier. */
+        private record SeedCell(BindingId binding, long generation) {
+        }
+
         private final JsEmissionInput input;
         private final Map<ModuleId, LoweredModuleUnit> units = new LinkedHashMap<>();
         private final Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
@@ -107,6 +112,15 @@ public final class JsSemanticEmitter {
         private final Map<Long, SemanticOp> producerByValue = new HashMap<>();
         /** Registered intrinsic kind per allocation identity (value id). */
         private final Map<Long, IntrinsicKind> intrinsicKinds = new HashMap<>();
+        /**
+         * The one binding cell that materializes each seeded intrinsic
+         * carrier: the lowerer's root-scope seed {@code BINDING_INIT}. The
+         * seed's own init publishes the wrapper value there, and every
+         * other materialization of the identity (an identity-preserving
+         * load, the adapter's VALUE operand) reads that cell, so one
+         * intrinsic is one value and reference identity holds.
+         */
+        private final Map<Long, SeedCell> intrinsicSeedCells = new HashMap<>();
         /** The binding cell holding each lowered function's closure. */
         private final Map<Long, String> closureBindings = new HashMap<>();
         private final Map<Long, LoweredFunction> functions = new HashMap<>();
@@ -164,6 +178,7 @@ public final class JsSemanticEmitter {
                     intrinsicKinds.put(entry.getKey().id(), intrinsic.kind());
                 }
             }
+            registerIntrinsicSeedCells(unit);
             for (LoweredFunction function : unit.functions().values()) {
                 functions.put(function.functionId().id(), function);
             }
@@ -217,6 +232,38 @@ public final class JsSemanticEmitter {
             ownedChildren.addAll(structural);
             ChainOperandCompletion.registerChainOperandOwners(unit, structural,
                 ownedChildren);
+        }
+
+        /**
+         * Records the seeded-intrinsic carrier cell of one unit: the first
+         * {@code BINDING_INIT} of a registered intrinsic identity whose
+         * operand identity is produced by no op other than an
+         * identity-preserving load of that init's own cell — the same
+         * seed-write notion the shared validator admits the key by
+         * ({@code BindingsProductionValidator}'s producer-less test, J1).
+         * Membership in the module-init scope is not assumed: the recorded
+         * seed init is the cell every other materialization of the identity
+         * reads.
+         */
+        private void registerIntrinsicSeedCells(LoweredModuleUnit unit) {
+            Set<Long> nonLoadProduced = new HashSet<>();
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.BINDING_LOAD
+                        && op.result() instanceof ValueId produced) {
+                    nonLoadProduced.add(produced.id());
+                }
+            }
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.BINDING_INIT
+                        || !(op.payload() instanceof KindPayload
+                            .BindingInitPayload init)
+                        || !intrinsicKinds.containsKey(init.value().id())
+                        || nonLoadProduced.contains(init.value().id())) {
+                    continue;
+                }
+                intrinsicSeedCells.putIfAbsent(init.value().id(),
+                    new SeedCell(init.binding(), init.generation()));
+            }
         }
 
         /**
@@ -778,7 +825,8 @@ public final class JsSemanticEmitter {
                 emit(target + " = $rt.bytesGet(" + container + ", " + index
                     + ", " + spanArgs(op) + ");");
             } else if (mode == IndexMode.TABLE_READ) {
-                emit(target + " = " + container + ".get(" + index + ");");
+                emit(target + " = $rt.tableGet(" + container + ", " + index
+                    + ");");
             } else {
                 String length = normalizeLengthSlot(payload.slot());
                 emit("if (" + index + " < 0 || " + index + " >= " + length
@@ -786,8 +834,25 @@ public final class JsSemanticEmitter {
                     + " " + spanArgs(boundary) + "); }");
                 emit(target + " = " + container + "[" + index + "];");
             }
+            if (isArrayElementRead(boundary)) {
+                // The ARRAY_ELEMENT_READ cell runs the bounds gate only (the
+                // shared ARRAY_READ_INDEX_THEN_DESCRIPTOR policy,
+                // BoundaryExecutor.checkArrayRead): an in-range hole/missing
+                // element passes through, and the next recorded boundary —
+                // the contextual check — decides null versus the E8001 arm
+                // at its own origin, exactly like the retained emission.
+                return;
+            }
             emitBoundaryCheck(boundary, target, descriptorOf(boundary),
                 payload.elementBoundaryOpId());
+        }
+
+        /** Whether one element boundary is the array read's bounds-only cell. */
+        private static boolean isArrayElementRead(SemanticOp boundary) {
+            return boundary != null
+                && boundary.payload() instanceof KindPayload.BoundaryPayload
+                    payload
+                && payload.kind() == BoundaryKind.ARRAY_ELEMENT_READ;
         }
 
         private void emitIndexWrite(SemanticOp op) {
@@ -801,7 +866,8 @@ public final class JsSemanticEmitter {
                 emit("$rt.bytesSet(" + container + ", " + index + ", " + value
                     + ", " + spanArgs(op) + ");");
             } else if (mode == IndexMode.TABLE_WRITE) {
-                emit(container + ".set(" + index + ", " + value + ");");
+                emit("$rt.tableSet(" + container + ", " + index + ", " + value
+                    + ");");
             } else {
                 emit(container + "[" + index + "] = " + value + ";");
             }
@@ -813,7 +879,7 @@ public final class JsSemanticEmitter {
             String container = slot(payload.container());
             String index = slot(payload.slot());
             if (normalizeMode(payload.slot()) == IndexMode.TABLE_WRITE) {
-                emit(container + ".delete(" + index + ");");
+                emit("$rt.tableDelete(" + container + ", " + index + ");");
             } else {
                 String length = normalizeLengthSlot(payload.slot());
                 emit("if (" + index + " < " + length + ") { " + container + "["
@@ -956,25 +1022,39 @@ public final class JsSemanticEmitter {
             KindPayload.BindingInitPayload payload =
                 (KindPayload.BindingInitPayload) op.payload();
             emit(cellSource(payload.binding(), payload.generation()) + " = "
-                + bindingValueExpr(payload.value()) + ";");
+                + bindingValueExpr(payload.binding(), payload.generation(),
+                    payload.value()) + ";");
         }
 
         /**
-         * The carrier expression of one binding-initialized value: a produced
-         * value's slot, or the seeded intrinsic wrapper of a producer-less
-         * seeded identity ({@code int}/{@code number}/{@code bytes}).
+         * The carrier expression of one binding-initialized value. A
+         * registered intrinsic identity is the seeded carrier: the seed
+         * {@code BINDING_INIT} materializes the one wrapper value, and every
+         * other site — the identity-preserving function-typed loads
+         * included — reads the seed binding's cell, so the seeded identity
+         * stays one value and its reference identity survives. Every other
+         * value is the slot of its producing op.
          */
-        private String bindingValueExpr(ValueId valueId) {
+        private String bindingValueExpr(BindingId binding, long generation,
+                                        ValueId valueId) {
+            IntrinsicKind kind = intrinsicKinds.get(valueId.id());
+            if (kind != null) {
+                SeedCell seed = intrinsicSeedCells.get(valueId.id());
+                if (seed == null) {
+                    return intrinsicWrapper(kind);
+                }
+                if (seed.binding().equals(binding)
+                        && seed.generation() == generation) {
+                    return intrinsicWrapper(kind);
+                }
+                return cellSource(seed.binding(), seed.generation());
+            }
             if (producerByValue.containsKey(valueId.id())) {
                 return slot(valueId);
             }
-            IntrinsicKind kind = intrinsicKinds.get(valueId.id());
-            if (kind == null) {
-                throw new IllegalStateException("the producer-less value "
-                    + valueId + " names no registered intrinsic identity (a"
-                    + " producer defect)");
-            }
-            return intrinsicWrapper(kind);
+            throw new IllegalStateException("the producer-less value "
+                + valueId + " names no registered intrinsic identity (a"
+                + " producer defect)");
         }
 
         private static String intrinsicWrapper(IntrinsicKind kind) {
@@ -1084,30 +1164,80 @@ public final class JsSemanticEmitter {
                         + " source of " + op.opId() + " belongs to the"
                         + " adapter-realization unit");
             }
-            int arity = payload.sourceSignature().paramTypes().size();
+            // The adapter's ABI is the retained call shape: the target
+            // signature's parameters followed by the call-site span
+            // triple, which the invocation forwards to the source wrapper
+            // unchanged, so a failure inside the source (the conversion
+            // ladder behind an arity-extension adapter included) carries
+            // the authoritative call origin.
+            int targetArity = payload.targetSignature().paramTypes().size();
+            int sourceArity = payload.sourceSignature().paramTypes().size();
             emit(slotOf(op) + " = $rt.function("
                 + jsString(payload.targetSignature().canonicalSpecText())
-                + ", (...$a) => {");
+                + ", (" + adapterParameters(targetArity) + ") => {");
             indent++;
             emit("const $src = " + sourceExpr + ";");
             emit("$rt.checkFunctionSig("
                 + jsString(payload.sourceSignature().canonicalSpecText())
-                + ", $src.$sig, $src, " + spanArgs(op) + ");");
-            emit("return $src.$f(...$a.slice(0, " + arity + "));");
+                + ", $src.$sig, $src, $file, $line, $column);");
+            emit("return $src.$f(" + adapterInnerArguments(sourceArity)
+                + ");");
             indent--;
             emit("});");
         }
 
-        private String adaptValueExpr(AdaptSourceRef.Value value) {
-            if (producerByValue.containsKey(value.value().id())) {
-                return slot(value.value());
+        /** The adapter's declared parameters: target arity plus the span. */
+        private static String adapterParameters(int targetArity) {
+            StringBuilder params = new StringBuilder();
+            for (int i = 0; i < targetArity; i++) {
+                if (params.length() > 0) {
+                    params.append(", ");
+                }
+                params.append("$p").append(i);
             }
-            IntrinsicKind kind = intrinsicKinds.get(value.value().id());
+            if (params.length() > 0) {
+                params.append(", ");
+            }
+            params.append("$file, $line, $column");
+            return params.toString();
+        }
+
+        /**
+         * The adapter's inner call arguments: the source signature's
+         * leading parameters (the D15 leading-M projection) followed by the
+         * received span triple.
+         */
+        private static String adapterInnerArguments(int sourceArity) {
+            StringBuilder args = new StringBuilder();
+            for (int i = 0; i < sourceArity; i++) {
+                if (args.length() > 0) {
+                    args.append(", ");
+                }
+                args.append("$p").append(i);
+            }
+            if (args.length() > 0) {
+                args.append(", ");
+            }
+            args.append("$file, $line, $column");
+            return args.toString();
+        }
+
+        private String adaptValueExpr(AdaptSourceRef.Value value) {
+            ValueId valueId = value.value();
+            IntrinsicKind kind = intrinsicKinds.get(valueId.id());
             if (kind != null) {
-                return intrinsicWrapper(kind);
+                // The seeded identity's VALUE capture is the seed cell's
+                // carrier: the adapter retains the one materialized value,
+                // never a fresh wrapper (identity preservation).
+                SeedCell seed = intrinsicSeedCells.get(valueId.id());
+                return seed == null ? intrinsicWrapper(kind)
+                    : cellSource(seed.binding(), seed.generation());
+            }
+            if (producerByValue.containsKey(valueId.id())) {
+                return slot(valueId);
             }
             throw new IllegalStateException("the adaptation source value "
-                + value.value() + " has no producer and no registered"
+                + valueId + " has no producer and no registered"
                 + " intrinsic identity (producer defect)");
         }
 
@@ -1305,8 +1435,10 @@ public final class JsSemanticEmitter {
                 }
                 return;
             }
+            List<String> callArguments = new ArrayList<>(arguments);
+            callArguments.add(spanArgs(op));
             emit(slotOf(op) + " = " + calleeExpr(op, payload) + ".$f("
-                + String.join(", ", arguments) + ");");
+                + String.join(", ", callArguments) + ");");
         }
 
         /**

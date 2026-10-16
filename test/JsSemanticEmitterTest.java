@@ -54,8 +54,11 @@ import java.util.stream.Stream;
  * (ISSUE-0798): one artifact per implementation unit in dependency order,
  * the structural declaration projection, local value/cell/control
  * execution under the real Node binary, the nullable equality pair's
- * shared nil-equivalence rule, the private module registry's repeat
- * identity and sticky failure, coordinate-only maps, the
+ * shared nil-equivalence rule, the seeded intrinsic carrier's single
+ * materialization and reference identity, the array hole decision at the
+ * contextual boundary, the adapter's forwarded call origin, the
+ * carrier-neutral module-namespace index realization, the private module
+ * registry's repeat identity and sticky failure, coordinate-only maps, the
  * malformed/no-frontend seam assertions, independent determinism, and the
  * fail-closed unsupported-slice contract with the offending operation's own
  * origin.
@@ -108,6 +111,10 @@ public class JsSemanticEmitterTest {
             testValuesContainersAndControl(tmpRoot, node);
             testNullableEqualityNilEquivalence(tmpRoot, node);
             testCellsClosuresAndAdapters(tmpRoot, node);
+            testIntrinsicValueCarriers(tmpRoot, node);
+            testArrayHoleReadDecision(tmpRoot, node);
+            testAdapterCallOrigin(tmpRoot, node);
+            testModuleNamespaceIndexCarrier(tmpRoot, node);
             testFailureTuples(tmpRoot, node);
             testModuleRegistry(tmpRoot, node);
             testDeclarationProjection(tmpRoot);
@@ -716,6 +723,358 @@ public class JsSemanticEmitterTest {
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the cells/closures program exits 0: "
             + run.output());
+    }
+
+    // =========================================================================
+    // 2c. The realized carriers: the seeded intrinsic identity, the array
+    // hole decision, the adapter call origin, and the module-namespace
+    // index carrier
+    // =========================================================================
+
+    /**
+     * ISSUE-0798 review cycle 2, finding 1: a function-typed load of the
+     * seeded intrinsic binding republishes the seeded identity, so the
+     * seed's {@code BINDING_INIT} — and every other materialization of
+     * the identity — must publish the one materialized carrier instead of
+     * a slot that only exists inside another body. Reference identity
+     * follows from the single cell the seed fills.
+     */
+    private static void testIntrinsicValueCarriers(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- the seeded intrinsic carrier: one materialized"
+            + " value, identity-preserving loads read its cell --");
+        Path root = Files.createTempDirectory(tmpRoot, "intrinsic");
+        Fixture fixture = compileFixture(root, """
+            export function storedInt(x: number): int {
+              let f: (x: number) => int = int;
+              return f(x);
+            }
+
+            export function same(): boolean {
+              let f: (x: number) => int = int;
+              let g: (x: number) => int = int;
+              return f === g;
+            }
+
+            export function adapted(x: number, y: int): int {
+              let g: (x: number, y: int) => int = int;
+              return g(x, y);
+            }
+
+            export function main(): null {
+              let a: int = storedInt(4.0);
+              let b: boolean = same();
+              let c: int = adapted(5.0, 0);
+              if (a !== 4 || !b || c !== 5) {
+                throw { code: "TEST_FAIL", message: "intrinsic" };
+              }
+              return null;
+            }
+            """);
+        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
+            fixture.project(), fixture.tables(), fixture.registries(), null);
+        check(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+            "the shared authority runs the intrinsic-value program: "
+                + oracle.terminal());
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        String artifact = emission.modules().get(0).source();
+        checkEq(1, countOccurrences(artifact,
+                "$rt.function(\"(number)->int\", (v, $f, $l, $c) =>"),
+            "the module materializes exactly one carrier (the seed's own"
+                + " BINDING_INIT); no site re-wraps the identity");
+        check(Pattern.compile("\\$g\\d+ = \\$rt\\.function\\(\"\\(number\\)->int\","
+                + " \\(v, \\$f, \\$l, \\$c\\) =>")
+                .matcher(artifact).find(),
+            "the seed binding's init publishes the carrier at the module"
+                + " root");
+        check(Pattern.compile("const \\$av\\d+ = \\$g\\d+;").matcher(artifact)
+                .find(),
+            "the adapter's VALUE operand reads the seed's binding cell"
+                + " instead of emitting a fresh wrapper");
+        Path out = stage(fixture, "intrinsic", false);
+        if (!node) {
+            skip("the intrinsic value drive needs node");
+            return;
+        }
+        NodeRun run = runNode(out, entryPath(out));
+        checkEq(0, run.status(), "the intrinsic-value program loads and runs"
+            + " (no undeclared seed slot): " + run.output());
+    }
+
+    /**
+     * ISSUE-0798 review cycle 2, finding 2: the array read's element
+     * boundary runs the bounds gate only (the shared
+     * ARRAY_READ_INDEX_THEN_DESCRIPTOR policy), so an in-range missing
+     * element flows to the contextual boundary — null for a nullable
+     * descriptor, the E8001 arm at the contextual origin otherwise.
+     */
+    private static void testArrayHoleReadDecision(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- an in-range missing array element flows to"
+            + " the contextual boundary --");
+        Path root = Files.createTempDirectory(tmpRoot, "hole");
+        Fixture nullable = compileFixture(root, """
+            export function nullableHole(): int | null {
+              let a: int[] = [1, 2, 3];
+              delete a[1];
+              let v: int | null = a[1];
+              return v;
+            }
+
+            export function main(): null {
+              if (nullableHole() !== null) {
+                throw { code: "TEST_FAIL", message: "hole" };
+              }
+              return null;
+            }
+            """);
+        var nullableOracle = deal.semantic.SemanticOracle.executeProjectInits(
+            nullable.project(), nullable.tables(), nullable.registries(), null);
+        check(nullableOracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+            "the shared authority reads the deleted element as null: "
+                + nullableOracle.terminal());
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(
+                nullable.emissionInput(false));
+        String artifact = emission.modules().get(0).source();
+        String[] lines = artifact.split("\n", -1);
+        int read = arrayReadLine(lines);
+        check(read >= 0 && read + 1 < lines.length
+                && lines[read + 1].contains("checkType(\"?int\""),
+            "the raw element passes straight to the contextual nullable"
+                + " boundary with no strict element descriptor check in"
+                + " between: " + (read >= 0 && read + 1 < lines.length
+                    ? lines[read + 1].trim() : "no read line"));
+        Path out = stage(nullable, "hole", false);
+        if (node) {
+            NodeRun run = runNode(out, entryPath(out));
+            checkEq(0, run.status(), "the nullable hole read returns null: "
+                + run.output());
+        } else {
+            skip("the nullable hole drive needs node");
+        }
+
+        Fixture strict = compileFixture(root, """
+            export function strictHole(): int {
+              let a: int[] = [1, 2, 3];
+              delete a[1];
+              let v: int = a[1];
+              return v;
+            }
+
+            export function main(): null {
+              let x: int = strictHole();
+              return null;
+            }
+            """);
+        var strictOracle = deal.semantic.SemanticOracle.executeProjectInits(
+            strict.project(), strict.tables(), strict.registries(), null);
+        check(strictOracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure,
+            "the shared authority rejects the missing element against the"
+                + " contextual int descriptor: " + strictOracle.terminal());
+        if (!(strictOracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure failure)) {
+            return;
+        }
+        deal.semantic.SemanticRuntimeModel.ErrorSnapshot snapshot =
+            failure.error();
+        String strictArtifact = JsSemanticEmitter.emitProductionProject(
+            strict.emissionInput(false)).modules().get(0).source();
+        String[] strictLines = strictArtifact.split("\n", -1);
+        int strictRead = arrayReadLine(strictLines);
+        checkEq(true, strictRead >= 0 && strictRead + 1 < strictLines.length
+                && strictLines[strictRead + 1].contains("checkType(\"int\"")
+                && strictLines[strictRead + 1].contains(
+                    originCoordinates(snapshot.origin()) + ")"),
+            "the contextual check runs at the shared authority's own origin"
+                + " (" + snapshot.origin() + "): "
+                + (strictRead >= 0 && strictRead + 1 < strictLines.length
+                    ? strictLines[strictRead + 1].trim() : "no read line"));
+        Path strictOut = stage(strict, "hole-strict", false);
+        if (!node) {
+            skip("the strict hole drive needs node");
+            return;
+        }
+        NodeRun strictRun = runNode(strictOut, entryPath(strictOut));
+        checkEq(1, strictRun.status(), "the strict hole read exits 1");
+        check(strictRun.output().contains("DEAL_ERROR_CODE: "
+                + snapshot.code() + " " + snapshot.message() + " at "
+                + snapshot.origin()),
+            "the strict hole read raises the shared tuple at the"
+                + " contextual origin: " + strictRun.output());
+    }
+
+    /**
+     * ISSUE-0798 review cycle 2, finding 3: the emitted call appends the
+     * call-site span triple and the adapter forwards the received triple
+     * to its source wrapper, so a conversion failure behind an
+     * arity-extension adapter keeps the authoritative call origin.
+     */
+    private static void testAdapterCallOrigin(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- the adapter forwards the call-site span to its"
+            + " source wrapper --");
+        Path root = Files.createTempDirectory(tmpRoot, "adapter-origin");
+        Fixture fixture = compileFixture(root, """
+            export function main(): null {
+              let g: (x: number, y: int) => int = int;
+              let n: number = 0.0 / 0.0;
+              let r: int = g(n, 1);
+              return null;
+            }
+            """);
+        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
+            fixture.project(), fixture.tables(), fixture.registries(), null);
+        check(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure,
+            "the shared authority rejects the NaN through the adapter:"
+                + " " + oracle.terminal());
+        if (!(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure failure)) {
+            return;
+        }
+        deal.semantic.SemanticRuntimeModel.ErrorSnapshot snapshot =
+            failure.error();
+        String artifact = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(false)).modules().get(0).source();
+        check(artifact.contains(
+                "$rt.checkFunctionSig(\"(number)->int\", $src.$sig, $src,"
+                    + " $file, $line, $column)"),
+            "the adapter's source-signature check runs at the received call"
+                + " span");
+        check(artifact.contains(
+                "return $src.$f($p0, $file, $line, $column);"),
+            "the adapter forwards the received span triple to the source"
+                + " wrapper");
+        Path out = stage(fixture, "adapter-origin", false);
+        if (!node) {
+            skip("the adapter origin drive needs node");
+            return;
+        }
+        NodeRun run = runNode(out, entryPath(out));
+        checkEq(1, run.status(), "the adapter-mediated conversion exits 1");
+        check(run.output().contains("DEAL_ERROR_CODE: " + snapshot.code()
+                + " " + snapshot.message() + " at " + snapshot.origin()),
+            "the conversion failure behind the adapter keeps the"
+                + " authoritative call origin: " + run.output());
+    }
+
+    /**
+     * ISSUE-0798 review cycle 2, finding 4: a dynamic index operation on a
+     * module-namespace value realizes the plain-object surface through the
+     * carrier-neutral table members (own-property-safe), never a Map
+     * member call on a plain object.
+     */
+    private static void testModuleNamespaceIndexCarrier(Path tmpRoot,
+                                                        boolean node)
+            throws Exception {
+        System.out.println("-- the module-namespace index carrier is the"
+            + " own-property-safe surface --");
+        Path root = Files.createTempDirectory(tmpRoot, "namespace");
+        Fixture fixture = compileFixture(root, """
+            import * as util from "./utilw3";
+
+            export function main(): null {
+              let k: string = "counter";
+              util[k] = 7;
+              let v: int = util[k];
+              if (v !== 7) { throw { code: "TEST_FAIL", message: "read" }; }
+              let p: string = "__proto__";
+              util[p] = 9;
+              let w: int = util[p];
+              if (w !== 9) { throw { code: "TEST_FAIL", message: "proto" }; }
+              return null;
+            }
+            """, Map.of("src/utilw3.deal", """
+                export function counter(): int {
+                  return 0;
+                }
+                """));
+        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
+            fixture.project(), fixture.tables(), fixture.registries(), null);
+        check(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+            "the shared authority realizes the namespace index write/read:"
+                + " " + oracle.terminal());
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        String artifact = emission.modules().stream()
+            .filter(a -> a.artifactRelativePath().equals("app.js"))
+            .findFirst().orElseThrow().source();
+        check(artifact.contains("$rt.tableSet(")
+                && artifact.contains("$rt.tableGet("),
+            "the namespace index arms use the carrier-neutral table members");
+        check(!artifact.contains(".set(") && !artifact.contains(".get(")
+                && !artifact.contains(".delete("),
+            "no Map member call is emitted for the plain-object namespace"
+                + " surface: " + artifact.lines()
+                    .filter(l -> l.contains(".set(") || l.contains(".get("))
+                    .findFirst().orElse(""));
+        Path out = stage(fixture, "namespace", false);
+        if (!node) {
+            skip("the namespace index drive needs node");
+            return;
+        }
+        NodeRun run = runNode(out, entryPath(out));
+        checkEq(0, run.status(), "the namespace index program exits 0: "
+            + run.output());
+        Files.writeString(out.resolve("driver.js"), """
+            const app = require("./app.js");
+            app.main.$f();
+            const util = require("./utilw3.js");
+            console.log(JSON.stringify({
+              counter: util.counter,
+              protoOwn: Object.prototype.hasOwnProperty.call(util, "__proto__"),
+              protoValue: util["__proto__"],
+              protoIntact: Object.getPrototypeOf(util) === Object.prototype}));
+            """, StandardCharsets.UTF_8);
+        NodeRun driver = runNode(out, "driver.js");
+        checkEq(0, driver.status(), "the namespace driver exits 0: "
+            + driver.output());
+        check(driver.output().contains("\"counter\":7")
+                && driver.output().contains("\"protoOwn\":true")
+                && driver.output().contains("\"protoValue\":9")
+                && driver.output().contains("\"protoIntact\":true"),
+            "the dynamic writes reach the published surface as own"
+                + " properties (__proto__ included) without moving the"
+                + " prototype: " + driver.output());
+    }
+
+    /** The emitted raw array read line's index, or -1. */
+    private static int arrayReadLine(String[] lines) {
+        int read = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].matches("\\s*\\$s\\d+ = \\$s\\d+\\[\\$s\\d+\\];")) {
+                read = i;
+            }
+        }
+        return read;
+    }
+
+    /** The trailing {@code line, column} pair of one origin string. */
+    private static String originCoordinates(String origin) {
+        int last = origin.lastIndexOf(':');
+        int previous = origin.lastIndexOf(':', last - 1);
+        return origin.substring(previous + 1, last) + ", "
+            + origin.substring(last + 1);
+    }
+
+    private static int countOccurrences(String text, String needle) {
+        int count = 0;
+        int index = text.indexOf(needle);
+        while (index >= 0) {
+            count++;
+            index = text.indexOf(needle, index + needle.length());
+        }
+        return count;
     }
 
     // =========================================================================
