@@ -423,14 +423,17 @@ public class FailureArmAuthorityTest {
     /**
      * The JS raw host-shape arm (ISSUE-0797): the raw non-object host
      * result projects E8011 {@code host module did not return a module
-     * object} with the pinned {@code table} expected, a carrier-kind actual
-     * and no location at all — distinct from the located, module-clause
-     * declared arms; a foreign expected text fails the arm's own field
-     * contract closed.
+     * object} with the pinned {@code table} expected, the JS runtime's own
+     * {@code $kindOf} diagnostic kind as its actual and no location at all —
+     * distinct from the located, module-clause declared arms. The JS null's
+     * {@code null} and the absent marker's {@code nil} are the vocabulary's
+     * own members (never the Lua-shaped carrier-kind {@code table}), while a
+     * foreign expected text and an object-shaped or invented actual token
+     * fail the arm's own field contract closed.
      */
-    static void testRawHostShapeArm() {
-        System.out.println("-- the raw host-shape arm: the unlocated carrier-kind "
-            + "tuple --");
+    static void testRawHostShapeArm() throws Exception {
+        System.out.println("-- the raw host-shape arm: the unlocated JS "
+            + "diagnostic-kind tuple --");
         FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_LOAD_RAW_SHAPE);
         checkEq(FailurePolicyId.HOST_LOAD, arm.policy(), "the arm renders the HOST_LOAD "
             + "row");
@@ -442,23 +445,62 @@ public class FailureArmAuthorityTest {
         checkEq(FailureArm.ExpectedSource.PINNED_TEXT, arm.expectedSource(),
             "the expected token is the arm's own pinned text");
         checkEq("table", arm.pinnedExpectedText(), "the pinned expected text is table");
-        checkEq(FailureArm.ActualProjection.CARRIER_KIND, arm.actualProjection(),
-            "the actual is the carrier-kind projection");
+        checkEq(FailureArm.ActualProjection.JS_DIAGNOSTIC_KIND, arm.actualProjection(),
+            "the actual is the JS diagnostic-kind projection ($kindOf)");
         checkEq("E8011", FailureContractRegistry.codeOf(arm), "the arm's code is E8011");
         BoundaryFailure rendered = FailureContractRegistry.render(
-            FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "table",
-            FailureProjections.carrierKindToken(FailureProjections.CarrierKind.NUMBER),
-            null);
+            FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "table", "number", null);
         checkEq("E8011", rendered.code().name(), "the rendered tuple carries E8011");
         checkEq("host module did not return a module object", rendered.message(),
             "the rendered message is the module-less raw-shape text");
         checkEq("table", rendered.expected(), "the rendered expected is table");
         checkEq("number", rendered.actual(), "the rendered actual is the numeric "
-            + "carrier kind");
+            + "JS diagnostic kind");
         checkEq(null, rendered.cause(), "the raw-shape tuple carries no cause");
+        // The criterion's null case: the JS null's own $kindOf token is
+        // representable by the declared projection — the Lua-shaped
+        // carrier-kind "table" is not what the guard publishes.
+        BoundaryFailure nullRaw = FailureContractRegistry.render(
+            FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "table", "null", null);
+        checkEq("host module did not return a module object", nullRaw.message(),
+            "the raw null export renders the module-less raw-shape text");
+        checkEq("table", nullRaw.expected(), "the raw null export's expected is table");
+        checkEq("null", nullRaw.actual(), "the raw null export's actual is the JS "
+            + "null, never the Lua-shaped carrier-kind table");
+        checkEq(null, nullRaw.cause(), "the raw null tuple carries no cause");
+        // Every closed member of the JS diagnostic-kind vocabulary — the
+        // absent marker and the typeof names a non-object result reaches —
+        // is admissible on the arm's own declaration.
+        for (String member : List.of("nil", "boolean", "number", "string",
+                "function", "symbol", "bigint")) {
+            BoundaryFailure projected = FailureContractRegistry.render(
+                FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "table", member, null);
+            checkEq(member, projected.actual(), "the JS diagnostic-kind token " + member
+                + " is a member of the arm's declared vocabulary");
+        }
+        // The object-shaped spellings never reach the guard (every non-null
+        // object passes it), so publishing one is a fabricated token.
+        expectDefect(() -> FailureContractRegistry.render(
+                FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "table", "table", null),
+            "the object-shaped table token is not a JS diagnostic kind");
+        expectDefect(() -> FailureContractRegistry.render(
+                FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "table", "object", null),
+            "an invented JS diagnostic-kind spelling fails closed");
         expectDefect(() -> FailureContractRegistry.render(
                 FailureArmId.HOST_LOAD_RAW_SHAPE, Map.of(), "function", "number", null),
             "a foreign expected text fails the arm's field contract");
+        // The emitted Lua prelude's mirror of the closed vocabulary (real
+        // luajit): the JS null renders the arm's complete tuple, while the
+        // object-shaped Lua carrier kind — a value that never fails the
+        // guard — fails closed. The probe supplies an origin operand (the
+        // no-origin guard of an unlocated render is covered separately).
+        renderProbes("raw-host-shape-probe",
+            new RenderProbe("arm", "js-kind-null",
+                "\"HOST_LOAD_RAW_SHAPE\", nil, \"-\", \"table\", \"null\"",
+                "true|E8011|table|null|host module did not return a module object",
+                "value.code .. '|' .. value.e .. '|' .. value.a .. '|' .. value.m"),
+            armProbe("js-kind-object",
+                "\"HOST_LOAD_RAW_SHAPE\", nil, \"-\", \"table\", \"table\"", "false|"));
     }
 
     static void testCarrierKindStringActual() {

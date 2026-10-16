@@ -7,7 +7,8 @@ import java.util.Objects;
 /**
  * The closed failure projections of the canonical failure-projection
  * authority (P2): the typed-boundary projection, the carrier-kind
- * projection, the completion variant, and the host inner-reason render.
+ * projection, the JS diagnostic-kind projection, the completion variant,
+ * and the host inner-reason render.
  *
  * <p>The projections are total over the closed value kinds (a value
  * outside them is a producer defect, never a fabricated token), pure, and
@@ -215,7 +216,7 @@ public final class FailureProjections {
         return FailureContractRegistry.render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
             Map.of("actual", actual),
             expectedFor(arm, null, null),
-            actualFor(arm, null, actual, null, null, null), null);
+            actualFor(arm, null, actual, null, null, null, null), null);
     }
 
     /** The array-element inner reason: the element arm's own text. */
@@ -256,18 +257,21 @@ public final class FailureProjections {
 
     /**
      * The arm's actual field, selected by the arm's declared actual
-     * projection: the typed-boundary or carrier-kind token, the completion
-     * variant, or the carried atom/signature the arm names. A
+     * projection: the typed-boundary or carrier-kind token, the JS
+     * diagnostic-kind token (the JS runtime's {@code $kindOf} of the raw
+     * host result, its own projection at the raw host-shape guard), the
+     * completion variant, or the carried atom/signature the arm names. A
      * {@code SIBLING_OWNED} binding is not renderable by a production
      * consumer.
      */
     public static String actualFor(FailureArm arm, String typedToken, String carrierToken,
-                                   String carriedAtom, String carriedSignature,
-                                   String canonicalValueText) {
+                                   String jsDiagnosticToken, String carriedAtom,
+                                   String carriedSignature, String canonicalValueText) {
         return switch (arm.actualProjection()) {
             case NONE -> null;
             case TYPED_BOUNDARY, COMPLETION -> typedToken;
             case CARRIER_KIND -> carrierToken;
+            case JS_DIAGNOSTIC_KIND -> jsDiagnosticToken;
             case NOTHING_TOKEN -> "nothing";
             case CARRIED_CLASS_ATOM -> carriedAtom;
             case CARRIED_SIGNATURE -> carriedSignature;

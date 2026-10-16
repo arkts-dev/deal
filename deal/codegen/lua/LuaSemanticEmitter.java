@@ -10055,6 +10055,19 @@ local function __checkActualField(id, arm, actual)
     if not __carrierTokens[actual] then
       __fieldDefect(id, "actual", "a closed carrier-kind token", actual)
     end
+  elseif arm.a == "JS_DIAGNOSTIC_KIND" then
+    -- The closed JS diagnostic-kind vocabulary (the raw host-shape guard's
+    -- actual): the absent marker, the JS null, and the typeof names a
+    -- non-object result reaches. No object-shaped token is a member (every
+    -- non-null object passes the guard), so the Lua-shaped "table" fails
+    -- closed. Spelled out in the branch, not as another chunk-level table:
+    -- the largest production chunks exhaust the main function's local limit.
+    local closed = actual == "nil" or actual == "null" or actual == "boolean"
+      or actual == "number" or actual == "string" or actual == "function"
+      or actual == "symbol" or actual == "bigint"
+    if not closed then
+      __fieldDefect(id, "actual", "a closed JS diagnostic-kind token", actual)
+    end
   elseif arm.a == "NOTHING_TOKEN" then
     if actual ~= "nothing" then
       __fieldDefect(id, "actual", "the nothing token", actual)

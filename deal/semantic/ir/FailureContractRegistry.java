@@ -451,7 +451,7 @@ public final class FailureContractRegistry {
             "reason", FailureArm.ParameterSource.REASON));
         declared.add(arm(FailureArmId.HOST_LOAD_RAW_SHAPE, FailurePolicyId.HOST_LOAD, 1,
             FailureArm.ExpectedSource.PINNED_TEXT, "table",
-            FailureArm.ActualProjection.CARRIER_KIND,
+            FailureArm.ActualProjection.JS_DIAGNOSTIC_KIND,
             FailureArm.OriginConvention.NO_ORIGIN, FailureArm.RenderScope.TOP_LEVEL));
         declared.add(arm(FailureArmId.HOST_LOAD_NOT_A_MODULE, FailurePolicyId.HOST_LOAD, 2,
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
@@ -909,6 +909,21 @@ public final class FailureContractRegistry {
         "boolean", "number", "string", "bytes", "function");
 
     /**
+     * The closed JS diagnostic-kind tokens (the raw host-shape guard's
+     * actual, ISSUE-0797): the JS runtime's {@code $kindOf} outputs over the
+     * values the guard rejects — the absent marker {@code nil}, the JS
+     * {@code null}, and the {@code typeof} names of a non-object result
+     * ({@code boolean}, {@code number}, {@code string}, {@code function},
+     * {@code symbol}, {@code bigint}). No object-shaped token is a member
+     * (every non-null object passes the guard), so the Lua-shaped
+     * {@code table} a carrier-kind projection would publish, and every
+     * invented spelling, fail closed instead of widening the published
+     * actual past {@code $kindOf(rawExports)}.
+     */
+    private static final Set<String> JS_DIAGNOSTIC_KIND_TOKENS = Set.of("nil", "null",
+        "boolean", "number", "string", "function", "symbol", "bigint");
+
+    /**
      * Enforces the arm's declared expected/actual field contract: presence
      * exactly when the arm declares the field, the closed shape of the
      * arm's declared token source or projection, and the declared
@@ -1045,6 +1060,13 @@ public final class FailureContractRegistry {
                 if (!CARRIER_KIND_TOKENS.contains(actual)) {
                     throw shapeDefect(arm, "actual", actual,
                         "a closed carrier-kind token (one of " + CARRIER_KIND_TOKENS + ")");
+                }
+            }
+            case JS_DIAGNOSTIC_KIND -> {
+                if (!JS_DIAGNOSTIC_KIND_TOKENS.contains(actual)) {
+                    throw shapeDefect(arm, "actual", actual,
+                        "a closed JS diagnostic-kind token (one of "
+                            + JS_DIAGNOSTIC_KIND_TOKENS + ")");
                 }
             }
             case NOTHING_TOKEN -> {

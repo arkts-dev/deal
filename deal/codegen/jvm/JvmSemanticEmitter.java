@@ -5650,9 +5650,7 @@ public final class JvmSemanticEmitter {
                     // a position past the live end) stops the iteration —
                     // never an E8001 and never a skipped continuation. Present
                     // elements keep the op's own terminal check, so a wrong
-                    // element is still rejected rather than skipped. The
-                    // block-local carrier and loop locals survive a nested
-                    // for-of inside the body.
+                    // element is still rejected rather than skipped.
                     String iterable = slot(payload.iterable());
                     String cellName = cell(payload.binding(), payload.generation());
                     out.append(indent(indent)).append("{\n");

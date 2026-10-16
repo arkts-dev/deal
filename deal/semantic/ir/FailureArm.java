@@ -75,6 +75,18 @@ public record FailureArm(
         TYPED_BOUNDARY,
         /** The carrier-kind projection (P2 item 2). */
         CARRIER_KIND,
+        /**
+         * The JS diagnostic-kind projection (the raw host-shape guard's
+         * actual, ISSUE-0797): the loaded file's raw result is no DEAL
+         * carrier, so the published token is the JS runtime's own
+         * {@code $kindOf} diagnostic kind of the value the guard rejected —
+         * {@code nil} for the absent marker, {@code null} for the JS null,
+         * and the {@code typeof} names a non-object result reaches
+         * ({@code boolean}, {@code number}, {@code string}, {@code function},
+         * {@code symbol}, {@code bigint}). An object-shaped spelling is never
+         * a member: every non-null object passes the guard.
+         */
+        JS_DIAGNOSTIC_KIND,
         /** The completion variant of the typed-boundary projection (P2 item 4). */
         COMPLETION,
         /** The fixed {@code nothing} token. */

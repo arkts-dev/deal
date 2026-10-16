@@ -181,7 +181,8 @@ public final class BoundaryExecutor {
         parameters.put("inner", innerReason(fail, view));
         return FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL, parameters,
             FailureProjections.expectedFor(arm, descriptor, null),
-            FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null, null), null);
+            FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null, null,
+                null), null);
     }
 
     /** HOST_SYNC_RETURN: no value first, then the host return cell arm. */
@@ -193,7 +194,7 @@ public final class BoundaryExecutor {
                 FailureArmId.HOST_SYNC_RETURN_NOTHING,
                 Map.of("expected", descriptor.canonicalSpecText()),
                 FailureProjections.expectedFor(arm, descriptor, null),
-                FailureProjections.actualFor(arm, null, null, null, null, null), null));
+                FailureProjections.actualFor(arm, null, null, null, null, null, null), null));
         }
         CoreResult result = core(descriptor, view);
         return switch (result) {
@@ -205,7 +206,8 @@ public final class BoundaryExecutor {
                 yield new BoundaryOutcome.Fail(FailureContractRegistry.render(
                     FailureArmId.HOST_SYNC_RETURN_CELL, parameters,
                     FailureProjections.expectedFor(arm, descriptor, null),
-                    FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null, null),
+                    FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null,
+                        null, null),
                     null));
             }
         };
@@ -254,7 +256,8 @@ public final class BoundaryExecutor {
         parameters.put("actual", fail.actualToken());
         return FailureContractRegistry.render(FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
             parameters, FailureProjections.expectedFor(arm, fail.descriptor(), null),
-            FailureProjections.actualFor(arm, null, null, null, fail.actualToken(), null), null);
+            FailureProjections.actualFor(arm, null, null, null, null, fail.actualToken(),
+                null), null);
     }
 
     /**
@@ -345,7 +348,7 @@ public final class BoundaryExecutor {
                     FailureProjections.expectedFor(arm, descriptor, descriptor),
                     FailureProjections.actualFor(arm,
                         elementReferenceToken(view),
-                        null, null, null, null),
+                        null, null, null, null, null),
                     project(tdProjection(), leaf)));
             }
         };
@@ -800,7 +803,8 @@ public final class BoundaryExecutor {
         }
         return FailureContractRegistry.render(armId, parameters,
             FailureProjections.expectedFor(arm, fail.descriptor(), null),
-            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null), null);
+            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null,
+                null), null);
     }
 
     /** One parameter-less arm render (the bounds, int32, sqrt and fixed-text rows). */
@@ -808,7 +812,8 @@ public final class BoundaryExecutor {
         FailureArm arm = FailureContractRegistry.arm(armId);
         return FailureContractRegistry.render(armId, new LinkedHashMap<>(),
             FailureProjections.expectedFor(arm, fail.descriptor(), null),
-            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null), null);
+            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null,
+                null), null);
     }
 
     /** The class-identity arm: the declared atom beside the carried atom. */
@@ -820,7 +825,8 @@ public final class BoundaryExecutor {
         parameters.put("actual", fail.actualToken());
         return FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY, parameters,
             FailureProjections.expectedFor(arm, fail.descriptor(), null),
-            FailureProjections.actualFor(arm, null, null, fail.actualToken(), null, null), null);
+            FailureProjections.actualFor(arm, null, null, null, fail.actualToken(), null,
+                null), null);
     }
 
     /** The signature arm: the declared canonical text beside the carried text. */
@@ -835,7 +841,8 @@ public final class BoundaryExecutor {
         parameters.put("actual", fail.actualToken());
         return FailureContractRegistry.render(armId, parameters,
             FailureProjections.expectedFor(arm, fail.descriptor(), null),
-            FailureProjections.actualFor(arm, null, null, null, fail.actualToken(), null), null);
+            FailureProjections.actualFor(arm, null, null, null, null, fail.actualToken(),
+                null), null);
     }
 
     /** The E8003 element arm with the first failing element's leaf cause. */
@@ -846,7 +853,8 @@ public final class BoundaryExecutor {
         BoundaryFailure cause = project(projection, fail.cause());
         return FailureContractRegistry.render(FailureArmId.ARRAY_ELEMENT_KIND, parameters,
             FailureProjections.expectedFor(arm, null, fail.descriptor()),
-            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null), cause);
+            FailureProjections.actualFor(arm, fail.actualToken(), null, null, null, null,
+                null), cause);
     }
 
     /**

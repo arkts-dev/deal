@@ -3151,16 +3151,21 @@ public class JsBackendTest {
             "  say(\"first-failure=\" + e.code + \" \" + e.message);",
             "}",
             "say(\"failure-read-order=\" + failOrder.join(\",\"));",
-            // The raw non-object guard: the complete unlocated tuple.
-            "try {",
-            "  $rt.loadHost(17, decl, \"host/echo\", \"main.deal\", 1, 1);",
-            "  say(\"raw-shape=none\");",
-            "} catch (e) {",
-            "  say(\"raw-shape=\" + e.code + \"|\" + e.message + \"|\" + e.expected",
-            "    + \"|\" + e.actual",
-            "    + \"|file=\" + (e.file === undefined ? \"<absent>\" : e.file)",
-            "    + \"|line=\" + (e.line === undefined ? \"<absent>\" : e.line)",
-            "    + \"|column=\" + (e.column === undefined ? \"<absent>\" : e.column));",
+            // The raw non-object guard: the complete unlocated tuple of
+            // every JS diagnostic kind the guard rejects — a number, the JS
+            // null and the absent marker (the JS runtime's own $kindOf
+            // vocabulary, never a Lua-shaped carrier kind).
+            "for (const raw of [17, null, undefined]) {",
+            "  try {",
+            "    $rt.loadHost(raw, decl, \"host/echo\", \"main.deal\", 1, 1);",
+            "    say(\"raw-shape=none\");",
+            "  } catch (e) {",
+            "    say(\"raw-shape=\" + e.code + \"|\" + e.message + \"|\" + e.expected",
+            "      + \"|\" + e.actual",
+            "      + \"|file=\" + (e.file === undefined ? \"<absent>\" : e.file)",
+            "      + \"|line=\" + (e.line === undefined ? \"<absent>\" : e.line)",
+            "      + \"|column=\" + (e.column === undefined ? \"<absent>\" : e.column));",
+            "  }",
             "}",
             "");
         NodeResult probeResult = runRuntimeProbe("host_occurrence", probe);
@@ -3192,6 +3197,14 @@ public class JsBackendTest {
                 + "module object|table|number|file=<absent>|line=<absent>|column=<absent>"),
             "the raw non-object guard renders the complete unlocated tuple: "
                 + probeOut);
+        check(probeOut.contains("raw-shape=E8011|host module did not return a "
+                + "module object|table|null|file=<absent>|line=<absent>|column=<absent>"),
+            "the raw null guard renders the JS null actual (never the Lua-shaped "
+                + "carrier-kind table) with the complete unlocated tuple: " + probeOut);
+        check(probeOut.contains("raw-shape=E8011|host module did not return a "
+                + "module object|table|nil|file=<absent>|line=<absent>|column=<absent>"),
+            "the raw absent guard renders the nil actual with the complete "
+                + "unlocated tuple: " + probeOut);
 
         // (2) The full orchestrator project: two same-file aliases and one
         // cross-unit import of one resolved host file.
