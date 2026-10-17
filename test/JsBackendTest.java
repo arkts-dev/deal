@@ -158,6 +158,7 @@ public class JsBackendTest {
             testCanonicalDescriptorMatcherPins();
             testLegacyDescriptorRejectionPins();
             testCanonicalClassIdentityIndex();
+            testSameIdentitySiblingClassLayouts();
             testErrorDefaultFilling();
             testContextualErrorConstruction();
             testRethrowPreservesCode();
@@ -587,6 +588,33 @@ public class JsBackendTest {
             Files.walk(dir).sorted(Comparator.reverseOrder())
                 .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
         } catch (IOException ignored) {}
+    }
+
+    /**
+     * Deploys every artifact of one multi-module compilation plus the
+     * runtime/stdlib support into a fresh temp dir and runs the named entry
+     * artifact under node (the same-identity sibling control needs the
+     * sibling's own artifact beside the entry).
+     */
+    private static NodeResult runProjectNode(CompiledProject compiled,
+            String artifact) throws Exception {
+        Path dir = Files.createTempDirectory("jstest_project_");
+        try {
+            for (Map.Entry<String, String> entry
+                    : compiled.artifacts().entrySet()) {
+                String relative = entry.getKey();
+                if (relative.startsWith("deal/") || relative.startsWith("std/")) {
+                    continue; // the deployed support set below owns those.
+                }
+                Path file = dir.resolve(relative);
+                Files.createDirectories(file.getParent());
+                Files.writeString(file, entry.getValue());
+            }
+            StubModuleResolver.deployJsSupport(dir);
+            return runNodeScript(dir, artifact);
+        } finally {
+            deleteDir(dir);
+        }
     }
 
     /**
@@ -5360,6 +5388,77 @@ public class JsBackendTest {
             return ii.modulePathIdentities().get(modulePath);
         }
         throw new AssertionError("expected the module-identity index");
+    }
+
+    /**
+     * The same-identity sibling declarations with different fields and no
+     * generated JSON helper (review cycle 2, finding 1): two module-level
+     * class declarations in one directory share the canonical class
+     * identity while declaring different fields. Every construction site
+     * renders its own declaration's layout and default owner (the entry's
+     * {@code nick} default and the imported declaration's {@code a}
+     * default), so neither the local nor the shared-factory construction
+     * borrows a sibling's flattened field set.
+     */
+    private static void testSameIdentitySiblingClassLayouts() throws Exception {
+        System.out.println("-- Public compilation: same-identity sibling"
+            + " declarations with different fields keep their own layouts --");
+        CompiledProject compiled = compileProject(Map.of(
+            "other.deal", """
+                export class Point { a: int = 7; }
+                """,
+            "main.deal", """
+                import * as console from "std/console";
+                import * as other from "./other";
+
+                export class Point { nick: string = "local"; }
+
+                export function main(): null {
+                  let local: Point = {};
+                  let imported: other.Point = {};
+                  let provided: Point = { nick: "given" };
+                  if (local.nick !== "local") {
+                    throw { code: "WRONG", message: "local" };
+                  }
+                  if (imported.a !== 7) {
+                    throw { code: "WRONG", message: "imported" };
+                  }
+                  if (provided.nick !== "given") {
+                    throw { code: "WRONG", message: "provided" };
+                  }
+                  console.log("ok");
+                  return null;
+                }
+                """), "main.deal");
+        check(compiled.success(),
+            "the same-identity different-field project compiles: "
+                + compiled.diagnostics());
+        if (!compiled.success()) {
+            return;
+        }
+        String mainJs = compiled.artifacts().get("main.js");
+        String otherJs = compiled.artifacts().get("other.js");
+        check(mainJs != null
+                && mainJs.contains("const $pPoint = [{ name: \"nick\""),
+            "the entry's constructor plan carries its own declaration's"
+                + " field: " + mainJs);
+        check(otherJs != null
+                && otherJs.contains("const $pPoint = [{ name: \"a\""),
+            "the imported sibling's constructor plan carries its own"
+                + " declaration's field: " + otherJs);
+        check(mainJs != null
+                && !mainJs.contains("const $pPoint = [{ name: \"a\""),
+            "the entry's constructor plan is never the sibling's flattened"
+                + " layout: " + mainJs);
+        if (!nodeAvailable) {
+            skipNode("same-identity sibling layout run");
+            return;
+        }
+        NodeResult run = runProjectNode(compiled, "main.js");
+        check(run.exitCode() == 0 && run.output().equals("ok"),
+            "the same-identity different-field artifact constructs both"
+                + " declarations and prints ok: " + run.output()
+                + " (exit " + run.exitCode() + ")");
     }
 
     private static void testErrorDefaultFilling() throws Exception {

@@ -1713,9 +1713,9 @@ public class ProductionDispatchTest {
             throws Exception {
         System.out.println("-- public compilation: the plan-imported/"
             + "non-plan-local and local-plan same-identity JSON links"
-            + " execute the exact plan-bearing declaration --");
+            + " execute the exact plan-bearing declaration on every target --");
         for (boolean importedPlan : new boolean[] { true, false }) {
-            for (String backend : List.of("luajit", "jvm")) {
+            for (String backend : List.of("js", "luajit", "jvm")) {
                 String label = (importedPlan ? "imported plan" : "local plan")
                     + " " + backend;
                 Path project = Files.createTempDirectory(
@@ -1749,15 +1749,111 @@ public class ProductionDispatchTest {
                         continue;
                     }
                     Path out = project.resolve("out");
-                    if (backend.equals("luajit")) {
-                        checkSiblingLuaRun(label, out);
-                    } else {
-                        checkSiblingJvmRun(label, project, out);
+                    switch (backend) {
+                        case "js" -> checkSiblingJsRun(label, out);
+                        case "luajit" -> checkSiblingLuaRun(label, out);
+                        default -> checkSiblingJvmRun(label, project, out);
                     }
                 } finally {
                     deleteRecursively(project);
                 }
             }
+        }
+    }
+
+    /**
+     * The same-identity sibling declarations with different fields and no
+     * generated JSON helper (review cycle 2, finding 1): the entry's own
+     * declaration and the imported sibling's declaration share the
+     * canonical identity, so every construction site must use its own
+     * declaration's field set and default owner. The local construction
+     * fills the entry's {@code nick} with its own default, the
+     * shared-factory construction runs the imported declaration's {@code a}
+     * default, and an explicitly provided field skips its local default.
+     */
+    private static final String LAYOUT_SIBLING_OTHER_SOURCE = """
+        export class Point { a: int = 7; }
+        """;
+
+    private static final String LAYOUT_SIBLING_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as other from "./other";
+
+        export class Point { nick: string = "local"; }
+
+        export function main(): null {
+          let local: Point = {};
+          let imported: other.Point = {};
+          let provided: Point = { nick: "given" };
+          if (local.nick !== "local") {
+            throw { code: "WRONG", message: "local" };
+          }
+          if (imported.a !== 7) {
+            throw { code: "WRONG", message: "imported" };
+          }
+          if (provided.nick !== "given") {
+            throw { code: "WRONG", message: "provided" };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The same-identity different-field non-JSON control on the JS
+     * production lane (review cycle 2, finding 1): each declaration's
+     * construction renders its own layout (the emitted per-module
+     * constructor plans stay per declaration), the shared factory transfer
+     * runs the imported owner's default, and the real Node artifact
+     * prints {@code ok} with an empty stderr and exit 0.
+     */
+    private static void testProductionSameIdentitySiblingLayouts()
+            throws Exception {
+        System.out.println("-- public compilation: same-identity sibling"
+            + " declarations with different fields keep their own layouts on"
+            + " the JavaScript production lane --");
+        Path project = Files.createTempDirectory("production-sibling-layout-");
+        try {
+            write(project, "deal.json", """
+                {
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(project, "src/other.deal", LAYOUT_SIBLING_OTHER_SOURCE);
+            write(project, "src/main.deal", LAYOUT_SIBLING_MAIN_SOURCE);
+
+            ProjectOutcome compile = productionCompile(project,
+                "src/main.deal", "out");
+            check(compile.exitCode() == 0,
+                "the same-identity different-field JS compile succeeds: "
+                    + compile.stderr());
+            check(compile.stderr().isEmpty(),
+                "the same-identity different-field JS compile emits no"
+                    + " diagnostic: " + compile.stderr());
+            if (compile.exitCode() != 0) {
+                return;
+            }
+            Path out = project.resolve("out");
+            String mainJs = Files.readString(out.resolve("main.js"));
+            String otherJs = Files.readString(out.resolve("other.js"));
+            check(mainJs.contains("const $pPoint = [{ name: \"nick\""),
+                "the entry's constructor plan carries its own declaration's"
+                    + " field: " + mainJs);
+            check(otherJs.contains("const $pPoint = [{ name: \"a\""),
+                "the imported sibling's constructor plan carries its own"
+                    + " declaration's field: " + otherJs);
+            check(!mainJs.contains("const $pPoint = [{ name: \"a\""),
+                "the entry's constructor plan is never the sibling's"
+                    + " flattened layout: " + mainJs);
+            checkSiblingJsRun("same-identity different-field", out);
+        } finally {
+            deleteRecursively(project);
         }
     }
 
@@ -6708,6 +6804,7 @@ public class ProductionDispatchTest {
         testProductionCallReceiverProviderBesideSameIdentityLocal();
         testProductionNestedFieldAndTransitiveProviders();
         testProductionPlanOwnerJsonLinks();
+        testProductionSameIdentitySiblingLayouts();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionShadowedLocalCalleeCollision();

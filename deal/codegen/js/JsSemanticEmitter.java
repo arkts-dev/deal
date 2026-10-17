@@ -103,8 +103,11 @@ import java.util.Set;
  * the deployed stdlib modules, and the host-declaration class construction
  * through the occurrence's synthesized {@code C$new}. The
  * {@code RETAINED_ABI} external calls belong to a later decomposition unit
- * of the same migration and fail closed here; no public dispatch selects
- * this renderer until the production cutover.</p>
+ * of the same migration and fail closed here. This renderer is the public
+ * JavaScript production arm: {@link
+ * deal.module.ProductionProjectEmission} invokes it exactly once over the
+ * one validated, lowered project for {@code Backend.JS}; no AST emitter
+ * exists and no invocation purpose selects an alternate rendering.</p>
  */
 public final class JsSemanticEmitter {
 
@@ -195,18 +198,65 @@ public final class JsSemanticEmitter {
         private final Set<OpId> ownedChildren = new HashSet<>();
         private final Set<OpId> skippedOps = new HashSet<>();
         // ----- Project class facts (validated layouts/owners/export surfaces) -----
-        /** The project closure's layout of every resolvable class identity. */
-        private final Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
-        /** The owning implementation module of every resolvable class identity. */
-        private final Map<ClassId, ModuleId> classModules = new LinkedHashMap<>();
+        /**
+         * Every declaration's layout of one canonical class identity, in
+         * project order. Two same-named declarations of sibling modules in
+         * one directory share one canonical identity but may declare
+         * different fields, so no identity-keyed single layout is a
+         * declaration: a construction, factory or JSON helper resolves the
+         * layout of its own declaring unit (or of the factory/registration
+         * owner it records).
+         */
+        private final Map<ClassId, List<ClassLayout>> declaredLayouts =
+            new LinkedHashMap<>();
+        /** The declaring units of one canonical class identity, project order. */
+        private final Map<ClassId, List<ModuleId>> declaringModules =
+            new LinkedHashMap<>();
+        /**
+         * The plan-bearing ({@code @jsonable}) declaring unit of each
+         * identity, by project order: the unique declaration that generates
+         * the identity's JSON helpers. A multiple-declaration identity
+         * carries at most one here when the shared admission admits it; a
+         * project whose JSON plan key is ambiguous fails closed before
+         * rendering.
+         */
+        private final Map<ClassId, List<ModuleId>> jsonPlanBearers =
+            new LinkedHashMap<>();
+        /**
+         * The declaration unit whose layout the canonical JSON plan key
+         * carries: the unique plan-bearing declaration, or (for an identity
+         * the shared admission never lets a nested link select) the
+         * emission order's last declaration. Every cross-module
+         * {@code $fields} read resolves this owner's published surface,
+         * never a first-seen sibling.
+         */
+        private final Map<ClassId, ModuleId> jsonPlanOwners =
+            new LinkedHashMap<>();
+        /** Declaration-module registration layouts (HOST/extern-C/builtin). */
+        private final Map<ClassId, ClassLayout> seedLayouts =
+            new LinkedHashMap<>();
+        /**
+         * The declaration module of a class identity outside the
+         * implementation closure (a HOST declaration's class): its public
+         * surface is the only declaration the identity has, so a nested
+         * link naming it is never a same-identity sibling selection.
+         */
+        private final Map<ClassId, ModuleId> declarationModuleOfClass =
+            new LinkedHashMap<>();
         /** The exported classes of each implementation module, declaration order. */
         private final Map<ModuleId, List<ClassId>> exportedClasses =
             new LinkedHashMap<>();
         /** The construction entry of every exported class (interface index fact). */
         private final Map<ClassId, ClassFactoryId> constructionEntries =
             new LinkedHashMap<>();
-        /** Classes carrying generated JSON helpers (the jsonable fact). */
-        private final Set<ClassId> jsonableClasses = new LinkedHashSet<>();
+        /**
+         * The {@code @jsonable} classes each unit itself declares (its own
+         * generated JSON helpers): a same-identity sibling declaration that
+         * is not plan-bearing publishes no {@code C$fields} and no helper
+         * export.
+         */
+        private final Map<ModuleId, Set<ClassId>> jsonableClassesByModule =
+            new LinkedHashMap<>();
         /** Per-owning-module {@code CLASS_DEFAULT} ops: a canonical class
          * identity may cover same-named declarations of sibling modules,
          * and each declaring unit's plan uses that unit's own default ops
@@ -463,31 +513,40 @@ public final class JsSemanticEmitter {
         }
 
         /**
-         * Indexes the project's validated class facts exactly once: the
-         * closure layouts (unit layouts plus the project's registration
-         * seeds), the interface index's exported-class entries with their
-         * recorded construction entries, the generated JSON-helper classes,
-         * and each class field's {@code CLASS_DEFAULT} child. These are the
-         * structural facts the class arms render from; no class fact is
-         * rediscovered from source text, an alias name or a target ABI
-         * registry.
+         * Indexes the project's validated class facts exactly once: every
+         * declaration's layout per canonical class identity (plus the
+         * project's declaration-module registration layouts), the
+         * interface index's exported-class entries with their recorded
+         * construction entries, the generated JSON-helper declarations per
+         * unit, and each class field's {@code CLASS_DEFAULT} child. A
+         * canonical identity may cover same-named declarations of sibling
+         * modules in one directory with different fields, so the declared
+         * layouts stay per declaration and the cross-module JSON surface
+         * resolves the plan-bearing declaration. These are the structural
+         * facts the class arms render from; no class fact is rediscovered
+         * from source text, an alias name or a target ABI registry.
          */
         private void indexClassFacts() {
             for (LoweredModuleUnit unit : units.values()) {
                 for (Map.Entry<ClassId, ClassLayout> entry
                         : unit.classLayouts().entrySet()) {
-                    layouts.putIfAbsent(entry.getKey(), entry.getValue());
-                    classModules.putIfAbsent(entry.getKey(), unit.moduleId());
+                    declaredLayouts
+                        .computeIfAbsent(entry.getKey(), key -> new ArrayList<>())
+                        .add(entry.getValue());
+                    declaringModules
+                        .computeIfAbsent(entry.getKey(), key -> new ArrayList<>())
+                        .add(unit.moduleId());
                 }
             }
             for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
                     : input.seeds().registrations().entrySet()) {
-                layouts.putIfAbsent(entry.getKey(), entry.getValue().layout());
+                seedLayouts.put(entry.getKey(), entry.getValue().layout());
             }
             for (Map.Entry<ModuleId, ExternalModuleInterface> entry
                     : input.project().interfaceIndex().modules().entrySet()) {
                 for (ClassInterface classInterface : entry.getValue().classes()) {
-                    classModules.putIfAbsent(classInterface.classId(), entry.getKey());
+                    declarationModuleOfClass.putIfAbsent(
+                        classInterface.classId(), entry.getKey());
                     constructionEntries.putIfAbsent(classInterface.classId(),
                         classInterface.constructionEntry());
                     exportedClasses
@@ -507,33 +566,66 @@ public final class JsSemanticEmitter {
                                     key -> new LinkedHashMap<>())
                                 .putIfAbsent(payload.field(), op);
                         case KindPayload.JsonFromClassPayload payload ->
-                            jsonableClasses.add(payload.layout().classId());
+                            indexJsonableDeclaration(moduleEntry.getKey(),
+                                payload.layout().classId());
                         case KindPayload.JsonToClassPayload payload ->
-                            jsonableClasses.add(payload.layout().classId());
+                            indexJsonableDeclaration(moduleEntry.getKey(),
+                                payload.layout().classId());
                         default -> {
                         }
                     }
                 }
             }
+            // The canonical JSON plan key carries the unique plan-bearing
+            // declaration's layout; an identity the shared admission never
+            // lets a nested link select falls back to the emission order's
+            // last declaration, exactly like the lowering's plan-owner fact.
+            for (Map.Entry<ClassId, List<ModuleId>> entry
+                    : declaringModules.entrySet()) {
+                List<ModuleId> bearers = jsonPlanBearers.get(entry.getKey());
+                jsonPlanOwners.put(entry.getKey(),
+                    bearers != null && bearers.size() == 1
+                        ? bearers.get(0)
+                        : entry.getValue().get(entry.getValue().size() - 1));
+            }
             // Every generated JSON helper descends from a module-level
-            // exported @jsonable class: a helper class outside its owner's
-            // exported-class set would carry no descriptor array and no
-            // public surface, so the disagreement fails closed here.
-            for (ClassId classId : jsonableClasses) {
-                ModuleId owner = classModules.get(classId);
-                if (owner == null || !units.containsKey(owner)) {
-                    continue; // a declaration class's helpers are its module's
-                }
-                List<ClassId> exported = exportedClassesOf(owner);
-                if (!exported.contains(classId)) {
-                    throw new SharedEmissionFailure("the @jsonable class "
-                        + classId + " is not one of the exported classes of"
-                        + " its module '" + owner.path() + "': the generated"
-                        + " helpers and their descriptor export exist for"
-                        + " module-level exported @jsonable classes only"
-                        + " (producer defect)", null);
+            // exported @jsonable class: a helper class outside its own
+            // declaring unit's exported-class set would carry no descriptor
+            // array and no public surface, so the disagreement fails closed
+            // here. The check is per declaring unit: a same-identity sibling
+            // declaration never satisfies it on the helper's behalf.
+            for (Map.Entry<ModuleId, Set<ClassId>> entry
+                    : jsonableClassesByModule.entrySet()) {
+                List<ClassId> exported = exportedClassesOf(entry.getKey());
+                for (ClassId classId : entry.getValue()) {
+                    if (!exported.contains(classId)) {
+                        throw new SharedEmissionFailure("the @jsonable class "
+                            + classId + " is not one of the exported classes of"
+                            + " its module '" + entry.getKey().path() + "':"
+                            + " the generated helpers and their descriptor"
+                            + " export exist for module-level exported"
+                            + " @jsonable classes only (producer defect)", null);
+                    }
                 }
             }
+        }
+
+        /** One unit's own plan-bearing declaration of a class identity. */
+        private void indexJsonableDeclaration(ModuleId module, ClassId classId) {
+            jsonableClassesByModule
+                .computeIfAbsent(module, key -> new LinkedHashSet<>())
+                .add(classId);
+            List<ModuleId> bearers = jsonPlanBearers
+                .computeIfAbsent(classId, key -> new ArrayList<>());
+            if (!bearers.contains(module)) {
+                bearers.add(module);
+            }
+        }
+
+        /** Whether one unit itself generates the identity's JSON helpers. */
+        private boolean unitDeclaresJsonable(ModuleId module, ClassId classId) {
+            Set<ClassId> classes = jsonableClassesByModule.get(module);
+            return classes != null && classes.contains(classId);
         }
 
         /**
@@ -623,14 +715,26 @@ public final class JsSemanticEmitter {
             }
         }
 
-        /** The project closure's layout of one class identity, or null. */
-        private ClassLayout layoutOf(ClassId classId) {
-            return layouts.get(classId);
+        /** One unit's own declared layout of a class identity, or null. */
+        private ClassLayout unitLayoutOf(ModuleId module, ClassId classId) {
+            LoweredModuleUnit unit = units.get(module);
+            return unit == null ? null : unit.classLayouts().get(classId);
         }
 
-        /** The owning module of one class identity, or null. */
-        private ModuleId ownerOfClass(ClassId classId) {
-            return classModules.get(classId);
+        /**
+         * The declaring unit's own layout of one class identity: the class
+         * machinery of a unit (its factory entry, its constructor plan and
+         * its JSON descriptor array) renders exactly the fields that unit
+         * declares, never a same-identity sibling's first-seen layout.
+         */
+        private ClassLayout requireUnitLayout(ModuleId module, ClassId classId,
+                                              SemanticOp op) {
+            ClassLayout layout = unitLayoutOf(module, classId);
+            if (layout == null) {
+                throw rejected(op, "module '" + module.path() + "' declares no"
+                    + " layout for the class " + classId + " (producer defect)");
+            }
+            return layout;
         }
 
         /** One class field's recorded {@code CLASS_DEFAULT} op, or null. */
@@ -3534,10 +3638,11 @@ public final class JsSemanticEmitter {
             }
             List<ClassId> exported = exportedClassesOf(unit.moduleId());
             for (ClassId classId : exported) {
-                ClassLayout layout = requireResolvedLayout(classId, null);
+                ClassLayout layout = requireUnitLayout(unit.moduleId(), classId,
+                    null);
                 beginMappedClassGroup(unit, classId);
                 emitClassPlan(classId, layout);
-                if (jsonableClasses.contains(classId)) {
+                if (unitDeclaresJsonable(unit.moduleId(), classId)) {
                     emitClassFieldsArray(classId, layout);
                 }
                 emitted = true;
@@ -3569,7 +3674,7 @@ public final class JsSemanticEmitter {
                         + jsString(classId.text()) + ", "
                         + classPlanExprs.get(classId) + ", provided, $file,"
                         + " $line, $column));");
-                    if (jsonableClasses.contains(classId)) {
+                    if (unitDeclaresJsonable(unit.moduleId(), classId)) {
                         emit("$rt.publishModule(" + jsString(modulePath) + ", "
                             + jsString(name + "$fields") + ", "
                             + classFieldsExprs.get(classId) + ");");
@@ -3668,7 +3773,8 @@ public final class JsSemanticEmitter {
                                            SemanticOp factoryOp) {
             KindPayload.ClassFactoryPayload payload =
                 (KindPayload.ClassFactoryPayload) factoryOp.payload();
-            ClassLayout layout = requireResolvedLayout(payload.classId(), factoryOp);
+            ClassLayout layout = requireUnitLayout(unit.moduleId(),
+                payload.classId(), factoryOp);
             String transfer = "$t" + factoryOp.opId().id();
             // The factory entry is the owner module's own wrapper group:
             // it maps to the class's recorded local declaration site.
@@ -3828,21 +3934,30 @@ public final class JsSemanticEmitter {
 
         /** The nested descriptor array of one class-valued field. */
         private String nestedFieldsText(ClassId nested, Set<ClassId> stack) {
-            ModuleId owner = ownerOfClass(nested);
+            ModuleId owner = jsonPlanOwners.get(nested);
+            if (owner == null) {
+                // A class outside the implementation closure (a HOST
+                // declaration's class) has exactly one declaration: its
+                // declaration module owns the published descriptor surface.
+                owner = declarationModuleOfClass.get(nested);
+            }
             if (owner == null) {
                 throw new SharedEmissionFailure("the class " + nested
-                    + " of a jsonable field resolves in no interface entry of"
+                    + " of a jsonable field resolves in no declaration of"
                     + " the project closure (producer defect)", null);
             }
             if (owner.equals(currentModule)) {
-                ClassLayout nestedLayout = layoutOf(nested);
+                ClassLayout nestedLayout = unitLayoutOf(currentModule, nested);
                 if (nestedLayout == null) {
-                    throw new SharedEmissionFailure("the same-module jsonable"
-                        + " class " + nested + " carries no layout in the"
-                        + " project closure (producer defect)", null);
+                    throw new SharedEmissionFailure("the plan-bearing jsonable"
+                        + " class " + nested + " carries no layout in its"
+                        + " declaring unit (producer defect)", null);
                 }
                 return fieldsArrayText(nested, nestedLayout, stack);
             }
+            // The canonical JSON plan key carries the plan-bearing
+            // declaration's layout: a consumer reads that declaration's
+            // published descriptor array, never a same-identity sibling's.
             return "$rt.readModule(" + jsString(owner.path()) + ", "
                 + jsString(nested.name() + "$fields") + ")";
         }
@@ -3946,8 +4061,15 @@ public final class JsSemanticEmitter {
          */
         private void emitClassNewHostDefaults(SemanticOp op,
                                               KindPayload.ClassNewPayload payload) {
-            ClassLayout layout = requireResolvedLayout(payload.classId(), op,
+            ClassLayout layout = requirePayloadLayout(op, payload.classId(),
                 payload.layout());
+            ClassLayout registered = seedLayouts.get(payload.classId());
+            if (registered == null || !registered.equals(layout)) {
+                throw rejected(op, "the CLASS_NEW " + op.opId()
+                    + " carries a host-declaration layout for "
+                    + payload.classId() + " that differs from the declaration"
+                    + " module's registered layout (producer defect)");
+            }
             if (payload.classFactoryRef() != null
                     || !payload.classDefaultOpIds().isEmpty()) {
                 throw rejected(op, "the CLASS_NEW " + op.opId() + " carries the"
@@ -4050,7 +4172,16 @@ public final class JsSemanticEmitter {
 
         private void emitClassNewLocal(SemanticOp op,
                                        KindPayload.ClassNewPayload payload) {
-            ClassLayout layout = requireResolvedLayout(payload.classId(), op, payload.layout());
+            ClassLayout layout = requirePayloadLayout(op, payload.classId(),
+                payload.layout());
+            ClassLayout unitLayout = unitLayoutOf(currentModule,
+                payload.classId());
+            if (unitLayout == null || !unitLayout.equals(layout)) {
+                throw rejected(op, "the LOCAL CLASS_NEW " + op.opId()
+                    + " of " + payload.classId() + " records a layout that"
+                    + " differs from its declaring unit's layout (producer"
+                    + " defect)");
+            }
             Set<String> providedNames = new LinkedHashSet<>();
             for (KindPayload.ProvidedField field : payload.providedFields()) {
                 providedNames.add(field.name());
@@ -4093,13 +4224,22 @@ public final class JsSemanticEmitter {
 
         private void emitClassNewSharedFactory(SemanticOp op,
                                                KindPayload.ClassNewPayload payload) {
-            ClassLayout layout = requireResolvedLayout(payload.classId(), op, payload.layout());
             OpId factoryOpId = factoryOpOf(op, payload.classFactoryRef());
             if (factoryOpId == null) {
                 throw rejected(op, "the CLASS_NEW " + op.opId()
                     + " classFactoryRef " + payload.classFactoryRef()
                     + " resolves in no module's ClassFactoryRegistry in the"
                     + " closure (producer defect)");
+            }
+            ClassLayout layout = requirePayloadLayout(op, payload.classId(),
+                payload.layout());
+            ClassLayout ownerLayout = unitLayoutOf(factoryOpId.module(),
+                payload.classId());
+            if (ownerLayout == null || !ownerLayout.equals(layout)) {
+                throw rejected(op, "the SHARED_FACTORY CLASS_NEW " + op.opId()
+                    + " of " + payload.classId() + " records a layout that"
+                    + " differs from the declaration of its factory owner '"
+                    + factoryOpId.module().path() + "' (producer defect)");
             }
             if (factoryOpId.module().equals(currentModule)) {
                 throw rejected(op, "the CLASS_NEW " + op.opId()
@@ -4316,7 +4456,7 @@ public final class JsSemanticEmitter {
         private void emitJsonFromClass(SemanticOp op) {
             KindPayload.JsonFromClassPayload payload =
                 (KindPayload.JsonFromClassPayload) op.payload();
-            requireResolvedLayout(payload.layout().classId(), op, payload.layout());
+            requireLocalJsonLayout(op, payload.layout());
             emit(slotOf(op) + " = $rt.jsonFromJson("
                 + jsString(payload.layout().classId().text()) + ", "
                 + classFieldsExpr(op, payload.layout().classId()) + ", null, "
@@ -4334,7 +4474,7 @@ public final class JsSemanticEmitter {
         private void emitJsonToClass(SemanticOp op) {
             KindPayload.JsonToClassPayload payload =
                 (KindPayload.JsonToClassPayload) op.payload();
-            requireResolvedLayout(payload.layout().classId(), op, payload.layout());
+            requireLocalJsonLayout(op, payload.layout());
             emit(slotOf(op) + " = $rt.jsonToJson("
                 + jsString(payload.layout().classId().text()) + ", "
                 + slot(payload.classValue()) + ", "
@@ -4342,21 +4482,35 @@ public final class JsSemanticEmitter {
                 + callSpanArgs(op) + ");");
         }
 
+        /**
+         * The generated JSON helper of one class runs over exactly its own
+         * declaring unit's layout: the helper is generated by that
+         * declaration, so the recorded payload layout must be its layout
+         * (a same-identity sibling's layout is never substituted).
+         */
+        private void requireLocalJsonLayout(SemanticOp op, ClassLayout layout) {
+            requirePayloadLayout(op, layout.classId(), layout);
+            ClassLayout unitLayout = unitLayoutOf(currentModule,
+                layout.classId());
+            if (unitLayout == null || !unitLayout.equals(layout)) {
+                throw rejected(op, "the " + op.kind() + " " + op.opId()
+                    + " records a layout of " + layout.classId() + " that"
+                    + " differs from its declaring unit's layout (producer"
+                    + " defect)");
+            }
+        }
+
         /** The emitted {@code $fields} binding of one jsonable class. */
         private String classFieldsExpr(SemanticOp op, ClassId classId) {
-            ModuleId owner = ownerOfClass(classId);
-            if (owner == null) {
+            if (unitLayoutOf(currentModule, classId) == null) {
                 throw rejected(op, "the @jsonable class " + classId
-                    + " resolves in no interface entry of the project closure"
-                    + " (producer defect)");
+                    + " is not declared by the module '" + currentModule.path()
+                    + " that generates its JSON helpers (producer defect)");
             }
-            if (owner.equals(currentModule)) {
-                // The module emits one descriptor array per local jsonable
-                // class into the binding every local helper reads.
-                return "$f" + classId.name();
-            }
-            return "$rt.readModule(" + jsString(owner.path()) + ", "
-                + jsString(classId.name() + "$fields") + ")";
+            // The module emits one descriptor array per class it declares
+            // and generates helpers for; the binding every local helper
+            // reads is its own declaration's array.
+            return "$f" + classId.name();
         }
 
         /**
@@ -4383,28 +4537,35 @@ public final class JsSemanticEmitter {
         }
 
         /**
-         * The resolved layout of one class identity, validated against the
-         * construction payload's own copy (a disagreement is a producer
-         * defect, never a silent selection).
+         * The exact layout a construction or JSON payload records,
+         * validated as one of the class identity's project facts: a
+         * declaration layout of some unit or a declaration-module
+         * registration layout. A canonical class identity can cover
+         * same-named declarations of sibling modules with different fields,
+         * so the payload's own layout — the exact declaration the shared
+         * lowering selected — supplies the field set; an identity-keyed
+         * single layout would silently select a sibling. A disagreement with
+         * every recorded layout is a producer defect, never a silent
+         * selection.
          */
-        private ClassLayout requireResolvedLayout(ClassId classId, SemanticOp op) {
-            return requireResolvedLayout(classId, op, null);
-        }
-
-        private ClassLayout requireResolvedLayout(ClassId classId, SemanticOp op,
-                                                  ClassLayout expected) {
-            ClassLayout layout = layoutOf(classId);
-            if (layout == null) {
-                throw rejected(op, "the class " + classId
-                    + " resolves in no layout of the project closure (producer"
+        private ClassLayout requirePayloadLayout(SemanticOp op, ClassId classId,
+                                                 ClassLayout expected) {
+            if (expected == null) {
+                throw rejected(op, "the " + op.kind() + " " + op.opId()
+                    + " of class " + classId + " records no layout (producer"
                     + " defect)");
             }
-            if (expected != null && !layout.equals(expected)) {
-                throw rejected(op, "the class " + classId
-                    + " resolves to a layout that differs from the recorded"
-                    + " payload layout (producer defect)");
+            List<ClassLayout> declared = declaredLayouts.get(classId);
+            if (declared != null && declared.contains(expected)) {
+                return expected;
             }
-            return layout;
+            ClassLayout registered = seedLayouts.get(classId);
+            if (expected.equals(registered)) {
+                return expected;
+            }
+            throw rejected(op, "the class " + classId + " resolves to a"
+                + " layout that differs from every recorded declaration and"
+                + " registration of the project closure (producer defect)");
         }
 
         /** One construction's recorded {@code CLASS_DEFAULT} child. */

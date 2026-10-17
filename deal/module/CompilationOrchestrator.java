@@ -189,10 +189,11 @@ public final class CompilationOrchestrator {
     /**
      * The per-module imported class-literal providers of the executed
      * dependency graph (dotted module path &rarr; literal range &rarr;
-     * import alias): the JavaScript emitter's exact construction
-     * reference for literals outside published plan defaults (the plan
-     * IR target route covers the defaults). Empty before the graph runs
-     * and for every module the graph skipped.
+     * import alias): the shared checked-project enrichment's contextual
+     * provider fact, republished into the one project lowering for
+     * literals outside published plan defaults (the plan IR target route
+     * covers the defaults). Empty before the graph runs and for every
+     * module the graph skipped.
      */
     private Map<String, Map<DiagnosticRange, String>>
         classLiteralProvidersByModulePath = Map.of();
@@ -2118,8 +2119,10 @@ public final class CompilationOrchestrator {
      * inputs — the one project lowering, the pre-emission closure guard,
      * the one production emission (with the project's source comments and
      * {@code .deal.map.json} sidecars, the v1.3 default), and the one
-     * staged project artifact plus the complete LuaJIT deployment
-     * copies — then the one project emission record
+     * staged production artifact set plus the target's complete
+     * runtime/stdlib deployment copies (LuaJIT and JVM stage one project
+     * artifact; JavaScript stages one CommonJS artifact per implementation
+     * unit) — then the one project emission record
      * ({@link #semanticEmissionCount}) and the one read-only
      * produced-project reference this compile exposes
      * ({@link #producedProject()}). A lowering, guard, or emission
