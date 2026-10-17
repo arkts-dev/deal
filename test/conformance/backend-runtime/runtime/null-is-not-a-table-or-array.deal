@@ -1,0 +1,48 @@
+// @spec: Type system — null and table/array values
+// @description: The language null stays distinct from the table and array values: a null read as a table or as an array takes the shared E8001 kind boundary instead of being admitted as an empty container, while a real empty table and a real empty array are admitted (v1.3)
+// @expected: runtime-ok
+// @features: tables, arrays, null, runtime-errors, v1.3
+
+import * as json from "std/json";
+
+export function test_null_is_not_a_container(): null {
+  let holder: table = json.parse("{\"n\":null}");
+  let tableCode: string = "";
+  try {
+    let t: table = holder.n;
+    tableCode = "admitted";
+  } catch (e) {
+    tableCode = e.code;
+  }
+  if (tableCode !== "E8001") {
+    throw { code: "TEST_FAIL", message: "the null value was admitted as a table: " + tableCode };
+  }
+  let arrayCode: string = "";
+  try {
+    let xs: int[] = holder.n;
+    if (xs.length >= 0) {
+      arrayCode = "admitted";
+    }
+  } catch (e) {
+    arrayCode = e.code;
+  }
+  if (arrayCode !== "E8001") {
+    throw { code: "TEST_FAIL", message: "the null value was admitted as an array" };
+  }
+  // The empty container controls: a real empty table and a real empty
+  // array are values, never confused with the null sentinel.
+  let emptyTable: table = {};
+  let encoded: string = json.stringify(emptyTable);
+  if (encoded !== "{}") {
+    throw { code: "TEST_FAIL", message: "the empty table did not encode: " + encoded };
+  }
+  let emptyArray: int[] = [];
+  if (emptyArray.length !== 0) {
+    throw { code: "TEST_FAIL", message: "the empty array did not keep its length" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

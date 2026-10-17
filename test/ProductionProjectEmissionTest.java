@@ -3001,9 +3001,9 @@ public class ProductionProjectEmissionTest {
                     local surfaces = dofile("out-luajit/app.lua")
                     assert(type(surfaces) == "table", "entry surface")
                     local worker = surfaces.worker
-                    assert(type(worker) == "table" and worker.__kind == "function", "async export")
+                    assert(type(worker) == "table" and worker[__dealCarrierKeys.kind] == "function", "async export")
                     local handle = worker.f()
-                    assert(type(handle) == "table" and handle.__kind == "async", "async operation")
+                    assert(type(handle) == "table" and handle[__dealCarrierKeys.kind] == "async", "async operation")
                     require("deal.runtime").async_step(handle)
                     assert(handle.__done and handle.__result == %d, "await completion")
                     print("PROBE|ASYNC-RESULT|" .. tostring(handle.__result))
@@ -3634,8 +3634,8 @@ public class ProductionProjectEmissionTest {
                     long id = export.value().id();
                     String write = jvm ? "exportSurface(\"" + unit.moduleId().path() + "\").write(\"" + export.name() + "\", v" + id + ");"
                         : "__exportSurfaces[\"" + unit.moduleId().path() + "\"][\"" + export.name()
-                            + "\"] = {__kind = \"function\", sig = \"" + export.descriptor().canonicalSpecText()
-                            + "\", f = __unfn(S.v" + id + "), __val = S.v" + id + "}";
+                            + "\"] = {[__dealCarrierKeys.kind] = \"function\", sig = \"" + export.descriptor().canonicalSpecText()
+                            + "\", f = __unfn(S.v" + id + "), [__dealCarrierKeys.val] = S.v" + id + "}";
                     int at = source.indexOf(write);
                     check(at > publication && source.indexOf(write, at + 1) < 0, "unique ordered publication " + export.name());
                     publication = at;
@@ -3695,7 +3695,7 @@ public class ProductionProjectEmissionTest {
                         .append(access).append(").spec.equals(\"").append(spec).append("\");\n");
                 } else {
                     probe.append("assert(type(").append(access).append(") == 'table' and ").append(access)
-                        .append(".__kind == 'function' and ").append(access).append(".sig == '")
+                        .append("[__dealCarrierKeys.kind] == 'function' and ").append(access).append(".sig == '")
                         .append(spec).append("')\n");
                     probe.append("assert(type(").append(access).append(".f) == 'function')\n");
                 }
@@ -3731,11 +3731,11 @@ public class ProductionProjectEmissionTest {
                 end
                 for _, name in ipairs({"run", "reraise", "leafFail", "swallow", "arun", "areraise", "overflow", "replaced", "mutate"}) do
                   local ok, e = pcall(s[name].f)
-                  if ok and type(e) == "table" and e.__kind == "async" then ok, e = pcall(rt.async_step, e) end
+                  if ok and type(e) == "table" and e[__dealCarrierKeys.kind] == "async" then ok, e = pcall(rt.async_step, e) end
                   report("HOST-ERR|" .. name .. "|", ok, e)
                 end
                 local step
-                step = {__kind = "function", sig = "(int)->int", f = function(n) return s.recur.f(n, step) end}
+                step = {[__dealCarrierKeys.kind] = "function", sig = "(int)->int", f = function(n) return s.recur.f(n, step) end}
                 report("HOST-REENTRY|recur|", pcall(s.recur.f, 2, step))
                 print("HOST-EMPTY|recur|" .. ((__frames == nil or next(__frames) == nil) and "-" or table.concat(__frames, ",")))
                 local ok, e = pcall(s.leafFail.f)

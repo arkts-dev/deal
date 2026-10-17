@@ -2785,7 +2785,7 @@ public class CanonicalProjectionParityTest {
     private static void driveHostIntArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_int_array", "int:8",
                 arrayCompletionResponder(oracleIntArrayElement(7L)),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
                 "the boxed int int[] completion");
     }
@@ -2797,7 +2797,7 @@ public class CanonicalProjectionParityTest {
     private static void driveHostNullableIntArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
                 "int:8", arrayCompletionResponder(oracleIntArrayElement(7L)),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
                 "the boxed int nullable int[] completion");
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
@@ -2814,7 +2814,7 @@ public class CanonicalProjectionParityTest {
         try {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_elements",
                 "int:8", arrayCompletionResponder(oracleNullableElementArray()),
-                luaAsyncArrayHost("{__a = true, __n = 2, [1] = 7}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), null)"),
                 "the boxed int and null (int | null)[] completion");
         } finally {
@@ -2830,7 +2830,7 @@ public class CanonicalProjectionParityTest {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nested_int_array",
                 "int:8", arrayCompletionResponder(oracleNestedIntArrayElement(7L)),
                 luaAsyncArrayHost(
-                    "{__a = true, __n = 1, [1] = {__a = true, __n = 1, [1] = 7}}"),
+                    "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}}"),
                 jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
                 "the nested boxed int int[][] completion");
         } finally {
@@ -2846,7 +2846,7 @@ public class CanonicalProjectionParityTest {
     private static void driveHostNumberArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_number_array",
                 "int:8", arrayCompletionResponder(oracleNumberArrayElement(7L)),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
                 "the boxed int number[] completion");
     }
@@ -2859,7 +2859,7 @@ public class CanonicalProjectionParityTest {
                 "test_drop_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
                     "int"),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 7}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
                 "the boxed int string[] completion");
     }
@@ -2876,7 +2876,7 @@ public class CanonicalProjectionParityTest {
                 asyncElementTuple(ARRAY_COMPLETION_STRINGS_DRIVER, 9, 1,
                     "[string]", "array"),
                 luaAsyncArrayHost(
-                    "{__a = true, __n = 1, [1] = {__a = true, __n = 1, [1] = 7}}"),
+                    "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}}"),
                 jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
                 "the nested boxed int string[][] completion");
     }
@@ -2943,10 +2943,10 @@ public class CanonicalProjectionParityTest {
      * host fixture itself never depends on the stack.
      */
     private static String luaDeepStringArrayHost(int levels) {
-        return luaAsyncArrayHost("{__a = true, __n = 2, [1] = 7, [2] = node}", """
-            local node = {__a = true, __n = 0}
+        return luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7, [2] = node}", """
+            local node = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0}
             for i = 1, %d do
-              node = {__a = true, __n = 1, [1] = node}
+              node = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = node}
             end
             """.formatted(levels));
     }
@@ -3012,7 +3012,7 @@ public class CanonicalProjectionParityTest {
      */
     private static String luaCyclicStringArrayHost() {
         return luaAsyncArrayHost("cyclic", """
-            local cyclic = {__a = true, __n = 2, [1] = 7}
+            local cyclic = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7}
             cyclic[2] = cyclic
             """);
     }
@@ -3076,9 +3076,9 @@ public class CanonicalProjectionParityTest {
      */
     private static String luaCyclicWrongKindArrayHost() {
         return luaAsyncArrayHost("completion", """
-            local inner = {__a = true, __n = 1}
+            local inner = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1}
             inner[1] = inner
-            local completion = {__a = true, __n = 1, [1] = inner}
+            local completion = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = inner}
             """);
     }
 
@@ -3117,7 +3117,7 @@ public class CanonicalProjectionParityTest {
                 "test_use_int_array",
                 asyncElementTuple(ARRAY_COMPLETION_INT_DRIVER, 4, 1, "int",
                     "number"),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 2147483648}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 2147483648}"),
                 jvmAsyncArrayHost(
                     "array(java.lang.Long.valueOf(2147483648L))"),
                 "the out-of-range long int[] completion");
@@ -3170,7 +3170,7 @@ public class CanonicalProjectionParityTest {
     private static final String LUA_SHARED_ARRAY_HOST = """
         local rt = require("deal.runtime")
 
-        local shared = {__a = true, __n = 1, [1] = 7}
+        local shared = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}
 
         return {
           fetchSharedInts = function()
@@ -3495,7 +3495,7 @@ public class CanonicalProjectionParityTest {
                 "test_drop_int_array",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_INT_DRIVER, 4, 1, "int",
                     "number"),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = 2147483648}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 2147483648}"),
                 jvmAsyncArrayHost("array(java.lang.Long.valueOf(2147483648L))"),
                 "the out-of-range Long int[] completion");
         } finally {
@@ -3519,7 +3519,7 @@ public class CanonicalProjectionParityTest {
                 "test_drop_nullable_elements",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER, 4, 1,
                     "?int", "number"),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = -2147483649}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = -2147483649}"),
                 jvmAsyncArrayHost("array(java.lang.Long.valueOf(-2147483649L))"),
                 "the out-of-range Long (int | null)[] completion");
         } finally {
@@ -3543,8 +3543,8 @@ public class CanonicalProjectionParityTest {
                 "test_drop_nested_int_array",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER, 4, 1,
                     "[int]", "array"),
-                luaAsyncArrayHost("{__a = true, __n = 1, [1] = {__a = true, "
-                    + "__n = 1, [1] = 2147483648}}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, "
+                    + "[__dealCarrierKeys.n] = 1, [1] = 2147483648}}"),
                 jvmAsyncArrayHost("array(array(java.lang.Long.valueOf(2147483648L)))"),
                 "the out-of-range Long int[][] completion");
         } finally {
@@ -3570,7 +3570,7 @@ public class CanonicalProjectionParityTest {
                 asyncElementTuple(ARRAY_COMPLETION_DROP_ORDER_DRIVER, 4, 1, "string",
                     "int"),
                 luaAsyncArrayHost(
-                    "{__a = true, __n = 2, [1] = 7, [2] = 2147483648}"),
+                    "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7, [2] = 2147483648}"),
                 jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), "
                     + "java.lang.Long.valueOf(2147483648L))"),
                 "the early wrong-kind element before the out-of-range Long "
@@ -3970,7 +3970,7 @@ public class CanonicalProjectionParityTest {
     private static String luaExportProbe(Compiled compiled, String export) {
         return """
             local function emit(e)
-              if type(e) == "table" and e.__d then
+              if type(e) == "table" and e[__dealCarrierKeys.d] then
                 local file, line, column = nil, nil, nil
                 if e.o ~= nil then
                   file, line, column = tostring(e.o):match("^(.*):(%%d+):(%%d+)$")
@@ -4968,7 +4968,7 @@ public class CanonicalProjectionParityTest {
         String probe = """
             local function fail(m) print("PROBE-FAIL: " .. tostring(m)) os.exit(1) end
             local function emit(e)
-              if type(e) == "table" and e.__d then
+              if type(e) == "table" and e[__dealCarrierKeys.d] then
                 local file, line, column = nil, nil, nil
                 if e.o ~= nil then
                   file, line, column = tostring(e.o):match("^(.*):(%d+):(%d+)$")
@@ -5462,7 +5462,7 @@ public class CanonicalProjectionParityTest {
     /** One wrapper probe's fail-closed assertion: a named defect, no DEAL tuple. */
     private static String wrapperDefect(String... fragments) {
         StringBuilder out = new StringBuilder();
-        out.append("if type(err2) == \"table\" and err2.__d then fail(\"a DEAL tuple "
+        out.append("if type(err2) == \"table\" and err2[__dealCarrierKeys.d] then fail(\"a DEAL tuple "
             + "was published: \" .. tostring(err2.m)) end\n");
         out.append("if type(err2) ~= \"string\" then fail(\"the fail-closed report: \" "
             + ".. tostring(err2)) end\n");
@@ -5520,7 +5520,7 @@ public class CanonicalProjectionParityTest {
      */
     private static String wrapperTuple(WrapperPin pin) {
         StringBuilder out = new StringBuilder();
-        out.append("if type(err2) ~= \"table\" or err2.__d ~= true then "
+        out.append("if type(err2) ~= \"table\" or err2[__dealCarrierKeys.d] ~= true then "
             + "fail(\"the carrier: \" .. tostring(err2)) end\n");
         out.append("if err2.code ~= ").append(luaString(pin.code()))
             .append(" then fail(\"the code: \" .. tostring(err2.code)) end\n");
@@ -6999,7 +6999,7 @@ public class CanonicalProjectionParityTest {
     private static String luaProbe(String artifact, String entryModulePath) {
         return """
             local function emit(e)
-              if type(e) == "table" and e.__d then
+              if type(e) == "table" and e[__dealCarrierKeys.d] then
                 local file, line, column = nil, nil, nil
                 if e.o ~= nil then
                   file, line, column = tostring(e.o):match("^(.*):(%%d+):(%%d+)$")
@@ -8480,11 +8480,11 @@ public class CanonicalProjectionParityTest {
             String probe = "io.write(\"KIND|\""
                 + " .. __typedBoundaryKind(\"array\", {}) .. \"|\""
                 + " .. __typedBoundaryKind(\"array\", { x = 1 }) .. \"|\""
-                + " .. __typedBoundaryKind(\"array\", { __t = true }) .. \"|\""
-                + " .. __typedBoundaryKind(\"array\", { __a = true, __n = 0 })"
+                + " .. __typedBoundaryKind(\"array\", { [__dealCarrierKeys.t] = true }) .. \"|\""
+                + " .. __typedBoundaryKind(\"array\", { [__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0 })"
                 + " .. \"|\""
-                + " .. __typedBoundaryKind(\"array\", { __a = true, __n = 0,"
-                + " __da = true }) .. \"\\n\")\n";
+                + " .. __typedBoundaryKind(\"array\", { [__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0,"
+                + " [__dealCarrierKeys.da] = true }) .. \"\\n\")\n";
             Path artifact = workspace.resolve("kind-probe.lua");
             Files.writeString(artifact, chunk.substring(0,
                 chunk.length() - (tail + "\n").length()) + probe + tail + "\n",

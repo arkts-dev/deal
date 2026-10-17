@@ -4,6 +4,10 @@
 -- Adjust package.path to find deal/runtime.lua and std/ modules
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
+-- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
+-- the stdlib share one process-wide key set.
+local __K = require("deal.runtime").__keys
+
 local passed = 0
 local failed = 0
 
@@ -48,12 +52,12 @@ local console = require("std.console")
 
 test("console.log is a function wrapper", function()
   assert(type(console.log) == "table")
-  assert(console.log.__kind == "function")
+  assert(console.log[__K.kind] == "function")
 end)
 
 test("console.error is a function wrapper", function()
   assert(type(console.error) == "table")
-  assert(console.error.__kind == "function")
+  assert(console.error[__K.kind] == "function")
 end)
 
 test("console.log with string does not error", function()
@@ -502,6 +506,10 @@ end)
 
 test("json.stringify encodes __NULL as null", function()
   local __rt = require("deal.runtime")
+
+-- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
+-- the stdlib share one process-wide key set.
+local __K = __rt.__keys
   local result = json.stringify.f({ a = __rt.__NULL, b = 1 })
   -- Should contain "null", not "{}"
   assert(string.find(result, "null") ~= nil, "should contain 'null' for __NULL value")
@@ -733,32 +741,37 @@ test("json.parse classifies exact decimal lexemes (v1.3)", function()
   -- and the acceptance of the signed32 edges; the variant itself is
   -- pinned through the canonical text of the compiled-artifact fixtures
   -- (stdlib/json/int32-boundary-parse, jsonable/table-field-roundtrip).
-  local neg_zero = json.parse.f("-0.0")
+  -- The declared (string)->table exit admits an object root only, so every
+  -- lexeme is carried by one member of the document.
+  local function lexeme(text)
+    return json.parse.f('{"v":' .. text .. '}').v
+  end
+  local neg_zero = lexeme("-0.0")
   assert(neg_zero == 0, "-0.0 normalizes to the integer zero")
   assert(1 / neg_zero == math.huge, "-0.0 is the positive zero, never -0.0")
-  assert(json.parse.f("1.0") == 1, "1.0 denotes the integer value 1")
-  assert(json.parse.f("1e0") == 1, "1e0 denotes the integer value 1")
-  assert(json.parse.f("100e-2") == 1, "100e-2 denotes the integer value 1")
-  assert(json.parse.f("2147483647e0") == 2147483647, "the positive signed32 edge")
-  assert(json.parse.f("-2147483648.0") == -2147483648, "the negative signed32 edge")
-  assert(json.parse.f("1.5") == 1.5, "a fractional token stays a number")
+  assert(lexeme("1.0") == 1, "1.0 denotes the integer value 1")
+  assert(lexeme("1e0") == 1, "1e0 denotes the integer value 1")
+  assert(lexeme("100e-2") == 1, "100e-2 denotes the integer value 1")
+  assert(lexeme("2147483647e0") == 2147483647, "the positive signed32 edge")
+  assert(lexeme("-2147483648.0") == -2147483648, "the negative signed32 edge")
+  assert(lexeme("1.5") == 1.5, "a fractional token stays a number")
   -- The signed32 check compares the magnitude before the sign is applied:
   -- the negative neighbours stay in range-consistent values.
-  assert(json.parse.f("-2147483649") == -2147483649, "-2147483649 stays a number")
-  assert(json.parse.f("-9999999999") == -9999999999, "-9999999999 stays a number")
+  assert(lexeme("-2147483649") == -2147483649, "-2147483649 stays a number")
+  assert(lexeme("-9999999999") == -9999999999, "-9999999999 stays a number")
   -- The exponent magnitude accumulates digits with bounded saturation:
   -- leading zeroes contribute nothing, so a zero-padded exponent text
   -- longer than 18 characters whose value is small stays exactly
   -- classified.
-  assert(json.parse.f("1e0000000000000000001") == 10, "a zero-padded long exponent denotes 10")
-  assert(json.parse.f("1e00000000000000000000") == 1, "a zero-valued zero-padded exponent denotes 1")
-  assert(json.parse.f("100e-000000000000000000002") == 1, "a zero-padded negative exponent denotes 1")
-  assert(json.parse.f("-1e0000000000000000001") == -10, "a negative zero-padded long exponent denotes -10")
-  local huge = json.parse.f("1e999999999999999999999")
+  assert(lexeme("1e0000000000000000001") == 10, "a zero-padded long exponent denotes 10")
+  assert(lexeme("1e00000000000000000000") == 1, "a zero-valued zero-padded exponent denotes 1")
+  assert(lexeme("100e-000000000000000000002") == 1, "a zero-padded negative exponent denotes 1")
+  assert(lexeme("-1e0000000000000000001") == -10, "a negative zero-padded long exponent denotes -10")
+  local huge = lexeme("1e999999999999999999999")
   assert(huge == math.huge, "a huge exponent converts to binary64 infinity")
   -- A long digit run past the signed32 range stays a number and never
   -- crashes the bounded classification.
-  assert(json.parse.f("123456789012345678901234567890") > 1e29,
+  assert(lexeme("123456789012345678901234567890") > 1e29,
     "an out-of-range integer token converts to binary64")
 end)
 
@@ -787,30 +800,30 @@ end)
 
 test("json.parse decodes the full RFC 8259 escape table", function()
   local text = '"' .. '\\"' .. '\\\\' .. '\\/' .. '\\b' .. '\\f' .. '\\n' .. '\\r' .. '\\t' .. '"'
-  local r = json.parse.f(text)
+  local r = json.parse.f('{"v":' .. text .. '}').v
   assert_byte_seq(r, 0x22, 0x5C, 0x2F, 0x08, 0x0C, 0x0A, 0x0D, 0x09)
 end)
 
 test("json.parse decodes \\u00E9 to UTF-8 bytes C3 A9", function()
-  assert_byte_seq(json.parse.f('"\\u00E9"'), 0xC3, 0xA9)
+  assert_byte_seq(json.parse.f('{"v":"\\u00E9"}').v, 0xC3, 0xA9)
   -- Hex digits are case-insensitive (RFC 8259 section 7: 4HEXDIG).
-  assert_byte_seq(json.parse.f('"\\u00e9"'), 0xC3, 0xA9)
+  assert_byte_seq(json.parse.f('{"v":"\\u00e9"}').v, 0xC3, 0xA9)
 end)
 
 test("json.parse decodes \\u4E2D to UTF-8 bytes E4 B8 AD", function()
-  assert_byte_seq(json.parse.f('"\\u4E2D"'), 0xE4, 0xB8, 0xAD)
+  assert_byte_seq(json.parse.f('{"v":"\\u4E2D"}').v, 0xE4, 0xB8, 0xAD)
 end)
 
 test("json.parse combines surrogate pair \\uD834\\uDD1E to U+1D11E (F0 9D 84 9E)", function()
-  assert_byte_seq(json.parse.f('"\\uD834\\uDD1E"'), 0xF0, 0x9D, 0x84, 0x9E)
+  assert_byte_seq(json.parse.f('{"v":"\\uD834\\uDD1E"}').v, 0xF0, 0x9D, 0x84, 0x9E)
 end)
 
 test("json.parse combines boundary pair \\uD800\\uDC00 to U+10000 (F0 90 80 80)", function()
-  assert_byte_seq(json.parse.f('"\\uD800\\uDC00"'), 0xF0, 0x90, 0x80, 0x80)
+  assert_byte_seq(json.parse.f('{"v":"\\uD800\\uDC00"}').v, 0xF0, 0x90, 0x80, 0x80)
 end)
 
 test("json.parse combines boundary pair \\uDBFF\\uDFFF to U+10FFFF (F4 8F BF BF)", function()
-  assert_byte_seq(json.parse.f('"\\uDBFF\\uDFFF"'), 0xF4, 0x8F, 0xBF, 0xBF)
+  assert_byte_seq(json.parse.f('{"v":"\\uDBFF\\uDFFF"}').v, 0xF4, 0x8F, 0xBF, 0xBF)
 end)
 
 test("json.parse rejects lone high surrogate \\uD834 with E8001", function()
@@ -859,20 +872,20 @@ test("json.parse rejects raw control characters with E8001", function()
 end)
 
 test("json.parse accepts raw DEL (0x7F) and escaped control forms", function()
-  assert_byte_seq(json.parse.f('"' .. string.char(0x7F) .. '"'), 0x7F)
-  assert_byte_seq(json.parse.f('"\\u0000"'), 0x00)
-  assert_byte_seq(json.parse.f('"\\u007F"'), 0x7F)
+  assert_byte_seq(json.parse.f('{"v":"' .. string.char(0x7F) .. '"}').v, 0x7F)
+  assert_byte_seq(json.parse.f('{"v":"\\u0000"}').v, 0x00)
+  assert_byte_seq(json.parse.f('{"v":"\\u007F"}').v, 0x7F)
 end)
 
 test("json.parse treats decoded \\u0022 and \\u005C as data, not structure", function()
   -- Decoded quote/backslash must not re-lex: the parse only succeeds when
   -- they are appended as data.
-  assert_byte_seq(json.parse.f('"\\u0022\\u005C"'), 0x22, 0x5C)
+  assert_byte_seq(json.parse.f('{"v":"\\u0022\\u005C"}').v, 0x22, 0x5C)
 end)
 
 test("json.parse passes raw supplementary UTF-8 through byte-identically", function()
   local supplementary = "\xF0\x9D\x84\x9E" -- U+1D11E, scalar-valid UTF-8
-  assert_byte_seq(json.parse.f('"' .. supplementary .. '"'), 0xF0, 0x9D, 0x84, 0x9E)
+  assert_byte_seq(json.parse.f('{"v":"' .. supplementary .. '"}').v, 0xF0, 0x9D, 0x84, 0x9E)
 end)
 
 test("json.stringify emits supplementary characters raw (byte-identical)", function()
@@ -957,18 +970,51 @@ test("json.stringify rejects bytes-kind values with E8001", function()
     "error message should mention bytes, got: " .. tostring(err.message))
 end)
 
--- The closed unsupported-carrier rejection (v1.3): every carrier the
--- reference runtime tags with its own __kind marker renders the
--- JSON_STRINGIFY_UNSUPPORTED arm's own text with the closed
--- carrier-kind token instead of encoding private carrier fields.
+-- The closed unsupported-carrier rejection (v1.3): every produced carrier
+-- renders the JSON_STRINGIFY_UNSUPPORTED arm's own text with the closed
+-- carrier-kind token instead of encoding private carrier fields. A carrier
+-- is rejected at the declared (table) parameter cell first; a carrier
+-- nested in a table is the walk's own arm.
 test("json.stringify rejects a class instance with the closed table token", function()
   local __rt = require("deal.runtime")
   local inst = __rt.class_("@m/C", { a = 1 }, {})
-  local err = assert_error_code(function() json.stringify.f(inst) end, "E8001")
+  local err = assert_error_code(function() json.stringify.f({ c = inst }) end, "E8001")
   assert(err.message == "unsupported type for JSON encoding: table",
     "class instance message, got: " .. tostring(err.message))
   assert(err.expected == "string, number, boolean, or table", "class instance expected text")
   assert(err.actual == "table", "class instance actual token, got: " .. tostring(err.actual))
+end)
+
+test("json.stringify rejects a carrier at the declared table parameter cell", function()
+  -- The (table) parameter is the strict table split: a produced carrier of
+  -- another kind never passes it, and the tuple is the shared typed-boundary
+  -- admission with the carrier's own kind token.
+  local __rt = require("deal.runtime")
+  local cases = {
+    { name = "class instance", value = __rt.class_("@m/C", { a = 1 }, {}),
+      actual = "@m/C" },
+    { name = "function wrapper",
+      value = __rt.function_("()->null", function() return __rt.__NULL end),
+      actual = "function" },
+    { name = "bytes", value = __rt.bytes_new(1), actual = "bytes" },
+    { name = "async handle", value = __rt.async_start(function() end),
+      actual = "async-operation" },
+    { name = "language null", value = __rt.__NULL, actual = "null" },
+    { name = "plain array table", value = { 1, 2 }, actual = "table_control" },
+  }
+  for _, case in ipairs(cases) do
+    if case.actual == "table_control" then
+      -- Control: the dense array form is a table value at a table cell.
+      assert(json.stringify.f(case.value) == "[1,2]", case.name .. ": array encodes")
+    else
+      local err = assert_error_code(function() json.stringify.f(case.value) end, "E8001")
+      assert(err.message == "expected table", case.name .. ": message, got: "
+        .. tostring(err.message))
+      assert(err.expected == "table", case.name .. ": expected token")
+      assert(err.actual == case.actual, case.name .. ": actual token, got: "
+        .. tostring(err.actual))
+    end
+  end
 end)
 
 test("json.stringify rejects an Error instance with the closed table token", function()
@@ -983,16 +1029,16 @@ end)
 test("json.stringify rejects a function wrapper with the closed function token", function()
   local __rt = require("deal.runtime")
   local wrapper = __rt.function_("()->null", function() return __rt.__NULL end)
-  local err = assert_error_code(function() json.stringify.f(wrapper) end, "E8001")
+  local err = assert_error_code(function() json.stringify.f({ f = wrapper }) end, "E8001")
   assert(err.message == "unsupported type for JSON encoding: function",
     "function wrapper message, got: " .. tostring(err.message))
   assert(err.actual == "function", "function wrapper actual token, got: " .. tostring(err.actual))
 end)
 
 test("json.stringify rejects a decoded async handle with the closed table token", function()
-  local err = assert_error_code(function()
-    json.stringify.f({ op = { __kind = "async" } })
-  end, "E8001")
+  local __rt = require("deal.runtime")
+  local handle = __rt.async_start(function() return "done" end)
+  local err = assert_error_code(function() json.stringify.f({ op = handle }) end, "E8001")
   assert(err.message == "unsupported type for JSON encoding: table",
     "async handle message, got: " .. tostring(err.message))
   assert(err.actual == "table", "async handle actual token, got: " .. tostring(err.actual))
@@ -1018,13 +1064,13 @@ test("json.stringify rejects the emitted chunk carrier marks with the pinned arm
   local __rt = require("deal.runtime")
   local carriers = {
     { name = "emitted class instance", actual = "table",
-      value = { __c = true, __id = "@m/C", __f = {}, __p = {} } },
+      value = { [__K.c] = true, [__K.id] = "@m/C", [__K.f] = {}, [__K.p] = {} } },
     { name = "emitted Error value", actual = "table",
-      value = { __d = true, code = "E1", m = "boom", o = nil, e = nil, a = nil } },
+      value = { [__K.d] = true, code = "E1", m = "boom", o = nil, e = nil, a = nil } },
     { name = "emitted function carrier", actual = "function",
-      value = { __fn = function() end, __csig = "()->null", __fid = nil } },
+      value = { [__K.fn] = function() end, [__K.csig] = "()->null", [__K.fid] = nil } },
     { name = "emitted function instance", actual = "function",
-      value = { __f = {}, __sig = "()->null" } },
+      value = { [__K.f] = {}, [__K.sig] = "()->null" } },
   }
   for _, carrier in ipairs(carriers) do
     local err = assert_error_code(function()
@@ -1042,6 +1088,32 @@ test("json.stringify rejects the emitted chunk carrier marks with the pinned arm
   assert(json.stringify.f({ 1, 2 }) == '[1,2]', "an array table still serializes")
   assert(json.stringify.f({ v = __rt.__NULL }) == '{"v":null}',
     "a nested null mark still serializes")
+end)
+
+-- ISSUE-0830: a DEAL table may carry any string key. A user table whose
+-- keys spell the internal carrier vocabulary is a plain JSON-shaped table on
+-- every consumer — it neither forges a carrier nor loses its own keys.
+test("a user table with carrier-like string keys encodes as data (v1.3)", function()
+  local __rt = require("deal.runtime")
+  local forged = {
+    __kind = "class", __classname = "Error", __c = true, __id = "@m/C",
+    __d = true, __a = true, __n = 3, __nK = 1, __da = true, __t = true,
+    __keys = "keys", __order = "order", __p = true, __f = true,
+    __fn = 1, __csig = "s", __sig = "t", __fid = 2, __it = "u",
+    __sid = "v", __val = 3, __mode = 4, __jn = true, __jo = true,
+    __ja = true, __jkeys = 5, __jnum = 6, __jseen = 7, __ptr = 8,
+    data = 9,
+  }
+  local encoded = json.stringify.f(forged)
+  local back = json.parse.f(encoded)
+  assert(back.__kind == "class" and back.__c == true and back.__t == true,
+    "the carrier-like keys survive the round-trip as data")
+  assert(back.__keys == "keys" and back.__order == "order", "the map keys survive")
+  assert(back.data == 9, "the ordinary key survives")
+  -- The same table is the table value at the table boundary (its string keys
+  -- never select a carrier arm).
+  assert(__rt.check_type("table", forged) == forged,
+    "a table with carrier-like keys is the table value")
 end)
 
 test("json int/number document round-trip", function()

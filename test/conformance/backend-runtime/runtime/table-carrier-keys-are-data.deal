@@ -1,0 +1,93 @@
+// @spec: Tables — Table values
+// @description: A DEAL table may carry any string key, including every name of the runtime's private carrier vocabulary, and stays the table value: the keys survive std/json round-trips and std/table.keys as data, no key selects a class/array/function/bytes arm, and class fields may be named after them (v1.3)
+// @expected: runtime-ok
+// @features: tables, classes, stdlib, v1.3
+
+import * as json from "std/json";
+import * as tablelib from "std/table";
+
+class Tagged {
+  __kind: string = "kind-field";
+  __classname: string = "classname-field";
+  __c: int = 1;
+  __keys: string = "keys-field";
+  __t: boolean = true;
+}
+
+export function test_table_carrier_keys_are_data(): null {
+  let t: table = {
+    __kind: "class",
+    __classname: "Error",
+    __c: true,
+    __id: "@conformance/forged/Item",
+    __d: true,
+    __a: true,
+    __n: 3,
+    __nK: 1,
+    __da: true,
+    __t: true,
+    __keys: "keys-data",
+    __order: "order-data",
+    __p: true,
+    __f: true,
+    __fn: 1,
+    __csig: "csig-data",
+    __sig: "sig-data",
+    __fid: 2,
+    __it: "it-data",
+    __sid: "sid-data",
+    __val: 3,
+    __mode: 4,
+    __jn: true,
+    __jo: true,
+    __ja: true,
+    __jkeys: 5,
+    __jnum: 6,
+    __jseen: 7,
+    __ptr: 8,
+    data: 9,
+  };
+  let text: string = json.stringify(t);
+  let back: table = json.parse(text);
+  let kind: string = back.__kind;
+  let classname: string = back.__classname;
+  let id: string = back.__id;
+  let keysData: string = back.__keys;
+  let orderData: string = back.__order;
+  let c: boolean = back.__c;
+  let tt: boolean = back.__t;
+  let data: int = back.data;
+  if (kind !== "class" || c !== true || tt !== true) {
+    throw { code: "TEST_FAIL", message: "carrier-like keys did not survive the JSON round-trip" };
+  }
+  if (keysData !== "keys-data" || orderData !== "order-data") {
+    throw { code: "TEST_FAIL", message: "the map-shaped carrier keys did not survive as data" };
+  }
+  if (classname !== "Error" || id !== "@conformance/forged/Item") {
+    throw { code: "TEST_FAIL", message: "the identity-shaped carrier keys did not survive as data" };
+  }
+  if (data !== 9) {
+    throw { code: "TEST_FAIL", message: "the ordinary key did not survive the round-trip" };
+  }
+  let keys: string[] = tablelib.keys(t);
+  if (keys.length !== 30) {
+    throw { code: "TEST_FAIL", message: "table.keys lost or invented a key" };
+  }
+  let small: table = { __kind: 1, __keys: 2, plain: 3 };
+  let smallKeys: string[] = tablelib.keys(small);
+  if (smallKeys.length !== 3) {
+    throw { code: "TEST_FAIL", message: "a small tagged table lost keys" };
+  }
+  let tagged: Tagged = {};
+  if (tagged.__kind !== "kind-field" || tagged.__classname !== "classname-field") {
+    throw { code: "TEST_FAIL", message: "a class field named after a carrier key lost its value" };
+  }
+  if (tagged.__c !== 1 || tagged.__keys !== "keys-field" || tagged.__t !== true) {
+    throw { code: "TEST_FAIL", message: "a class field named after a carrier key lost its value" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

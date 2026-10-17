@@ -1401,7 +1401,7 @@ public class CompositeTerminatorAnalysisTest {
             local ok, err = __dealMain()
             if not ok then error(err, 0) end
             local probe = surface["%s"]
-            assert(type(probe) == "table" and probe.__kind == "function"
+            assert(type(probe) == "table" and probe[__dealCarrierKeys.kind] == "function"
               and type(probe.f) == "function", "the entry surface publishes the fixture probe")
             %s
             assert(tostring(value) == %s, "the probe result " .. tostring(value))

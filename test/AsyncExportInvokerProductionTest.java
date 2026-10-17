@@ -1241,7 +1241,7 @@ public class AsyncExportInvokerProductionTest {
                 local rt = require("deal.runtime")
                 local exports = dofile("out/main.lua")
                 local handle = exports.run.f(7)
-                assert(type(handle) == "table" and handle.__kind == "async",
+                assert(type(handle) == "table" and handle[__dealCarrierKeys.kind] == "async",
                   "the published parameterized export produces an operation: "
                     .. tostring(handle))
                 rt.async_step(handle)

@@ -12,6 +12,10 @@
 package.path = "./?.lua;" .. package.path
 local __rt = require("deal.runtime")
 
+-- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
+-- the stdlib share one process-wide key set.
+local __K = __rt.__keys
+
 local passed = 0
 local failed = 0
 local function test(name, fn)

@@ -40,6 +40,12 @@
 
 local __rt = require("deal.runtime")
 
+-- The private carrier keys (ISSUE-0830): the emitted chunk, the deployed
+-- runtime and this module share one process-wide key set, so no string key
+-- of a DEAL table or of a decoded JSON member can be mistaken for a carrier
+-- mark and no table can forge a carrier.
+local __K = __rt.__keys
+
 local json = {}
 
 -- Encode a Unicode code point as its UTF-8 byte sequence (1-4 bytes).
@@ -184,25 +190,27 @@ end
 -- JSON_STRINGIFY_UNSUPPORTED arm's actual token, the emitted prelude's
 -- __stdJsonKind vocabulary): the absent marker is nil, the language-null
 -- sentinel keeps its Lua type() shape table, a function carrier — the
--- runtime's __kind == "function" wrapper and the emitted chunk's
--- __fn/__f/__csig marks — is function, the bytes carrier is bytes, and
--- every other table-carried value (a class instance in either the
--- runtime __kind == "class" form or the emitted __c/__id form, the
--- builtin Error instance and its __d form, a decoded async handle) is
--- table. A plain table — the JSON object/array shape — is table too, so
--- the projection alone never selects.
+-- runtime's function-kind wrapper and the emitted chunk's callable
+-- carriers — is function, the bytes carrier is bytes, and every other
+-- produced carrier (a class instance in either the runtime's class shape
+-- or the emitted chunk's class shape, the builtin Error instance, a
+-- decoded async handle) is table. A plain table — the JSON object/array
+-- shape, whatever string keys it carries — is table too, so the
+-- projection alone never selects.
 local function json_carrier_kind(v)
   if v == __rt.__MISSING or v == nil then return 'nil' end
   if v == __rt.__NULL then return 'table' end
   local t = type(v)
   if t == 'table' then
-    if v.__kind == 'bytes' then return 'bytes' end
+    local kind = v[__K.kind]
+    if kind == 'bytes' then return 'bytes' end
     -- A class or Error carrier is table even when it also carries the
-    -- function markers: an emitted class instance holds both __c/__id
-    -- and its field map __f, and the emitted prelude's projection reads
-    -- the class marker first.
-    if v.__c or v.__d then return 'table' end
-    if v.__fn ~= nil or v.__f or v.__csig ~= nil or v.__kind == 'function' then
+    -- function markers: an emitted class instance holds both the class
+    -- mark and its field map, and the emitted prelude's projection reads
+    -- the class mark first.
+    if v[__K.c] or v[__K.d] then return 'table' end
+    if v[__K.fn] ~= nil or v[__K.f] or v[__K.csig] ~= nil
+        or kind == 'function' then
       return 'function'
     end
     return 'table'
@@ -265,14 +273,14 @@ local function encode_value(v, file, line, column, path)
       -- Error instance, and a decoded async handle are never JSON-shaped
       -- table contents — each renders the JSON_STRINGIFY_UNSUPPORTED arm
       -- with its own closed token instead of encoding private carrier
-      -- fields. Both carrier vocabularies select: the reference runtime's
-      -- __kind tags (bytes/function/class/async) and the emitted chunk's
-      -- own marks — __c/__id for a class instance, __d for the Error
-      -- value, __fn/__f/__csig for a function carrier — exactly the
-      -- markers the emitted prelude's __stdJsonKind classifies.
-      if val.__kind == "bytes" or val.__kind == "function" or val.__kind == "class"
-          or val.__kind == "async" or val.__c or val.__d
-          or val.__fn ~= nil or val.__f or val.__csig ~= nil then
+      -- fields. The projection reads the produced carrier marks only: a
+      -- plain table is JSON-shaped whatever string keys it carries, so no
+      -- user table key can select a carrier arm.
+      local carrierKind = type(val) == 'table' and val[__K.kind] or nil
+      if carrierKind == "bytes" or carrierKind == "function"
+          or carrierKind == "class" or carrierKind == "async"
+          or val[__K.c] or val[__K.d]
+          or val[__K.fn] ~= nil or val[__K.f] or val[__K.csig] ~= nil then
         unsupported(val, file, line, column)
       end
       -- The path-local cycle guard (the walk family's closed cycle arm):
@@ -741,11 +749,10 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   end
   -- The declared (string)->table exit (ISSUE-0824): the scanner's own
   -- arms fired above, so a grammar-valid document whose root is the
-  -- language-null sentinel or an array reports the shared table-admission
-  -- tuple with that carrier's own actual token — the emitted chunk's
-  -- table cell and the JS runtime's checkTable publish the identical
-  -- fields. Object roots and the top-level scalar results pass
-  -- unchanged.
+  -- language-null sentinel, an array, or a scalar reports the shared
+  -- table-admission tuple with that carrier's own actual token — the
+  -- emitted chunk's table cell and the JS runtime's checkTable publish
+  -- the identical fields. Only an object root is the table return.
   if result == __rt.__NULL then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
       "expected table", file, line, column, "table", "null"))
@@ -754,7 +761,10 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
       "expected table", file, line, column, "table", "array"))
   end
-  return result
+  -- A top-level scalar (a string, a number, or a boolean) is not the
+  -- declared table return either: the documented wrapper exit is enforced
+  -- by the same admission every caller-side table cell runs.
+  return __rt.check_table(result, file, line, column)
 end)
 
 return json

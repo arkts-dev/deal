@@ -1,0 +1,90 @@
+// @spec: Type system — Class identity and array values
+// @description: Carrier identity is nominal and cannot be forged by table keys: a table carrying the internal class/array/bytes/function mark names is rejected at every declared carrier boundary, while the real carriers and a table with the same keys at a table boundary are admitted (v1.3)
+// @expected: runtime-ok
+// @features: tables, classes, arrays, bytes, functions, runtime-errors, v1.3
+
+import * as json from "std/json";
+
+class Item {
+  label: string = "item";
+}
+
+function needTable(t: table): string {
+  return json.stringify(t);
+}
+
+export function test_forged_carrier_identities(): null {
+  let holder: table = {
+    classLike: { __c: true, __id: "@conformance/forged/Item", __f: { label: "x" }, __p: { label: true } },
+    kindClass: { __kind: "class", __classname: "@conformance/forged/Item" },
+    arrayLike: { __a: true, __n: 1 },
+    bytesLike: { __kind: "bytes", __data: 0, __len: 4 },
+    functionLike: { __fn: "not a callable", __csig: "()->int" },
+    plainLike: { __c: true, __a: true, __kind: "class", label: "kept" },
+  };
+  let classCode: string = "";
+  try {
+    let item: Item = holder.classLike;
+    if (item.label !== "") { classCode = "admitted"; }
+  } catch (e) {
+    classCode = e.code;
+  }
+  if (classCode !== "E8001") {
+    throw { code: "TEST_FAIL", message: "the forged class carrier was not rejected: " + classCode };
+  }
+  let kindClassCode: string = "";
+  try {
+    let item: Item = holder.kindClass;
+    if (item.label !== "") { kindClassCode = "admitted"; }
+  } catch (e) {
+    kindClassCode = e.code;
+  }
+  if (kindClassCode !== "E8001") {
+    throw { code: "TEST_FAIL", message: "the forged runtime class carrier was not rejected: " + kindClassCode };
+  }
+  let arrayCode: string = "";
+  try {
+    let xs: int[] = holder.arrayLike;
+    if (xs.length >= 0) {
+      arrayCode = "admitted";
+    }
+  } catch (e) {
+    arrayCode = e.code;
+  }
+  if (arrayCode !== "E8001") {
+    throw { code: "TEST_FAIL", message: "the forged array carrier was not rejected" };
+  }
+  let bytesCode: string = "";
+  try {
+    let b: bytes = holder.bytesLike;
+    if (b.length >= 0) {
+      bytesCode = "admitted";
+    }
+  } catch (e) {
+    bytesCode = e.code;
+  }
+  if (bytesCode !== "E8001") {
+    throw { code: "TEST_FAIL", message: "the forged bytes carrier was not rejected" };
+  }
+  // The same key names at the declared table parameter are data, never a
+  // carrier: the table is encoded with its own keys.
+  let encoded: string = needTable(holder.plainLike);
+  if (encoded !== "{\"__c\":true,\"__a\":true,\"__kind\":\"class\",\"label\":\"kept\"}") {
+    throw { code: "TEST_FAIL", message: "the carrier-like table did not encode as data: " + encoded };
+  }
+  // The real carriers stay admitted: a constructed instance and an array
+  // literal are not affected by the key names around them.
+  let real: Item = { label: "real" };
+  if (real.label !== "real") {
+    throw { code: "TEST_FAIL", message: "the real class instance lost its field" };
+  }
+  let realXs: int[] = [1, 2];
+  if (realXs.length !== 2) {
+    throw { code: "TEST_FAIL", message: "the real array lost its elements" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

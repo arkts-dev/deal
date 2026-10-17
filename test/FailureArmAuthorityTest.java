@@ -112,6 +112,7 @@ public class FailureArmAuthorityTest {
         testCompletionSignatureDrive();
         testCompletionNullCarrierDrive();
         testTypedBoundaryBytesCarrier();
+        testForgedCarrierTableKeys();
         testTypedBoundaryInvalidUnicode();
         testStdJsonArmDrive();
         testInt32AndSqrtArmFamily();
@@ -904,15 +905,16 @@ public class FailureArmAuthorityTest {
      */
     private static final String COMPLETION_LUA_HOST = """
         local rt = require("deal.runtime")
+        local __K = rt.__keys
 
         local function mismatched()
-          return {__fn = function(x) return "s" end, __sig = "function(int;string)",
-            __csig = "(int)->string", __fid = nil}
+          return {[__dealCarrierKeys.fn] = function(x) return "s" end, [__dealCarrierKeys.sig] = "function(int;string)",
+            [__dealCarrierKeys.csig] = "(int)->string", [__dealCarrierKeys.fid] = nil}
         end
 
         local function matching()
-          return {__fn = function(x) return x end, __sig = "function(int;int)",
-            __csig = "(int)->int", __fid = nil}
+          return {[__dealCarrierKeys.fn] = function(x) return x end, [__dealCarrierKeys.sig] = "function(int;int)",
+            [__dealCarrierKeys.csig] = "(int)->int", [__dealCarrierKeys.fid] = nil}
         end
 
         local function operation(value)
@@ -1689,12 +1691,12 @@ public class FailureArmAuthorityTest {
         // The emitted prelude leg, under real luajit: the failures and the
         // two admissions.
         List<String> rows = runPreludeProbe("""
-            local bytes = {__kind = "bytes", __len = 0}
+            local bytes = {[__dealCarrierKeys.kind] = "bytes", __len = 0}
             local ok, value = pcall(__bcheck, "table", "table", bytes, nil)
             row("bytes-at-table", ok, value)
             ok, value = pcall(__bcheck, "int", "int", bytes, nil)
             row("bytes-at-int", ok, value)
-            ok, value = pcall(__bcheck, "table", "table", {__t = true, __order = {}}, nil)
+            ok, value = pcall(__bcheck, "table", "table", {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {}}, nil)
             row("table-at-table", ok, value)
             ok, value = pcall(__bcheck, "bytes", "bytes", bytes, nil)
             row("bytes-at-bytes", ok, value)
@@ -1712,6 +1714,75 @@ public class FailureArmAuthorityTest {
             "the Lua artifact renders the oracle's identical bytes-at-table tuple");
         checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(1), span)),
             "the Lua artifact renders the oracle's identical bytes-at-int tuple");
+    }
+
+    // =========================================================================
+    // 9a-2. Private carrier identity: a table with carrier-like keys
+    // =========================================================================
+
+    /**
+     * ISSUE-0830: a DEAL table may carry any string key. On the emitted
+     * prelude under real luajit a table whose keys spell the internal
+     * carrier vocabulary is the table value at the table cell and is
+     * rejected at the class, array, bytes, function and int cells with the
+     * value's own table token — never admitted as a carrier of the arm its
+     * keys name. A real carrier (the runtime class representation and the
+     * bytes carrier) keeps its own token, so the two vocabularies stay
+     * distinguishable in one process.
+     */
+    static void testForgedCarrierTableKeys() throws Exception {
+        System.out.println("-- private carrier identity: carrier-like table keys "
+            + "are data --");
+        List<String> rows = runProbe(emittedArmsChunk(), "arms", """
+            local forged = {
+              __kind = "class", __classname = "Error", __c = true,
+              __id = "@m/C", __d = true, __a = true, __n = 3, __nK = 1,
+              __da = true, __t = true, __keys = "k", __order = "o",
+              __p = true, __f = true, __fn = 1, __csig = "s", __sig = "t",
+              __fid = 2, __it = "u", __sid = "v", __val = 3, __mode = 4,
+              __jn = true, __jo = true, __ja = true, __jkeys = 5,
+              __jnum = 6, __jseen = 7, __ptr = 8, plain = 9,
+            }
+            local ok, value = pcall(__bcheck, "table", "table", forged, nil)
+            row("forged-at-table", ok, value)
+            ok, value = pcall(__bcheck, "@m/C", "table", forged, nil)
+            row("forged-at-class", ok, value)
+            ok, value = pcall(__bcheck, "array(int)", "table", forged, nil)
+            row("forged-at-array", ok, value)
+            ok, value = pcall(__bcheck, "bytes", "bytes", forged, nil)
+            row("forged-at-bytes", ok, value)
+            ok, value = pcall(__bcheck, "function(;null)", "table", forged,
+              "()->null")
+            row("forged-at-function", ok, value)
+            ok, value = pcall(__bcheck, "int", "int", forged, nil)
+            row("forged-at-int", ok, value)
+            ok, value = pcall(__bcheck, "table", "table", {[__dealCarrierKeys.t] = true,
+              [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}}, nil)
+            row("real-table-carrier", ok, value)
+            ok, value = pcall(__bcheck, "array(int)", "array",
+              {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0}, nil,
+              "[int]")
+            row("real-array-carrier", ok, value)
+            print("forged-kind|" .. __typedBoundaryKind("", forged))
+            """, "forged-carrier-probe", 9);
+        checkEq("forged-at-table|OK|", rows.get(0),
+            "a table with carrier-like keys is the table value");
+        checkEq("forged-at-class|E8001|class|table|expected class instance",
+            rows.get(1), "the forged class carrier is rejected");
+        checkEq("forged-at-array|E8001|array|table|expected array",
+            rows.get(2), "the forged array carrier is rejected");
+        checkEq("forged-at-bytes|E8001|bytes|table|expected bytes",
+            rows.get(3), "the forged bytes carrier is rejected");
+        checkEq("forged-at-function|E8001|function|table|expected function",
+            rows.get(4), "the forged function carrier is rejected");
+        checkEq("forged-at-int|E8001|int|table|expected int", rows.get(5),
+            "a table with carrier-like keys is not an int carrier");
+        checkEq("real-table-carrier|OK|", rows.get(6),
+            "the emitted table carrier is the table value");
+        checkEq("real-array-carrier|OK|", rows.get(7),
+            "the emitted array carrier is the array value");
+        checkEq("forged-kind|table", rows.get(8),
+            "the typed-boundary projection of a carrier-like table is table");
     }
 
     // =========================================================================
@@ -1842,8 +1913,8 @@ public class FailureArmAuthorityTest {
             local bad = "\\237\\160\\128"
             local valid = "ok"
             local function arr(...)
-              local out = {__a = true, __n = select("#", ...)}
-              for i = 1, out.__n do out[i] = (select(i, ...)) end
+              local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = select("#", ...)}
+              for i = 1, out[__dealCarrierKeys.n] do out[i] = (select(i, ...)) end
               return out
             end
             row("string-bad", pcall(__bcheck, "string", "string", bad, nil))
@@ -1985,17 +2056,17 @@ public class FailureArmAuthorityTest {
               return pcall(__stdlibInvoke, "STDLIB_CALL", "JSON_STRINGIFY", "op",
                 "digest", "parent", "origin", root)
             end
-            local ok, value = call({__t = true, __order = {"m"}, m = __MISSING})
+            local ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"m"}, m = __MISSING})
             row("missing", ok, value)
-            ok, value = call({__t = true, __order = {"c"},
-              c = {__c = true, __id = "@a/B", __f = {}, __p = {}}})
+            ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"c"},
+              c = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = "@a/B", [__dealCarrierKeys.f] = {}, [__dealCarrierKeys.p] = {}}})
             row("class", ok, value)
-            ok, value = call({__t = true, __order = {"f"}, f = function() end})
+            ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"f"}, f = function() end})
             row("function", ok, value)
-            ok, value = call({__t = true, __order = {"b"},
-              b = {__kind = "bytes", __len = 0}})
+            ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"b"},
+              b = {[__dealCarrierKeys.kind] = "bytes", __len = 0}})
             row("bytes", ok, value)
-            ok, value = call({__t = true, __order = {"n"}, n = 0 / 0})
+            ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"n"}, n = 0 / 0})
             row("nan", ok, value)
             """, "std-json-probe", 5);
         checkEq("missing|E8001|" + expectedText
@@ -3277,7 +3348,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "3.5", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 3.5, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // A nonfinite value at an array(int) element: number.
@@ -3287,7 +3358,7 @@ public class FailureArmAuthorityTest {
                 "data", walkEmptyTable(),
                 "tags", walkIntThenNonfiniteArray()),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 2, [1] = 1, [2] = math.huge}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 1, [2] = math.huge}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags",
                 jvmNumberArray(1L, Double.POSITIVE_INFINITY))));
@@ -3297,7 +3368,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(Double.NaN),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0/0",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", Double.NaN, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // A table value at a string-typed declared field: its closed kind.
@@ -3306,7 +3377,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", LUA_TABLE_CARRIER, "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", new deal.codegen.jvm.JvmRuntime.Table(), "age", 1L,
                 "ratio", 0.5, "data", new deal.codegen.jvm.JvmRuntime.Table(), "tags",
                 jvmIntArray(1L))));
@@ -3315,7 +3386,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", walkString("n"), "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // A present null on a non-nullable field: the null token.
@@ -3325,7 +3396,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", "__NULL", "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             walkNullField("name")));
         // An invalid Unicode scalar sequence: invalid-unicode.
         cases.add(walkCase("invalid-scalar-string", "JSON_TO_WALK", "name",
@@ -3334,10 +3405,10 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", "\"\\237\\160\\128\"", "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "\uD800", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
-        // A host-ABI function wrapper ({__kind = "function"}: the emitted
+        // A host-ABI function wrapper ({[__dealCarrierKeys.kind] = "function"}: the emitted
         // export-surface entry and host-crossing carrier shape) at a failing
         // declared field: the closed function token on every consumer, never
         // the table spelling.
@@ -3346,10 +3417,10 @@ public class FailureArmAuthorityTest {
             Map.of("name", walkFunction(), "age", new ClassOpsExecutor.Value.Int(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
-            Map.of("name", "{__kind = \"function\", sig = \"()->number\", "
+            Map.of("name", "{[__dealCarrierKeys.kind] = \"function\", sig = \"()->number\", "
                     + "f = function() end}",
                 "age", "1", "ratio", "0.5", "data", LUA_TABLE_CARRIER,
-                "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", walkJvmFunction(), "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // The remaining declared-descriptor kind mismatches (V2's
@@ -3360,7 +3431,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "true", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", Boolean.TRUE, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         cases.add(walkCase("string-at-number-field", "JSON_TO_WALK", "ratio", "string",
@@ -3368,7 +3439,7 @@ public class FailureArmAuthorityTest {
                 "ratio", walkString("x"),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", luaString("x"),
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", "x", "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         cases.add(walkCase("string-at-table-field", "JSON_TO_WALK", "data", "string",
@@ -3376,7 +3447,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkString("x"), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", luaString("x"), "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", luaString("x"), "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data", "x", "tags",
                 jvmIntArray(1L))));
         cases.add(walkCase("table-at-array-field", "JSON_TO_WALK", "tags", "table",
@@ -3394,7 +3465,7 @@ public class FailureArmAuthorityTest {
                 "data", walkEmptyTable(), "tags", walkIntArray(1),
                 "note", new ClassOpsExecutor.Value.Int(5)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}",
                 "note", "5"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
@@ -3407,8 +3478,8 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkFunctionTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "{__t = true, __keys = {k = true}, k = function() end}",
-                "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = function() end}",
+                "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 jvmFunctionTable(), "tags", jvmIntArray(1L))));
         // A table-content class instance: the carried canonical class atom at
@@ -3419,10 +3490,10 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkClassTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "{__t = true, __keys = {k = true}, k = {__c = true, "
-                    + "__id = " + quote(FOREIGN_ID.text())
-                    + ", __p = {}, __f = {}}}",
-                "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = {[__dealCarrierKeys.c] = true, "
+                    + "[__dealCarrierKeys.id] = " + quote(FOREIGN_ID.text())
+                    + ", [__dealCarrierKeys.p] = {}, [__dealCarrierKeys.f] = {}}}",
+                "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 jvmClassTable(), "tags", jvmIntArray(1L))));
         // The builtin Error carrier at the walk root: the root-identity
@@ -3433,7 +3504,7 @@ public class FailureArmAuthorityTest {
             new ClassOpsExecutor.Value.Class(deal.semantic.ir.ClassId.ERROR,
                 List.of(new ClassOpsExecutor.FieldState.Present(walkString("E8001")),
                     new ClassOpsExecutor.FieldState.Present(walkString("x")))),
-            "{__d = true, code = \"E8001\", m = \"x\"}",
+            "{[__dealCarrierKeys.d] = true, code = \"E8001\", m = \"x\"}",
             new deal.codegen.jvm.JvmRuntime.ErrorValue("E8001", "x")));
         // A path-local table re-entry: the cycle arm, no expected/actual.
         cases.add(walkCase("cyclic-table-field", "JSON_TO_WALK_CYCLE", null, null,
@@ -3441,7 +3512,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkCyclicTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "cyc", "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", "cyc", "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data", jvmCyclicTable(),
                 "tags", jvmIntArray(1L))));
         // The array container needle: the table subtree re-enters the array
@@ -3453,7 +3524,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkCyclicArrayViaTables(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "arrCycTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", "arrCycTable", "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicArrayViaTables(), "tags", jvmIntArray(1L))));
         // The declared-array container needle: the grid field's declared
@@ -3469,7 +3540,7 @@ public class FailureArmAuthorityTest {
                 "data", walkEmptyTable(), "tags", walkIntArray(1),
                 "grid", walkSelfReferentialArray()),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}",
                 "grid", "gridSelf"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
@@ -3487,7 +3558,7 @@ public class FailureArmAuthorityTest {
                 "data", walkEmptyTable(), "tags", walkIntArray(1),
                 "matrix", walkTableHoldingItsOwnArray()),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}",
                 "matrix", "mixArr"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
@@ -3505,7 +3576,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkFunctionThenCyclicTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "fnCycTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", "fnCycTable", "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmFunctionThenCyclicTable(), "tags", jvmIntArray(1L))));
         // The same shape with the cycle behind the failure closed through
@@ -3518,7 +3589,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkFunctionThenMixedCycle(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "fnMixTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", "fnMixTable", "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmFunctionThenMixedCycle(), "tags", jvmIntArray(1L))));
         // The cycle-first control over the same graph shape: the re-entry
@@ -3532,7 +3603,7 @@ public class FailureArmAuthorityTest {
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkCyclicTableThenFunction(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "cycFirstTable", "tags", "{__a = true, __n = 1, [1] = 1}"),
+                "data", "cycFirstTable", "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicTableThenFunction(), "tags", jvmIntArray(1L))));
         // A table-content carrier under a key containing braces or the
@@ -3550,7 +3621,7 @@ public class FailureArmAuthorityTest {
                     "data", walkFunctionTable(key), "tags", walkIntArray(1)),
                 Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
                     "data", luaFunctionTable(key),
-                    "tags", "{__a = true, __n = 1, [1] = 1}"),
+                    "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
                 Map.of("name", "n", "age", 1L, "ratio", 0.5,
                     "data", jvmFunctionTable(key), "tags", jvmIntArray(1L))));
         }
@@ -3763,11 +3834,11 @@ public class FailureArmAuthorityTest {
                 + "; got " + outcome);
 
         // The emitted Lua leg (the real luajit lane).
-        String body = "local sharedInner = {__a = true, __n = 0}\n"
+        String body = "local sharedInner = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0}\n"
             + "local root = " + walkLuaRoot(Map.of(
                 "name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", LUA_TABLE_CARRIER, "tags", "{__a = true, __n = 1, [1] = 1}",
-                "grid", "{__a = true, __n = 2, sharedInner, sharedInner}")) + "\n"
+                "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}",
+                "grid", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, sharedInner, sharedInner}")) + "\n"
             + "local ok, text = __jsonToClassOp(" + quote(WALK_ID.text()) + ", root)\n"
             + "if ok then print(\"shared-array-ref|OK|\" .. text)\n"
             + "else print(\"shared-array-ref|FAIL|\") end\n";
@@ -3912,7 +3983,7 @@ public class FailureArmAuthorityTest {
         luaFields.put("age", "1");
         luaFields.put("ratio", "0.5");
         luaFields.put("data", LUA_TABLE_CARRIER);
-        luaFields.put("tags", "{__a = true, __n = 1, [1] = 1}");
+        luaFields.put("tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}");
         luaFields.put("note", "__NULL");
         Map<String, Object> jvmFields = new LinkedHashMap<>();
         jvmFields.put("name", "n");
@@ -4186,8 +4257,8 @@ public class FailureArmAuthorityTest {
             present.append(entry.getKey()).append(" = true");
             values.append(entry.getKey()).append(" = ").append(entry.getValue());
         }
-        return "{__c = true, __id = " + quote(WALK_ID.text()) + ", __p = {" + present
-            + "}, __f = {" + values + "}}";
+        return "{[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = " + quote(WALK_ID.text()) + ", [__dealCarrierKeys.p] = {" + present
+            + "}, [__dealCarrierKeys.f] = {" + values + "}}";
     }
 
     /** One JVM walk instance of the drive's layout (the generated carrier shape). */
@@ -4327,7 +4398,7 @@ public class FailureArmAuthorityTest {
      * reaches the walk verbatim.
      */
     private static String luaFunctionTable(String key) {
-        return "{__t = true, __keys = {[" + luaString(key) + "] = true}, ["
+        return "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {[" + luaString(key) + "] = true}, ["
             + luaString(key) + "] = function() end}";
     }
 
@@ -4493,7 +4564,7 @@ public class FailureArmAuthorityTest {
         return table;
     }
 
-    private static final String LUA_TABLE_CARRIER = "{__t = true, __keys = {}}";
+    private static final String LUA_TABLE_CARRIER = "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}}";
 
     /** The JVM walk plan of the drive's layout. */
     private static deal.codegen.jvm.JvmJson.Plan walkPlan() {
@@ -4520,44 +4591,44 @@ public class FailureArmAuthorityTest {
      */
     private static List<String> runWalkProbe(List<WalkCase> cases) throws Exception {
         StringBuilder body = new StringBuilder();
-        body.append("local cyc = {__t = true, __keys = {self = true}}\n");
+        body.append("local cyc = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {self = true}}\n");
         body.append("cyc[\"self\"] = cyc\n");
         // The array-container cycle: data -> array -> table -> the same array
         // (the needle is detected at the array container's re-entry, never at
         // the table's).
-        body.append("local arrCycTable = {__t = true, __keys = {a = true}}\n");
-        body.append("local arrCycTblB = {__t = true, __keys = {b = true}}\n");
-        body.append("local arrCycArr = {__a = true, __n = 1, arrCycTblB}\n");
+        body.append("local arrCycTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {a = true}}\n");
+        body.append("local arrCycTblB = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {b = true}}\n");
+        body.append("local arrCycArr = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, arrCycTblB}\n");
         body.append("arrCycTblB.b = arrCycArr\n");
         body.append("arrCycTable.a = arrCycArr\n");
         // The declared-array container needle: the grid field's declared
         // array (array(array(table))) holds itself as its own first element,
         // so the declared-array container is re-entered at the first
         // element.
-        body.append("local gridSelf = {__a = true, __n = 1}\n");
+        body.append("local gridSelf = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1}\n");
         body.append("gridSelf[1] = gridSelf\n");
         // The mixed declared-array/table route: the matrix field's declared
         // array (array(table)) holds the table and that table holds the same
         // array again.
-        body.append("local mixArrTable = {__t = true, __keys = {a = true}}\n");
-        body.append("local mixArr = {__a = true, __n = 1, mixArrTable}\n");
+        body.append("local mixArrTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {a = true}}\n");
+        body.append("local mixArr = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, mixArrTable}\n");
         body.append("mixArrTable.a = mixArr\n");
         // A selected noncycle failure with a table cycle behind it: 'bad'
         // sorts before 'self', so both the ascending-key walk and the
         // first-insertion declaration order meet the unsupported value
         // first.
-        body.append("local fnCycTable = {__t = true, __keys = {bad = true, "
+        body.append("local fnCycTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {bad = true, "
             + "self = true}}\n");
         body.append("fnCycTable.bad = function() end\n");
         body.append("fnCycTable.self = fnCycTable\n");
         // The same shape with the cycle behind the failure closed through a
         // mixed table/array path.
-        body.append("local fnMixTable = {__t = true, __keys = {bad = true, "
+        body.append("local fnMixTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {bad = true, "
             + "mix = true}}\n");
         body.append("fnMixTable.bad = function() end\n");
-        body.append("fnMixTable.mix = {__a = true, __n = 1, fnMixTable}\n");
+        body.append("fnMixTable.mix = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, fnMixTable}\n");
         // The cycle-first control over the same graph shape.
-        body.append("local cycFirstTable = {__t = true, __keys = {self = true, "
+        body.append("local cycFirstTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {self = true, "
             + "zbad = true}}\n");
         body.append("cycFirstTable.self = cycFirstTable\n");
         body.append("cycFirstTable.zbad = function() end\n");
@@ -4814,18 +4885,18 @@ public class FailureArmAuthorityTest {
             List<String> rows = runPreludeProbe("""
                 do
                   local ok, value = pcall(__bcheck, "array(int)", "array",
-                    {__a = true, __n = 1, [1] = 3.5})
+                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 3.5})
                   row("element", ok, value)
                 end
                 do
                   local ok, value = pcall(__bcheck, "array(int)", "array",
-                    {__a = true, __da = true, __n = 1, [1] = __NULL})
+                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.da] = true, [__dealCarrierKeys.n] = 1, [1] = __NULL})
                   row("present-null", ok, value)
                   ok, value = pcall(__bcheck, "array(int)", "array",
-                    {__a = true, __da = true, __n = 1})
+                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.da] = true, [__dealCarrierKeys.n] = 1})
                   row("deleted-slot", ok, value)
                   ok, value = pcall(__bcheck, "array(null)", "array",
-                    {__a = true, __da = true, __n = 1, [1] = __NULL})
+                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.da] = true, [__dealCarrierKeys.n] = 1, [1] = __NULL})
                   row("null-admission", ok, value)
                 end
                 """, "array-boundary-probe", 4);
@@ -4994,11 +5065,11 @@ public class FailureArmAuthorityTest {
         String foreign = FOREIGN_ID.text();
         String body = "local rt = require(\"deal.runtime\")\n"
             + "local carriers = {\n"
-            + "  {label = \"runtime-async-handle-at-string-field\", root = {__c = true, "
-            + "__id = " + quote(WALK_ID.text()) + ", __p = {name = true, age = true, "
-            + "ratio = true, data = true, tags = true}, __f = {name = "
+            + "  {label = \"runtime-async-handle-at-string-field\", root = {[__dealCarrierKeys.c] = true, "
+            + "[__dealCarrierKeys.id] = " + quote(WALK_ID.text()) + ", [__dealCarrierKeys.p] = {name = true, age = true, "
+            + "ratio = true, data = true, tags = true}, [__dealCarrierKeys.f] = {name = "
             + "rt.async_create(function() return \"x\" end), age = 1, ratio = 0.5, "
-            + "data = " + LUA_TABLE_CARRIER + ", tags = {__a = true, __n = 1, "
+            + "data = " + LUA_TABLE_CARRIER + ", tags = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, "
             + "[1] = 1}}}},\n"
             + "  {label = \"runtime-class-root\", root = rt.class_(" + quote(foreign)
             + ", {}, {})},\n"
@@ -5128,22 +5199,22 @@ public class FailureArmAuthorityTest {
             + "and \"OK\" or \"MISSING\") .. \"|\")\n"
             + "local returned = __hostReturnCell(\"table\", {k = sentinel}, "
             + quote(WALK_SPAN) + ", false)\n"
-            + "local dataRoot = {__c = true, __id = " + quote(WALK_ID.text())
-            + ", __p = {name = true, age = true, ratio = true, data = true, "
-            + "tags = true}, __f = {name = " + luaString("n") + ", age = 1, "
-            + "ratio = 0.5, data = {__t = true, __keys = {k = true}, k = "
-            + "returned.k}, tags = {__a = true, __n = 1, [1] = 1}}}\n"
+            + "local dataRoot = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = " + quote(WALK_ID.text())
+            + ", [__dealCarrierKeys.p] = {name = true, age = true, ratio = true, data = true, "
+            + "tags = true}, [__dealCarrierKeys.f] = {name = " + luaString("n") + ", age = 1, "
+            + "ratio = 0.5, data = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = "
+            + "returned.k}, tags = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}}}\n"
             + "local cases = {\n"
             + "  {label = \"host-returned-table-null-entry\", root = dataRoot},\n"
-            + "  {label = \"plain-table-entry-control\", root = {__c = true, __id = "
-            + quote(WALK_ID.text()) + ", __p = {name = true, age = true, ratio = "
-            + "true, data = true, tags = true}, __f = {name = " + luaString("n")
-            + ", age = 1, ratio = 0.5, data = {__t = true, __keys = {k = true}, "
-            + "k = {}}, tags = {__a = true, __n = 1, [1] = 1}}}},\n"
+            + "  {label = \"plain-table-entry-control\", root = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = "
+            + quote(WALK_ID.text()) + ", [__dealCarrierKeys.p] = {name = true, age = true, ratio = "
+            + "true, data = true, tags = true}, [__dealCarrierKeys.f] = {name = " + luaString("n")
+            + ", age = 1, ratio = 0.5, data = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, "
+            + "k = {}}, tags = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}}}},\n"
             + "  {label = \"runtime-class-null-field\", root = __hostDealProject("
             + quote(WALK_ID.text()) + ", {name = returned.k, age = 1, ratio = "
-            + "0.5, data = {__t = true, __keys = {}}, tags = {__a = true, "
-            + "__n = 0}, __kind = \"class\", __classname = "
+            + "0.5, data = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}}, tags = {[__dealCarrierKeys.a] = true, "
+            + "[__dealCarrierKeys.n] = 0}, [__dealCarrierKeys.kind] = \"class\", [__dealCarrierKeys.classname] = "
             + quote(WALK_ID.text()) + "}, " + quote(WALK_SPAN) + ")},\n"
             + "}\n"
             + "for i = 1, #cases do\n"
@@ -5216,22 +5287,22 @@ public class FailureArmAuthorityTest {
             + "\"OK\" or \"MISSING\") .. \"|\")\n"
             + "local returned = __hostReturnCell(\"table\", {k = sentinel}, "
             + quote(WALK_SPAN) + ", false)\n"
-            + "local dataRoot = {__c = true, __id = " + quote(WALK_ID.text())
-            + ", __p = {name = true, age = true, ratio = true, data = true, "
-            + "tags = true}, __f = {name = " + luaString("n") + ", age = 1, "
-            + "ratio = 0.5, data = {__t = true, __keys = {k = true}, k = "
-            + "returned.k}, tags = {__a = true, __n = 1, [1] = 1}}}\n"
+            + "local dataRoot = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = " + quote(WALK_ID.text())
+            + ", [__dealCarrierKeys.p] = {name = true, age = true, ratio = true, data = true, "
+            + "tags = true}, [__dealCarrierKeys.f] = {name = " + luaString("n") + ", age = 1, "
+            + "ratio = 0.5, data = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = "
+            + "returned.k}, tags = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}}}\n"
             + "local cases = {\n"
             + "  {label = \"host-returned-table-missing-entry\", root = dataRoot},\n"
-            + "  {label = \"plain-table-entry-control\", root = {__c = true, __id = "
-            + quote(WALK_ID.text()) + ", __p = {name = true, age = true, ratio = "
-            + "true, data = true, tags = true}, __f = {name = " + luaString("n")
-            + ", age = 1, ratio = 0.5, data = {__t = true, __keys = {k = true}, "
-            + "k = {}}, tags = {__a = true, __n = 1, [1] = 1}}}},\n"
+            + "  {label = \"plain-table-entry-control\", root = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = "
+            + quote(WALK_ID.text()) + ", [__dealCarrierKeys.p] = {name = true, age = true, ratio = "
+            + "true, data = true, tags = true}, [__dealCarrierKeys.f] = {name = " + luaString("n")
+            + ", age = 1, ratio = 0.5, data = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, "
+            + "k = {}}, tags = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}}}},\n"
             + "  {label = \"runtime-class-missing-field\", root = __hostDealProject("
             + quote(WALK_ID.text()) + ", {name = returned.k, age = 1, ratio = "
-            + "0.5, data = {__t = true, __keys = {}}, tags = {__a = true, "
-            + "__n = 0}, __kind = \"class\", __classname = "
+            + "0.5, data = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}}, tags = {[__dealCarrierKeys.a] = true, "
+            + "[__dealCarrierKeys.n] = 0}, [__dealCarrierKeys.kind] = \"class\", [__dealCarrierKeys.classname] = "
             + quote(WALK_ID.text()) + "}, " + quote(WALK_SPAN) + ")},\n"
             + "}\n"
             + "for i = 1, #cases do\n"

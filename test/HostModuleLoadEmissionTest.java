@@ -118,7 +118,7 @@ public class HostModuleLoadEmissionTest {
     private static final String ORDER_LUA = """
         return {
           ping = function() return "pong" end,
-          Config = { __kind = "class", __classname = "@$external/host/order/Config" },
+          Config = { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@$external/host/order/Config" },
           Config_defaults = { port = 1 },
         }
         """;
@@ -270,9 +270,9 @@ public class HostModuleLoadEmissionTest {
         _HOST_CFG_LOADS = (_HOST_CFG_LOADS or 0) + 1
         local rt = require("deal.runtime")
         return {
-          Endpoint = { __kind = "class", __classname = "@$external/host/cfg/Endpoint" },
+          Endpoint = { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@$external/host/cfg/Endpoint" },
           Endpoint_defaults = { path = "/" },
-          ServerConfig = { __kind = "class", __classname = "@$external/host/cfg/ServerConfig" },
+          ServerConfig = { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@$external/host/cfg/ServerConfig" },
           ServerConfig_defaults = { port = 8080, endpoint = rt.__MISSING, tags = rt.__MISSING, note = rt.__MISSING },
           describe = function(s) return s.endpoint.path .. ":" .. tostring(s.port) end,
         }
@@ -340,8 +340,8 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String ERROR_LUA = """
         local function runtimeError(e)
-          if type(e) ~= "table" or e.__kind ~= "class"
-              or e.__classname ~= "Error" then
+          if type(e) ~= "table" or e[__dealCarrierKeys.kind] ~= "class"
+              or e[__dealCarrierKeys.classname] ~= "Error" then
             return nil
           end
           return e
@@ -351,36 +351,36 @@ public class HostModuleLoadEmissionTest {
             if runtimeError(e) == nil then
               error("host echo: the parameter is not the runtime Error instance", 0)
             end
-            return { __kind = "class", __classname = "Error",
+            return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
                      code = "R:" .. e.code, message = e.message }
           end,
           make = function()
-            return { __kind = "class", __classname = "Error",
+            return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
                      code = "E_M", message = "mm" }
           end,
           aliased = function()
-            return { __kind = "class", __classname = "@/Error",
+            return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@/Error",
                      code = "E_A", message = "am" }
           end,
           builtinAliased = function()
-            return { __kind = "class", __classname = "@$builtin/Error",
+            return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@$builtin/Error",
                      code = "E_B", message = "bm" }
           end,
-          Holder = { __kind = "class",
-                     __classname = "@$external/host/error_probe/Holder" },
+          Holder = { [__dealCarrierKeys.kind] = "class",
+                     [__dealCarrierKeys.classname] = "@$external/host/error_probe/Holder" },
           Holder_defaults = { e = nil },
           wrap = function(e)
             if runtimeError(e) == nil then
               error("host wrap: the parameter is not the runtime Error instance", 0)
             end
-            return { __kind = "class",
-                     __classname = "@$external/host/error_probe/Holder",
-                     e = { __kind = "class", __classname = "Error",
+            return { [__dealCarrierKeys.kind] = "class",
+                     [__dealCarrierKeys.classname] = "@$external/host/error_probe/Holder",
+                     e = { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
                            code = "W:" .. e.code, message = e.message } }
           end,
           observe = function(v)
-            if type(v) ~= "table" or v.__kind ~= "class"
-                or v.__classname ~= "@$external/host/error_probe/Holder" then
+            if type(v) ~= "table" or v[__dealCarrierKeys.kind] ~= "class"
+                or v[__dealCarrierKeys.classname] ~= "@$external/host/error_probe/Holder" then
               error("host observe: the parameter is not the runtime Holder "
                 .. "instance", 0)
             end
@@ -389,7 +389,7 @@ public class HostModuleLoadEmissionTest {
               error("host observe: the nested field is not the runtime Error "
                 .. "instance", 0)
             end
-            return { __kind = "class", __classname = "Error",
+            return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
                      code = "O:" .. inner.code, message = inner.message }
           end,
         }
@@ -772,7 +772,7 @@ public class HostModuleLoadEmissionTest {
             dofile("%s")
             local ok, err = __dealMain()
             if ok then fail("the construction succeeded") end
-            if type(err) ~= "table" or err.__d ~= true then
+            if type(err) ~= "table" or err[__dealCarrierKeys.d] ~= true then
               fail("not a DEAL failure: " .. tostring(type(err)))
             end
             if err.code ~= "E8007" then fail("code: " .. tostring(err.code)) end
@@ -913,7 +913,7 @@ public class HostModuleLoadEmissionTest {
             "require-failure");
         checkLuaArmSeed(missing, "host/missing_export.lua",
             "return { ping = function() return \"pong\" end,\n"
-                + "  missing = { __kind = \"function\", sig = \"(int)->string\", "
+                + "  missing = { [__dealCarrierKeys.kind] = \"function\", sig = \"(int)->string\", "
                 + "f = function() end } }\n",
             armMessage(FailureArmId.HOST_LOAD_SIGNATURE_MISMATCH, Map.of("name", "missing",
                 "module", MISSING_SPECIFIER, "expected", "()->string",
@@ -926,7 +926,7 @@ public class HostModuleLoadEmissionTest {
         // failures (no declared arm composes their text).
         checkLuaSeed(missing, "host/missing_export.lua",
             "return { ping = function() return \"pong\" end,\n"
-                + "  missing = { __kind = \"function\", sig = \"()->string\", f = 42 } }\n",
+                + "  missing = { [__dealCarrierKeys.kind] = \"function\", sig = \"()->string\", f = 42 } }\n",
             "host export 'missing' in module 'host/missing_export' has non-function .f",
             -1, -1, "prewrapped-non-function-f");
         checkLuaSeed(missing, "host/missing_export.lua",
@@ -956,7 +956,7 @@ public class HostModuleLoadEmissionTest {
             defaultsMessage, cfgOrigin, "cfg-non-table-defaults");
         checkLuaSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace(
-                "ServerConfig = { __kind = \"class\", __classname = "
+                "ServerConfig = { [__dealCarrierKeys.kind] = \"class\", [__dealCarrierKeys.classname] = "
                     + "\"@$external/host/cfg/ServerConfig\" }",
                 "ServerConfig = 42"),
             "host export 'ServerConfig' in module 'host/cfg' is not a class meta "
@@ -1035,7 +1035,7 @@ public class HostModuleLoadEmissionTest {
               if ok2 then
                 fail(name .. ": the superseded alias " .. alias .. " was admitted")
               end
-              if type(e) ~= "table" or e.__d ~= true then
+              if type(e) ~= "table" or e[__dealCarrierKeys.d] ~= true then
                 fail(name .. ": the failure is not the DEAL Error carrier: "
                   .. tostring(e))
               end
@@ -1116,7 +1116,7 @@ public class HostModuleLoadEmissionTest {
             dofile("%s")
             local ok, err = __dealMain()
             if ok then fail("the init succeeded") end
-            if type(err) ~= "table" or err.__d ~= true or err.code ~= "E8011" then
+            if type(err) ~= "table" or err[__dealCarrierKeys.d] ~= true or err.code ~= "E8011" then
               fail("code: " .. tostring(type(err) == "table" and err.code))
             end
             if err.m ~= %s then fail("message: " .. tostring(err.m)) end
@@ -1215,7 +1215,7 @@ public class HostModuleLoadEmissionTest {
             local surface = __exportSurfaces["%s"]
             if type(surface) ~= "table" then fail("no probe surface") end
             local ping = surface["ping"]
-            if type(ping) ~= "table" or ping.__kind ~= "function" then
+            if type(ping) ~= "table" or ping[__dealCarrierKeys.kind] ~= "function" then
               fail("the loaded entry is not the wrapped function table")
             end
             if type(ping.f) ~= "function" then fail("the loaded entry has no callable") end

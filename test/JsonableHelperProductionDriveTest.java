@@ -3431,7 +3431,7 @@ public class JsonableHelperProductionDriveTest {
                     // the emitted Lua surface keys it as a quoted string, the
                     // emitted JVM surface writes the same string.
                     String publication = target == Target.LUAJIT
-                        ? "[\"" + helper + "\"] = {__kind = \"function\""
+                        ? "[\"" + helper + "\"] = {[__dealCarrierKeys.kind] = \"function\""
                         : ".write(\"" + helper + "\", ";
                     check(first.contains(publication), fixtureRel + " ["
                         + target.laneName() + "]: the emitted helper publication "

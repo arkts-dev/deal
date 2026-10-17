@@ -5,7 +5,12 @@
 -- zero, so any leakage is observable in the witness's exact counts).
 
 local rt = require("deal.runtime")
-local original = {__a = true, __n = 2, 1, 2}
+-- The shared runtime array carrier (ISSUE-0830): the array mark and length
+-- are keyed by the process-wide private carrier keys, so a DEAL table can
+-- never shadow or forge them and the host-built carrier is the same value
+-- shape the emitted chunk produces.
+local K = rt.__keys
+local original = {[K.a] = true, [K.n] = 2, 1, 2}
 local calls = 0
 local order = ""
 

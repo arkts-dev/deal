@@ -4,6 +4,10 @@
 package.path = "./?.lua;" .. package.path
 local __rt = require("deal.runtime")
 
+-- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
+-- the stdlib share one process-wide key set.
+local __K = __rt.__keys
+
 local passed = 0
 local failed = 0
 local function test(name, fn)
@@ -265,6 +269,143 @@ end)
 
 test("check_table on string errors with E8001", function()
   assert_error(function() __rt.check_table("hi") end, "E8001")
+end)
+
+-- ==================== private carrier identity (ISSUE-0830) ====================
+-- Carrier identity is nominal and unforgeable: the marks live under
+-- process-wide private table keys, so a table may carry every mark name as
+-- a string key, stays the table value, and never satisfies a class, bytes,
+-- function, array or table-shape row it merely names.
+
+-- The exact closed tuple of one typed-boundary rejection.
+local function assert_boundary_error(fn, code, message, expected, actual)
+  local err = assert_error(fn, code)
+  assert(err.message == message, "message: " .. tostring(err.message))
+  assert(err.expected == expected, "expected: " .. tostring(err.expected))
+  assert(err.actual == actual, "actual: " .. tostring(err.actual))
+  return err
+end
+
+-- A table carrying every carrier-vocabulary name as a string key.
+local function carrier_key_table()
+  return {
+    __kind = "class", __classname = "Error", __c = true,
+    __id = "@m/C", __d = true, __a = true, __n = 3, __nK = 1,
+    __da = true, __t = true, __keys = "keys", __order = "order",
+    __p = true, __f = true, __fn = 1, __csig = "s", __sig = "t",
+    __fid = 2, __it = "u", __sid = "v", __val = 3, __mode = 4,
+    __jn = true, __jo = true, __ja = true, __jkeys = 5, __jnum = 6,
+    __jseen = 7, __ptr = 8, plain = 9,
+  }
+end
+
+test("a table with carrier-like string keys is the table value (v1.3)", function()
+  local t = carrier_key_table()
+  assert(__rt.check_table(t) == t, "the carrier-key table is a table")
+  assert(__rt.check_type("table", t) == t, "the table descriptor admits it")
+  assert(__rt.typed_kind(t) == "table", "its projected kind is table")
+  assert(__rt.typed_kind(__rt.__NULL) == "null")
+  assert(__rt.typed_kind(__rt.__MISSING) == "nil")
+end)
+
+test("forged class carriers are rejected at a class descriptor (v1.3)", function()
+  local forged = carrier_key_table()
+  assert_boundary_error(function() __rt.check_type("@m/C", forged) end,
+    "E8001", "expected class instance", "class", "table")
+  assert(__rt.check_type("@m/C", __rt.class_("@m/C", {}, {})) ~= nil,
+    "the produced class instance is admitted")
+end)
+
+test("forged bytes carriers are rejected at the bytes descriptor (v1.3)", function()
+  local forged = carrier_key_table()
+  assert_boundary_error(function() __rt.check_type("bytes", forged) end,
+    "E8001", "expected bytes", "bytes", "table")
+  assert(__rt.check_type("bytes", __rt.bytes_new(1)) ~= nil,
+    "the produced bytes carrier is admitted")
+end)
+
+test("forged function carriers are rejected at a function descriptor (v1.3)", function()
+  local forged = carrier_key_table()
+  assert_boundary_error(function() __rt.check_type("()->null", forged) end,
+    "E8001", "expected function", "function", "table")
+  assert(__rt.check_type("()->null",
+    __rt.function_("()->null", function() return __rt.__NULL end)) ~= nil,
+    "the produced function wrapper is admitted")
+end)
+
+test("non-arrays are rejected at an array descriptor (v1.3)", function()
+  -- A plain object, a class instance, a function wrapper, the language null
+  -- and the absent marker are not arrays; the language null is never the
+  -- empty array.
+  assert_boundary_error(function() __rt.check_type("[int]", { a = 1 }) end,
+    "E8001", "expected array", "array", "table")
+  assert_boundary_error(function()
+    __rt.check_type("[int]", __rt.class_("@m/C", {}, {}))
+  end, "E8001", "expected array", "array", "@m/C")
+  assert_boundary_error(function()
+    __rt.check_type("[int]", __rt.function_("()->null", function() return nil end))
+  end, "E8001", "expected array", "array", "function")
+  assert_boundary_error(function() __rt.check_type("[int]", __rt.__NULL) end,
+    "E8001", "expected array", "array", "null")
+  assert_boundary_error(function() __rt.check_type("[int]", __rt.__MISSING) end,
+    "E8001", "expected array", "array", "nil")
+  -- A carrier-key table is not an array either.
+  assert_boundary_error(function()
+    __rt.check_type("[int]", carrier_key_table())
+  end, "E8001", "expected array", "array", "table")
+  -- The array values are admitted: the emitted chunk's array carrier (its
+  -- private marks) and the reference runtime's dense array form.
+  local carrier = { [__K.a] = true, [__K.n] = 2, 1, 2 }
+  assert(__rt.check_type("[int]", carrier) == carrier,
+    "the array carrier is admitted")
+  local dense = { 1, 2 }
+  assert(__rt.check_type("[int]", dense) == dense, "the dense array is admitted")
+  assert(__rt.check_type("[int]", {}) ~= nil, "the empty dense array is admitted")
+end)
+
+test("array element failures keep the E8003 wrap over a carrier (v1.3)", function()
+  local carrier = { [__K.a] = true, [__K.n] = 2, 1, "bad" }
+  local err = assert_error(function() __rt.check_type("[int]", carrier) end, "E8003")
+  assert(err.message == "array element 2 type mismatch", err.message)
+  assert(err.expected == "int", tostring(err.expected))
+  assert(err.actual == "string", tostring(err.actual))
+end)
+
+test("carriers are rejected at a table descriptor (v1.3)", function()
+  assert_boundary_error(function()
+    __rt.check_table(__rt.class_("@m/C", {}, {}))
+  end, "E8001", "expected table", "table", "@m/C")
+  assert_boundary_error(function() __rt.check_table(__rt.bytes_new(1)) end,
+    "E8001", "expected table", "table", "bytes")
+  assert_boundary_error(function()
+    __rt.check_table(__rt.function_("()->null", function() return nil end))
+  end, "E8001", "expected table", "table", "function")
+  assert_boundary_error(function()
+    __rt.check_table(__rt.async_start(function() end))
+  end, "E8001", "expected table", "table", "async-operation")
+  assert_boundary_error(function()
+    __rt.check_table({ [__K.a] = true, [__K.n] = 0 })
+  end, "E8001", "expected table", "table", "array")
+  -- The language null and the absent marker keep their own tokens.
+  assert_boundary_error(function() __rt.check_table(__rt.__NULL) end,
+    "E8001", "expected table", "table", "null")
+  assert_boundary_error(function() __rt.check_table(__rt.__MISSING) end,
+    "E8001", "expected table", "table", "nil")
+  -- A plain table stays the table value, whatever its string keys.
+  assert(__rt.check_table(carrier_key_table()) ~= nil,
+    "a carrier-key table is a table at the table cell")
+end)
+
+test("a class instance may declare fields named after the carrier keys (v1.3)", function()
+  local instance = __rt.class_("@m/Tagged",
+    { __kind = "user-kind", __c = 1, __keys = "keys" }, {})
+  assert(instance[__K.kind] == "class", "the instance keeps its runtime class mark")
+  assert(instance[__K.classname] == "@m/Tagged", "the instance keeps its identity")
+  assert(instance.__kind == "user-kind", "the user field named __kind survives")
+  assert(instance.__c == 1 and instance.__keys == "keys",
+    "the user fields named after carrier keys survive")
+  assert(__rt.check_type("@m/Tagged", instance) == instance,
+    "the instance is still the declared class value")
 end)
 
 
@@ -597,7 +738,7 @@ end)
 test("bytes_new(4) returns tagged bytes with length 4", function()
   local b = __rt.bytes_new(4)
   assert(type(b) == "table")
-  assert(b.__kind == "bytes")
+  assert(b[__K.kind] == "bytes")
   assert(b.__len == 4)
 end)
 
@@ -753,7 +894,7 @@ test("function_ creates wrapper with correct shape", function()
   local f = function(x) return x end
   local w = __rt.function_("(int)->int", f)
   assert(type(w) == "table")
-  assert(w.__kind == "function")
+  assert(w[__K.kind] == "function")
   assert(w.sig == "(int)->int")
   assert(w.f == f)
 end)
@@ -806,7 +947,7 @@ end
 test("from_lua_function wraps with type checks", function()
   local raw = function(a, b) return a + b end
   local w = __rt.from_lua_function("(int,int)->int", raw)
-  assert(w.__kind == "function")
+  assert(w[__K.kind] == "function")
   assert(w.sig == "(int,int)->int")
   -- Call with valid args
   local r = w.f(1, 2)
@@ -836,6 +977,33 @@ test("from_lua_function delegates a wrong param type to the closed arm renderer"
   assert(inner.values.kind == "int")
 end)
 
+test("the host parameter cell rejects a forged carrier (ISSUE-0830)", function()
+  -- A DEAL table carrying the internal class/array mark names reaches the
+  -- host parameter cell as the table value: the declared class/array cell
+  -- rejects it through the same closed row a real carrier mismatch takes,
+  -- so a table never forges identity across the host boundary.
+  local raw = function(item) return __rt.__NULL end
+  local classWrapped = __rt.from_lua_function("(@m/C)->null", raw)
+  local before = #host_arm_calls
+  local err = assert_error(function()
+    classWrapped.f({ __c = true, __id = "@m/C", __kind = "class",
+      __classname = "@m/C" })
+  end, "E8010")
+  assert(err.message == "arm:HOST_PARAMETER_CELL", tostring(err.message))
+  assert(host_arm_calls[#host_arm_calls].values.index == 1)
+  assert(#host_arm_calls == before + 1)
+  local arrayWrapped = __rt.from_lua_function("([int])->null", raw)
+  local errArray = assert_error(function()
+    arrayWrapped.f({ __a = true, __n = 0 })
+  end, "E8010")
+  assert(errArray.message == "arm:HOST_PARAMETER_CELL", tostring(errArray.message))
+  -- The real carriers pass the same cells.
+  assert(__rt.from_lua_function("(@m/C)->null", raw).f(
+    __rt.class_("@m/C", {}, {})) == __rt.__NULL)
+  assert(__rt.from_lua_function("([int])->null", raw).f(
+    { [__K.a] = true, [__K.n] = 0 }) == __rt.__NULL)
+end)
+
 test("from_lua_function rejects wrong arg count (too few)", function()
   local raw = function(a, b) return a + b end
   local w = __rt.from_lua_function("(int,int)->int", raw)
@@ -858,15 +1026,15 @@ test("class_ basic construction", function()
   local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada"})
   assert(u.name == "Ada")
   assert(u.nick == nil)
-  assert(u.__classname == "User")
-  assert(u.__kind == "class")
+  assert(u[__K.classname] == "User")
+  assert(u[__K.kind] == "class")
 end)
 
 test("class_ optional field provided", function()
   local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {nick = "ads"})
   assert(u.name == "")
   assert(u.nick == "ads")
-  assert(u.__classname == "User")
+  assert(u[__K.classname] == "User")
 end)
 
 test("class_ all optional fields provided", function()
@@ -892,7 +1060,7 @@ end)
 test("class_ with __NULL default value", function()
   local u = __rt.class_("C", {val = __rt.__NULL}, {})
   assert(u.val == __rt.__NULL)
-  assert(u.__kind == "class")
+  assert(u[__K.kind] == "class")
 end)
 
 test("class_ with provided __NULL field (not rejected as extra)", function()
@@ -962,8 +1130,8 @@ test("class_plan_ basic construction tags and publishes", function()
   local u = __rt.class_plan_("@mod/User", plan, { name = "Ada" }, "f.deal", 3, 5)
   assert(u.name == "Ada")
   assert(u.nick == nil)
-  assert(u.__kind == "class")
-  assert(u.__classname == "@mod/User")
+  assert(u[__K.kind] == "class")
+  assert(u[__K.classname] == "@mod/User")
 end)
 
 test("class_plan_ omitted required default evaluates exactly once per attempt", function()
@@ -1088,7 +1256,7 @@ test("class_plan_ failure publishes no instance", function()
   }
   local ok, inst = pcall(__rt.class_plan_, "C", plan, { id = "x" }, "f.deal", 1, 1)
   assert(ok == false)
-  assert(type(inst) ~= "table" or inst.__kind ~= "class")
+  assert(type(inst) ~= "table" or inst[__K.kind] ~= "class")
 end)
 
 test("class_plan_ evaluator-raised DEAL errors propagate unchanged", function()
@@ -1117,7 +1285,7 @@ test("class_plan_ supports bytes fields through the canonical matcher", function
     { name = "b", descriptor = "bytes", optional = false, evaluator = function() return __rt.bytes_new(2) end },
   }
   local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
-  assert(u.b.__kind == "bytes")
+  assert(u.b[__K.kind] == "bytes")
   assert(__rt.bytes_length(u.b) == 2)
   assert_error(function()
     __rt.class_plan_("C", plan, { b = "nope" }, "f.deal", 1, 1)
@@ -1177,7 +1345,7 @@ test("class_plan_ function fields compare signatures byte-for-byte", function()
       evaluator = function() return __rt.function_("(int)->int", function(x) return x end) end },
   }
   local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
-  assert(u.f.__kind == "function")
+  assert(u.f[__K.kind] == "function")
   assert_error(function()
     __rt.class_plan_("C", plan, { f = __rt.function_("(string)->int", function() return 1 end) },
       "f.deal", 1, 1)
@@ -1234,8 +1402,8 @@ test("json_from_plan decodes provided fields, evaluates omitted defaults, and ta
   assert(u.id == 42)
   assert(u.name == "anon")
   assert(u.nick == nil)
-  assert(u.__kind == "class")
-  assert(u.__classname == "@mod/User")
+  assert(u[__K.kind] == "class")
+  assert(u[__K.classname] == "@mod/User")
   assert(calls == 0)
 end)
 
@@ -1368,8 +1536,8 @@ end)
 
 test("export_class returns correct shape", function()
   local e = __rt.export_class("User")
-  assert(e.__kind == "class")
-  assert(e.__classname == "User")
+  assert(e[__K.kind] == "class")
+  assert(e[__K.classname] == "User")
 end)
 
 -- ==================== has tests ====================
@@ -1539,8 +1707,8 @@ end)
 
 test("error_value shape with span args", function()
   local e = __rt.error_value("E_LIMIT", "fail", "test.deal", 3, 7)
-  assert(e.__kind == "class")
-  assert(e.__classname == "Error")
+  assert(e[__K.kind] == "class")
+  assert(e[__K.classname] == "Error")
   assert(e.code == "E_LIMIT")
   assert(e.message == "fail")
   assert(e.file == "test.deal")
@@ -1550,8 +1718,8 @@ end)
 
 test("error_value shape without span args", function()
   local e = __rt.error_value("", "m")
-  assert(e.__kind == "class")
-  assert(e.__classname == "Error")
+  assert(e[__K.kind] == "class")
+  assert(e[__K.classname] == "Error")
   assert(e.code == "")
   assert(e.message == "m")
   assert(e.file == nil)
@@ -1567,9 +1735,9 @@ end)
 
 test("check_type Error rejects non-Error class instances", function()
   local u = __rt.class_("Error", {code = "", message = ""}, {code = "X"})
-  assert_error(function() __rt.check_type("Error", {__kind = "class", __classname = "User"}) end, "E8001")
+  assert_error(function() __rt.check_type("Error", {[__K.kind] = "class", [__K.classname] = "User"}) end, "E8001")
   -- sanity: a genuine Error instance still passes
-  assert(u.__kind == "class" and u.__classname == "Error")
+  assert(u[__K.kind] == "class" and u[__K.classname] == "Error")
 end)
 
 test("check_type rejects the superseded builtin Error aliases", function()
@@ -1751,7 +1919,7 @@ test("the canonical matcher selects its closed arm on every mapped cell", functi
   local bytes = selection(function() __rt.check_type("bytes", 5) end, "E8001")
   assert(bytes.id == "TYPED_BOUNDARY_KIND" and bytes.values.kind == "bytes")
   local klass = selection(function()
-    __rt.check_type("Error", {__kind = "class", __classname = "@src/A"})
+    __rt.check_type("Error", {[__K.kind] = "class", [__K.classname] = "@src/A"})
   end, "E8001")
   assert(klass.id == "CLASS_IDENTITY")
   assert(klass.values.expected == "Error")
@@ -1769,7 +1937,7 @@ test("the canonical matcher selects its closed arm on every mapped cell", functi
   -- A malformed function carrier has no signature operand: the closed kind
   -- arm renders (the JVM host check's own function row).
   local carrier = selection(function()
-    __rt.check_type("()->int", {__kind = "function"})
+    __rt.check_type("()->int", {[__K.kind] = "function"})
   end, "E8001")
   assert(carrier.id == "TYPED_BOUNDARY_KIND" and carrier.values.kind == "function")
   -- A producer defect carries no selection, so it can never become a host
@@ -1976,7 +2144,7 @@ test("parse_descriptor async direct: async(int)->string wraps and preserves sig"
   end)
   assert(wrapper.sig == "async(int)->string")
   local h = wrapper.f(42)
-  assert(type(h) == "table" and h.__kind == "async")
+  assert(type(h) == "table" and h[__K.kind] == "async")
   assert(h.__result == "42")
 end)
 
@@ -2022,14 +2190,14 @@ test("parse_descriptor async nullable: from_lua_function wraps nullable async de
   -- "async(int)->?@src/User" is an async function whose declared nullable
   -- return is enforced at the await site.
   local wrapper = __rt.from_lua_function("async(int)->?@src/User", function(x)
-    return __rt.async_start(function() return { __kind = "class", __classname = "User" } end)
+    return __rt.async_start(function() return { [__K.kind] = "class", [__K.classname] = "User" } end)
   end)
   assert(wrapper.sig == "async(int)->?@src/User")
   local h = wrapper.f(1)
-  assert(type(h) == "table" and h.__kind == "async")
+  assert(type(h) == "table" and h[__K.kind] == "async")
   -- a non-operation return still fails the async-shape check
   local wrapper2 = __rt.from_lua_function("async(int)->?@src/User", function(x)
-    return { __kind = "class", __classname = "User" }
+    return { [__K.kind] = "class", [__K.classname] = "User" }
   end)
   assert_error(function() wrapper2.f(1) end, "E8010")
 end)
@@ -2088,7 +2256,7 @@ test("from_lua_function async: correct params pass through", function()
     return __rt.async_start(function() return "value: " .. tostring(x) end)
   end)
   local h = wrapper.f(42)
-  assert(type(h) == "table" and h.__kind == "async")
+  assert(type(h) == "table" and h[__K.kind] == "async")
   assert(h.__result == "value: 42")
 end)
 
@@ -2104,7 +2272,7 @@ end)
 test("async_create returns a table with __kind='async'", function()
   local handle = __rt.async_create(function() end)
   assert(type(handle) == "table")
-  assert(handle.__kind == "async")
+  assert(handle[__K.kind] == "async")
   assert(handle.__done == false)
 end)
 
@@ -2348,7 +2516,7 @@ test("async outer wrapper: from_lua_function does not validate return type for a
   local wrapper = __rt.from_lua_function("async()->@src/User", function()
     -- Returns an async handle (simulating what codegen produces)
     return __rt.async_start(function()
-      return { __kind = "class", __classname = "User", name = "test" }
+      return { [__K.kind] = "class", [__K.classname] = "User", name = "test" }
     end)
   end)
   -- Call should succeed without E8010
@@ -2356,7 +2524,7 @@ test("async outer wrapper: from_lua_function does not validate return type for a
   assert(ok, "async wrapper should not validate return type: " .. tostring(result))
   -- The result should be an async handle
   assert(type(result) == "table")
-  assert(result.__kind == "async", "result should be async handle, got kind: " .. tostring(result.__kind))
+  assert(result[__K.kind] == "async", "result should be async handle, got kind: " .. tostring(result[__K.kind]))
 end)
 
 test("async outer wrapper: sync function still validates return type", function()
@@ -2647,7 +2815,7 @@ test("load_host loads fixture and wraps raw functions", function()
     answer = "()->int",
     add = "(int,int)->int",
   })
-  assert(type(host.answer) == "table" and host.answer.__kind == "function")
+  assert(type(host.answer) == "table" and host.answer[__K.kind] == "function")
   assert(host.answer.sig == "()->int")
   assert(host.answer.f() == 42)
   assert(host.add.f(2, 3) == 5)
@@ -2682,7 +2850,7 @@ end)
 
 test("load_host pre-wrapped export with matching sig is re-wrapped and enforced", function()
   local host = __rt.load_host(HOST_FIXTURE, { prewrapped_good = "()->int" })
-  assert(host.prewrapped_good.__kind == "function")
+  assert(host.prewrapped_good[__K.kind] == "function")
   assert(host.prewrapped_good.f() == 7)
   -- junk return from the pre-wrapped .f is caught by the re-wrap
   local host2 = __rt.load_host(HOST_FIXTURE, { prewrapped_bad = "()->int" })
@@ -2752,7 +2920,7 @@ end)
 test("load_host async export: real handle passes, junk raises E8010", function()
   local host = __rt.load_host(HOST_FIXTURE, { fetch = "async()->string" })
   local h = host.fetch.f()
-  assert(type(h) == "table" and h.__kind == "async")
+  assert(type(h) == "table" and h[__K.kind] == "async")
   assert(h.__result == "data")
   local host2 = __rt.load_host(HOST_FIXTURE, { fetch_bad = "async()->string" })
   assert_error(function() host2.fetch_bad.f() end, "E8010")
@@ -2771,8 +2939,8 @@ test("load_host class export validates identity and copies defaults", function()
   local host = __rt.load_host(HOST_FIXTURE, {
     ServerConfig = "@$external/host.cfg/ServerConfig",
   })
-  assert(type(host.ServerConfig) == "table" and host.ServerConfig.__kind == "class")
-  assert(host.ServerConfig.__classname == "@$external/host.cfg/ServerConfig")
+  assert(type(host.ServerConfig) == "table" and host.ServerConfig[__K.kind] == "class")
+  assert(host.ServerConfig[__K.classname] == "@$external/host.cfg/ServerConfig")
   assert(type(host.ServerConfig_defaults) == "table")
   assert(host.ServerConfig_defaults.port == 80)
 end)
@@ -2794,8 +2962,8 @@ test("load_host synthesizes no <C>_plan key and host classes keep the defaults-m
   assert(a.port == 9000)
   assert(b.port == 8080)
   assert(host.ServerConfig_defaults.port == 80)
-  assert(host.ServerConfig_defaults.__kind == nil)
-  assert(host.ServerConfig_defaults.__classname == nil)
+  assert(host.ServerConfig_defaults[__K.kind] == nil)
+  assert(host.ServerConfig_defaults[__K.classname] == nil)
   assert_error(function()
     __rt.class_("@$external/host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 1, extra = true })
   end, "E8007")
@@ -2948,7 +3116,7 @@ end)
 
 test("load_host class absent _fields tolerated", function()
   local host = __rt.load_host(HOST_FIXTURE, { NoFields = "@$external/host.cfg/NoFields" })
-  assert(host.NoFields.__kind == "class")
+  assert(host.NoFields[__K.kind] == "class")
   assert(host.NoFields_fields == nil)
 end)
 
@@ -3198,17 +3366,17 @@ test("check_canonical_type function row keeps the exact async marker", function(
 end)
 
 test("check_canonical_type class row matches atoms byte-for-byte", function()
-  local probe = { __kind = "class", __classname = "Error" }
+  local probe = { [__K.kind] = "class", [__K.classname] = "Error" }
   assert(__rt.check_canonical_type("Error", probe) == probe)
   local err = assert_error(function()
-    __rt.check_canonical_type("Error", { __kind = "class", __classname = "@src/A" })
+    __rt.check_canonical_type("Error", { [__K.kind] = "class", [__K.classname] = "@src/A" })
   end, "E8001")
   assert(err.message == "expected instance of Error, got @src/A", tostring(err.message))
   assert_error(function()
-    __rt.check_canonical_type("Error", { __kind = "class", __classname = "Errorx" })
+    __rt.check_canonical_type("Error", { [__K.kind] = "class", [__K.classname] = "Errorx" })
   end, "E8001")
   assert_error(function()
-    __rt.check_canonical_type("Error", { __kind = "class", __classname = "@host.cfg/ServerConfig" })
+    __rt.check_canonical_type("Error", { [__K.kind] = "class", [__K.classname] = "@host.cfg/ServerConfig" })
   end, "E8001")
   assert_error(function() __rt.check_canonical_type("Error", 42) end, "E8001")
   assert_error(function() __rt.check_canonical_type("Error", {}) end, "E8001")
@@ -3261,7 +3429,7 @@ test("boundary flip: check_type IS the canonical matcher", function()
   assert(__rt.check_type("[int]", { 1, 2 }) ~= nil)
   assert(__rt.check_type("?string", __rt.__NULL) == __rt.__NULL)
   local ev = __rt.error_value("E8001", "boom")
-  assert(ev.__classname == "Error")
+  assert(ev[__K.classname] == "Error")
   assert(__rt.check_type("Error", ev) == ev)
   -- The canonical alias entries are the same matcher.
   assert(__rt.check_canonical_type("[int]", { 1 }) ~= nil)
@@ -3392,7 +3560,7 @@ test("invoke_async_export completion validation uses the canonical matcher", fun
   assert(__rt.invoke_async_export(exportsNull, "oracle", "?int")
       == __rt.__NULL)
 
-  local inst = { __kind = "class", __classname = "@mod/Thing" }
+  local inst = { [__K.kind] = "class", [__K.classname] = "@mod/Thing" }
   local exportsClass = {
     oracle = __rt.function_("async()->@mod/Thing", function()
       return __rt.async_start(function() return inst end)
@@ -3614,8 +3782,8 @@ local FFI_BATT_CALL_COL = 77
 local function ffi_batt_assert_reified(err, expected_code)
   assert(type(err) == "table", "expected an error table for reification")
   local ev = __rt.error_value(err.code, err.message)
-  assert(ev.__kind == "class", "the reified error must be a tagged class instance")
-  assert(ev.__classname == "Error",
+  assert(ev[__K.kind] == "class", "the reified error must be a tagged class instance")
+  assert(ev[__K.classname] == "Error",
       "the reified error must carry the canonical Error identity")
   assert(ev.code == expected_code,
       "the reified error code must be " .. tostring(expected_code))
@@ -4031,7 +4199,7 @@ test("FFI positive composition: the full fixture bundle exercises every pipeline
   for i = 1, #names do
     local name = names[i]
     local w = exports[name]
-    assert(type(w) == "table" and w.__kind == "function",
+    assert(type(w) == "table" and w[__K.kind] == "function",
         "export " .. name .. " must be a function_-shaped wrapper table")
     assert(type(w.f) == "function", "export " .. name .. " must carry a working .f closure")
     assert(w.sig == sigs[name],
@@ -4062,9 +4230,9 @@ test("FFI positive composition: the full fixture bundle exercises every pipeline
   -- Non-NULL pointer returns produce fresh declared-identity tokens.
   local tok1 = exports.static_pointer.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
   local tok2 = exports.static_pointer.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  assert(tok1.__kind == "class" and tok1.__classname == FFI_BATT_PTR_IDENTITY,
+  assert(tok1[__K.kind] == "class" and tok1[__K.classname] == FFI_BATT_PTR_IDENTITY,
       "the pointer token must be tagged with the declared canonical class identity")
-  assert(tok2.__kind == "class" and tok2.__classname == FFI_BATT_PTR_IDENTITY,
+  assert(tok2[__K.kind] == "class" and tok2[__K.classname] == FFI_BATT_PTR_IDENTITY,
       "the second pointer token must be tagged with the declared canonical class identity")
   assert(tok1 ~= tok2, "two successive calls must produce distinct token tables")
   -- Cells and bindings all READY; zero default evaluation during load.
@@ -4240,9 +4408,9 @@ test("C-series precheck (G1(d)): the consumed entry is a function and a smoke co
       "the C-series fail-closed precheck requires __rt.class_plan_ to be a function")
   local smoke = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
       { x = 7 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  assert(smoke.__classname == FFI_BATT_PAIR_IDENTITY,
+  assert(smoke[__K.classname] == FFI_BATT_PAIR_IDENTITY,
       "the smoke construction through the retained plan must carry the canonical Pair identity")
-  assert(smoke.__kind == "class",
+  assert(smoke[__K.kind] == "class",
       "the smoke construction through the retained plan must be tagged __kind == 'class'")
 end)
 
@@ -4251,9 +4419,9 @@ test("C1: construction through the retained exported FFI plan yields a tagged in
   local before = ffi_batt_evaluator_count
   local inst = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
       { x = 7 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  assert(inst.__classname == FFI_BATT_PAIR_IDENTITY,
+  assert(inst[__K.classname] == FFI_BATT_PAIR_IDENTITY,
       "the constructed instance must carry the canonical Pair identity")
-  assert(inst.__kind == "class",
+  assert(inst[__K.kind] == "class",
       "the constructed instance must be tagged __kind == 'class'")
   assert(inst.x == 7, "the provided field x must be copied through")
   assert(inst.y == nil, "the omitted optional field y must stay absent")
@@ -4351,9 +4519,9 @@ test("C7: inbound direct by-value struct against the remediated row publishes a 
   local inst = exports.make_pair.f(3, 4.5,
       FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
   assert(type(inst) == "table", "make_pair must publish a table instance")
-  assert(inst.__classname == FFI_BATT_PAIR_IDENTITY,
+  assert(inst[__K.classname] == FFI_BATT_PAIR_IDENTITY,
       "the inbound Pair instance must carry the canonical class identity")
-  assert(inst.__kind == "class",
+  assert(inst[__K.kind] == "class",
       "the inbound Pair instance must be tagged __kind == 'class'")
   assert(inst.x == 3, "the inbound x member must be 3")
   assert(type(inst.x) == "number",
@@ -4363,7 +4531,7 @@ test("C7: inbound direct by-value struct against the remediated row publishes a 
       "the inbound y member must be a Lua number by construction (the D7 unboxing)")
   local inst2 = exports.make_pair.f(3, 4.5,
       FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  assert(inst2.__classname == FFI_BATT_PAIR_IDENTITY and inst2.__kind == "class",
+  assert(inst2[__K.classname] == FFI_BATT_PAIR_IDENTITY and inst2[__K.kind] == "class",
       "the second inbound Pair instance must be tagged identically")
   assert(inst2 ~= inst, "two calls must produce distinct instance tables")
 end)
@@ -4372,19 +4540,19 @@ test("C8: inbound by-value struct with a non-NULL pointer field publishes a tagg
   local exports = ffi_batt_require_full_exports()
   local tok = exports.static_pointer.f(
       FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  assert(tok.__kind == "class" and tok.__classname == FFI_BATT_PTR_IDENTITY,
+  assert(tok[__K.kind] == "class" and tok[__K.classname] == FFI_BATT_PTR_IDENTITY,
       "the static_pointer token must be tagged with the Pointer identity")
   local box = exports.make_ptr_box.f(tok,
       FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
   assert(type(box) == "table", "make_ptr_box must publish a table instance")
-  assert(box.__classname == FFI_BATT_PTRBOX_IDENTITY,
+  assert(box[__K.classname] == FFI_BATT_PTRBOX_IDENTITY,
       "the inbound PtrBox instance must carry the canonical class identity")
-  assert(box.__kind == "class",
+  assert(box[__K.kind] == "class",
       "the inbound PtrBox instance must be tagged __kind == 'class'")
   assert(type(box.ptr) == "table", "the ptr field must be a token table")
-  assert(box.ptr.__kind == "class" and box.ptr.__classname == FFI_BATT_PTR_IDENTITY,
+  assert(box.ptr[__K.kind] == "class" and box.ptr[__K.classname] == FFI_BATT_PTR_IDENTITY,
       "the ptr field must be tagged with the Pointer identity")
-  assert(box.ptr.__ptr ~= nil, "the ptr field must carry a non-nil __ptr")
+  assert(box.ptr[__K.ptr] ~= nil, "the ptr field must carry a non-nil __ptr")
 end)
 
 test("C9: an inbound field NULL pointer raises FFI_NULL_POINTER with the call span, keeps native effects, and publishes no class", function()
@@ -4495,13 +4663,13 @@ test("FFI negative-constraint source audits against deal/runtime.lua hold", func
   -- C10 (j): exactly one public FFI entry assignment in the half.
   assert(count_all(half, "__rt.load_ffi =") == 1,
       "exactly one __rt.load_ffi = public-entry assignment must exist in the FFI half")
-  -- C10 (k): exactly two __classname assignment sites (the two C_POINTER
-  -- token-tagging rows) out of three textual references (plus the
-  -- outbound-row doc comment).
-  assert(count_all(half, "__classname =") == 2,
-      "exactly two __classname = assignment sites must exist in the FFI half (the C_POINTER token-tagging rows)")
-  assert(count_all(half, "__classname") == 3,
-      "exactly three textual __classname references must exist in the FFI half (the outbound doc comment plus the two assignments)")
+  -- C10 (k): exactly two class-identity assignment sites (the two
+  -- C_POINTER token-tagging rows), keyed by the private carrier key so the
+  -- identity tag is not a user-visible string field (ISSUE-0830).
+  assert(count_all(half, "[__K.classname] =") == 2,
+      "exactly two [__K.classname] = assignment sites must exist in the FFI half (the C_POINTER token-tagging rows)")
+  assert(count_all(half, "__K.classname") == 2,
+      "exactly two textual private-classname references must exist in the FFI half (the two assignments)")
   -- C10 (l): exactly one tonumber( production in the half — the D7
   -- inbound INT/NUMBER unboxing.
   assert(count_all(half, "tonumber(") == 1,
@@ -4863,7 +5031,7 @@ test("FFI ISSUE-0163 D0: the ABI module loads through the production path with e
   for i = 1, #FFI_D_ABI_NAMES do
     local name = FFI_D_ABI_NAMES[i]
     local w = exports[name]
-    assert(type(w) == "table" and w.__kind == "function",
+    assert(type(w) == "table" and w[__K.kind] == "function",
         "export " .. name .. " must be a function_-shaped wrapper table")
     assert(type(w.f) == "function", "export " .. name .. " must carry a working .f closure")
     assert(w.sig == sigs[name],
@@ -5448,7 +5616,7 @@ end)
 test("FFI ISSUE-0163 D16: source-order struct conversion uses deal_fN members, keyword-named DEAL fields, and defaults evaluate once per attempt only after READY", function()
   local exports = ffi_d_require_exports()
   local kw = exports.make_kw.f(11, 22, 33, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  assert(kw.__kind == "class" and kw.__classname == FFI_D_KW_IDENTITY,
+  assert(kw[__K.kind] == "class" and kw[__K.classname] == FFI_D_KW_IDENTITY,
       "the inbound Kw instance must carry the canonical class identity")
   assert(kw["if"] == 11 and kw["return"] == 22 and kw["int"] == 33,
       "the keyword-named fields must arrive through the ordinal deal_f0/deal_f1/deal_f2 members")
@@ -5476,7 +5644,7 @@ test("FFI ISSUE-0163 D17: by-value struct parameters convert through one unpubli
   local p = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
       { x = 5, y = 2.5 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
   local bumped = exports.bump_pair.f(p, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  assert(bumped.__kind == "class" and bumped.__classname == FFI_BATT_PAIR_IDENTITY,
+  assert(bumped[__K.kind] == "class" and bumped[__K.classname] == FFI_BATT_PAIR_IDENTITY,
       "the bumped result must be a tagged Pair class")
   assert(bumped.x == 6 and bumped.y == 3.5, "C must see the converted copy and mutate only it")
   assert(p.x == 5 and p.y == 2.5, "the C copy mutation must never touch the DEAL source class")
@@ -5495,7 +5663,7 @@ test("FFI ISSUE-0163 D18: outbound struct/field validation failures raise before
   full.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
   -- A struct field that fails int validation must stop the outbound
   -- conversion before the single native call.
-  local bad_pair = { __kind = "class", __classname = FFI_BATT_PAIR_IDENTITY,
+  local bad_pair = { [__K.kind] = "class", [__K.classname] = FFI_BATT_PAIR_IDENTITY,
                      x = "not-an-int", y = 0 }
   local e1 = assert_error(function()
     return exports.sum_pair.f(bad_pair, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
@@ -5506,8 +5674,8 @@ test("FFI ISSUE-0163 D18: outbound struct/field validation failures raise before
       "the native call must never have run for the invalid struct field")
   -- A NULL pointer field in a by-value struct parameter is an outbound
   -- non-null-token failure before the call.
-  local null_token = { __kind = "class", __classname = FFI_BATT_PTR_IDENTITY }
-  local bad_box = { __kind = "class", __classname = FFI_BATT_PTRBOX_IDENTITY,
+  local null_token = { [__K.kind] = "class", [__K.classname] = FFI_BATT_PTR_IDENTITY }
+  local bad_box = { [__K.kind] = "class", [__K.classname] = FFI_BATT_PTRBOX_IDENTITY,
                     ptr = null_token }
   local e2 = assert_error(function()
     return exports.ptrbox_nonnull.f(bad_box, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
@@ -5518,7 +5686,7 @@ test("FFI ISSUE-0163 D18: outbound struct/field validation failures raise before
       "the native call must never have run for the NULL pointer field")
   -- A valid non-null pointer field passes the nominal check and reaches C.
   local tok = full.static_pointer.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
-  local good_box = { __kind = "class", __classname = FFI_BATT_PTRBOX_IDENTITY,
+  local good_box = { [__K.kind] = "class", [__K.classname] = FFI_BATT_PTRBOX_IDENTITY,
                      ptr = tok }
   assert(exports.ptrbox_nonnull.f(good_box, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 1,
       "the non-null pointer field must reach C through the nominal check")

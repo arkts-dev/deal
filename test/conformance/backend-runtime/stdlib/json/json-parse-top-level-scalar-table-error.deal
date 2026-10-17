@@ -1,0 +1,15 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.parse rejects a top-level scalar at the declared (string)->table return with E8001 expected table (the decoded scalar, actual string) — one uniform outcome on the shared oracle and all three production lanes (v1.3)
+// @expected: runtime-error E8001
+// @features: stdlib, json, v1.3
+
+import * as json from "std/json";
+
+export function test_json_parse_top_level_scalar(): null {
+  let t: table = json.parse("\"scalar\"");
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

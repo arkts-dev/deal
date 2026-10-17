@@ -1250,7 +1250,7 @@ public class BytesCoverageTest {
                 String probe = "\nlocal ok, err = pcall(__bytesBounds, 'k', 'd', 'p',"
                     + " 'junk', {i=0,n=4}, 'int', 'int', '" + origin + "')\n"
                     + "if ok then error('wrong-kind byte cell accepted', 0) end\n"
-                    + "if type(err) ~= 'table' or not err.__d then error(err, 0) end\n"
+                    + "if type(err) ~= 'table' or not err[__dealCarrierKeys.d] then error(err, 0) end\n"
                     + "print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o"
                     + " .. '|' .. (err.e or '') .. '|' .. (err.a or ''))\nos.exit(0)\n";
                 Path artifact = root.resolve("out/cell-probe.lua");
@@ -2776,7 +2776,7 @@ public class BytesCoverageTest {
                 local ok2, res = pcall(__asyncEntries["%s#%s"], "-", true)
                 if ok2 then
                   print("OK:" .. tostring(res))
-                elseif type(res) == "table" and res.__d then
+                elseif type(res) == "table" and res[__dealCarrierKeys.d] then
                   print("ERR:ENTRY|" .. res.code .. "|" .. tostring(res.m))
                 else
                   print("ERR:ENTRY|" .. tostring(res))
@@ -3120,7 +3120,7 @@ public class BytesCoverageTest {
                 local chunk = dofile("%s")
                 local ok, err = __dealMain()
                 if not ok then
-                  if type(err) == "table" and err.__d then
+                  if type(err) == "table" and err[__dealCarrierKeys.d] then
                     local expected = err.e
                     local actual = err.a
                     if expected == nil then expected = "" end
@@ -3719,7 +3719,7 @@ public class BytesCoverageTest {
                 + (export == null ? "" : "if ok then ok, err = pcall(surface[\""
                     + export + "\"].f) end\n")
                 + "if not ok then\n"
-                + "  if type(err) ~= 'table' or not err.__d then error(err, 0) end\n"
+                + "  if type(err) ~= 'table' or not err[__dealCarrierKeys.d] then error(err, 0) end\n"
                 + "  print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o .. '|'"
                 + " .. (err.e or '') .. '|' .. (err.a or ''))\n  os.exit(1)\nend\n",
                 StandardCharsets.UTF_8);

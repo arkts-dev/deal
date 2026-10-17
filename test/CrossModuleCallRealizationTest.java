@@ -833,7 +833,7 @@ public class CrossModuleCallRealizationTest {
             assert(type(surfaces) == "table",
               "the production chunk returns the entry surface")
             local probe = surfaces["%s"]
-            assert(type(probe) == "table" and probe.__kind == "function"
+            assert(type(probe) == "table" and probe[__dealCarrierKeys.kind] == "function"
               and type(probe.f) == "function",
               "the entry surface publishes the fixture probe")
             probe.f()

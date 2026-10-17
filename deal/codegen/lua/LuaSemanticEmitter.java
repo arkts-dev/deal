@@ -582,6 +582,35 @@ public final class LuaSemanticEmitter {
         String emit() {
             out.append("-- deal.semantic-ir/2 shared LuaJIT artifact (ISSUE-0410 "
                 + "decomposition tail)\n");
+            // The one process-wide private carrier key set (ISSUE-0830):
+            // carrier identity, array length, table presence/insertion order
+            // and the per-slot numeric-variant marks are keyed by table
+            // objects, never by strings. A DEAL table may carry any string
+            // key — a class field or a JSON member may be named after any of
+            // them — and no table value can forge a carrier mark. Every
+            // chunk of one process and the deployed runtime
+            // (deal/runtime.lua, which adopts the same set) reuse the same
+            // objects, so a carrier built by one is classifiable by the
+            // other. The set is a chunk-global like the other runtime
+            // registries: LuaJIT bounds one function at 200 locals and the
+            // prelude's main chunk budget is nearly spent. Where the
+            // prelude's comments name a marker (__kind, __c, __id, __d,
+            // __a, __n, __nK, __t, __keys, __order, __fn, __f, __sig,
+            // __csig, __fid, __it, __sid, __val, __mode, __jn, __jo, __ja,
+            // __jkeys, __jnum, __jseen, __ptr), the name is that marker's
+            // private key slot: no string field carries carrier identity in
+            // a produced value.
+            out.append("__dealCarrierKeys = __dealCarrierKeys or {\n");
+            out.append("  kind = {}, classname = {}, c = {}, id = {}, p = {}, "
+                + "f = {}, d = {},\n");
+            out.append("  a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, "
+                + "order = {},\n");
+            out.append("  fn = {}, csig = {}, sig = {}, fid = {}, it = {}, "
+                + "sid = {}, val = {},\n");
+            out.append("  mode = {}, jn = {}, jo = {}, ja = {}, jkeys = {}, "
+                + "jnum = {}, jseen = {},\n");
+            out.append("  ptr = {},\n");
+            out.append("}\n");
             // The shared run state (frames, sequence, allocation ids, the
             // async task registry and FIFO queue) is chunk-global: a
             // multi-module drive runs several artifacts in one process,
@@ -964,7 +993,7 @@ public final class LuaSemanticEmitter {
                 // retained DEAL_ERROR_CODE line on stdout and exits 1; a
                 // non-DEAL failure rethrows; success returns the exports.
                 out.append("if not __mainOk then\n");
-                out.append("  if type(__mainErr) == \"table\" and __mainErr.__d then\n");
+                out.append("  if type(__mainErr) == \"table\" and __mainErr[__dealCarrierKeys.d] then\n");
                 out.append("    print(\"DEAL_ERROR_CODE: \"..__mainErr.code)\n");
                 out.append("  else\n");
                 out.append("    error(__mainErr, 0)\n");
@@ -1882,7 +1911,7 @@ public final class LuaSemanticEmitter {
             KindPayload.ArrayNewPayload payload = (KindPayload.ArrayNewPayload) op.payload();
             emitStart(op);
             String target = slot((ValueId) op.result());
-            out.append(target).append(" = {__a = true, __n = ")
+            out.append(target).append(" = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = ")
                 .append(payload.values().size()).append("}\n");
             for (int i = 0; i < payload.values().size(); i++) {
                 OpId boundaryId = payload.elementBoundaryOpIds().get(i);
@@ -1936,7 +1965,7 @@ public final class LuaSemanticEmitter {
             KindPayload.TableNewPayload payload = (KindPayload.TableNewPayload) op.payload();
             emitStart(op);
             String target = slot((ValueId) op.result());
-            out.append(target).append(" = {__t = true, __keys = {}, __order = {}}\n");
+            out.append(target).append(" = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}}\n");
             for (KindPayload.TableEntry entry : payload.entries()) {
                 out.append(target).append("[").append(luaString(entry.key()))
                     .append("] = ").append(slot(entry.value())).append("\n");
@@ -1969,7 +1998,7 @@ public final class LuaSemanticEmitter {
                     .append(spanTripletArgs(op)).append(")\n");
             } else {
                 out.append(target).append(" = ")
-                    .append(slot(payload.arrayValue())).append(".__n\n");
+                    .append(slot(payload.arrayValue())).append("[__dealCarrierKeys.n]\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
@@ -2283,9 +2312,9 @@ public final class LuaSemanticEmitter {
                 // The presence-aware read: missing → nil before the boundary;
                 // present (present null included) → the stored value.
                 out.append("__rvT = nil\n");
-                out.append("if __instT.__p[").append(luaString(payload.field()))
+                out.append("if __instT[__dealCarrierKeys.p][").append(luaString(payload.field()))
                     .append("] then\n");
-                out.append("  __rvT = __instT.__f[").append(luaString(payload.field()))
+                out.append("  __rvT = __instT[__dealCarrierKeys.f][").append(luaString(payload.field()))
                     .append("]\n");
                 out.append("  if __rvT == __NULL then __rvT = nil end\n");
                 out.append("end\n");
@@ -2329,9 +2358,9 @@ public final class LuaSemanticEmitter {
                 out.append("__instT[").append(luaString(payload.field()))
                     .append("] = (__chkB == nil) and __rt.__NULL or __chkB\n");
             } else {
-                out.append("__instT.__f[").append(luaString(payload.field()))
+                out.append("__instT[__dealCarrierKeys.f][").append(luaString(payload.field()))
                     .append("] = (__chkB == nil) and __NULL or __chkB\n");
-                out.append("__instT.__p[").append(luaString(payload.field()))
+                out.append("__instT[__dealCarrierKeys.p][").append(luaString(payload.field()))
                     .append("] = true\n");
             }
             emitPlainSuccess(op);
@@ -2362,9 +2391,9 @@ public final class LuaSemanticEmitter {
                 emitPlainSuccess(op);
                 return;
             }
-            out.append("__chkB.__p[").append(luaString(payload.field()))
+            out.append("__chkB[__dealCarrierKeys.p][").append(luaString(payload.field()))
                 .append("] = nil\n");
-            out.append("__chkB.__f[").append(luaString(payload.field()))
+            out.append("__chkB[__dealCarrierKeys.f][").append(luaString(payload.field()))
                 .append("] = nil\n");
             emitPlainSuccess(op);
         }
@@ -2579,8 +2608,8 @@ public final class LuaSemanticEmitter {
             out.append("elseif ").append(slotName).append(".slot == \"a\" then\n");
             out.append("  if ").append(slotName).append(".i == ").append(slotName)
                 .append(".n then\n");
-            out.append("    ").append(container).append(".__n = ").append(container)
-                .append(".__n + 1\n");
+            out.append("    ").append(container).append("[__dealCarrierKeys.n] = ").append(container)
+                .append("[__dealCarrierKeys.n] + 1\n");
             out.append("  end\n");
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".i + 1] = ").append(value)
@@ -2608,7 +2637,7 @@ public final class LuaSemanticEmitter {
             String slotName = slot(payload.slot());
             out.append("if ").append(slotName).append(".slot == \"a\" then\n");
             out.append("  if ").append(slotName).append(".i < ").append(container)
-                .append(".__n then\n");
+                .append("[__dealCarrierKeys.n] then\n");
             out.append("    ").append(container).append("[").append(slotName)
                 .append(".i + 1] = nil\n");
             out.append("  end\n");
@@ -2783,12 +2812,12 @@ public final class LuaSemanticEmitter {
                 }
                 args.append(captureArg(capture));
             }
-            out.append(target).append(" = {__fn = ").append(fnFactory(payload.function()))
-                .append("(").append(args).append("), __sig = ")
+            out.append(target).append(" = {[__dealCarrierKeys.fn] = ").append(fnFactory(payload.function()))
+                .append("(").append(args).append("), [__dealCarrierKeys.sig] = ")
                 .append(luaString(descriptorText(payload.signature())))
-                .append(", __csig = ")
+                .append(", [__dealCarrierKeys.csig] = ")
                 .append(luaString(payload.signature().canonicalSpecText()))
-                .append(", __fid = ")
+                .append(", [__dealCarrierKeys.fid] = ")
                 .append(luaString(frameLabel(payload.function()))).append("}\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
@@ -2815,7 +2844,7 @@ public final class LuaSemanticEmitter {
                 ? adaptValueExpr(value) : null;
             emitAdaptStart(op, payload, valueExpr);
             String target = slot((ValueId) op.result());
-            out.append(target).append(" = {__mode = ");
+            out.append(target).append(" = {[__dealCarrierKeys.mode] = ");
             switch (payload.mode()) {
                 case VALUE -> out.append("0");
                 case SHARED_CELL -> out.append("1");
@@ -2824,11 +2853,11 @@ public final class LuaSemanticEmitter {
             out.append(", __m = ").append(payload.sourceSignature().paramTypes().size())
                 .append(", __csrc = ")
                 .append(luaString(payload.sourceSignature().canonicalSpecText()))
-                .append(", __sig = ")
+                .append(", [__dealCarrierKeys.sig] = ")
                 .append(luaString(descriptorText(payload.targetSignature())))
-                .append(", __csig = ")
+                .append(", [__dealCarrierKeys.csig] = ")
                 .append(luaString(payload.targetSignature().canonicalSpecText()))
-                .append(", __fid = nil");
+                .append(", [__dealCarrierKeys.fid] = nil");
             switch (payload.source()) {
                 case AdaptSourceRef.Value ignored ->
                     out.append(", __value = ").append(valueExpr);
@@ -2839,7 +2868,7 @@ public final class LuaSemanticEmitter {
                     out.append(", __thunk = ").append(thunkFn(op.opId()));
             }
             out.append("}\n");
-            out.append(target).append(".__fn = __adaptInvoke\n");
+            out.append(target).append("[__dealCarrierKeys.fn] = __adaptInvoke\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
@@ -2916,13 +2945,13 @@ public final class LuaSemanticEmitter {
                     }
                     args.append(captureArg(capture));
                 }
-                out.append(groupTemp(op, i)).append(" = {__fn = ")
+                out.append(groupTemp(op, i)).append(" = {[__dealCarrierKeys.fn] = ")
                     .append(fnFactory(functionId)).append("(").append(args)
-                    .append("), __sig = ")
+                    .append("), [__dealCarrierKeys.sig] = ")
                     .append(luaString(descriptorText(function.descriptor())))
-                    .append(", __csig = ")
+                    .append(", [__dealCarrierKeys.csig] = ")
                     .append(luaString(function.descriptor().canonicalSpecText()))
-                    .append(", __fid = ")
+                    .append(", [__dealCarrierKeys.fid] = ")
                     .append(luaString(frameLabel(functionId))).append("}\n");
             }
             for (int i = 0; i < payload.bindings().size(); i++) {
@@ -3306,7 +3335,7 @@ public final class LuaSemanticEmitter {
                             .input()));
                     }
                     out.append("__okT, __resT = pcall(").append(adapterSlot)
-                        .append(".__fn, ").append(adapterSlot).append(", ")
+                        .append("[__dealCarrierKeys.fn], ").append(adapterSlot).append(", ")
                         .append(luaString(originOf(op)));
                     if (args.length() > 0) {
                         out.append(", ").append(args);
@@ -3879,8 +3908,8 @@ public final class LuaSemanticEmitter {
                 }
             }
             out.append("if ").append(target).append(" ~= nil and ").append(target)
-                .append(".__sid ~= nil then\n");
-            out.append("  __resT = ").append(target).append(".__fn(")
+                .append("[__dealCarrierKeys.sid] ~= nil then\n");
+            out.append("  __resT = ").append(target).append("[__dealCarrierKeys.fn](")
                 .append(luaString(op.kind().name())).append(", ")
                 .append(luaString(opKey(op.opId()))).append(", ")
                 .append(luaString(op.contract().canonicalDigest())).append(", ")
@@ -4031,7 +4060,7 @@ public final class LuaSemanticEmitter {
             // module; the module context is restored on every path and the
             // carrier owns its own frame.
             out.append("if __dynK == \"DEAL_BODY\" then\n");
-            out.append("  __dynM = __fnModules[__dynC.__fid]\n");
+            out.append("  __dynM = __fnModules[__dynC[__dealCarrierKeys.fid]]\n");
             out.append("  if __dynM == nil then\n");
             emitDynamicCarrierFailure(op, origin);
             out.append("  end\n");
@@ -4067,7 +4096,7 @@ public final class LuaSemanticEmitter {
             out.append("  __dynS = __chkB\n");
             out.append("  __dynSK = __dynClass(__dynS)\n");
             out.append("  if __dynSK == \"DEAL_BODY\" then\n");
-            out.append("    __dynM = __fnModules[__dynS.__fid]\n");
+            out.append("    __dynM = __fnModules[__dynS[__dealCarrierKeys.fid]]\n");
             out.append("    if __dynM == nil then\n");
             out.append("      __dynC = __dynS\n");
             emitDynamicCarrierFailure(op, origin);
@@ -4093,7 +4122,7 @@ public final class LuaSemanticEmitter {
                 emitRecordedCellRun(op, recordedDealCell, "__resT", "    ");
             }
 
-            out.append("  elseif __dynS.__it ~= nil then\n");
+            out.append("  elseif __dynS[__dealCarrierKeys.it] ~= nil then\n");
             if (payload.parameterBoundaryOpIds().isEmpty()) {
                 // The leading-M projection of the runtime intrinsic source has
                 // no argument to convert (the intrinsic declares one
@@ -4105,13 +4134,13 @@ public final class LuaSemanticEmitter {
                     opsById.get(payload.parameterBoundaryOpIds().get(0));
                 String dynamicInput =
                     slot(((KindPayload.BoundaryPayload) dynamicLeading.payload()).input());
-                out.append("    if __dynS.__it == \"INT_CONVERT\" then\n");
+                out.append("    if __dynS[__dealCarrierKeys.it] == \"INT_CONVERT\" then\n");
                 emitIntrinsicLadder(op, IntrinsicKind.INT_CONVERT, dynamicInput,
                     "      ");
-                out.append("    elseif __dynS.__it == \"NUMBER_CONVERT\" then\n");
+                out.append("    elseif __dynS[__dealCarrierKeys.it] == \"NUMBER_CONVERT\" then\n");
                 emitIntrinsicLadder(op, IntrinsicKind.NUMBER_CONVERT, dynamicInput,
                     "      ");
-                out.append("    elseif __dynS.__it == \"BYTES_NEW\" then\n");
+                out.append("    elseif __dynS[__dealCarrierKeys.it] == \"BYTES_NEW\" then\n");
                 emitIntrinsicLadder(op, IntrinsicKind.BYTES_NEW, dynamicInput,
                     "      ");
                 out.append("    else\n");
@@ -4143,7 +4172,7 @@ public final class LuaSemanticEmitter {
                     (KindPayload.BoundaryPayload) parameter.payload();
                 String input = slot(parameterPayload.input());
                 String declaredKind = luaString(staticKind(parameterPayload.descriptor()));
-                out.append("  if __dynC.__it == \"INT_CONVERT\" then\n");
+                out.append("  if __dynC[__dealCarrierKeys.it] == \"INT_CONVERT\" then\n");
                 out.append("    __resT = __intConv(").append(input)
                     .append(", ").append(luaString(op.kind().name())).append(", ")
                     .append(declaredKind).append(", ")
@@ -4152,22 +4181,22 @@ public final class LuaSemanticEmitter {
                     .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
                     .append(luaString(originOf(op))).append(")\n");
                 emitHostReturnCellRun(op, returnBoundary, "__atom");
-                out.append("  elseif __dynC.__it == \"NUMBER_CONVERT\" then\n");
+                out.append("  elseif __dynC[__dealCarrierKeys.it] == \"NUMBER_CONVERT\" then\n");
                 emitIntrinsicLadder(op, IntrinsicKind.NUMBER_CONVERT, input, "  ");
                 emitHostReturnCellRun(op, returnBoundary, "__atom");
-                out.append("  elseif __dynC.__it == \"BYTES_NEW\" then\n");
+                out.append("  elseif __dynC[__dealCarrierKeys.it] == \"BYTES_NEW\" then\n");
                 emitIntrinsicLadder(op, IntrinsicKind.BYTES_NEW, input, "  ");
                 emitHostReturnCellRun(op, returnBoundary, "__atom");
-                out.append("  elseif __dynC.__sid ~= nil then\n");
+                out.append("  elseif __dynC[__dealCarrierKeys.sid] ~= nil then\n");
             } else {
                 // No checker-valid program reaches an intrinsic carrier at a
                 // site without the intrinsic's single declared parameter cell;
                 // the tag still fails closed rather than guessing a conversion.
-                out.append("  if __dynC.__it ~= nil then\n");
+                out.append("  if __dynC[__dealCarrierKeys.it] ~= nil then\n");
                 emitDynamicCarrierFailure(op, luaString(originOf(op)));
-                out.append("  elseif __dynC.__sid ~= nil then\n");
+                out.append("  elseif __dynC[__dealCarrierKeys.sid] ~= nil then\n");
             }
-            out.append("    __resT = __dynC.__fn(")
+            out.append("    __resT = __dynC[__dealCarrierKeys.fn](")
                 .append(luaString(op.kind().name())).append(", ")
                 .append(luaString(opKey(op.opId()))).append(", ")
                 .append(luaString(op.contract().canonicalDigest())).append(", ")
@@ -4266,7 +4295,7 @@ public final class LuaSemanticEmitter {
             // module; the module context is restored on every path and the
             // carrier owns its own frame.
             out.append("if __dynK == \"DEAL_BODY\" then\n");
-            out.append("  __dynM = __fnModules[__dynC.__fid]\n");
+            out.append("  __dynM = __fnModules[__dynC[__dealCarrierKeys.fid]]\n");
             out.append("  if __dynM == nil then\n");
             emitDynamicCarrierFailure(op, origin);
             out.append("  end\n");
@@ -4296,7 +4325,7 @@ public final class LuaSemanticEmitter {
             out.append("  end\n");
             out.append("  __dynS = __chkB\n");
 
-            out.append("  if __dynS.__it ~= nil then\n");
+            out.append("  if __dynS[__dealCarrierKeys.it] ~= nil then\n");
             if (recordedArgCount(payload, op) == 0) {
                 // The leading-M projection of the runtime intrinsic source has
                 // no argument to convert (the intrinsic declares one
@@ -4307,7 +4336,7 @@ public final class LuaSemanticEmitter {
             out.append("    __asyncStartTask(").append(token.tokenId())
                 .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
             out.append("      local __okA, __resA\n");
-            out.append("      if __dynS.__it == \"INT_CONVERT\" then\n");
+            out.append("      if __dynS[__dealCarrierKeys.it] == \"INT_CONVERT\" then\n");
             emitIntrinsicLadderPcall(op, IntrinsicKind.INT_CONVERT,
                 carrierArgs + "[1]", "        ");
             out.append("      else\n");
@@ -4323,7 +4352,7 @@ public final class LuaSemanticEmitter {
             out.append("    __dynC = __dynS\n");
             emitDynamicCarrierFailure(op, origin);
             out.append("  else\n");
-            out.append("  __dynM = __fnModules[__dynS.__fid]\n");
+            out.append("  __dynM = __fnModules[__dynS[__dealCarrierKeys.fid]]\n");
             out.append("  if __dynM == nil then\n");
             out.append("    __dynC = __dynS\n");
             emitDynamicCarrierFailure(op, origin);
@@ -4644,8 +4673,8 @@ public final class LuaSemanticEmitter {
             }
 
             out.append("__instT = {}\n");
-            out.append("__instT.__f = {}\n");
-            out.append("__instT.__p = {}\n");
+            out.append("__instT[__dealCarrierKeys.f] = {}\n");
+            out.append("__instT[__dealCarrierKeys.p] = {}\n");
             for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                 SemanticOp boundary = opsById.get(entry.boundaryOpId());
                 if (boundary == null) {
@@ -4686,14 +4715,14 @@ public final class LuaSemanticEmitter {
                 out.append("  error(__chkB, 0)\n");
                 out.append("end\n");
                 emitBoundarySuccess(boundary, "__chkB", boundaryPayload.descriptor());
-                out.append("__instT.__f[").append(luaString(entry.field()))
+                out.append("__instT[__dealCarrierKeys.f][").append(luaString(entry.field()))
                     .append("] = (__chkB == nil) and __NULL or __chkB\n");
-                out.append("__instT.__p[").append(luaString(entry.field()))
+                out.append("__instT[__dealCarrierKeys.p][").append(luaString(entry.field()))
                     .append("] = true\n");
             }
 
-            out.append("__instT.__c = true\n");
-            out.append("__instT.__id = ")
+            out.append("__instT[__dealCarrierKeys.c] = true\n");
+            out.append("__instT[__dealCarrierKeys.id] = ")
                 .append(luaString(payload.classId().text())).append("\n");
             out.append(slot((ValueId) op.result())).append(" = __instT\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
@@ -4778,7 +4807,7 @@ public final class LuaSemanticEmitter {
             String target = slot((ValueId) op.result());
             String code = values.get("code");
             String message = values.get("message");
-            out.append("__instT = {__d = true, code = ")
+            out.append("__instT = {[__dealCarrierKeys.d] = true, code = ")
                 .append(code == null ? luaString("") : code)
                 .append(", m = ")
                 .append(message == null ? luaString("") : message).append("}\n");
@@ -4849,8 +4878,8 @@ public final class LuaSemanticEmitter {
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
             out.append("  error(__eT, 0)\n");
             out.append("end\n");
-            out.append("__instT.__c = true\n");
-            out.append("__instT.__id = ")
+            out.append("__instT[__dealCarrierKeys.c] = true\n");
+            out.append("__instT[__dealCarrierKeys.id] = ")
                 .append(luaString(payload.classId().text())).append("\n");
             // (5) The CLASS_LITERAL_FIELD boundary children in declaration
             // order; the admitted value replaces the overlaid one (the
@@ -5169,8 +5198,8 @@ public final class LuaSemanticEmitter {
             // fields present (present null via the __NULL sentinel),
             // every other field missing.
             out.append("__instT = {}\n");
-            out.append("__instT.__f = {}\n");
-            out.append("__instT.__p = {}\n");
+            out.append("__instT[__dealCarrierKeys.f] = {}\n");
+            out.append("__instT[__dealCarrierKeys.p] = {}\n");
             for (SemanticOp defaultOp : filled) {
                 KindPayload.ClassDefaultPayload defaultPayload =
                     (KindPayload.ClassDefaultPayload) defaultOp.payload();
@@ -5178,15 +5207,15 @@ public final class LuaSemanticEmitter {
                 if (value == null) {
                     value = slot((ValueId) defaultOp.result());
                 }
-                out.append("__instT.__f[").append(luaString(defaultPayload.field()))
+                out.append("__instT[__dealCarrierKeys.f][").append(luaString(defaultPayload.field()))
                     .append("] = (").append(value)
                     .append(" == nil) and __NULL or ")
                     .append(value).append("\n");
-                out.append("__instT.__p[").append(luaString(defaultPayload.field()))
+                out.append("__instT[__dealCarrierKeys.p][").append(luaString(defaultPayload.field()))
                     .append("] = true\n");
             }
-            out.append("__instT.__c = true\n");
-            out.append("__instT.__id = ")
+            out.append("__instT[__dealCarrierKeys.c] = true\n");
+            out.append("__instT[__dealCarrierKeys.id] = ")
                 .append(luaString(payload.classId().text())).append("\n");
             out.append(slot(factoryResult)).append(" = __instT\n");
             out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
@@ -5326,7 +5355,7 @@ public final class LuaSemanticEmitter {
                     out.append("  local __aitT = ").append(iterable).append("\n");
                     out.append("  local __aiT = 0\n");
                     out.append("  while true do\n");
-                    out.append("    if __aiT >= __aitT.__n then break end\n");
+                    out.append("    if __aiT >= __aitT[__dealCarrierKeys.n] then break end\n");
                     // The element read is a typed position: the admitted
                     // int/number variant materializes exactly as at
                     // __arrayRead (the element's own slot mark and the
@@ -5421,7 +5450,7 @@ public final class LuaSemanticEmitter {
             tryDepth--;
             out.append("if not __okT then\n");
             emitTransferDispatch(op, payload.tryBlock(), "  ", "__resT");
-            out.append("  if type(__resT) == \"table\" and __resT.__d then\n");
+            out.append("  if type(__resT) == \"table\" and __resT[__dealCarrierKeys.d] then\n");
 
             // The DEAL error is an error identity from here on: the __re
             // mark makes a rethrow of this value re-raise it verbatim
@@ -5439,7 +5468,7 @@ public final class LuaSemanticEmitter {
             // the only writer of the field and always link this snapshot
             // form).
             out.append("    local ").append(caughtIdentity)
-                .append(" = {__d = true, code = __resT.code, m = __resT.m, ")
+                .append(" = {[__dealCarrierKeys.d] = true, code = __resT.code, m = __resT.m, ")
                 .append("o = __resT.o, e = __resT.e, a = __resT.a, ")
                 .append("f = __resT.f, cause = __resT.cause}\n");
             out.append("    ").append(cellName).append(" = __resT\n");
@@ -5469,7 +5498,7 @@ public final class LuaSemanticEmitter {
                 "__errtext(__terrT)");
             out.append("        error(__terrT, 0)\n");
             out.append("      else\n");
-            out.append("        __wrappedT = {__d = true, code = __terrT.code, "
+            out.append("        __wrappedT = {[__dealCarrierKeys.d] = true, code = __terrT.code, "
                 + "m = __terrT.m, o = __terrT.o, e = __terrT.e, a = __terrT.a, "
                 + "f = __terrT.f, g = __terrT.g, gm = __terrT.gm, cause = "
                 + caughtIdentity + "}\n");
@@ -5587,7 +5616,7 @@ public final class LuaSemanticEmitter {
                 "__errtext(" + value + ")");
             out.append("  error(").append(value).append(", 0)\n");
             out.append("else\n");
-            String synthesized = "{__d = true, code = " + value + ".code, m = "
+            String synthesized = "{[__dealCarrierKeys.d] = true, code = " + value + ".code, m = "
                 + value + ".m, o = " + luaString(originOf(op))
                 + ", e = nil, a = nil, f = __framesText(), cause = nil}";
             emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -5710,10 +5739,10 @@ public final class LuaSemanticEmitter {
             out.append("__exportSurfaces[")
                 .append(luaString(emittingModulePath(op)))
                 .append("][").append(luaString(payload.name()))
-                .append("] = {__kind = \"function\", sig = ")
+                .append("] = {[__dealCarrierKeys.kind] = \"function\", sig = ")
                 .append(luaString(payload.descriptor().canonicalSpecText()))
                 .append(", f = ").append(exportCallable(op, payload))
-                .append(", __val = ").append(slot(payload.value()))
+                .append(", [__dealCarrierKeys.val] = ").append(slot(payload.value()))
                 .append("}\n");
             // The publication records the entry's key in the surface's own
             // order discipline: the module's declared exports are its
@@ -5961,7 +5990,7 @@ public final class LuaSemanticEmitter {
                     String adapterSlot =
                         slot((ValueId) opsById.get(adapter.adaptOpId()).result());
                     out.append("  __okT, __resT = pcall(").append(adapterSlot)
-                        .append(".__fn, ").append(adapterSlot).append(", ")
+                        .append("[__dealCarrierKeys.fn], ").append(adapterSlot).append(", ")
                         .append(luaString(originOf(op)));
                     for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
                         out.append(", __cargs[").append(i + 1).append("]");
@@ -6540,7 +6569,7 @@ public final class LuaSemanticEmitter {
             out.append("    __okH, __errH = pcall(__rt.async_step, "
                 + "__tA.handle)\n");
             out.append("    if not __okH then\n");
-            out.append("      if type(__errH) == \"table\" and (__errH.__d "
+            out.append("      if type(__errH) == \"table\" and (__errH[__dealCarrierKeys.d] "
                 + "or (__errH.code ~= nil and __errH.message ~= nil)) then\n");
             out.append("        __tA.err = __hostError(__errH, ")
                 .append(luaString(originOf(op))).append(")\n");
@@ -6588,7 +6617,7 @@ public final class LuaSemanticEmitter {
                     + "..__esc(__tA.label..\"!\"..__oA.code)..\"\\n\")\n");
                 out.append("      io.stderr:flush()\n");
             }
-            out.append("      __tA.err = {__d = true, code = __oA.code, m = __oA.m, o = ")
+            out.append("      __tA.err = {[__dealCarrierKeys.d] = true, code = __oA.code, m = __oA.m, o = ")
                 .append(luaString(originOf(op)))
                 .append(", e = nil, a = nil, f = __framesText(), cause = nil}\n");
             out.append("    end\n");
@@ -7403,13 +7432,13 @@ local __plans = {}
 local __BS = string.char(92)
 local __QT = string.char(34)
 local function __jsonIsObject(v)
-  return type(v) == "table" and v.__jo == true
+  return type(v) == "table" and v[__dealCarrierKeys.jo] == true
 end
 local function __jsonIsArray(v)
-  return type(v) == "table" and v.__ja == true
+  return type(v) == "table" and v[__dealCarrierKeys.ja] == true
 end
 local function __jsonEmptyObject()
-  return {__jo = true, __jkeys = {}, __jnum = {}}
+  return {[__dealCarrierKeys.jo] = true, [__dealCarrierKeys.jkeys] = {}, [__dealCarrierKeys.jnum] = {}}
 end
 local function __jsonUtf8(cp)
   if cp < 0x80 then return string.char(cp) end
@@ -7560,12 +7589,12 @@ local function __jsonParse(s)
     if c == "{" then
       pos = pos + 1
       frames[#frames + 1] = {kind = "object",
-        obj = {__jo = true, __jkeys = {}, __jnum = {}, __jseen = {}}, state = 0}
+        obj = {[__dealCarrierKeys.jo] = true, [__dealCarrierKeys.jkeys] = {}, [__dealCarrierKeys.jnum] = {}, [__dealCarrierKeys.jseen] = {}}, state = 0}
       return __OPENED
     elseif c == "[" then
       pos = pos + 1
       frames[#frames + 1] = {kind = "array",
-        arr = {__ja = true, __n = 0, __jnum = {}}, state = 4}
+        arr = {[__dealCarrierKeys.ja] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.jnum] = {}}, state = 4}
       return __OPENED
     elseif c == __QT then
       local str = parseString()
@@ -7594,15 +7623,15 @@ local function __jsonParse(s)
         if #frames == 0 then return completedValue, completedVariant end
         local parent = frames[#frames]
         if parent.kind == "array" then
-          parent.arr.__n = parent.arr.__n + 1
-          parent.arr[parent.arr.__n] = completedValue
-          if completedVariant then parent.arr.__jnum[parent.arr.__n] = true end
+          parent.arr[__dealCarrierKeys.n] = parent.arr[__dealCarrierKeys.n] + 1
+          parent.arr[parent.arr[__dealCarrierKeys.n]] = completedValue
+          if completedVariant then parent.arr[__dealCarrierKeys.jnum][parent.arr[__dealCarrierKeys.n]] = true end
           parent.state = 5
         else
-          parent.obj.__jkeys[#parent.obj.__jkeys + 1] = parent.key
+          parent.obj[__dealCarrierKeys.jkeys][#parent.obj[__dealCarrierKeys.jkeys] + 1] = parent.key
           parent.obj[parent.key] = completedValue
-          if completedVariant then parent.obj.__jnum[parent.key] = true
-          else parent.obj.__jnum[parent.key] = nil end
+          if completedVariant then parent.obj[__dealCarrierKeys.jnum][parent.key] = true
+          else parent.obj[__dealCarrierKeys.jnum][parent.key] = nil end
           parent.state = 3
         end
         completedValue = nil
@@ -7637,8 +7666,8 @@ local function __jsonParse(s)
             -- is a parse defect (an escaped spelling included).
             local key = parseString()
             if key == nil then return nil end
-            if frame.obj.__jseen[key] then return nil end
-            frame.obj.__jseen[key] = true
+            if frame.obj[__dealCarrierKeys.jseen][key] then return nil end
+            frame.obj[__dealCarrierKeys.jseen][key] = true
             skipws()
             if pos > len or string.sub(s, pos, pos) ~= ":" then return nil end
             pos = pos + 1
@@ -7817,10 +7846,10 @@ local function __jsonToLanguage(v)
   local function pushContainer(source)
     if __jsonIsArray(source) then
       frames[#frames + 1] = {kind = "array", source = source,
-        out = {__a = true, __n = source.__n, __nK = {}}, index = 1}
+        out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = source[__dealCarrierKeys.n], [__dealCarrierKeys.nK] = {}}, index = 1}
     else
       frames[#frames + 1] = {kind = "object", source = source,
-        out = {__t = true, __keys = {}, __order = {}, __nK = {}}, index = 1}
+        out = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}, [__dealCarrierKeys.nK] = {}}, index = 1}
     end
   end
   pushContainer(v)
@@ -7831,7 +7860,7 @@ local function __jsonToLanguage(v)
       if frame.kind == "array" then
         frame.out[frame.index] = completed
       else
-        frame.out[frame.source.__jkeys[frame.index]] = completed
+        frame.out[frame.source[__dealCarrierKeys.jkeys][frame.index]] = completed
       end
       frame.index = frame.index + 1
       completed = nil
@@ -7841,7 +7870,7 @@ local function __jsonToLanguage(v)
     else
       local frame = frames[#frames]
       if frame.kind == "array" then
-        if frame.index > frame.source.__n then
+        if frame.index > frame.source[__dealCarrierKeys.n] then
           completed = frame.out
           frames[#frames] = nil
           haveCompleted = true
@@ -7854,19 +7883,19 @@ local function __jsonToLanguage(v)
             pushContainer(element)
           else
             frame.out[frame.index] = element
-            if frame.source.__jnum[frame.index] == true then
-              frame.out.__nK[frame.index] = true
+            if frame.source[__dealCarrierKeys.jnum][frame.index] == true then
+              frame.out[__dealCarrierKeys.nK][frame.index] = true
             end
             frame.index = frame.index + 1
           end
         end
       else
-        if frame.index > #frame.source.__jkeys then
+        if frame.index > #frame.source[__dealCarrierKeys.jkeys] then
           completed = frame.out
           frames[#frames] = nil
           haveCompleted = true
         else
-          local key = frame.source.__jkeys[frame.index]
+          local key = frame.source[__dealCarrierKeys.jkeys][frame.index]
           local element = frame.source[key]
           __orderAdd(frame.out, key)
           if element == __JNULL then
@@ -7876,8 +7905,8 @@ local function __jsonToLanguage(v)
             pushContainer(element)
           else
             frame.out[key] = element
-            if frame.source.__jnum[key] == true then
-              frame.out.__nK[key] = true
+            if frame.source[__dealCarrierKeys.jnum][key] == true then
+              frame.out[__dealCarrierKeys.nK][key] = true
             end
             frame.index = frame.index + 1
           end
@@ -7899,7 +7928,7 @@ local function __jsonConforms(desc, v)
   if kind == "null" then return v == nil end
   if kind == "boolean" then return type(v) == "boolean" end
   if kind == "int" then
-    if type(v) == "table" and v.__jn then
+    if type(v) == "table" and v[__dealCarrierKeys.jn] then
       -- The int position admits the int variant only (the oracle's
       -- Value.Int admission; a number-variant carrier fails exactly like
       -- the oracle's Number-at-Int case).
@@ -7910,14 +7939,14 @@ local function __jsonConforms(desc, v)
       and v >= -2147483648 and v <= 2147483647
   end
   if kind == "number" then
-    if type(v) == "table" and v.__jn then return true end
+    if type(v) == "table" and v[__dealCarrierKeys.jn] then return true end
     return type(v) == "number"
   end
   if kind == "string" then return type(v) == "string" and __jsonValidUtf8(v) end
-  if kind == "table" then return type(v) == "table" and v.__t == true end
+  if kind == "table" then return type(v) == "table" and v[__dealCarrierKeys.t] == true end
   if kind == "array" then
-    if type(v) ~= "table" or v.__a ~= true then return false end
-    for i = 1, v.__n do
+    if type(v) ~= "table" or v[__dealCarrierKeys.a] ~= true then return false end
+    for i = 1, v[__dealCarrierKeys.n] do
       local element = v[i]
       if element == __NULL then element = nil end
       -- A null element is normalized to the language null the element
@@ -7936,7 +7965,7 @@ local function __jsonConforms(desc, v)
   if kind == "class" then
     -- A nested @jsonable class value: the tagged instance of exactly
     -- the declared class identity (the canonical nominal check).
-    return type(v) == "table" and v.__c == true and v.__id == inner
+    return type(v) == "table" and v[__dealCarrierKeys.c] == true and v[__dealCarrierKeys.id] == inner
   end
   return true
 end
@@ -7973,19 +8002,19 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     return false
   elseif kind == "table" then
     if __jsonIsObject(v) then return true, __jsonToLanguage(v) end
-    if __jsonIsArray(v) and v.__n == 0 then
-      return true, {__t = true, __keys = {}, __order = {}, __nK = {}}
+    if __jsonIsArray(v) and v[__dealCarrierKeys.n] == 0 then
+      return true, {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}, [__dealCarrierKeys.nK] = {}}
     end
     return false
   elseif kind == "array" then
     if not __jsonIsArray(v) then return false end
-    local out = {__a = true, __n = v.__n, __nK = {}}
-    for i = 1, v.__n do
+    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = v[__dealCarrierKeys.n], [__dealCarrierKeys.nK] = {}}
+    for i = 1, v[__dealCarrierKeys.n] do
       local ok, element, elementVariant =
-        __jsonDecodeRaw(inner, v[i], v.__jnum[i] == true)
+        __jsonDecodeRaw(inner, v[i], v[__dealCarrierKeys.jnum][i] == true)
       if not ok then return false end
       out[i] = (element == nil) and __NULL or element
-      if elementVariant == "number" then out.__nK[i] = true end
+      if elementVariant == "number" then out[__dealCarrierKeys.nK][i] = true end
     end
     return true, out
   elseif kind == "nullable" then
@@ -8001,7 +8030,7 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
       error("JSON_FROM_CLASS has no plan " .. inner .. " for a nested @jsonable "
         .. "class field (producer defect)", 0)
     end
-    if __jsonIsArray(v) and v.__n == 0 then v = __jsonEmptyObject() end
+    if __jsonIsArray(v) and v[__dealCarrierKeys.n] == 0 then v = __jsonEmptyObject() end
     if not __jsonIsObject(v) then return false end
     local ok, inst = __jsonDecodeClass(nested, v)
     if not ok then return false end
@@ -8010,13 +8039,13 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
   return false
 end
 local function __jsonInstanceOf(plan, fields, present, values)
-  local inst = {__c = true, __id = plan.classId, __f = {}, __p = {}}
+  local inst = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = plan.classId, [__dealCarrierKeys.f] = {}, [__dealCarrierKeys.p] = {}}
   for i = 1, #fields do
     local f = fields[i]
     if present[f.name] then
       local value = values[f.name]
-      inst.__f[f.name] = (value == nil) and __NULL or value
-      inst.__p[f.name] = true
+      inst[__dealCarrierKeys.f][f.name] = (value == nil) and __NULL or value
+      inst[__dealCarrierKeys.p][f.name] = true
     end
   end
   return inst
@@ -8029,8 +8058,8 @@ end
 -- field decode (the nested plan's own walk).
 __jsonDecodeClass = function(plan, doc)
   local fields = plan.fields
-  for i = 1, #doc.__jkeys do
-    if not __jsonKnownField(plan, doc.__jkeys[i]) then return false end
+  for i = 1, #doc[__dealCarrierKeys.jkeys] do
+    if not __jsonKnownField(plan, doc[__dealCarrierKeys.jkeys][i]) then return false end
   end
   local values = {}
   local provided = {}
@@ -8038,7 +8067,7 @@ __jsonDecodeClass = function(plan, doc)
     local f = fields[i]
     if doc[f.name] ~= nil then
       local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name],
-        doc.__jnum[f.name] == true)
+        doc[__dealCarrierKeys.jnum][f.name] == true)
       if not ok then return false end
       values[f.name] = decoded
       provided[f.name] = true
@@ -8071,7 +8100,7 @@ local function __jsonFromClassOp(planName, text)
   end
   local doc = __jsonParse(text)
   if doc == __JSONSYNTAX or doc == __JNULL then return nil end
-  if __jsonIsArray(doc) and doc.__n == 0 then doc = __jsonEmptyObject() end
+  if __jsonIsArray(doc) and doc[__dealCarrierKeys.n] == 0 then doc = __jsonEmptyObject() end
   if not __jsonIsObject(doc) then return nil end
   local ok, inst = __jsonDecodeClass(plan, doc)
   if not ok then return nil end
@@ -8148,21 +8177,21 @@ local function __jsonToClassOp(planName, root)
       -- they were inserted, never in sorted order. A hand-built carrier
       -- without the shared order marks (no production path builds one)
       -- keeps the deterministic sorted spelling.
-      local order = root.__order
+      local order = root[__dealCarrierKeys.order]
       if type(order) ~= "table" then
         order = {}
-        for k, _ in pairs(root.__keys) do order[#order + 1] = k end
+        for k, _ in pairs(root[__dealCarrierKeys.keys]) do order[#order + 1] = k end
         table.sort(order)
       end
       frames[1].order = order
     end
-    local rootMarks = root.__nK
+    local rootMarks = root[__dealCarrierKeys.nK]
     if type(rootMarks) ~= "table" then rootMarks = nil end
     frames[1].marks = rootMarks
     while #frames > 0 do
       local frame = frames[#frames]
       if frame.array then
-        if frame.index > frame.value.__n then
+        if frame.index > frame.value[__dealCarrierKeys.n] then
           out[#out + 1] = "]"
           visited[frame.value] = nil
           frames[#frames] = nil
@@ -8197,7 +8226,7 @@ local function __jsonToClassOp(planName, root)
             else
               out[#out + 1] = tostring(element)
             end
-          elseif type(element) == "table" and element.__jn then
+          elseif type(element) == "table" and element[__dealCarrierKeys.jn] then
             if element.k == "int" then
               out[#out + 1] = tostring(element.d)
             else
@@ -8211,25 +8240,25 @@ local function __jsonToClassOp(planName, root)
             end
             out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
           elseif type(element) == "table" then
-            if element.__a then
+            if element[__dealCarrierKeys.a] then
               if visited[element] then return cycle() end
               visited[element] = true
               out[#out + 1] = "["
-              local marks = element.__nK
+              local marks = element[__dealCarrierKeys.nK]
               if type(marks) ~= "table" then marks = nil end
               frames[#frames + 1] = {array = true, value = element,
                 path = elementPath, index = 1, marks = marks}
-            elseif element.__t then
+            elseif element[__dealCarrierKeys.t] then
               if visited[element] then return cycle() end
               visited[element] = true
               out[#out + 1] = "{"
-              local order = element.__order
+              local order = element[__dealCarrierKeys.order]
               if type(order) ~= "table" then
                 order = {}
-                for k, _ in pairs(element.__keys) do order[#order + 1] = k end
+                for k, _ in pairs(element[__dealCarrierKeys.keys]) do order[#order + 1] = k end
                 table.sort(order)
               end
-              local marks = element.__nK
+              local marks = element[__dealCarrierKeys.nK]
               if type(marks) ~= "table" then marks = nil end
               frames[#frames + 1] = {array = false, value = element,
                 path = elementPath, index = 1, order = order, marks = marks}
@@ -8271,7 +8300,7 @@ local function __jsonToClassOp(planName, root)
             else
               out[#out + 1] = tostring(element)
             end
-          elseif type(element) == "table" and element.__jn then
+          elseif type(element) == "table" and element[__dealCarrierKeys.jn] then
             -- The read-side variant carrier (__readVar) keeps its value's
             -- own recorded variant: an int carrier spells its integer
             -- text, a number carrier the closed decimal spelling.
@@ -8288,25 +8317,25 @@ local function __jsonToClassOp(planName, root)
             end
             out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
           elseif type(element) == "table" then
-            if element.__a then
+            if element[__dealCarrierKeys.a] then
               if visited[element] then return cycle() end
               visited[element] = true
               out[#out + 1] = "["
-              local marks = element.__nK
+              local marks = element[__dealCarrierKeys.nK]
               if type(marks) ~= "table" then marks = nil end
               frames[#frames + 1] = {array = true, value = element,
                 path = elementPath, index = 1, marks = marks}
-            elseif element.__t then
+            elseif element[__dealCarrierKeys.t] then
               if visited[element] then return cycle() end
               visited[element] = true
               out[#out + 1] = "{"
-              local order = element.__order
+              local order = element[__dealCarrierKeys.order]
               if type(order) ~= "table" then
                 order = {}
-                for k, _ in pairs(element.__keys) do order[#order + 1] = k end
+                for k, _ in pairs(element[__dealCarrierKeys.keys]) do order[#order + 1] = k end
                 table.sort(order)
               end
-              local marks = element.__nK
+              local marks = element[__dealCarrierKeys.nK]
               if type(marks) ~= "table" then marks = nil end
               frames[#frames + 1] = {array = false, value = element,
                 path = elementPath, index = 1, order = order, marks = marks}
@@ -8330,10 +8359,10 @@ local function __jsonToClassOp(planName, root)
     end
     if visited[av] then return cycle() end
     visited[av] = true
-    local marks = av.__nK
+    local marks = av[__dealCarrierKeys.nK]
     if type(marks) ~= "table" then marks = nil end
     local out = {"["}
-    for i = 1, av.__n do
+    for i = 1, av[__dealCarrierKeys.n] do
       local element = av[i]
       local elementPath = apath .. "[" .. (i - 1) .. "]"
       if element == __NULL then
@@ -8360,7 +8389,7 @@ local function __jsonToClassOp(planName, root)
       -- descriptor's text.
       local declared = element
       if type(element) == "number" then
-        declared = {__jn = true,
+        declared = {[__dealCarrierKeys.jn] = true,
           k = (marks ~= nil and marks[i] == true) and "number" or "int",
           d = element}
       end
@@ -8379,8 +8408,8 @@ local function __jsonToClassOp(planName, root)
   -- declared descriptor. The class instance enters the path-local
   -- visited set, so a class re-entry on the path is the cycle needle.
   encodeClass = function(instance, classId, cpath, visited)
-    if type(instance) ~= "table" or instance.__c ~= true
-        or instance.__id ~= classId then
+    if type(instance) ~= "table" or instance[__dealCarrierKeys.c] ~= true
+        or instance[__dealCarrierKeys.id] ~= classId then
       return fail(cpath, instance)
     end
     local cplan = __plans[classId]
@@ -8396,7 +8425,7 @@ local function __jsonToClassOp(planName, root)
     for i = 1, #fields do
       local f = fields[i]
       local fieldPath = (cpath == "") and f.name or (cpath .. "." .. f.name)
-      if not instance.__p[f.name] then
+      if not instance[__dealCarrierKeys.p][f.name] then
         if not f.optional then
           -- The internal nil propagation: the callers (a nested field's
           -- encodeField, the array element walk) check nil and return nil
@@ -8406,7 +8435,7 @@ local function __jsonToClassOp(planName, root)
           return nil
         end
       else
-        local value = instance.__f[f.name]
+        local value = instance[__dealCarrierKeys.f][f.name]
         -- The present-null admission: the carrier's __NULL sentinel is
         -- the language null the declared descriptor then decides —
         -- a nullable position admits it and spells JSON null (the corpus
@@ -8442,7 +8471,7 @@ local function __jsonToClassOp(planName, root)
       -- A fractional or nonfinite number, a number-variant carrier (and
       -- every non-number) is the number/other carrier and fails here
       -- exactly like the oracle's Value.Int admission.
-      if type(v) == "table" and v.__jn then
+      if type(v) == "table" and v[__dealCarrierKeys.jn] then
         if v.k ~= "int" then return fail(path, v) end
         v = v.d
       end
@@ -8458,7 +8487,7 @@ local function __jsonToClassOp(planName, root)
       -- carrier the closed decimal spelling — exactly the oracle's and
       -- the shared JVM runtime's Int/Double split, never the declared
       -- descriptor's text.
-      if type(v) == "table" and v.__jn then
+      if type(v) == "table" and v[__dealCarrierKeys.jn] then
         if v.k == "int" then return tostring(v.d) end
         local text = __jsonNumText(v.d)
         if text == nil then return fail(path, v) end
@@ -8478,18 +8507,18 @@ local function __jsonToClassOp(planName, root)
       if v == nil then return "null" end
       return encodeField(inner, v, path, visited)
     elseif kind == "table" then
-      if type(v) ~= "table" or v.__t ~= true then return fail(path, v) end
+      if type(v) ~= "table" or v[__dealCarrierKeys.t] ~= true then return fail(path, v) end
       return encodeTableValue(v, path, visited)
     elseif kind == "array" then
-      if type(v) ~= "table" or v.__a ~= true then return fail(path, v) end
+      if type(v) ~= "table" or v[__dealCarrierKeys.a] ~= true then return fail(path, v) end
       return encodeArrayValue(v, path, visited, inner)
     elseif kind == "class" then
       return encodeClass(v, inner, path, visited)
     end
     return fail(path, v)
   end
-  if root == nil or type(root) ~= "table" or root.__c ~= true
-      or root.__id ~= plan.classId then
+  if root == nil or type(root) ~= "table" or root[__dealCarrierKeys.c] ~= true
+      or root[__dealCarrierKeys.id] ~= plan.classId then
     fail("", root)
     return failure()
   end
@@ -8520,9 +8549,9 @@ end
 -- the runtime representation the DEAL program never holds).
 local function __hostClassIdOf(v)
   if type(v) ~= "table" then return nil end
-  if v.__kind == "class" then return v.__classname end
-  if v.__c then return v.__id end
-  if v.__d then return "Error" end
+  if v[__dealCarrierKeys.kind] == "class" then return v[__dealCarrierKeys.classname] end
+  if v[__dealCarrierKeys.c] then return v[__dealCarrierKeys.id] end
+  if v[__dealCarrierKeys.d] then return "Error" end
   return nil
 end
 -- One host parameter/return cell failure: the host arm's composite with the
@@ -8571,19 +8600,19 @@ end
 -- declaration policy.
 local function __hostClassProject(desc, v)
   if type(v) ~= "table" then return v end
-  if v.__kind == "class" then return v end
-  if v.__d then
-    return {__kind = "class", __classname = "Error",
+  if v[__dealCarrierKeys.kind] == "class" then return v end
+  if v[__dealCarrierKeys.d] then
+    return {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
             code = v.code, message = v.m}
   end
-  if not v.__c then return v end
-  local out = {__kind = "class", __classname = desc}
-  if v.__ptr ~= nil then out.__ptr = v.__ptr end
-  if type(v.__f) == "table" then
-    for k, val in pairs(v.__f) do
-      if type(val) == "table" and val.__c then
-        out[k] = __hostClassProject(val.__id, val)
-      elseif type(val) == "table" and val.__d then
+  if not v[__dealCarrierKeys.c] then return v end
+  local out = {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = desc}
+  if v[__dealCarrierKeys.ptr] ~= nil then out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr] end
+  if type(v[__dealCarrierKeys.f]) == "table" then
+    for k, val in pairs(v[__dealCarrierKeys.f]) do
+      if type(val) == "table" and val[__dealCarrierKeys.c] then
+        out[k] = __hostClassProject(val[__dealCarrierKeys.id], val)
+      elseif type(val) == "table" and val[__dealCarrierKeys.d] then
         out[k] = __hostClassProject("Error", val)
       else
         out[k] = val
@@ -8608,30 +8637,30 @@ end
 -- class-typed crossing.
 local function __hostDealProject(desc, v, origin)
   if type(v) ~= "table" then return v end
-  if v.__c then return v end
-  if v.__kind ~= "class" then return v end
-  if desc == "Error" and v.__classname == "Error" then
-    return {__d = true, code = v.code, m = v.message}
+  if v[__dealCarrierKeys.c] then return v end
+  if v[__dealCarrierKeys.kind] ~= "class" then return v end
+  if desc == "Error" and v[__dealCarrierKeys.classname] == "Error" then
+    return {[__dealCarrierKeys.d] = true, code = v.code, m = v.message}
   end
-  if v.__classname ~= desc then
+  if v[__dealCarrierKeys.classname] ~= desc then
     -- The bridge guard keeps its landed E8010 code while its text is the
     -- identity arm's own template (no composed spelling).
     return error(__failExpr("E8010",
       __renderTemplate("CLASS_IDENTITY", {expected = desc,
-        actual = tostring(v.__classname)}), origin, desc, v.__classname, true), 0)
+        actual = tostring(v[__dealCarrierKeys.classname])}), origin, desc, v[__dealCarrierKeys.classname], true), 0)
   end
-  local out = {__c = true, __id = desc, __f = {}, __p = {}}
+  local out = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = desc, [__dealCarrierKeys.f] = {}, [__dealCarrierKeys.p] = {}}
   for k, val in pairs(v) do
-    if k ~= "__classname" and k ~= "__kind" and k ~= "__ptr" then
-      if type(val) == "table" and val.__kind == "class" then
-        out.__f[k] = __hostDealProject(val.__classname, val, origin)
+    if k ~= __dealCarrierKeys.classname and k ~= __dealCarrierKeys.kind and k ~= __dealCarrierKeys.ptr then
+      if type(val) == "table" and val[__dealCarrierKeys.kind] == "class" then
+        out[__dealCarrierKeys.f][k] = __hostDealProject(val[__dealCarrierKeys.classname], val, origin)
       else
-        out.__f[k] = val
+        out[__dealCarrierKeys.f][k] = val
       end
-      out.__p[k] = true
+      out[__dealCarrierKeys.p][k] = true
     end
   end
-  if v.__ptr ~= nil then out.__ptr = v.__ptr end
+  if v[__dealCarrierKeys.ptr] ~= nil then out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr] end
   return out
 end
 -- The declared parameter cell of a function-typed host position: the
@@ -8661,8 +8690,8 @@ local function __hostFnParam(desc, inner, index, v, origin)
   end
   local carried = nil
   if type(v) == "table" then
-    if v.__csig ~= nil then carried = v.__csig
-    elseif v.__kind == "function" then carried = v.sig end
+    if v[__dealCarrierKeys.csig] ~= nil then carried = v[__dealCarrierKeys.csig]
+    elseif v[__dealCarrierKeys.kind] == "function" then carried = v.sig end
   end
   if carried == nil then
     return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = kindReason()},
@@ -8725,7 +8754,7 @@ __factories.__hostParamAdmit = function(desc, index, v, origin)
   -- carrier's value. A carrier at any other declared position loses its
   -- internal table shape too, so the closed inner reason is the
   -- position's own text, never the carrier table's Lua type.
-  if type(v) == "table" and v.__jn then v = v.d end
+  if type(v) == "table" and v[__dealCarrierKeys.jn] then v = v.d end
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then
     if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
     local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
@@ -8819,14 +8848,14 @@ end
 -- contract), never two distinct carriers.
 local function __hostToDealArray(memo, desc, v)
   if v == __NULL or v == __rt.__NULL then return __NULL end
-  if type(v) ~= "table" or v.__a then return v end
+  if type(v) ~= "table" or v[__dealCarrierKeys.a] then return v end
   local mapped = memo[v]
   if mapped ~= nil then return mapped end
   local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
   local inner = string.sub(body, 2, -2)
   local arrayElement = string.sub(inner, 1, 1) == "["
     or string.sub(inner, 1, 2) == "?["
-  local out = {__a = true, __n = 0, __nK = {}}
+  local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.nK] = {}}
   memo[v] = out
   local n = 0
   for i = 1, #v do
@@ -8836,7 +8865,7 @@ local function __hostToDealArray(memo, desc, v)
     out[i] = element
     n = i
   end
-  out.__n = n
+  out[__dealCarrierKeys.n] = n
   return out
 end
 local function __hostReturnCell(desc, v, origin, nothing)
@@ -8872,8 +8901,8 @@ end
 -- function bridge: the carrier's own body runs (its own return cell
 -- applies), an adapter carrier runs the D15 protocol.
 local function __dealFnValue(w, ...)
-  if w.__mode ~= nil then return __adaptInvoke(w, "-", ...) end
-  return w.__fn(...)
+  if w[__dealCarrierKeys.mode] ~= nil then return __adaptInvoke(w, "-", ...) end
+  return w[__dealCarrierKeys.fn](...)
 end
 -- The host-facing projection of one recorded DEAL-to-host argument at the
 -- async-start crossing — the async twin of the sync crossing's declared
@@ -8897,7 +8926,7 @@ end
 -- by the next chunk) without spending a main-chunk local.
 __factories.__hostAsyncArg = function(v)
   if v == nil or v == __NULL then return __rt.__NULL end
-  if type(v) == "table" and v.__jn then return v.d end
+  if type(v) == "table" and v[__dealCarrierKeys.jn] then return v.d end
   -- Every other value crosses unchanged in both directions, the shared
   -- array carrier included: the chunk's null sentinel is the deployed
   -- runtime's own __rt.__NULL (the runtime-binding preamble aliases
@@ -8913,10 +8942,10 @@ end
 -- else is left to the parameter cell.
 local function __hostFnArg(desc, inner, v)
   if type(v) ~= "table" then return v end
-  if v.__kind == "function" then return v end
-  if v.__fn == nil then return v end
+  if v[__dealCarrierKeys.kind] == "function" then return v end
+  if v[__dealCarrierKeys.fn] == nil then return v end
   local carrier = v
-  return {__kind = "function", sig = inner,
+  return {[__dealCarrierKeys.kind] = "function", sig = inner,
           f = function(...) return __dealFnValue(carrier, ...) end}
 end
 -- The declared host-facing projection of one checked parameter: a
@@ -8951,7 +8980,7 @@ end
 -- expected, actual, and origin.
 local function __hostError(e, origin)
   if type(e) ~= "table" then return e end
-  if e.__d then return e end
+  if e[__dealCarrierKeys.d] then return e end
   if e.code == nil or e.message == nil then return e end
   local o = origin
   if e.file ~= nil then
@@ -9008,7 +9037,7 @@ end
 -- consults this.
 local function __rtFail(e, origin)
   if type(e) ~= "table" then return e end
-  if e.__d then return e end
+  if e[__dealCarrierKeys.d] then return e end
   if e.code == nil or e.message == nil then return e end
   local o = origin
   if e.file ~= nil then
@@ -9087,7 +9116,7 @@ local function __bytesBounds(bKey, bDigest, bParent, input, slotName, desc, kind
   end
   local ok, checked = pcall(__bcheck, desc, kind, input)
   if not ok then
-    if type(checked) == "table" and checked.__d then checked.o = origin end
+    if type(checked) == "table" and checked[__dealCarrierKeys.d] then checked.o = origin end
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(checked))
     error(checked, 0)
   end
@@ -9226,8 +9255,8 @@ local function __nsSurface(t)
   return t
 end
 local function __nsEntry(t, v)
-  if __nsSurfaces[t] ~= nil and type(v) == "table" and v.__val ~= nil then
-    return v.__val
+  if __nsSurfaces[t] ~= nil and type(v) == "table" and v[__dealCarrierKeys.val] ~= nil then
+    return v[__dealCarrierKeys.val]
   end
   return v
 end
@@ -9251,9 +9280,9 @@ local function __nsOrder(t, names)
   return t
 end
 local function __member(t, k)
-  if t.__c then
-    if t.__p[k] then
-      local v = t.__f[k]
+  if t[__dealCarrierKeys.c] then
+    if t[__dealCarrierKeys.p][k] then
+      local v = t[__dealCarrierKeys.f][k]
       if v == __NULL then return nil end
       return v
     end
@@ -9270,7 +9299,7 @@ local function __member(t, k)
     if v == nil then return __MISSING end
     return __nsEntry(t, v)
   end
-  local __keys = t.__keys
+  local __keys = t[__dealCarrierKeys.keys]
   if __keys ~= nil then
     if __keys[k] then return t[k] end
     return __MISSING
@@ -9345,15 +9374,15 @@ local __bytesNew
 -- so the landed function row (__bcheck/__fncheck) admits it by its
 -- carried signature, __unfn exposes its invoker, and every
 -- materialization of one intrinsic is the identical value (functions
--- compare by reference identity). The kind tag `it` and the declared
--- signature texts `sig`/`csig` come from the unit's own
+-- compare by reference identity). The kind tag __it and the declared
+-- signature texts __sig/__csig come from the unit's own
 -- IntrinsicFunction registration — never a spelling, never a call
 -- site's or an adapter target's signature.
 local function __intrinsicFn(it, sig, csig)
   local c = __intrinsicCarriers[it]
   if c == nil then
-    c = {__sig = sig, __csig = csig, __fid = nil, __it = it}
-    c.__fn = function(...) return __intrinsicInvoke(it, ...) end
+    c = {[__dealCarrierKeys.sig] = sig, [__dealCarrierKeys.csig] = csig, [__dealCarrierKeys.fid] = nil, [__dealCarrierKeys.it] = it}
+    c[__dealCarrierKeys.fn] = function(...) return __intrinsicInvoke(it, ...) end
     __intrinsicCarriers[it] = c
   end
   return c
@@ -9369,8 +9398,8 @@ end
 -- only when the read's identity carries an IntrinsicFunction
 -- registration (the only kind authority).
 local function __intrinsicExport()
-  return {__fn = function() return nil end, __sig = "function(;number)",
-    __csig = "()->number", __fid = nil}
+  return {[__dealCarrierKeys.fn] = function() return nil end, [__dealCarrierKeys.sig] = "function(;number)",
+    [__dealCarrierKeys.csig] = "()->number", [__dealCarrierKeys.fid] = nil}
 end
 -- The compiled export read (M2): the nil-safe accessor of the
 -- chunk-global program-scoped export-surface registry. A published
@@ -9385,7 +9414,7 @@ local function __exportValue(module, name)
   if surface == nil then return __MISSING end
   local entry = surface[name]
   if entry == nil then return __MISSING end
-  local value = entry.__val
+  local value = entry[__dealCarrierKeys.val]
   if value == nil then return __MISSING end
   return value
 end
@@ -9410,7 +9439,7 @@ end
 -- model's realization of the shared JVM runtime's numberOf/longOf
 -- tolerance, so every numeric consumer accepts either representation.
 local function __num(v)
-  if type(v) == "table" and v.__jn then return v.d end
+  if type(v) == "table" and v[__dealCarrierKeys.jn] then return v.d end
   return v
 end
 -- The number-typed slot mark of the shared JSON_STRINGIFY walker: the
@@ -9426,7 +9455,7 @@ end
 -- the stored value's own variant — the oracle's and the shared JVM
 -- runtime's typing rule.
 local function __numKey(t, k, v, isNumber)
-  if type(v) == "table" and v.__jn then isNumber = (v.k == "number") end
+  if type(v) == "table" and v[__dealCarrierKeys.jn] then isNumber = (v.k == "number") end
   local ns = __nsSurfaces[t]
   if ns ~= nil then
     -- A module namespace surface keeps its number-variant marks in the
@@ -9440,11 +9469,11 @@ local function __numKey(t, k, v, isNumber)
     return
   end
   if isNumber then
-    local marks = t.__nK
-    if type(marks) ~= "table" then marks = {}; t.__nK = marks end
+    local marks = t[__dealCarrierKeys.nK]
+    if type(marks) ~= "table" then marks = {}; t[__dealCarrierKeys.nK] = marks end
     marks[k] = true
   else
-    local marks = t.__nK
+    local marks = t[__dealCarrierKeys.nK]
     if type(marks) == "table" then marks[k] = nil end
   end
 end
@@ -9460,11 +9489,11 @@ end
 local function __readVar(t, k, v, wantsNumber)
   if type(v) ~= "number" then return v end
   local ns = __nsSurfaces[t]
-  local marks = ns ~= nil and ns.numbers or t.__nK
+  local marks = ns ~= nil and ns.numbers or t[__dealCarrierKeys.nK]
   if type(marks) == "table" and marks[k] == true then
-    return {__jn = true, k = "number", d = v}
+    return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
   end
-  if wantsNumber then return {__jn = true, k = "int", d = v} end
+  if wantsNumber then return {[__dealCarrierKeys.jn] = true, k = "int", d = v} end
   return v
 end
 -- The canonical hex-float spelling (Double.toHexString parity; the
@@ -9513,11 +9542,11 @@ local function __atom(kind, v)
   if v == nil then return "null" end
   if type(v) == "string" then return "str:"..__esc(v) end
   if type(v) == "boolean" then return "bool:"..tostring(v) end
-  if type(v) == "table" and v.__jn then
+  if type(v) == "table" and v[__dealCarrierKeys.jn] then
     if v.k == "int" then return "int:"..tostring(v.d) end
     return __atom("number", v.d)
   end
-  if type(v) == "table" and v.__kind == "bytes" then return "ref:"..__allocId(v) end
+  if type(v) == "table" and v[__dealCarrierKeys.kind] == "bytes" then return "ref:"..__allocId(v) end
   if kind == "null" then return "null" end
   if kind == "missing" then return "missing" end
   if kind == "bool" then return "bool:"..tostring(v) end
@@ -9544,7 +9573,7 @@ local function __atom(kind, v)
   return "missing"
 end
 local function __errtext(e)
-  if type(e) == "table" and e.__d then
+  if type(e) == "table" and e[__dealCarrierKeys.d] then
     local parts = {e.code, __esc(e.m or ""), e.o or "-", e.e or "-", e.a or "-",
                    e.f or "-", e.cause and __errtext(e.cause) or "-"}
     return table.concat(parts, ";")
@@ -9609,7 +9638,7 @@ end
 local function __rawAtom(kind, v)
   if v == __MISSING then return "missing" end
   if v == nil then return "null" end
-  if type(v) == "table" and v.__jn then
+  if type(v) == "table" and v[__dealCarrierKeys.jn] then
     if v.k == "int" then return "int:"..tostring(v.d) end
     return __atom("number", v.d)
   end
@@ -9622,14 +9651,14 @@ local function __rawAtom(kind, v)
   end
   if type(v) == "string" then return "str:"..__esc(v) end
   if type(v) == "table" then
-    if v.__d then return "err:"..v.code..":"..__esc(v.m or "") end
+    if v[__dealCarrierKeys.d] then return "err:"..v.code..":"..__esc(v.m or "") end
     return "ref:"..__allocId(v)
   end
   if type(v) == "function" then return "ref:"..__allocId(v) end
   return __atom(kind, v)
 end
 local function __failExpr(code, msg, o, e, a, g)
-  return {__d = true, code = code, m = msg, o = o, e = e, a = a, g = g,
+  return {[__dealCarrierKeys.d] = true, code = code, m = msg, o = o, e = e, a = a, g = g,
           gm = g, f = __framesText(), cause = nil}
 end
 -- The carrier provenance marks of one failure table (the lane's honest
@@ -10405,7 +10434,7 @@ local function __typedBoundaryKind(staticKind, v)
   -- value, never the nil a host-free chunk leaves the binding at).
   if __rtMissing ~= nil and v == __rtMissing then return "nil" end
   if v == nil or v == __NULL or v == __rtNull then return "null" end
-  if type(v) == "table" and v.__jn then return v.k end
+  if type(v) == "table" and v[__dealCarrierKeys.jn] then return v.k end
   local t = type(v)
   if t == "boolean" then return "boolean" end
   if t == "number" then
@@ -10434,7 +10463,7 @@ local function __typedBoundaryKind(staticKind, v)
     -- The bytes carrier keeps its own closed kind: a bytes value never
     -- projects the table spelling, so a non-bytes typed boundary rejects
     -- it instead of admitting it.
-    if v.__kind == "bytes" then return "bytes" end
+    if v[__dealCarrierKeys.kind] == "bytes" then return "bytes" end
     -- The landed runtime/host ABI carriers (the runtime's own produced
     -- shapes, W1/W6): the async handle deal/runtime.lua's async_create
     -- builds projects the closed async token, and the runtime class
@@ -10442,31 +10471,31 @@ local function __typedBoundaryKind(staticKind, v)
     -- atom — never the table spelling. The chunk's own class carrier
     -- (__c/__id) is classified by the next branch; a class carrier
     -- without its atom fails closed exactly like the oracle's projection.
-    if v.__kind == "async" then return "async-operation" end
-    if v.__kind == "class" then
-      if v.__classname == nil then
+    if v[__dealCarrierKeys.kind] == "async" then return "async-operation" end
+    if v[__dealCarrierKeys.kind] == "class" then
+      if v[__dealCarrierKeys.classname] == nil then
         error("a class instance without its carried canonical class atom has "
           .. "no typed-boundary token (producer defect)", 0)
       end
-      return v.__classname
+      return v[__dealCarrierKeys.classname]
     end
-    if v.__a then return "array" end
-    if v.__c then return v.__id end
+    if v[__dealCarrierKeys.a] then return "array" end
+    if v[__dealCarrierKeys.c] then return v[__dealCarrierKeys.id] end
     -- The DEAL error carrier (the builtin Error class instance, the
     -- __d-tagged shape every failure and raise site publishes) projects
     -- its carried canonical class atom Error — never the class:<ClassId>
     -- IR/trace spelling, the superseded v1.2 @/Error form, or the
     -- superseded @$builtin/Error form (the oracle's and the JVM's class
     -- instances project the same carried canonical atom).
-    if v.__d then return "Error" end
-    if v.__t then return "table" end
+    if v[__dealCarrierKeys.d] then return "Error" end
+    if v[__dealCarrierKeys.t] then return "table" end
     -- Every function-shaped carrier projects the closed function token:
     -- the __fn protocol carriers (closures, adapters, intrinsic and
     -- stdlib callables), the __f mark, and the host ABI/export wrapper's
     -- own __kind mark (the mark __bcheck and __stdJsonKind already
     -- recognize). The wrapper is a required carrier classification here,
     -- never the table spelling.
-    if v.__fn ~= nil or v.__f or v.__kind == "function" then
+    if v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.f] or v[__dealCarrierKeys.kind] == "function" then
       return "function"
     end
     -- A value without a closed carrier mark projects its own kind: the
@@ -10486,13 +10515,13 @@ end
 -- landed refined typed-boundary token (array for a real array carrier).
 -- The mark is read here and nowhere else in the emitted prelude.
 local function __elemRefKind(staticKind, v)
-  if type(v) == "table" and v.__a and v.__da then return "table" end
+  if type(v) == "table" and v[__dealCarrierKeys.a] and v[__dealCarrierKeys.da] then return "table" end
   return __typedBoundaryKind(staticKind, v)
 end
 -- The completion variant (P2 item 4): every numeric carrier is the single
 -- number kind.
 local function __completionBoundaryKind(staticKind, v)
-  if type(v) == "number" or (type(v) == "table" and v.__jn) then
+  if type(v) == "number" or (type(v) == "table" and v[__dealCarrierKeys.jn]) then
     return "number"
   end
   return __typedBoundaryKind(staticKind, v)
@@ -10507,7 +10536,7 @@ local function __carrierKind(v)
   if v == __NULL then return "table" end
   local t = type(v)
   if t == "table" then
-    if v.__jn then return "number" end
+    if v[__dealCarrierKeys.jn] then return "number" end
     return "table"
   end
   return t
@@ -10522,10 +10551,10 @@ local function __stdJsonKind(v)
   if v == __NULL then return "table" end
   local t = type(v)
   if t == "table" then
-    if v.__jn then return "number" end
-    if v.__kind == "bytes" then return "bytes" end
-    if v.__c or v.__d then return "table" end
-    if v.__fn ~= nil or v.__f or v.__csig ~= nil or v.__kind == "function" then
+    if v[__dealCarrierKeys.jn] then return "number" end
+    if v[__dealCarrierKeys.kind] == "bytes" then return "bytes" end
+    if v[__dealCarrierKeys.c] or v[__dealCarrierKeys.d] then return "table" end
+    if v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.f] or v[__dealCarrierKeys.csig] ~= nil or v[__dealCarrierKeys.kind] == "function" then
       return "function"
     end
     return "table"
@@ -10653,13 +10682,13 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     local function failRange()
       return error(__arm("INT32_RANGE", nil, "-", nil, nil), 0)
     end
-    if type(v) == "table" and v.__jn then
+    if type(v) == "table" and v[__dealCarrierKeys.jn] then
       -- The int cell's positive-zero normalization: a zero-valued carrier
       -- is re-published with a positive zero while its recorded variant
       -- is preserved; the input carrier is never mutated.
       local function admitCarrier()
         if v.d == 0 and 1 / v.d < 0 then
-          return {__jn = true, k = v.k, d = 0}
+          return {[__dealCarrierKeys.jn] = true, k = v.k, d = 0}
         end
         return v
       end
@@ -10682,7 +10711,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     return fail("int")
   elseif desc == "number" then
     if type(v) == "number" then return v end
-    if type(v) == "table" and v.__jn then return v end
+    if type(v) == "table" and v[__dealCarrierKeys.jn] then return v end
     return fail("number")
   elseif desc == "string" then
     if type(v) == "string" then
@@ -10719,22 +10748,22 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     -- The builtin Error class (the err carrier): an Error table
     -- passes unchanged. The canonical builtin atom is exactly Error
     -- (the one class text without the leading '@').
-    if type(v) == "table" and v.__d then return v end
-    return failClass(desc, (type(v) == "table" and v.__c) and v.__id or nil)
+    if type(v) == "table" and v[__dealCarrierKeys.d] then return v end
+    return failClass(desc, (type(v) == "table" and v[__dealCarrierKeys.c]) and v[__dealCarrierKeys.id] or nil)
   elseif desc == "bytes" then
     -- The bytes view (K6 item 11): the runtime carrier passes unchanged
     -- (classification only — the view carries no contents); every other
     -- value projects the closed kind arm's bytes text (the arm table is
     -- the text source, never a composed literal).
-    if type(v) == "table" and v.__kind == "bytes" then return v end
+    if type(v) == "table" and v[__dealCarrierKeys.kind] == "bytes" then return v end
     return failKind("bytes", "bytes")
   elseif string.sub(desc, 1, 1) == "@" then
     -- A nominal class descriptor (E5): the canonical @module/Class
     -- identity text — the instance must carry the identical tag.
-    if type(v) == "table" and v.__c and v.__id == desc then return v end
-    return failClass(desc, (type(v) == "table" and v.__c) and v.__id or nil)
+    if type(v) == "table" and v[__dealCarrierKeys.c] and v[__dealCarrierKeys.id] == desc then return v end
+    return failClass(desc, (type(v) == "table" and v[__dealCarrierKeys.c]) and v[__dealCarrierKeys.id] or nil)
   elseif string.sub(desc, 1, 6) == "array(" then
-    if type(v) == "table" and v.__a then
+    if type(v) == "table" and v[__dealCarrierKeys.a] then
       local inner = string.sub(desc, 7, -2)
       local innerSig = nil
       -- The canonical element text of the E8003 projection: the closed
@@ -10747,7 +10776,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
         innerSig = string.sub(csig, 2, -2)
         innerExpected = innerSig
       end
-      for i = 1, v.__n do
+      for i = 1, v[__dealCarrierKeys.n] do
         -- The element's own recorded numeric variant (the __nK mark a
         -- decoded array carries) materializes before the recursive
         -- validation and the failure projection; the stored value is
@@ -10784,12 +10813,12 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     return __bcheck(string.sub(desc, 10, -2), staticKind, v, innerSig, completion)
   elseif string.sub(desc, 1, 9) == "function(" then
     if type(v) == "function" then
-      return __fnRow(desc, csig, v, v.__csig, v.__sig)
+      return __fnRow(desc, csig, v, v[__dealCarrierKeys.csig], v[__dealCarrierKeys.sig])
     end
-    if type(v) == "table" and v.__fn ~= nil then
-      return __fnRow(desc, csig, v, v.__csig, v.__sig)
+    if type(v) == "table" and v[__dealCarrierKeys.fn] ~= nil then
+      return __fnRow(desc, csig, v, v[__dealCarrierKeys.csig], v[__dealCarrierKeys.sig])
     end
-    if type(v) == "table" and v.__kind == "function" then
+    if type(v) == "table" and v[__dealCarrierKeys.kind] == "function" then
       -- The host ABI wrapper — the loaded host surface entry a HOST
       -- EXPORT_READ publishes (ISSUE-0653; host-module-load-and-host-call-
       -- realization H5's read value). The entry's own sig metadata is its
@@ -11017,7 +11046,7 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
     __ev(opKey, "FAILURE", "INDEX_READ", digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
-  if index < container.__n then
+  if index < container[__dealCarrierKeys.n] then
     elem = container[index + 1]
     if elem == __NULL then elem = nil
     elseif elem == nil then elem = __MISSING end
@@ -11115,7 +11144,7 @@ end
 -- The wrapper unwrapper: a table carrying an __fn field exposes the
 -- underlying callable (the closure or the adapter protocol).
 local function __unfn(v)
-  if type(v) == "table" and v.__fn ~= nil then return v.__fn end
+  if type(v) == "table" and v[__dealCarrierKeys.fn] ~= nil then return v[__dealCarrierKeys.fn] end
   return v
 end
 -- The dynamic dispatch's carrier-class resolution (ISSUE-0658;
@@ -11133,11 +11162,11 @@ end
 -- (nil) and the dynamic call fails closed at its origin.
 local function __dynClass(v)
   if type(v) ~= "table" then return nil end
-  if v.__fid ~= nil then return "DEAL_BODY" end
-  if v.__mode ~= nil then return "ADAPTER" end
-  if v.__kind == "function" then return "HOST" end
-  if v.__sid ~= nil then return "HOST" end
-  if v.__it ~= nil then return "HOST" end
+  if v[__dealCarrierKeys.fid] ~= nil then return "DEAL_BODY" end
+  if v[__dealCarrierKeys.mode] ~= nil then return "ADAPTER" end
+  if v[__dealCarrierKeys.kind] == "function" then return "HOST" end
+  if v[__dealCarrierKeys.sid] ~= nil then return "HOST" end
+  if v[__dealCarrierKeys.it] ~= nil then return "HOST" end
   return nil
 end
 -- The declared identity (module path, export name) of one loaded host
@@ -11199,12 +11228,12 @@ end
 __hostNumVar = function(v)
   if type(v) ~= "number" then return v end
   if v ~= v or v == math.huge or v == -math.huge then
-    return {__jn = true, k = "number", d = v}
+    return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
   end
   if v % 1 ~= 0 or v < -2147483648 or v > 2147483647 then
-    return {__jn = true, k = "number", d = v}
+    return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
   end
-  return {__jn = true, k = "int", d = v}
+  return {[__dealCarrierKeys.jn] = true, k = "int", d = v}
 end
 -- The adapter's source-signature check (D15): the resolved source's
 -- carried canonical spec text must equal the recorded source signature;
@@ -11215,8 +11244,8 @@ local function __fncheck(v, expected, origin)
   -- A DEAL carrier carries its canonical spec text in __csig; a loaded
   -- host surface entry (the host ABI wrapper a HOST read publishes,
   -- ISSUE-0653) carries its declared canonical signature in sig.
-  if type(v) == "table" then carried = v.__csig or v.sig or "" end
-  if type(v) == "function" then carried = v.__csig or "" end
+  if type(v) == "table" then carried = v[__dealCarrierKeys.csig] or v.sig or "" end
+  if type(v) == "function" then carried = v[__dealCarrierKeys.csig] or "" end
   if carried == expected then return v end
   return error(__arm("FUNCTION_SIGNATURE_MISMATCH",
     {expected = expected, actual = carried}, origin, expected, carried), 0)
@@ -11224,8 +11253,8 @@ end
 -- The adapter's source resolution per the closed capture mode
 -- (D15 creation half): 0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK.
 local function __adaptSource(w)
-  if w.__mode == 0 then return w.__value
-  elseif w.__mode == 1 then return w.__cell[1]
+  if w[__dealCarrierKeys.mode] == 0 then return w.__value
+  elseif w[__dealCarrierKeys.mode] == 1 then return w.__cell[1]
   else return w.__thunk() end
 end
 -- The D15 adapter invocation protocol: resolve the source per the
@@ -11239,8 +11268,8 @@ local function __adaptInvoke(w, origin, ...)
   local src = __adaptSource(w)
   __fncheck(src, w.__csrc, origin)
   local __fid = nil
-  if type(src) == "table" then __fid = src.__fid end
-  if type(src) == "function" then __fid = src.__fid end
+  if type(src) == "table" then __fid = src[__dealCarrierKeys.fid] end
+  if type(src) == "function" then __fid = src[__dealCarrierKeys.fid] end
   local __savedModule = __module
   local __switched = false
   if __fid ~= nil then
@@ -11332,7 +11361,7 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
     end
     return v
   end
-  if v.__jn then
+  if v[__dealCarrierKeys.jn] then
     if __top then
       __dealAsyncExportVariant = v.k == "number" and "number" or "int"
     end
@@ -11342,66 +11371,66 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
   if seen == nil then seen = {} end
   local projected = seen[v]
   if projected ~= nil then return projected end
-  if v.__a then
-    local out = {__a = true, __n = v.__n}
+  if v[__dealCarrierKeys.a] then
+    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = v[__dealCarrierKeys.n]}
     seen[v] = out
-    local marks = v.__nK
+    local marks = v[__dealCarrierKeys.nK]
     if type(marks) ~= "table" then marks = nil end
-    for i = 1, v.__n do
+    for i = 1, v[__dealCarrierKeys.n] do
       local child, childNumber =
           __asyncExportCompletion(__rtAsync, v[i], nil, seen)
       if child ~= nil then
         out[i] = child
         if childNumber or (marks ~= nil and marks[i] == true) then
-          if out.__nK == nil then out.__nK = {} end
-          out.__nK[i] = true
+          if out[__dealCarrierKeys.nK] == nil then out[__dealCarrierKeys.nK] = {} end
+          out[__dealCarrierKeys.nK][i] = true
         end
       end
     end
     return out
   end
-  if v.__t then
-    local out = {__t = true, __keys = {}, __order = {}}
+  if v[__dealCarrierKeys.t] then
+    local out = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}}
     seen[v] = out
-    local marks = v.__nK
+    local marks = v[__dealCarrierKeys.nK]
     if type(marks) ~= "table" then marks = nil end
-    local order = v.__order
+    local order = v[__dealCarrierKeys.order]
     if type(order) == "table" then
       for i = 1, #order do
         local key = order[i]
         local child, childNumber =
             __asyncExportCompletion(__rtAsync, v[key], nil, seen)
         out[key] = child
-        out.__keys[key] = true
-        out.__order[i] = key
+        out[__dealCarrierKeys.keys][key] = true
+        out[__dealCarrierKeys.order][i] = key
         if childNumber or (marks ~= nil and marks[key] == true) then
-          if out.__nK == nil then out.__nK = {} end
-          out.__nK[key] = true
+          if out[__dealCarrierKeys.nK] == nil then out[__dealCarrierKeys.nK] = {} end
+          out[__dealCarrierKeys.nK][key] = true
         end
       end
     end
     return out
   end
-  if v.__c then
-    local out = {__kind = "class", __c = true, __id = v.__id,
-                 __classname = v.__id}
+  if v[__dealCarrierKeys.c] then
+    local out = {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = v[__dealCarrierKeys.id],
+                 [__dealCarrierKeys.classname] = v[__dealCarrierKeys.id]}
     seen[v] = out
     return out
   end
-  if v.__d then
-    local out = {__kind = "class", __d = true,
-                 __classname = "Error"}
+  if v[__dealCarrierKeys.d] then
+    local out = {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.d] = true,
+                 [__dealCarrierKeys.classname] = "Error"}
     seen[v] = out
     return out
   end
-  if v.__fn ~= nil or v.__f or v.__kind == "function" then
-    if v.__kind == "function" and v.sig ~= nil then
+  if v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.f] or v[__dealCarrierKeys.kind] == "function" then
+    if v[__dealCarrierKeys.kind] == "function" and v.sig ~= nil then
       return v
     end
-    local sig = v.__csig or v.sig
+    local sig = v[__dealCarrierKeys.csig] or v.sig
     if sig == nil then return v end
-    local out = {__kind = "function", sig = sig, __fn = v.__fn,
-                 __csig = v.__csig, __sig = v.__sig}
+    local out = {[__dealCarrierKeys.kind] = "function", sig = sig, [__dealCarrierKeys.fn] = v[__dealCarrierKeys.fn],
+                 [__dealCarrierKeys.csig] = v[__dealCarrierKeys.csig], [__dealCarrierKeys.sig] = v[__dealCarrierKeys.sig]}
     seen[v] = out
     return out
   end
@@ -11433,7 +11462,7 @@ __dealAsyncExportEncode = function(v)
   if __dealAsyncExportVariant == "number" and type(v) == "number" then
     return string.sub(__stdlib("JSON_STRINGIFY", "JSON_STRINGIFY",
         "-", "-", "-", "-",
-        {__a = true, __n = 1, [1] = v, __nK = {[1] = true}}), 2, -2)
+        {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = v, [__dealCarrierKeys.nK] = {[1] = true}}), 2, -2)
   end
   -- The "-" op-context tokens are the absent-op spelling: the completion
   -- encoder runs outside any emitted op, and the production chunk's __ev
@@ -11573,7 +11602,7 @@ local function __asyncDrain()
       local ok, v = coroutine.resume(t.co,
           unpack(t.args, 1, t.args.__argn or #t.args))
       if not ok then
-        if type(v) == "table" and v.__d then
+        if type(v) == "table" and v[__dealCarrierKeys.d] then
           t.err = v
         else
           error(v, 0)
@@ -11600,7 +11629,7 @@ local function __orderAdd(t, k)
     ns.keys[k] = true
     return
   end
-  local __keys = t.__keys
+  local __keys = t[__dealCarrierKeys.keys]
   if __keys == nil then
     -- The fail-safe marker creation for a table built without the shared
     -- carrier's marks (a plain table the value model produced outside
@@ -11608,11 +11637,11 @@ local function __orderAdd(t, k)
     -- marks, so its insertion order and presence discipline match every
     -- other table value from then on.
     __keys = {}
-    t.__keys = __keys
-    t.__order = {}
+    t[__dealCarrierKeys.keys] = __keys
+    t[__dealCarrierKeys.order] = {}
   end
   if not __keys[k] then
-    t.__order[#t.__order + 1] = k
+    t[__dealCarrierKeys.order][#t[__dealCarrierKeys.order] + 1] = k
   end
   __keys[k] = true
 end
@@ -11628,11 +11657,11 @@ local function __orderRemove(t, k)
     end
     return
   end
-  if t.__keys == nil then return end
-  t.__keys[k] = nil
-  for i = 1, #t.__order do
-    if t.__order[i] == k then
-      table.remove(t.__order, i)
+  if t[__dealCarrierKeys.keys] == nil then return end
+  t[__dealCarrierKeys.keys][k] = nil
+  for i = 1, #t[__dealCarrierKeys.order] do
+    if t[__dealCarrierKeys.order][i] == k then
+      table.remove(t[__dealCarrierKeys.order], i)
       return
     end
   end
@@ -11702,11 +11731,11 @@ local function __rawArgAtom(kind, v)
   end
   if t == "string" then return "str:"..__esc(v) end
   if t == "table" then
-    if v.__jn then
+    if v[__dealCarrierKeys.jn] then
       if v.k == "int" then return "int:"..tostring(v.d) end
       return __atom("number", v.d)
     end
-    if v.__d then return "err:"..v.code..":"..__esc(v.m or "") end
+    if v[__dealCarrierKeys.d] then return "err:"..v.code..":"..__esc(v.m or "") end
     return "ref:"..__allocId(v)
   end
   if t == "function" then return "ref:"..__allocId(v) end
@@ -11997,7 +12026,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   -- for — the two representations never diverge inside an algorithm.
   for __i = 1, select("#", ...) do
     local __a = __args[__i]
-    if type(__a) == "table" and __a.__jn then __args[__i] = __a.d end
+    if type(__a) == "table" and __a[__dealCarrierKeys.jn] then __args[__i] = __a.d end
   end
   local function __sfail(armId, values, expected, actual)
     local e = __arm(armId, values, origin, expected, actual)
@@ -12063,27 +12092,27 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   elseif fn == "STRING_SPLIT" then
     local input = __cps(__args[1])
     local sep = __cps(__args[2])
-    if #input == 0 then return {__a = true, __n = 0} end
+    if #input == 0 then return {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0} end
     if #sep == 0 then
-      local singles = {__a = true, __n = #input}
+      local singles = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #input}
       for i = 1, #input do singles[i] = __u8enc(input[i]) end
       return singles
     end
-    local parts = {__a = true, __n = 0}
+    local parts = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0}
     local cursor = 1
     while true do
       local occ = __subseqIndexOf(input, sep, cursor - 1)
       if occ < 0 then break end
       local piece = {}
       for i = cursor, occ do piece[#piece + 1] = __u8enc(input[i]) end
-      parts.__n = parts.__n + 1
-      parts[parts.__n] = table.concat(piece)
+      parts[__dealCarrierKeys.n] = parts[__dealCarrierKeys.n] + 1
+      parts[parts[__dealCarrierKeys.n]] = table.concat(piece)
       cursor = occ + 1 + #sep
     end
     local tail = {}
     for i = cursor, #input do tail[#tail + 1] = __u8enc(input[i]) end
-    parts.__n = parts.__n + 1
-    parts[parts.__n] = table.concat(tail)
+    parts[__dealCarrierKeys.n] = parts[__dealCarrierKeys.n] + 1
+    parts[parts[__dealCarrierKeys.n]] = table.concat(tail)
     return parts
   elseif fn == "STRING_TRIM" then
     local cps = __cps(__args[1])
@@ -12098,8 +12127,8 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   elseif fn == "TABLE_KEYS" then
     local t = __args[1]
     local ns = __nsSurfaces[t]
-    local order = ns ~= nil and ns.order or t.__order
-    local keys = {__a = true, __n = #order}
+    local order = ns ~= nil and ns.order or t[__dealCarrierKeys.order]
+    local keys = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #order}
     for i = 1, #order do keys[i] = order[i] end
     return keys
   elseif fn == "JSON_PARSE" then
@@ -12232,9 +12261,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       local text = string.sub(s, startPos, pos - 1)
       local exact = __jsonIntOrNil(text)
       if exact ~= nil then
-        return {__jn = true, k = "int", d = exact}
+        return {[__dealCarrierKeys.jn] = true, k = "int", d = exact}
       end
-      return {__jn = true, k = "number", d = tonumber(text)}
+      return {[__dealCarrierKeys.jn] = true, k = "number", d = tonumber(text)}
     end
     -- One value at the cursor: a scalar returns directly, a container
     -- opens a frame on the stack and returns the __OPENED sentinel. The
@@ -12248,13 +12277,13 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       if c == 123 then
         advance()
         frames[#frames + 1] = {kind = "object",
-          value = {__t = true, __keys = {}, __order = {}}, seen = {}, state = 0}
+          value = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}}, seen = {}, state = 0}
         return __OPENED
       end
       if c == 91 then
         advance()
         frames[#frames + 1] = {kind = "array",
-          value = {__a = true, __n = 0, __da = true}, state = 4}
+          value = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.da] = true}, state = 4}
         return __OPENED
       end
       if c == 34 then return parseString() end
@@ -12273,11 +12302,11 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           if #frames == 0 then return completed end
           local parent = frames[#frames]
           if parent.kind == "array" then
-            parent.value.__n = parent.value.__n + 1
+            parent.value[__dealCarrierKeys.n] = parent.value[__dealCarrierKeys.n] + 1
             if completed == nil then
-              parent.value[parent.value.__n] = __NULL
+              parent.value[parent.value[__dealCarrierKeys.n]] = __NULL
             else
-              parent.value[parent.value.__n] = completed
+              parent.value[parent.value[__dealCarrierKeys.n]] = completed
             end
             parent.state = 5
           else
@@ -12437,7 +12466,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       end
       if t == "string" then out[#out + 1] = __jsonEscape(v); return end
       if t == "table" then
-        if v.__jn then
+        if v[__dealCarrierKeys.jn] then
           if v.k == "int" then out[#out + 1] = tostring(v.d)
           else
             if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then
@@ -12447,11 +12476,11 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           end
           return
         end
-        if v.__a then
+        if v[__dealCarrierKeys.a] then
           if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "["
-          local marks = v.__nK
+          local marks = v[__dealCarrierKeys.nK]
           if type(marks) ~= "table" then marks = nil end
           frames[#frames + 1] = {kind = "array", value = v, index = 1, marks = marks}
           return
@@ -12464,28 +12493,28 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           frames[#frames + 1] = {kind = "namespace", value = v, order = ns.order, index = 1}
           return
         end
-        if v.__t then
+        if v[__dealCarrierKeys.t] then
           if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "{"
-          local marks = v.__nK
+          local marks = v[__dealCarrierKeys.nK]
           if type(marks) ~= "table" then marks = nil end
-          frames[#frames + 1] = {kind = "table", value = v, order = v.__order, index = 1, marks = marks}
+          frames[#frames + 1] = {kind = "table", value = v, order = v[__dealCarrierKeys.order], index = 1, marks = marks}
           return
         end
         -- The class instance is a table-carried value on the carrier-kind
         -- projection (the std/json member included), never its canonical
         -- identity: the marker is checked before the function arm (every
         -- class instance carries the field map __f).
-        if v.__c or v.__d then sfFail(v); return end
-        if v.__fn ~= nil or v.__f or v.__kind == "function" then
+        if v[__dealCarrierKeys.c] or v[__dealCarrierKeys.d] then sfFail(v); return end
+        if v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.f] or v[__dealCarrierKeys.kind] == "function" then
           sfFail(v); return
         end
         -- The bytes carrier keeps its own closed kind: a stringified
         -- bytes value renders the pinned rejection (the std/json
         -- carrier-kind projection's bytes member) through the same sfFail
         -- render, never the generic table fallback.
-        if v.__kind == "bytes" then sfFail(v); return end
+        if v[__dealCarrierKeys.kind] == "bytes" then sfFail(v); return end
         sfFail(v)
         return
       end
@@ -12498,7 +12527,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       while #frames > 0 do
         local frame = frames[#frames]
         if frame.kind == "array" then
-          if frame.index > frame.value.__n then
+          if frame.index > frame.value[__dealCarrierKeys.n] then
             out[#out + 1] = "]"
             path[frame.value] = nil
             frames[#frames] = nil
@@ -12631,9 +12660,9 @@ local function __stdlibInvoke(kind, fn, opKey, digest, parent, origin, ...)
   return __stdlib(kind, fn, opKey, digest, parent, origin, ...)
 end
 -- The memoized cataloged callable of one catalog row (M4): one carrier
--- per catalog row per module per program — {__fn = the row invoker,
--- __sig = the row's declared descriptor text, __csig = the row's
--- canonical spec text, __fid = nil, __sid = the row tag}, admissible by
+-- per catalog row per module per program — {[__dealCarrierKeys.fn] = the row invoker,
+-- __sig = the row's declared descriptor text, [__dealCarrierKeys.csig] = the row's
+-- canonical spec text, [__dealCarrierKeys.fid] = nil, [__dealCarrierKeys.sid] = the row tag}, admissible by
 -- the landed function row. Creation goes through this one accessor, so
 -- a read before any surface population and the later whole-surface
 -- population observe one callable object. The registry is chunk-global
@@ -12642,10 +12671,10 @@ local function __stdlibEntry(module, name, sid, sig, csig)
   local key = module..string.char(1)..name
   local entry = __stdlibEntries[key]
   if entry == nil then
-    entry = {__fn = function(kind, opKey, digest, parent, origin, ...)
+    entry = {[__dealCarrierKeys.fn] = function(kind, opKey, digest, parent, origin, ...)
         return __stdlibInvoke(kind, sid, opKey, digest, parent, origin, ...)
       end,
-      __sig = sig, __csig = csig, __fid = nil, __sid = sid}
+      [__dealCarrierKeys.sig] = sig, [__dealCarrierKeys.csig] = csig, [__dealCarrierKeys.fid] = nil, [__dealCarrierKeys.sid] = sid}
     __stdlibEntries[key] = entry
   end
   return entry

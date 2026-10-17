@@ -595,12 +595,12 @@ public final class SemanticDifferentialHarness {
     private static String luaLiteralOf(CallbackArg arg) {
         return switch (arg) {
             case CallbackArg.Int value -> String.valueOf(value.value());
-            case CallbackArg.Number value -> "{__jn = true, k = \"number\", d = "
+            case CallbackArg.Number value -> "{[__dealCarrierKeys.jn] = true, k = \"number\", d = "
                 + Double.toString(value.value()) + "}";
             case CallbackArg.Str value -> luaByteLiteral(value.value());
             case CallbackArg.Null ignored -> "nil";
             case CallbackArg.Array value -> {
-                StringBuilder sb = new StringBuilder("{__a = true, __n = ")
+                StringBuilder sb = new StringBuilder("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = ")
                     .append(value.elements().size());
                 for (int i = 0; i < value.elements().size(); i++) {
                     sb.append(", [").append(i + 1).append("] = ")

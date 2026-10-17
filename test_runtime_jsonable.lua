@@ -4,6 +4,10 @@
 package.path = "./?.lua;" .. package.path
 local __rt = require("deal.runtime")
 
+-- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
+-- the stdlib share one process-wide key set.
+local __K = __rt.__keys
+
 local passed = 0
 local failed = 0
 local function test(name, fn)
@@ -28,8 +32,8 @@ test("json_from_json with int field", function()
   local instance = __rt.json_from_json("Counter", parsed, defaults, fields)
   assert(instance ~= nil)
   assert(instance.count == 42)
-  assert(instance.__classname == "Counter")
-  assert(instance.__kind == "class")
+  assert(instance[__K.classname] == "Counter")
+  assert(instance[__K.kind] == "class")
 end)
 
 test("json_from_json with string field", function()
@@ -185,8 +189,8 @@ test("json_from_json with empty fields array", function()
   local parsed = {}
   local instance = __rt.json_from_json("Empty", parsed, defaults, fields)
   assert(instance ~= nil)
-  assert(instance.__classname == "Empty")
-  assert(instance.__kind == "class")
+  assert(instance[__K.classname] == "Empty")
+  assert(instance[__K.kind] == "class")
 end)
 
 test("json_from_json with empty fields and defaults", function()
@@ -314,8 +318,8 @@ test("json_from_json nested class field", function()
   assert(instance ~= nil)
   assert(instance.child ~= nil)
   assert(instance.child.x == 42)
-  assert(instance.child.__classname == "Child")
-  assert(instance.child.__kind == "class")
+  assert(instance.child[__K.classname] == "Child")
+  assert(instance.child[__K.kind] == "class")
 end)
 
 test("json_from_json nested class with extra keys fails", function()
@@ -437,7 +441,7 @@ test("json_from_json array of nested classes", function()
   assert(instance ~= nil)
   assert(#instance.children == 3)
   assert(instance.children[1].val == 1)
-  assert(instance.children[1].__classname == "Child")
+  assert(instance.children[1][__K.classname] == "Child")
   assert(instance.children[2].val == 2)
   assert(instance.children[3].val == 3)
 end)
@@ -484,7 +488,7 @@ test("json_to_json includes required fields", function()
   local fields = {
     { name = "name", jtype = "string", optional = false, nullable = false }
   }
-  local instance = { name = "Alice", __classname = "Person", __kind = "class" }
+  local instance = { name = "Alice", [__K.classname] = "Person", [__K.kind] = "class" }
   local result = __rt.json_to_json("Person", instance, fields)
   assert(result ~= nil)
   assert(result.name == "Alice")
@@ -495,7 +499,7 @@ test("json_to_json includes multiple fields", function()
     { name = "id", jtype = "int", optional = false, nullable = false },
     { name = "name", jtype = "string", optional = false, nullable = false }
   }
-  local instance = { id = 1, name = "Test", __classname = "C", __kind = "class" }
+  local instance = { id = 1, name = "Test", [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(result.id == 1)
@@ -509,7 +513,7 @@ test("json_to_json omits missing optional field", function()
     { name = "required", jtype = "string", optional = false, nullable = false },
     { name = "optional", jtype = "string", optional = true, nullable = false }
   }
-  local instance = { required = "x", __classname = "C", __kind = "class" }
+  local instance = { required = "x", [__K.classname] = "C", [__K.kind] = "class" }
   -- optional field is nil (not set)
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
@@ -522,7 +526,7 @@ test("json_to_json includes set optional field", function()
     { name = "required", jtype = "string", optional = false, nullable = false },
     { name = "optional", jtype = "string", optional = true, nullable = false }
   }
-  local instance = { required = "x", optional = "y", __classname = "C", __kind = "class" }
+  local instance = { required = "x", optional = "y", [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(result.required == "x")
@@ -535,7 +539,7 @@ test("json_to_json emits __NULL for explicit null on nullable field", function()
   local fields = {
     { name = "bio", jtype = "string", optional = false, nullable = true }
   }
-  local instance = { bio = __rt.__NULL, __classname = "C", __kind = "class" }
+  local instance = { bio = __rt.__NULL, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(result.bio == __rt.__NULL)
@@ -545,7 +549,7 @@ test("json_to_json emits value for non-null nullable field", function()
   local fields = {
     { name = "bio", jtype = "string", optional = false, nullable = true }
   }
-  local instance = { bio = "hello", __classname = "C", __kind = "class" }
+  local instance = { bio = "hello", [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(result.bio == "hello")
@@ -557,7 +561,7 @@ test("json_to_json optional+nullable: missing → omitted", function()
   local fields = {
     { name = "tag", jtype = "string", optional = true, nullable = true }
   }
-  local instance = { __classname = "C", __kind = "class" }
+  local instance = { [__K.classname] = "C", [__K.kind] = "class" }
   -- tag is nil (missing)
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
@@ -568,7 +572,7 @@ test("json_to_json optional+nullable: null → __NULL", function()
   local fields = {
     { name = "tag", jtype = "string", optional = true, nullable = true }
   }
-  local instance = { tag = __rt.__NULL, __classname = "C", __kind = "class" }
+  local instance = { tag = __rt.__NULL, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(result.tag == __rt.__NULL)
@@ -578,7 +582,7 @@ test("json_to_json optional+nullable: value → value", function()
   local fields = {
     { name = "tag", jtype = "string", optional = true, nullable = true }
   }
-  local instance = { tag = "important", __classname = "C", __kind = "class" }
+  local instance = { tag = "important", [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(result.tag == "important")
@@ -590,12 +594,12 @@ test("json_to_json nested class field", function()
   local child_fields = {
     { name = "x", jtype = "int", optional = false, nullable = false }
   }
-  local child_instance = { x = 42, __classname = "Child", __kind = "class" }
+  local child_instance = { x = 42, [__K.classname] = "Child", [__K.kind] = "class" }
   local parent_fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = child_fields }
   }
-  local parent_instance = { child = child_instance, __classname = "Parent", __kind = "class" }
+  local parent_instance = { child = child_instance, [__K.classname] = "Parent", [__K.kind] = "class" }
   local result = __rt.json_to_json("Parent", parent_instance, parent_fields)
   assert(result ~= nil)
   assert(result.child ~= nil)
@@ -609,7 +613,7 @@ test("json_to_json array of primitives", function()
     { name = "tags", jtype = "array", optional = false, nullable = false,
       element = { jtype = "int", optional = false, nullable = false } }
   }
-  local instance = { tags = {1, 2, 3}, __classname = "C", __kind = "class" }
+  local instance = { tags = {1, 2, 3}, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(#result.tags == 3)
@@ -626,9 +630,9 @@ test("json_to_json array of nested classes", function()
     { name = "children", jtype = "array", optional = false, nullable = false,
       element = { jtype = "class", className = "Child", fields = child_fields } }
   }
-  local child1 = { val = 1, __classname = "Child", __kind = "class" }
-  local child2 = { val = 2, __classname = "Child", __kind = "class" }
-  local instance = { children = {child1, child2}, __classname = "Parent", __kind = "class" }
+  local child1 = { val = 1, [__K.classname] = "Child", [__K.kind] = "class" }
+  local child2 = { val = 2, [__K.classname] = "Child", [__K.kind] = "class" }
+  local instance = { children = {child1, child2}, [__K.classname] = "Parent", [__K.kind] = "class" }
   local result = __rt.json_to_json("Parent", instance, parent_fields)
   assert(result ~= nil)
   assert(#result.children == 2)
@@ -641,7 +645,7 @@ test("json_to_json empty array", function()
     { name = "items", jtype = "array", optional = false, nullable = false,
       element = { jtype = "int", optional = false, nullable = false } }
   }
-  local instance = { items = {}, __classname = "C", __kind = "class" }
+  local instance = { items = {}, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(#result.items == 0)
@@ -759,7 +763,7 @@ test("nested class roundtrip", function()
 
   -- Build nested instance
   local child = __rt.class_("Child", child_defaults, { x = 99, y = "why" })
-  local parent = { name = "Parent", child = child, __classname = "Parent", __kind = "class" }
+  local parent = { name = "Parent", child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
 
   local serialized = __rt.json_to_json("Parent", parent, parent_fields)
   assert(serialized.name == "Parent")
@@ -773,7 +777,7 @@ test("nested class roundtrip", function()
   assert(roundtripped.child ~= nil)
   assert(roundtripped.child.x == 99)
   assert(roundtripped.child.y == "why")
-  assert(roundtripped.child.__classname == "Child")
+  assert(roundtripped.child[__K.classname] == "Child")
 end)
 
 -- ==================== Multi-level nesting roundtrip ====================
@@ -796,8 +800,8 @@ test("three-level nested class roundtrip", function()
   local parent_defaults = { child = __rt.__MISSING }
 
   local gc = __rt.class_("GrandChild", grandchild_defaults, { v = 7 })
-  local child = { name = "middle", grand = gc, __classname = "Child", __kind = "class" }
-  local parent = { child = child, __classname = "Parent", __kind = "class" }
+  local child = { name = "middle", grand = gc, [__K.classname] = "Child", [__K.kind] = "class" }
+  local parent = { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
 
   local serialized = __rt.json_to_json("Parent", parent, parent_fields)
   assert(serialized.child.name == "middle")
@@ -817,7 +821,7 @@ test("array of primitives roundtrip", function()
       element = { jtype = "int", optional = false, nullable = false } }
   }
   local defaults = { nums = {} }
-  local instance = { nums = {10, 20, 30}, __classname = "C", __kind = "class" }
+  local instance = { nums = {10, 20, 30}, [__K.classname] = "C", [__K.kind] = "class" }
 
   local serialized = __rt.json_to_json("C", instance, fields)
   assert(#serialized.nums == 3)
@@ -844,7 +848,7 @@ test("array of nested classes roundtrip", function()
 
   local c1 = __rt.class_("Child", child_defaults, { val = 1 })
   local c2 = __rt.class_("Child", child_defaults, { val = 2 })
-  local instance = { children = {c1, c2}, __classname = "Parent", __kind = "class" }
+  local instance = { children = {c1, c2}, [__K.classname] = "Parent", [__K.kind] = "class" }
 
   local serialized = __rt.json_to_json("Parent", instance, parent_fields)
   assert(#serialized.children == 2)
@@ -856,7 +860,7 @@ test("array of nested classes roundtrip", function()
   assert(#roundtripped.children == 2)
   assert(roundtripped.children[1].val == 1)
   assert(roundtripped.children[2].val == 2)
-  assert(roundtripped.children[1].__classname == "Child")
+  assert(roundtripped.children[1][__K.classname] == "Child")
 end)
 
 -- ==================== Instance tagging ====================
@@ -866,7 +870,7 @@ test("json_from_json tags instance with __kind = class", function()
   local defaults = { x = 0 }
   local parsed = { x = 1 }
   local instance = __rt.json_from_json("MyClass", parsed, defaults, fields)
-  assert(instance.__kind == "class")
+  assert(instance[__K.kind] == "class")
 end)
 
 test("json_from_json tags instance with correct __classname", function()
@@ -874,7 +878,7 @@ test("json_from_json tags instance with correct __classname", function()
   local defaults = { x = 0 }
   local parsed = { x = 1 }
   local instance = __rt.json_from_json("MyClass", parsed, defaults, fields)
-  assert(instance.__classname == "MyClass")
+  assert(instance[__K.classname] == "MyClass")
 end)
 
 -- ==================== Edge case: json_from_json with all field types ====================
@@ -937,7 +941,7 @@ test("json_to_json returns a table, not a JSON string", function()
   local fields = {
     { name = "x", jtype = "int", optional = false, nullable = false }
   }
-  local instance = { x = 42, __classname = "C", __kind = "class" }
+  local instance = { x = 42, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(type(result) == "table")
   assert(result.x == 42)
@@ -1072,21 +1076,21 @@ test("_json_table_shape: function leaf rejected", function()
 end)
 
 test("_json_table_shape: function-wrapper leaf rejected", function()
-  assert(__rt._json_table_shape({ fn = { __kind = "function" } }, {}, 0) == false)
+  assert(__rt._json_table_shape({ fn = { [__K.kind] = "function" } }, {}, 0) == false)
 end)
 
 test("_json_table_shape: class-instance leaf rejected", function()
-  assert(__rt._json_table_shape({ inst = { __kind = "class", __classname = "C" } }, {}, 0) == false)
+  assert(__rt._json_table_shape({ inst = { [__K.kind] = "class", [__K.classname] = "C" } }, {}, 0) == false)
 end)
 
 test("_json_table_shape: async handle leaf rejected", function()
-  assert(__rt._json_table_shape({ handle = { __kind = "async" } }, {}, 0) == false)
+  assert(__rt._json_table_shape({ handle = { [__K.kind] = "async" } }, {}, 0) == false)
 end)
 
 test("_json_table_shape: top-level tagged tables rejected", function()
-  assert(__rt._json_table_shape({ __kind = "class", __classname = "C" }, {}, 0) == false)
-  assert(__rt._json_table_shape({ __kind = "function" }, {}, 0) == false)
-  assert(__rt._json_table_shape({ __kind = "async" }, {}, 0) == false)
+  assert(__rt._json_table_shape({ [__K.kind] = "class", [__K.classname] = "C" }, {}, 0) == false)
+  assert(__rt._json_table_shape({ [__K.kind] = "function" }, {}, 0) == false)
+  assert(__rt._json_table_shape({ [__K.kind] = "async" }, {}, 0) == false)
 end)
 
 test("_json_table_shape: NaN and Infinity leaves rejected", function()
@@ -1350,11 +1354,11 @@ end)
 test("_json_defaults_identity_ok: sentinels and tagged tables rejected, plain accepted", function()
   assert(__rt._json_defaults_identity_ok(__rt.__NULL) == false)
   assert(__rt._json_defaults_identity_ok(__rt.__MISSING) == false)
-  assert(__rt._json_defaults_identity_ok({ __kind = "class", __classname = "C" }) == false)
-  assert(__rt._json_defaults_identity_ok({ __kind = "function" }) == false)
-  assert(__rt._json_defaults_identity_ok({ __kind = "async" }) == false)
+  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "class", [__K.classname] = "C" }) == false)
+  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "function" }) == false)
+  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "async" }) == false)
   -- a __kind field holding any other value is a legal field default
-  assert(__rt._json_defaults_identity_ok({ __kind = "plain" }) == true)
+  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "plain" }) == true)
   assert(__rt._json_defaults_identity_ok({ a = 1 }) == true)
   assert(__rt._json_defaults_identity_ok({}) == true)
   -- non-table defaults
@@ -1363,9 +1367,9 @@ test("_json_defaults_identity_ok: sentinels and tagged tables rejected, plain ac
   assert(__rt._json_defaults_identity_ok(nil) == false)
   assert(__rt._json_defaults_identity_ok(function() end) == false)
   -- the predicate never mutates the global sentinels
-  assert(__rt.__NULL.__kind == nil)
-  assert(__rt.__MISSING.__kind == nil)
-  assert(__rt.__NULL.__classname == nil)
+  assert(__rt.__NULL[__K.kind] == nil)
+  assert(__rt.__MISSING[__K.kind] == nil)
+  assert(__rt.__NULL[__K.classname] == nil)
 end)
 
 -- ==================== Direct helpers: _json_defaults_acyclic ====================
@@ -1394,7 +1398,7 @@ test("_json_defaults_acyclic: acyclic defaults accepted, cyclic rejected", funct
   -- sentinels and __kind-tagged tables are leaves (mirror _deep_copy)
   assert(__rt._json_defaults_acyclic(__rt.__NULL, {}) == true)
   assert(__rt._json_defaults_acyclic(__rt.__MISSING, {}) == true)
-  local tagged = { __kind = "class", __classname = "C" }
+  local tagged = { [__K.kind] = "class", [__K.classname] = "C" }
   tagged.self = tagged
   assert(__rt._json_defaults_acyclic(tagged, {}) == true)
 end)
@@ -1495,8 +1499,8 @@ test("decode matrix: nested class with value decodes a tagged instance", functio
   local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
   assert(instance ~= nil)
   assert(instance.child.x == 42)
-  assert(instance.child.__classname == "Child")
-  assert(instance.child.__kind == "class")
+  assert(instance.child[__K.classname] == "Child")
+  assert(instance.child[__K.kind] == "class")
 end)
 
 test("decode matrix: int[][] nested arrays decode level by level", function()
@@ -1652,8 +1656,8 @@ test("decode matrix: table field with non-JSON leaves returns nil", function()
   }
   local defaults = { t = {} }
   assert(__rt.json_from_json("C", { t = { fn = function() end } }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { t = { w = { __kind = "function" } } }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { t = { c = { __kind = "class", __classname = "C" } } }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { t = { w = { [__K.kind] = "function" } } }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { t = { c = { [__K.kind] = "class", [__K.classname] = "C" } } }, defaults, fields) == nil)
   assert(__rt.json_from_json("C", { t = { x = 0/0 } }, defaults, fields) == nil)
   assert(__rt.json_from_json("C", { t = { x = 1/0 } }, defaults, fields) == nil)
 end)
@@ -1698,29 +1702,29 @@ test("decode matrix: sentinel/identity-preserved defaults rejected, sentinels un
   }
   assert(__rt.json_from_json("C", {}, __rt.__NULL, fields) == nil)
   assert(__rt.json_from_json("C", {}, __rt.__MISSING, fields) == nil)
-  local class_instance = { __kind = "class", __classname = "C", x = 1 }
+  local class_instance = { [__K.kind] = "class", [__K.classname] = "C", x = 1 }
   assert(__rt.json_from_json("C", {}, class_instance, fields) == nil)
-  assert(__rt.json_from_json("C", {}, { __kind = "function" }, fields) == nil)
-  assert(__rt.json_from_json("C", {}, { __kind = "async" }, fields) == nil)
+  assert(__rt.json_from_json("C", {}, { [__K.kind] = "function" }, fields) == nil)
+  assert(__rt.json_from_json("C", {}, { [__K.kind] = "async" }, fields) == nil)
   -- the global sentinels carry no tag or field value after the calls
-  assert(__rt.__NULL.__kind == nil)
-  assert(__rt.__NULL.__classname == nil)
-  assert(__rt.__MISSING.__kind == nil)
-  assert(__rt.__MISSING.__classname == nil)
+  assert(__rt.__NULL[__K.kind] == nil)
+  assert(__rt.__NULL[__K.classname] == nil)
+  assert(__rt.__MISSING[__K.kind] == nil)
+  assert(__rt.__MISSING[__K.classname] == nil)
   assert(__rt.__NULL.x == nil)
   -- the tagged class-instance defaults was neither overlaid nor re-tagged
-  assert(class_instance.__kind == "class")
-  assert(class_instance.__classname == "C")
+  assert(class_instance[__K.kind] == "class")
+  assert(class_instance[__K.classname] == "C")
   assert(class_instance.x == 1)
 end)
 
 test("decode matrix: defaults table with a plain __kind value accepted", function()
   local fields = {}
-  local defaults = { __kind = "plain" }
+  local defaults = { [__K.kind] = "plain" }
   local instance = __rt.json_from_json("C", {}, defaults, fields)
   assert(instance ~= nil)
-  assert(instance.__classname == "C")
-  assert(instance.__kind == "class")
+  assert(instance[__K.classname] == "C")
+  assert(instance[__K.kind] == "class")
 end)
 
 test("decode matrix: malformed descriptor entries return nil", function()
@@ -2030,8 +2034,8 @@ test("decode matrix: empty parsed table decodes as the defaulted instance ([]/{}
   local from_obj = __rt.json_from_json("C", {}, defaults, fields)
   assert(from_obj ~= nil)
   assert(from_obj.x == 5)
-  assert(from_obj.__kind == "class")
-  assert(from_obj.__classname == "C")
+  assert(from_obj[__K.kind] == "class")
+  assert(from_obj[__K.classname] == "C")
   -- json.parse("[]") and json.parse("{}") produce the same fresh empty
   -- table, so both decode identically (D2a).
 end)
@@ -2053,7 +2057,7 @@ test("decode matrix: []/{} collapse holds one level down", function()
   local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
   assert(instance ~= nil)
   assert(instance.child.x == 7)
-  assert(instance.child.__kind == "class")
+  assert(instance.child[__K.kind] == "class")
   assert(#instance.items == 0)
   assert(next(instance.meta) == nil)
 end)
@@ -2088,9 +2092,9 @@ test("json_to_json top-level identity: non-table and untagged values raise E8001
     "E8001", "expected class instance")
   assert_error(function() __rt.json_to_json("C", "s", fields) end,
     "E8001", "expected class instance")
-  assert_error(function() __rt.json_to_json("C", { __classname = "C" }, fields) end,
+  assert_error(function() __rt.json_to_json("C", { [__K.classname] = "C" }, fields) end,
     "E8001", "expected class instance")
-  assert_error(function() __rt.json_to_json("C", { __kind = "async", __classname = "C" }, fields) end,
+  assert_error(function() __rt.json_to_json("C", { [__K.kind] = "async", [__K.classname] = "C" }, fields) end,
     "E8001", "expected class instance")
 end)
 
@@ -2099,7 +2103,7 @@ test("json_to_json top-level identity: __classname mismatch raises E8001", funct
     { name = "x", jtype = "int", optional = false, nullable = false }
   }
   assert_error(function()
-    __rt.json_to_json("C", { x = 1, __classname = "Other", __kind = "class" }, fields)
+    __rt.json_to_json("C", { x = 1, [__K.classname] = "Other", [__K.kind] = "class" }, fields)
   end, "E8001", "expected instance of C, got Other")
 end)
 
@@ -2109,13 +2113,13 @@ test("json_to_json encode matrix: null field", function()
   local fields = {
     { name = "data", jtype = "null", optional = false, nullable = true }
   }
-  local instance = { data = __rt.__NULL, __classname = "C", __kind = "class" }
+  local instance = { data = __rt.__NULL, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= nil)
   assert(result.data == __rt.__NULL)
   -- jtype null accepts only __NULL
   assert_error(function()
-    __rt.json_to_json("C", { data = 42, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { data = 42, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected null")
 end)
 
@@ -2123,12 +2127,12 @@ test("json_to_json encode matrix: boolean field", function()
   local fields = {
     { name = "flag", jtype = "boolean", optional = true, nullable = false }
   }
-  local set = { flag = true, __classname = "C", __kind = "class" }
+  local set = { flag = true, [__K.classname] = "C", [__K.kind] = "class" }
   assert(__rt.json_to_json("C", set, fields).flag == true)
   -- missing optional omitted
-  assert(__rt.json_to_json("C", { __classname = "C", __kind = "class" }, fields).flag == nil)
+  assert(__rt.json_to_json("C", { [__K.classname] = "C", [__K.kind] = "class" }, fields).flag == nil)
   assert_error(function()
-    __rt.json_to_json("C", { flag = 1, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { flag = 1, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected boolean")
 end)
 
@@ -2136,22 +2140,22 @@ test("json_to_json encode matrix: int field", function()
   local fields = {
     { name = "n", jtype = "int", optional = false, nullable = false }
   }
-  assert(__rt.json_to_json("C", { n = 42, __classname = "C", __kind = "class" }, fields).n == 42)
-  assert(__rt.json_to_json("C", { n = -0, __classname = "C", __kind = "class" }, fields).n == 0)
+  assert(__rt.json_to_json("C", { n = 42, [__K.classname] = "C", [__K.kind] = "class" }, fields).n == 42)
+  assert(__rt.json_to_json("C", { n = -0, [__K.classname] = "C", [__K.kind] = "class" }, fields).n == 0)
   assert_error(function()
-    __rt.json_to_json("C", { n = "x", __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { n = "x", [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected int")
   assert_error(function()
-    __rt.json_to_json("C", { n = 3.5, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { n = 3.5, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected int, got non-integer number")
   assert_error(function()
-    __rt.json_to_json("C", { n = 0/0, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { n = 0/0, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected int, got NaN")
   assert_error(function()
-    __rt.json_to_json("C", { n = 1/0, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { n = 1/0, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected int, got infinity")
   assert_error(function()
-    __rt.json_to_json("C", { n = 9007199254740992, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { n = 9007199254740992, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8004", "int out of safe range")
 end)
 
@@ -2159,18 +2163,18 @@ test("json_to_json encode matrix: number field", function()
   local fields = {
     { name = "p", jtype = "number", optional = false, nullable = false }
   }
-  assert(__rt.json_to_json("C", { p = 3.14, __classname = "C", __kind = "class" }, fields).p == 3.14)
+  assert(__rt.json_to_json("C", { p = 3.14, [__K.classname] = "C", [__K.kind] = "class" }, fields).p == 3.14)
   assert_error(function()
-    __rt.json_to_json("C", { p = "true", __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { p = "true", [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected number")
   assert_error(function()
-    __rt.json_to_json("C", { p = 0/0, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { p = 0/0, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "cannot encode NaN as JSON")
   assert_error(function()
-    __rt.json_to_json("C", { p = 1/0, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { p = 1/0, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "cannot encode Infinity as JSON")
   assert_error(function()
-    __rt.json_to_json("C", { p = -1/0, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { p = -1/0, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "cannot encode Infinity as JSON")
 end)
 
@@ -2178,9 +2182,9 @@ test("json_to_json encode matrix: string field", function()
   local fields = {
     { name = "s", jtype = "string", optional = false, nullable = false }
   }
-  assert(__rt.json_to_json("C", { s = "hi", __classname = "C", __kind = "class" }, fields).s == "hi")
+  assert(__rt.json_to_json("C", { s = "hi", [__K.classname] = "C", [__K.kind] = "class" }, fields).s == "hi")
   assert_error(function()
-    __rt.json_to_json("C", { s = 42, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { s = 42, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected string")
 end)
 
@@ -2190,15 +2194,15 @@ test("json_to_json encode matrix: table field (object and dense-array datum)", f
   }
   -- string-keyed object with nested arrays inside object values (D7)
   local obj = { count = 2, name = "x", values = {{1, 2}, {3, 4}}, nil_leaf = __rt.__NULL }
-  local result = __rt.json_to_json("C", { data = obj, __classname = "C", __kind = "class" }, fields)
+  local result = __rt.json_to_json("C", { data = obj, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   assert(result.data == obj)  -- emitted by reference, never copied
   -- dense-array datum
   local arr = {1, 2.5, "s", false, __rt.__NULL}
-  local result2 = __rt.json_to_json("C", { data = arr, __classname = "C", __kind = "class" }, fields)
+  local result2 = __rt.json_to_json("C", { data = arr, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   assert(result2.data == arr)
   -- non-table raw
   assert_error(function()
-    __rt.json_to_json("C", { data = 42, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { data = 42, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected table")
 end)
 
@@ -2210,18 +2214,18 @@ test("json_to_json encode matrix: nested class field", function()
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = child_fields }
   }
-  local child = { x = 5, __classname = "Child", __kind = "class" }
+  local child = { x = 5, [__K.classname] = "Child", [__K.kind] = "class" }
   local result = __rt.json_to_json("Parent",
-    { child = child, __classname = "Parent", __kind = "class" }, fields)
+    { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }, fields)
   assert(result.child ~= nil and result.child.x == 5)
   assert(result.child ~= child)  -- fresh nested encoding
   assert_error(function()
-    __rt.json_to_json("Parent", { child = 42, __classname = "Parent", __kind = "class" }, fields)
+    __rt.json_to_json("Parent", { child = 42, [__K.classname] = "Parent", [__K.kind] = "class" }, fields)
   end, "E8001", "expected class instance")
   assert_error(function()
     __rt.json_to_json("Parent",
-      { child = { x = 5, __classname = "Other", __kind = "class" },
-        __classname = "Parent", __kind = "class" }, fields)
+      { child = { x = 5, [__K.classname] = "Other", [__K.kind] = "class" },
+        [__K.classname] = "Parent", [__K.kind] = "class" }, fields)
   end, "E8001", "expected instance of Child, got Other")
 end)
 
@@ -2231,17 +2235,17 @@ test("json_to_json encode matrix: array field incl. int[][]", function()
       element = { jtype = "array", optional = false, nullable = false,
         element = { jtype = "int", optional = false, nullable = false } } }
   }
-  local instance = { m = {{1, 2}, {3, 4}}, __classname = "C", __kind = "class" }
+  local instance = { m = {{1, 2}, {3, 4}}, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(#result.m == 2)
   assert(result.m[1][1] == 1 and result.m[1][2] == 2)
   assert(result.m[2][1] == 3 and result.m[2][2] == 4)
   -- empty array
-  local empty = __rt.json_to_json("C", { m = {}, __classname = "C", __kind = "class" }, fields)
+  local empty = __rt.json_to_json("C", { m = {}, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   assert(#empty.m == 0)
   -- non-table raw
   assert_error(function()
-    __rt.json_to_json("C", { m = 42, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { m = 42, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected array")
 end)
 
@@ -2263,7 +2267,7 @@ test("json_to_json encode matrix: nullable __NULL emission for every jtype", fun
     f_null = __rt.__NULL, f_bool = __rt.__NULL, f_int = __rt.__NULL,
     f_number = __rt.__NULL, f_string = __rt.__NULL, f_table = __rt.__NULL,
     f_class = __rt.__NULL, f_array = __rt.__NULL,
-    __classname = "C", __kind = "class",
+    [__K.classname] = "C", [__K.kind] = "class",
   }
   local result = __rt.json_to_json("C", instance, fields)
   for _, name in ipairs({"f_null", "f_bool", "f_int", "f_number",
@@ -2278,10 +2282,10 @@ test("json_to_json encode matrix: explicit null gating", function()
     { name = "n", jtype = "string", optional = false, nullable = false },
   }
   local ok = __rt.json_to_json("C",
-    { s = __rt.__NULL, n = "v", __classname = "C", __kind = "class" }, fields)
+    { s = __rt.__NULL, n = "v", [__K.classname] = "C", [__K.kind] = "class" }, fields)
   assert(ok.s == __rt.__NULL and ok.n == "v")
   assert_error(function()
-    __rt.json_to_json("C", { s = "v", n = __rt.__NULL, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { s = "v", n = __rt.__NULL, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "explicit null on non-nullable field 'n'")
   -- element null gating: absent element flag means nullable = false
   local arr_fields = {
@@ -2289,7 +2293,7 @@ test("json_to_json encode matrix: explicit null gating", function()
       element = { jtype = "int" } }
   }
   assert_error(function()
-    __rt.json_to_json("C", { m = {1, __rt.__NULL}, __classname = "C", __kind = "class" }, arr_fields)
+    __rt.json_to_json("C", { m = {1, __rt.__NULL}, [__K.classname] = "C", [__K.kind] = "class" }, arr_fields)
   end, "E8001", "explicit null on non-nullable array element")
   -- hand-built nullable element accepts __NULL
   local null_arr_fields = {
@@ -2297,7 +2301,7 @@ test("json_to_json encode matrix: explicit null gating", function()
       element = { jtype = "int", nullable = true } }
   }
   local res = __rt.json_to_json("C",
-    { m = {1, __rt.__NULL}, __classname = "C", __kind = "class" }, null_arr_fields)
+    { m = {1, __rt.__NULL}, [__K.classname] = "C", [__K.kind] = "class" }, null_arr_fields)
   assert(res.m[1] == 1 and res.m[2] == __rt.__NULL)
 end)
 
@@ -2306,7 +2310,7 @@ test("json_to_json encode matrix: missing required field raises E8001", function
     { name = "x", jtype = "int", optional = false, nullable = false }
   }
   assert_error(function()
-    __rt.json_to_json("C", { __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "missing required field 'x'")
 end)
 
@@ -2317,11 +2321,11 @@ test("json_to_json encode matrix: dense-array shape violations raise E8001", fun
   }
   local holes = { [1] = 1, [3] = 3 }
   assert_error(function()
-    __rt.json_to_json("C", { m = holes, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { m = holes, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected dense array")
   local mixed = { [1] = 1, a = 2 }
   assert_error(function()
-    __rt.json_to_json("C", { m = mixed, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { m = mixed, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "expected dense array")
 end)
 
@@ -2331,29 +2335,29 @@ test("json_to_json encode matrix: non-JSON table leaves raise E8001", function()
   }
   local function leaf_error(leaf)
     assert_error(function()
-      __rt.json_to_json("C", { data = { leaf = leaf }, __classname = "C", __kind = "class" }, fields)
+      __rt.json_to_json("C", { data = { leaf = leaf }, [__K.classname] = "C", [__K.kind] = "class" }, fields)
     end, "E8001", "value is not JSON-shaped")
   end
   leaf_error(function() end)
-  leaf_error({ __kind = "function" })
-  leaf_error({ __kind = "class", __classname = "X" })
-  leaf_error({ __kind = "async" })
+  leaf_error({ [__K.kind] = "function" })
+  leaf_error({ [__K.kind] = "class", [__K.classname] = "X" })
+  leaf_error({ [__K.kind] = "async" })
   leaf_error(0/0)     -- NaN
   leaf_error(1/0)     -- +Infinity
   leaf_error(-1/0)    -- -Infinity
   -- top-level tagged datum
   assert_error(function()
     __rt.json_to_json("C",
-      { data = { __kind = "class", __classname = "X" }, __classname = "C", __kind = "class" }, fields)
+      { data = { [__K.kind] = "class", [__K.classname] = "X" }, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "value is not JSON-shaped")
   -- mixed-shape and sparse data
   assert_error(function()
     __rt.json_to_json("C",
-      { data = { [1] = "x", a = 1 }, __classname = "C", __kind = "class" }, fields)
+      { data = { [1] = "x", a = 1 }, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "value is not JSON-shaped")
   assert_error(function()
     __rt.json_to_json("C",
-      { data = { [1] = "x", [3] = "z" }, __classname = "C", __kind = "class" }, fields)
+      { data = { [1] = "x", [3] = "z" }, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "value is not JSON-shaped")
 end)
 
@@ -2365,7 +2369,7 @@ test("json_to_json encode matrix: cyclic class instance raises E8001", function(
       className = "C", fields = nil }
   }
   fields[1].fields = fields  -- self-referential descriptor: self_ref is a C again
-  local instance = { __classname = "C", __kind = "class" }
+  local instance = { [__K.classname] = "C", [__K.kind] = "class" }
   instance.self_ref = instance
   assert_error(function() __rt.json_to_json("C", instance, fields) end,
     "E8001", "cyclic value cannot be encoded as JSON")
@@ -2375,7 +2379,7 @@ test("json_to_json encode matrix: cyclic table datum raises E8001", function()
   local fields = {
     { name = "data", jtype = "table", optional = false, nullable = false }
   }
-  local instance = { __classname = "W", __kind = "class" }
+  local instance = { [__K.classname] = "W", [__K.kind] = "class" }
   local direct = { a = 1 }
   direct.self = direct
   instance.data = direct
@@ -2396,7 +2400,7 @@ test("json_to_json encode matrix: cyclic array container raises E8001", function
   local arr = {}
   arr[1] = arr
   assert_error(function()
-    __rt.json_to_json("C", { m = arr, __classname = "C", __kind = "class" }, fields)
+    __rt.json_to_json("C", { m = arr, [__K.classname] = "C", [__K.kind] = "class" }, fields)
   end, "E8001", "cyclic value cannot be encoded as JSON")
 end)
 
@@ -2404,7 +2408,7 @@ test("json_to_json encode matrix: shared non-cyclic child serializes twice", fun
   local child_fields = {
     { name = "x", jtype = "int", optional = false, nullable = false }
   }
-  local child = { x = 7, __classname = "Child", __kind = "class" }
+  local child = { x = 7, [__K.classname] = "Child", [__K.kind] = "class" }
   local fields = {
     { name = "a", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = child_fields },
@@ -2412,7 +2416,7 @@ test("json_to_json encode matrix: shared non-cyclic child serializes twice", fun
       className = "Child", fields = child_fields },
   }
   local result = __rt.json_to_json("Parent",
-    { a = child, b = child, __classname = "Parent", __kind = "class" }, fields)
+    { a = child, b = child, [__K.classname] = "Parent", [__K.kind] = "class" }, fields)
   assert(result.a ~= nil and result.a.x == 7)
   assert(result.b ~= nil and result.b.x == 7)
   assert(result.a ~= result.b)  -- two fresh encodings, no false positive
@@ -2429,7 +2433,7 @@ test("json_to_json encode matrix: a deep class chain has no fixed cap", function
   local function build_chain(n)  -- n instances: deepest at depth n-1
     local chain = {}
     for i = 1, n do
-      chain[i] = { __classname = "C", __kind = "class" }
+      chain[i] = { [__K.classname] = "C", [__K.kind] = "class" }
     end
     for i = 1, n - 1 do
       chain[i].child = chain[i + 1]
@@ -2466,14 +2470,14 @@ test("json_to_json encode matrix: a deep array chain has no fixed cap", function
       element = build_desc(600) }
   }
   local ok_result = __rt.json_to_json("C",
-    { m = build_data(601), __classname = "C", __kind = "class" }, deep_fields)
+    { m = build_data(601), [__K.classname] = "C", [__K.kind] = "class" }, deep_fields)
   assert(ok_result ~= nil)
 end)
 
 -- ---- Descriptor-entry validation (D3 step 2, encode rules) ----
 
 test("json_to_json encode matrix: non-table fields and non-table entries raise E8001", function()
-  local instance = { x = 1, __classname = "C", __kind = "class" }
+  local instance = { x = 1, [__K.classname] = "C", [__K.kind] = "class" }
   assert_error(function() __rt.json_to_json("C", instance, 42) end,
     "E8001", "malformed field descriptors")
   assert_error(function() __rt.json_to_json("C", instance, nil) end,
@@ -2489,7 +2493,7 @@ test("json_to_json encode matrix: non-table fields and non-table entries raise E
 end)
 
 test("json_to_json encode matrix: nameless field entry raises E8001, never a raw error", function()
-  local instance = { x = 1, __classname = "C", __kind = "class" }
+  local instance = { x = 1, [__K.classname] = "C", [__K.kind] = "class" }
   -- a nameless member would otherwise be classified under the element
   -- rules and crash the walker with "attempt to concatenate field
   -- 'name' (a nil value)" (missing required) or "table index is nil"
@@ -2506,14 +2510,14 @@ test("json_to_json encode matrix: nameless entry inside nested class fields rais
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = { { jtype = "int" } } }
   }
-  local child = { x = 1, __classname = "Child", __kind = "class" }
-  local parent = { child = child, __classname = "Parent", __kind = "class" }
+  local child = { x = 1, [__K.classname] = "Child", [__K.kind] = "class" }
+  local parent = { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
   assert_error(function() __rt.json_to_json("Parent", parent, parent_fields) end,
     "E8001", "malformed field descriptors")
 end)
 
 test("json_to_json encode matrix: field entries require boolean optional/nullable", function()
-  local instance = { x = 1, __classname = "C", __kind = "class" }
+  local instance = { x = 1, [__K.classname] = "C", [__K.kind] = "class" }
   assert_error(function() __rt.json_to_json("C", instance,
     { { name = "x", jtype = "int", nullable = false } }) end,
     "E8001", "malformed field descriptors")  -- missing optional
@@ -2533,7 +2537,7 @@ test("json_to_json encode matrix: element flags — present non-boolean rejected
     { name = "m", jtype = "array", optional = false, nullable = false,
       element = { jtype = "int" } }
   }
-  local instance = { m = {1, 2}, __classname = "C", __kind = "class" }
+  local instance = { m = {1, 2}, [__K.classname] = "C", [__K.kind] = "class" }
   -- absent element flags mean false/false: valid, encodes
   local res = __rt.json_to_json("C", instance, fields)
   assert(res.m[1] == 1 and res.m[2] == 2)
@@ -2553,7 +2557,7 @@ test("json_to_json encode matrix: truncated nested-array element raises E8001, n
     { name = "m", jtype = "array", optional = false, nullable = false,
       element = { jtype = "array", optional = false, nullable = false } }
   }
-  local instance = { m = {{1, 2}}, __classname = "C", __kind = "class" }
+  local instance = { m = {{1, 2}}, [__K.classname] = "C", [__K.kind] = "class" }
   assert_error(function() __rt.json_to_json("C", instance, fields) end,
     "E8001", "malformed field descriptors")
 end)
@@ -2566,8 +2570,8 @@ test("json_to_json encode matrix: malformed entry inside nested class fields rai
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = child_fields }
   }
-  local child = { x = 1, __classname = "Child", __kind = "class" }
-  local parent = { child = child, __classname = "Parent", __kind = "class" }
+  local child = { x = 1, [__K.classname] = "Child", [__K.kind] = "class" }
+  local parent = { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
   assert_error(function() __rt.json_to_json("Parent", parent, parent_fields) end,
     "E8001", "malformed field descriptors")
 end)
@@ -2580,8 +2584,8 @@ test("json_to_json encode matrix: malformed flags at depth inside nested class f
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = child_fields }
   }
-  local child = { x = 1, __classname = "Child", __kind = "class" }
-  local parent = { child = child, __classname = "Parent", __kind = "class" }
+  local child = { x = 1, [__K.classname] = "Child", [__K.kind] = "class" }
+  local parent = { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
   assert_error(function() __rt.json_to_json("Parent", parent, parent_fields) end,
     "E8001", "malformed field descriptors")
 end)
@@ -2596,19 +2600,19 @@ test("json_to_json asymmetry: class entry with className/fields but no defaults 
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = child_fields }
   }
-  local child = { x = 1, __classname = "Child", __kind = "class" }
+  local child = { x = 1, [__K.classname] = "Child", [__K.kind] = "class" }
   local result = __rt.json_to_json("Parent",
-    { child = child, __classname = "Parent", __kind = "class" }, fields)
+    { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }, fields)
   assert(result.child ~= nil and result.child.x == 1)
   -- missing className -> E8001
   assert_error(function() __rt.json_to_json("Parent",
-    { child = child, __classname = "Parent", __kind = "class" },
+    { child = child, [__K.classname] = "Parent", [__K.kind] = "class" },
     { { name = "child", jtype = "class", optional = false, nullable = false,
         fields = child_fields } }) end,
     "E8001", "malformed field descriptors")
   -- missing fields -> E8001
   assert_error(function() __rt.json_to_json("Parent",
-    { child = child, __classname = "Parent", __kind = "class" },
+    { child = child, [__K.classname] = "Parent", [__K.kind] = "class" },
     { { name = "child", jtype = "class", optional = false, nullable = false,
         className = "Child" } }) end,
     "E8001", "malformed field descriptors")
@@ -2622,21 +2626,21 @@ test("json_to_json asymmetry: class element with className/fields but no default
     { name = "children", jtype = "array", optional = false, nullable = false,
       element = { jtype = "class", className = "Child", fields = child_fields } }
   }
-  local c1 = { val = 1, __classname = "Child", __kind = "class" }
-  local c2 = { val = 2, __classname = "Child", __kind = "class" }
+  local c1 = { val = 1, [__K.classname] = "Child", [__K.kind] = "class" }
+  local c2 = { val = 2, [__K.classname] = "Child", [__K.kind] = "class" }
   local result = __rt.json_to_json("Parent",
-    { children = {c1, c2}, __classname = "Parent", __kind = "class" }, fields)
+    { children = {c1, c2}, [__K.classname] = "Parent", [__K.kind] = "class" }, fields)
   assert(#result.children == 2)
   assert(result.children[1].val == 1 and result.children[2].val == 2)
   -- missing className on the class element -> E8001
   assert_error(function() __rt.json_to_json("Parent",
-    { children = {c1}, __classname = "Parent", __kind = "class" },
+    { children = {c1}, [__K.classname] = "Parent", [__K.kind] = "class" },
     { { name = "children", jtype = "array", optional = false, nullable = false,
         element = { jtype = "class", fields = child_fields } } }) end,
     "E8001", "malformed field descriptors")
   -- missing fields on the class element -> E8001
   assert_error(function() __rt.json_to_json("Parent",
-    { children = {c1}, __classname = "Parent", __kind = "class" },
+    { children = {c1}, [__K.classname] = "Parent", [__K.kind] = "class" },
     { { name = "children", jtype = "array", optional = false, nullable = false,
         element = { jtype = "class", className = "Child" } } }) end,
     "E8001", "malformed field descriptors")
@@ -2654,10 +2658,10 @@ test("json_to_json asymmetry at depth: nested class fields entry without default
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", fields = child_fields }
   }
-  local grand = { v = 3, __classname = "Grand", __kind = "class" }
-  local child = { grand = grand, __classname = "Child", __kind = "class" }
+  local grand = { v = 3, [__K.classname] = "Grand", [__K.kind] = "class" }
+  local child = { grand = grand, [__K.classname] = "Child", [__K.kind] = "class" }
   local result = __rt.json_to_json("Parent",
-    { child = child, __classname = "Parent", __kind = "class" }, parent_fields)
+    { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }, parent_fields)
   assert(result.child ~= nil and result.child.grand ~= nil)
   assert(result.child.grand.v == 3)
 end)
@@ -2672,7 +2676,7 @@ test("json_to_json does not mutate the instance or nested tables", function()
   }
   local datum = { a = 1, b = { c = 2 } }
   local tags = { 1, 2 }
-  local instance = { data = datum, tags = tags, __classname = "C", __kind = "class" }
+  local instance = { data = datum, tags = tags, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
   assert(result ~= instance)          -- fresh outer table
   assert(result.data == datum)        -- table datum by reference
@@ -2680,7 +2684,7 @@ test("json_to_json does not mutate the instance or nested tables", function()
   assert(result.tags[1] == 1 and result.tags[2] == 2)
   assert(instance.data == datum and instance.tags == tags)
   assert(datum.a == 1 and datum.b.c == 2 and #tags == 2)
-  assert(instance.__classname == "C" and instance.__kind == "class")
+  assert(instance[__K.classname] == "C" and instance[__K.kind] == "class")
 end)
 
 -- ==================== ISSUE-0188 cross-direction roundtrip invariants (step 4) ====================
@@ -2779,7 +2783,7 @@ test("ISSUE-0188 roundtrip invariant: nested class", function()
   -- decode
   local original = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
   assert(original ~= nil)
-  assert(original.child.__classname == "Child")
+  assert(original.child[__K.classname] == "Child")
   assert(original.child.x == 41 and original.child.y == "yy")
 
   -- encode
@@ -2848,7 +2852,7 @@ test("ISSUE-0188 roundtrip invariant: class arrays", function()
   local original = __rt.json_from_json("Parent", parsed, defaults, fields)
   assert(original ~= nil)
   assert(#original.children == 3)
-  assert(original.children[1].__classname == "Child")
+  assert(original.children[1][__K.classname] == "Child")
   assert(original.children[2] == __rt.__NULL)
   assert(original.children[3].val == 3)
 

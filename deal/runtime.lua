@@ -20,6 +20,32 @@ local __rt = {}
 __rt.__NULL = setmetatable({}, {__tostring = function() return "null" end})
 __rt.__MISSING = {}
 
+-- ===== Private carrier keys (ISSUE-0830) =====
+-- Carrier identity (the class/Error/bytes/function/array/async/numeric-variant
+-- mark), the array length, the table presence/insertion order and the
+-- per-slot numeric-variant marks live under table-object keys, never under
+-- strings: a DEAL table may carry any string key (a class instance may
+-- declare a field named after any of them), so a string-keyed mark would be
+-- both shadowable and forgeable. The key set is process-wide — every chunk
+-- of one process and this runtime reuse the same objects — so a carrier
+-- built by an emitted chunk is classifiable here and vice versa (a chunk
+-- that binds no runtime creates the set first and later chunks and the
+-- runtime adopt it). __rt.__keys publishes the set to the stdlib modules
+-- and to the direct runtime drives; DEAL source cannot name a table key.
+local __CARRIER_KEYS = rawget(_G, "__dealCarrierKeys")
+if __CARRIER_KEYS == nil then
+  __CARRIER_KEYS = {
+    kind = {}, classname = {}, c = {}, id = {}, p = {}, f = {}, d = {},
+    a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, order = {},
+    fn = {}, csig = {}, sig = {}, fid = {}, it = {}, sid = {}, val = {},
+    mode = {}, jn = {}, jo = {}, ja = {}, jkeys = {}, jnum = {}, jseen = {},
+    ptr = {},
+  }
+  rawset(_G, "__dealCarrierKeys", __CARRIER_KEYS)
+end
+local __K = __CARRIER_KEYS
+__rt.__keys = __K
+
 -- ===== Signed-32 gate (signed-int32 foundation I4) =====
 -- The signed-32 gate is active from runtime load: check_int gates
 -- [-2147483648, 2147483647] with the pinned template E8004 "int out of
@@ -73,8 +99,8 @@ end
 -- @$builtin/Error are never emitted and never parse.
 function __rt.error_value(code, message, file, line, column)
   return {
-    __kind = "class",
-    __classname = "Error",
+    [__K.kind] = "class",
+    [__K.classname] = "Error",
     code = code,
     message = message,
     file = file,
@@ -322,10 +348,61 @@ function __rt.check_string(v, file, line, column)
   return v
 end
 
+--- The reference value-model kind of one value: the closed token every
+-- typed boundary reports as its "actual" projection (the emitted
+-- prelude's __typedBoundaryKind and this runtime agree). A DEAL table is
+-- "table" whatever string keys it carries — a user table can never
+-- project a carrier kind — and a produced carrier keeps its own token.
+function __rt.typed_kind(v)
+  if v == nil or v == __rt.__MISSING then return "nil" end
+  if v == __rt.__NULL then return "null" end
+  local t = type(v)
+  if t == "boolean" then return "boolean" end
+  if t == "number" then
+    if v ~= v then return "number" end
+    if v % 1 == 0 and v >= -2147483648 and v <= 2147483647 then return "int" end
+    return "number"
+  end
+  if t == "string" then return "string" end
+  if t ~= "table" then return t end
+  local kind = v[__K.kind]
+  if kind == "bytes" then return "bytes" end
+  if kind == "async" then return "async-operation" end
+  if kind == "function" then return "function" end
+  if kind == "class" then
+    return v[__K.classname] or "class instance"
+  end
+  if v[__K.d] then return "Error" end
+  if v[__K.c] then return v[__K.id] or "class instance" end
+  if v[__K.a] then return "array" end
+  if v[__K.jn] then return "number" end
+  return "table"
+end
+
 function __rt.check_table(v, file, line, column)
+  -- The strict table split: the language-null sentinel is not a table, the
+  -- internal absent marker is not a table, and a produced carrier of
+  -- another kind (a class instance, a bytes buffer, a function wrapper,
+  -- an async handle, an array, a numeric-variant carrier) keeps its own
+  -- kind and never passes a table descriptor. A plain table — and the
+  -- emitted chunk's shared table carrier — is the table value whatever
+  -- string keys it carries.
+  if v == __rt.__NULL then
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
+      "expected table", file, line, column, "table", "null"))
+  end
+  if v == __rt.__MISSING then
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
+      "expected table", file, line, column, "table", "nil"))
+  end
   if type(v) ~= "table" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
       "expected table", file, line, column, "table", type(v)))
+  end
+  local projected = __rt.typed_kind(v)
+  if projected ~= "table" then
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
+      "expected table", file, line, column, "table", projected))
   end
   return v
 end
@@ -400,7 +477,7 @@ local ffi = require("ffi")
 
 --- Fail-closed bytes object validation shared by the bytes entries.
 local function check_bytes(b, file, line, column)
-  if type(b) ~= "table" or b.__kind ~= "bytes" then
+  if type(b) ~= "table" or b[__K.kind] ~= "bytes" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "bytes" }, "E8001",
       "expected bytes", file, line, column, "bytes", type(b)))
   end
@@ -421,7 +498,7 @@ function __rt.bytes_new(length, file, line, column)
   if not ok then
     error(__rt._err("E8001", "bytes allocation failed", file, line, column, nil, nil))
   end
-  return { __kind = "bytes", __data = data, __len = n }
+  return { [__K.kind] = "bytes", __data = data, __len = n }
 end
 
 --- The immutable signed-int32 logical length of a bytes buffer.
@@ -795,12 +872,12 @@ local function check_canonical_ast(ast, v, file, line, column)
     -- canonical atom has no identity to compare and selects the closed
     -- kind arm (the JVM host check's own disposition), never a composed
     -- "unknown" atom.
-    if type(v) ~= "table" or v.__kind ~= "class" then
+    if type(v) ~= "table" or v[__K.kind] ~= "class" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
         "E8001", "expected class instance", file, line, column, "class",
         type(v)))
     end
-    local actual_class = v.__classname
+    local actual_class = v[__K.classname]
     if actual_class == nil then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
         "E8001", "expected class instance", file, line, column, "class",
@@ -813,16 +890,45 @@ local function check_canonical_ast(ast, v, file, line, column)
     end
     return v
   elseif kind == "array" then
-    if type(v) ~= "table" then
+    -- The array value only: a produced array carrier (the emitted chunk's
+    -- array mark) and the reference runtime's own dense-indexed array form
+    -- are arrays; the language null sentinel, the absent marker, every
+    -- other carrier kind (a class instance, a table, a bytes buffer, a
+    -- function wrapper, an async handle) and any non-dense table are not.
+    -- The null check runs before the shape check: an empty sentinel table
+    -- is never the empty array.
+    if v == __rt.__NULL or v == __rt.__MISSING or type(v) ~= "table" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
-        "expected array", file, line, column, "array", type(v)))
+        "expected array", file, line, column, "array", __rt.typed_kind(v)))
     end
-    for i = 1, #v do
+    local length
+    if v[__K.a] ~= nil then
+      length = v[__K.n] or 0
+    elseif __rt.typed_kind(v) ~= "table" then
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
+        "expected array", file, line, column, "array", __rt.typed_kind(v)))
+    else
+      local dense = true
+      local max = 0
+      for k in pairs(v) do
+        if type(k) ~= "number" or k < 1 or k % 1 ~= 0 then
+          dense = false
+          break
+        end
+        if k > max then max = k end
+      end
+      if not dense then
+        error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
+          "expected array", file, line, column, "array", "table"))
+      end
+      length = max
+    end
+    for i = 1, length do
       local ok = pcall(check_canonical_ast, ast.element, v[i], file, line, column)
       if not ok then
         error(__rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
           "array element " .. i .. " type mismatch", file, line, column,
-          ast.element.text, type(v[i])))
+          ast.element.text, __rt.typed_kind(v[i])))
       end
     end
     return v
@@ -838,7 +944,7 @@ local function check_canonical_ast(ast, v, file, line, column)
     -- like the JVM host check's own function row, so a malformed carrier
     -- is never projected through the signature arm's two descriptor
     -- operands.
-    if type(v) ~= "table" or v.__kind ~= "function" then
+    if type(v) ~= "table" or v[__K.kind] ~= "function" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
         "expected function", file, line, column, "function", type(v)))
     end
@@ -868,7 +974,7 @@ end
 --- The canonical type checker — the one runtime boundary matcher
 -- (parent matcher table D4; runtime page D3): one row per primitive
 -- (the bytes row is the RV bytes predicate — a table with
--- __kind == "bytes"), [D] arrays via 1-based contiguous iteration with
+-- [__K.kind] == "bytes"), [D] arrays via 1-based contiguous iteration with
 -- E8003 wrapping at the first failing index, ?D nullables, function
 -- descriptors with byte-for-byte signature comparison (E8010 on
 -- mismatch), and class atoms matched byte-for-byte as complete text
@@ -907,15 +1013,15 @@ end
 -- ===== Function infrastructure =====
 
 --- Create a function wrapper.
--- The wrapper is a table { __kind = "function", sig = sig, f = f }.
+-- The wrapper is a table { [__K.kind] = "function", sig = sig, f = f }.
 -- No __call metamethod is set; callers use wrapper.f(...).
 function __rt.function_(sig, f)
-  return { __kind = "function", sig = sig, f = f }
+  return { [__K.kind] = "function", sig = sig, f = f }
 end
 
 --- Extract the raw Lua function from a wrapper for host interop.
 function __rt.as_lua_function(fn)
-  if type(fn) ~= "table" or fn.__kind ~= "function" then
+  if type(fn) ~= "table" or fn[__K.kind] ~= "function" then
     error(__rt._err("E8001", "expected function wrapper", nil, nil, nil, "function", type(fn)))
   end
   return fn.f
@@ -997,7 +1103,7 @@ end
 -- Three-way return dispatch:
 -- 1. Async descriptor (parsed.isAsync == true): the call must produce at
 --    least one result and every result must be an async operation table
---    ({ __kind = "async" }); the declared return type R is enforced at the
+--    ({ [__K.kind] = "async" }); the declared return type R is enforced at the
 --    await site, not here.
 -- 2. Non-null return (the return atom is not the "null" primitive): the
 --    call must produce at least one result — zero results and a single
@@ -1116,7 +1222,7 @@ function __rt.from_lua_function(sig, raw_f)
       end
       for i = 1, nresults do
         local r = results[i]
-        if type(r) ~= "table" or r.__kind ~= "async" then
+        if type(r) ~= "table" or r[__K.kind] ~= "async" then
           host_arm_failure("ASYNC_SHAPE", {}, file, line, column,
             "async operation", r)
         end
@@ -1232,10 +1338,14 @@ function __rt.load_host(module_path, declared, file, line, column)
       if type(v) == "function" then
         -- Raw Lua function: wrap with parameter/return/async-shape checks.
         exports[name] = __rt.from_lua_function(descriptor, v)
-      elseif type(v) == "table" and v.__kind == "function" then
+      elseif type(v) == "table" and (v[__K.kind] == "function"
+          or v.__kind == "function") then
         -- Pre-wrapped export: the declared descriptor is the only trusted
         -- metadata. Validate the identity, then re-wrap .f so raw and
-        -- pre-wrapped exports get identical call-time enforcement.
+        -- pre-wrapped exports get identical call-time enforcement. The
+        -- documented host-authoring shape ({__kind = "function", sig, f})
+        -- is a host-module input, accepted here and normalized by the
+        -- re-wrap; the marks a DEAL value carries are the private ones.
         if v.sig ~= descriptor then
           host_load_failure("HOST_LOAD_SIGNATURE_MISMATCH",
             { name = name, module = module_path, expected = descriptor,
@@ -1250,16 +1360,22 @@ function __rt.load_host(module_path, declared, file, line, column)
       end
     elseif parsed ~= nil and parsed.kind == "class" then
       -- Class meta: the identity must equal the declared descriptor exactly
-      -- (module-qualified nominal identity).
-      if type(v) ~= "table" or v.__kind ~= "class" then
+      -- (module-qualified nominal identity). The documented host-authoring
+      -- shape ({__kind = "class", __classname = <atom>}) is a host-module
+      -- input; it is normalized into the runtime's private-marked carrier
+      -- so every later consumer reads one representation, and a DEAL table
+      -- with the same string keys can never be projected as a class.
+      if type(v) ~= "table" or (v[__K.kind] ~= "class"
+          and v.__kind ~= "class") then
         error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a class meta table", file, line, column, "class", type(v)))
       end
-      if v.__classname ~= descriptor then
+      local carried = (v[__K.kind] == "class") and v[__K.classname] or v.__classname
+      if carried ~= descriptor then
         host_load_failure("HOST_LOAD_IDENTITY_MISMATCH",
           { name = name, module = module_path, expected = descriptor,
-            actual = tostring(v.__classname) }, file, line, column)
+            actual = tostring(carried) }, file, line, column)
       end
-      exports[name] = v
+      exports[name] = { [__K.kind] = "class", [__K.classname] = descriptor }
       -- <C>_defaults is mandatory (construction depends on it); a
       -- missing or non-table entry is the HOST_LOAD_INVALID_METADATA
       -- arm's `defaults` kind, rendered by the artifact-registered arm
@@ -1301,7 +1417,7 @@ end
 -- @return table — async handle
 function __rt.async_create(fn)
   local co = coroutine.create(fn)
-  return { __kind = "async", __co = co, __done = false, __result = nil }
+  return { [__K.kind] = "async", __co = co, __done = false, __result = nil }
 end
 
 --- Start an async operation: create a handle and step it.
@@ -1341,7 +1457,7 @@ function __rt.async_step(handle, value)
     return
   end
   -- Coroutine yielded. Expect an async handle.
-  if type(yielded) == "table" and yielded.__kind == "async" then
+  if type(yielded) == "table" and yielded[__K.kind] == "async" then
     local inner_handle = yielded
     local outer_handle = handle
     if inner_handle.__done then
@@ -1441,7 +1557,7 @@ function __rt.invoke_async_export(exports, exportName, returnDescriptor)
     error(__rt._host_invocation_failure(
         "missing export '" .. exportName .. "'"))
   end
-  if type(entry) ~= "table" or entry.__kind ~= "function" then
+  if type(entry) ~= "table" or entry[__K.kind] ~= "function" then
     error(__rt._host_invocation_failure(
         "export '" .. exportName .. "' is not a function wrapper"))
   end
@@ -1487,7 +1603,7 @@ function __rt.invoke_async_export(exports, exportName, returnDescriptor)
   -- Call the wrapper exactly once. The sig above promised the exact
   -- async()->R; a non-operation result is a non-production wrapper.
   local handle = entry.f()
-  if type(handle) ~= "table" or handle.__kind ~= "async" then
+  if type(handle) ~= "table" or handle[__K.kind] ~= "async" then
     error(__rt._host_invocation_failure(
         "export '" .. exportName .. "' did not produce an async operation"))
   end
@@ -1549,8 +1665,8 @@ function __rt.class_(classname, defaults, provided, file, line, column)
   end
 
   -- 4. Tag with class name and kind
-  instance.__classname = classname
-  instance.__kind = "class"
+  instance[__K.classname] = classname
+  instance[__K.kind] = "class"
 
   return instance
 end
@@ -1607,7 +1723,7 @@ end
 --   3. Every present field validates against its canonical descriptor in
 --      class source order through check_canonical_type (RCP — the
 --      canonical matcher entry).
---   4. Tag __classname = identity, __kind = "class", publish.
+--   4. Tag [__K.classname] = identity, [__K.kind] = "class", publish.
 --
 -- Failure publishes no instance (the slots are local and discarded);
 -- completed evaluator or native side effects are not rolled back; one
@@ -1661,14 +1777,14 @@ function __rt.class_plan_(identity, plan, provided, file, line, column)
   end
 
   -- Phase 4: tag and publish.
-  slots.__classname = identity
-  slots.__kind = "class"
+  slots[__K.classname] = identity
+  slots[__K.kind] = "class"
   return slots
 end
 
 --- Create a class export descriptor for module exports.
 function __rt.export_class(name)
-  return { __kind = "class", __classname = name }
+  return { [__K.kind] = "class", [__K.classname] = name }
 end
 
 -- ===== Intrinsic support =====
@@ -1725,7 +1841,7 @@ function __rt._deep_copy(t)
     return t
   end
   -- Preserve special __kind objects by identity
-  if t.__kind == "function" or t.__kind == "class" or t.__kind == "async" then
+  if t[__K.kind] == "function" or t[__K.kind] == "class" or t[__K.kind] == "async" then
     return t
   end
   local copy = {}
@@ -1828,8 +1944,8 @@ end
 --- True iff v is a JSON-shaped table datum (Contract 4 table row):
 -- JSON-object or dense-array shape whose leaves are __NULL, booleans,
 -- finite numbers, or strings, and whose nested tables satisfy the same
--- shape. Functions, function wrappers (__kind == "function"), class
--- instances (__kind == "class"), async handles (__kind == "async"),
+-- shape. Functions, function wrappers ([__K.kind] == "function"), class
+-- instances ([__K.kind] == "class"), async handles ([__K.kind] == "async"),
 -- NaN/Infinity leaves, and cycles are false; empty tables are true, and
 -- there is no fixed nesting-depth bound (a finite datum is never
 -- rejected for its depth). Non-table v is false — the guard runs before
@@ -1847,7 +1963,7 @@ function __rt._json_table_shape(v, seen)
   if type(v) ~= "table" then
     return false, "shape"
   end
-  if v.__kind == "function" or v.__kind == "class" or v.__kind == "async" then
+  if v[__K.kind] == "function" or v[__K.kind] == "class" or v[__K.kind] == "async" then
     return false, "shape"
   end
   if type(seen) ~= "table" then
@@ -1891,8 +2007,8 @@ function __rt._json_table_shape(v, seen)
         return false, "shape"
       end
     elseif type(val) == "table" then
-      if val.__kind == "function" or val.__kind == "class"
-          or val.__kind == "async" then
+      if val[__K.kind] == "function" or val[__K.kind] == "class"
+          or val[__K.kind] == "async" then
         unwind()
         return false, "shape"
       end
@@ -1918,7 +2034,7 @@ end
 
 --- D2 step 3 defaults identity gate, as a non-throwing predicate:
 -- false when defaults is not a table, when defaults is __NULL or
--- __MISSING by identity, or when defaults.__kind is
+-- __MISSING by identity, or when defaults[__K.kind] is
 -- "function"/"class"/"async" — exactly the condition under which
 -- _deep_copy returns the table by identity (see _deep_copy above).
 -- A __kind field holding any other value (a legal field default) is
@@ -1930,7 +2046,7 @@ function __rt._json_defaults_identity_ok(defaults)
   if defaults == __rt.__NULL or defaults == __rt.__MISSING then
     return false
   end
-  local k = defaults.__kind
+  local k = defaults[__K.kind]
   if k == "function" or k == "class" or k == "async" then
     return false
   end
@@ -1959,7 +2075,7 @@ function __rt._json_defaults_acyclic(t, seen)
     if x == __rt.__NULL or x == __rt.__MISSING then
       return true
     end
-    local k = x.__kind
+    local k = x[__K.kind]
     return k == "function" or k == "class" or k == "async"
   end
   if seen[t] then
@@ -2106,7 +2222,7 @@ end
 --      attempt under pcall — an evaluator failure returns nil;
 --   5. final validation — every present field re-checks against its
 --      canonical descriptor in class source order;
---   6. tag __classname = identity, __kind = "class", publish.
+--   6. tag [__K.classname] = identity, [__K.kind] = "class", publish.
 -- Optional omissions stay absent; evaluator results are retained by
 -- reference (no generic deep copy).
 function __rt.json_from_plan(identity, plan, parsed, file, line, column)
@@ -2170,8 +2286,8 @@ function __rt.json_from_plan(identity, plan, parsed, file, line, column)
     end
   end
 
-  slots.__classname = identity
-  slots.__kind = "class"
+  slots[__K.classname] = identity
+  slots[__K.kind] = "class"
   return slots
 end
 
@@ -2275,8 +2391,8 @@ function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
       instance[k] = nil
     end
   end
-  instance.__classname = descriptor
-  instance.__kind = "class"
+  instance[__K.classname] = descriptor
+  instance[__K.kind] = "class"
   seen[parsed] = nil
   return instance
 end
@@ -2487,11 +2603,11 @@ function __rt._json_to_value(fdesc, v, seen, file, line, column)
     -- Emit the validated original table by reference (never mutated).
     return v
   elseif jtype == "class" then
-    if type(v) ~= "table" or v.__kind ~= "class" then
+    if type(v) ~= "table" or v[__K.kind] ~= "class" then
       error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(v)))
     end
-    if v.__classname ~= fdesc.className then
-      error(__rt._err("E8001", "expected instance of " .. fdesc.className .. ", got " .. tostring(v.__classname or "unknown"), file, line, column, fdesc.className, v.__classname))
+    if v[__K.classname] ~= fdesc.className then
+      error(__rt._err("E8001", "expected instance of " .. fdesc.className .. ", got " .. tostring(v[__K.classname] or "unknown"), file, line, column, fdesc.className, v[__K.classname]))
     end
     if seen[v] then
       error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
@@ -2547,11 +2663,11 @@ function __rt.json_to_json(descriptor, value, fields, file, line, column)
   -- 1. Top-level identity check (D3 step 1, defense in depth — the
   -- generated wrapper's check_type fires first): exact-compare like
   -- check_type's class branch.
-  if type(value) ~= "table" or value.__kind ~= "class" then
+  if type(value) ~= "table" or value[__K.kind] ~= "class" then
     error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(value)))
   end
-  if value.__classname ~= descriptor then
-    error(__rt._err("E8001", "expected instance of " .. tostring(descriptor) .. ", got " .. tostring(value.__classname or "unknown"), file, line, column, descriptor, value.__classname))
+  if value[__K.classname] ~= descriptor then
+    error(__rt._err("E8001", "expected instance of " .. tostring(descriptor) .. ", got " .. tostring(value[__K.classname] or "unknown"), file, line, column, descriptor, value[__K.classname]))
   end
   -- 2. Encode descriptor-entry validation (D3 step 2): field entries
   -- require boolean optional/nullable, present element flags must be
@@ -3289,7 +3405,7 @@ function ffi_converters.outbound(cargs, keep, kind, meta, value, classIndex, fil
     -- byte-for-byte, so the DEAL-opaque __ptr storage stays invisible
     -- to typed boundaries.
     local v = __rt.check_type(meta.canonicalDescriptor, value, file, line, column)
-    local ptr = v.__ptr
+    local ptr = v[__K.ptr]
     if ptr == nil then
       error(__rt._err("E8001", "expected a non-null pointer token",
         file, line, column, "non-null pointer token", "null pointer token"))
@@ -3318,7 +3434,7 @@ function ffi_converters.outbound(cargs, keep, kind, meta, value, classIndex, fil
         tmp[member] = ffi.cast("_Bool", __rt.check_boolean(v[fld.dealName], file, line, column))
       elseif ft == "C_POINTER" then
         local tok = __rt.check_type(fld.type.canonicalDescriptor, v[fld.dealName], file, line, column)
-        local fptr = tok.__ptr
+        local fptr = tok[__K.ptr]
         if fptr == nil then
           error(__rt._err("E8001", "expected a non-null pointer token",
             file, line, column, "non-null pointer token", "null pointer token"))
@@ -3373,8 +3489,8 @@ function ffi_converters.inbound(kind, meta, result, classIndex, planIndex, file,
       error(__rt._err("FFI_NULL_POINTER", "C pointer return was NULL",
         file, line, column, nil, nil))
     end
-    return { __kind = "class", __classname = meta.canonicalClassIdentity,
-             __ptr = ffi.cast("void *", result) }
+    return { [__K.kind] = "class", [__K.classname] = meta.canonicalClassIdentity,
+             [__K.ptr] = ffi.cast("void *", result) }
   elseif kind == "C_STRUCT" then
     local cls = classIndex[meta.canonicalClassIdentity]
     local provided = {}
@@ -3400,9 +3516,9 @@ function ffi_converters.inbound(kind, meta, result, classIndex, planIndex, file,
             "C pointer field '" .. fld.dealName .. "' return was NULL",
             file, line, column, nil, nil))
         end
-        provided[fld.dealName] = { __kind = "class",
-          __classname = fld.type.canonicalClassIdentity,
-          __ptr = ffi.cast("void *", member) }
+        provided[fld.dealName] = { [__K.kind] = "class",
+          [__K.classname] = fld.type.canonicalClassIdentity,
+          [__K.ptr] = ffi.cast("void *", member) }
       end
     end
     return __rt.class_plan_(meta.canonicalClassIdentity,
@@ -3494,7 +3610,7 @@ local ffi_wrapper_readiness_builder = {}
 -- a config failure FFI_LIBRARY_LOAD), compose the sig by canonical
 -- serialization over the literalized per-parameter descriptors, and
 -- return the spec-pinned wrapper table
--- { __kind = "function", sig = <composed>, f = <closure> }.
+-- { [__K.kind] = "function", sig = <composed>, f = <closure> }.
 --
 -- The closure realizes f(v1, ..., vN, file, line, column): a defensive
 -- exact arity check first (E8010, following the from_lua_function

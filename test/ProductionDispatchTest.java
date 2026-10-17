@@ -1255,12 +1255,12 @@ public class ProductionDispatchTest {
                 local surfaces = dofile("out/main.lua")
                 assert(type(surfaces) == "table", "the chunk returns the entry surface")
                 assert(type(surfaces.label) == "table", "the entry surface carries label")
-                assert(surfaces.label.__kind == "function", "the landed entry shape")
+                assert(surfaces.label[__dealCarrierKeys.kind] == "function", "the landed entry shape")
                 local lib = __exportSurfaces["lib"]
                 assert(type(lib) == "table", "the lib surface exists")
-                assert(type(lib.value) == "table" and lib.value.__kind == "function",
+                assert(type(lib.value) == "table" and lib.value[__dealCarrierKeys.kind] == "function",
                   "the lib surface carries value")
-                assert(type(lib.label) == "table" and lib.label.__kind == "function",
+                assert(type(lib.label) == "table" and lib.label[__dealCarrierKeys.kind] == "function",
                   "the lib surface carries label")
                 return surfaces
                 """);
@@ -2695,10 +2695,10 @@ public class ProductionDispatchTest {
                 assert(type(surfaces) == "table",
                   "the chunk returns the entry surface")
                 local worker = surfaces.worker
-                assert(type(worker) == "table" and worker.__kind == "function",
+                assert(type(worker) == "table" and worker[__dealCarrierKeys.kind] == "function",
                   "the entry surface publishes the same-module async export")
                 local handle = worker.f()
-                assert(type(handle) == "table" and handle.__kind == "async",
+                assert(type(handle) == "table" and handle[__dealCarrierKeys.kind] == "async",
                   "the published async export produces an async operation")
                 require("deal.runtime").async_step(handle)
                 local completion = handle.__result
@@ -3239,7 +3239,7 @@ public class ProductionDispatchTest {
                     + luaCompile.stderr());
             if (luaCompile.exitCode() == 0) {
                 String lua = Files.readString(project.resolve("out/main.lua"));
-                check(lua.contains("__instT = {__d = true, code = ")
+                check(lua.contains("__instT = {[__dealCarrierKeys.d] = true, code = ")
                         && lua.contains(", m = ")
                         && lua.contains("\"E1\"")
                         && lua.contains("\"m\""),
@@ -4949,7 +4949,7 @@ public class ProductionDispatchTest {
                 local ok, err = __dealMain()
                 if ok then ok, err = pcall(surface[arg[2]].f) end
                 if not ok then
-                  if type(err) ~= 'table' or not err.__d then error(err, 0) end
+                  if type(err) ~= 'table' or not err[__dealCarrierKeys.d] then error(err, 0) end
                   print('ERR:' .. err.code .. '|' .. err.m .. '|' .. err.o
                     .. '|' .. (err.e or '') .. '|' .. (err.a or ''))
                   os.exit(1)
@@ -4980,6 +4980,26 @@ public class ProductionDispatchTest {
                 "stdlib/json/json-stringify-contextual-read-carrier",
                 "test_json_stringify_contextual_read_carrier", false,
                 drivers);
+            // ISSUE-0830: private carrier identity on the published
+            // artifacts. A table may carry any string key: the
+            // carrier-vocabulary table keeps its keys end to end, the
+            // forged class/array/bytes/function carriers are rejected at
+            // every declared carrier boundary, the language null is never
+            // a table or an array, and std/json.parse's declared
+            // (string)->table exit refuses a scalar root with the shared
+            // expected-table tuple.
+            driveBoundaryCorpusFixture(
+                "runtime/table-carrier-keys-are-data",
+                "test_table_carrier_keys_are_data", false, drivers);
+            driveBoundaryCorpusFixture(
+                "runtime/forged-carrier-identities-rejected",
+                "test_forged_carrier_identities", false, drivers);
+            driveBoundaryCorpusFixture(
+                "runtime/null-is-not-a-table-or-array",
+                "test_null_is_not_a_container", false, drivers);
+            driveBoundaryCorpusFixture(
+                "stdlib/json/json-parse-top-level-scalar-table-error",
+                "test_json_parse_top_level_scalar", true, drivers);
         } finally {
             deleteRecursively(drivers);
         }
