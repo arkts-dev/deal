@@ -117,6 +117,7 @@ function $kindOf($v) {
   if ($v === null) return "null";
   if ($jsonNullTables.has($v)) return "null";
   if ($jsonArrayTables.has($v)) return "array";
+  if ($isNumCarrier($v)) return $v.k;
   if ($v.$kind === "function") return "function";
   if ($v.$kind === "class") return "class";
   if ($v instanceof $Map) return "table";
@@ -663,6 +664,76 @@ function $markNumberVariant($container, $key) {
 function $isNumberVariant($container, $key) {
   const $marks = $jsonNumberMarks.get($container);
   return $marks !== $undefined && $marks.has($key);
+}
+
+// $numCarrier/$isNumCarrier/$numOf: the read-side number-variant carrier
+// (the Lua realization's __readVar __jn carrier, deal/runtime.lua's
+// emitted prelude): a decoded graph records each numeric slot's variant
+// in the container marks, and a read that leaves the container
+// materializes the value's own variant as this carrier, because a JS
+// number cannot carry it itself. The carrier is the runtime's private
+// value form on the same contract the Lua __jn table and the shared
+// JVM runtime's boxed Long/Double implement: `k` is the closed variant
+// ("int"|"number") and `d` the double value. The numeric consumers
+// unwrap it explicitly ($numOf) wherever they read a number; `valueOf`
+// and `toString` make host-visible coercions of a runtime-owned carrier
+// (the generated std modules' native Math calls included) agree with the
+// wrapped value. Never exported and never produced by user source.
+const $numCarrier = function $numCarrier($k, $d) {
+  return {
+    $jn: true,
+    k: $k,
+    d: $d,
+    valueOf: function $numCarrierValueOf() { return $d; },
+    toString: function $numCarrierToString() { return String($d); },
+  };
+};
+
+function $isNumCarrier($v) {
+  return $v !== null && $v !== $undefined && typeof $v === "object"
+    && $v.$jn === true;
+}
+
+// $numOf: the numeric value view of one operand — a read-side carrier
+// unwraps to its double, every other value passes through unchanged (the
+// Lua __num tolerance, so an int/number carrier and a plain JS number
+// are interchangeable at every numeric consumer).
+function $numOf($v) {
+  return $isNumCarrier($v) ? $v.d : $v;
+}
+
+// $numVariantOf: the recorded variant of one value being committed into a
+// container slot — a carrier carries its own variant, every other value
+// takes the written expression's static kind (the caller passes whether
+// that kind is the number variant). Mirrors __numKey's
+// carrier-overrides-static rule so a slot's mark always mirrors the
+// stored value's own variant.
+function $numVariantOf($v, $staticIsNumber) {
+  if ($isNumCarrier($v)) {
+    return $v.k === "number";
+  }
+  return $staticIsNumber === true;
+}
+
+// $setNumberVariant/$clearNumberVariant: the container-slot mark
+// maintenance of every committed write (the Lua __numKey mirror). A
+// committed write records the written value's own variant, so the
+// encode walks' spelling decision always mirrors the stored value's
+// variant — a later non-number rewrite of the same slot clears the
+// mark.
+function $setNumberVariant($container, $key, $isNumber) {
+  if ($isNumber === true) {
+    $markNumberVariant($container, $key);
+    return;
+  }
+  $clearNumberVariant($container, $key);
+}
+
+function $clearNumberVariant($container, $key) {
+  const $marks = $jsonNumberMarks.get($container);
+  if ($marks !== $undefined) {
+    $marks.delete($key);
+  }
 }
 
 // $isValidScalars: true when $s contains no unpaired surrogate unit (every
@@ -1223,6 +1294,9 @@ function $sfDigits($v, $n) {
 // $numText: the canonical decimal text of one finite binary64 value, or
 // null for a nonfinite one.
 function $numText($v) {
+  // A read-side variant carrier spells its own double: the canonical text
+  // is a function of the value, never of the carrier (__num).
+  $v = $numOf($v);
   if ($v !== $v || $v === Infinity || $v === -Infinity) {
     return null;
   }
@@ -1285,7 +1359,10 @@ function $carrierToken($v) {
   if ($v === $undefined || $v === $MISSING) return "nil";
   if ($v === null) return "table";
   if (typeof $v === "boolean") return "boolean";
-  if (typeof $v === "number") return "number";
+  // A read-side variant carrier is a number carrier on the std/json row's
+  // closed vocabulary (the shared JsonStringify projection), whichever
+  // variant it records.
+  if (typeof $v === "number" || $isNumCarrier($v)) return "number";
   if (typeof $v === "string") return "string";
   if ($rt.isBytes($v)) return "bytes";
   if (typeof $v === "function" || $v.$kind === "function") return "function";
@@ -1300,6 +1377,9 @@ function $walkToken($v) {
   if ($v === $undefined || $v === $MISSING) return "nil";
   if ($v === null) return "null";
   if (typeof $v === "boolean") return "boolean";
+  // A read-side variant carrier projects its own variant (the shared
+  // Value.Int/Value.Number typed-boundary tokens).
+  if ($isNumCarrier($v)) return $v.k;
   if (typeof $v === "number") {
     if ($v === $v && $v !== Infinity && $v !== -Infinity && $v % 1 === 0) {
       return "int";
@@ -1390,6 +1470,22 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
       $out.push(String($value));
       return;
     }
+    // A read-side variant carrier (a decoded slot's materialized
+    // variant) spells by its own kind, exactly like the shared model's
+    // Value.Number (canonical decimal text) and Value.Int (integer
+    // text): the recorded variant, not the declared position, decides.
+    if ($isNumCarrier($value)) {
+      const $d = $value.d;
+      if ($d !== $d || $d === Infinity || $d === -Infinity) {
+        $unsupported($d, $valuePath);
+      }
+      if ($value.k === "number") {
+        $out.push($numText($d));
+        return;
+      }
+      $out.push(String($d));
+      return;
+    }
     if ($type === "string") {
       if (!$isValidScalars($value)) $unsupported($value, $valuePath);
       $out.push($jsonEscapeText($value));
@@ -1450,8 +1546,9 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
     while ($stack.length > 0) {
       const $frame = $stack[$stack.length - 1];
       if ($frame.kind === 1) {
-        // A marked array-shaped Map: dense indices 1..max, an absent
-        // element spelling the JSON null.
+        // A marked array-shaped Map: dense indices 1..max; an absent
+        // element is the internal missing value (the general emit arm
+        // reports the closed nil failure).
         if ($frame.index > $frame.max) {
           $out.push("]");
           $active.pop();
@@ -1464,10 +1561,10 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
         const $element = $frame.map.get($key);
         const $elementPath = $frame.path === "" ? "[" + ($i - 1) + "]"
           : $frame.path + "[" + ($i - 1) + "]";
-        if ($element === $undefined) {
-          $out.push("null");
-          continue;
-        }
+        // An absent (deleted) slot is the internal missing value, never a
+        // fabricated present JSON null: the shared encoder rejects it as
+        // a value-representation failure at this position (the general
+        // emit arm projects the pinned nil token for both rows).
         $emit($element, $elementPath, $isNumberVariant($frame.map, $key));
         continue;
       }
@@ -1499,8 +1596,9 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
         $emit($element, $elementPath, $isNumberVariant($frame.map, $key));
         continue;
       }
-      // A native Array: elements in index order, an absent element
-      // spelling the JSON null.
+      // A native Array: elements in index order; an absent (deleted)
+      // element is the internal missing value and takes the same closed
+      // representation failure as a decoded array's absent slot.
       if ($frame.index >= $frame.array.length) {
         $out.push("]");
         $active.pop();
@@ -1511,10 +1609,6 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
       if ($i > 0) $out.push(",");
       const $element = $frame.array[$i];
       const $elementPath = $frame.path === "" ? "[" + $i + "]" : $frame.path + "[" + $i + "]";
-      if ($element === $undefined) {
-        $out.push("null");
-        continue;
-      }
       $emit($element, $elementPath, $isNumberVariant($frame.array, String($i)));
     }
     return $out.join("");
@@ -1798,7 +1892,10 @@ function $fieldPathFor($base, $name) {
 // encoder with the typed-boundary projection. $variant is the recorded
 // number variant of a decoded-array slot ($true for the number
 // classification, $false for the int classification, $undefined
-// outside a decoded carrier); the "int" and "number" rows consult it.
+// outside a decoded carrier); the "int" and "number" rows consult it
+// for a plain number. A read-side variant carrier is judged by its own
+// recorded kind first (the shared model's Value.Int/Value.Number rows,
+// never the declared position).
 function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
     $variant) {
   const $walkFail = function () {
@@ -1833,6 +1930,18 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
       }
       return $jsonEscapeText($value);
     case "int":
+      if ($isNumCarrier($value)) {
+        // The value's own variant decides, never the declared position:
+        // a number-variant carrier is a Value.Number and fails with the
+        // number token even when its double is integral; an int-variant
+        // carrier keeps the integer row.
+        if ($value.k === "number") {
+          $rt.fail("E8001", "value at " + $fieldPath
+            + " is not JSON serializable: number", $file, $line, $column,
+            $undefined, "number");
+        }
+        return String($value.d);
+      }
       if (typeof $value !== "number" || $value !== $value
           || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308
           || $value % 1 !== 0) {
@@ -1853,6 +1962,19 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
       // The signed32 range gate keeps its own E8004 projection.
       return String($rt.checkInt($value, $file, $line, $column));
     case "number":
+      if ($isNumCarrier($value)) {
+        // The value's own variant decides the spelling: an int-variant
+        // carrier keeps the integer spelling and a number-variant carrier
+        // the canonical decimal text, exactly the shared
+        // Value.Int/Value.Number rows.
+        const $carried = $value.d;
+        if ($carried !== $carried
+            || $carried > 1.7976931348623157e308
+            || $carried < -1.7976931348623157e308) {
+          $walkFail();
+        }
+        return $value.k === "number" ? $numText($carried) : String($carried);
+      }
       if (typeof $value !== "number" || $value !== $value
           || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308) {
         $walkFail();
@@ -1919,20 +2041,28 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
       try {
         const $parts = [];
         const $isDecoded = $rt.isJsonArrayTable($value);
+        const $wantsNumber = $entry.element.jtype === "number";
         const $length = $rt.arrayLength($value);
         for (let $i = 0; $i < $length; $i++) {
-          const $element = $rt.arrayAt($value, $i);
+          const $element = $rt.arrayAt($value, $i, $wantsNumber);
           const $elementPath = $fieldPath + "[" + $i + "]";
           if ($element === $undefined) {
-            $parts.push("null");
-            continue;
+            // An absent (deleted) slot is the internal missing value, not
+            // a present JSON null: the shared walk rejects it at this
+            // position with the closed nil token on every lane.
+            $rt.fail("E8001", "value at " + $elementPath
+              + " is not JSON serializable: nil", $file, $line, $column,
+              $undefined, "nil");
           }
           // A decoded carrier records its per-slot number variant under
           // the same 1-based key $rt.arrayAt reads (only the number
-          // variant is marked), so the element row reaches the same
-          // spelling the shared model's Value.Int/Value.Number carry; a
-          // native Array records no variant.
-          const $elementVariant = $isDecoded
+          // variant is marked) and materializes a variant carrier for the
+          // positions whose variant the read's declared kind cannot
+          // express, so the element row reaches the same spelling the
+          // shared model's Value.Int/Value.Number carry; a native Array
+          // records no decoded variant and keeps the declared-type
+          // spelling.
+          const $elementVariant = $isDecoded && typeof $element === "number"
             ? $isNumberVariant($value, String($i + 1))
             : $undefined;
           $parts.push($jsonToValue($entry.element, $element, $path, $elementPath,
@@ -2006,6 +2136,16 @@ const $rt = {
   MISSING: $MISSING,
   NULL: null,
   undefined: $undefined,
+
+  // numOf: the emitted numeric value view (the same private unwrap the
+  // numeric runtime members use) — a read-side number-variant carrier
+  // reduces to its double and every other value passes through, so an
+  // emitted strict equality of two numeric operands compares by value
+  // while the carrier keeps its variant everywhere else (the Lua __num
+  // tolerance on the JS lane). A total, pure function.
+  numOf: function $numOfPublic(v) {
+    return $numOf(v);
+  },
 
   // isNilEquivalent: the nil-equivalent predicate of the null-admitting
   // boundaries and the nullable equality forms. DEAL null is the JS null
@@ -2253,6 +2393,31 @@ const $rt = {
   // range arm carries no expected/actual (nil in the reference — fields
   // absent, the _err convention).
   checkInt: function $checkInt(v, file, line, column) {
+    if ($isNumCarrier(v)) {
+      // The boundary view of a read-side variant carrier keeps the
+      // value's own representation (the shared coreInt row): an
+      // int-variant carrier passes, a number-variant carrier passes
+      // exactly when its double is an integral in-range value and
+      // otherwise takes the number rows in the shared order. The
+      // admitted value is returned unchanged — the boundary never
+      // re-types a Value.Number into a Value.Int.
+      if (v.k === "number") {
+        const $d = v.d;
+        if ($d !== $d) {
+          $rt.fail("E8001", "expected int, got NaN", file, line, column, "int", "NaN");
+        }
+        if ($d === Infinity || $d === -Infinity) {
+          $rt.fail("E8001", "expected int, got infinity", file, line, column, "int", "infinity");
+        }
+        if ($d % 1 !== 0) {
+          $rt.fail("E8001", "expected int, got non-integer number", file, line, column, "int", "number");
+        }
+        if ($d < -2147483648 || $d > 2147483647) {
+          $rt.fail("E8004", "int out of safe range", file, line, column);
+        }
+      }
+      return v;
+    }
     if (typeof v !== "number") {
       $rt.fail("E8001", "expected int", file, line, column, "int", $kindOf(v));
     }
@@ -2272,8 +2437,14 @@ const $rt = {
     return v;
   },
 
-  // checkNumber: NaN and ±Infinity pass (spec §Numeric overflow).
+  // checkNumber: NaN and ±Infinity pass (spec §Numeric overflow). A
+  // read-side variant carrier is the number value itself (the shared
+  // number row admits an int-variant Value.Int unchanged), so it passes
+  // and keeps its variant.
   checkNumber: function $checkNumber(v, file, line, column) {
+    if ($isNumCarrier(v)) {
+      return v;
+    }
     if (typeof v !== "number") {
       $rt.fail("E8001", "expected number", file, line, column, "number", $kindOf(v));
     }
@@ -2496,12 +2667,35 @@ const $rt = {
   // an error: that is the stop cell of the emitted array for-of (the
   // LuaJIT ipairs stop-at-first-nil semantics), so a deleted element or
   // a past-the-end position ends the iteration exactly like a native
-  // Array's out-of-range read. Pure read: no mutation, no allocation,
-  // and never a materialized copy — the carrier identity is untouched,
-  // so writes and reads through the same table stay aliased.
-  arrayAt: function $arrayAt(v, i) {
+  // Array's out-of-range read. Pure read: no mutation, no allocation
+  // beyond the read-side variant carrier, and never a materialized copy —
+  // the carrier identity is untouched, so writes and reads through the
+  // same table stay aliased.
+  //
+  // The decoded carrier's scalar slot materializes the value's own
+  // variant as a read-side carrier (the Lua emitted prelude's __readVar
+  // materialization, the same rule the reference value model applies): a
+  // number-marked slot yields the number carrier and an int-marked slot
+  // yields the int carrier exactly when the read's declared element kind
+  // is the number variant ($wantsNumber, the isNumberKind(staticKind)
+  // flag of the emitted lanes) — the two positions whose variant the JS
+  // number cannot express by itself. Every other position returns the
+  // stored value, so a real Array keeps the representation its declared
+  // element type gave it and a decoded slot whose variant matches its
+  // declared kind stays a plain number.
+  arrayAt: function $arrayAt(v, i, wantsNumber) {
     if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
-      return v.get(String(i + 1));
+      const $key = String(i + 1);
+      const $element = v.get($key);
+      if (typeof $element === "number") {
+        if ($isNumberVariant(v, $key)) {
+          return $numCarrier("number", $element);
+        }
+        if (wantsNumber === true) {
+          return $numCarrier("int", $element);
+        }
+      }
+      return $element;
     }
     return v[i];
   },
@@ -2535,13 +2729,23 @@ const $rt = {
   // array) sets the array-form key "i+1", so a write through one
   // reference is observed by every alias and by the shared JSON encode
   // walk. Returns the written value (the assignment's expression value).
-  // The carrier identity is preserved; no copy, no extra mutation.
-  arraySet: function $arraySet(v, i, value) {
+  // The committed write also records the written value's own variant on
+  // the slot (the Lua __numKey mirror): the written expression's static
+  // element kind decides for a plain number ($isNumber), a read-side
+  // variant carrier's own kind otherwise, and a non-number write clears
+  // the mark — so a decoded slot never keeps its decode-time variant
+  // after a rewrite and the encode walks spell by the stored value. The
+  // carrier identity is preserved; no copy, no extra mutation.
+  arraySet: function $arraySet(v, i, value, isNumber) {
+    const $variant = $numVariantOf(value, isNumber);
     if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
-      v.set(String(i + 1), value);
+      const $key = String(i + 1);
+      v.set($key, value);
+      $setNumberVariant(v, $key, $variant);
       return value;
     }
     v[i] = value;
+    $setNumberVariant(v, String(i), $variant);
     return value;
   },
 
@@ -2551,14 +2755,18 @@ const $rt = {
   // the T1 nil-equivalent in the slot and a marked Map sets its
   // array-form key to the same value, the nil-write of the reference
   // semantics: reads at the slot yield the nil-equivalent and the length
-  // is unchanged. No mutation of any other slot; the carrier identity is
-  // preserved.
+  // is unchanged. The slot's number-variant mark is cleared — the slot
+  // now holds the internal missing value, never a classified number. No
+  // mutation of any other slot; the carrier identity is preserved.
   arrayDelete: function $arrayDelete(v, i) {
     if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
-      v.set(String(i + 1), $undefined);
+      const $key = String(i + 1);
+      v.set($key, $undefined);
+      $clearNumberVariant(v, $key);
       return;
     }
     v[i] = $undefined;
+    $clearNumberVariant(v, String(i));
   },
 
   // checkFunctionSig: the named surface member the emitter calls where the
@@ -2586,25 +2794,27 @@ const $rt = {
   // runtime member. Pure functions; no mutation.
 
   intAdd: function $intAdd(a, b, file, line, column) {
-    return $rt.checkInt(a + b, file, line, column);
+    return $rt.checkInt($numOf(a) + $numOf(b), file, line, column);
   },
 
   intSub: function $intSub(a, b, file, line, column) {
-    return $rt.checkInt(a - b, file, line, column);
+    return $rt.checkInt($numOf(a) - $numOf(b), file, line, column);
   },
 
   intMul: function $intMul(a, b, file, line, column) {
-    return $rt.checkInt(a * b, file, line, column);
+    return $rt.checkInt($numOf(a) * $numOf(b), file, line, column);
   },
 
   intNeg: function $intNeg(a, file, line, column) {
-    return $rt.checkInt(-a, file, line, column);
+    return $rt.checkInt(-$numOf(a), file, line, column);
   },
 
   // intDiv: E8005 on a zero divisor first (no expected/actual, mirroring
   // the reference _err(nil, nil) pair), then checkInt of the
   // truncation-toward-zero quotient (deal/runtime.lua:490-494).
   intDiv: function $intDiv(a, b, file, line, column) {
+    a = $numOf(a);
+    b = $numOf(b);
     if (b === 0) {
       $rt.fail("E8005", "integer division by zero", file, line, column);
     }
@@ -2618,6 +2828,8 @@ const $rt = {
   // SharedValueSemantics.int32Mod agrees). The remainder a - q * b then
   // passes through checkInt.
   intMod: function $intMod(a, b, file, line, column) {
+    a = $numOf(a);
+    b = $numOf(b);
     if (b === 0) {
       $rt.fail("E8005", "integer division by zero", file, line, column);
     }
@@ -3495,7 +3707,9 @@ const $rt = {
     if ($rt.isNilEquivalent(v)) {
       $rt.fail("E8001", "cannot convert null to int", file, line, column, "int", "null");
     }
-    return $rt.checkInt(v, file, line, column);
+    // The conversion produces the target representation: a read-side
+    // variant carrier unwraps to its plain double (the validated value).
+    return $numOf($rt.checkInt(v, file, line, column));
   },
 
   // numberConvert: the number(x) conversion intrinsic
@@ -3508,7 +3722,8 @@ const $rt = {
     if ($rt.isNilEquivalent(v)) {
       $rt.fail("E8001", "cannot convert null to number", file, line, column, "number", "null");
     }
-    return $rt.checkNumber(v, file, line, column);
+    // The conversion produces the target representation (see intConvert).
+    return $numOf($rt.checkNumber(v, file, line, column));
   },
   // ===== String scalar-value helpers (js-backend-runtime-artifact D9) =====
   // Code-point measures and ordering. Native JS string iteration walks one

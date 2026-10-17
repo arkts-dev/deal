@@ -170,6 +170,7 @@ public class JsBackendTest {
             testJsonDecodedArrayElementKindNode();
             testJsonDecodedArrayReadLengthNode();
             testJsonableDecodedArrayFieldNode();
+            testJsonDecodedArrayVariantNode();
             testJsonStoredFunctionE8001();
             testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
@@ -2566,9 +2567,11 @@ public class JsBackendTest {
         check(js.contains("if ($idx < 0 || $idx >= $rt.arrayLength($arr)) { "
                 + "$rt.fail(\"E8002\", \"array index out of bounds\", "),
             "the read gates both bounds with E8002 'array index out of bounds'");
-        check(js.contains("return $rt.arrayAt($arr, $idx); })()"),
+        check(js.contains("return $rt.arrayAt($arr, $idx, false); })()"),
             "the read returns the carrier-agnostic position only after the "
-                + "bounds gate");
+                + "bounds gate (the third argument is the declared element's "
+                + "number-kind flag: an int element reads the decoded slot's "
+                + "own variant)");
     }
 
     private static void testHostGlobalHygiene() {
@@ -2589,7 +2592,7 @@ public class JsBackendTest {
         if (plain != null && !plain.hasErrors()) {
             check(plain.source().contains("$rt.arrayDelete($arr, $idx);"),
                 "the delete commit routes through $rt.arrayDelete");
-            check(plain.source().contains("const $el = $rt.arrayAt($iter, $i);"),
+            check(plain.source().contains("const $el = $rt.arrayAt($iter, $i, false);"),
                 "the for-of element read routes through $rt.arrayAt");
             check(plain.source().contains("if ($el === $rt.undefined) { break; }"),
                 "the for-of nil-stop comparison spells $rt.undefined");
@@ -2619,7 +2622,7 @@ public class JsBackendTest {
                 "the user binding named undefined emits as declared");
             check(js.contains("$rt.arrayDelete($arr, $idx);"),
                 "the delete commit routes through $rt.arrayDelete despite the binding");
-            check(js.contains("const $el = $rt.arrayAt($iter, $i);"),
+            check(js.contains("const $el = $rt.arrayAt($iter, $i, false);"),
                 "the for-of element read routes through $rt.arrayAt despite the binding");
             check(js.contains("if ($el === $rt.undefined) { break; }"),
                 "the for-of nil-stop spells $rt.undefined despite the binding");
@@ -5836,6 +5839,159 @@ public class JsBackendTest {
                 + " walk renders) as the"
                 + " DEAL array text, and observes an alias"
                 + " write through the walk: "
+                + run.output() + " (exit " + run.exitCode() + ")");
+    }
+
+    /**
+     * The decoded-array variant parity of the committed write, the element
+     * read and the deleted slot (the ISSUE-0827 review cycle-3 findings;
+     * the same rule test/AsyncExportInvokerProductionTest pins for the
+     * emitted LuaJIT/JVM projections):
+     * <ul>
+     *   <li>a committed element write records the written value's own
+     *       variant on the slot (__numKey), so a decoded number-variant
+     *       slot rewritten with an int expression encodes as the int and a
+     *       number-typed write spells the canonical decimal text — through
+     *       both the @jsonable class walk and the std/json walk;</li>
+     *   <li>the element read materializes the slot's recorded variant (the
+     *       __readVar rule) so a value leaving the decoded graph keeps its
+     *       own classification at the following boundary and encode
+     *       consumers, while the decoded values still compare and compute
+     *       by value;</li>
+     *   <li>an absent (deleted) slot is the internal missing value: both
+     *       encode walks raise the closed nil failure instead of
+     *       fabricating a present JSON null, and a genuinely present null
+     *       element keeps its JSON null slot.</li>
+     * </ul>
+     * The whole drive is the production frontend -> JsBackend emission ->
+     * deployed runtime chain under node.
+     */
+    private static void testJsonDecodedArrayVariantNode() throws Exception {
+        System.out.println("-- Node: decoded-array variant through the"
+            + " committed write, the element read and the deleted slot --");
+        if (!nodeAvailable) { skipNode("decoded-array variant"); return; }
+
+        NodeResult run = runDealNode("""
+            import * as json from "std/json";
+
+            // @jsonable
+            export class WBox {
+              nums: int[] = [];
+            }
+
+            // @jsonable
+            export class IBox {
+              n: int = 0;
+            }
+
+            // @jsonable
+            export class NBox {
+              n: number = 0.0;
+            }
+
+            export function test(): int {
+              // (1) The committed write records the written value's own
+              // variant: a decoded number-variant slot rewritten with an
+              // int expression is an int slot afterwards.
+              let t1: table = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let b: WBox = {};
+              b.nums = t1.values;
+              let alias: int[] = b.nums;
+              alias[0] = 7;
+              if (WBox$toJson(b) !== "{\\"nums\\":[7]}") { return 0; }
+              let t2: table = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let xs2: int[] = t2.values;
+              xs2[0] = 7;
+              if (json.stringify(t2) !== "{\\"values\\":[7]}") { return 0; }
+              // A number-typed write sets the mark, so the slot spells the
+              // canonical decimal text.
+              let t3: table = json.parse("{\\"values\\":[1]}");
+              let xs3: number[] = t3.values;
+              xs3[0] = 1e21;
+              if (json.stringify(t3) !== "{\\"values\\":[1.0E21]}") { return 0; }
+              // Delete then rewrite: the cleared mark never survives the
+              // rewrite.
+              let t3b: table = json.parse("{\\"values\\":[1]}");
+              let nsb: number[] = t3b.values;
+              delete nsb[0];
+              nsb[0] = 1e21;
+              if (json.stringify(t3b) !== "{\\"values\\":[1.0E21]}") { return 0; }
+
+              // (2) The element read materializes the slot's own variant at
+              // the positions the declared kind cannot express.
+              let t4: table = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let xs4: int[] = t4.values;
+              let ib: IBox = {};
+              ib.n = xs4[0];
+              let r1: string = "";
+              try { r1 = IBox$toJson(ib); } catch (e) { r1 = e.code + "|" + e.message; }
+              if (r1 !== "E8001|value at n is not JSON serializable: number") { return 0; }
+              let t5: table = json.parse("{\\"values\\":[1]}");
+              let xs5: number[] = t5.values;
+              let nb: NBox = {};
+              nb.n = xs5[0];
+              if (NBox$toJson(nb) !== "{\\"n\\":1}") { return 0; }
+              // The materialized variant still compares and computes by
+              // value (the carriers unwrap at every numeric consumer: the
+              // strict-equality emit, the native number operators, the int
+              // runtime members and the conversions).
+              if (xs5[0] !== 1.0) { return 0; }
+              if (xs4[0] !== 2147483647) { return 0; }
+              let sum: number = xs5[0] + 0.5;
+              if (sum !== 1.5) { return 0; }
+              let doubled: number = xs5[0] * 2.0;
+              if (doubled !== 2.0) { return 0; }
+              let halves: number = xs5[0] / 2.0;
+              if (halves !== 0.5) { return 0; }
+              let rest: int = xs4[0] - 2147483647;
+              if (rest !== 0) { return 0; }
+              let count: int = 0;
+              let total: number = 0.0;
+              for (let v: number of xs5) {
+                count = count + 1;
+                total = total + v;
+              }
+              if (count !== 1) { return 0; }
+              if (total !== 1.0) { return 0; }
+              // The conversions produce the target representation.
+              if (int(xs5[0]) !== 1) { return 0; }
+              if (number(xs4[0] - 2147483647) !== 0.0) { return 0; }
+
+              // (3) A deleted slot is the internal missing value: both
+              // encode walks raise the closed nil failure; a genuinely
+              // present null element keeps its JSON null slot.
+              let t6: table = json.parse("{\\"values\\":[1,2]}");
+              let xs6: int[] = t6.values;
+              delete xs6[0];
+              let d1: string = "";
+              try { d1 = json.stringify(t6); } catch (e) { d1 = e.code + "|" + e.message; }
+              if (d1 !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
+              let t7: table = json.parse("{\\"values\\":[1,2]}");
+              let db: WBox = {};
+              db.nums = t7.values;
+              let ys: int[] = db.nums;
+              delete ys[0];
+              let d2: string = "";
+              try { d2 = WBox$toJson(db); } catch (e) { d2 = e.code + "|" + e.message; }
+              if (d2 !== "E8001|value at nums[0] is not JSON serializable: nil") { return 0; }
+              let zs: int[] = [1,2];
+              delete zs[0];
+              let d3: string = "";
+              try { d3 = json.stringify({xs: zs}); } catch (e) { d3 = e.code + "|" + e.message; }
+              if (d3 !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
+              let t8: table = json.parse("{\\"values\\":[1,null,2]}");
+              if (json.stringify(t8) !== "{\\"values\\":[1,null,2]}") { return 0; }
+              return 1;
+            }
+            """, "json-decoded-array-variant");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "the production artifact keeps the decoded slot's own variant"
+                + " through the committed write (both encode walks), the"
+                + " element read (the class walk renders the int spelling and"
+                + " the number token for the mismatched positions, while the"
+                + " values still compare and compute by value) and the deleted"
+                + " slot (the closed nil failure, never a fabricated JSON"
+                + " null; a present null element keeps its slot): "
                 + run.output() + " (exit " + run.exitCode() + ")");
     }
 

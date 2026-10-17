@@ -621,10 +621,16 @@ test("json round-trip: a mixed-key mutation falls back to the object form", func
   assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), '{"1":1,"2":2,"x":9}', "mixed-key object form");
 });
 
-test("json round-trip: a missing middle index emits null", function() {
+// An absent (deleted) slot is the internal missing value, never a present
+// JSON null: the shared encoder rejects it as a value-representation
+// failure at the position, exactly like the LuaJIT/JVM rows
+// (test/AsyncExportInvokerProductionTest.testAbsentAndNullSlotsBothTargets
+// pins the same rule for the emitted artifacts).
+test("json round-trip: a missing middle index is a representation failure", function() {
   const parsed = rt.jsonParseValue([1, 2, 3], "f.js", 1, 1);
   parsed.delete("2");
-  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[1,null,3]", "missing index as null");
+  assertErrorMessage(function() { json.stringify.$f(parsed, "f.js", 1, 1); }, "E8001",
+    "unsupported type for JSON encoding: nil");
 });
 
 test("json round-trip: a __proto__-keyed table round-trips through stringify and parse", function() {

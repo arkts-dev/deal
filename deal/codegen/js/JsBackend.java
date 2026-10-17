@@ -2586,7 +2586,9 @@ public final class JsBackend {
         if (iterableType instanceof Type.Array) {
             line("for (let $i = 0; ; $i++) {");
             indent++;
-            line("const $el = $rt.arrayAt($iter, $i);");
+            String wantsNumber = isNumberKind(resolveTypeNode(node.varType()))
+                ? "true" : "false";
+            line("const $el = $rt.arrayAt($iter, $i, " + wantsNumber + ");");
             line("if ($el === $rt.undefined) { break; }");
             line("let " + varName + " = $el;");
             line("{");
@@ -3212,7 +3214,10 @@ public final class JsBackend {
      * ±Infinity-before-range order included); number arithmetic
      * stays native IEEE; string ordering compares Unicode
      * scalar values via {@code $rt.strCompare}; equality and inequality
-     * are native {@code ===}/{@code !==}; {@code &&}/{@code ||} are
+     * of numeric operands reduce both sides through {@code $rt.numOf}
+     * (a read-side number-variant carrier compares by value, its variant
+     * still carried through every boundary and encode consumer — strict
+     * equality never coerces); {@code &&}/{@code ||} are
      * native short-circuit. The two nullable special forms mirror the
      * retained LuaJIT AST emitter's nil-aware equality byte-for-byte:
      * a nullable operand
@@ -3248,8 +3253,8 @@ public final class JsBackend {
                 case MOD -> "$rt.intMod(" + left + ", " + right + ", "
                     + spanParam + ")";
                 case POW -> throw removedOperator(bin);
-                case EQ -> "(" + left + " === " + right + ")";
-                case NEQ -> "(" + left + " !== " + right + ")";
+                case EQ -> "(" + numValue(left) + " === " + numValue(right) + ")";
+                case NEQ -> "(" + numValue(left) + " !== " + numValue(right) + ")";
                 case LT -> "(" + left + " < " + right + ")";
                 case LTE -> "(" + left + " <= " + right + ")";
                 case GT -> "(" + left + " > " + right + ")";
@@ -3267,8 +3272,8 @@ public final class JsBackend {
                 case MUL -> "(" + left + " * " + right + ")";
                 case DIV -> "(" + left + " / " + right + ")";
                 case MOD, POW -> throw removedOperator(bin);
-                case EQ -> "(" + left + " === " + right + ")";
-                case NEQ -> "(" + left + " !== " + right + ")";
+                case EQ -> "(" + numValue(left) + " === " + numValue(right) + ")";
+                case NEQ -> "(" + numValue(left) + " !== " + numValue(right) + ")";
                 case LT -> "(" + left + " < " + right + ")";
                 case LTE -> "(" + left + " <= " + right + ")";
                 case GT -> "(" + left + " > " + right + ")";
@@ -3279,16 +3284,21 @@ public final class JsBackend {
         }
 
         // Nullable-vs-nullable equality: nil-equivalent pairs compare
-        // equal (the reference's nil-aware form).
+        // equal (the reference's nil-aware form). Both operands unwrap
+        // through $rt.numOf so a nullable number-variant carrier compares
+        // by value (the shared NULLABLE_EQ num tolerance); every other
+        // value form passes through unchanged.
         if (leftType instanceof Type.Nullable
                 && rightType instanceof Type.Nullable) {
             if (op == BinaryOp.EQ) {
-                return "((" + left + " === " + right + ") || ("
+                return "((" + numValue(left) + " === " + numValue(right)
+                    + ") || ("
                     + "$rt.isNilEquivalent(" + left + ") && "
                     + "$rt.isNilEquivalent(" + right + ")))";
             }
             if (op == BinaryOp.NEQ) {
-                return "!((" + left + " === " + right + ") || ("
+                return "!((" + numValue(left) + " === " + numValue(right)
+                    + ") || ("
                     + "$rt.isNilEquivalent(" + left + ") && "
                     + "$rt.isNilEquivalent(" + right + ")))";
             }
@@ -3328,6 +3338,35 @@ public final class JsBackend {
         }
 
         return "(" + left + " " + opSymbolJs(op) + " " + right + ")";
+    }
+
+    /** The numeric value view of one emitted operand (the runtime
+     * {@code $rt.numOf} unwrap of a read-side variant carrier). */
+    private static String numValue(String expr) {
+        return "$rt.numOf(" + expr + ")";
+    }
+
+    /**
+     * The emitted number-kind flag of one declared element type (the
+     * runtime read's {@code $wantsNumber} and the write's
+     * {@code $isNumber} argument): a number-typed position,
+     * nullable-number included, is the number variant; every other
+     * position is the int/declared variant. The flag mirrors the LuaJIT
+     * emitter's {@code isNumberKind("number"/"nullable:number")} rule.
+     */
+    private static boolean isNumberKind(Type type) {
+        if (type instanceof Type.Number) {
+            return true;
+        }
+        if (type instanceof Type.Nullable nullable) {
+            return nullable.inner() instanceof Type.Number;
+        }
+        return false;
+    }
+
+    /** The emitted literal of {@link #isNumberKind(Type)}. */
+    private static String numberWriteFlag(Type type) {
+        return isNumberKind(type) ? "true" : "false";
     }
 
     private String opSymbolJs(BinaryOp op) {
@@ -3573,18 +3612,28 @@ public final class JsBackend {
         if (containerType instanceof Type.Array) {
             boolean hasAwait = containsAwait(idx.array())
                 || containsAwait(idx.index());
+            // The read materializes a decoded slot's recorded variant as
+            // the runtime's read-side carrier when the read's declared
+            // element kind is the number variant (the Lua __readVar
+            // wantsNumber flag), so a value leaving a decoded graph keeps
+            // the classification every later boundary and encode consumer
+            // judges.
+            String wantsNumber = isNumberKind(((Type.Array) containerType).element())
+                ? "true" : "false";
             if (!hasAwait) {
                 return "(() => { const $arr = " + arr
                     + "; const $idx = $rt.checkInt(" + index + ", "
                     + spanArgs(span) + "); if ($idx < 0 || $idx >= $rt.arrayLength($arr)) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
-                    + spanArgs(span) + "); } return $rt.arrayAt($arr, $idx); })()";
+                    + spanArgs(span) + "); } return $rt.arrayAt($arr, $idx, "
+                    + wantsNumber + "); })()";
             }
             return "(await (async () => { const $arr = " + arr
                 + "; const $idx = $rt.checkInt(" + index + ", "
                 + spanArgs(span) + "); if ($idx < 0 || $idx >= $rt.arrayLength($arr)) { "
                 + "$rt.fail(\"E8002\", \"array index out of bounds\", "
-                + spanArgs(span) + "); } return $rt.arrayAt($arr, $idx); })())";
+                + spanArgs(span) + "); } return $rt.arrayAt($arr, $idx, "
+                + wantsNumber + "); })())";
         }
         if (containerType instanceof Type.Table) {
             return arr + ".get(" + index + ")";
@@ -3866,7 +3915,7 @@ public final class JsBackend {
                         + spanArgs(idx.span()) + "); } "
                         + "return $rt.arraySet($arr, $idx, "
                         + emitCheckExpr("$rhs", arrT.element(), span)
-                        + "); })()";
+                        + ", " + numberWriteFlag(arrT.element()) + "); })()";
                 }
                 return "(await (async () => { const $arr = " + arr
                     + "; const $idx = $rt.checkInt(" + index + ", "
@@ -3877,7 +3926,7 @@ public final class JsBackend {
                     + spanArgs(idx.span()) + "); } "
                     + "return $rt.arraySet($arr, $idx, "
                     + emitCheckExpr("$rhs", arrT.element(), span)
-                    + "); })())";
+                    + ", " + numberWriteFlag(arrT.element()) + "); })())";
             }
             if (containerType instanceof Type.Bytes) {
                 // v1.2 bytes write (js-v12-int32-bytes D4): b[i] = v
