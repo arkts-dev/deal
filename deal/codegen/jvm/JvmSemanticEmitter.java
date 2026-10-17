@@ -911,15 +911,40 @@ public final class JvmSemanticEmitter {
                 throw rejectedOp(defaultOp, "CLASS_DEFAULT " + defaultOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
+            List<String> keys = defaultBlockStateKeys(payload.defaultBlock());
             out.append("  private static Object ").append(defaultFn(defaultOp.opId()))
                 .append("() {\n");
+            // The invocation-local attempt scratch: the default block's own
+            // slots and cells are saved before the block runs and restored
+            // in a finally, so a default re-entered by a nested or
+            // re-entrant construction restores the enclosing attempt's
+            // operands on the success and the failure path alike (the same
+            // private-state discipline the function-invocation save applies
+            // to a body). The produced value travels in the return, never
+            // in a restored slot.
+            int bodyIndent = 2;
+            if (!keys.isEmpty()) {
+                out.append("    Object[] __dsv = new Object[]{")
+                    .append(String.join(", ", keys)).append("};\n");
+                out.append("    try {\n");
+                bodyIndent = 3;
+            }
             for (OpId opId : ops) {
                 if (opId.equals(defaultOp.opId()) || ownedChildren.contains(opId)) {
                     continue;
                 }
-                emitOp(opsById.get(opId), 2);
+                emitOp(opsById.get(opId), bodyIndent);
             }
-            out.append("    return ").append(slot(resultId)).append(";\n");
+            out.append(indent(bodyIndent)).append("return ")
+                .append(slot(resultId)).append(";\n");
+            if (!keys.isEmpty()) {
+                out.append("    } finally {\n");
+                for (int i = 0; i < keys.size(); i++) {
+                    out.append("      ").append(keys.get(i)).append(" = __dsv[")
+                        .append(i).append("];\n");
+                }
+                out.append("    }\n");
+            }
             out.append("  }\n");
         }
 

@@ -1290,7 +1290,20 @@ public final class LuaSemanticEmitter {
                 throw rejectedOp(defaultOp, "CLASS_DEFAULT " + defaultOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
+            List<String> keys = defaultBlockStateKeys(payload.defaultBlock());
             out.append(defaultFn(defaultOp.opId())).append(" = function()\n");
+            // The invocation-local attempt scratch: the default block's own
+            // slots and cells are saved in this invocation's own local table
+            // before the block runs and restored after it — on success and
+            // on failure alike — so a default re-entered by a nested or
+            // re-entrant construction restores the enclosing attempt's
+            // operands instead of overwriting them (the same private-state
+            // discipline the function-invocation save applies to a body; a
+            // function local is per invocation, so no chunk-level stack is
+            // needed). The produced value travels in the function return,
+            // never in a restored slot.
+            emitDefaultStateSave(keys);
+            out.append("  __okD, __chkD = pcall(function()\n");
             for (OpId opId : ops) {
                 if (opId.equals(defaultOp.opId()) || ownedChildren.contains(opId)) {
                     continue;
@@ -1298,7 +1311,59 @@ public final class LuaSemanticEmitter {
                 emitOp(opsById.get(opId));
             }
             out.append("  return ").append(slot(resultId)).append("\n");
+            out.append("  end)\n");
+            emitDefaultStateRestore(keys);
+            out.append("  if not __okD then error(__chkD, 0) end\n");
+            out.append("  return __chkD\n");
             out.append("end\n");
+        }
+
+        /**
+         * The invocation-local save of one detached default attempt's
+         * state: the block's own slots and cells into this invocation's
+         * own local table, in bounded statement chunks (the LuaJIT
+         * per-statement name/expression limits).
+         */
+        private void emitDefaultStateSave(List<String> keys) {
+            out.append("  local __dSave = {}\n");
+            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
+                int end = Math.min(start + STATE_CHUNK, keys.size());
+                StringBuilder targets = new StringBuilder();
+                StringBuilder values = new StringBuilder();
+                for (int i = start; i < end; i++) {
+                    if (i > start) {
+                        targets.append(", ");
+                        values.append(", ");
+                    }
+                    targets.append("__dSave[").append(i + 1).append("]");
+                    values.append(keys.get(i));
+                }
+                out.append("  ").append(targets).append(" = ").append(values)
+                    .append("\n");
+            }
+        }
+
+        /**
+         * The matching default-invocation restore, executed on the success
+         * and the failure path alike: the enclosing attempt's operands
+         * return before the produced value is published.
+         */
+        private void emitDefaultStateRestore(List<String> keys) {
+            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
+                int end = Math.min(start + STATE_CHUNK, keys.size());
+                StringBuilder targets = new StringBuilder();
+                StringBuilder values = new StringBuilder();
+                for (int i = start; i < end; i++) {
+                    if (i > start) {
+                        targets.append(", ");
+                        values.append(", ");
+                    }
+                    targets.append(keys.get(i));
+                    values.append("__dSave[").append(i + 1).append("]");
+                }
+                out.append("  ").append(targets).append(" = ").append(values)
+                    .append("\n");
+            }
         }
 
         /** One detached class-default function field of a CLASS_DEFAULT op. */

@@ -6155,6 +6155,149 @@ public class ProductionDispatchTest {
         }
     }
 
+    /**
+     * ISSUE-0810: the per-construction default invocation carries
+     * invocation-local attempt scratch. A default that re-enters its own
+     * class's construction (through a module-level helper) must keep the
+     * enclosing attempt's operand slots: the outer attempt's first operand
+     * (the host counter read before the nested attempt) stays {@code 0}, so
+     * the outer default composes {@code 0 * 1000 + 1100}. A clobbered
+     * artifact composes the nested attempt's counter read and throws the
+     * named tripwire. The subject publishes through the release-owned CLI
+     * and executes under the real toolchains with the exact success
+     * transcript on LuaJIT, the JVM and the retained JS lane.
+     */
+    private static void testDefaultReentrantAttemptScratchBothTargets()
+            throws Exception {
+        System.out.println("-- the re-entrant default's invocation-local attempt"
+            + " scratch on LuaJIT, the JVM and the JS lane --");
+        runReentrantDefaultSubject("re-entrant default", """
+            import * as console from "std/console";
+            import * as state from "host/retained_default";
+
+            class A {
+              x: int = combine(state.calls(), build());
+            }
+
+            function combine(a: int, b: int): int {
+              return a * 1000 + b;
+            }
+
+            function build(): int {
+              if (state.calls() >= 1) {
+                return 100;
+              }
+              state.provideFirst();
+              let inner: A = {};
+              return inner.x;
+            }
+
+            export function main(): null {
+              let a: A = {};
+              if (a.x !== 1100) {
+                throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
+              }
+              console.log("ok");
+              return null;
+            }
+            """);
+        runReentrantDefaultSubject("failed nested attempt", """
+            import * as console from "std/console";
+            import * as state from "host/retained_default";
+
+            class A {
+              x: int = combine(state.calls(), build());
+            }
+
+            function combine(a: int, b: int): int {
+              return a * 1000 + b;
+            }
+
+            function build(): int {
+              if (state.calls() >= 1) {
+                throw { code: "INNER_FAIL", message: "inner attempt fails" };
+              }
+              state.provideFirst();
+              try {
+                let inner: A = {};
+              } catch (e) {
+              }
+              return 5;
+            }
+
+            export function main(): null {
+              let a: A = {};
+              if (a.x !== 5) {
+                throw { code: "OPERAND_OVERWRITE", message: "a failed nested attempt overwrote the enclosing operands" };
+              }
+              console.log("ok");
+              return null;
+            }
+            """);
+    }
+
+    /**
+     * One re-entrant-default subject published by the release-owned CLI and
+     * executed under the real toolchains of all three lanes: the exact
+     * success transcript pins that a nested attempt (failing or completing)
+     * never overwrites the enclosing attempt's operands.
+     */
+    private static void runReentrantDefaultSubject(String label, String subject)
+            throws Exception {
+        String declaration = """
+            export function retained(): int[];
+            export function provideFirst(): int[];
+            export function bump(): null;
+            export function calls(): int;
+            """;
+        Path corpus = Path.of("test/conformance");
+        String hostLua = Files.readString(
+            corpus.resolve("host-fixtures/retained_default.lua"));
+        String hostJava = Files.readString(
+            corpus.resolve("host-fixtures/retained_default.java"));
+        String hostJs = Files.readString(
+            corpus.resolve("host-fixtures/retained_default.js"));
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            Path project = Files.createTempDirectory(
+                "production-default-reentrancy-");
+            try {
+                write(project, "src/main.deal", subject);
+                write(project, "bindings/retained_default.d.deal", declaration);
+                write(project, "deal.json", """
+                    {
+                      "languageVersion": "1.3",
+                      "moduleRoots": ["src"],
+                      "output": "out",
+                      "backend": "%s",
+                      "externals": {
+                        "host/retained_default": { "declaration": "bindings/retained_default.d.deal" }
+                      }
+                    }
+                    """.formatted(backend));
+                if (!compileRetainedSubject(project, backend + ": " + label, true)) {
+                    continue;
+                }
+                switch (backend) {
+                    case "luajit" -> {
+                        write(project, "out/host/retained_default.lua", hostLua);
+                        checkRetainedSubjectRun(project, backend, label, "ok\n");
+                    }
+                    case "jvm" -> {
+                        write(project, "HostRetained_default.java", hostJava);
+                        checkRetainedSubjectRun(project, backend, label, "ok\n",
+                            project.resolve("HostRetained_default.java"));
+                    }
+                    default -> {
+                        write(project, "out/host/retained_default.js", hostJs);
+                        checkRetainedSubjectRun(project, backend, label, "ok\n");
+                    }
+                }
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
     private static String retainedManifest(String backend) {
         return switch (backend) {
             case "luajit" -> DEAL_JSON_LUA;
@@ -6252,6 +6395,7 @@ public class ProductionDispatchTest {
         testV12CornerCaseCorpusProductionDrive();
         testV13BoundaryCorpusProductionDrive();
         testRetainedDefaultCallWitnessBothTargets();
+        testDefaultReentrantAttemptScratchBothTargets();
         testRetainedCornerCaseDiamond();
         testRetainedCornerCaseNegatives();
 
