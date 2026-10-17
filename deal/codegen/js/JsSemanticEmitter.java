@@ -338,33 +338,43 @@ public final class JsSemanticEmitter {
             for (LoweredFunction function : unit.functions().values()) {
                 functions.put(function.functionId().id(), function);
             }
+            // The publication pairs: a lowered body's *creation site* owns
+            // the spelling every static call resolves, so a direct call never
+            // depends on a caller's local scope. The shared invocation-
+            // identity rule has exactly two creation forms: a
+            // {@code CLOSURE_NEW} publishes the created value in its own slot,
+            // and a {@code RECURSIVE_GROUP_INIT} publishes each member's
+            // created identity into that member's own cell. A binding
+            // initialized from an already-created function value is an
+            // identity-preserving *load*, not a creation: it shares the
+            // function's identity ValueId but creates nothing, so it never
+            // qualifies — a function-typed alias may be reassigned and may
+            // live in another function's scope, and spelling the function's
+            // static calls with the alias's cell would call whatever the alias
+            // holds and would name a cell that is out of scope everywhere
+            // else.
             for (SemanticOp op : unit.ops()) {
-                if (op.kind() == SemanticOpKind.CLOSURE_NEW
-                        && op.result() instanceof ValueId valueId) {
-                    KindPayload.ClosureNewPayload payload =
-                        (KindPayload.ClosureNewPayload) op.payload();
-                    closureBindings.putIfAbsent(payload.function().id(),
-                        slot(valueId));
-                }
-            }
-            // The publication pairs: a binding initialized from a closure
-            // value gains that closure's binding-cell spelling, so a direct
-            // call to a static body resolves the created function value.
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.BINDING_INIT) {
+                if (op.kind() != SemanticOpKind.CLOSURE_NEW
+                        || !(op.result() instanceof ValueId valueId)) {
                     continue;
                 }
-                KindPayload.BindingInitPayload payload =
-                    (KindPayload.BindingInitPayload) op.payload();
-                SemanticOp producer = producerByValue.get(payload.value().id());
-                if (producer != null
-                        && producer.kind() == SemanticOpKind.CLOSURE_NEW) {
-                    KindPayload.ClosureNewPayload closure =
-                        (KindPayload.ClosureNewPayload) producer.payload();
-                    closureBindings.put(closure.function().id(),
-                        cell(payload.binding(), payload.generation()));
+                KindPayload.ClosureNewPayload payload =
+                    (KindPayload.ClosureNewPayload) op.payload();
+                closureBindings.putIfAbsent(payload.function().id(),
+                    slot(valueId));
+            }
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.RECURSIVE_GROUP_INIT
+                        || !(op.payload() instanceof KindPayload
+                            .RecursiveGroupInitPayload group)) {
+                    continue;
+                }
+                for (int i = 0; i < group.functions().size(); i++) {
+                    closureBindings.putIfAbsent(group.functions().get(i).id(),
+                        cell(group.bindings().get(i), 0));
                 }
             }
+
             // Parameter bindings per function: the unit's recorded parameter
             // bindings whose allocation scope is the function's body block,
             // in allocation (declaration) order.

@@ -149,6 +149,7 @@ public class JsSemanticEmitterTest {
             testModuleNamespaceIndexCarrier(tmpRoot, node);
             testFailureTuples(tmpRoot, node);
             testClassConstructionAndJson(tmpRoot, node);
+            testFieldJsonExecutionAndCreationSites(tmpRoot, node);
             testModuleRegistry(tmpRoot, node);
             testAsyncCallsAndCompletion(tmpRoot, node);
             testAwaitedFailureTransport(tmpRoot, node);
@@ -2704,6 +2705,404 @@ public class JsSemanticEmitterTest {
         check(throwRun.output().contains("DEAL_ERROR_CODE: E9000 boom at "),
             "the rethrow preserves the code/message/location: "
                 + throwRun.output());
+    }
+
+    // =========================================================================
+    // 3b. Field and generated-JSON execution over the resolved declaration
+    //     sites
+    // =========================================================================
+
+    /**
+     * ISSUE-0813: the field and generated-JSON family under the real Node
+     * binary, over the resolved layouts, declaration sites and default
+     * factories the admission pinned.
+     *
+     * <p>The criteria measured here: required/optional reads, writes,
+     * deletes and {@code has} preserve missing, present-null and present
+     * value; the receiver, key and value of a committing chain evaluate
+     * exactly once and a failed array write commits nothing; an imported
+     * class's optional field is deleted, re-written and read over the
+     * declaring module's own layout; class-valued and class-array-valued
+     * field writes commit the resolved provider's defaults;
+     * {@code C$fromJson} decodes provided values before the omitted defaults
+     * (nested imported defaults run in their declaring module), returns the
+     * language null for every specified failure (duplicate key, extra nested
+     * key, wrong provided kind, scalar document) while the three optional
+     * states stay distinct, and {@code C$toJson} writes the declared order,
+     * omits absent optionals, encodes a deep finite table chain without a
+     * depth bound and reports the walk failure at the invoking call
+     * expression's own origin.</p>
+     *
+     * <p>It also pins the creation-site identity of a static call: a
+     * generated JSON helper (or any declared body) invoked directly keeps
+     * resolving its own creation site even when another function holds a
+     * function-typed alias of it, and a local alias that is later reassigned
+     * changes no direct call of the aliased declaration.</p>
+     */
+    private static void testFieldJsonExecutionAndCreationSites(Path tmpRoot,
+                                                                boolean node)
+            throws Exception {
+        System.out.println("-- fields and generated JSON over the resolved"
+            + " declaration sites, under Node --");
+        Path root = Files.createTempDirectory(tmpRoot, "fields-json");
+        String appSource = """
+            import * as lib from "./lib";
+
+            class Bag {
+              items: lib.Point[] = [];
+              p: lib.Point = {};
+              opt?: string;
+              np?: lib.Point | null;
+            }
+
+            // @jsonable
+            export class Item {
+              v: int = 0;
+              data: table = {};
+            }
+
+            // @jsonable
+            export class Form {
+              name: string = "";
+              point: lib.Point = {};
+              many: lib.Point[] = [];
+              node?: Item | null;
+              data: table = {};
+            }
+
+            function b(v: boolean): string {
+              if (v) {
+                return "T";
+              }
+              return "F";
+            }
+
+            function alpha(n: int): int {
+              if (n <= 0) {
+                return 0;
+              }
+              return beta(n - 1) + 1;
+            }
+
+            function beta(n: int): int {
+              if (n <= 0) {
+                return 0;
+              }
+              return alpha(n - 1) + 1;
+            }
+
+            function nine(): int {
+              return 9;
+            }
+
+            function aliasHelper(): string {
+              let a: (v: Item) => string = Item$toJson;
+              return a({ v: 7 });
+            }
+
+            export function directHelper(): string {
+              let first: string = aliasHelper();
+              return Item$toJson({ v: 1 }) + "|" + first;
+            }
+
+            export function aliasReassign(): int {
+              function inner(): int {
+                return 1;
+              }
+              let g: () => int = inner;
+              let first: int = inner();
+              g = nine;
+              let second: int = inner();
+              return first + second;
+            }
+
+            export function mutual(): int {
+              return alpha(5) + beta(3);
+            }
+
+            export function nestedGroup(): int {
+              function left(n: int): int {
+                if (n <= 0) {
+                  return 0;
+                }
+                return right(n - 1) + 1;
+              }
+              function right(n: int): int {
+                if (n <= 0) {
+                  return 0;
+                }
+                return left(n - 1) + 1;
+              }
+              return left(6);
+            }
+
+            export function presence(): string {
+              let bag: Bag = {};
+              let out: string = "";
+              out = out + b(has(bag.opt)) + b(bag.opt === null);
+              bag.opt = "x";
+              out = out + b(has(bag.opt));
+              delete bag.opt;
+              out = out + b(has(bag.opt)) + b(bag.opt === null);
+              delete bag.opt;
+              out = out + b(has(bag.opt));
+              return out;
+            }
+
+            export function importedFields(): string {
+              let p: lib.Point = {};
+              let out: string = b(has(p.opt)) + b(p.opt === null);
+              delete p.opt;
+              out = out + b(has(p.opt));
+              p.opt = 9;
+              out = out + b(has(p.opt));
+              let read: int | null = p.opt;
+              if (read !== null) {
+                out = out + b(read === 9);
+              }
+              delete p.opt;
+              out = out + b(has(p.opt)) + b(p.opt === null);
+              return out;
+            }
+
+            export function chains(): string {
+              let bag: Bag = {};
+              bag.items = [{ x: 1 }];
+              let notes: int[] = [];
+              function note(n: int): int {
+                notes[notes.length] = n;
+                return n;
+              }
+              bag.items[note(0)] = { y: note(2) };
+              let after: string = b(bag.items[0].x === 0)
+                + b(bag.items[0].y === 2) + b(notes.length === 2);
+              let failed: string = "COMMITTED";
+              try {
+                bag.items[note(3)] = { y: note(4) };
+              } catch (e) {
+                failed = e.code;
+              }
+              let state: string = b(bag.items.length === 1)
+                + b(bag.items[0].y === 2) + b(notes.length === 4);
+              return after + "|" + failed + "|" + state;
+            }
+
+            export function fieldWrites(): string {
+              let bag: Bag = {};
+              bag.p = { x: 4 };
+              bag.items = [{ y: 5 }];
+              return b(bag.p.x === 4) + b(bag.p.y === 0)
+                + b(bag.items.length === 1) + b(bag.items[0].x === 0)
+                + b(bag.items[0].y === 5);
+            }
+
+            export function jsonStates(): string {
+              let missing: Form | null = Form$fromJson("{\\"name\\":\\"A\\"}");
+              let nil: Form | null = Form$fromJson(
+                "{\\"name\\":\\"A\\",\\"node\\":null}");
+              let value: Form | null = Form$fromJson(
+                "{\\"name\\":\\"A\\",\\"node\\":{\\"v\\":5}}");
+              let out: string = "";
+              if (missing !== null) {
+                out = out + b(has(missing.node)) + Form$toJson(missing);
+              }
+              if (nil !== null) {
+                out = out + "|" + Form$toJson(nil);
+              }
+              if (value !== null) {
+                out = out + "|" + Form$toJson(value);
+              }
+              out = out + "|" + b(Form$fromJson(
+                "{\\"name\\":\\"A\\",\\"name\\":\\"B\\"}") !== null);
+              out = out + b(Form$fromJson("{\\"node\\":{\\"zz\\":1}}") !== null);
+              out = out + b(Form$fromJson(
+                "{\\"point\\":{\\"x\\":\\"no\\"}}") !== null);
+              out = out + b(Form$fromJson("42") !== null);
+              out = out + b(Form$fromJson("null") !== null);
+              out = out + b(Form$fromJson(
+                "{\\"many\\":[{\\"x\\":1},{\\"y\\":2}]}") !== null);
+              return out;
+            }
+
+            export function deepChain(links: int): string {
+              let form: Form = {};
+              let cur: table = form.data;
+              let i: int = 0;
+              while (i < links) {
+                let next: table = {};
+                cur.next = next;
+                cur = next;
+                i = i + 1;
+              }
+              let text: string = Form$toJson(form);
+              let back: Form | null = Form$fromJson(text);
+              let backText: string = "";
+              if (back !== null) {
+                backText = Form$toJson(back);
+              } else {
+                return "NULL";
+              }
+              if (backText !== text) {
+                return "DIFF";
+              }
+              return "SAME";
+            }
+
+            export function toJsonFailure(): string {
+              let item: Item = { v: 1 };
+              let f: (n: int) => int = function(n: int): int {
+                return n;
+              };
+              item.data.f = f;
+              let boom: (v: Item) => string = Item$toJson;
+              return boom(item);
+            }
+
+            export function toJsonCycle(): string {
+              let item: Item = { v: 1 };
+              item.data.self = item.data;
+              return Item$toJson(item);
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """;
+        // The failing walk's origin: the invoking call expression inside
+        // `toJsonFailure` (1-based line and column of the callee token).
+        int failureLine = 0;
+        int failureColumn = 0;
+        int line = 0;
+        for (String text : appSource.split("\n", -1)) {
+            line++;
+            int callee = text.indexOf("boom(item)");
+            if (callee >= 0) {
+                failureLine = line;
+                failureColumn = callee + 1;
+            }
+        }
+        check(failureLine > 0,
+            "the fixture records the failing helper call expression");
+        Fixture fixture = compileFixture(root, appSource,
+            Map.of("src/lib.deal", """
+                // @jsonable
+                export class Point {
+                  x: int = 0;
+                  y: int = 0;
+                  opt?: int | null;
+                }
+                """));
+        Path out = stage(fixture, "fields-json", false);
+        if (!node) {
+            skip("the field/JSON drive needs the real Node binary");
+            return;
+        }
+        Files.writeString(out.resolve("driver.js"), """
+            const app = require("./app.js");
+            const out = {};
+            const step = (name, f) => {
+              try {
+                out[name] = "ok:" + f();
+              } catch (e) {
+                out[name] = "fail:" + (e.code || e.name) + ":" + e.message;
+              }
+            };
+            step("directHelper", () => app.directHelper.$f("d.js", 1, 1));
+            step("aliasReassign", () => app.aliasReassign.$f("d.js", 2, 2));
+            step("mutual", () => app.mutual.$f("d.js", 3, 3));
+            step("nestedGroup", () => app.nestedGroup.$f("d.js", 4, 4));
+            step("presence", () => app.presence.$f("d.js", 5, 5));
+            step("importedFields", () => app.importedFields.$f("d.js", 6, 6));
+            step("chains", () => app.chains.$f("d.js", 7, 7));
+            step("fieldWrites", () => app.fieldWrites.$f("d.js", 8, 8));
+            step("jsonStates", () => app.jsonStates.$f("d.js", 9, 9));
+            step("deep", () => app.deepChain.$f(600, "d.js", 10, 10));
+            try {
+              app.toJsonFailure.$f("d.js", 11, 11);
+              out.walk = "no-failure";
+            } catch (e) {
+              out.walk = e.code + ":" + e.message + ":at=" + e.file + ":"
+                + e.line + ":" + e.column;
+            }
+            try {
+              app.toJsonCycle.$f("d.js", 12, 12);
+              out.cycle = "no-failure";
+            } catch (e) {
+              out.cycle = e.code + ":" + e.message;
+            }
+            console.log("DRIVE:" + JSON.stringify(out));
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the field/JSON driver exits 0: "
+            + run.output());
+        String report = run.output();
+        check(report.contains("\"directHelper\":\"ok:{\\\"v\\\":1,"
+                + "\\\"data\\\":{}}|{\\\"v\\\":7,\\\"data\\\":{}}\""),
+            "a direct call of a generated JSON helper keeps its own"
+                + " creation site while another function holds a"
+                + " function-typed alias of it: " + report);
+        check(report.contains("\"aliasReassign\":\"ok:2\""),
+            "a reassigned local alias changes no direct call of the"
+                + " aliased declaration (the creation site, never the alias"
+                + " cell, spells the call): " + report);
+        check(report.contains("\"mutual\":\"ok:8\""),
+            "a mutually recursive declaration group keeps both members"
+                + " callable through their own published creation cells: "
+                + report);
+        check(report.contains("\"nestedGroup\":\"ok:6\""),
+            "a nested recursive group keeps its members callable through"
+                + " their group cells: " + report);
+        check(report.contains("\"presence\":\"ok:FTTFTF\""),
+            "required/optional presence: an absent optional reads null and"
+                + " has false, a written value is present, a delete makes it"
+                + " absent again and a repeated delete is an idempotent"
+                + " no-op: " + report);
+        check(report.contains("\"importedFields\":\"ok:FTFTTFT\""),
+            "an imported class's optional field is deleted, re-written and"
+                + " read over its declaring module's own layout, keeping"
+                + " present-null distinct from absence: " + report);
+        check(report.contains("\"chains\":\"ok:TTT|E8002|TTT\""),
+            "one array-element write evaluates the receiver, index and value"
+                + " once, commits once, and an out-of-bounds write after the"
+                + " same operand evaluation raises E8002 with the length, the"
+                + " slot and the operand count unchanged: " + report);
+        check(report.contains("\"fieldWrites\":\"ok:TTTTT\""),
+            "class-valued and class-array-valued field writes commit with"
+                + " the resolved provider's own defaults: " + report);
+        check(report.contains("\"jsonStates\":\"ok:F{\\\"name\\\":\\\"A\\\","
+                + "\\\"point\\\":{\\\"x\\\":0,\\\"y\\\":0},"
+                + "\\\"many\\\":[],\\\"data\\\":{}}"
+                + "|{\\\"name\\\":\\\"A\\\",\\\"point\\\":"
+                + "{\\\"x\\\":0,\\\"y\\\":0},"
+                + "\\\"many\\\":[],\\\"node\\\":null,\\\"data\\\":{}}"
+                + "|{\\\"name\\\":\\\"A\\\",\\\"point\\\":"
+                + "{\\\"x\\\":0,\\\"y\\\":0},"
+                + "\\\"many\\\":[],\\\"node\\\":{\\\"v\\\":5,"
+                + "\\\"data\\\":{}},\\\"data\\\":{}}"
+                + "|FFFFFT\""),
+            "fromJson decodes provided values before the omitted imported"
+                + " provider defaults, keeps the three optional states"
+                + " distinct, writes the declared order with the absent"
+                + " optional omitted, and returns the language null for a"
+                + " duplicate key, a nested extra key, a wrong provided kind,"
+                + " a scalar document and a top-level null while the"
+                + " class-array document decodes: " + report);
+        check(report.contains("\"deep\":\"ok:SAME\""),
+            "a 600-link finite table chain inside a class table field"
+                + " encodes and re-decodes with no depth bound and the exact"
+                + " same text: " + report);
+        check(report.contains("\"walk\":\"E8001:value at data.f is not JSON"
+                + " serializable: function:at="),
+            "a non-JSON value in a declared table field raises the closed"
+                + " walk tuple: " + report);
+        check(report.contains("app.deal:" + failureLine + ":" + failureColumn),
+            "the walk failure keeps the invoking call expression's own"
+                + " origin (app.deal line " + failureLine + ", column "
+                + failureColumn + "), never the generated helper's anchor: "
+                + report);
+        check(report.contains("\"cycle\":\"E8001:cyclic value cannot be"
+                + " encoded as JSON\""),
+            "a cyclic table field raises the closed cycle arm: " + report);
     }
 
     // =========================================================================

@@ -2167,7 +2167,20 @@ function $jsonFromValue($entry, $raw, $file, $line, $column, $numberVariant) {
       if (typeof $entry.className !== "string" || !$Array.isArray($entry.fields)) {
         $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
       }
-      return $jsonFromDocument($entry.className, $raw, $entry.fields, null, $file, $line, $column);
+      const $nested = $jsonFromDocument($entry.className, $raw,
+        $entry.fields, null, $file, $line, $column);
+      if ($nested === null) {
+        // A nested decode has no successful-null outcome: every gate and
+        // every validation failure collapses to the language null of the
+        // whole C$fromJson call (the public entry's own catch), so a
+        // nullable class field or nullable class-array element never
+        // absorbs a failed nested decode as a present null — only a JSON
+        // null token reaches the null arm above, and no partial instance
+        // publishes.
+        $rt.fail("E8001", "nested @jsonable decode failed", $file, $line,
+          $column);
+      }
+      return $nested;
     case "array":
       if (!$Array.isArray($raw)) {
         $rt.fail("E8001", "expected array", $file, $line, $column, "array", $kindOf($raw));
