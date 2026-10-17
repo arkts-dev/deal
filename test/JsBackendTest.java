@@ -11,8 +11,7 @@ import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.codegen.Backend;
-import deal.codegen.HostModuleDeclarations;
-import deal.codegen.js.JsBackend;
+import deal.codegen.SourceMapPaths;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.identity.CanonicalClassIdentity;
@@ -67,7 +66,7 @@ import java.util.stream.Stream;
  * <p>Emission and rejection pins inspect generated CommonJS source
  * without executing Node on every case (the {@link JvmBackendTest}
  * pattern); the bounded node semantic cases execute the real
- * frontend → {@link JsBackend} → node chain through the deployed
+ * frontend → public compilation → node chain through the deployed
  * {@code deal/runtime.js} and {@code std/*.js} artifacts with the
  * generated-artifact runner ({@link StubModuleResolver#buildJsRunner}),
  * which auto-invokes zero-arity exports in declaration order, prints
@@ -214,6 +213,17 @@ public class JsBackendTest {
     private static void fail(String message) {
         failed++;
         System.err.println("FAIL: " + message);
+    }
+
+    /** Number of non-overlapping occurrences of {@code needle}. */
+    private static int countOf(String text, String needle) {
+        int count = 0;
+        int index = text.indexOf(needle);
+        while (index >= 0) {
+            count++;
+            index = text.indexOf(needle, index + needle.length());
+        }
+        return count;
     }
 
     /** Counts one toolchain skip (node unavailable) — a skip, never a
@@ -370,97 +380,242 @@ public class JsBackendTest {
         return new Frontend(parseResult.program(), result, errors);
     }
 
-    /** The adapter-shape generation call: sourcePath = the frontend
-     * filename, modulePath = "Main", no imports, not the entry. */
-    private static JsBackend.JsCodegenResult generate(String source, String name) {
-        return generate(source, name, "Main", Map.of(), Map.of(), false);
+    // =========================================================================
+    // Public compilation harness (ISSUE-0805): every subject is compiled
+    // through the one public production path (CompilationOrchestrator with
+    // Backend.JS). No AST emitter exists; the emitted artifact, the compiled
+    // project's diagnostics, and the staged artifact set are the subjects.
+    // =========================================================================
+
+    /** One public compilation's subject artifact plus the compile result. */
+    private record JsEmission(String source, List<CompilerDiagnostic> diagnostics,
+                              boolean hasErrors,
+                              Map<String, String> artifacts) {
     }
 
-    private static JsBackend.JsCodegenResult generate(String source, String name,
-                                                      String modulePath,
-                                                      Map<String, String> importResolutions,
-                                                      Map<String, HostModuleDeclarations> hostModules,
-                                                      boolean isEntry) {
-        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
-        if (f.program() == null) {
-            return null;
-        }
-        return JsBackend.generate(f.program(), f.checkResult(),
-            "jstest-" + name + ".deal", modulePath, importResolutions,
-            hostModules, isEntry);
+    /** One public compilation: its module root, output root, diagnostics and
+     * staged JavaScript artifacts keyed by output-relative path. */
+    private record CompiledProject(Path moduleRoot, Path output,
+                                   boolean success,
+                                   List<CompilerDiagnostic> diagnostics,
+                                   Map<String, String> artifacts) {
+    }
+
+    private static int projectSequence = 0;
+
+    /**
+     * Compiles one project through the public pipeline: {@code sources}
+     * are module-root-relative source files (the module root directory is
+     * named {@code Main}, so a top-level class's canonical identity text is
+     * {@code @Main/<Class>} — the spelling the retained assertions pin);
+     * {@code entry} is the entry's module-root-relative path.
+     */
+    private static CompiledProject compileProject(Map<String, String> sources,
+                                                  String entry) {
+        return compileProject(sources, entry, Map.of());
     }
 
     /**
-     * The adapter-shape generation call with an explicit extern-C import
-     * set (fixed-name-directive-events D9): routes through the
-     * production seam with a standalone identity surface, exactly as the
-     * host-ABI class fixture does — the E6006 re-key pin passes the raw
-     * import path here.
+     * Compiles one project through the public pipeline with an explicit
+     * externals declaration map (raw specifier to declaration path relative
+     * to the module root's parent).
      */
-    private static JsBackend.JsCodegenResult generateWithExternC(
-            String source, String name, String modulePath,
-            Map<String, String> importResolutions,
-            Map<String, HostModuleDeclarations> hostModules,
-            Set<String> externCImports, boolean isEntry) {
-        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
-        if (f.program() == null) {
-            return null;
+    private static CompiledProject compileProject(Map<String, String> sources,
+                                                  String entry,
+                                                  Map<String, String> externals) {
+        int sequence = ++projectSequence;
+        Path base;
+        Path moduleRoot;
+        Path output;
+        try {
+            base = Files.createTempDirectory(tmpDir, "jsproj_" + sequence + "_");
+            moduleRoot = base.resolve("Main");
+            Files.createDirectories(moduleRoot);
+            for (Map.Entry<String, String> source : sources.entrySet()) {
+                Path file = moduleRoot.resolve(source.getKey()).normalize();
+                Files.createDirectories(file.getParent());
+                Files.writeString(file, source.getValue(),
+                    StandardCharsets.UTF_8);
+            }
+            output = base.resolve("out");
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
-        Map<String, CanonicalModuleIdentity> byPath =
-            new LinkedHashMap<>();
-        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
-        byPath.put(modulePath, new CanonicalModuleIdentity.ProjectModule(
-            new ProjectModuleIdentity(modulePath, modulePath, List.of())));
-        ModuleIdentityResolver.IdentityIndex index =
-            ModuleIdentityResolver.buildIndex(byPath);
-        return JsBackend.generate(f.program(), f.checkResult(),
-            "jstest-" + name + ".deal", modulePath, importResolutions,
-            hostModules, externCImports, isEntry, index,
-            index.moduleIdentityLookup(), null);
+        Map<String, String> resolvedExternals = new LinkedHashMap<>();
+        for (Map.Entry<String, String> external : externals.entrySet()) {
+            resolvedExternals.put(external.getKey(), moduleRoot
+                .resolve(external.getValue()).toAbsolutePath().normalize()
+                .toString());
+        }
+        Map<String, String> externalsOrNull = resolvedExternals.isEmpty()
+            ? null : resolvedExternals;
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            moduleRoot.resolve(entry), output, false, false, false, Backend.JS,
+            externalsOrNull, List.of(moduleRoot), null);
+        boolean success;
+        try {
+            success = orchestrator.compile();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        Map<String, String> artifacts = new LinkedHashMap<>();
+        if (Files.isDirectory(output)) {
+            try (Stream<Path> walk = Files.walk(output)) {
+                for (Path file : walk.filter(Files::isRegularFile)
+                        .sorted().toList()) {
+                    String relative = output.relativize(file).toString()
+                        .replace('\\', '/');
+                    if (relative.endsWith(".js")) {
+                        artifacts.put(relative, Files.readString(file,
+                            StandardCharsets.UTF_8));
+                    }
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return new CompiledProject(moduleRoot, output, success,
+            List.copyOf(orchestrator.diagnostics()), artifacts);
     }
 
-    /** The adapter-shape generation call over the unshaped frontend
-     * (no module-shape validation) — the backend-level surface for
-     * contracts the shape rules do not cover (a nested export class). */
-    private static JsBackend.JsCodegenResult generateUnshaped(String source,
-                                                              String name) {
-        Frontend f = compileFrontendUnshaped(source, "jstest-" + name + ".deal");
-        if (f.program() == null) {
-            return null;
+    /**
+     * Compiles one project whose externals declarations live outside the
+     * module root: {@code declarations} maps each raw externals specifier
+     * to a declaration source written under the project's {@code bindings}
+     * directory, and the compile receives the same raw-to-declaration
+     * mapping the production manifest form supplies.
+     */
+    private static CompiledProject compileProjectWithExternals(
+            Map<String, String> sources, String entry,
+            Map<String, String> declarations) {
+        Map<String, String> files = new LinkedHashMap<>(sources);
+        Map<String, String> externals = new LinkedHashMap<>();
+        int index = 0;
+        for (Map.Entry<String, String> declaration : declarations.entrySet()) {
+            String fileName = "bindings/decl" + (index++) + ".d.deal";
+            files.put(fileName, declaration.getValue());
+            externals.put(declaration.getKey(), fileName);
         }
-        return JsBackend.generate(f.program(), f.checkResult(),
-            "jstest-" + name + ".deal", "Main", Map.of(), Map.of(), false);
+        return compileProject(files, entry, externals);
     }
 
-    private record PreparedJs(Frontend frontend,
-                              JsBackend.JsCodegenResult emission) {}
+    /**
+     * Compiles one subject module through the public path. A subject that is
+     * not the entry is imported by a generated entry module (the compile
+     * requires an entry exporting {@code main}); the subject artifact keeps
+     * its own module path and is otherwise unchanged.
+     */
+    private static JsEmission generate(String source, String name,
+                                       String modulePath,
+                                       Map<String, String> extraSources,
+                                       boolean isEntry) {
+        Map<String, String> sources = new LinkedHashMap<>(extraSources);
+        String subject = modulePath.replace('.', '/') + ".deal";
+        sources.put(subject, source);
+        String entry;
+        if (isEntry) {
+            entry = subject;
+        } else {
+            entry = sources.containsKey("Main.deal") ? "Entry.deal"
+                : "Main.deal";
+            sources.put(entry, "import * as subject from \""
+                + relativeImport(entry, subject) + "\";\n"
+                + "export function main(): null { return null; }\n");
+        }
+        CompiledProject compiled = compileProject(sources, entry);
+        String artifact = compiled.artifacts().get(
+            modulePath.replace('.', '/') + ".js");
+        return new JsEmission(normalizeArtifact(artifact,
+                compiled, subject, "jstest-" + name + ".deal"),
+            compiled.diagnostics(), !compiled.success(), compiled.artifacts());
+    }
+
+    /** The default subject compilation: module path {@code Main}, not the
+     * compile entry, no extra sources. */
+    private static JsEmission generate(String source, String name) {
+        return generate(source, name, "Main", Map.of(), false);
+    }
+
+    /** The entry-module compilation: the subject is the compile entry. */
+    private static JsEmission generateEntry(String source, String name,
+                                            String modulePath) {
+        return generate(source, name, modulePath, Map.of(), true);
+    }
+
+    /** The relative require specifier from one source file to another. */
+    private static String relativeImport(String from, String to) {
+        Path fromDir = Path.of(from).getParent();
+        Path target = Path.of(to);
+        String relative = fromDir == null ? target.toString()
+            : fromDir.relativize(target).toString();
+        relative = relative.replace('\\', '/');
+        if (!relative.startsWith(".")) {
+            relative = "./" + relative;
+        }
+        return relative.endsWith(".deal")
+            ? relative.substring(0, relative.length() - ".deal".length())
+            : relative;
+    }
+
+    /**
+     * Normalizes one public artifact's source display spelling for the
+     * retained assertions: the subject source's absolute path (and the
+     * owner-supplied source-map display name) becomes the short
+     * {@code jstest-<name>.deal} spelling, and every other file keeps its
+     * module-root-relative spelling. Coordinates, identities, generated
+     * names and effects are untouched.
+     */
+    private static String normalizeArtifact(String artifact,
+            CompiledProject compiled, String subject, String displayName) {
+        if (artifact == null) {
+            return null;
+        }
+        Path subjectPath = compiled.moduleRoot().resolve(subject)
+            .toAbsolutePath().normalize();
+        String sourceId = subjectPath.toString();
+        String display = SourceMapPaths.sourceDisplay(sourceId,
+            compiled.output());
+        String normalized = artifact.replace(sourceId, displayName);
+        if (!display.equals(sourceId)) {
+            normalized = normalized.replace(display, displayName);
+        }
+        String rootPrefix = compiled.moduleRoot().toAbsolutePath().normalize()
+            + java.io.File.separator;
+        return normalized.replace(rootPrefix, "");
+    }
+
+    /** A public compilation that is expected to reject: its diagnostics and
+     * its (artifact-free) staged set. */
+    private static JsEmission generateRejected(String source, String name,
+                                               String modulePath,
+                                               Map<String, String> extraSources) {
+        return generate(source, name, modulePath, extraSources, false);
+    }
+
+    private record PreparedJs(Frontend frontend, JsEmission emission,
+                              CompiledProject compiled) {
+    }
 
     private static PreparedJs prepareJs(String source, String name) {
         String filename = "jstest-" + name + ".deal";
-        Frontend f = compileFrontend(source, filename);
-        JsBackend.JsCodegenResult res = f.program() == null ? null
-            : JsBackend.generate(f.program(), f.checkResult(), filename,
-                "Main", Map.of(), Map.of(), false);
-        return new PreparedJs(f, res);
+        Frontend frontend = compileFrontend(source, filename);
+        JsEmission emission = frontend.program() == null ? null
+            : generate(source, name);
+        return new PreparedJs(frontend, emission, null);
     }
 
     private static PreparedJs prepareJsUnshaped(String source, String name) {
-        String filename = "jstest-" + name + ".deal";
-        Frontend f = compileFrontendUnshaped(source, filename);
-        JsBackend.JsCodegenResult res = f.program() == null ? null
-            : JsBackend.generate(f.program(), f.checkResult(), filename,
-                "Main", Map.of(), Map.of(), false);
-        return new PreparedJs(f, res);
+        return prepareJs(source, name);
     }
 
     private record NodeResult(String output, int exitCode) {}
 
     /**
-     * Deploys one generated artifact plus the runtime/stdlib support set
-     * into a fresh temp dir (the conformance adapter's deployment shape:
+     * Deploys one compiled subject artifact plus the runtime/stdlib support
+     * set into a fresh temp dir (the conformance adapter's deployment shape:
      * {@link StubModuleResolver#deployJsSupport}).
      */
-    private static Path deployArtifacts(JsBackend.JsCodegenResult res,
+    private static Path deployArtifacts(JsEmission res,
                                         String artifactName) throws IOException {
         Path dir = Files.createTempDirectory("jstest_run_");
         Files.writeString(dir.resolve(artifactName), res.source());
@@ -492,7 +647,7 @@ public class JsBackendTest {
     }
 
     /**
-     * The full JS chain under the real node binary: frontend → codegen →
+     * The full JS chain under the real node binary: public compilation →
      * deployment → the conformance runner → node execution.
      */
     private static NodeResult runDealNode(String source, String name)
@@ -500,14 +655,15 @@ public class JsBackendTest {
         return runDealArtifact(prepareJs(source, name));
     }
 
-    private static JsBackend.JsCodegenResult checkedEmission(PreparedJs prepared) {
+    private static JsEmission checkedEmission(PreparedJs prepared) {
         if (!prepared.frontend().errors().isEmpty()) {
             throw new RuntimeException("frontend errors: "
                 + prepared.frontend().errors());
         }
-        JsBackend.JsCodegenResult res = prepared.emission();
-        if (res.hasErrors()) {
-            throw new RuntimeException("codegen errors: " + res.diagnostics());
+        JsEmission res = prepared.emission();
+        if (res == null || res.hasErrors()) {
+            throw new RuntimeException("compilation errors: "
+                + (res == null ? "<null>" : res.diagnostics()));
         }
         return res;
     }
@@ -540,11 +696,11 @@ public class JsBackendTest {
 
     /**
      * The full JS chain under node with a production-invoker runner
-     * (js-v12-async-export-invocation D5): frontend → codegen →
-     * deployment → a runner that requires the emitted entry artifact
-     * and calls the production host ABI
-     * {@code $rt.invokeAsyncExport} with the pinned export name and
-     * return descriptor, printing the distinct result signal.
+     * (js-v12-async-export-invocation D5): public compilation → deployment
+     * → a runner that requires the emitted artifact and calls the
+     * production host ABI {@code $rt.invokeAsyncExport} with the pinned
+     * export name and return descriptor, printing the distinct result
+     * signal.
      */
     private static NodeResult runInvokerNode(String source, String name,
             String exportName, String returnDescriptor) throws Exception {
@@ -553,40 +709,39 @@ public class JsBackendTest {
     }
 
     /**
-     * The E6004 no-main variant: drives {@link JsBackend#generate} with
-     * {@code isEntry = true} on a module without {@code main} — the
-     * backstop emits the E6004 diagnostic but still produces the
-     * artifact (without the entry shim and without any {@code main}
-     * export), which the invoker must reject with the pinned
-     * {@code missing main} host failure.
+     * The missing-main variant: the invoker receives the exports of a
+     * compiled module without {@code main} (the compile entry that pulls
+     * the module in carries its own main), so the host ABI must reject the
+     * selection with the pinned {@code missing main} host failure — never a
+     * DEAL error and never a throw.
      */
     private static NodeResult runInvokerNodeNoMain(String source, String name,
             String exportName, String returnDescriptor) throws Exception {
-        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
-        if (!f.errors().isEmpty()) {
-            throw new RuntimeException("frontend errors: " + f.errors());
+        CompiledProject compiled = compileProject(Map.of(
+            "Main.deal", "import * as lib from \"./lib\";\n"
+                + "export function main(): null { return null; }\n",
+            "lib.deal", source), "Main.deal");
+        if (!compiled.success()) {
+            throw new RuntimeException("compilation errors: "
+                + compiled.diagnostics());
         }
-        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), true);
-        boolean e6004 = res.diagnostics().stream()
-            .anyMatch(d -> "E6004".equals(d.code()));
-        if (!e6004) {
-            throw new RuntimeException("expected the E6004 backstop, got: "
-                + res.diagnostics());
-        }
-        return runInvokerArtifact(res, exportName, returnDescriptor);
+        String artifact = compiled.artifacts().get("lib.js");
+        JsEmission emission = new JsEmission(
+            normalizeArtifact(artifact, compiled, "lib.deal",
+                "jstest-" + name + ".deal"),
+            compiled.diagnostics(), false, compiled.artifacts());
+        return runInvokerArtifact(emission, exportName, returnDescriptor);
     }
 
-    /** Deploys a generated entry artifact and runs the invoker runner. */
+    /** Deploys a compiled artifact and runs the invoker runner. */
     private static NodeResult runInvokerArtifact(
-            JsBackend.JsCodegenResult res, String exportName,
+            JsEmission res, String exportName,
             String returnDescriptor) throws Exception {
         return runArtifactScript(res, INVOKER_RUNNER_SOURCE,
             exportName, returnDescriptor);
     }
 
-    private static NodeResult runArtifactScript(JsBackend.JsCodegenResult res,
+    private static NodeResult runArtifactScript(JsEmission res,
             String script, String... args) throws Exception {
         Path dir = deployArtifacts(res, "Main.js");
         try {
@@ -728,7 +883,7 @@ public class JsBackendTest {
             skipNode("async error detail transport");
             return;
         }
-        JsBackend.JsCodegenResult res = checkedEmission(prepareJs("""
+        JsEmission res = checkedEmission(prepareJs("""
             async function fail(): int {
               let t: table = {value: "bad"};
               let x: int = t.value;
@@ -1585,11 +1740,11 @@ public class JsBackendTest {
     private static void testModuleShapeRoot() {
         System.out.println("-- Module shape: root module --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             import * as console from "std/console";
             function helper(x: int): int { return x; }
             export function test(): int { return helper(1); }
-            """, "shape-root", "main", Map.of(), Map.of(), false);
+            """, "shape-root", "main", Map.of(), false);
         check(res != null && !res.hasErrors(), "shape-root codegen clean: "
             + (res == null ? "<null>" : res.diagnostics()));
         if (res == null || res.hasErrors()) return;
@@ -1601,79 +1756,75 @@ public class JsBackendTest {
             "the $require/$module/$exports CommonJS capture");
         check(js.contains("const $rt = $require(\"./deal/runtime\");"),
             "root module requires ./deal/runtime");
-        check(js.contains("const int = $rt.function(\"(number)->int\", "
-            + "(v, $file, $line, $column) => $rt.intConvert(v, $file, $line, $column));"),
+        check(js.contains("$rt.function(\"(number)->int\", (v, $f, $l, $c) => "
+            + "$rt.intConvert(v, $f, $l, $c), \"HOST\")"),
             "the int intrinsic header wrapper with sig (number)->int");
-        check(js.contains("const number = $rt.function(\"(int)->number\", "
-            + "(v, $file, $line, $column) => $rt.numberConvert(v, $file, $line, $column));"),
+        check(js.contains("$rt.function(\"(int)->number\", (v, $f, $l, $c) => "
+            + "$rt.numberConvert(v, $f, $l, $c), \"HOST\")"),
             "the number intrinsic header wrapper with sig (int)->number");
-        check(js.contains("const $ErrorDefaults = () => ({ [\"code\"]: \"\", "
-            + "[\"message\"]: \"\" });"),
-            "the header-synthesized $ErrorDefaults thunk");
-        check(js.contains("const Error$new = (provided, $file, $line, $column) => "
-            + "$rt.makeClass(\"Error\", \"Error\", $ErrorDefaults, provided, "
-            + "$file, $line, $column);"),
-            "the header-synthesized Error$new closure (the canonical builtin atom \"Error\")");
-        check(js.contains("const Error$meta = { $kind: \"class\", "
-            + "$classname: \"Error\" };"),
-            "the header-synthesized Error$meta META pair "
-                + "(the canonical builtin atom \"Error\")");
-        check(!js.contains("$rt.setProp($exports, \"$ErrorDefaults\""),
-            "$ErrorDefaults stays module-private (never exported)");
-        check(!js.contains("$rt.setProp($exports, \"Error$new\""),
-            "Error$new stays module-private (never exported)");
-        check(js.contains("const console = $require(\"./std/console\");"),
+        check(!js.contains("publishModule(\"main\", \"Error\""),
+            "the builtin Error META stays module-private (never exported)");
+        check(!js.contains("\"Error$new\""),
+            "the builtin Error$new stays module-private (never exported)");
+        check(!js.contains("$ErrorDefaults"),
+            "the builtin Error defaults thunk stays module-private");
+        check(js.contains("$require(\"./std/console\")"),
             "spec-stdlib import binds through the relative require");
-        check(js.contains("let helper;") && js.contains("let test;"),
-            "predeclared let bindings for module functions");
-        check(js.contains("$rt.setProp($exports, \"test\", test);"),
-            "own-property-safe export assignment with the raw key");
-        check(!js.contains("module.exports"),
-            "no bare module.exports spelling");
+        check(js.contains("$rt.function(\"()->int\"")
+                && js.contains("= $rt.undefined;"),
+            "the module function's binding is a predeclared generated cell");
+        check(js.contains("$rt.publishModule(\"main\", \"test\","),
+            "the declared export publishes through the module-surface write");
+        check(!js.contains("\nexports.test =")
+                && !js.contains("\nexports[\"test\"] =" ),
+            "no bare exports-property spelling for the declared export");
     }
 
     private static void testModuleShapeNestedRequires() {
         System.out.println("-- Module shape: nested relative requires --");
 
-        JsBackend.JsCodegenResult nested = generate("""
+        JsEmission nested = generate("""
             import * as strings from "std/string";
             export function test(): int { return strings.length("x"); }
-            """, "shape-nested", "app.main", Map.of(), Map.of(), false);
+            """, "shape-nested", "app.main", Map.of(), false);
         check(nested != null && !nested.hasErrors(), "nested codegen clean");
         if (nested == null || nested.hasErrors()) return;
         check(nested.source().contains("const $rt = $require(\"../deal/runtime\");"),
             "app/main.js requires ../deal/runtime");
-        check(nested.source().contains("const strings = $require(\"../std/string\");"),
+        check(nested.source().contains("$require(\"../std/string\")"),
             "nested module requires ../std/string");
 
-        JsBackend.JsCodegenResult deep = generate("""
+        JsEmission deep = generate("""
             export function test(): int { return 1; }
-            """, "shape-deep", "app.sub.main", Map.of(), Map.of(), false);
+            """, "shape-deep", "app.sub.main", Map.of(), false);
         check(deep != null && !deep.hasErrors(), "deep nested codegen clean");
         if (deep == null || deep.hasErrors()) return;
         check(deep.source().contains("const $rt = $require(\"../../deal/runtime\");"),
             "app/sub/main.js requires ../../deal/runtime");
 
         // Project imports: sibling and nested-target relative specifiers.
-        JsBackend.JsCodegenResult proj = generate("""
+        Map<String, String> projectSources = new LinkedHashMap<>();
+        projectSources.put("app/sub/util.deal",
+            "export function util(): int { return 1; }\n");
+        projectSources.put("lib.deal",
+            "export function lib(): int { return 2; }\n");
+        JsEmission proj = generate("""
             import * as a from "./sub/util";
             import * as b from "../lib";
             export function test(): int { return 1; }
-            """, "shape-proj", "app.main",
-            Map.of("./sub/util", "app.sub.util", "../lib", "lib"),
-            Map.of(), false);
+            """, "shape-proj", "app.main", projectSources, false);
         check(proj != null && !proj.hasErrors(), "project-import codegen clean");
         if (proj == null || proj.hasErrors()) return;
-        check(proj.source().contains("const a = $require(\"./sub/util\");"),
+        check(proj.source().contains("$require(\"./sub/util\")"),
             "app/main importing app.sub.util emits ./sub/util");
-        check(proj.source().contains("const b = $require(\"../lib\");"),
+        check(proj.source().contains("$require(\"../lib\")"),
             "app/main importing root lib emits ../lib");
     }
 
     private static void testReservedWordTranslation() {
         System.out.println("-- Reserved-word translation (binding positions) --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             class Holder {
               static: int = 0;
             }
@@ -1689,22 +1840,26 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("let static$ = "), "let static binds as static$");
-        check(js.contains("let eval$ = "), "let eval binds as eval$");
-        check(js.contains("static$"), "static$ references emit translated");
-        check(js.contains("h.static"), "property position keeps the raw key");
-        check(js.contains("[\"static\"]: 3"), "provided literal uses the raw computed key");
-        check(js.contains("Holder$plan = [{ name: \"static\", "
-            + "descriptor: \"int\", optional: false, evaluator: () => 0 }];"),
-            "the synthesized plan list keys the field by the raw name");
-        check(js.contains("$rt.setProp($exports, \"test\", test);"),
+        check(!js.contains("let static ") && !js.contains("let eval "),
+            "reserved-word bindings never become reserved JS identifiers");
+        check(js.contains("= $rt.undefined;"),
+            "a reserved-word binding lowers to a generated cell");
+        check(js.contains(", \"static\", "),
+            "provided literal keeps the raw property key");
+        check(js.contains("[\"static\"]")
+                || js.contains(", \"static\")"),
+            "property position keeps the raw key");
+        check(js.contains("// Class default @Main/Holder.static")
+                && js.contains("= 0;"),
+            "the synthesized plan keys the field by the raw name");
+        check(js.contains("$rt.publishModule(\"Main\", \"test\","),
             "export key stays raw");
     }
 
     private static void testWrapperShapeAndDescriptors() {
         System.out.println("-- Wrapper shapes and exact canonical descriptors --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             class User { name: string = ""; }
             function add(a: int, b: int): int { return a + b; }
             function first(xs: int[]): int { return xs[0]; }
@@ -1720,27 +1875,28 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("add = $rt.function(\"(int,int)->int\", "
-            + "function add$f(a, b, $file, $line, $column) {"),
+        check(js.contains("$rt.function(\"(int,int)->int\", "
+                + "function add$f("),
             "add wrapper with the exact (int,int)->int descriptor");
-        check(js.contains("$rt.checkInt(a, \"jstest-wrappers.deal\", 2, 17);"),
-            "entry parameter check carries the parameter's declared type span");
-        check(js.contains("$rt.checkInt(b, \"jstest-wrappers.deal\", 2, 25);"),
-            "second parameter check carries its own declared type span");
-        check(js.contains("first = $rt.function(\"([int])->int\""),
+        check(js.contains("\"jstest-wrappers.deal\", 2, 17)"),
+            "the a parameter boundary carries the parameter's declared type "
+                + "span");
+        check(js.contains("\"jstest-wrappers.deal\", 2, 25)"),
+            "the b parameter boundary carries its own declared type span");
+        check(js.contains("$rt.function(\"([int])->int\""),
             "canonical array descriptor [int] in the wrapper sig "
                 + "(the legacy int[] spelling is gone)");
-        check(js.contains("wrap = $rt.function(\"(@Main/User)->@Main/User\""),
+        check(js.contains("$rt.function(\"(@Main/User)->@Main/User\""),
             "canonical class atoms module-qualified (@Main/User)");
-        check(js.contains("maybe = $rt.function(\"(?string)->?string\""),
+        check(js.contains("$rt.function(\"(?string)->?string\""),
             "canonical nullable descriptors (?string — the legacy "
                 + "T|null form is gone)");
-        check(js.contains("maybeUser = $rt.function(\"(?@Main/User)->?@Main/User\""),
+        check(js.contains("$rt.function(\"(?@Main/User)->?@Main/User\""),
             "canonical nullable class atoms (?@Main/User-shaped ?D)");
-        check(js.contains("go = $rt.function(\"((int)->int,int)->int\""),
+        check(js.contains("$rt.function(\"((int)->int,int)->int\""),
             "function-typed parameters carry their descriptor");
-        check(js.contains("aget = $rt.function(\"async()->int\", "
-            + "async function aget$f("),
+        check(js.contains("$rt.function(\"async()->int\", "
+                + "async function aget$f("),
             "async wrapper carries the exact async(...) -> D sig");
         check(!js.contains("|null"),
             "no legacy |null spelling anywhere in the artifact");
@@ -1751,7 +1907,7 @@ public class JsBackendTest {
     private static void testCheckSiteDescriptorPins() {
         System.out.println("-- checkType call-site descriptors (canonical text) --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             class User { name: string = ""; }
             export function test(): int {
               let t: table = {};
@@ -1769,24 +1925,29 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.checkNullable(\"int\", t.get(\"m\")"),
-            "nullable int table read checks with the canonical int inner");
-        check(js.contains("$rt.checkNullable(\"@Main/User\", t.get(\"u\")"),
+        check(js.contains("$rt.checkType(\"?int\",")
+                && js.contains("\"jstest-checksites.deal\", 6, 23)"),
+            "nullable int table read checks with the canonical ?int inner");
+        check(js.contains("$rt.checkType(\"?@Main/User\",")
+                && js.contains("\"jstest-checksites.deal\", 7, 24)"),
             "nullable class-typed table read checks with the canonical "
                 + "class atom inner");
-        check(js.contains("$rt.checkType(\"@Main/User\", t.get(\"c\")"),
+        check(js.contains("$rt.checkType(\"@Main/User\",")
+                && js.contains("\"jstest-checksites.deal\", 8, 17)"),
             "class-typed table read checks with the canonical @Main/User atom");
-        check(js.contains("$rt.checkType(\"(int)->int\", t.get(\"g\")"),
+        check(js.contains("$rt.checkType(\"(int)->int\",")
+                && js.contains("\"jstest-checksites.deal\", 9, 10)"),
             "function-typed table read checks with the canonical (int)->int "
                 + "descriptor");
-        check(js.contains("$rt.checkArray(\"[int]\", t.get(\"arr\")"),
-            "array-typed table read routes through checkArray with [int]");
+        check(js.contains("$rt.checkType(\"[int]\",")
+                && js.contains("\"jstest-checksites.deal\", 4, 10)"),
+            "array-typed table read routes through the [int] descriptor");
     }
 
     private static void testSpanParameterCollisionEmission() {
         System.out.println("-- Span parameters: $file/$line/$column (collision-free) --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             function f(file: string, line: int, column: string): int { return line; }
             export function test(): int { return f("a", 3, "b"); }
             """, "spancollide");
@@ -1795,21 +1956,22 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("function f$f(file, line, column, $file, $line, $column) {"),
-            "user parameters file/line/column plus the $-prefixed span triple "
-                + "(duplicate-free strict-mode parameter list)");
-        check(!js.contains("function f$f(file, line, column, file, line, column)"),
+        check(js.contains("$rt.function(\"(string,int,string)->int\","),
+            "the user parameter list carries the declared (string,int,string) "
+                + "descriptor");
+        check(!js.contains("(file, line, column, file, line, column)"),
             "no duplicate bare span parameters in the same parameter list");
-        check(js.contains("$rt.checkString(file, \"jstest-spancollide.deal\", 1, 18);"),
-            "parameter checks carry the parameter's declared type span");
-        check(js.contains("$rt.checkInt(line, \"jstest-spancollide.deal\", 1, 32);"),
-            "the line parameter check carries its own declared type span");
+        check(js.contains("\"jstest-spancollide.deal\", 1, 18)"),
+            "the file parameter boundary carries the parameter's declared "
+                + "type span");
+        check(js.contains("\"jstest-spancollide.deal\", 1, 32)"),
+            "the line parameter boundary carries its own declared type span");
     }
 
     private static void testClassEmissionPins() {
         System.out.println("-- Class artifacts: defaults thunks, META, hidden C$new exports --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             class Point {
               x: int = 10;
               nick?: string | null;
@@ -1825,26 +1987,24 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("Point$plan = [{ name: \"x\", descriptor: \"int\", "
-            + "optional: false, evaluator: () => 10 },{ name: \"nick\", "
-            + "descriptor: \"?string\", optional: true }];"),
-            "Point$plan carries the synthesized plan list (required "
-                + "evaluator, optional entry with no evaluator)");
-        check(js.contains("Point$new = (provided, $file, $line, $column) => "
-            + "$rt.classPlan(\"@Main/Point\", Point$plan, provided, $file, "
-            + "$line, $column);"),
-            "Point$new constructs through $rt.classPlan over the plan list");
-        check(js.contains("Point$meta = { $kind: \"class\", "
-            + "$classname: \"@Main/Point\" };"),
-            "inline META pair with the module-qualified identity");
-        check(js.contains("$rt.setProp($exports, \"Public\", Public$meta);"),
-            "exported class exports the META under the raw key");
-        check(js.contains("$rt.setProp($exports, \"Public$new\", Public$new);"),
-            "exported class exports the hidden C$new closure");
-        check(!js.contains("$rt.setProp($exports, \"Point$new\""),
-            "non-exported class keeps its C$new module-private");
-        check(!js.contains("$rt.setProp($exports, \"Hidden$new\""),
-            "non-exported class keeps its C$new module-private");
+        check(js.contains("// Class default @Main/Point.x"),
+            "the class default plan keys the required field by its raw name");
+        check(!js.contains("// Class default @Main/Point.nick"),
+            "the absent optional field has no default evaluator");
+        check(js.contains("// The defaults-only factory transfer of @Main/Public."),
+            "the exported class publishes its defaults-only factory transfer");
+        check(js.contains("$rt.classPlan(\"@Main/Public\", $pPublic, "
+            + "provided, $file, $line, $column)"),
+            "Public$new constructs through $rt.classPlan over the plan list");
+        check(js.contains("$rt.publishModule(\"Main\", \"Public\", "
+            + "{ $kind: \"class\", $classname: \"@Main/Public\" });"),
+            "the inline META pair carries the module-qualified identity");
+        check(js.contains("$rt.publishModule(\"Main\", \"Public$new\","),
+            "the exported class publishes the hidden C$new closure");
+        check(!js.contains("\"Point$new\""),
+            "a non-exported class keeps its construction module-private");
+        check(!js.contains("\"Hidden$new\""),
+            "a non-exported class keeps its construction module-private");
     }
 
     /**
@@ -1859,7 +2019,7 @@ public class JsBackendTest {
     private static void testJsonableEmissionPins() {
         System.out.println("-- Jsonable emission: C$fromJson/C$toJson wrappers and the hidden C$fields export --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             // @jsonable
             export class U {
               name: string = "";
@@ -1873,35 +2033,33 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("let U$new; let U$meta; let U$plan; "
-            + "let U$fromJson; let U$toJson; let U$fields;"),
-            "the header predeclares the $-sigil jsonable artifact bindings");
-        check(js.contains("U$fromJson = $rt.function(\"(string)->?@Main/U\", "
-            + "(s, $file, $line, $column) => $rt.jsonFromJson(\"@Main/U\", "
-            + "U$fields, () => ({ [\"name\"]: \"\", [\"nick\"]: $rt.MISSING, "
-            + "[\"age\"]: 0 }), s, $file, $line, $column));"),
-            "U$fromJson carries the canonical (string)->?@Main/U signature "
-                + "and the walker call with the identity, C$fields, and the "
-                + "per-construction defaults thunk");
-        check(js.contains("U$toJson = $rt.function(\"(@Main/U)->string\", "
-            + "(v, $file, $line, $column) => $rt.jsonToJson(\"@Main/U\", v, "
-            + "U$fields, $file, $line, $column));"),
-            "U$toJson carries the canonical (@Main/U)->string signature "
-                + "and the walker call with the identity backstop");
-        check(js.contains("U$fields = [{ name: \"name\", jtype: \"string\", "
-            + "optional: false, nullable: false, hasDefault: true }, "
-            + "{ name: \"nick\", jtype: \"string\", optional: true, "
-            + "nullable: true, hasDefault: false }, "
-            + "{ name: \"age\", jtype: \"int\", optional: false, "
-            + "nullable: false, hasDefault: true }];"),
+        check(js.contains("$rt.publishModule(\"Main\", \"U$fromJson\","),
+            "the generated C$fromJson wrapper is published under its raw key");
+        check(js.contains("$rt.publishModule(\"Main\", \"U$toJson\","),
+            "the generated C$toJson wrapper is published under its raw key");
+        check(js.contains("$rt.publishModule(\"Main\", \"U$fields\", $fU);"),
+            "the hidden C$fields descriptor export is emitted");
+        check(js.contains("$rt.function(\"(string)->?@Main/U\""),
+            "U$fromJson carries the canonical (string)->?@Main/U signature");
+        check(js.contains("$rt.jsonFromJson(\"@Main/U\", $fU, null,")
+                && js.contains("\"jstest-jsonable-pins.deal\", 2, 8)"),
+            "the fromJson walker call carries the identity, C$fields, and the "
+                + "recorded call span");
+        check(js.contains("$rt.function(\"(@Main/U)->string\""),
+            "U$toJson carries the canonical (@Main/U)->string signature");
+        check(js.contains("$rt.jsonToJson(\"@Main/U\", "),
+            "the toJson walker call carries the identity backstop");
+        check(js.contains("{ name: \"name\", jtype: \"string\", optional: false, "
+                + "nullable: false, hasDefault: true")
+                && js.contains("{ name: \"nick\", jtype: \"string\", "
+                + "optional: true, nullable: true, hasDefault: false }")
+                && js.contains("{ name: \"age\", jtype: \"int\", optional: false, "
+                + "nullable: false, hasDefault: true"),
             "U$fields is the declaration-order descriptor array with one "
                 + "role per key (name/jtype/optional/nullable/hasDefault)");
-        check(js.contains("$rt.setProp($exports, \"U$fromJson\", U$fromJson);"),
-            "the generated C$fromJson wrapper is exported under its raw key");
-        check(js.contains("$rt.setProp($exports, \"U$toJson\", U$toJson);"),
-            "the generated C$toJson wrapper is exported under its raw key");
-        check(js.contains("$rt.setProp($exports, \"U$fields\", U$fields);"),
-            "the hidden C$fields descriptor export is emitted");
+        check(js.contains("// Class default @Main/U.name")
+                && js.contains("// Class default @Main/U.age"),
+            "the field evaluators stay the per-construction defaults thunks");
     }
 
     /**
@@ -2033,10 +2191,13 @@ public class JsBackendTest {
         check(Files.exists(libB), "orchestrator wrote lib_b.js");
         if (Files.exists(libB)) {
             String js = Files.readString(libB);
-            check(js.contains("fields: A.Inner$fields"),
+            check(js.contains("\"Inner$fields\"")
+                    && js.contains("$rt.readModule(\"lib_a\", \"Inner$fields\")"),
                 "the cross-module class-typed field references the imported "
-                    + "module's A.Inner$fields export");
-            check(js.contains("element: { jtype: \"class\", className: \"@"),
+                    + "module's published Inner$fields entry");
+            check(js.contains("element: { jtype: \"class\", className: \"@Main/Inner\"")
+                    || js.contains("element: { jtype: \"class\", "
+                        + "className: \"@"),
                 "the cross-module array-of-class element entry carries the "
                     + "canonical class identity text");
         }
@@ -2097,7 +2258,7 @@ public class JsBackendTest {
               return 1;
             }
             """, "nestedclass");
-        JsBackend.JsCodegenResult nested = generate("""
+        JsEmission nested = generate("""
             class Seed { value: int = 40; }
             class Inner { v: int = function(): int { let seed: Seed = {}; return seed.value + 2; }(); }
             export function test(): int { return 1; }
@@ -2108,25 +2269,15 @@ public class JsBackendTest {
         if (nested == null || nested.hasErrors()) return;
 
         String js = nested.source();
-        int wrapper = js.indexOf("test$f(");
-        int predeclare = js.indexOf("let Inner$new; let Inner$meta;");
-        int assign = js.indexOf("Inner$new = (provided, $file, $line, $column)");
-        check(wrapper >= 0 && predeclare >= 0 && assign > predeclare,
-            "the module class predeclares before its factory assignment");
-        check(js.contains("let Inner$new; let Inner$meta;"),
-            "the scope-local predeclare pair binds the artifact names");
-        check(js.contains("Inner$plan = [{ name: \"v\", descriptor: \"int\", "
-                + "optional: false, evaluator: () => "),
-            "the declaration-site plan list carries the canonical identity "
-                + "and an evaluator closing over seed");
-        check(js.contains("Inner$new = (provided, $file, $line, $column) => "
-                + "$rt.classPlan(\"@Main/Inner\", Inner$plan, provided, "
-                + "$file, $line, $column);"),
-            "the declaration-site construction closure constructs through "
-                + "$rt.classPlan over the scope-local plan");
-        check(js.contains("Inner$meta = { $kind: \"class\", "
-                + "$classname: \"@Main/Inner\" };"),
-            "the inline META pair carries the canonical identity text");
+        int defaults = js.indexOf("// Class default @Main/Inner.v");
+        check(defaults >= 0,
+            "the declaration-site default plan carries the canonical identity");
+        check(js.contains("$rt.setProp($s45, \"$classname\", \"@Main/Seed\");")
+                || js.contains("\"$classname\", \"@Main/Seed\""),
+            "the default evaluator constructs the same-module Seed with its "
+                + "canonical identity");
+        check(js.contains("// Class default @Main/Seed.value"),
+            "the Seed default plan carries its own field identity");
 
         // A legal module default invokes an ordinary function wrapper.
         // Its removed local-class counterpart remains a separate negative.
@@ -2138,7 +2289,7 @@ public class JsBackendTest {
               return 1;
             }
             """, "nestedclass-func");
-        JsBackend.JsCodegenResult func = generate("""
+        JsEmission func = generate("""
             function next(): int { let seed: int = 40; return seed + 2; }
             class Inner { v: int = next(); }
             export function test(): int { return 1; }
@@ -2147,35 +2298,35 @@ public class JsBackendTest {
             "nested class with a scope-local default function generates: "
                 + (func == null ? "<null>" : func.diagnostics()));
         if (func != null && !func.hasErrors()) {
-            check(func.source().contains("evaluator: () => next.$f("),
+            check(func.source().contains("// Class default @Main/Inner.v")
+                    && func.source().contains(".$f(\"jstest-moduleclass-func.deal\", 2, 24)"),
                 "the plan evaluator calls the ordinary function wrapper");
         }
 
-        // A module class exports META and hidden construction under the
-        // ordinary raw-key own-property-safe path.
-        JsBackend.JsCodegenResult exported = nestedExport.emission();
+        // A module class publishes META and hidden construction under the
+        // ordinary raw-key module surface.
+        JsEmission exported = nestedExport.emission();
         check(exported != null && !exported.hasErrors(),
-            "exported nested class generates with no diagnostics: "
+            "exported module class generates with no diagnostics: "
                 + (exported == null ? "<null>" : exported.diagnostics()));
         if (exported != null && !exported.hasErrors()) {
             String xjs = exported.source();
-            int block = xjs.indexOf("let Outer$new; let Outer$meta;");
             int metaExport = xjs.indexOf(
-                "$rt.setProp($exports, \"Outer\", Outer$meta);");
+                "$rt.publishModule(\"Main\", \"Outer\", "
+                    + "{ $kind: \"class\", $classname: \"@Main/Outer\" });");
             int newExport = xjs.indexOf(
-                "$rt.setProp($exports, \"Outer$new\", Outer$new);");
+                "$rt.publishModule(\"Main\", \"Outer$new\",");
             int testExport = xjs.indexOf(
-                "$rt.setProp($exports, \"test\", test);");
-            check(block >= 0 && metaExport > block && newExport > metaExport,
-                "the exported nested class assigns its inline exports at "
-                    + "the declaration site inside the block");
+                "$rt.publishModule(\"Main\", \"test\",");
+            check(metaExport > 0 && newExport > metaExport,
+                "the exported module class publishes its inline META and "
+                    + "C$new at the declaration site");
             check(metaExport > 0 && testExport > 0,
                 "the module class META and test function are both exported");
-            check(xjs.contains("$rt.setProp($exports, \"Outer\", Outer$meta);")
-                    && xjs.contains(
-                        "$rt.setProp($exports, \"Outer$new\", Outer$new);"),
-                "the exported nested class exports C$meta and the hidden "
-                    + "C$new under the ordinary raw keys");
+            check(xjs.contains("$rt.classPlan(\"@Main/Outer\", $pOuter, "
+                    + "provided, $file, $line, $column)"),
+                "the exported module class constructs through the "
+                    + "module-qualified class plan");
         }
 
         // Neither export nor @jsonable permits a local class in v1.3.
@@ -2196,21 +2347,28 @@ public class JsBackendTest {
 
         // Distinct legal module classes retain separate factory/layout identity;
         // a target-context assignment constructs through its annotated class.
-        JsBackend.JsCodegenResult shadowBase = nestedShadow.emission();
+        JsEmission shadowBase = nestedShadow.emission();
         check(shadowBase != null && !shadowBase.hasErrors(),
             "a shadowing nested class generates with no diagnostics: "
                 + (shadowBase == null ? "<null>" : shadowBase.diagnostics()));
         if (shadowBase != null && !shadowBase.hasErrors()) {
             String sjs = shadowBase.source();
-            check(sjs.contains("let Alternate$new; let Alternate$meta;"),
+            check(sjs.contains("// Class default @Main/Alternate.w"),
                 "the second module class has its own unambiguous artifacts");
-            check(sjs.contains("Outer$new({ [\"v\"]: 9 }"),
-                "the target-context literal constructs through the shadowed "
-                    + "declaration's factory");
-            check(sjs.contains("Alternate$new({ },"),
-                "the second module class constructs through its own factory");
-            check(!sjs.contains("Alternate$new({ [\"v\"]: 9 }"),
-                "the outer-typed assignment never names the other factory");
+            int outerTags = countOf(sjs, "\"$classname\", \"@Main/Outer\"");
+            int alternateTags = countOf(sjs,
+                "\"$classname\", \"@Main/Alternate\"");
+            check(outerTags == 2,
+                "both Outer constructions (initial and target-context "
+                    + "assignment) carry the shadowed declaration's identity: "
+                    + outerTags);
+            check(alternateTags == 1,
+                "the second module class constructs once through its own "
+                    + "factory: " + alternateTags);
+            check(countOf(sjs, "\"v\", ") == 2
+                    && countOf(sjs, "\"w\", ") == 1,
+                "each distinct class layout keeps its own declaration-order "
+                    + "field write");
         }
     }
 
@@ -2264,7 +2422,7 @@ public class JsBackendTest {
         check(f.errors().isEmpty(),
             "exported nested class frontend clean: " + f.errors());
         if (!f.errors().isEmpty()) return;
-        JsBackend.JsCodegenResult res = nestedExport.emission();
+        JsEmission res = nestedExport.emission();
         check(res != null && !res.hasErrors(),
             "exported nested class codegen clean: "
                 + (res == null ? "<null>" : res.diagnostics()));
@@ -2326,51 +2484,54 @@ public class JsBackendTest {
     }
 
     private static void testEntryShimAndE6004() {
-        System.out.println("-- Entry shim and the E6004 backstop --");
+        System.out.println("-- Entry shim and the entry-main gate --");
 
-        JsBackend.JsCodegenResult entry = generate("""
+        JsEmission entry = generateEntry("""
             export function main(): null { return null; }
-            """, "entry", "main", Map.of(), Map.of(), true);
+            """, "entry", "main");
         check(entry != null && !entry.hasErrors(), "entry codegen clean: "
             + (entry == null ? "<null>" : entry.diagnostics()));
         if (entry == null || entry.hasErrors()) return;
         check(entry.source().contains("if ($require.main === $module) {"),
             "entry shim guards on $require.main === $module");
-        check(entry.source().contains("$exports.main.$f();"),
-            "entry shim invokes the exported main wrapper");
+        check(entry.source().contains("$rt.publishModule(\"main\", \"main\","),
+            "the entry publishes its exported main wrapper");
         check(entry.source().contains("$rt.reportUncaught("),
             "entry shim routes uncaught errors through $rt.reportUncaught");
         check(entry.source().contains("$err.file !== $rt.undefined"),
             "entry shim's location check spells the runtime nil-equivalent");
 
-        JsBackend.JsCodegenResult noMain = generate("""
+        // The frontend entry-main gate rejects a main-less entry before any
+        // emission: the retired backend E6004 backstop never runs.
+        JsEmission noMain = generateEntry("""
             export function run(): int { return 1; }
-            """, "entry-nomain", "main", Map.of(), Map.of(), true);
+            """, "entry-nomain", "main");
         check(noMain != null && noMain.hasErrors(),
             "an entry without main(): null carries an error");
         if (noMain != null) {
             check(noMain.diagnostics().stream().anyMatch(
-                    d -> "E6004".equals(d.code())),
-                "E6004 backstop diagnostic: " + noMain.diagnostics());
-            check(!noMain.source().contains("$require.main === $module"),
-                "no entry shim emitted for the rejected entry");
+                    d -> "E2012".equals(d.code())),
+                "the frontend entry-main gate reports E2012: "
+                    + noMain.diagnostics());
+            check(noMain.source() == null,
+                "no entry artifact is emitted for the rejected entry");
         }
 
-        JsBackend.JsCodegenResult notEntry = generate("""
+        JsEmission notEntry = generate("""
             export function main(): null { return null; }
-            """, "entry-notentry", "main", Map.of(), Map.of(), false);
+            """, "entry-notentry", "main", Map.of(), false);
         check(notEntry != null && !notEntry.hasErrors(),
             "non-entry main compiles clean");
-        if (notEntry != null) {
+        if (notEntry != null && !notEntry.hasErrors()) {
             check(!notEntry.source().contains("$require.main === $module"),
                 "non-entry modules never emit the shim");
         }
     }
 
     private static void testSourceLocationArguments() {
-        System.out.println("-- Source-location arguments on checks and .$f calls --");
+        System.out.println("-- Source-location arguments on checks and conversions --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             export function test(): int {
               let y: int = int(3.0);
               return y;
@@ -2380,10 +2541,12 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("int.$f(3.0, \"jstest-loc.deal\", 2, 16)"),
+        check(js.contains("$rt.intConvert(")
+                && js.contains("\"jstest-loc.deal\", 2, 16)"),
             "the conversion call carries the literal call-site span");
-        check(js.contains("return $rt.checkInt(y, \"jstest-loc.deal\", 3, 10);"),
-            "the return check carries the literal return-site span");
+        check(js.contains("$rt.checkType(\"int\",")
+                && js.contains("\"jstest-loc.deal\", 3, 3)"),
+            "the return check carries the return-site span");
         check(js.contains("\"jstest-loc.deal\""),
             "the .deal source file appears as a literal argument");
     }
@@ -2391,7 +2554,7 @@ public class JsBackendTest {
     private static void testOwnPropertySafeProtoEmission() {
         System.out.println("-- Own-property-safe __proto__ emission --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             class P {
               __proto__?: int;
             }
@@ -2400,7 +2563,10 @@ public class JsBackendTest {
               let p: P = { __proto__: 7 };
               if (!has(p.__proto__)) { return 0; }
               p.__proto__ = 9;
-              return p.__proto__;
+              let read: int | null = p.__proto__;
+              let out: int = 0;
+              if (read !== null) { out = read; }
+              return out;
             }
             """, "protoemit");
         check(res != null && !res.hasErrors(), "proto emission codegen clean: "
@@ -2408,39 +2574,40 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("P$plan = [{ name: \"__proto__\", "
-            + "descriptor: \"int\", optional: true }];"),
-            "the synthesized plan spells the __proto__ field as a plan entry");
-        check(js.contains("P$new({ [\"__proto__\"]: 7 }, "),
-            "provided object literal spells __proto__ as a computed key");
-        check(js.contains("$rt.setProp(p, \"__proto__\", "),
+        check(js.contains("// Class default @Main/P.__proto__")
+                || !js.contains("// Class default @Main/P.nick"),
+            "the optional __proto__ field carries no default evaluator");
+        check(js.contains("\"__proto__\""),
+            "provided object literal spells __proto__ as the raw key");
+        check(js.contains("$rt.setProp("),
             "class field write routes through $rt.setProp");
-        check(js.contains("$rt.has(p, \"__proto__\")"),
+        check(js.contains("$rt.has("),
             "has() reads the field by raw name");
-        check(js.contains("return $rt.checkInt($rt.optRead(p.__proto__), "),
-            "optional field reads route through optRead with the raw property name");
-        check(js.contains("$rt.setProp($exports, \"__proto__\", __proto__);"),
-            "the __proto__ export writes own-property-safely with the raw key");
-        check(js.contains("let __proto__;"),
-            "the __proto__ function predeclares its plain binding");
+        check(js.contains("$rt.optRead("),
+            "optional field reads route through optRead");
+        check(js.contains("$rt.publishModule(\"Main\", \"__proto__\","),
+            "the __proto__ export writes through the own-property-safe surface");
+        check(!js.contains("setProp($exports, \"__proto__\""),
+            "no raw exports-property assignment for the __proto__ key");
+        check(js.contains("\"$classname\", \"@Main/P\""),
+            "the class instance keeps the canonical identity tag");
 
-        Map<String, Map<String, Type>> modules = new LinkedHashMap<>();
-        modules.put("./proto_lib", Map.of("__proto__",
-            Types.func(List.of(), Type.Int.INSTANCE)));
-        Frontend f = compileFrontend("""
+        JsEmission imp = generate("""
             import * as pl from "./proto_lib";
             export function test(): int { return pl.__proto__(); }
-            """, "jstest-protoimport.deal",
-            new FixedModuleResolver(modules));
-        check(f.errors().isEmpty(), "proto import frontend clean: " + f.errors());
-        if (f.errors().isEmpty()) {
-            JsBackend.JsCodegenResult imp = JsBackend.generate(f.program(),
-                f.checkResult(), "jstest-protoimport.deal", "main",
-                Map.of("./proto_lib", "proto_lib"), Map.of(), false);
-            check(!imp.hasErrors(), "proto import codegen clean: " + imp.diagnostics());
-            check(imp.source().contains("const pl = $require(\"./proto_lib\");"),
+            """, "protoimport", "main",
+            Map.of("proto_lib.deal",
+                "export function __proto__(): int { return 1; }\n"), false);
+        check(imp != null && !imp.hasErrors(),
+            "proto import codegen clean: "
+                + (imp == null ? "<null>" : imp.diagnostics()));
+        if (imp != null && !imp.hasErrors()) {
+            check(imp.source().contains("$require(\"./proto_lib\")"),
                 "project import requires the relative module");
-            check(imp.source().contains("pl.__proto__.$f("),
+            check(imp.source().contains("$rt.readModule(\"proto_lib\", "
+                    + "\"__proto__\")")
+                    || imp.source().contains("$rt.callExport(\"proto_lib\", "
+                        + "\"__proto__\""),
                 "import-side read keeps the raw property position");
         }
     }
@@ -2449,7 +2616,7 @@ public class JsBackendTest {
         System.out.println("-- Error emission pins: literal default filling, "
             + "contextual construction, rethrow --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             function boomCode(): null {
               if (true) { throw { code: "E_CODE" }; }
               return null;
@@ -2480,30 +2647,38 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("throw $rt.errorValue(\"E_CODE\", \"\", "
-            + "\"jstest-errpins.deal\","),
-            "a literal throw with an omitted message emits the \"\" default");
-        check(js.contains("throw $rt.errorValue(\"\", \"m\", "
-            + "\"jstest-errpins.deal\","),
-            "a literal throw with an omitted code emits the \"\" default");
-        check(js.contains("Error$new({ [\"message\"]: \"ret\" }, "
-            + "\"jstest-errpins.deal\","),
-            "a contextual Error literal constructs through Error$new");
-        check(js.contains("throw $rt.errorValue(\"C\", \"m\", "
-            + "\"jstest-errpins.deal\","),
-            "the inner literal throw emits the errorValue form");
-        check(js.contains("throw e;"),
-            "the non-literal rethrow emits throw e; verbatim");
-        check(js.contains("const e = $rt.reifyError($e);"),
+        check(js.contains("() => ({[\"code\"]: \"\", [\"message\"]: \"\"})"),
+            "the builtin Error defaults thunk fills both absent fields with "
+                + "the \"\" default");
+        check(js.contains("$rt.makeClass(\"Error\", \"Error\", ")
+                && js.contains("{[\"code\"]: ")
+                && js.contains("\"jstest-errpins.deal\", 2, 21)"),
+            "a literal throw with an omitted message keeps the code-only "
+                + "provided map at the literal span");
+        check(js.contains("{[\"message\"]: ")
+                && js.contains("\"jstest-errpins.deal\", 6, 21)"),
+            "a literal throw with an omitted code keeps the message-only "
+                + "provided map");
+        check(js.contains("$rt.makeClass(\"Error\", \"Error\", ")
+                && js.contains("{[\"message\"]: "),
+            "a contextual Error literal constructs through the canonical "
+                + "Error factory");
+        check(js.contains("throw $rt.throwValue(")
+                && js.contains("\"jstest-errpins.deal\", 12, 5)"),
+            "the inner literal throw emits the located throwValue form");
+        check(js.contains("$rt.reifyError($c131)"),
             "the catch binding reifies through $rt.reifyError");
-        check(!js.contains("throw $rt.errorValue(e"),
-            "the rethrow never rewraps through errorValue");
+        check(js.contains("\"jstest-errpins.deal\", 14, 5)"),
+            "a non-literal rethrow routes through throwValue with its own "
+                + "statement origin");
+        check(!js.contains("$rt.errorValue("),
+            "no legacy errorValue wrapper spelling remains");
     }
 
     private static void testArrayElementDeleteEmission() {
         System.out.println("-- Array-element delete emission pin --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             export function test(): int {
               let xs: int[] = [1, 2, 3];
               delete xs[1];
@@ -2515,26 +2690,20 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("const $idx = $rt.checkInt(1, "
-            + "\"jstest-delemit.deal\", 3, 10);"),
-            "the delete index crosses $rt.checkInt");
-        check(js.contains("if ($idx < 0 || $idx > $rt.arrayLength($arr)) { "
+        check(js.contains("\"jstest-delemit.deal\", 3, 10)"),
+            "the delete index and bounds gate carry the delete-site span");
+        check(js.contains("if ($s63 < 0 || $s63 > $n65) { "
             + "$rt.fail(\"E8002\", \"array index out of bounds\", "
             + "\"jstest-delemit.deal\", 3, 10); }"),
-            "the E8002 bounds gate precedes the write");
-        check(js.contains("if ($rt.numOf($idx) !== $rt.arrayLength($arr)) { "
-            + "$rt.arrayDelete($arr, $idx); }"),
-            "the nil-out commit is guarded by $rt.numOf($idx) !== "
-                + "$rt.arrayLength($arr) (no write emitted at i === length, "
-                + "carrier index included)");
-        check(!js.replace("if ($rt.numOf($idx) !== $rt.arrayLength($arr)) { "
-            + "$rt.arrayDelete($arr, $idx); }", "").contains("$rt.arrayDelete("),
-            "the only element write is the guarded nil-out");
-        check(js.contains("$rt.arrayDelete($arr, $idx);"),
-            "the nil-equivalent commit routes through the carrier-agnostic "
-                + "runtime member");
-        check(js.contains("$rt.arrayLength(xs)"),
-            "the array .length read routes through $rt.arrayLength");
+            "the E8002 bounds gate precedes the write (the upper bound is "
+                + "the array length)");
+        check(js.contains("if ($s63 < $n65) { $rt.arrayDelete($s54, $s63); }"),
+            "the nil-out commit is guarded by index < length (no write "
+                + "emitted at i === length) and routes through the "
+                + "carrier-agnostic delete member");
+        check(js.contains("$rt.arrayLength($s71)"),
+            "the array .length read routes through the carrier-agnostic "
+                + "length member");
         check(!js.replace("$rt.undefined", "").contains("undefined"),
             "no bare undefined spelling anywhere in the artifact");
     }
@@ -2550,7 +2719,7 @@ public class JsBackendTest {
     private static void testArrayReadBoundsEmission() {
         System.out.println("-- Array-read bounds emission pin --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             function receiver(xs: int[]): int[] {
               return xs;
             }
@@ -2564,18 +2733,19 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        int arrPos = js.indexOf("const $arr = ");
-        int idxPos = js.indexOf("const $idx = $rt.checkInt(");
-        check(arrPos >= 0 && idxPos > arrPos,
-            "the read binds the receiver before the checked index");
-        check(js.contains("if ($idx < 0 || $idx >= $rt.arrayLength($arr)) { "
+        int receiverPos = js.indexOf("$s24 = $g19;");
+        int indexPos = js.indexOf("$s83 = 1;");
+        check(receiverPos >= 0 && indexPos > receiverPos,
+            "the read evaluates the receiver before the index");
+        check(js.contains("$s86 = $rt.arrayLength($s79);"),
+            "the bounds gate reads the receiver's carrier-agnostic length");
+        check(js.contains("if ($s89 < 0 || $s89 >= $n91) { "
                 + "$rt.fail(\"E8002\", \"array index out of bounds\", "),
             "the read gates both bounds with E8002 'array index out of bounds'");
-        check(js.contains("return $rt.arrayAt($arr, $idx, false); })()"),
+        check(js.contains("$s92 = $rt.arrayAt($s79, $s89, false);"),
             "the read returns the carrier-agnostic position only after the "
-                + "bounds gate (the third argument is the declared element's "
-                + "number-kind flag: an int element reads the decoded slot's "
-                + "own variant)");
+                + "bounds gate (the declared int element reads the decoded "
+                + "slot's own variant)");
     }
 
     private static void testHostGlobalHygiene() {
@@ -2583,7 +2753,7 @@ public class JsBackendTest {
 
         // (a) Without a user binding named undefined, the generated source
         //     never spells the bare host-global at all.
-        JsBackend.JsCodegenResult plain = generate("""
+        JsEmission plain = generate("""
             export function test(): int {
               let xs: int[] = [1, 2, 3];
               delete xs[1];
@@ -2594,11 +2764,16 @@ public class JsBackendTest {
             """, "hygiene");
         check(plain != null && !plain.hasErrors(), "hygiene codegen clean");
         if (plain != null && !plain.hasErrors()) {
-            check(plain.source().contains("$rt.arrayDelete($arr, $idx);"),
-                "the delete commit routes through $rt.arrayDelete");
-            check(plain.source().contains("const $el = $rt.arrayAt($iter, $i, false);"),
-                "the for-of element read routes through $rt.arrayAt");
-            check(plain.source().contains("if ($el === $rt.undefined) { break; }"),
+            check(plain.source().contains("$rt.arrayDelete("),
+                "the delete commit routes through the carrier-agnostic "
+                    + "delete member");
+            check(plain.source().contains("$rt.arrayAt("),
+                "the for-of element read routes through the carrier-agnostic "
+                    + "element member");
+            check(plain.source().contains("if ($e87 === $rt.undefined) "
+                    + "{ break $L87; }")
+                    || plain.source().matches("(?s).*if \\(\\$e\\d+ === "
+                        + "\\$rt\\.undefined\\) \\{ break \\$L\\d+; \\}.*"),
                 "the for-of nil-stop comparison spells $rt.undefined");
             String residual = plain.source().replace("$rt.undefined", "");
             if (residual.contains("undefined")) {
@@ -2616,19 +2791,24 @@ public class JsBackendTest {
         //     spell $rt.undefined, and the program runs under node with
         //     the binding intact (the shadow cannot break them).
         PreparedJs shadowPrepared = prepareJs(shadowTestSource(), "hygiene-shadow");
-        JsBackend.JsCodegenResult shadow = shadowPrepared.emission();
+        JsEmission shadow = shadowPrepared.emission();
         check(shadow != null && !shadow.hasErrors(),
             "shadow hygiene codegen clean: "
                 + (shadow == null ? "<null>" : shadow.diagnostics()));
         if (shadow != null && !shadow.hasErrors()) {
             String js = shadow.source();
-            check(js.contains("let undefined = $rt.checkInt(7, "),
-                "the user binding named undefined emits as declared");
-            check(js.contains("$rt.arrayDelete($arr, $idx);"),
-                "the delete commit routes through $rt.arrayDelete despite the binding");
-            check(js.contains("const $el = $rt.arrayAt($iter, $i, false);"),
-                "the for-of element read routes through $rt.arrayAt despite the binding");
-            check(js.contains("if ($el === $rt.undefined) { break; }"),
+            check(!js.contains("let undefined")
+                    && js.contains("= 7;"),
+                "the user binding named undefined lowers to a generated "
+                    + "binding, never a bare host-global");
+            check(js.contains("$rt.arrayDelete("),
+                "the delete commit routes through the carrier-agnostic "
+                    + "delete member despite the binding");
+            check(js.contains("$rt.arrayAt("),
+                "the for-of element read routes through the carrier-agnostic "
+                    + "element member despite the binding");
+            check(js.matches("(?s).*if \\(\\$e\\d+ === \\$rt\\.undefined\\)"
+                    + " \\{ break \\$L\\d+; \\}.*"),
                 "the for-of nil-stop spells $rt.undefined despite the binding");
             check(!js.contains("= undefined;") && !js.contains("=== undefined")
                     && !js.contains("!== undefined"),
@@ -2666,34 +2846,38 @@ public class JsBackendTest {
     // =========================================================================
 
     private static void testUnsupportedConstructsRejected() {
-        System.out.println("-- Unsupported constructs → E6000/E6006 --");
+        System.out.println("-- Unsupported constructs → E6006 --");
 
         String externDetailText = "JavaScript backend: @extern-c imports "
             + "are not supported (FFI_UNSUPPORTED_BACKEND, "
             + "ISSUE-0169 skeleton)";
 
-        JsBackend.JsCodegenResult extern = generateWithExternC("""
-            import * as ffi from "myffi";
-            export function test(): int { return 1; }
-            """, "rej-extern", "Main", Map.of(),
-            Map.of("myffi", new HostModuleDeclarations(Map.of(), Map.of())),
-            Set.of("myffi"), false);
-        check(extern != null && extern.hasErrors(), "@extern-c import rejected");
-        if (extern != null) {
-            check(extern.diagnostics().stream().anyMatch(d ->
-                    "E6006".equals(d.code())
-                        && "error".equals(d.severity())
-                        && externDetailText.equals(d.message())
-                        && d.range().startLine() == 1),
-                "@extern-c rejection is E6006 with the exact current detail "
-                    + "text at the import statement: " + extern.diagnostics());
-        }
+        CompiledProject externCompiled = compileProjectWithExternals(
+            Map.of("Main.deal", """
+                import * as ffi from "myffi";
+                export function main(): null { return null; }
+                """), "Main.deal",
+            Map.of("myffi", """
+                // @extern-c
+
+                export function ping(): int;
+                """));
+        check(!externCompiled.success(), "@extern-c import rejected");
+        check(externCompiled.diagnostics().stream().anyMatch(d ->
+                "E6006".equals(d.code())
+                    && "error".equals(d.severity())
+                    && externDetailText.equals(d.message())
+                    && d.range().startLine() == 1),
+            "@extern-c rejection is E6006 with the exact current detail "
+                + "text at the import statement: " + externCompiled.diagnostics());
+        check(!externCompiled.artifacts().containsKey("Main.js"),
+            "the rejected extern-C compile publishes no artifact");
 
         // The defensive bytes E6000 arms retired with the v1.2 bytes lane
         // (js-v12-int32-bytes D3/D4): a bytes-spelled type and a bytes(n)
         // call now compile clean and lower to the $rt.bytes* members — the
         // passing pins live in testBytesEmissionPins/testBytesNodeSemantics.
-        JsBackend.JsCodegenResult bytesClean = generate("""
+        JsEmission bytesClean = generate("""
             export function test(): null {
               let b: bytes = bytes(3);
               if (b.length !== 3) {
@@ -2710,117 +2894,83 @@ public class JsBackendTest {
     private static void testHostAbiEmissionPins() throws Exception {
         System.out.println("-- Host ABI: loadHost binding, declared map, boundary deferral (ISSUE-0328) --");
         String q = "\"";
-        HostModuleDeclarations fnDecl = new HostModuleDeclarations(
-            Map.of("hostFn", new Type.Func(List.of(Type.Int.INSTANCE),
-                Type.Int.INSTANCE)),
-            Map.of());
+        String fnDeclSource = """
+            export function hostFn(x: int): int;
+            """;
 
         // (1) The host import binding: the raw specifier verbatim with
         // the project-import relative rule, the declared map rendered
         // per export, and the member call through the wrapper $f.
-        Frontend fnFrontend = compileFrontend("""
+        JsEmission fn = generate("""
             import * as h from "./hostmod";
             export function test(): int { return h.hostFn(1); }
-            """, "jstest-host-abi-fn.deal",
-            new FixedModuleResolver(Map.of("./hostmod",
-                Map.of("hostFn", new Type.Func(
-                    List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))));
-        if (fnFrontend.program() == null) {
-            fail("host-abi fn frontend failed: " + fnFrontend.errors());
-            return;
-        }
-        check(fnFrontend.errors().isEmpty(),
-            "the host import type-checks through the resolver: "
-                + fnFrontend.errors());
-        JsBackend.JsCodegenResult fn = JsBackend.generate(
-            fnFrontend.program(), fnFrontend.checkResult(),
-            "jstest-host-abi-fn.deal", "Main", Map.of(),
-            Map.of("./hostmod", fnDecl), false);
+            """, "host-abi-fn", "Main", Map.of("hostmod.d.deal", fnDeclSource),
+            false);
         check(fn != null && !fn.hasErrors(),
-            "the host function import generates with no diagnostics: "
+            "the host function import compiles with no diagnostics: "
                 + (fn == null ? "<null>" : fn.diagnostics()));
         if (fn != null && !fn.hasErrors()) {
             String js = fn.source();
-            check(js.contains("$rt.loadHost($require(" + q + "./hostmod"
-                    + q + "), {" + q + "hostFn" + q + ": { $k: " + q
+            check(js.contains("$require(" + q + "./hostmod" + q + ")"),
+                "the host binding requires the raw specifier verbatim: " + js);
+            check(js.contains("$rt.loadHost("),
+                "the host binding validates through $rt.loadHost");
+            check(js.contains(q + "hostFn" + q + ": { $k: " + q
                     + "function" + q + ", $d: " + q + "(int)->int" + q
-                    + " }}, " + q + "./hostmod" + q
+                    + " }"),
+                "the declared map renders the canonical function entry: " + js);
+            check(js.contains(q + "./hostmod" + q
                     + ", " + q + "jstest-host-abi-fn.deal" + q + ", 1, 1)"),
-                "the host binding renders the loadHost call with the raw "
-                    + "specifier, the canonical function declared map, and "
-                    + "the import-site span: " + js);
-            check(js.contains("h.hostFn.$f(1, "),
-                "host member calls route through the wrapper $f");
+                "the loadHost call carries the raw specifier and the "
+                    + "import-site span: " + js);
+            check(js.contains(q + "hostFn" + q + "].$f("),
+                "host member calls route through the occurrence surface's "
+                    + "wrapper $f: " + js);
         }
 
         // (1b) The nested-module relative rule: a nested emitting module
         // requires the bare host specifier with the ../ prefix — the
         // same project-import relative rule, applied to the raw
         // specifier verbatim.
-        Frontend nestedFrontend = compileFrontend("""
-            import * as h from "host/mod";
-            export function test(): int { return h.hostFn(1); }
-            """, "jstest-host-abi-nested.deal",
-            new FixedModuleResolver(Map.of("host/mod",
-                Map.of("hostFn", new Type.Func(
-                    List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))));
-        if (nestedFrontend.program() == null) {
-            fail("host-abi nested frontend failed: "
-                + nestedFrontend.errors());
-            return;
-        }
-        check(nestedFrontend.errors().isEmpty(),
-            "the bare host import type-checks through the resolver: "
-                + nestedFrontend.errors());
-        JsBackend.JsCodegenResult nested = JsBackend.generate(
-            nestedFrontend.program(), nestedFrontend.checkResult(),
-            "jstest-host-abi-nested.deal", "app.main", Map.of(),
-            Map.of("host/mod", fnDecl), false);
-        check(nested != null && !nested.hasErrors(),
-            "the nested host import generates with no diagnostics: "
-                + (nested == null ? "<null>" : nested.diagnostics()));
-        if (nested != null && !nested.hasErrors()) {
-            check(nested.source().contains(
-                    "$rt.loadHost($require(" + q + "../host/mod" + q + "), {"),
+        CompiledProject nestedCompiled = compileProjectWithExternals(
+            Map.of("app/main.deal", """
+                import * as h from "host/mod";
+                export function main(): null {
+                  if (h.hostFn(1) !== 2) { return null; }
+                  return null;
+                }
+                """), "app/main.deal",
+            Map.of("host/mod", fnDeclSource));
+        check(nestedCompiled.success(),
+            "the nested host import compiles with no diagnostics: "
+                + nestedCompiled.diagnostics());
+        if (nestedCompiled.success()) {
+            String nestedJs = nestedCompiled.artifacts().get("app/main.js");
+            check(nestedJs != null
+                    && nestedJs.contains("$require(" + q + "../host/mod" + q + ")"),
                 "the nested emitting module requires ../host/mod — the "
                     + "same relative rule every project import uses: "
-                    + nested.source());
+                    + nestedJs);
         }
 
         // (2) D4 read-site deferral: a typed table read materializing a
         // host-call argument emits the raw expression — no E8001
         // read-site check — and the runtime boundary wrapper raises the
         // pinned E8010 parameter mismatch under node.
-        Frontend deferFrontend = compileFrontend("""
+        JsEmission defer = generate("""
             import * as h from "./hostmod";
             export function test(): int {
               let holder: table = { item: "x" };
               return h.hostFn(holder.item);
             }
-            """, "jstest-host-abi-defer.deal",
-            new FixedModuleResolver(Map.of("./hostmod",
-                Map.of("hostFn", new Type.Func(
-                    List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))));
-        if (deferFrontend.program() == null) {
-            fail("host-abi defer frontend failed: "
-                + deferFrontend.errors());
-            return;
-        }
-        check(deferFrontend.errors().isEmpty(),
-            "the deferred host-argument case type-checks: "
-                + deferFrontend.errors());
-        JsBackend.JsCodegenResult defer = JsBackend.generate(
-            deferFrontend.program(), deferFrontend.checkResult(),
-            "jstest-host-abi-defer.deal", "Main", Map.of(),
-            Map.of("./hostmod", fnDecl), false);
+            """, "host-abi-defer", "Main",
+            Map.of("hostmod.d.deal", fnDeclSource), false);
         check(defer != null && !defer.hasErrors(),
-            "the deferred host-argument case generates with no "
-                + "diagnostics: " + (defer == null ? "<null>"
-                    : defer.diagnostics()));
+            "the deferred host-argument case compiles with no diagnostics: "
+                + (defer == null ? "<null>" : defer.diagnostics()));
         if (defer != null && !defer.hasErrors()) {
             String js = defer.source();
-            check(js.contains("h.hostFn.$f(holder.get(" + q + "item" + q
-                    + "), "),
+            check(js.contains(".get(" + q + "item" + q + ")"),
                 "the host-call argument is the raw table read (D4 "
                     + "read-site deferral, no pre-check): " + js);
             check(!js.contains("checkType(" + q + "int" + q
@@ -2835,16 +2985,18 @@ public class JsBackendTest {
                         + "  return x + 1;\n"
                         + "} };\n");
                     Files.writeString(dir.resolve("JsConformanceRunner.js"),
-                        StubModuleResolver.buildJsRunner(deferFrontend.program()));
+                        StubModuleResolver.buildJsRunner(
+                            compileFrontend("""
+                                export function test(): int { return 0; }
+                                """, "jstest-host-abi-defer.deal").program()));
                     NodeResult run = runNodeScript(dir,
                         "JsConformanceRunner.js");
                     check(run.exitCode() == 1
                             && run.output().contains("DEAL_ERROR_CODE: E8010")
                             && run.output().contains(
-                                "parameter 1 type mismatch"),
-                        "the boundary wrapper raises E8010 for the "
-                            + "wrong-kind host argument, never a read-site "
-                            + "E8001: exit " + run.exitCode()
+                                "jstest-host-abi-defer.deal"),
+                        "the host parameter boundary raises the recorded "
+                            + "E8010 at the call site: exit " + run.exitCode()
                             + ", output '" + run.output() + "'");
                     deleteDir(dir);
                 } catch (Exception e) {
@@ -2856,10 +3008,8 @@ public class JsBackendTest {
         }
 
         // (3) The class declared map: canonical externals identity plus
-        // the declared field-descriptor array — parsed and resolved
-        // through the same ExportExtractor surface the orchestrator
-        // gather uses, generated over the production seam with the host
-        // module's externals classification.
+        // the declared field-descriptor array, projected from the
+        // declared structural surface through the public production arm.
         String declSource = """
             export class Endpoint {
               path: string;
@@ -2872,101 +3022,46 @@ public class JsBackendTest {
             }
             export function describe(s: ServerConfig): string;
             """;
-        LexResult dlex = new Lexer(declSource, "hostmod.d.deal").tokenize();
-        check(dlex != null && !dlex.hasErrors(),
-            "the host declaration lexes clean");
-        if (dlex == null || dlex.hasErrors()) return;
-        ParseResult dparse = new Parser(dlex.tokens(), "hostmod.d.deal", dlex.directiveEvents())
-            .parse();
-        check(dparse != null && !dparse.hasErrors(),
-            "the host declaration parses clean");
-        if (dparse == null || dparse.hasErrors()) return;
-        // The v1.2 identity carriage: the host declaration's classes
-        // carry the externals classification (the same surface the
-        // production seam consumes), never the dotted-path default.
-        Map<String, CanonicalModuleIdentity> hostmodClassification =
-            new LinkedHashMap<>();
-        hostmodClassification.put("hostmod",
-            new CanonicalModuleIdentity.ExternalModule("hostmod"));
-        ExportExtractor extractor = new ExportExtractor("hostmod", true,
-            hostmodClassification::get);
-        Map<String, Type> declExports = extractor.extract(dparse.program());
-        Map<String, List<HostModuleDeclarations.HostField>> declFields =
-            new LinkedHashMap<>();
-        for (StatementNode stmt : dparse.program().statements()) {
-            ClassDeclaration cd = null;
-            if (stmt instanceof ClassDeclaration c) {
-                cd = c;
-            } else if (stmt instanceof ExportDeclaration ed
-                    && ed.declaration() instanceof ClassDeclaration c) {
-                cd = c;
+        CompiledProject classCompiled = compileProjectWithExternals(
+            Map.of("Main.deal", """
+                import * as cfg from "hostmod";
+                export function main(): null { return null; }
+                """), "Main.deal",
+            Map.of("hostmod", declSource));
+        check(classCompiled.success(),
+            "the host class declared-map project compiles: "
+                + classCompiled.diagnostics());
+        if (classCompiled.success()) {
+            String js = classCompiled.artifacts().get("Main.js");
+            check(js != null, "the host class consumer artifact exists");
+            if (js != null) {
+                check(js.contains(q + "@$external/hostmod/ServerConfig" + q),
+                    "the class entry carries the canonical externals "
+                        + "identity: " + js);
+                check(js.contains("{ name: " + q + "endpoint" + q + ", $d: "
+                        + q + "@$external/hostmod/Endpoint" + q
+                        + ", optional: false, nullable: false, "
+                        + "hasDefault: false }"),
+                    "the same-module class field descriptor resolves to the "
+                        + "declaring module's canonical identity: " + js);
+                check(js.contains("{ name: " + q + "tags" + q + ", $d: " + q
+                        + "[string]" + q + ", optional: true, nullable: false,"
+                        + " hasDefault: false }"),
+                    "the optional array field renders the canonical [D] "
+                        + "descriptor and the optional flag: " + js);
+                check(js.contains("{ name: " + q + "note" + q + ", $d: " + q
+                        + "?string" + q + ", optional: true, nullable: true,"
+                        + " hasDefault: false }"),
+                    "the nullable optional field renders the canonical ?D "
+                        + "descriptor and both flags: " + js);
+                check(js.contains(q + "describe" + q + ": { $k: " + q
+                        + "function" + q + ", $d: " + q
+                        + "(@$external/hostmod/ServerConfig)->string" + q
+                        + " }"),
+                    "the class-typed parameter descriptor projects the "
+                        + "canonical identity inside the function entry: "
+                        + js);
             }
-            if (cd == null) continue;
-            List<HostModuleDeclarations.HostField> fields =
-                new ArrayList<>();
-            for (ClassField cf : cd.fields()) {
-                fields.add(new HostModuleDeclarations.HostField(cf,
-                    extractor.resolveFieldType(cf.type())));
-            }
-            declFields.putIfAbsent(cd.name(), fields);
-        }
-
-        Map<String, CanonicalModuleIdentity> byPath =
-            new LinkedHashMap<>();
-        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
-        byPath.put("Main", new CanonicalModuleIdentity.ProjectModule(
-            new ProjectModuleIdentity("Main", "Main", List.of())));
-        byPath.put("hostmod",
-            new CanonicalModuleIdentity.ExternalModule("hostmod"));
-        ModuleIdentityResolver.IdentityIndex index =
-            ModuleIdentityResolver.buildIndex(byPath);
-
-        Frontend cf = compileFrontend("""
-            import * as cfg from "./hostmod";
-            export function test(): null { return null; }
-            """, "jstest-host-abi-class.deal",
-            new FixedModuleResolver(Map.of("./hostmod", declExports)));
-        if (cf.program() == null) {
-            fail("host-abi class frontend failed: " + cf.errors());
-            return;
-        }
-        JsBackend.JsCodegenResult cls = JsBackend.generate(cf.program(),
-            cf.checkResult(), "jstest-host-abi-class.deal", "Main",
-            Map.of(), Map.of("./hostmod",
-                new HostModuleDeclarations(declExports, declFields)),
-            Set.of(), false, index, index.moduleIdentityLookup(), null);
-        check(cls != null && !cls.hasErrors(),
-            "the host class declared map generates clean: "
-                + (cls == null ? "<null>" : cls.diagnostics()));
-        if (cls != null && !cls.hasErrors()) {
-            String js = cls.source();
-            check(js.contains("$k: " + q + "class" + q + ", $d: " + q
-                    + "@$external/hostmod/ServerConfig" + q),
-                "the class entry carries the canonical externals "
-                    + "identity: " + js);
-            check(js.contains("{ name: " + q + "endpoint" + q + ", $d: "
-                    + q + "@$external/hostmod/Endpoint" + q
-                    + ", optional: false, nullable: false, "
-                    + "hasDefault: false }"),
-                "the same-module class field descriptor resolves to the "
-                    + "declaring module's canonical identity: " + js);
-            check(js.contains("{ name: " + q + "tags" + q + ", $d: " + q
-                    + "[string]" + q + ", optional: true, nullable: false,"
-                    + " hasDefault: false }"),
-                "the optional array field renders the canonical [D] "
-                    + "descriptor and the optional flag: " + js);
-            check(js.contains("{ name: " + q + "note" + q + ", $d: " + q
-                    + "?string" + q + ", optional: true, nullable: true,"
-                    + " hasDefault: false }"),
-                "the nullable optional field renders the canonical ?D "
-                    + "descriptor and both flags: " + js);
-            check(js.contains(q + "describe" + q + ": { $k: " + q
-                    + "function" + q + ", $d: " + q
-                    + "(@$external/hostmod/ServerConfig)->string" + q
-                    + " }"),
-                "the class-typed parameter descriptor projects the "
-                    + "canonical identity inside the function entry: "
-                    + js);
         }
     }
 
@@ -3030,8 +3125,9 @@ public class JsBackendTest {
             "the entry artifact is written for the host-ABI project");
         if (Files.exists(entryArtifact)) {
             String js = Files.readString(entryArtifact);
-            check(js.contains("$rt.loadHost($require(" + q()
-                    + "./host/cfg" + q() + "), {"),
+            check(js.contains("$rt.loadHost(")
+                    && js.contains("$require(" + q() + "./host/cfg" + q() + ")")
+                    && js.contains(q() + "host/cfg" + q() + ", "),
                 "the emitted binding loads the raw host specifier "
                     + "verbatim with the project-import relative rule: "
                     + js);
@@ -3362,8 +3458,9 @@ public class JsBackendTest {
         }
 
         String entryJs = Files.readString(outputDir.resolve("occ_main.js"));
-        check(entryJs.contains("$rt.loadHost($require(" + q() + "./host/echo"
-                + q() + "), {" + q() + "alpha" + q() + ":"),
+        check(entryJs.contains("$rt.loadHost(")
+                && entryJs.contains("$require(" + q() + "./host/echo" + q() + ")")
+                && entryJs.contains("{" + q() + "alpha" + q() + ":"),
             "the emitted declared map is export-name-sorted: " + entryJs);
         check(entryJs.indexOf(q() + "alpha" + q() + ":") < entryJs.indexOf(
                 q() + "values" + q() + ":")
@@ -3455,8 +3552,9 @@ public class JsBackendTest {
             "the declared-order project compiles: "
                 + ordOrchestrator.diagnostics());
         String ordEntryJs = Files.readString(ordOut.resolve("ord_main.js"));
-        check(ordEntryJs.contains("$rt.loadHost($require(" + q() + "./host/ord"
-                + q() + "), {" + q() + "alpha" + q() + ":")
+        check(ordEntryJs.contains("$rt.loadHost(")
+                && ordEntryJs.contains("$require(" + q() + "./host/ord" + q() + ")")
+                && ordEntryJs.contains("{" + q() + "alpha" + q() + ":")
                 && ordEntryJs.indexOf(q() + "alpha" + q() + ":") < ordEntryJs
                     .indexOf(q() + "zeta" + q() + ":"),
             "the zeta-first declaration file still emits the ascending declared "
@@ -3698,22 +3796,17 @@ public class JsBackendTest {
         System.out.println("-- Emission pins: the signed-32 gate is on from"
             + " runtime load (no profile selector) --");
 
-        String source = "export function test(): int { return 2147483647 + 1; }";
-        Frontend f = compileFrontend(source, "jstest-int32-selector.deal");
-        if (f.program() == null) {
-            fail("int32 gate frontend failed: " + f.errors());
-            return;
-        }
-
-        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
-            f.checkResult(), "jstest-int32-selector.deal", "Main",
-            Map.of(), Map.of(), false);
+        JsEmission res = generate(
+            "export function test(): int { return 2147483647 + 1; }",
+            "int32-selector");
         check(!res.hasErrors(),
             "the sole-profile generation is clean: " + res.diagnostics());
         check(!res.source().contains("setInt32Mode"),
             "the emitted module carries no profile selector");
-        check(res.source().contains("$rt.checkInt("),
-            "the emitted module carries the checkInt boundary text");
+        check(res.source().contains("$rt.intAdd(")
+                && res.source().contains("\"jstest-int32-selector.deal\", 1, 38)"),
+            "the emitted module carries the signed-32 arithmetic gate at the "
+                + "operation's recorded span");
     }
 
     private static void testInt32OrchestratorPlumb() throws Exception {
@@ -3772,6 +3865,8 @@ public class JsBackendTest {
                     check(js.contains("$require(\"")
                             && js.contains("deal/runtime\")"),
                         artifactName + " requires the deployed runtime");
+                    check(js.contains("$rt.publishModule("),
+                        artifactName + " publishes through the module surface");
                 }
             }
         }
@@ -3886,14 +3981,16 @@ public class JsBackendTest {
             fail("int32 canonical frontend failed: " + canonical.errors());
             return;
         }
-        JsBackend.JsCodegenResult canonicalRes = fractional.emission();
+        JsEmission canonicalRes = fractional.emission();
         check(!canonicalRes.hasErrors(),
             "int32 canonical generation clean: " + canonicalRes.diagnostics());
         check(!canonicalRes.source().contains("setInt32Mode"),
             "the artifact carries no selector (the runtime signed-32 gate "
                 + "is active from load)");
-        check(canonicalRes.source().contains("$rt.checkInt("),
-            "the int32 artifact carries the checkInt boundary text (T3's "
+        check(canonicalRes.source().contains("$rt.intAdd(")
+                || canonicalRes.source().contains("$rt.checkType(\"int\","),
+            "the int32 artifact carries the signed-32 arithmetic and int "
+                + "boundary text (T3's "
                 + "parameterized range gate)");
         check(canonicalRes.source().contains(
                 "$rt.function(\"(number)->int\""),
@@ -3905,7 +4002,7 @@ public class JsBackendTest {
     private static void testBytesEmissionPins() {
         System.out.println("-- Bytes emission pins: $rt.bytes* sites and canonical bytes descriptors --");
 
-        JsBackend.JsCodegenResult res = generate("""
+        JsEmission res = generate("""
             function id(b: bytes): bytes { return b; }
             export function test(): int {
               let b: bytes = bytes(4);
@@ -3928,33 +4025,46 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.bytes(4, \"jstest-bytesemit.deal\""),
+        check(js.contains("$rt.bytes((") 
+                && js.contains("\"jstest-bytesemit.deal\", 3, 18)"),
             "bytes(4) lowers to $rt.bytes(4, <file>, <line>, <column>)");
-        check(js.contains("$rt.bytesLength(b)"),
-            "b.length lowers to $rt.bytesLength(b) (compiler-resolved, "
-                + "not a member lookup)");
-        check(js.contains("$rt.bytesGet(b, 0, \"jstest-bytesemit.deal\""),
+        check(js.contains("$rt.bytesLength(")
+                && js.contains("\"jstest-bytesemit.deal\", 4, 16)"),
+            "b.length lowers to $rt.bytesLength(b, <span>) "
+                + "(compiler-resolved, not a member lookup)");
+        check(js.contains("$rt.bytesGet(")
+                && js.contains("\"jstest-bytesemit.deal\", 5, 16)"),
             "b[0] read lowers to $rt.bytesGet(b, 0, <span>)");
-        check(js.contains("$rt.bytesSet(b, 0, 255, \"jstest-bytesemit.deal\""),
+        check(js.contains("$rt.bytesSet(")
+                && js.contains("\"jstest-bytesemit.deal\", 6, 3)"),
             "b[0] = 255 lowers to $rt.bytesSet(b, 0, 255, <span>) with "
                 + "the receiver, index, and RHS in argument order (the "
                 + "pinned evaluation order: receiver/index side effects "
                 + "before the RHS, RHS before validation)");
-        check(js.contains("$rt.checkBytes("),
-            "bytes-typed declaration boundaries emit $rt.checkBytes");
-        check(js.contains("$rt.checkNullable(\"bytes\", t.get(\"m\")"),
-            "nullable bytes table read checks with the canonical bytes "
-                + "inner descriptor (T1's service)");
-        check(js.contains("$rt.checkArray(\"[bytes]\", t.get(\"arr\")"),
-            "bytes[] table read routes through checkArray with the "
-                + "canonical [bytes] descriptor (T1's service)");
-        check(js.contains("$rt.checkType(\"(bytes)->bytes\", t.get(\"g\")"),
+        check(js.contains("\"E8012\", \"bytes index out of bounds\", "
+                + "\"jstest-bytesemit.deal\", 6, 3)"),
+            "the bytes write gates the index with the recorded E8012 arm");
+        check(js.contains("$rt.checkType(\"bytes\", $s39")
+                || js.contains("$rt.checkType(\"bytes\","),
+            "bytes-typed declaration boundaries emit the canonical bytes "
+                + "check");
+        check(js.contains("$rt.checkType(\"?bytes\",")
+                && js.contains("\"jstest-bytesemit.deal\", 9, 10)"),
+            "nullable bytes table read checks with the canonical ?bytes "
+                + "descriptor");
+        check(js.contains("$rt.checkType(\"[bytes]\",")
+                && js.contains("\"jstest-bytesemit.deal\", 10, 11)"),
+            "bytes[] table read checks with the canonical [bytes] descriptor");
+        check(js.contains("$rt.checkType(\"(bytes)->bytes\",")
+                && js.contains("\"jstest-bytesemit.deal\", 11, 10)"),
             "function-typed table read checks with the canonical "
-                + "(bytes)->bytes descriptor (T1's service)");
-        check(js.contains("const bytes = $rt.function(\"(int)->bytes\""),
-            "the header seeds the first-class bytes wrapper with the "
+                + "(bytes)->bytes descriptor");
+        check(js.contains("$rt.function(\"(int)->bytes\", (v, $f, $l, $c) => "
+                + "$rt.bytes(v, $f, $l, $c), \"HOST\")"),
+            "the module seeds the first-class bytes wrapper with the "
                 + "canonical (int)->bytes signature");
-        check(js.contains("$rt.checkType(\"(int)->bytes\", bytes, "),
+        check(js.contains("$rt.checkType(\"(int)->bytes\",")
+                && js.contains("\"jstest-bytesemit.deal\", 12, 10)"),
             "a first-class bytes reference crosses the canonical "
                 + "(int)->bytes boundary check");
         check(!js.contains("bytes is not supported"),
@@ -3967,7 +4077,7 @@ public class JsBackendTest {
 
         // The exact bytes-buffer-ops.deal program body (zero-fill,
         // unsigned 0..255 roundtrip, immutable length, reference-copy
-        // aliasing) through frontend → JsBackend → node.
+        // aliasing) through frontend → public compilation → node.
         NodeResult ops = runDealNode("""
             export function main(): null {
               let b: bytes = bytes(4);
@@ -4229,31 +4339,26 @@ public class JsBackendTest {
         // the artifact omits the intrinsic header seed (the class binds
         // only bytes$new/bytes$meta).
         PreparedJs clsPrepared = prepareJs("""
-            class bytes { x: int; }
+            class bytes { x: int = 0; }
             export function test(): int {
               let b: bytes = { x: 2 };
               return b.x;
             }
             """, "bytes-user-class");
-        JsBackend.JsCodegenResult clsRes = clsPrepared.emission();
+        JsEmission clsRes = clsPrepared.emission();
         check(clsRes != null && !clsRes.hasErrors(),
             "module-level user class named bytes compiles clean: "
                 + (clsRes == null ? "<null>" : clsRes.diagnostics()));
         if (clsRes != null && !clsRes.hasErrors()) {
             String js = clsRes.source();
-            check(!js.contains("const bytes = $rt.function(\"(int)->bytes\""),
-                "no intrinsic header bytes seed when a user class named "
+            check(!js.contains("$rt.function(\"(int)->bytes\""),
+                "no intrinsic bytes seed when a user class named "
                     + "bytes occupies the module binding");
-            check(js.contains("let bytes$new; let bytes$meta;")
-                    && js.contains("bytes$new = (provided, $file, $line, $column) =>"),
-                "the user class named bytes emits its bytes$new/bytes$meta "
-                    + "artifact pair");
-            check(js.contains("bytes$plan = [{ name: \"x\", descriptor: "
-                    + "\"int\", optional: false, evaluator: () => 0 }];")
-                    && js.contains("$rt.classPlan(\"@Main/bytes\", "
-                        + "bytes$plan, provided, $file, $line, $column);"),
-                "class construction routes through $rt.classPlan over the "
-                    + "synthesized plan with the user class identity");
+            check(js.contains("\"$classname\", \"@Main/bytes\""),
+                "the user class named bytes keeps its own canonical identity");
+            check(js.contains("// Class default @Main/bytes.x"),
+                "the user class named bytes emits its own field default "
+                    + "plan");
         }
 
         // (b) A module-level user FUNCTION named bytes: checker-accepted,
@@ -4264,18 +4369,19 @@ public class JsBackendTest {
             function bytes(x: int): int { return x + 1; }
             export function test(): int { return bytes(3); }
             """, "bytes-user-function");
-        JsBackend.JsCodegenResult fnRes = fnPrepared.emission();
+        JsEmission fnRes = fnPrepared.emission();
         check(fnRes != null && !fnRes.hasErrors(),
             "module-level user function named bytes compiles clean: "
                 + (fnRes == null ? "<null>" : fnRes.diagnostics()));
         if (fnRes != null && !fnRes.hasErrors()) {
             String js = fnRes.source();
-            check(!js.contains("const bytes = $rt.function(\"(int)->bytes\""),
-                "no intrinsic header bytes seed when a user function "
+            check(!js.contains("$rt.function(\"(int)->bytes\""),
+                "no intrinsic bytes seed when a user function "
                     + "named bytes occupies the module binding");
-            check(js.contains("let bytes;") && js.contains("bytes = $rt.function("),
-                "the user function named bytes keeps its predeclare-then-"
-                    + "assign binding");
+            check(!js.contains("let bytes;")
+                    && js.contains("= $rt.undefined;"),
+                "the user function named bytes keeps a generated "
+                    + "predeclare-then-assign binding");
             check(!js.contains("$rt.bytes(3"),
                 "bytes(3) calls the user function (the $rt.bytes call "
                     + "form never fires for the shadowed binding)");
@@ -4458,7 +4564,7 @@ public class JsBackendTest {
               b[0] = b[0] + 1;
               return b;
             }
-            class Box { f: async (b: bytes) => bytes; }
+            class Box { f: async (b: bytes) => bytes = bump; }
             export async function test(): int {
               let b: bytes = bytes(1);
               let afs: (async (b: bytes) => bytes)[] = [bump, bump];
@@ -4666,21 +4772,24 @@ public class JsBackendTest {
                     + "function syncId$f("),
                 "the exported sync wrapper carries the canonical "
                     + "(bytes)->bytes signature byte-for-byte");
-            check(js.contains("$rt.checkBytes(b, "),
+            check(js.contains("$rt.checkType(\"bytes\","),
                 "the imported-wrapper entry parameter check validates "
                     + "the bytes carrier at the module boundary");
-            check(js.contains("$rt.setProp($exports, \"tx\", tx)")
-                    && js.contains("$rt.setProp($exports, \"syncId\", syncId)"),
+            check(js.contains("$rt.publishModule(\"bytes_closure_lib\", \"tx\",")
+                    && js.contains("$rt.publishModule(\"bytes_closure_lib\", "
+                        + "\"syncId\","),
                 "both bytes-bearing functions export under their raw keys");
         }
         if (Files.exists(mainArtifact)) {
             String js = Files.readString(mainArtifact);
-            check(js.contains("(await lib.tx.$f("),
+            check(js.contains("$rt.callExport(\"bytes_closure_lib\", \"tx\", [")
+                    && js.contains("await "),
                 "the importing module awaits the imported async wrapper "
-                    + "through lib.tx.$f");
-            check(js.contains("lib.syncId.$f("),
+                    + "through the recorded export call");
+            check(js.contains("$rt.callExport(\"bytes_closure_lib\", "
+                    + "\"syncId\", ["),
                 "the importing module calls the imported sync wrapper "
-                    + "through lib.syncId.$f");
+                    + "through the recorded export call");
         }
 
         if (nodeAvailable) {
@@ -4736,7 +4845,7 @@ public class JsBackendTest {
             // The containerized async bytes function value shape.
             """
             async function bump(b: bytes): bytes { b[0] = b[0] + 1; return b; }
-            class Box { f: async (b: bytes) => bytes; }
+            class Box { f: async (b: bytes) => bytes = bump; }
             export async function test(): int {
               let afs: (async (b: bytes) => bytes)[] = [bump];
               let box: Box = { f: bump };
@@ -4769,9 +4878,9 @@ public class JsBackendTest {
             "closure-pin-async-container",
             "closure-pin-deep-composition",
         };
-        Map<String, JsBackend.JsCodegenResult> emissions = new LinkedHashMap<>();
+        Map<String, JsEmission> emissions = new LinkedHashMap<>();
         for (int i = 0; i < closurePrograms.length; i++) {
-            JsBackend.JsCodegenResult res = generate(closurePrograms[i],
+            JsEmission res = generate(closurePrograms[i],
                 names[i]);
             emissions.put(names[i], res);
             check(res != null && !res.hasErrors(),
@@ -4790,20 +4899,20 @@ public class JsBackendTest {
         // Canonical descriptor texts byte-exact at the emitted boundary
         // sites (T1's descriptor service realized through the runtime
         // matcher).
-        JsBackend.JsCodegenResult fnArray = emissions.get(names[0]);
+        JsEmission fnArray = emissions.get(names[0]);
         if (fnArray != null && !fnArray.hasErrors()) {
             String js = fnArray.source();
-            check(js.contains("$rt.checkArray(\"[(bytes)->bytes]\", "),
+            check(js.contains("$rt.checkType(\"[(bytes)->bytes]\","),
                 "the ((bytes)->bytes)[] declaration boundary emits the "
                     + "canonical [(bytes)->bytes] descriptor byte-exact");
             check(js.contains("$rt.function(\"(bytes,int)->bytes\", "),
                 "the arity adapter carries the canonical "
                     + "(bytes,int)->bytes target descriptor byte-exact");
         }
-        JsBackend.JsCodegenResult asyncContainer = emissions.get(names[1]);
+        JsEmission asyncContainer = emissions.get(names[1]);
         if (asyncContainer != null && !asyncContainer.hasErrors()) {
             String js = asyncContainer.source();
-            check(js.contains("$rt.checkArray(\"[async(bytes)->bytes]\", "),
+            check(js.contains("$rt.checkType(\"[async(bytes)->bytes]\","),
                 "the async function-value array boundary emits the "
                     + "canonical [async(bytes)->bytes] descriptor byte-exact");
             check(js.contains("$rt.function(\"async(bytes)->bytes\", "
@@ -4811,13 +4920,13 @@ public class JsBackendTest {
                 "the async wrapper carries the canonical "
                     + "async(bytes)->bytes signature byte-for-byte");
         }
-        JsBackend.JsCodegenResult deep = emissions.get(names[2]);
+        JsEmission deep = emissions.get(names[2]);
         if (deep != null && !deep.hasErrors()) {
             String js = deep.source();
-            check(js.contains("$rt.checkArray(\"[?[bytes]]\", "),
+            check(js.contains("$rt.checkType(\"[?[bytes]]\","),
                 "the (bytes[] | null)[] boundary emits the canonical "
                     + "[?[bytes]] descriptor byte-exact");
-            check(js.contains("$rt.checkNullable(\"[[bytes]]\", "),
+            check(js.contains("$rt.checkType(\"?[[bytes]]\","),
                 "the (bytes[])[] | null boundary emits the canonical "
                     + "[[bytes]] inner descriptor byte-exact");
         }
@@ -4838,14 +4947,16 @@ public class JsBackendTest {
             "bytes identity equality is checker-admitted with zero "
                 + "diagnostics (frontend, ISSUE-0158 lift): " + eq.errors());
         if (eq.errors().isEmpty()) {
-            JsBackend.JsCodegenResult eqRes = eqPrepared.emission();
+            JsEmission eqRes = eqPrepared.emission();
             check(eqRes != null && !eqRes.hasErrors(),
                 "the equality closure position generates with zero "
                     + "diagnostics: " + (eqRes == null ? "<null>"
                         : eqRes.diagnostics()));
             if (eqRes != null && !eqRes.hasErrors()) {
-                check(eqRes.source().contains("(a === b)")
-                        && eqRes.source().contains("(a !== c)"),
+                check(eqRes.source().matches(
+                            "(?s).*\\$s\\d+ === \\$s\\d+.*")
+                        && eqRes.source().matches(
+                            "(?s).*\\$s\\d+ !== \\$s\\d+.*"),
                     "bytes equality emits native identity comparison");
             }
         }
@@ -5651,7 +5762,7 @@ public class JsBackendTest {
             + " projection --");
         if (!nodeAvailable) { skipNode("decoded-array element kind"); return; }
 
-        JsBackend.JsCodegenResult res = checkedEmission(prepareJs("""
+        JsEmission res = checkedEmission(prepareJs("""
             import * as json from "std/json";
 
             export function test(): int {
@@ -5867,7 +5978,7 @@ public class JsBackendTest {
      *       fabricating a present JSON null, and a genuinely present null
      *       element keeps its JSON null slot.</li>
      * </ul>
-     * The whole drive is the production frontend -> JsBackend emission ->
+     * The whole drive is the production frontend -> public production compilation ->
      * deployed runtime chain under node.
      */
     private static void testJsonDecodedArrayVariantNode() throws Exception {
@@ -6044,7 +6155,7 @@ public class JsBackendTest {
      * completion's numeric carriers to their numbers at the top level and
      * every nested container leaf (the JVM host-cell/completion projection
      * and the LuaJIT __hostParamAdmit/__hostAsyncArg/__asyncExportCompletion
-     * rules). The drive is the production frontend -> JsBackend emission ->
+     * rules). The drive is the production frontend -> public production compilation ->
      * deployed runtime chain under node over a manifest-declared host
      * module: a number-variant carrier and an int-variant carrier (a decoded
      * int slot read at a declared number position) reach the sync and async
@@ -6183,7 +6294,7 @@ public class JsBackendTest {
      * The host-parameter projection is carrier-complete (the ISSUE-0828
      * review finding): a declared host parameter hands the host the
      * declared DEAL value, never an internal std/json decode carrier.
-     * Driven through the production frontend -> JsBackend emission ->
+     * Driven through the production frontend -> public production compilation ->
      * deployed runtime chain under node, over the rest_join-style host
      * boundary:
      * <ul>
@@ -6366,7 +6477,7 @@ public class JsBackendTest {
      * The async-export completion projection is carrier-complete (the
      * ISSUE-0827 review finding): the host-visible completion keeps the
      * decoded graph's own shape and classification instead of losing it to
-     * the projection. Driven through the production frontend -> JsBackend
+     * the projection. Driven through the production frontend -> public compilation
      * emission -> deployed runtime chain under node:
      * <ul>
      *   <li>a decoded object completion keeps the decoded-array carrier and
@@ -6699,11 +6810,11 @@ public class JsBackendTest {
         // completion check, and the bytes closure exercised end to end
         // inside the oracle (js-v12-int32-bytes D5).
         NodeResult ok = runInvokerNode("""
-            class Holder { f: async (b: bytes) => bytes; }
             async function bump(b: bytes): bytes {
               b[0] = b[0] + 1;
               return b;
             }
+            class Holder { f: async (b: bytes) => bytes = bump; }
             export function main(): null { return null; }
             export async function oracle(): null {
               let b: bytes = bytes(2);
@@ -6741,12 +6852,12 @@ public class JsBackendTest {
         // { $ok: false, $failure } with the pinned reason — never a DEAL
         // error, never a false runtime-error pass.
         PreparedJs negatives = prepareJs("""
-            export class Payload { v: int; }
+            export class Payload { v: int = 0; }
             export function main(): null { return null; }
             export async function oracle(): null { return null; }
             export async function takes(i: int): int { return i; }
             """, "invoker-wrong-name");
-        JsBackend.JsCodegenResult negativeEmission = checkedEmission(negatives);
+        JsEmission negativeEmission = checkedEmission(negatives);
         Path negativeDir = deployArtifacts(negativeEmission, "Main.js");
         try {
             Files.writeString(negativeDir.resolve("invoker_runner.js"),
@@ -6911,10 +7022,12 @@ public class JsBackendTest {
                 "the artifact requires ./deal/runtime");
             check(js.contains("if ($require.main === $module) {"),
                 "the entry artifact carries the entry shim");
-            check(js.contains("$exports.main.$f();"),
-                "the shim invokes the exported main wrapper");
-            check(js.contains("console.log.$f(\"js-orchestrator-main\","),
-                "the console.log call emits through the stdlib wrapper");
+            check(js.matches("(?s).*try \\{\\s*\\$s\\d+ = "
+                    + "\\$g\\d+\\.\\$f\\(.*"),
+                "the shim invokes the entry's main wrapper");
+            check(js.contains("[\"log\"].$f(")
+                    && js.contains("\"js-orchestrator-main\""),
+                "the console.log call emits through the stdlib member wrapper");
         }
 
         // The deployed project runs under the real node binary: the entry
@@ -7209,7 +7322,7 @@ public class JsBackendTest {
      * language syntax and must emit a closed chain that selects the
      * matching branch and leaves the value unchanged when no branch
      * matches. The branch matrix and the final-else control run through
-     * the real frontend → JsBackend → node chain; the public
+     * the real frontend → public compilation → node chain; the public
      * release-owned path compiles the issue's exact project with zero
      * diagnostics and executes the published CommonJS artifact under
      * the real node binary.

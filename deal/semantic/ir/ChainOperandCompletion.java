@@ -198,6 +198,23 @@ public final class ChainOperandCompletion {
         List<SemanticOp> closure = new ArrayList<>();
         Set<ValueId> done = new HashSet<>();
         Deque<ValueId> work = new ArrayDeque<>();
+        // An awaited RHS is the chain's value child: the ASYNC_START that
+        // publishes the awaited token belongs to the RHS position (the
+        // RHS operand completes after the receiver/key children), so the
+        // start and its own operand closure join this child's closure and
+        // the flat block walk never executes the start early (A-D2
+        // receiver → key → RHS). The start is not an operand of the
+        // AWAIT (its published token is not a value); the token identity
+        // links the two ops.
+        SemanticOp start = publishingStartOf(child, unit);
+        if (start != null && !structuralOwned.contains(start.opId())) {
+            closure.add(start);
+            for (ValueId operand : start.operands()) {
+                if (done.add(operand)) {
+                    work.add(operand);
+                }
+            }
+        }
         for (ValueId operand : child.operands()) {
             if (done.add(operand)) {
                 work.add(operand);
@@ -228,6 +245,37 @@ public final class ChainOperandCompletion {
             index.getOrDefault(a.opId(), Integer.MAX_VALUE),
             index.getOrDefault(b.opId(), Integer.MAX_VALUE)));
         return closure;
+    }
+
+    /**
+     * The {@code ASYNC_START} op that publishes one awaited child's token,
+     * or {@code null} for every non-await child (and for an await whose
+     * token no start in this unit publishes — a cross-unit external
+     * async link, which carries no caller-side start op).
+     */
+    private static SemanticOp publishingStartOf(SemanticOp child,
+                                                LoweredModuleUnit unit) {
+        if (!(child.payload() instanceof KindPayload.AwaitPayload await)) {
+            return null;
+        }
+        AsyncTokenId.Canonical canonical = canonicalToken(await.token());
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.ASYNC_START
+                    && op.result() instanceof AsyncTokenId.Canonical token
+                    && token.tokenId() == canonical.tokenId()) {
+                return op;
+            }
+        }
+        return null;
+    }
+
+    /** The canonical token one token identity resolves to (alias chains). */
+    private static AsyncTokenId.Canonical canonicalToken(AsyncTokenId token) {
+        AsyncTokenId current = token;
+        while (current instanceof AsyncTokenId.Alias alias) {
+            current = alias.referent();
+        }
+        return (AsyncTokenId.Canonical) current;
     }
 
     /**

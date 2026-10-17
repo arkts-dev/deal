@@ -94,7 +94,7 @@ public record HostDeclarationSurface(
         /**
          * The declared export names in ascending Java String order — the
          * JS declared-export validation/raw-read selection (equivalently
-         * the retained {@code JsBackend}'s {@code TreeMap}). The shared
+         * a {@code TreeMap} ordering). The shared
          * compatibility prerequisite owns this selection, so the renderer
          * never selects or rediscovers it; the declaration-ordered
          * {@link #exports()} map stays the original provider fact and no
@@ -225,7 +225,7 @@ public record HostDeclarationSurface(
     /**
      * The ascending Java String order of one declared export map — the
      * single selection owner of the JS declared-export validation/raw-read
-     * order (the retained AST emitter and the future declaration
+     * order (the shared declaration surface and the JavaScript production
      * projection consume the same helper, so the selection is never
      * rediscovered per consumer).
      */

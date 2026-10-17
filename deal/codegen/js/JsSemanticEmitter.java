@@ -33,6 +33,7 @@ import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.NullableSide;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.OpResultType;
 import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
@@ -207,8 +208,13 @@ public final class JsSemanticEmitter {
         /** Classes carrying generated JSON helpers (the jsonable fact). */
         private final Set<ClassId> jsonableClasses = new LinkedHashSet<>();
         /** Each class field's {@code CLASS_DEFAULT} op, by class identity. */
-        private final Map<ClassId, Map<String, SemanticOp>> classDefaultOps =
-            new LinkedHashMap<>();
+        /** Per-owning-module {@code CLASS_DEFAULT} ops: a canonical class
+         * identity may cover same-named declarations of sibling modules,
+         * and each declaring unit's plan uses that unit's own default ops
+         * (the plan-bearing declaration's layout and its declaration's
+         * defaults agree). */
+        private final Map<ModuleId, Map<ClassId, Map<String, SemanticOp>>>
+            classDefaultOps = new LinkedHashMap<>();
         /** Emitted {@code $fields} descriptor arrays, by class identity. */
         private final Map<ClassId, String> classFieldsExprs =
             new LinkedHashMap<>();
@@ -490,11 +496,14 @@ public final class JsSemanticEmitter {
                         .add(classInterface.classId());
                 }
             }
-            for (LoweredModuleUnit unit : units.values()) {
-                for (SemanticOp op : unit.ops()) {
+            for (Map.Entry<ModuleId, LoweredModuleUnit> moduleEntry
+                    : units.entrySet()) {
+                for (SemanticOp op : moduleEntry.getValue().ops()) {
                     switch (op.payload()) {
                         case KindPayload.ClassDefaultPayload payload ->
                             classDefaultOps
+                                .computeIfAbsent(moduleEntry.getKey(),
+                                    key -> new LinkedHashMap<>())
                                 .computeIfAbsent(payload.classId(),
                                     key -> new LinkedHashMap<>())
                                 .putIfAbsent(payload.field(), op);
@@ -627,7 +636,10 @@ public final class JsSemanticEmitter {
 
         /** One class field's recorded {@code CLASS_DEFAULT} op, or null. */
         private SemanticOp defaultOpOf(ClassId classId, String field) {
-            Map<String, SemanticOp> byField = classDefaultOps.get(classId);
+            Map<ClassId, Map<String, SemanticOp>> moduleOps =
+                classDefaultOps.get(currentModule);
+            Map<String, SemanticOp> byField = moduleOps == null ? null
+                : moduleOps.get(classId);
             return byField == null ? null : byField.get(field);
         }
 
@@ -1139,7 +1151,7 @@ public final class JsSemanticEmitter {
                 case BOOL_NOT -> "!" + operand;
                 case INT32_NEG -> "$rt.intNeg(" + operand + ", " + spanArgs(op)
                     + ")";
-                case NUMBER_NEG -> "-" + operand;
+                case NUMBER_NEG -> "-" + numeric(operand);
             };
             emit(slotOf(op) + " = " + expression + ";");
         }
@@ -1160,18 +1172,34 @@ public final class JsSemanticEmitter {
                     + ", " + spanArgs(op) + ")";
                 case INT32_MOD_TRUNC -> "$rt.intMod(" + left + ", " + right
                     + ", " + spanArgs(op) + ")";
-                case NUMBER_ADD -> "(" + left + " + " + right + ")";
-                case NUMBER_SUB -> "(" + left + " - " + right + ")";
-                case NUMBER_MUL -> "(" + left + " * " + right + ")";
-                case NUMBER_DIV_IEEE -> "(" + left + " / " + right + ")";
-                case INT32_EQ, NUMBER_EQ, BOOLEAN_EQ, REFERENCE_EQ, STRING_EQ,
+                case NUMBER_ADD -> "(" + numeric(left) + " + "
+                    + numeric(right) + ")";
+                case NUMBER_SUB -> "(" + numeric(left) + " - "
+                    + numeric(right) + ")";
+                case NUMBER_MUL -> "(" + numeric(left) + " * "
+                    + numeric(right) + ")";
+                case NUMBER_DIV_IEEE -> "(" + numeric(left) + " / "
+                    + numeric(right) + ")";
+                // The numeric selectors unwrap the read-side number-
+                // variant carrier ($rt.numOf) exactly like the shared
+                // executor's number views: a decoded JSON slot stays
+                // comparable and computable by value on every carrier.
+                case INT32_EQ, NUMBER_EQ -> "(" + numeric(left) + " === "
+                    + numeric(right) + ")";
+                case BOOLEAN_EQ, REFERENCE_EQ, STRING_EQ,
                      BYTES_EQ -> "(" + left + " === " + right + ")";
-                case INT32_NE, NUMBER_NE, BOOLEAN_NE, REFERENCE_NE, STRING_NE,
+                case INT32_NE, NUMBER_NE -> "(" + numeric(left) + " !== "
+                    + numeric(right) + ")";
+                case BOOLEAN_NE, REFERENCE_NE, STRING_NE,
                      BYTES_NE -> "(" + left + " !== " + right + ")";
-                case INT32_LT, NUMBER_LT -> "(" + left + " < " + right + ")";
-                case INT32_LE, NUMBER_LE -> "(" + left + " <= " + right + ")";
-                case INT32_GT, NUMBER_GT -> "(" + left + " > " + right + ")";
-                case INT32_GE, NUMBER_GE -> "(" + left + " >= " + right + ")";
+                case INT32_LT, NUMBER_LT -> "(" + numeric(left) + " < "
+                    + numeric(right) + ")";
+                case INT32_LE, NUMBER_LE -> "(" + numeric(left) + " <= "
+                    + numeric(right) + ")";
+                case INT32_GT, NUMBER_GT -> "(" + numeric(left) + " > "
+                    + numeric(right) + ")";
+                case INT32_GE, NUMBER_GE -> "(" + numeric(left) + " >= "
+                    + numeric(right) + ")";
                 case STRING_LT -> "($rt.strCompare(" + left + ", " + right
                     + ") < 0)";
                 case STRING_LE -> "($rt.strCompare(" + left + ", " + right
@@ -1185,10 +1213,12 @@ public final class JsSemanticEmitter {
                 // Nullable-vs-nullable equality: nil-equivalent pairs
                 // compare equal (the shared ComparisonExecutor rule and
                 // the reference nil-aware form).
-                case NULLABLE_EQ -> "((" + left + " === " + right
+                case NULLABLE_EQ -> "((" + nullableOperand(op, 0, left)
+                    + " === " + nullableOperand(op, 1, right)
                     + ") || ($rt.isNilEquivalent(" + left
                     + ") && $rt.isNilEquivalent(" + right + ")))";
-                case NULLABLE_NE -> "!((" + left + " === " + right
+                case NULLABLE_NE -> "!((" + nullableOperand(op, 0, left)
+                    + " === " + nullableOperand(op, 1, right)
                     + ") || ($rt.isNilEquivalent(" + left
                     + ") && $rt.isNilEquivalent(" + right + ")))";
                 case NULLABLE_NULL_EQ -> "$rt.isNilEquivalent("
@@ -1197,6 +1227,28 @@ public final class JsSemanticEmitter {
                     + nullableSideExpr(payload.side(), left, right) + ")";
             };
             emit(slotOf(op) + " = " + expression + ";");
+        }
+
+        /** The numeric value view of one operand (the carrier unwrap). */
+        private static String numeric(String operand) {
+            return "$rt.numOf(" + operand + ")";
+        }
+
+        /** One nullable-equality operand: a nullable numeric operand
+         * unwraps its read-side carrier; every other operand passes
+         * through (the shared inner-equality rule). */
+        private static String nullableOperand(SemanticOp op, int index,
+                                              String operand) {
+            if (op.operandTypes().size() <= index) {
+                return operand;
+            }
+            RuntimeDescriptor descriptor = op.operandTypes().get(index);
+            RuntimeDescriptor inner = descriptor
+                instanceof RuntimeDescriptor.Nullable nullable
+                    ? nullable.inner() : descriptor;
+            return inner == RuntimeDescriptor.Int.INSTANCE
+                    || inner == RuntimeDescriptor.Number.INSTANCE
+                ? numeric(operand) : operand;
         }
 
         private static String nullableSideExpr(NullableSide side, String left,
@@ -1295,7 +1347,7 @@ public final class JsSemanticEmitter {
             String array = slot(payload.arrayValue());
             String expression = isBytesValue(payload.arrayValue())
                 ? "$rt.bytesLength(" + array + ", " + spanArgs(op) + ")"
-                : array + ".length";
+                : "$rt.arrayLength(" + array + ")";
             emit(slotOf(op) + " = " + expression + ";");
         }
 
@@ -1360,7 +1412,14 @@ public final class JsSemanticEmitter {
                 emit("if (" + index + " < 0 || " + index + " >= " + length
                     + ") { $rt.fail(\"E8002\", \"array index out of bounds\","
                     + " " + spanArgs(boundary) + "); }");
-                emit(target + " = " + container + "[" + index + "];");
+                // The carrier split is $rt.arrayAt's own (a native Array
+                // first, the std/json array-marked Map second): every
+                // carrier checkArray admits reads at the checked position,
+                // and the declared element's number kind selects the
+                // read-side variant carrier a decoded slot materializes.
+                emit(target + " = $rt.arrayAt(" + container + ", " + index
+                    + ", " + (isNumberDescriptor(op.resultType()) ? "true"
+                        : "false") + ");");
             }
             if (isArrayElementRead(boundary)) {
                 // The ARRAY_ELEMENT_READ cell runs the bounds gate only (the
@@ -1425,7 +1484,14 @@ public final class JsSemanticEmitter {
                 emit("$rt.tableSet(" + container + ", " + index + ", " + value
                     + ");");
             } else {
-                emit(container + "[" + index + "] = " + value + ";");
+                // The carrier split is $rt.arraySet's own (a native Array
+                // assigns the slot, the std/json array-marked Map sets its
+                // array-form key) so a write through one alias is observed
+                // by every alias and by the shared encode walk; the written
+                // value's own static number kind records the slot variant.
+                emit("$rt.arraySet(" + container + ", " + index + ", " + value
+                    + ", " + (isNumberDescriptor(producerResultType(
+                        payload.value())) ? "true" : "false") + ");");
             }
         }
 
@@ -1438,8 +1504,12 @@ public final class JsSemanticEmitter {
                 emit("$rt.tableDelete(" + container + ", " + index + ");");
             } else {
                 String length = normalizeLengthSlot(payload.slot());
-                emit("if (" + index + " < " + length + ") { " + container + "["
-                    + index + "] = $rt.undefined; }");
+                // The append-at-length guard suppresses the write at
+                // i === length; the committed step is $rt.arrayDelete's
+                // carrier split (a native Array slot or the marked Map's
+                // array-form key set to the nil-equivalent).
+                emit("if (" + index + " < " + length + ") { $rt.arrayDelete("
+                    + container + ", " + index + "); }");
             }
         }
 
@@ -1459,6 +1529,26 @@ public final class JsSemanticEmitter {
                     + " has no INDEX_NORMALIZE producer (producer defect)");
             }
             return payload.mode();
+        }
+
+        /** One value's producing op result descriptor, or null when the
+         * producer carries none. */
+        private OpResultType producerResultType(ValueId value) {
+            SemanticOp producer = producerByValue.get(value.id());
+            return producer == null ? null : producer.resultType();
+        }
+
+        /** A number-typed descriptor (a nullable number included): the
+         * declared element/operand kind that selects the read-side numeric
+         * variant carrier. */
+        private static boolean isNumberDescriptor(OpResultType resultType) {
+            if (!(resultType instanceof RuntimeDescriptor descriptor)) {
+                return false;
+            }
+            RuntimeDescriptor inner = descriptor
+                instanceof RuntimeDescriptor.Nullable nullable
+                    ? nullable.inner() : descriptor;
+            return inner == RuntimeDescriptor.Number.INSTANCE;
         }
 
         /** The recorded length slot paired with one normalized index slot. */
@@ -1717,9 +1807,19 @@ public final class JsSemanticEmitter {
             // Promises, and the resolved completion is the declared
             // return value the body's own RETURN cell checked.
             String keyword = function.descriptor().isAsync() ? "async " : "";
+            // The emitted function expression keeps the lowered function's
+            // original source name (docs/spec-v1.3.md §Source maps and
+            // debugging: a stack trace names both the generated function and
+            // the original source function). The generated half is the
+            // deterministic "<sourceName>$f" spelling of the retained JS
+            // artifact ABI; a name-less function expression stays anonymous.
+            String name = function.sourceName() == null ? null
+                : function.sourceName() + "$f";
             emit(prefix + "$rt.function("
                 + jsString(function.descriptor().canonicalSpecText()) + ", "
-                + keyword + "(" + params + ") => {");
+                + keyword + (name == null
+                    ? "(" + params + ") => {"
+                    : "function " + name + "(" + params + ") {"));
             indent++;
             emitCallbackCrossing(functionId, parameters);
             String previousSpan = currentCallSpan;
@@ -3166,7 +3266,7 @@ public final class JsSemanticEmitter {
          * The require specifier of one HOST/STDLIB import declaration,
          * relative to the emitting artifact's own output directory: an
          * already-relative host specifier keeps its spelling verbatim (the
-         * retained {@code JsBackend#relativeSpecifier} rule), every other
+         * retained already-relative spelling rule), every other
          * target takes the relative path from this artifact's directory to
          * the deployed file, the extension omitted. No ambient
          * {@code NODE_PATH}/{@code node_modules} resolution exists.

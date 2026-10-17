@@ -1552,7 +1552,8 @@ public class JsSemanticEmitterTest {
         // nil-equivalence clause — byte-identical to the inequality arm's
         // inner form and to the reference nil-aware emission.
         Pattern equalityForm = Pattern.compile(
-            "\\$s\\d+ = \\(\\(\\$s\\d+ === \\$s\\d+\\) \\|\\| "
+            "\\$s\\d+ = \\(\\(\\$rt\\.numOf\\(\\$s\\d+\\) === "
+                + "\\$rt\\.numOf\\(\\$s\\d+\\)\\) \\|\\| "
                 + "\\(\\$rt\\.isNilEquivalent\\(\\$s\\d+\\) && "
                 + "\\$rt\\.isNilEquivalent\\(\\$s\\d+\\)\\)\\);");
         check(equalityForm.matcher(artifact).find(),
@@ -2036,7 +2037,9 @@ public class JsSemanticEmitterTest {
     private static int arrayReadLine(String[] lines) {
         int read = -1;
         for (int i = 0; i < lines.length; i++) {
-            if (lines[i].matches("\\s*\\$s\\d+ = \\$s\\d+\\[\\$s\\d+\\];")) {
+            if (lines[i].matches(
+                    "\\s*\\$s\\d+ = \\$rt\\.arrayAt\\(\\$s\\d+, "
+                        + "\\$s\\d+, (true|false)\\);")) {
                 read = i;
             }
         }
@@ -3284,7 +3287,7 @@ public class JsSemanticEmitterTest {
         String appSource = Files.readString(out.resolve("app.js"),
             StandardCharsets.UTF_8);
         check(appSource.contains(
-                "$rt.function(\"async()->int\", async () => {"),
+                "$rt.function(\"async()->int\", async function "),
             "the async body is emitted as a real async function:"
                 + " the awaited completion is the Promise resolution");
         check(appSource.contains(" = await "),
@@ -4986,7 +4989,7 @@ public class JsSemanticEmitterTest {
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
         passed++;
         String asyncSource = asyncEmission.modules().get(0).source();
-        check(asyncSource.contains("async ("),
+        check(asyncSource.contains("async function "),
             "the declared async body is the native async function");
         check(asyncSource.contains("await "),
             "the awaited operation is the native await");

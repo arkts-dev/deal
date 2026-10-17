@@ -938,7 +938,16 @@ public final class SemanticLowerer {
         }
     }
 
-    public record CatchFrame(String name, BindingId binding) {
+    /**
+     * One open catch scope: the catch variable's name and binding, plus
+     * the number of enclosing binding frames at the moment the catch
+     * block opened. The count distinguishes a declaration nested inside
+     * the catch body (a frame pushed after the catch opened — a genuine
+     * shadowing declaration) from an enclosing declaration the catch
+     * variable itself shadows (a frame that was already open).
+     */
+    public record CatchFrame(String name, BindingId binding,
+                             int outerFrameCount) {
 
         public CatchFrame {
             Objects.requireNonNull(name, "name must not be null");
@@ -12264,7 +12273,8 @@ public final class SemanticLowerer {
             } finally {
                 popBlock();
             }
-            catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding));
+            catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding,
+                bindingScopes.size()));
             pushBlock(catchBlock);
             try {
 
@@ -12443,11 +12453,15 @@ public final class SemanticLowerer {
             for (CatchFrame frame : catchFrames) {
                 if (frame.name().equals(identifier.name())) {
                     FrameResolution catchResolution = resolveFrame(frame.name());
+                    int innerFrames = bindingScopes.size()
+                        - frame.outerFrameCount();
                     if (catchResolution != null
+                            && catchResolution.frameIndex() < innerFrames
                             && !catchResolution.entry().cell().id.equals(
                                 frame.binding())) {
-                        // Same precedence rule as the loop frames: a
-                        // nearer shadowing declaration owns the load.
+                        // A declaration inside the catch body shadows the
+                        // catch variable; an enclosing declaration does
+                        // not (the catch variable is the nearer scope).
                         break;
                     }
                     return emitDynamicAwareLoad(

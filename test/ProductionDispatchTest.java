@@ -5958,9 +5958,11 @@ public class ProductionDispatchTest {
                     + violations);
         }
 
-        // (2) The JS arm records none: the third, unchanged pipeline runs no
-        // production arm, so the accessor can never surface a JS artifact's
-        // project.
+        // (2) The JS arm is the same one production arm: the public
+        // Backend.JS dispatch runs the release-owned project emission, so
+        // the compile records the one project it lowered and emitted and
+        // stages the semantic renderer's per-module artifact set. No
+        // alternate AST emitter exists and no arm re-lowers.
         Path js = Files.createTempDirectory("production-dispatch-produced-js-");
         try {
             write(js, "deal.json", """
@@ -5975,8 +5977,35 @@ public class ProductionDispatchTest {
             write(js, "src/main.deal", SYNC_CALL_SOURCE);
             ArmCompile arm = compileWithInvocation(js, "src/main.deal",
                 productionInvocation());
-            check(arm.orchestrator().producedProject() == null,
-                "the JS arm records no produced project");
+            check(arm.success(), "the JS production compile succeeds: "
+                + arm.orchestrator().diagnostics());
+            ExecutableLoweredProject jsProduced =
+                arm.orchestrator().producedProject();
+            check(jsProduced != null, "the JS arm records the project it "
+                + "lowered and emitted");
+            checkEq(1, arm.orchestrator().semanticEmissionCount(),
+                "the JS arm runs the one production arm exactly once");
+            if (jsProduced != null) {
+                Path jsArtifact = js.resolve("out").resolve(
+                    jsProduced.entryModule().path().replace('.', '/')
+                        + ".js");
+                check(Files.isRegularFile(jsArtifact),
+                    "the JS arm stages the produced project's entry "
+                        + "artifact: " + jsArtifact);
+                if (Files.isRegularFile(jsArtifact)) {
+                    String jsSource = Files.readString(jsArtifact,
+                        StandardCharsets.UTF_8);
+                    check(jsSource.contains("$rt.initModule(")
+                            && jsSource.contains("$rt.publishModule("),
+                        "the staged JS artifact is the semantic renderer's "
+                            + "module artifact");
+                }
+                List<ProducedProjectIdentityAudit.Violation> jsViolations =
+                    ProducedProjectIdentityAudit.audit(jsProduced);
+                check(jsViolations.isEmpty(),
+                    "the JS produced project passes the dangling-identity "
+                        + "audit: " + jsViolations);
+            }
         } finally {
             deleteRecursively(js);
         }

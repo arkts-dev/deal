@@ -3,10 +3,6 @@ package deal.module;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.Backend;
-import deal.codegen.HostModuleDeclarations;
-import deal.codegen.SourceMapGenerator;
-import deal.codegen.SourceMapPaths;
-import deal.codegen.js.JsBackend;
 import deal.identity.CanonicalModuleIdentity;
 import deal.ir.IrDumper;
 import deal.lexer.*;
@@ -200,9 +196,6 @@ public final class CompilationOrchestrator {
      */
     private Map<String, Map<DiagnosticRange, String>>
         classLiteralProvidersByModulePath = Map.of();
-
-    private final Map<String, JsBackend.JsCodegenResult>
-        jsGeneratedResults = new LinkedHashMap<>();
 
     /**
      * The {@code --diagnostics-json} output path, or {@code null} when the
@@ -617,8 +610,8 @@ public final class CompilationOrchestrator {
      * {@code conformance-cutover-guards-pins-and-production-source-removal}
      * HR4(b) and the lane project identity audit contract). The reference
      * is set exactly once, by the one production-arm run of phase 4 (the
-     * release-owned production invocation); it is never set by the JS arm
-     * or a harness arm, and it is {@code null} before phase 4 and for a
+     * release-owned production invocation on every backend); it is never
+     * set by a harness arm, and it is {@code null} before phase 4 and for a
      * production arm that failed — a failed run produced no project, so it
      * staged none. The lane-level dangling-identity guard observes this
      * project, never a re-lowering; no emission, staging, or comparison
@@ -647,6 +640,12 @@ public final class CompilationOrchestrator {
         stager = PublicationStager.forRoot(outputRoot);
         pendingStageFailure = null;
         pendingIrDumps.clear();
+        // Per-compilation production-arm state: a second compile() on the
+        // same orchestrator observes its own one produced project and its
+        // own one emission record (the once-per-compile guard below still
+        // rejects a second record inside one compile).
+        producedProject = null;
+        semanticEmissionCount = 0;
         boolean success;
         try {
             success = compileInternal();
@@ -1583,24 +1582,6 @@ public final class CompilationOrchestrator {
         return Collections.unmodifiableMap(completedDefaultPlans);
     }
 
-    public Map<String, JsBackend.JsCodegenResult> jsGeneratedResults() {
-        return Collections.unmodifiableMap(jsGeneratedResults);
-    }
-
-    public Map<String, List<PlannedDefaultClass>>
-            completedPlansByModulePath() {
-        Map<String, List<PlannedDefaultClass>> byModulePath =
-            new LinkedHashMap<>();
-        for (ModuleInfo info : modules.values()) {
-            List<PlannedDefaultClass> plans =
-                completedDefaultPlans.get(info.sourcePath);
-            if (plans != null && !plans.isEmpty()) {
-                byModulePath.put(info.modulePath, plans);
-            }
-        }
-        return Collections.unmodifiableMap(byModulePath);
-    }
-
     public List<RuntimeImportDependency> runtimeDependencies() {
         return List.copyOf(runtimeDependencies);
     }
@@ -2095,14 +2076,10 @@ public final class CompilationOrchestrator {
     private void codegenAll() throws IOException {
         long phaseStart = System.currentTimeMillis();
         try {
-            if (backend == Backend.JS) {
-                codegenAllJs();
-            } else {
-                // The one production arm: every LuaJIT/JVM compile runs
-                // the release-owned project emission. The invocation
-                // record selects no arm and carries the single profile.
-                emitProductionProject();
-            }
+            // The one production arm: every backend's compile runs the
+            // release-owned project emission. The invocation record
+            // selects no arm and carries the single profile.
+            emitProductionProject();
         } catch (IOException stagingFailure) {
             // A staging write failure (D4): nothing is published, the
             // stage tree is removed by compile(), the diagnostics report
@@ -2339,129 +2316,6 @@ public final class CompilationOrchestrator {
         return modulePathIdentities;
     }
 
-    private void codegenAllJs() throws IOException {
-        // Canonical identity surface (js-v12-completion-architecture D3):
-        // the shared per-compilation surface both emitter arms consume.
-        ModuleIdentityResolver.IdentityIndex identityIndex =
-            buildCanonicalIdentitySurface();
-
-        // Pass 1: generate every module and merge diagnostics. Rejected
-        // modules write no artifact.
-        List<ModuleInfo> cleanModules = new ArrayList<>();
-        Map<ModuleInfo, JsBackend.JsCodegenResult> results =
-            new LinkedHashMap<>();
-        for (ModuleInfo info : modules.values()) {
-            if (info.isDeclarationFile) continue;
-            // Import classification: raw import path → module path of the
-            // imported COMPILED module; declaration files that are not
-            // spec stdlib modules become host modules with their declared
-            // export map.
-            Map<String, String> importResolutions = new HashMap<>();
-
-            Map<String, HostModuleDeclarations> hostModules =
-                new HashMap<>();
-            // Extern-C imports (fixed-name-directive-events D9): raw
-            // import paths whose resolved module is a declaration file
-            // with effective FileDirectives.externC — the re-keyed JS
-            // E6006 FFI_UNSUPPORTED_BACKEND arm keys on this set at the
-            // import statement.
-            Set<String> externCImports = new HashSet<>();
-            if (info.rawAst != null) {
-                for (StatementNode stmt : info.rawAst.statements()) {
-                    if (stmt instanceof ImportDeclaration imp) {
-                        ModuleInfo imported = resolveImport(imp, info,
-                            importResolutions);
-                        if (imported != null) {
-                            // Host modules: declaration files that are
-                            // not spec stdlib modules (the LuaJIT use
-                            // site's classification, verbatim).
-                            if (imported.isDeclarationFile
-                                    && !isSpecStdlibModuleInfo(imported)) {
-                                hostModules.put(imp.modulePath(),
-                                    hostDeclarationsOf(imported));
-                            }
-                            if (imported.isDeclarationFile
-                                    && imported.rawAst != null
-                                    && imported.rawAst.fileDirectives()
-                                        .externC()) {
-                                externCImports.add(imp.modulePath());
-                            }
-                        }
-                    }
-                }
-            }
-            boolean isEntry = info.sourcePath.equals(entryFile.toString());
-
-            JsBackend.JsCodegenResult res = JsBackend.generate(
-                info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, hostModules, externCImports, isEntry,
-                identityIndex, identityIndex.moduleIdentityLookup(),
-                new SourceMapGenerator(),
-                completedPlansByModulePath(),
-                classLiteralProvidersByModulePath);
-            // Native ranged backend list (T12): the backend emits
-            // CompilerDiagnostic entries directly, so the orchestrator
-            // merge needs no boundary conversion — real spans keep their
-            // exact scalar offsets and synthetic anchors keep their notes.
-            List<CompilerDiagnostic> backendDiags = res.diagnostics();
-            diagnostics.addAll(backendDiags);
-            if (backendDiags.stream()
-                    .anyMatch(d -> "error".equals(d.severity()))) {
-                hasErrors = true;
-            }
-            if (res.hasErrors()) {
-                log("  JavaScript backend rejected " + info.modulePath + ": "
-                    + res.diagnostics());
-                continue;
-            }
-            cleanModules.add(info);
-            results.put(info, res);
-            jsGeneratedResults.put(info.sourcePath, res);
-        }
-
-        // Pass 2: write artifacts for clean modules only. Every clean
-        // module writes its .deal.map.json sidecar (js-v12-source-maps
-        // D1, the v1.3 default debugging artifacts): one <modulePath
-        // with '/' for '.'>.deal.map.json next to the artifact,
-        // serialized from the module's recorded mappings via
-        // SourceMapGenerator.toJson with the same project-relative
-        // source/generated path strings the Lua arm passes. A clean
-        // statement-less module (an empty or comment-only source)
-        // writes its sidecar with an empty mappings array — every
-        // clean module gets exactly one sidecar, so no hasMappings()
-        // gate may skip the write. A rejected module writes no .js
-        // and no sidecar (the two-pass no-partial-artifact contract).
-        for (ModuleInfo info : cleanModules) {
-            JsBackend.JsCodegenResult res = results.get(info);
-            // The staging sink (whole-project-artifact-publication
-            // D1/D5): the same module-relative paths inside the staging
-            // tree; the live publication path feeds only the sidecar's
-            // path-string computation, so the per-invocation stage-tree
-            // nonce (on-disk names only) never enters artifact content.
-            String artifactRel = res.modulePath().replace('.', '/') + ".js";
-            Path liveArtifactPath = outputRoot.resolve(artifactRel);
-            Path stageOutputPath = stager.stagePath(artifactRel);
-            Files.writeString(stageOutputPath, res.source());
-            log("  Generated: " + liveArtifactPath);
-
-            SourceMapGenerator moduleMap = res.sourceMap() != null
-                ? res.sourceMap() : new SourceMapGenerator();
-            String[] paths = sourceMapSidecarPaths(info.sourcePath,
-                outputRoot, liveArtifactPath);
-            String mapJson = moduleMap.toJson(paths[0], paths[1]);
-            Path stageMapPath = stager.stagePath(
-                res.modulePath().replace('.', '/')
-                    + ".deal.map.json");
-            Files.writeString(stageMapPath, mapJson);
-            log("  Source map: " + outputRoot.resolve(
-                res.modulePath().replace('.', '/')
-                    + ".deal.map.json"));
-        }
-
-        copyJsRuntimeLibrary();
-        copyStdlibJsModules();
-    }
-
     public HostDeclarationSurface hostDeclarationSurface() {
         return hostDeclarationSurface;
     }
@@ -2558,90 +2412,9 @@ public final class CompilationOrchestrator {
             classes);
     }
 
-    private HostModuleDeclarations hostDeclarationsOf(
-            ModuleInfo imported) {
-        HostDeclarationSurface.DeclarationFacts facts = hostDeclarationSurface
-            .require(new ModuleId(imported.modulePath));
-        Map<String, List<HostModuleDeclarations.HostField>> classFields =
-            new LinkedHashMap<>();
-        for (Map.Entry<String, HostDeclarationSurface.DeclaredClass> entry
-                : facts.classes().entrySet()) {
-            List<HostModuleDeclarations.HostField> fields =
-                new ArrayList<>();
-            for (HostDeclarationSurface.DeclaredField field
-                    : entry.getValue().fields()) {
-                fields.add(new HostModuleDeclarations.HostField(
-                    field.declaration(), field.type()));
-            }
-            classFields.put(entry.getKey(), fields);
-        }
-        return new HostModuleDeclarations(facts.exports(), classFields);
-    }
-
-    /**
-     * The source/generated path pair passed to
-     * {@link SourceMapGenerator#toJson} for a sidecar — the exact strings
-     * every source-map arm consumes ({@link deal.codegen.SourceMapPaths}, the
-     * one project-relative normalization of the JS arm and the
-     * LuaJIT/JVM production projection).
-     */
-    private static String[] sourceMapSidecarPaths(String sourcePath,
-                                                  Path outputRoot,
-                                                  Path outputPath) {
-        return SourceMapPaths.projectRelative(sourcePath, outputRoot, outputPath);
-    }
-
     private boolean isSpecStdlibModuleInfo(ModuleInfo info) {
         return info.location.moduleClassification()
             instanceof CanonicalModuleIdentity.BuiltinModule;
-    }
-
-    /**
-     * JS deployment copy (js-backend-emitter D10): copies deal/runtime.js
-     * to <output>/deal/runtime.js — the resolved distribution surface,
-     * else E6000 — staged fresh every compile (whole-set semantics; no
-     * destination skip). The mirror of copyRuntimeLibrary with the .js
-     * spelling.
-     */
-    private void copyJsRuntimeLibrary() throws IOException {
-
-        Optional<DistributionHome.ResolvedSource> runtime =
-            stager.stageRuntimeCopy("deal/runtime.js", distributionHome);
-        if (runtime.isPresent()) {
-            log("  Copied runtime: " + outputRoot.resolve("deal/runtime.js")
-                + " (" + runtime.get().tier() + ")");
-            return;
-        }
-
-        // Anchorless site (D5/D6): the note names the missing runtime
-        // library path.
-        syntheticError(DiagnosticCode.E6000,
-            "Runtime library not found: deal/runtime.js", "",
-            "missing anchor: runtime library path 'deal/runtime.js'");
-    }
-
-    private void copyStdlibJsModules() throws IOException {
-        for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-            // Whole-set semantics (whole-project-artifact-publication
-            // D3/D6): each stdlib copy stages fresh from the resolved
-            // distribution surface — project-local surface first, then
-            // the language distribution, then the checkout CWD dev
-            // fallback — and no skip of an existing destination remains.
-            // A spec-listed implementation the surface does not provide
-            // is missing required deployment content (the one shared
-            // pinned E6000 of the LuaJIT arm too), never a silent skip:
-            // the compile fails and publishes nothing.
-            String name = stdlibModule.substring("std/".length());
-            Optional<DistributionHome.ResolvedSource> source =
-                stager.stageStdlibCopy(name, "js", distributionHome);
-            if (source.isEmpty()) {
-                recordSyntheticError(
-                    ProductionProjectEmission.stdlibLibraryMissing(name, "js"));
-                return;
-            }
-            log("  Copied stdlib: " + stdlibModule + " ("
-                + source.get().tier() + ")");
-        }
     }
 
     // =========================================================================
@@ -2789,12 +2562,6 @@ public final class CompilationOrchestrator {
                                 String missingAnchorNote) {
         diagnostics.add(CompilerDiagnostic.syntheticError(code, message, file,
             missingAnchorNote));
-        hasErrors = true;
-    }
-
-    /** Records one already-built synthetic diagnostic as a compile error. */
-    private void recordSyntheticError(CompilerDiagnostic diagnostic) {
-        diagnostics.add(diagnostic);
         hasErrors = true;
     }
 

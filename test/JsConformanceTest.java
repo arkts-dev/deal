@@ -987,7 +987,7 @@ public class JsConformanceTest {
     }
 
     // =========================================================================
-    // Backend-runtime execution: orchestrator → JsBackend → node
+    // Backend-runtime execution: orchestrator → public production arm → node
     // =========================================================================
 
     private static Outcome runApplicable(Classified classified) {
@@ -1203,7 +1203,7 @@ public class JsConformanceTest {
      * Runs the real {@link CompilationOrchestrator} with
      * {@link Backend#JS} over the temp project: module discovery,
      * signature extraction, dependency ordering, name resolution, type
-     * checking, and per-module JsBackend codegen into
+     * checking, and per-module public production compilation into
      * {@code outputRoot}, with the repository root as the stdlib
      * directory (the JsE2eTest production-pipeline pattern). The
      * explicit {@link #LANE_INVOCATION} (the sole

@@ -2669,6 +2669,17 @@ public class CheckerTest {
      * layouts. LuaJIT/JVM stay outside this correction (the duplicate
      * layout still fails closed before emission).
      */
+    /** Number of non-overlapping occurrences of {@code needle}. */
+    private static int countOf(String text, String needle) {
+        int count = 0;
+        int index = text.indexOf(needle);
+        while (index >= 0) {
+            count++;
+            index = text.indexOf(needle, index + needle.length());
+        }
+        return count;
+    }
+
     static void testClassProvenanceContextualConstructionUnderShadowing() {
         System.out.println("-- public deal compile: target-context construction "
             + "under a same-named shadowing declaration --");
@@ -2732,12 +2743,13 @@ public class CheckerTest {
                 check(Files.isRegularFile(legalOut.resolve("main.js")), "legal target-context artifact exists");
                 if (Files.isRegularFile(legalOut.resolve("main.js"))) {
                     String js = Files.readString(legalOut.resolve("main.js"), StandardCharsets.UTF_8);
-                    check(js.contains("let B$new; let B$meta;") && js.contains("B$new = (provided"),
+                    check(js.contains("\"$classname\", \"@src/A\"")
+                            && js.contains("\"$classname\", \"@src/B\""),
                         "the distinct module class retains independent factory artifacts");
-                    check(js.contains("A$new({ [\"n\"]: 8 }"),
-                        "target-context construction selects the annotated module class factory");
-                    check(!js.contains("B$new({ [\"n\"]: 8 }"),
-                        "target-context construction never selects the other class factory");
+                    check(countOf(js, "\"$classname\", \"@src/A\"") == 2
+                            && countOf(js, "\"$classname\", \"@src/B\"") == 1,
+                        "target-context construction selects the annotated module "
+                            + "class factory and never the other class factory");
                     cliNode(legalOut, tokens[p]);
                 }
 

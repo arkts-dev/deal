@@ -40,8 +40,8 @@ import java.util.Objects;
  * rediscovers no path or name.</p>
  *
  * <p>{@code exports} carries the v1.3 pinned declared-export order — the
- * ascending Java String order equivalent to {@code JsBackend}'s
- * {@code TreeMap} — while class fields keep their declaration order and
+ * ascending Java String order (the one name-sorted export
+ * selection) — while class fields keep their declaration order and
  * HOST occurrences keep source order (the latter is not part of this
  * structural surface).</p>
  *

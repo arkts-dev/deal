@@ -107,7 +107,7 @@ public final class NameResolver {
 
     /**
      * The single-module standalone classification adapter (the
-     * standalone-surface convention used by JsBackend): the empty
+     * standalone-surface classification convention): the empty
      * module path is the intrinsic builtin Error module and the module
      * path itself is a project module whose configured root text is the
      * path — byte-identical to the pre-carriage
