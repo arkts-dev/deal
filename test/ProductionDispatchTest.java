@@ -1857,6 +1857,105 @@ public class ProductionDispatchTest {
         }
     }
 
+    /**
+     * The declaration-file class as a {@code @jsonable} field type (review
+     * cycle 3, finding 1): a declaration module's class with visible declared
+     * {@code C$fromJson}/{@code C$toJson} is a jsonable field type (spec
+     * JSON serialization), and the declaration module carries no
+     * implementation lowering, so the generated JSON descriptor array inlines
+     * the declaration's own declared fields — never a {@code $rt.readModule}
+     * read of a module that has no implementation record and never the host
+     * ABI's synthesized {@code $fields} entry shape. The real Node artifact
+     * decodes and re-encodes a nested declared-class value.
+     */
+    private static final String DECLARED_JSON_MODEL_DECLARATION = """
+        export class Model { n: int = 0; }
+        export function Model$fromJson(s: string): Model | null;
+        export function Model$toJson(v: Model): string;
+        """;
+
+    private static final String DECLARED_JSON_MODEL_MAIN = """
+        import * as console from "std/console";
+        import * as M from "model";
+
+        // @jsonable
+        export class Holder { m: M.Model | null = null; }
+
+        export function main(): null {
+          let h: Holder | null = Holder$fromJson("{\\\"m\\\":{\\\"n\\\":5}}");
+          if (h !== null) {
+            let s: string = Holder$toJson(h);
+            if (s !== "{\\\"m\\\":{\\\"n\\\":5}}") {
+              throw { code: "WRONG", message: s };
+            }
+          } else {
+            throw { code: "NULL", message: "decode" };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    private static void testProductionDeclarationClassJsonField()
+            throws Exception {
+        System.out.println("-- public compilation: a declaration-file class is"
+            + " a @jsonable field type and its metadata walks under Node --");
+        Path project = Files.createTempDirectory(
+            "production-declared-json-");
+        try {
+            write(project, "deal.json", """
+                {
+                  "languageVersion": "1.3",
+                  "stdlib": "1.3",
+                  "moduleRoots": ["src"],
+                  "dependencies": {},
+                  "externals": {"model": {"declaration": "bindings/model.d.deal"}},
+                  "backend": "js",
+                  "output": "out"
+                }
+                """);
+            write(project, "bindings/model.d.deal",
+                DECLARED_JSON_MODEL_DECLARATION);
+            write(project, "src/main.deal", DECLARED_JSON_MODEL_MAIN);
+
+            ProjectOutcome compile = productionCompile(project,
+                "src/main.deal", "out");
+            check(compile.exitCode() == 0,
+                "the declaration-class JSON compile succeeds: "
+                    + compile.stderr());
+            check(compile.stderr().isEmpty(),
+                "the declaration-class JSON compile emits no diagnostic: "
+                    + compile.stderr());
+            if (compile.exitCode() != 0) {
+                return;
+            }
+            Path out = project.resolve("out");
+            String mainJs = Files.readString(out.resolve("main.js"));
+            check(mainJs.contains("{ name: \"m\", jtype: \"class\","
+                    + " className: \"@$external/model/Model\", fields:"
+                    + " [{ name: \"n\", jtype: \"int\", optional: false,"
+                    + " nullable: false, hasDefault: true }]"),
+                "the @jsonable descriptor inlines the declaration's own"
+                    + " fields: " + mainJs);
+            check(!mainJs.contains("Model$fields"),
+                "the declaration module's nested metadata is never read"
+                    + " through the implementation-module registry: " + mainJs);
+            // The host implementation is host-owned: the compile stages none.
+            write(out, "model.js", """
+                "use strict";
+                module.exports = {
+                  Model: { $kind: "class", $classname: "@$external/model/Model" },
+                  Model$defaults: { n: 0 },
+                  Model$fromJson: function (s) { return null; },
+                  Model$toJson: function (v) { return "{}"; },
+                };
+                """);
+            checkSiblingJsRun("declaration-class JSON field", out);
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
     private static void testProductionSiblingModuleProviderIdentity()
             throws Exception {
         System.out.println("-- public compilation: sibling class-declaring"
@@ -6805,6 +6904,7 @@ public class ProductionDispatchTest {
         testProductionNestedFieldAndTransitiveProviders();
         testProductionPlanOwnerJsonLinks();
         testProductionSameIdentitySiblingLayouts();
+        testProductionDeclarationClassJsonField();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionShadowedLocalCalleeCollision();

@@ -1584,14 +1584,16 @@ local function plan_declared_names(plan)
   return declared
 end
 
---- Construct a compiler-class instance from a runtime default plan (RCP —
--- runtime page D4; the runtime half of RuntimeClassDefaultPlan). The plan
--- is the ordered field-entry list
+--- Construct a compiler-class instance from an emitted default plan (RCP —
+-- runtime page D4; the runtime half of FfiCompilerClassDefaultPlan, the
+-- compiler-side planning/dependency owner being CompilerClassDefaultPlan).
+-- The plan is the ordered field-entry list
 --   { {name=..., descriptor=..., optional=..., evaluator=function() ... end}, ... }
--- in class source order, produced by the emitter's default-plan lowerer
--- (emitter page D4). Evaluator closures are created at module load and
--- never invoked there; the provided object literal already evaluated its
--- field expressions left-to-right at the construction call site.
+-- in class source order, emitted by the Lua FFI binding generator from the
+-- compiled class plan (luajit-ffi-generated-content-seam S5). Evaluator
+-- closures are created at module load and never invoked there; the provided
+-- object literal already evaluated its field expressions left-to-right at
+-- the construction call site.
 --
 -- The four construction phases (deal-v1.2-int32-and-bytes-architecture D5):
 --   1. Provided fields copy into unpublished slots. An extra provided name
