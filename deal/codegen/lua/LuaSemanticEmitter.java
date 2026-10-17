@@ -4596,8 +4596,22 @@ public final class LuaSemanticEmitter {
             for (KindPayload.ProvidedField field : payload.providedFields()) {
                 provided.add(field.name());
             }
+            java.util.List<SemanticOp> omitted =
+                payload.defaultOwner() == DefaultOwner.LOCAL
+                    ? omittedDefaults(op, payload.classDefaultOpIds(), provided)
+                    : java.util.List.of();
+            // The LOCAL attempt's produced default values live in a
+            // construction-local scratch table, so the attempt's whole
+            // emission is one `do … end` block: a control-flow goto outside
+            // the construction then never jumps into the scratch local's
+            // scope (Lua forbids a forward goto into a local's scope).
+            boolean attemptScope = !omitted.isEmpty();
+            if (attemptScope) {
+                out.append("do\n");
+            }
+            java.util.Map<ValueId, String> defaultAttempts = java.util.Map.of();
             switch (payload.defaultOwner()) {
-                case LOCAL -> emitClassNewLocalDefaults(op, payload, provided);
+                case LOCAL -> defaultAttempts = emitClassNewLocalDefaults(op, omitted);
                 case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided);
                 case HOST_DEFAULTS -> {
 
@@ -4651,7 +4665,12 @@ public final class LuaSemanticEmitter {
                         .append(slot((ValueId) factoryOp.result())).append(", ")
                         .append(luaString(entry.field())).append(")\n");
                 } else {
-                    inputExpr = slot(boundaryPayload.input());
+                    // A defaulted field's value is the enclosing attempt's
+                    // own produced value (the attempt-local entry), never the
+                    // class-default shared slot a nested attempt overwrites.
+                    String attempt = defaultAttempts.get(boundaryPayload.input());
+                    inputExpr = attempt != null ? attempt
+                        : slot(boundaryPayload.input());
                 }
                 emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor());
                 out.append("__okB, __chkB = pcall(__bcheck, ")
@@ -4679,6 +4698,9 @@ public final class LuaSemanticEmitter {
             out.append(slot((ValueId) op.result())).append(" = __instT\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType());
+            if (attemptScope) {
+                out.append("end\n");
+            }
         }
 
         private void emitExtraKeyRejection(SemanticOp op,
@@ -4901,12 +4923,19 @@ public final class LuaSemanticEmitter {
             return checked;
         }
 
-        private void emitClassNewLocalDefaults(SemanticOp op,
-                KindPayload.ClassNewPayload payload, java.util.Set<String> provided) {
-            for (OpId defaultOpId : payload.classDefaultOpIds()) {
+        /**
+         * The construction's omitted required defaults in declaration order:
+         * the complement of the skip-provided rule. A provided field neither
+         * executes its default nor needs a default slot; an omitted optional
+         * field has no default at all (the lowering emits no child for it).
+         */
+        private java.util.List<SemanticOp> omittedDefaults(SemanticOp owner,
+                java.util.List<OpId> defaultOpIds, java.util.Set<String> provided) {
+            java.util.List<SemanticOp> running = new ArrayList<>();
+            for (OpId defaultOpId : defaultOpIds) {
                 SemanticOp defaultOp = opsById.get(defaultOpId);
                 if (defaultOp == null) {
-                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
+                    throw rejectedOp(owner, owner.kind().name() + " " + owner.opId()
                         + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
                         + "(producer defect)");
                 }
@@ -4915,12 +4944,59 @@ public final class LuaSemanticEmitter {
                 if (provided.contains(defaultPayload.field())) {
                     continue; // the skip-provided rule
                 }
-                emitClassDefaultCall(op, defaultOp);
+                running.add(defaultOp);
             }
+            return running;
         }
 
-        /** One CLASS_DEFAULT child execution (START, function, terminal). */
-        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp) {
+        /**
+         * The LOCAL construction's omitted required defaults: each runs once
+         * in declaration order and publishes its produced value into the
+         * construction attempt's own scratch — a function-local table, so a
+         * default that re-enters the construction (the same class built
+         * inside a default, directly or through a helper) writes only its
+         * own attempt's entries. The declaration order field boundaries read
+         * those entries, never the class-default shared slots a nested
+         * attempt overwrites. The attempt keeps one local for the whole
+         * scratch rather than one local per default: the per-function local
+         * budget binds a class with many defaults otherwise.
+         */
+        private java.util.Map<ValueId, String> emitClassNewLocalDefaults(SemanticOp op,
+                java.util.List<SemanticOp> running) {
+            java.util.Map<ValueId, String> attempts = new java.util.LinkedHashMap<>();
+            if (running.isEmpty()) {
+                return attempts;
+            }
+            String scratch = attemptScratch(op.opId());
+            out.append("local ").append(scratch).append(" = {}\n");
+            for (int i = 0; i < running.size(); i++) {
+                SemanticOp defaultOp = running.get(i);
+                String entry = scratch + "[" + (i + 1) + "]";
+                emitClassDefaultCall(op, defaultOp, entry);
+                if (defaultOp.result() instanceof ValueId result) {
+                    attempts.put(result, entry);
+                }
+            }
+            return attempts;
+        }
+
+        /**
+         * The attempt-local scratch table name of one construction: a local
+         * of the enclosing function invocation (a loop body's block declares
+         * its own), so re-entrancy and recursion always write a fresh
+         * attempt's entries.
+         */
+        private String attemptScratch(OpId classNewOp) {
+            return "__dA" + classNewOp.id();
+        }
+
+        /**
+         * One CLASS_DEFAULT child execution (START, function, terminal): the
+         * produced value is published to the op's result slot and to the
+         * enclosing attempt's own entry.
+         */
+        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp,
+                                          String attemptEntry) {
             out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
                 .append(", \"START\", \"CLASS_DEFAULT\", ")
                 .append(luaString(defaultOp.contract().canonicalDigest()))
@@ -4935,6 +5011,7 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
             if (defaultOp.result() instanceof ValueId resultId) {
                 out.append(slot(resultId)).append(" = __resT\n");
+                out.append(attemptEntry).append(" = __resT\n");
             }
             out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
                 .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
@@ -4982,6 +5059,23 @@ public final class LuaSemanticEmitter {
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
+            // The factory's default children in declaration order, skipping
+            // any child whose field the caller provides.
+            java.util.List<SemanticOp> running = omittedDefaults(factoryOp,
+                factoryPayload.classDefaultOpIds(), provided);
+            // The transfer attempt's own scratch: the produced default
+            // values live in this attempt's local table, never in the owner
+            // module's class-default shared slots, which a default that
+            // re-enters the construction (directly or through a helper)
+            // overwrites. One local for the whole attempt keeps the
+            // per-function local budget bounded; the `do … end` block keeps a
+            // control-flow goto outside the transfer out of the scratch
+            // local's scope.
+            java.util.Map<OpId, String> attemptEntries = new java.util.LinkedHashMap<>();
+            java.util.List<SemanticOp> filled = new ArrayList<>();
+            if (!running.isEmpty()) {
+                out.append("do\n");
+            }
             // The owner-side factory group (the module transfer, the
             // CLASS_FACTORY envelope, the defaults, and the transfer
             // instance) opens its own mapped group in the owner module, so
@@ -4989,26 +5083,21 @@ public final class LuaSemanticEmitter {
             beginSourceMappedGroup(factoryOp, "");
             emitModulePush();
             out.append("__module = ").append(luaString(ownerPath)).append("\n");
+            if (!running.isEmpty()) {
+                String scratch = attemptScratch(op.opId());
+                out.append("local ").append(scratch).append(" = {}\n");
+                for (int i = 0; i < running.size(); i++) {
+                    attemptEntries.put(running.get(i).opId(),
+                        scratch + "[" + (i + 1) + "]");
+                }
+            }
             out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
                 .append(", \"START\", \"CLASS_FACTORY\", ")
                 .append(luaString(factoryOp.contract().canonicalDigest()))
                 .append(", ").append(luaString(opKey(op.opId())))
                 .append(", {}, nil, nil)\n");
-            // The factory's default children in declaration order,
-            // skipping any child whose field the caller provides.
-            java.util.List<SemanticOp> filled = new ArrayList<>();
-            for (OpId defaultOpId : factoryPayload.classDefaultOpIds()) {
-                SemanticOp defaultOp = opsById.get(defaultOpId);
-                if (defaultOp == null) {
-                    throw rejectedOp(factoryOp, "CLASS_FACTORY " + factoryOp.opId()
-                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
-                        + "(producer defect)");
-                }
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                if (provided.contains(defaultPayload.field())) {
-                    continue;
-                }
+            for (SemanticOp defaultOp : running) {
+                String entry = attemptEntries.get(defaultOp.opId());
                 out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
                     .append(", \"START\", \"CLASS_DEFAULT\", ")
                     .append(luaString(defaultOp.contract().canonicalDigest()))
@@ -5043,6 +5132,7 @@ public final class LuaSemanticEmitter {
                 beginSourceMappedGroup(factoryOp, "");
                 if (defaultOp.result() instanceof ValueId resultId) {
                     out.append(slot(resultId)).append(" = __resT\n");
+                    out.append(entry).append(" = __resT\n");
                 }
                 out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
                     .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
@@ -5061,10 +5151,14 @@ public final class LuaSemanticEmitter {
             for (SemanticOp defaultOp : filled) {
                 KindPayload.ClassDefaultPayload defaultPayload =
                     (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                String value = attemptEntries.get(defaultOp.opId());
+                if (value == null) {
+                    value = slot((ValueId) defaultOp.result());
+                }
                 out.append("__instT.__f[").append(luaString(defaultPayload.field()))
-                    .append("] = (").append(slot((ValueId) defaultOp.result()))
+                    .append("] = (").append(value)
                     .append(" == nil) and __NULL or ")
-                    .append(slot((ValueId) defaultOp.result())).append("\n");
+                    .append(value).append("\n");
                 out.append("__instT.__p[").append(luaString(defaultPayload.field()))
                     .append("] = true\n");
             }
@@ -5081,6 +5175,9 @@ public final class LuaSemanticEmitter {
             // Emission returns to the caller's statements (the caller-side
             // instance and the caller's own success terminal).
             beginSourceMappedGroup(op, "");
+            if (!running.isEmpty()) {
+                out.append("end\n");
+            }
         }
 
         /** The declared layout entry of one field name, or null. */

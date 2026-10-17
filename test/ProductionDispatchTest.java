@@ -6163,9 +6163,14 @@ public class ProductionDispatchTest {
      * (the host counter read before the nested attempt) stays {@code 0}, so
      * the outer default composes {@code 0 * 1000 + 1100}. A clobbered
      * artifact composes the nested attempt's counter read and throws the
-     * named tripwire. The subject publishes through the release-owned CLI
-     * and executes under the real toolchains with the exact success
-     * transcript on LuaJIT, the JVM and the retained JS lane.
+     * named tripwire. The two-required-default subjects pin the other half:
+     * each attempt's produced default values are its own, so a nested
+     * attempt (completing or failing) never replaces an enclosing attempt's
+     * earlier default value — in the same-module LOCAL arm and in the
+     * imported SHARED_FACTORY transfer alike. Every subject publishes
+     * through the release-owned CLI and executes under the real toolchains
+     * with the exact success transcript on LuaJIT, the JVM and the retained
+     * JS lane.
      */
     private static void testDefaultReentrantAttemptScratchBothTargets()
             throws Exception {
@@ -6200,7 +6205,7 @@ public class ProductionDispatchTest {
               console.log("ok");
               return null;
             }
-            """);
+            """, Map.of());
         runReentrantDefaultSubject("failed nested attempt", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
@@ -6233,17 +6238,149 @@ public class ProductionDispatchTest {
               console.log("ok");
               return null;
             }
-            """);
+            """, Map.of());
+        runReentrantDefaultSubject("two required defaults", """
+            import * as console from "std/console";
+            import * as state from "host/retained_default";
+
+            class A {
+              x: int = state.calls();
+              y: int = build();
+            }
+
+            function build(): int {
+              if (state.calls() >= 1) {
+                return 100;
+              }
+              state.provideFirst();
+              let inner: A = {};
+              return 7;
+            }
+
+            export function main(): null {
+              let a: A = {};
+              if (a.x !== 0) {
+                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
+              }
+              if (a.y !== 7) {
+                throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
+              }
+              console.log("ok");
+              return null;
+            }
+            """, Map.of());
+        runReentrantDefaultSubject("two required defaults, failed nested attempt", """
+            import * as console from "std/console";
+            import * as state from "host/retained_default";
+
+            class A {
+              x: int = state.calls();
+              y: int = build();
+            }
+
+            function build(): int {
+              if (state.calls() >= 1) {
+                throw { code: "INNER_FAIL", message: "the nested attempt fails" };
+              }
+              state.provideFirst();
+              try {
+                let inner: A = {};
+              } catch (e) {
+              }
+              return 7;
+            }
+
+            export function main(): null {
+              let a: A = {};
+              if (a.x !== 0) {
+                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the enclosing attempt's first default value" };
+              }
+              if (a.y !== 7) {
+                throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
+              }
+              console.log("ok");
+              return null;
+            }
+            """, Map.of());
+        runReentrantDefaultSubject("imported class, two required defaults", """
+            import * as console from "std/console";
+            import * as lib from "lib";
+
+            export function main(): null {
+              let a: lib.A = {};
+              if (a.x !== 0) {
+                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred default value" };
+              }
+              if (a.y !== 7) {
+                throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
+              }
+              console.log("ok");
+              return null;
+            }
+            """, Map.of("src/lib.deal", """
+            import * as state from "host/retained_default";
+
+            export class A {
+              x: int = state.calls();
+              y: int = build();
+            }
+
+            function build(): int {
+              if (state.calls() >= 1) {
+                return 100;
+              }
+              state.provideFirst();
+              let inner: A = {};
+              return 7;
+            }
+            """));
+        runReentrantDefaultSubject("imported class, failed nested attempt", """
+            import * as console from "std/console";
+            import * as lib from "lib";
+
+            export function main(): null {
+              let a: lib.A = {};
+              if (a.x !== 0) {
+                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the transferred default value" };
+              }
+              if (a.y !== 7) {
+                throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
+              }
+              console.log("ok");
+              return null;
+            }
+            """, Map.of("src/lib.deal", """
+            import * as state from "host/retained_default";
+
+            export class A {
+              x: int = state.calls();
+              y: int = build();
+            }
+
+            function build(): int {
+              if (state.calls() >= 1) {
+                throw { code: "INNER_FAIL", message: "the nested attempt fails" };
+              }
+              state.provideFirst();
+              try {
+                let inner: A = {};
+              } catch (e) {
+              }
+              return 7;
+            }
+            """));
     }
 
     /**
      * One re-entrant-default subject published by the release-owned CLI and
      * executed under the real toolchains of all three lanes: the exact
      * success transcript pins that a nested attempt (failing or completing)
-     * never overwrites the enclosing attempt's operands.
+     * never overwrites the enclosing attempt's operands or its produced
+     * default values. {@code extraSources} carries the provider module of an
+     * imported-class subject.
      */
-    private static void runReentrantDefaultSubject(String label, String subject)
-            throws Exception {
+    private static void runReentrantDefaultSubject(String label, String subject,
+            Map<String, String> extraSources) throws Exception {
         String declaration = """
             export function retained(): int[];
             export function provideFirst(): int[];
@@ -6262,6 +6399,9 @@ public class ProductionDispatchTest {
                 "production-default-reentrancy-");
             try {
                 write(project, "src/main.deal", subject);
+                for (Map.Entry<String, String> extra : extraSources.entrySet()) {
+                    write(project, extra.getKey(), extra.getValue());
+                }
                 write(project, "bindings/retained_default.d.deal", declaration);
                 write(project, "deal.json", """
                     {
