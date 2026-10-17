@@ -3,6 +3,7 @@ package deal.codegen.js;
 import deal.codegen.SharedEmissionFailure;
 import deal.codegen.SourceMapGenerator;
 import deal.diagnostics.DiagnosticRange;
+import deal.semantic.StdlibFunctionCatalog;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.BindingId;
@@ -37,6 +38,7 @@ import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SourceSpan;
+import deal.semantic.ir.StdlibFunctionId;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 import deal.semantic.ClassRegistrationSeeds;
@@ -88,10 +90,19 @@ import java.util.Set;
  * full-construction {@code C$new} and the hidden {@code C$fields} export
  * of a {@code @jsonable} class). The builtin {@code Error} construction is
  * realized because {@code THROW} transport needs the tagged error carrier.
- * Stdlib calls, host imports and the {@code RETAINED_ABI} external calls
- * belong to the later decomposition units of the same migration and fail
- * closed here; no public dispatch selects this renderer until the
- * production cutover.</p>
+ * The HOST/STDLIB boundary is realized from the admitted occurrence facts
+ * and the structural declaration surface: one raw Node require per
+ * resolved host file, one validating {@code $rt.loadHost} per source HOST
+ * import declaration (the occurrence-owned typed surface carrying fresh
+ * wrappers and synthesized {@code C$new}/{@code C$fields} over the raw
+ * META/defaults references), every host read and call through that
+ * occurrence's own surface entry, the once-only stdlib surface behind the
+ * recorded relative require, the cataloged {@code STDLIB_CALL} rows over
+ * the deployed stdlib modules, and the host-declaration class construction
+ * through the occurrence's synthesized {@code C$new}. The
+ * {@code RETAINED_ABI} external calls belong to a later decomposition unit
+ * of the same migration and fail closed here; no public dispatch selects
+ * this renderer until the production cutover.</p>
  */
 public final class JsSemanticEmitter {
 
@@ -134,6 +145,35 @@ public final class JsSemanticEmitter {
         private final Map<Long, SemanticOp> producerByValue = new HashMap<>();
         /** Registered intrinsic kind per allocation identity (value id). */
         private final Map<Long, IntrinsicKind> intrinsicKinds = new HashMap<>();
+        /**
+         * The recorded import kind of every module the whole closure
+         * resolves (one kind per resolved module by construction): the
+         * read and callee arms select the closed kind from the recorded
+         * resolution, never from a specifier spelling or a module name.
+         */
+        private final Map<ModuleId, ModuleImportKind> importKinds =
+            new LinkedHashMap<>();
+        /**
+         * The artifact's stdlib surface binding per imported stdlib
+         * module: the module-scope require binding of that module's first
+         * recorded STDLIB {@code MODULE_IMPORT} in this artifact. The
+         * deployed stdlib module is once-only (Node's module cache returns
+         * the identical object for every relative require of the same
+         * deployed file), so its reads, direct cataloged calls and stored
+         * call forms all resolve the one surface entry.
+         */
+        private final Map<ModuleId, String> stdlibSurfaces =
+            new LinkedHashMap<>();
+        /**
+         * The artifact's first HOST import occurrence per resolved
+         * declaration module: the alias cell of that occurrence. Each
+         * source HOST import owns one typed surface, so a
+         * host-declaration class construction runs through that
+         * occurrence's synthesized {@code C$new} instead of re-loading or
+         * re-wrapping the host module.
+         */
+        private final Map<ModuleId, BindingId> hostOccurrences =
+            new LinkedHashMap<>();
         /**
          * The one binding cell that materializes each seeded intrinsic
          * carrier: the lowerer's root-scope seed {@code BINDING_INIT}. The
@@ -251,6 +291,9 @@ public final class JsSemanticEmitter {
                 opModule.put(op.opId(), unit.moduleId());
                 if (op.result() instanceof ValueId valueId) {
                     producerByValue.putIfAbsent(valueId.id(), op);
+                }
+                if (op.payload() instanceof KindPayload.ModuleImportPayload payload) {
+                    importKinds.putIfAbsent(payload.resolvedModule(), payload.kind());
                 }
             }
             for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding>
@@ -624,6 +667,44 @@ public final class JsSemanticEmitter {
                 artifactRelativePath(input.project().entryModule()), modules);
         }
 
+        /**
+         * Indexes one artifact's own import occurrences in recorded source
+         * order: the stdlib surface binding of each imported stdlib module
+         * (the first recorded STDLIB {@code MODULE_IMPORT}'s require
+         * binding) and the first HOST occurrence of each resolved
+         * declaration module (its alias cell, which holds that
+         * occurrence's typed surface). Both indexes are artifact-scoped: an
+         * artifact never reads another artifact's bindings, and the
+         * occurrence selection is the recorded import declaration order —
+         * never a module/name lookup.
+         */
+        private void indexArtifactImports(LoweredModuleUnit unit) {
+            stdlibSurfaces.clear();
+            hostOccurrences.clear();
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.MODULE_IMPORT
+                        || !(op.payload()
+                            instanceof KindPayload.ModuleImportPayload payload)) {
+                    continue;
+                }
+                switch (payload.kind()) {
+                    case HOST -> {
+                        if (!payload.aliasCells().isEmpty()) {
+                            hostOccurrences.putIfAbsent(
+                                payload.resolvedModule(),
+                                payload.aliasCells().get(0));
+                        }
+                    }
+                    case STDLIB -> stdlibSurfaces.putIfAbsent(
+                        payload.resolvedModule(), "$d" + op.opId().id());
+                    case COMPILED -> {
+                        // The compiled read arm resolves the published
+                        // surface by module identity; no occurrence index.
+                    }
+                }
+            }
+        }
+
         private JsModuleArtifact emitModule(ModuleId module) {
             LoweredModuleUnit unit = units.get(module);
             currentModule = module;
@@ -631,6 +712,7 @@ public final class JsSemanticEmitter {
             line = 1;
             indent = 0;
             mappings = input.sourceMap() ? new ArrayList<>() : null;
+            indexArtifactImports(unit);
 
             emit("// Generated by DEAL compiler — JavaScript semantic-IR "
                 + "renderer. DO NOT EDIT.");
@@ -939,6 +1021,7 @@ public final class JsSemanticEmitter {
                 case DISCARD -> emitDiscard(op);
                 case MODULE_IMPORT -> emitModuleImport(op);
                 case EXPORT_READ -> emitExportRead(op);
+                case STDLIB_CALL -> emitStdlibCall(op);
                 case EXPORT_PUBLISH -> emitExportPublish(op);
                 case ENTRY_INVOKE -> emitEntryInvoke(unit, op);
                 case MODULE_INIT -> emit("// The artifact's registered record"
@@ -964,12 +1047,6 @@ public final class JsSemanticEmitter {
                     + " detached " + op.kind() + " " + op.opId() + " executes"
                     + " only under its triggering constructor or factory arm —"
                     + " the block walk never runs it (producer defect)");
-                case STDLIB_CALL ->
-                    throw unsupported(op, "the op kind " + op.kind()
-                        + " belongs to a realized later decomposition unit of"
-                        + " the JavaScript semantic-IR renderer; the"
-                        + " foundation fails closed instead of emitting a"
-                        + " partial result");
             }
         }
 
@@ -2168,17 +2245,26 @@ public final class JsSemanticEmitter {
                                       FunctionExecutionBinding binding) {
             switch (binding) {
                 case FunctionExecutionBinding.HostFunction host -> {
-                    if (host.importCell() == null) {
-                        throw unsupported(op, "the " + op.kind() + " "
-                            + op.opId() + " resolves the host export '"
-                            + host.hostModuleId().path() + "#"
-                            + host.exportName() + "' whose binding records no"
-                            + " source import occurrence cell (producer"
-                            + " defect; the typed surface is per source import"
-                            + " occurrence)");
+                    if (host.importCell() != null) {
+                        return cell(host.importCell(), 0) + "["
+                            + jsString(host.exportName()) + "]";
                     }
-                    return cell(host.importCell(), 0) + "["
-                        + jsString(host.exportName()) + "]";
+                    // A declared function export of a STDLIB import records
+                    // no occurrence cell: its surface is once-only per
+                    // resolved module, so every call form reaches the same
+                    // deployed module entry the value read produces.
+                    if (importKindOf(host.hostModuleId())
+                            == ModuleImportKind.STDLIB) {
+                        return stdlibSurface(op, host.hostModuleId()) + "["
+                            + jsString(host.exportName()) + "]";
+                    }
+                    throw unsupported(op, "the " + op.kind() + " "
+                        + op.opId() + " resolves the host export '"
+                        + host.hostModuleId().path() + "#"
+                        + host.exportName() + "' whose binding records no"
+                        + " source import occurrence cell (producer"
+                        + " defect; the typed surface is per source import"
+                        + " occurrence)");
                 }
                 case FunctionExecutionBinding.HostFunctionValue value -> {
                     SemanticOp crossing = opsById.get(
@@ -2247,14 +2333,33 @@ public final class JsSemanticEmitter {
                 case KindPayload.CallCallee.Static staticCallee ->
                     staticCallee.binding();
                 case KindPayload.CallCallee.Indirect indirect ->
-                    bindingOfIdentity(indirect.callee());
+                    bindingOfIdentity(op, indirect.callee());
                 case KindPayload.CallCallee.Dynamic ignored -> null;
             };
         }
 
-        private FunctionExecutionBinding bindingOfIdentity(ValueId identity) {
-            for (LoweredModuleUnit unit : units.values()) {
-                FunctionExecutionBinding found = unit.functionBindings().get(
+        /**
+         * The recorded binding of one allocation identity: value identities
+         * are module-scoped, so the op's own unit's registry is consulted
+         * first and a same-numbered identity of another unit never selects
+         * a binding (the occurrence correlation of a HOST value read is
+         * exactly that unit's fact). The closure-wide scan remains only as
+         * the defensive form for a reference the owning unit does not
+         * record.
+         */
+        private FunctionExecutionBinding bindingOfIdentity(SemanticOp op,
+                                                           ValueId identity) {
+            ModuleId owner = opModule.get(op.opId());
+            LoweredModuleUnit unit = owner == null ? null : units.get(owner);
+            if (unit != null) {
+                FunctionExecutionBinding own = unit.functionBindings().get(
+                    new FunctionAllocationIdentity(identity.id()));
+                if (own != null) {
+                    return own;
+                }
+            }
+            for (LoweredModuleUnit candidate : units.values()) {
+                FunctionExecutionBinding found = candidate.functionBindings().get(
                     new FunctionAllocationIdentity(identity.id()));
                 if (found != null) {
                     return found;
@@ -2264,13 +2369,13 @@ public final class JsSemanticEmitter {
         }
 
         /** The recorded binding of one callee reference, or null for Dynamic. */
-        private FunctionExecutionBinding resolvedBindingOf(
+        private FunctionExecutionBinding resolvedBindingOf(SemanticOp op,
                 KindPayload.CallCallee callee) {
             return switch (callee) {
                 case KindPayload.CallCallee.Static staticCallee ->
                     staticCallee.binding();
                 case KindPayload.CallCallee.Indirect indirect ->
-                    bindingOfIdentity(indirect.callee());
+                    bindingOfIdentity(op, indirect.callee());
                 case KindPayload.CallCallee.Dynamic ignored -> null;
             };
         }
@@ -2323,7 +2428,8 @@ public final class JsSemanticEmitter {
                     await);
                 return;
             }
-            FunctionExecutionBinding binding = resolvedBindingOf(payload.callee());
+            FunctionExecutionBinding binding =
+                resolvedBindingOf(op, payload.callee());
             if (binding instanceof FunctionExecutionBinding.ExternalFunction
                     external) {
                 if (external.executionOwner()
@@ -2724,6 +2830,26 @@ public final class JsSemanticEmitter {
         // Modules
         // =====================================================================
 
+        /**
+         * One {@code MODULE_IMPORT} — the load-once initialization record
+         * of its resolved target, followed by the pinned initializing write
+         * of the import's alias cell(s).
+         *
+         * <p>A COMPILED import requires the target artifact and publishes
+         * that module's own surface. A HOST import requires the actual
+         * resolved host file once and validates it against the structural
+         * declaration surface through {@code $rt.loadHost}: the returned
+         * typed surface is the source import occurrence's own (fresh
+         * wrappers and synthesized {@code C$new}/{@code C$fields} over the
+         * raw META/defaults references), and it is the only surface the
+         * occurrence's reads and calls reach. A STDLIB import requires the
+         * deployed (project-overridable) stdlib module; that surface is
+         * once-only per resolved module and records no occurrence cell.
+         * The require specifiers keep the retained
+         * {@code relativeSpecifier}/{@code importRequireSpecifier} rules
+         * relative to the emitted output, an already-relative host
+         * specifier spelling included.</p>
+         */
         private void emitModuleImport(SemanticOp op) {
             KindPayload.ModuleImportPayload payload =
                 (KindPayload.ModuleImportPayload) op.payload();
@@ -2739,27 +2865,355 @@ public final class JsSemanticEmitter {
                             + jsString(payload.resolvedModule().path()) + ");");
                     }
                 }
-                case STDLIB, HOST -> throw unsupported(op, "the MODULE_IMPORT "
-                    + op.opId() + " resolves the " + payload.kind()
-                    + " module '" + payload.resolvedModule().path() + "': the"
-                    + " host/stdlib import slice belongs to a realized later"
-                    + " decomposition unit");
+                case HOST -> {
+                    String loaded = "$d" + op.opId().id();
+                    emit("const " + loaded + " = $require("
+                        + jsString(importSpecifier(payload.rawSpecifier()))
+                        + ");");
+                    String declaredMap = declaredHostMap(op,
+                        payload.resolvedModule());
+                    String call = "$rt.loadHost(" + loaded + ", " + declaredMap
+                        + ", " + jsString(payload.rawSpecifier()) + ", "
+                        + spanArgs(op) + ")";
+                    if (payload.aliasCells().isEmpty()) {
+                        // An operation-free import record (no source alias
+                        // cell): the source declaration still validates
+                        // exactly once, and no surface value escapes.
+                        emit(call + ";");
+                    } else {
+                        for (BindingId alias : payload.aliasCells()) {
+                            emit(cell(alias, 0) + " = " + call + ";");
+                        }
+                    }
+                }
+                case STDLIB -> {
+                    String loaded = "$d" + op.opId().id();
+                    emit("const " + loaded + " = $require("
+                        + jsString(importSpecifier(payload.rawSpecifier()))
+                        + ");");
+                    for (BindingId alias : payload.aliasCells()) {
+                        emit(cell(alias, 0) + " = " + loaded + ";");
+                    }
+                }
             }
         }
 
+        /**
+         * One {@code EXPORT_READ} — the checked read of one resolved
+         * module's export through the reading occurrence's own surface.
+         *
+         * <p>A COMPILED read resolves the owner module's published value
+         * through the private implementation record. A HOST read resolves
+         * the typed surface entry of the recorded source import occurrence
+         * (its alias cell's {@code $rt.loadHost} result, so repeated reads
+         * with one occurrence return the identical wrapper and never
+         * re-wrap; a module/name lookup is never a fallback). A STDLIB
+         * read resolves the deployed module's export — the once-only
+         * surface entry, identical to the wrapper every call form
+         * reaches.</p>
+         */
         private void emitExportRead(SemanticOp op) {
             KindPayload.ExportReadPayload payload =
                 (KindPayload.ExportReadPayload) op.payload();
             ModuleImportKind kind = importKindOf(payload.module());
-            if (kind != null && kind != ModuleImportKind.COMPILED) {
-                throw unsupported(op, "the EXPORT_READ " + op.opId() + " of '"
-                    + payload.module().path() + "#" + payload.name()
-                    + "' resolves a " + kind + " surface: the host/stdlib read"
-                    + " slice belongs to a realized later decomposition unit");
+            if (kind == ModuleImportKind.HOST) {
+                emit(slotOf(op) + " = " + hostReadSurface(op, payload)
+                    + "[" + jsString(payload.name()) + "];");
+                return;
+            }
+            if (kind == ModuleImportKind.STDLIB) {
+                emit(slotOf(op) + " = "
+                    + stdlibSurface(op, payload.module()) + "["
+                    + jsString(payload.name()) + "];");
+                return;
             }
             emit(slotOf(op) + " = $rt.readModule("
                 + jsString(payload.module().path()) + ", "
                 + jsString(payload.name()) + ");");
+        }
+
+        /**
+         * The typed surface expression of one host import read: the
+         * recorded function-typed read registers exactly one
+         * {@code HostFunction} binding carrying its owning source import
+         * occurrence's alias cell, and that cell holds the occurrence's
+         * typed surface. A read without that correlation is a producer
+         * defect: a module/name or first-alias lookup never selects a
+         * typed host value.
+         */
+        private String hostReadSurface(SemanticOp op,
+                                       KindPayload.ExportReadPayload payload) {
+            if (!(op.result() instanceof ValueId valueId)) {
+                throw rejected(op, "the host EXPORT_READ " + op.opId()
+                    + " publishes no value identity (producer defect)");
+            }
+            FunctionExecutionBinding binding = bindingOfIdentity(op, valueId);
+            if (!(binding instanceof FunctionExecutionBinding.HostFunction host)
+                    || host.importCell() == null) {
+                throw rejected(op, "the host EXPORT_READ " + op.opId()
+                    + " of '" + payload.module().path() + "#" + payload.name()
+                    + " records no owning import-occurrence cell (the typed"
+                    + " surface is per source import declaration; a module/name"
+                    + " lookup is never a fallback — producer defect)");
+            }
+            return cell(host.importCell(), 0);
+        }
+
+        /**
+         * The once-only stdlib surface expression of one artifact: the
+         * require binding of the recorded STDLIB import of that resolved
+         * module. An artifact that reads or calls a stdlib module it never
+         * imported fails closed (the import declaration is the resolution
+         * that materialized the surface).
+         */
+        private String stdlibSurface(SemanticOp op, ModuleId module) {
+            String surface = stdlibSurfaces.get(module);
+            if (surface == null) {
+                throw rejected(op, "the " + op.kind() + " " + op.opId()
+                    + " resolves the stdlib module '" + module.path()
+                    + "' which no MODULE_IMPORT of this artifact imports (the"
+                    + " import declaration materializes the stdlib surface —"
+                    + " producer defect)");
+            }
+            return surface;
+        }
+
+        /**
+         * {@code STDLIB_CALL} — one cataloged stdlib row over the deployed
+         * (project-overridable) stdlib module: the recorded
+         * {@code STDLIB_PARAMETER} cells in their one-based declared order,
+         * the cataloged callable invoked exactly once with the call-site
+         * span triple the deployed wrapper's own boundary checks consume,
+         * and the recorded {@code STDLIB_RETURN} cell over the result. The
+         * callable is the module surface entry the value read also
+         * produces, so a direct call, a stored function value and a
+         * namespace read reach the identical wrapper (streams, number
+         * time, canonical {@code Error} and JSON included).
+         */
+        private void emitStdlibCall(SemanticOp op) {
+            KindPayload.StdlibCallPayload payload =
+                (KindPayload.StdlibCallPayload) op.payload();
+            StdlibFunctionCatalog.Entry row = stdlibRowOf(op, payload.function());
+            if (op.resultType() instanceof RuntimeDescriptor resultDescriptor
+                    && !resultDescriptor.equals(row.returnDescriptor())) {
+                throw rejected(op, "the STDLIB_CALL " + op.opId() + " of "
+                    + payload.function() + " carries the result descriptor "
+                    + resultDescriptor.canonicalSpecText() + " but the closed"
+                    + " catalog row declares "
+                    + row.returnDescriptor().canonicalSpecText()
+                    + " (the row's declared signature is the single authority"
+                    + " — producer defect)");
+            }
+            List<SemanticOp> parameterBoundaries = stdlibParamBoundaries(op);
+            if (parameterBoundaries.size() != payload.args().size()) {
+                throw rejected(op, "the STDLIB_CALL " + op.opId() + " records "
+                    + payload.args().size() + " argument(s) but "
+                    + parameterBoundaries.size() + " STDLIB_PARAMETER cell(s)"
+                    + " (one cell per declared parameter — producer defect)");
+            }
+            List<String> callArguments = new ArrayList<>();
+            for (int i = 0; i < parameterBoundaries.size(); i++) {
+                SemanticOp boundary = parameterBoundaries.get(i);
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                if (!boundaryPayload.input().equals(payload.args().get(i))) {
+                    throw rejected(op, "the STDLIB_CALL " + op.opId()
+                        + " parameter cell " + boundary.opId() + " checks "
+                        + boundaryPayload.input() + ", not the recorded"
+                        + " argument " + payload.args().get(i) + " at position "
+                        + (i + 1) + " (producer defect)");
+                }
+                emitBoundaryCheck(boundary, slot(boundaryPayload.input()),
+                    boundaryPayload.descriptor());
+                callArguments.add(slot(boundaryPayload.input()));
+            }
+            callArguments.add(spanArgs(op));
+            ModuleId stdlibModule = new ModuleId(row.modulePath());
+            emit(slotOf(op) + " = " + stdlibSurface(op, stdlibModule) + "["
+                + jsString(row.exportName()) + "].$f("
+                + String.join(", ", callArguments) + ");");
+            SemanticOp returnBoundary = stdlibReturnBoundary(op);
+            if (returnBoundary != null) {
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) returnBoundary.payload();
+                if (!boundaryPayload.input().equals(op.result())) {
+                    throw rejected(op, "the STDLIB_CALL " + op.opId()
+                        + " return cell " + returnBoundary.opId() + " checks "
+                        + boundaryPayload.input() + ", not the call result "
+                        + op.result() + " (producer defect)");
+                }
+                emitBoundaryCheck(returnBoundary, slotOf(op),
+                    boundaryPayload.descriptor());
+            }
+        }
+
+        /**
+         * The closed catalog row of one {@code STDLIB_CALL} id: the catalog
+         * is the STDLIB kind's resolution authority, so an id the closed
+         * table does not carry is a producer defect.
+         */
+        private StdlibFunctionCatalog.Entry stdlibRowOf(SemanticOp op,
+                                                        StdlibFunctionId function) {
+            for (StdlibFunctionCatalog.Entry entry
+                    : StdlibFunctionCatalog.entries()) {
+                if (entry.function() == function) {
+                    return entry;
+                }
+            }
+            throw rejected(op, "the STDLIB_CALL " + op.opId() + " resolves "
+                + function + " which the closed stdlib catalog does not carry"
+                + " (producer defect)");
+        }
+
+        /** The STDLIB_PARAMETER children of one call, in one-based order. */
+        private List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
+            List<SemanticOp> boundaries = new ArrayList<>();
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.BOUNDARY
+                        && op.opId().equals(candidate.origin().parentOpId())
+                        && ((KindPayload.BoundaryPayload) candidate.payload())
+                            .kind() == BoundaryKind.STDLIB_PARAMETER) {
+                    boundaries.add(candidate);
+                }
+            }
+            boundaries.sort(java.util.Comparator.comparingLong(
+                candidate -> candidate.opId().id()));
+            return boundaries;
+        }
+
+        /** The single recorded STDLIB_RETURN cell of one call, or null. */
+        private SemanticOp stdlibReturnBoundary(SemanticOp op) {
+            SemanticOp found = null;
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() != SemanticOpKind.BOUNDARY
+                        || !op.opId().equals(candidate.origin().parentOpId())
+                        || ((KindPayload.BoundaryPayload) candidate.payload())
+                            .kind() != BoundaryKind.STDLIB_RETURN) {
+                    continue;
+                }
+                if (found == null || candidate.opId().id() < found.opId().id()) {
+                    found = candidate;
+                }
+            }
+            return found;
+        }
+
+        /**
+         * The require specifier of one HOST/STDLIB import declaration,
+         * relative to the emitting artifact's own output directory: an
+         * already-relative host specifier keeps its spelling verbatim (the
+         * retained {@code JsBackend#relativeSpecifier} rule), every other
+         * target takes the relative path from this artifact's directory to
+         * the deployed file, the extension omitted. No ambient
+         * {@code NODE_PATH}/{@code node_modules} resolution exists.
+         */
+        private String importSpecifier(String rawSpecifier) {
+            if (rawSpecifier.startsWith("./") || rawSpecifier.startsWith("../")) {
+                return rawSpecifier;
+            }
+            return relativeSpecifier(currentModule.path(), rawSpecifier);
+        }
+
+        /**
+         * The declared-map expression of one HOST import: the structural
+         * declaration module's exports in the supplied ascending Java
+         * String name order (the pinned JS declared-export read order),
+         * each entry carrying its structural descriptor and — for a
+         * declared class — the declaration-order field metadata. The
+         * runtime loader validates the raw module object against exactly
+         * this map; extra raw exports stay ignorable and no emitter-side
+         * execution or copying of host code exists.
+         */
+        private String declaredHostMap(SemanticOp op, ModuleId module) {
+            RuntimeDeclarationSurface.RuntimeDeclarationModule declared =
+                input.declarations().modules().get(module);
+            if (declared == null) {
+                throw rejected(op, "the HOST MODULE_IMPORT " + op.opId()
+                    + " resolves the declaration module '" + module.path()
+                    + "' which the structural declaration surface does not"
+                    + " carry (the projection covers every declaration module"
+                    + " of the compilation — producer defect)");
+            }
+            if (declared.kind()
+                    != RuntimeDeclarationSurface.DeclarationKind.HOST) {
+                throw rejected(op, "the HOST MODULE_IMPORT " + op.opId()
+                    + " resolves the " + declared.kind() + " declaration"
+                    + " module '" + module.path() + "': a host import never"
+                    + " resolves an extern-C declaration (the JavaScript"
+                    + " backend rejects @extern-c imports with E6006 before"
+                    + " lowering — producer defect)");
+            }
+            StringBuilder map = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<String, RuntimeDescriptor> export
+                    : declared.exports().entrySet()) {
+                if (!first) {
+                    map.append(", ");
+                }
+                first = false;
+                map.append(jsString(export.getKey())).append(": ")
+                    .append(declaredHostEntry(op, declared, export.getKey(),
+                        export.getValue()));
+            }
+            return map.append("}").toString();
+        }
+
+        /** One declared host export's runtime declared-map entry. */
+        private String declaredHostEntry(SemanticOp op,
+                RuntimeDeclarationSurface.RuntimeDeclarationModule declared,
+                String name, RuntimeDescriptor descriptor) {
+            if (descriptor instanceof RuntimeDescriptor.Class classDescriptor) {
+                RuntimeDeclarationSurface.RuntimeDeclaredClass declaredClass =
+                    declared.classes().get(name);
+                if (declaredClass == null
+                        || !declaredClass.classId()
+                            .equals(classDescriptor.classId())) {
+                    throw rejected(op, "the declared host class export '"
+                        + name + "' carrying " + classDescriptor.classId()
+                        + " has no matching declared-class entry in the"
+                        + " structural declaration surface (producer"
+                        + " defect)");
+                }
+                return "{ $k: " + jsString("class") + ", $d: "
+                    + jsString(descriptor.canonicalSpecText()) + ", $fields: "
+                    + declaredHostFields(declaredClass) + " }";
+            }
+            // A function export is the declared function form; every other
+            // declaration kind (unreachable for checker-accepted host
+            // declarations, which export functions and classes only) keeps
+            // the defensive function form, so the deployed runtime raises
+            // its pinned E8011 unsupported-descriptor arm at load.
+            return "{ $k: " + jsString("function") + ", $d: "
+                + jsString(descriptor.canonicalSpecText()) + " }";
+        }
+
+        /**
+         * One declared class's field-metadata array in declaration order:
+         * the field name, its structural descriptor, and the optional /
+         * nullable / has-default flags ({@code optional} is exactly
+         * {@code !required}).
+         */
+        private String declaredHostFields(
+                RuntimeDeclarationSurface.RuntimeDeclaredClass declaredClass) {
+            StringBuilder fields = new StringBuilder("[");
+            boolean first = true;
+            for (RuntimeDeclarationSurface.RuntimeDeclaredField field
+                    : declaredClass.fields()) {
+                if (!first) {
+                    fields.append(", ");
+                }
+                first = false;
+                fields.append("{ name: ").append(jsString(field.name()))
+                    .append(", $d: ")
+                    .append(jsString(field.descriptor().canonicalSpecText()))
+                    .append(", optional: ").append(!field.required())
+                    .append(", nullable: ")
+                    .append(field.descriptor()
+                        instanceof RuntimeDescriptor.Nullable)
+                    .append(", hasDefault: ").append(field.hasDefault())
+                    .append(" }");
+            }
+            return fields.append("]").toString();
         }
 
         private void emitExportPublish(SemanticOp op) {
@@ -3242,9 +3696,11 @@ public final class JsSemanticEmitter {
          * One {@code CLASS_NEW}: the shared construction phases over the
          * resolved module-level layout and default owner. {@code LOCAL}
          * constructs directly, {@code SHARED_FACTORY} transfers the owner
-         * module's defaults first, and the builtin {@code Error} keeps its
-         * compiler-constant defaults. A host-declaration or extern-C owner
-         * belongs to the host and FFI slices and fails closed here.
+         * module's defaults first, {@code HOST_DEFAULTS} runs the host
+         * occurrence's synthesized full construction over the loaded
+         * defaults, and the builtin {@code Error} keeps its
+         * compiler-constant defaults. An extern-C owner fails closed: the
+         * JavaScript backend rejects @extern-c before lowering (E6006).
          */
         private void emitClassNew(SemanticOp op) {
             KindPayload.ClassNewPayload payload =
@@ -3253,18 +3709,129 @@ public final class JsSemanticEmitter {
                 case LOCAL -> emitClassNewLocal(op, payload);
                 case SHARED_FACTORY -> emitClassNewSharedFactory(op, payload);
                 case BUILTIN_DEFAULTS -> emitBuiltinErrorConstruction(op);
-                case HOST_DEFAULTS -> throw unsupported(op, "the CLASS_NEW "
-                    + op.opId() + " carries the host-declaration default owner"
-                    + " of " + payload.classId() + ": the HOST/STDLIB"
-                    + " realization (the host occurrence surfaces and their"
-                    + " declared defaults) belongs to a realized later"
-                    + " decomposition unit of the same migration");
+                case HOST_DEFAULTS -> emitClassNewHostDefaults(op, payload);
                 case FFI_PLAN -> throw unsupported(op, "the CLASS_NEW "
                     + op.opId() + " carries the extern-C C-struct default owner"
                     + " of " + payload.classId() + ": the JavaScript backend"
                     + " rejects @extern-c before lowering (E6006), so a C-struct"
                     + " construction reaching this renderer is a producer defect");
             }
+        }
+
+        /**
+         * One host-declaration class construction: the class's declaration
+         * module is a HOST module and the raw defaults are that host's own
+         * data, so the construction runs the source import occurrence's
+         * synthesized {@code C$new} — the full-construction entry the typed
+         * surface owns (fresh per import, over the raw {@code <C>_defaults}
+         * reference {@code $rt.loadHost} retained). The provided values
+         * therefore cross the host's own defaults-map gate, and each
+         * provided field then runs its recorded declaration-order boundary
+         * at its own origin. A failed construction publishes no instance
+         * and the completed host/default effects stay.
+         */
+        private void emitClassNewHostDefaults(SemanticOp op,
+                                              KindPayload.ClassNewPayload payload) {
+            ClassLayout layout = requireResolvedLayout(payload.classId(), op,
+                payload.layout());
+            if (payload.classFactoryRef() != null
+                    || !payload.classDefaultOpIds().isEmpty()) {
+                throw rejected(op, "the CLASS_NEW " + op.opId() + " carries the"
+                    + " host-declaration default owner of " + payload.classId()
+                    + " with a factory ref or a default child list: the loaded"
+                    + " host defaults are data and run in the host's own"
+                    + " construction (producer defect)");
+            }
+            DeclaredHostClass declared = requireDeclaredHostClass(op,
+                payload.classId());
+            emitExtraFieldFailure(op, payload, layout);
+            String provided = "$pv" + op.opId().id();
+            emit("const " + provided + " = {};");
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                emit("$rt.setProp(" + provided + ", " + jsString(field.name())
+                    + ", " + slot(field.valueOpId()) + ");");
+            }
+            String target = slotOf(op);
+            emit(target + " = " + cell(declared.importCell(), 0) + "["
+                + jsString(declared.name() + "$new") + "](" + provided + ", "
+                + spanArgs(op) + ");");
+            for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
+                SemanticOp boundary = requireBoundaryChild(op,
+                    entry.boundaryOpId());
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                if (boundaryPayload.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
+                    throw rejected(op, "the CLASS_NEW " + op.opId()
+                        + " host-declaration construction carries the "
+                        + boundaryPayload.kind() + " boundary cell "
+                        + boundary.opId() + ": the host defaults are data, so"
+                        + " no default child exists (producer defect)");
+                }
+                String admitted = "$h" + boundary.opId().id();
+                emit("const " + admitted + " = "
+                    + boundaryCheckExpr(boundary,
+                        slot(boundaryPayload.input())) + ";");
+                emit("$rt.setProp(" + target + ", " + jsString(entry.field())
+                    + ", " + admitted + ");");
+            }
+        }
+
+        /** One declared host class of the structural declaration surface. */
+        private record DeclaredHostClass(String name, BindingId importCell) {
+        }
+
+        /**
+         * The declared host class of one class identity together with the
+         * artifact's source import occurrence of its declaration module.
+         * The occurrence is the recorded import declaration that named the
+         * class (the class's own declaration module is reachable only
+         * through it); a class no declaration module declares, or a
+         * construction in an artifact without that import occurrence, is a
+         * producer defect — never an invented surface.
+         */
+        private DeclaredHostClass requireDeclaredHostClass(SemanticOp op,
+                                                           ClassId classId) {
+            // The artifact's own HOST occurrences first, in recorded import
+            // order: a construction resolves the declaration module its
+            // import declaration named, never a first-identity match.
+            for (Map.Entry<ModuleId, BindingId> occurrence
+                    : hostOccurrences.entrySet()) {
+                RuntimeDeclarationSurface.RuntimeDeclarationModule declared =
+                    input.declarations().modules().get(occurrence.getKey());
+                if (declared == null || declared.kind()
+                        != RuntimeDeclarationSurface.DeclarationKind.HOST) {
+                    continue;
+                }
+                for (Map.Entry<String,
+                        RuntimeDeclarationSurface.RuntimeDeclaredClass>
+                        declaredClass : declared.classes().entrySet()) {
+                    if (declaredClass.getValue().classId().equals(classId)) {
+                        return new DeclaredHostClass(declaredClass.getKey(),
+                            occurrence.getValue());
+                    }
+                }
+            }
+            for (Map.Entry<ModuleId,
+                    RuntimeDeclarationSurface.RuntimeDeclarationModule> entry
+                    : input.declarations().modules().entrySet()) {
+                for (Map.Entry<String,
+                        RuntimeDeclarationSurface.RuntimeDeclaredClass>
+                        declared : entry.getValue().classes().entrySet()) {
+                    if (!declared.getValue().classId().equals(classId)) {
+                        continue;
+                    }
+                    throw rejected(op, "the CLASS_NEW " + op.opId()
+                        + " constructs the declared host class " + classId
+                        + " of module '" + entry.getKey().path()
+                        + "' which no HOST import occurrence of this artifact"
+                        + " imports: the construction runs through the import"
+                        + " declaration's own typed surface (producer defect)");
+                }
+            }
+            throw rejected(op, "the CLASS_NEW " + op.opId() + " carries the"
+                + " host-declaration default owner of " + classId + ", which no"
+                + " class of the structural declaration surface declares"
+                + " (producer defect)");
         }
 
         private void emitClassNewLocal(SemanticOp op,
@@ -3769,18 +4336,15 @@ public final class JsSemanticEmitter {
         // Helpers
         // =====================================================================
 
+        /**
+         * The recorded (closed) import kind of one resolved module, or null
+         * when no unit of the closure imports it. One kind per resolved
+         * module exists by construction (the resolution classifies the
+         * target once), so the read and callee arms select from these
+         * recorded facts and never from a spelling.
+         */
         private ModuleImportKind importKindOf(ModuleId module) {
-            for (LoweredModuleUnit unit : units.values()) {
-                for (SemanticOp op : unit.ops()) {
-                    if (op.kind() == SemanticOpKind.MODULE_IMPORT
-                            && op.payload() instanceof KindPayload
-                                .ModuleImportPayload payload
-                            && payload.resolvedModule().equals(module)) {
-                        return payload.kind();
-                    }
-                }
-            }
-            return null;
+            return importKinds.get(module);
         }
 
         /**

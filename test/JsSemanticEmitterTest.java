@@ -28,10 +28,14 @@ import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.IntrinsicKind;
+import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.NamespaceRegistrations;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.SemanticOp;
+import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.StructuredBodyTable;
 
 import java.io.IOException;
@@ -68,7 +72,13 @@ import java.util.stream.Stream;
  * and cross-module async entry, the direct-run/require entry split with
  * the uncaught-main presentation, the {@code $rt.invokeAsyncExport} legs
  * with their exact per-invocation counts, the awaited failure transport
- * across modules, and the host-driven callback crossing).
+ * across modules, and the host-driven callback crossing), and the
+ * ISSUE-0801 HOST/STDLIB boundary (one raw Node require per resolved host
+ * file, the occurrence-owned typed import surfaces with their name-sorted
+ * declared validation and first-failure stop, the unlocated raw-shape
+ * guard under require and direct execution, the deployed stdlib surface
+ * behind the relative require, and the host-declaration class
+ * construction).
  */
 public class JsSemanticEmitterTest {
 
@@ -132,6 +142,9 @@ public class JsSemanticEmitterTest {
             testDynamicCalleeDispatch(tmpRoot, node);
             testAdapterPerExecutionSource(tmpRoot, node);
             testHostParameterCellAndDeferredReads(tmpRoot, node);
+            testHostOccurrenceSurfaces(tmpRoot, node);
+            testHostDeclaredOrderAndRawShape(tmpRoot, node);
+            testStdlibSurfaceAndCalls(tmpRoot, node);
             testDeclarationProjection(tmpRoot);
             testFailClosedAndSeamPurity(tmpRoot);
         } finally {
@@ -245,8 +258,7 @@ public class JsSemanticEmitterTest {
         for (ModuleId declarationModule
                 : orchestrator.hostDeclarationSurface().moduleIds()) {
             identities.put(declarationModule,
-                IdentityTestFixtures.moduleIdentityOf(
-                    declarationModule.path()));
+                declarationIdentityOf(declarationModule, externals));
         }
         BuiltinErrorDeclaration builtinError =
             BuiltinErrorDeclaration.synthesized(
@@ -282,6 +294,25 @@ public class JsSemanticEmitterTest {
             identities);
     }
 
+    /**
+     * The compilation's declaration-module identity: the externals key the
+     * manifest resolves the declaration through, exactly as written (the
+     * production owner's single module-path classification). A declaration
+     * module without an externals entry (no host fixture) keeps the
+     * standalone harness identity.
+     */
+    private static CanonicalModuleIdentity declarationIdentityOf(
+            ModuleId declarationModule, Map<String, String> externals) {
+        for (String specifier : externals.keySet()) {
+            if (specifier.equals(declarationModule.path())
+                    || specifier.replace('/', '.')
+                        .equals(declarationModule.path())) {
+                return new CanonicalModuleIdentity.ExternalModule(specifier);
+            }
+        }
+        return IdentityTestFixtures.moduleIdentityOf(declarationModule.path());
+    }
+
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolve(
             deal.semantic.ir.ReleaseState.V1_3_ACTIVE,
@@ -297,8 +328,10 @@ public class JsSemanticEmitterTest {
 
     /**
      * Renders one fixture's emission and stages the artifacts (plus the one
-     * runtime copy) into a fresh output directory under {@code root}. The
-     * renderer itself writes nothing; the drive performs the staging.
+     * runtime copy and the spec-listed stdlib implementation copies the
+     * project imports) into a fresh output directory under {@code root}.
+     * The renderer itself writes nothing; the drive performs the staging the
+     * production owner performs.
      */
     private static Path stage(Fixture fixture, String name, boolean sourceMap)
             throws IOException {
@@ -314,9 +347,33 @@ public class JsSemanticEmitterTest {
         Files.createDirectories(runtimeDir);
         Files.copy(Path.of("deal/runtime.js"), runtimeDir.resolve("runtime.js"),
             StandardCopyOption.REPLACE_EXISTING);
+        for (String stdlibModule : importedStdlibModules(fixture)) {
+            Path target = out.resolve("std/" + stdlibModule + ".js");
+            Files.createDirectories(target.getParent());
+            Files.copy(Path.of("std/" + stdlibModule + ".js"), target,
+                StandardCopyOption.REPLACE_EXISTING);
+        }
         Files.writeString(out.resolve("entry.txt"),
             emission.entryArtifactRelativePath(), StandardCharsets.UTF_8);
         return out;
+    }
+
+    /** The spec-listed stdlib modules one fixture's project imports. */
+    private static List<String> importedStdlibModules(Fixture fixture) {
+        Set<String> modules = new java.util.LinkedHashSet<>();
+        for (LoweredModuleUnit unit : fixture.project().modules().values()) {
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.MODULE_IMPORT
+                        || !(op.payload()
+                            instanceof KindPayload.ModuleImportPayload payload)
+                        || payload.kind() != ModuleImportKind.STDLIB) {
+                    continue;
+                }
+                modules.add(payload.resolvedModule().path()
+                    .substring("std.".length()));
+            }
+        }
+        return List.copyOf(modules);
     }
 
     private static String entryPath(Path out) throws IOException {
@@ -336,6 +393,40 @@ public class JsSemanticEmitterTest {
             StandardCharsets.UTF_8);
         int status = node.waitFor();
         return new NodeRun(status, output);
+    }
+
+    /** Runs a driver under node with the two streams captured separately. */
+    private record NodeStreams(int status, String stdout, String stderr) {
+    }
+
+    private static NodeStreams runNodeStreams(Path dir, String script)
+            throws Exception {
+        ProcessBuilder builder = new ProcessBuilder("node", script);
+        builder.directory(dir.toFile());
+        Process node = builder.start();
+        byte[][] captured = new byte[2][];
+        Thread stdout = new Thread(() -> {
+            try {
+                captured[0] = node.getInputStream().readAllBytes();
+            } catch (IOException ignored) {
+                captured[0] = new byte[0];
+            }
+        });
+        Thread stderr = new Thread(() -> {
+            try {
+                captured[1] = node.getErrorStream().readAllBytes();
+            } catch (IOException ignored) {
+                captured[1] = new byte[0];
+            }
+        });
+        stdout.start();
+        stderr.start();
+        int status = node.waitFor();
+        stdout.join();
+        stderr.join();
+        return new NodeStreams(status,
+            new String(captured[0], StandardCharsets.UTF_8),
+            new String(captured[1], StandardCharsets.UTF_8));
     }
 
     // =========================================================================
@@ -2484,7 +2575,706 @@ public class JsSemanticEmitterTest {
     }
 
     // =========================================================================
-    // 5. The structural declaration projection
+    // 5. The HOST surface: one raw init per resolved file, occurrence-owned
+    //    typed surfaces, the sanctioned host class construction
+    // =========================================================================
+
+    /** The declared host module of the HOST-surface drives. */
+    private static final String HOST_CFG_DECLARATION = """
+        export class Endpoint {
+          path: string = "";
+          port?: int;
+        }
+
+        export class ServerConfig {
+          port: int;
+          endpoint: Endpoint;
+          tags?: string[];
+        }
+
+        export function zeta(): int;
+        export function alpha(): int;
+        export function describe(cfg: ServerConfig): string;
+        export function values(): int[];
+        export function apply(f: () => int): int;
+        export function sameFn(a: () => int, b: () => int): boolean;
+        export async function label(): string;
+        """;
+
+    /**
+     * The HOST import drive: two source aliases of one resolved host file
+     * plus one cross-unit import. One raw Node require runs per resolved
+     * file; every source import owns its own typed surface (fresh wrappers,
+     * same-import identity, cross-import inequality); the declared reads
+     * follow the supplied ascending export-name order; and every call form
+     * — direct, stored, namespace/index, host-driven callback and async —
+     * selects its occurrence's entry. The host-declaration class
+     * construction runs through the recorded occurrence's synthesized
+     * {@code C$new} over the host's own defaults.
+     */
+    private static void testHostOccurrenceSurfaces(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- HOST imports: one raw init, per-import typed"
+            + " surfaces, name-sorted declared reads and the host class"
+            + " construction --");
+        Path root = Files.createTempDirectory(tmpRoot, "host-occ");
+        writeFileIn(root, "src/cfg.d.deal", HOST_CFG_DECLARATION);
+        Fixture fixture = compileFixture(root, """
+            import * as h1 from "host/cfg";
+            import * as h2 from "host/cfg";
+            import * as util from "./util";
+
+            export function run(): string {
+              if (h1.alpha !== h1.alpha) {
+                throw { code: "SAME_IMPORT_IDENTITY", message: "same import" };
+              }
+              if (h1.alpha === h2.alpha) {
+                throw { code: "CROSS_IMPORT_INEQUALITY", message: "imports" };
+              }
+              let direct: int = h1.alpha();
+              let f: () => int = h2.alpha;
+              let stored: int = f();
+              let namespaced: int = h1.zeta();
+              if (direct !== 7 || stored !== 7 || namespaced !== 9) {
+                throw { code: "HOST_CALL", message: "call forms" };
+              }
+              let values: int[] = h1.values();
+              let sum: int = 0;
+              for (let v: int of values) {
+                sum = sum + v;
+              }
+              if (sum !== 6) {
+                throw { code: "HOST_ARRAY", message: "array carrier" };
+              }
+              let applied: int = h2.apply(h1.alpha);
+              if (applied !== 107) {
+                throw { code: "HOST_CALLBACK", message: "callback" };
+              }
+              if (!h1.sameFn(h1.alpha, h1.alpha)) {
+                throw { code: "HOST_IDENTITY", message: "same import" };
+              }
+              if (h1.sameFn(h1.alpha, h2.alpha)) {
+                throw { code: "HOST_IDENTITY", message: "cross import" };
+              }
+              let e1: h1.Endpoint = { path: "/one" };
+              let e2: h2.Endpoint = { path: "/two" };
+              let c1: h1.ServerConfig = { port: 7, endpoint: e1 };
+              let c2: h2.ServerConfig = { port: 9, endpoint: e2,
+                tags: ["a"] };
+              let d1: string = h1.describe(c1);
+              let d2: string = h2.describe(c2);
+              if (d1 !== "/one:7") {
+                throw { code: "HOST_CLASS", message: d1 };
+              }
+              if (d2 !== "/two:9") {
+                throw { code: "HOST_CLASS", message: d2 };
+              }
+              if (util.read() !== 7) {
+                throw { code: "CROSS_UNIT_CALL", message: "cross unit" };
+              }
+              return "ok";
+            }
+
+            export async function label2(): string {
+              return await h1.label();
+            }
+
+            export function main(): null { return null; }
+            """, Map.of("src/util.deal", """
+            import * as e from "host/cfg";
+
+            export function read(): int {
+              return e.alpha();
+            }
+            """), Map.of("host/cfg",
+                root.resolve("src/cfg.d.deal").toAbsolutePath().toString()));
+        RuntimeDeclarationSurface surface = RuntimeDeclarationProjection
+            .project(fixture.surface(), fixture.identities(), fixture.seeds());
+        RuntimeDeclarationSurface.RuntimeDeclarationModule cfg =
+            surface.modules().values().iterator().next();
+        String endpointId = cfg.classes().get("Endpoint").classId().text();
+        String serverConfigId =
+            cfg.classes().get("ServerConfig").classId().text();
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        String app = sourceOf(emission, "app");
+        String util = sourceOf(emission, "util");
+        checkEq(2, countOf(app, "$rt.loadHost("),
+            "one typed host surface per source HOST import declaration (two"
+                + " source aliases of one resolved file emit two loads)");
+        checkEq(1, countOf(util, "$rt.loadHost("),
+            "the cross-unit import emits its own source occurrence's load");
+        check(app.contains("$require(\"./host/cfg\")")
+                && !app.contains("$require(\"host/cfg\")"),
+            "the emitted host specifier is the resolved file's relative"
+                + " require (never an ambient NODE_PATH/node_modules"
+                + " resolution): " + app);
+        checkEq(2, countOf(app, "\"host/cfg\", \""),
+            "each load carries the source import's own module clause for the"
+                + " load-time tuple texts: " + app);
+        check(app.contains("{\"Endpoint\":"),
+            "the declared map starts with the ascending-name first export");
+        check(app.indexOf("\"Endpoint\":") < app.indexOf("\"ServerConfig\":")
+                && app.indexOf("\"ServerConfig\":") < app.indexOf("\"alpha\":")
+                && app.indexOf("\"alpha\":") < app.indexOf("\"apply\":")
+                && app.indexOf("\"apply\":") < app.indexOf("\"describe\":")
+                && app.indexOf("\"label\":") < app.indexOf("\"sameFn\":")
+                && app.indexOf("\"sameFn\":") < app.indexOf("\"values\":")
+                && app.indexOf("\"values\":") < app.indexOf("\"zeta\":"),
+            "the declared map carries the supplied ascending export-name"
+                + " order: " + app);
+        check(Pattern.compile("\\$rt\\.loadHost\\(\\$d\\d+, \\{\"Endpoint\": "
+                + "\\{ \\$k: \"class\", \\$d: \"" + Pattern.quote(endpointId)
+                + "\", \\$fields: \\[").matcher(app).find(),
+            "a declared class export carries its identity and field metadata"
+                + " in the declared map: " + app);
+        check(app.contains("{ name: \"path\", $d: \"string\", optional:"
+                + " false, nullable: false, hasDefault: true }"),
+            "the declared field entry carries the structural descriptor and"
+                + " the optional/nullable/has-default flags: " + app);
+        check(app.contains("{ name: \"port\", $d: \"int\", optional: true,"
+                + " nullable: false, hasDefault: false }"),
+            "the optional declared field entry projects the !required flag");
+        check(app.contains("{ name: \"tags\", $d: \"[string]\", optional:"
+                + " true, nullable: false, hasDefault: false }"),
+            "the array-typed declared field carries its structural array"
+                + " descriptor");
+        check(app.contains("{ $k: \"function\", $d: \"()->int\" }"),
+            "a declared function export carries its structural descriptor");
+        check(app.contains("{ $k: \"function\", $d: \"async()->string\" }"),
+            "a declared async function export keeps its async signature");
+        check(Pattern.compile("= \\$g\\d+\\[\"Endpoint\\$new\"\\]\\(\\$p")
+                .matcher(app).find(),
+            "the host class construction runs the recorded occurrence"
+                + " surface's synthesized C$new: " + app);
+
+        // A declaration link the structural surface does not carry (a
+        // producer defect) fails closed with the offending import's own
+        // origin, never an emitted load with a guessed declared map.
+        try {
+            JsSemanticEmitter.emitProductionProject(new JsEmissionInput(
+                fixture.project(), fixture.tables(), fixture.registries(),
+                fixture.seeds(), fixture.namespaces(),
+                new RuntimeDeclarationSurface(Map.of()),
+                fixture.emissionInput(false).sourceFiles(), false));
+            check(false, "a missing declaration-surface entry fails closed");
+        } catch (SharedEmissionFailure failure) {
+            passed++;
+            check(failure.diagnosticRange() != null,
+                "the malformed declaration link's failure carries the"
+                    + " offending import's own origin");
+            check(failure.getMessage().contains("host.cfg"),
+                "the failure names the resolved declaration module: "
+                    + failure.getMessage());
+        }
+
+        Path out = stage(fixture, "host-occ", false);
+        writeFileIn(out, "host/cfg.js", """
+            "use strict";
+            const $rt = require("../deal/runtime");
+            globalThis.__hostInit = (globalThis.__hostInit || 0) + 1;
+            const values = [1, 2, 3];
+            module.exports = {
+              Endpoint: { $kind: "class", $classname: "%s" },
+              Endpoint_defaults: { path: "/", port: $rt.MISSING },
+              ServerConfig: { $kind: "class", $classname: "%s" },
+              ServerConfig_defaults: { port: 8080, endpoint: $rt.MISSING,
+                tags: $rt.MISSING },
+              zeta: function () { return 9; },
+              alpha: function () { return 7; },
+              describe: function (c) { return c.endpoint.path + ":" + c.port; },
+              values: function () { return values; },
+              apply: function (f) { return f.$f() + 100; },
+              sameFn: function (a, b) { return a === b; },
+              label: function () { return Promise.resolve("labelled"); },
+            };
+            """.formatted(endpointId, serverConfigId));
+        if (!node) {
+            skip("the HOST import drive needs node");
+            return;
+        }
+        writeFileIn(out, "driver.js", """
+            const app = require("./app.js");
+            (async () => {
+              const out = { run: app.run.$f() };
+              out.label = await app.label2.$f();
+              out.init = globalThis.__hostInit;
+              console.log(JSON.stringify(out));
+            })().catch((e) => {
+              console.log("ERR " + (e && e.message));
+            });
+            """);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the host drive exits 0: " + run.output());
+        check(run.output().contains("\"run\":\"ok\""),
+            "every host call form, the array carrier, the host-driven"
+                + " callback and both occurrences' class construction run: "
+                + run.output());
+        check(run.output().contains("\"label\":\"labelled\""),
+            "the host async operation completes through the occurrence's"
+                + " typed async wrapper: " + run.output());
+        check(run.output().contains("\"init\":1"),
+            "the raw host file is required exactly once across both source"
+                + " aliases and the cross-unit import: " + run.output());
+
+        // The runtime allocation contract the emitted load calls rest on:
+        // fresh C$new/C$fields per source import over the preserved raw META
+        // reference, identical same-import reads and unequal cross-import
+        // function wrappers.
+        writeFileIn(out, "surface-probe.js", """
+            const $rt = require("./deal/runtime.js");
+            const rawEndpoint = { $kind: "class", $classname: "%s" };
+            const rawAlpha = function () { return 7; };
+            const raw = { Endpoint: rawEndpoint, Endpoint_defaults: { path: "/" },
+              alpha: rawAlpha };
+            const decl = { Endpoint: { $k: "class", $d: "%s", $fields: [] },
+              alpha: { $k: "function", $d: "()->int" } };
+            const s1 = $rt.loadHost(raw, decl, "host/cfg", "app.deal", 1, 1);
+            const s2 = $rt.loadHost(raw, decl, "host/cfg", "app.deal", 2, 1);
+            console.log(JSON.stringify({
+              meta: s1.Endpoint === rawEndpoint && s2.Endpoint === rawEndpoint,
+              freshNew: s1.Endpoint$new !== s2.Endpoint$new,
+              freshFields: s1.Endpoint$fields !== s2.Endpoint$fields,
+              sameRead: s1.alpha === s1.alpha,
+              crossImport: s1.alpha !== s2.alpha,
+              rawFunction: raw.alpha === rawAlpha && s1.alpha !== rawAlpha,
+            }));
+            """.formatted(endpointId, endpointId));
+        NodeRun probe = runNode(out, "surface-probe.js");
+        checkEq(0, probe.status(), "the surface probe exits 0: "
+            + probe.output());
+        check(probe.output().contains("\"meta\":true"),
+            "the raw class META reference is preserved, never cloned: "
+                + probe.output());
+        check(probe.output().contains("\"freshNew\":true"),
+            "each source import synthesizes a fresh C$new: "
+                + probe.output());
+        check(probe.output().contains("\"freshFields\":true"),
+            "each source import synthesizes a fresh C$fields: "
+                + probe.output());
+        check(probe.output().contains("\"sameRead\":true"),
+            "repeated reads from one occurrence's surface are identical: "
+                + probe.output());
+        check(probe.output().contains("\"crossImport\":true"),
+            "different source imports' typed functions are unequal: "
+                + probe.output());
+        check(probe.output().contains("\"rawFunction\":true"),
+            "the typed wrapper never replaces or clones the raw function: "
+                + probe.output());
+    }
+
+    /** The rendered source of one implementation module of an emission. */
+    private static String sourceOf(JsProjectEmission emission, String module) {
+        for (JsModuleArtifact artifact : emission.modules()) {
+            if (artifact.moduleId().path().equals(module)) {
+                return artifact.source();
+            }
+        }
+        throw new IllegalStateException("the emission carries no artifact for"
+            + " module '" + module + "': " + emission.modules().stream()
+                .map(a -> a.moduleId().path()).toList());
+    }
+
+    /** The occurrence count of one needle in an emitted source. */
+    private static int countOf(String source, String needle) {
+        int count = 0;
+        int from = 0;
+        while (true) {
+            int at = source.indexOf(needle, from);
+            if (at < 0) {
+                return count;
+            }
+            count++;
+            from = at + needle.length();
+        }
+    }
+
+    /**
+     * The declared-read order and load-time failure drive: the declaration
+     * file names {@code zeta} before {@code alpha} and the host file defines
+     * its getters in the same z-before-a order, so an ascending read can
+     * never be explained by either file's own property order. The recorded
+     * declared validation reads {@code [alpha]}/{@code [alpha,zeta]} and
+     * stops at the first failure; a declared failure keeps its exact
+     * import-located tuple, and a raw non-object result raises the complete
+     * unlocated {@code host module did not return a module object} tuple
+     * under require and the actual initialization-failure presentation under
+     * direct execution.
+     */
+    private static void testHostDeclaredOrderAndRawShape(Path tmpRoot,
+                                                        boolean node)
+            throws Exception {
+        System.out.println("-- the ascending declared-read order, the"
+            + " first-failure stop and the unlocated raw-shape guard --");
+        Path root = Files.createTempDirectory(tmpRoot, "host-order");
+        writeFileIn(root, "src/cfg.d.deal", """
+            export function zeta(): int;
+            export function alpha(): int;
+            """);
+        Path declaration = root.resolve("src/cfg.d.deal").toAbsolutePath();
+        Fixture fixture = compileFixture(root, """
+            import * as h from "host/cfg";
+
+            export function run(): int {
+              return h.alpha() + h.zeta();
+            }
+
+            export function main(): null { return null; }
+            """, Map.of(), Map.of("host/cfg", declaration.toString()));
+        String app = sourceOf(
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false)),
+            "app");
+        check(app.indexOf("\"alpha\":") < app.indexOf("\"zeta\":"),
+            "the zeta-first declaration still emits the ascending declared"
+                + " map alpha, zeta: " + app);
+        checkEq(1, countOf(app, "$rt.loadHost("),
+            "the single source HOST import emits exactly one validating"
+                + " load: " + app);
+
+        Path out = stage(fixture, "host-order", false);
+        if (!node) {
+            skip("the declared-read order drive needs node");
+            return;
+        }
+        writeFileIn(out, "driver.js", """
+            const $rt = require("./deal/runtime.js");
+            const out = {};
+            let first = null;
+            let second = null;
+            let app = null;
+            try {
+              app = require("./app.js");
+            } catch (e) {
+              first = e;
+            }
+            out.state = $rt.moduleState("app");
+            out.order = globalThis.__readOrder
+              ? globalThis.__readOrder.join(",") : "";
+            try {
+              require("./app.js");
+            } catch (e) {
+              second = e;
+            }
+            out.sticky = first !== null && first === second;
+            if (first !== null) {
+              out.tuple = {
+                code: first.code,
+                message: first.message,
+                expected: first.expected === undefined
+                  ? "<absent>" : first.expected,
+                actual: first.actual === undefined ? "<absent>" : first.actual,
+                file: first.file === undefined ? "<absent>" : first.file,
+                line: first.line === undefined ? "<absent>" : first.line,
+                column: first.column === undefined ? "<absent>" : first.column,
+              };
+            } else {
+              out.run = app.run.$f();
+            }
+            console.log(JSON.stringify(out));
+            """);
+
+        // (a) alpha (ascending first) invalid: the exact first-invalid tuple
+        // at the import origin, and zeta is never read.
+        writeFileIn(out, "host/cfg.js", """
+            "use strict";
+            const order = [];
+            globalThis.__readOrder = order;
+            module.exports = {};
+            Object.defineProperty(module.exports, "zeta", { enumerable: true,
+              get: function () { order.push("zeta");
+                return function () { return 9; }; } });
+            Object.defineProperty(module.exports, "alpha", { enumerable: true,
+              get: function () { order.push("alpha"); return 17; } });
+            """);
+        NodeRun alphaFailure = runNode(out, "driver.js");
+        checkEq(0, alphaFailure.status(), "the alpha-failure driver exits 0: "
+            + alphaFailure.output());
+        check(alphaFailure.output().contains("\"order\":\"alpha\""),
+            "the first invalid export stops later reads (only alpha is"
+                + " read): " + alphaFailure.output());
+        check(alphaFailure.output().contains("\"tuple\":{\"code\":"
+                + "\"E8011\",\"message\":\"host export 'alpha' in module"
+                + " 'host/cfg' is not a function\",\"expected\":\"function\","
+                + "\"actual\":\"number\",\"file\":"),
+            "the first invalid export renders the exact declared-failure"
+                + " tuple at the import origin: " + alphaFailure.output());
+        check(alphaFailure.output().contains("\"file\":\""
+                + root.resolve("src/app.deal") + "\",\"line\":1,"
+                + "\"column\":1}"),
+            "the declared failure keeps the import declaration's own located"
+                + " origin: " + alphaFailure.output());
+        check(alphaFailure.output().contains("\"state\":\"FAILED\""),
+            "a failed host import leaves the importing implementation in the"
+                + " sticky FAILED state: " + alphaFailure.output());
+
+        // (b) alpha valid, zeta invalid: the ascending read visits both and
+        // stops at the invalid one.
+        writeFileIn(out, "host/cfg.js", """
+            "use strict";
+            const order = [];
+            globalThis.__readOrder = order;
+            module.exports = {};
+            Object.defineProperty(module.exports, "zeta", { enumerable: true,
+              get: function () { order.push("zeta"); return 17; } });
+            Object.defineProperty(module.exports, "alpha", { enumerable: true,
+              get: function () { order.push("alpha");
+                return function () { return 7; }; } });
+            """);
+        NodeRun zetaFailure = runNode(out, "driver.js");
+        checkEq(0, zetaFailure.status(), "the zeta-failure driver exits 0: "
+            + zetaFailure.output());
+        check(zetaFailure.output().contains("\"order\":\"alpha,zeta\""),
+            "the later failure reads alpha, zeta in ascending name order: "
+                + zetaFailure.output());
+        check(zetaFailure.output().contains("host export 'zeta' in module"
+                + " 'host/cfg' is not a function"),
+            "the later failure names its own export: "
+                + zetaFailure.output());
+
+        // (c) zeta missing: the exact missing-export tuple with absent
+        // expected/actual (the arm defines neither) and no later reads.
+        writeFileIn(out, "host/cfg.js", """
+            "use strict";
+            const order = [];
+            globalThis.__readOrder = order;
+            module.exports = {};
+            Object.defineProperty(module.exports, "alpha", { enumerable: true,
+              get: function () { order.push("alpha");
+                return function () { return 7; }; } });
+            """);
+        NodeRun zetaMissing = runNode(out, "driver.js");
+        checkEq(0, zetaMissing.status(), "the missing-export driver exits 0: "
+            + zetaMissing.output());
+        check(zetaMissing.output().contains("\"order\":\"alpha\""),
+            "the missing export stops after the earlier valid read: "
+                + zetaMissing.output());
+        check(zetaMissing.output().contains("\"code\":\"E8011\",\"message\":"
+                + "\"missing host export 'zeta' in module 'host/cfg'\","
+                + "\"expected\":\"<absent>\",\"actual\":\"<absent>\","
+                + "\"file\":\"")
+                && zetaMissing.output().contains("\",\"line\":1,"
+                    + "\"column\":1}"),
+            "the missing export renders the exact tuple with an absent"
+                + " expected/actual pair and the import origin: "
+                + zetaMissing.output());
+
+        // (d) the valid control: the same z-a declaration reads both in
+        // ascending order and the program runs.
+        writeFileIn(out, "host/cfg.js", """
+            "use strict";
+            const order = [];
+            globalThis.__readOrder = order;
+            module.exports = {};
+            Object.defineProperty(module.exports, "zeta", { enumerable: true,
+              get: function () { order.push("zeta");
+                return function () { return 9; }; } });
+            Object.defineProperty(module.exports, "alpha", { enumerable: true,
+              get: function () { order.push("alpha");
+                return function () { return 7; }; } });
+            """);
+        NodeRun valid = runNode(out, "driver.js");
+        checkEq(0, valid.status(), "the valid control exits 0: "
+            + valid.output());
+        check(valid.output().contains("\"order\":\"alpha,zeta\""),
+            "the valid control reads alpha, zeta in ascending name order: "
+                + valid.output());
+        check(valid.output().contains("\"run\":16"),
+            "the valid control calls both host exports: " + valid.output());
+        check(valid.output().contains("\"state\":\"INITIALIZED\""),
+            "a successful host import initializes its implementation: "
+                + valid.output());
+
+        // (e) the raw non-object result: the complete unlocated tuple under
+        // require (never a module clause or a guessed/null origin), the
+        // sticky failure, and no partial published surface.
+        writeFileIn(out, "host/cfg.js", "module.exports = 17;\n");
+        NodeRun rawShape = runNode(out, "driver.js");
+        checkEq(0, rawShape.status(), "the raw-shape driver exits 0: "
+            + rawShape.output());
+        check(rawShape.output().contains("\"state\":\"FAILED\""),
+            "a raw non-object host result fails the importing"
+                + " implementation: " + rawShape.output());
+        check(rawShape.output().contains("\"tuple\":{\"code\":\"E8011\","
+                + "\"message\":\"host module did not return a module object\","
+                + "\"expected\":\"table\",\"actual\":\"number\","
+                + "\"file\":\"<absent>\",\"line\":\"<absent>\","
+                + "\"column\":\"<absent>\"}"),
+            "the raw non-object guard renders the complete unlocated tuple"
+                + " with the JS diagnostic kind: " + rawShape.output());
+        check(rawShape.output().contains("\"sticky\":true"),
+            "a later load rethrows the identical saved failure without"
+                + " retrying the raw initialization: " + rawShape.output());
+        writeFileIn(out, "surface.js", """
+            const $rt = require("./deal/runtime.js");
+            let failure = null;
+            try { require("./app.js"); } catch (e) { failure = e; }
+            console.log(JSON.stringify({
+              preserved: failure !== null,
+              exports: Object.keys($rt.moduleSurface("app")).length,
+            }));
+            """);
+        NodeRun noPartial = runNode(out, "surface.js");
+        checkEq(0, noPartial.status(), "the partial-surface driver exits 0: "
+            + noPartial.output());
+        check(noPartial.output().contains("\"exports\":0"),
+            "a failed initialization publishes no partial export surface: "
+                + noPartial.output());
+        NodeRun direct = runNode(out, entryPath(out));
+        checkEq(1, direct.status(),
+            "direct execution of a failing host initialization exits 1: "
+                + direct.output());
+        check(direct.output().contains("host module did not return a module"
+                + " object"),
+            "direct execution keeps the initialization failure's own"
+                + " presentation: " + direct.output());
+        check(!direct.output().contains("DEAL_ERROR_CODE"),
+            "direct execution never converts an initialization failure to"
+                + " main-shim framing: " + direct.output());
+        check(!direct.output().contains(" in module '"),
+            "the raw-shape arm names no module clause: " + direct.output());
+    }
+
+    /**
+     * The STDLIB drive: the deployed (project-overridable) stdlib modules
+     * behind the emitted relative require, the once-only surface identity
+     * across direct/stored/namespace calls, the separate console streams,
+     * the number-returning clock and the canonical JSON projections.
+     */
+    private static void testStdlibSurfaceAndCalls(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- STDLIB: the once-only deployed surface, the"
+            + " cataloged calls, separate streams, number time and canonical"
+            + " JSON --");
+        Path root = Files.createTempDirectory(tmpRoot, "stdlib");
+        Fixture fixture = compileFixture(root, """
+            import * as console from "std/console";
+            import * as json from "std/json";
+            import * as str from "std/string";
+            import * as time from "std/time";
+
+            export function checks(): string {
+              console.log("out-line");
+              console.error("err-line");
+              let parse: (s: string) => table = json.parse;
+              if (json.parse !== parse) {
+                throw { code: "STDLIB_IDENTITY", message: "surface" };
+              }
+              let stored: table = parse("{\\"n\\":1}");
+              let direct: table = json.parse("{\\"n\\":2}");
+              let a: int = stored.n;
+              let b: int = direct.n;
+              if (a !== 1 || b !== 2) {
+                throw { code: "STDLIB_CALL", message: "values" };
+              }
+              let text: string = json.stringify(stored);
+              if (text !== "{\\"n\\":1}") {
+                throw { code: "STDLIB_JSON", message: text };
+              }
+              let now: number = time.nowMillis();
+              if (now <= 0.0) {
+                throw { code: "STDLIB_TIME", message: "clock" };
+              }
+              let length: int = str.length("héllo");
+              if (length !== 5) {
+                throw { code: "STDLIB_STRING", message: "length" };
+              }
+              return "ok";
+            }
+
+            export function duplicateKey(): table {
+              return json.parse("{\\"a\\":1,\\"a\\":2}");
+            }
+
+            export function main(): null { return null; }
+            """);
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        String app = sourceOf(emission, "app");
+        check(app.contains("$require(\"./std/console\")")
+                && app.contains("$require(\"./std/json\")")
+                && app.contains("$require(\"./std/string\")")
+                && app.contains("$require(\"./std/time\")"),
+            "every stdlib import requires the deployed module by its"
+                + " relative specifier (never an ambient module lookup): "
+                + app);
+        checkEq(1, countOf(app, "$require(\"./std/json\")"),
+            "one recorded stdlib import is one execution registration: "
+                + app);
+        check(app.contains("$d") && app.contains("[\"parse\"].$f("),
+            "the cataloged direct call invokes the deployed module's typed"
+                + " entry: " + app);
+
+        Path out = stage(fixture, "stdlib", false);
+        if (!node) {
+            skip("the STDLIB drive needs node");
+            return;
+        }
+        writeFileIn(out, "driver.js", """
+            const app = require("./app.js");
+            const out = { checks: app.checks.$f() };
+            try {
+              app.duplicateKey.$f();
+            } catch (e) {
+              out.duplicate = { code: e.code, message: e.message,
+                expected: e.expected === undefined ? "<absent>" : e.expected,
+                actual: e.actual === undefined ? "<absent>" : e.actual };
+            }
+            console.log(JSON.stringify(out));
+            """);
+        NodeStreams run = runNodeStreams(out, "driver.js");
+        checkEq(0, run.status(), "the stdlib driver exits 0: " + run.stdout()
+            + run.stderr());
+        check(run.stdout().contains("out-line"),
+            "console.log writes the captured stdout stream: " + run.stdout());
+        check(!run.stdout().contains("err-line"),
+            "console.error never writes the stdout stream: " + run.stdout());
+        check(run.stderr().contains("err-line"),
+            "console.error writes the captured stderr stream: " + run.stderr());
+        check(!run.stderr().contains("out-line"),
+            "console.log never writes the stderr stream: " + run.stderr());
+        check(run.stdout().contains("\"checks\":\"ok\""),
+            "the stdlib identity, direct/stored JSON calls, number clock and"
+                + " Unicode-scalar string row all run: " + run.stdout());
+        check(run.stdout().contains("\"duplicate\":{\"code\":\"E8001\","
+                + "\"message\":\"JSON parse error at position 8: duplicate"
+                + " key\""),
+            "the deployed JSON scanner raises its canonical duplicate-key"
+                + " projection: " + run.stdout());
+
+        // The deployed copy owns the algorithm: an override staged at the
+        // published stdlib path is what the emitted require resolves.
+        writeFileIn(out, "std/console.js", """
+            "use strict";
+            const $rt = require("../deal/runtime");
+            const $console = {};
+            $console.log = $rt.function("(string)->null",
+              function (x, $file, $line, $column) {
+                $rt.checkString(x, $file, $line, $column);
+                process.stdout.write("[override] " + x + "\\n");
+                return $rt.checkNull(null, $file, $line, $column);
+              });
+            $console.error = $rt.function("(string)->null",
+              function (x, $file, $line, $column) {
+                $rt.checkString(x, $file, $line, $column);
+                process.stderr.write("[override] " + x + "\\n");
+                return $rt.checkNull(null, $file, $line, $column);
+              });
+            module.exports = $console;
+            """);
+        NodeStreams overridden = runNodeStreams(out, "driver.js");
+        checkEq(0, overridden.status(), "the overridden stdlib driver exits"
+            + " 0: " + overridden.stdout() + overridden.stderr());
+        check(overridden.stdout().contains("[override] out-line"),
+            "the emitted require resolves the deployed stdlib copy, so a"
+                + " project override owns the algorithm: "
+                + overridden.stdout());
+        check(overridden.stderr().contains("[override] err-line"),
+            "the overridden stderr row keeps its own stream: "
+                + overridden.stderr());
+    }
+
+    // =========================================================================
+    // 7. The structural declaration projection
     // =========================================================================
 
     private static void testDeclarationProjection(Path tmpRoot)
@@ -2558,21 +3348,23 @@ public class JsSemanticEmitterTest {
             "the field descriptors are the structural descriptors"
                 + " (nullability included, optionality carried by required)");
 
-        // The host import slice is not realized by this foundation: the
-        // renderer fails closed with the import's own origin and produces no
-        // partial result.
-        try {
+        // The host import renders from the projected surface: the emitted
+        // load carries exactly this declaration module's ascending-name
+        // declared map, so the renderer consumes the one projection and
+        // never re-derives a name or an order.
+        JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
-            check(false, "the host import slice fails closed");
-        } catch (SharedEmissionFailure failure) {
-            passed++;
-            check(failure.diagnosticRange() != null,
-                "the fail-closed host import failure carries the offending"
-                    + " operation's own origin");
-            check(failure.getMessage().contains("HOST"),
-                "the failure names the unsupported slice: "
-                    + failure.getMessage());
-        }
+        String app = sourceOf(emission, "app");
+        check(app.contains("\"alpha\": { $k: \"function\", $d:"
+                + " \"(string)->string\" }")
+                && app.contains("\"zebra\": { $k: \"function\", $d:"
+                + " \"()->int\" }")
+                && app.indexOf("\"Endpoint\":") < app.indexOf("\"alpha\":"),
+            "the emitted declared map is the projected ascending-name"
+                + " surface: " + app);
+        checkEq(1, countOf(app, "$rt.loadHost("),
+            "the declaration module's one source import emits one validating"
+                + " load: " + app);
     }
 
     // =========================================================================
@@ -2607,8 +3399,9 @@ public class JsSemanticEmitterTest {
 
         // The async slice is realized (ISSUE-0800): the same program that
         // the foundation once rejected now renders the native async body
-        // and the single await; the host import arm above remains the
-        // fail-closed unsupported slice.
+        // and the single await. The HOST/STDLIB boundary is realized too
+        // (ISSUE-0801): a malformed declaration link still fails closed
+        // with the offending import's own origin and no partial result.
         Path root = Files.createTempDirectory(tmpRoot, "failclosed");
         Fixture fixture = compileFixture(root, """
             async function work(): int {
