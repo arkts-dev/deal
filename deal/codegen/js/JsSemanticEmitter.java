@@ -17,6 +17,7 @@ import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ControlSelector;
 import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
@@ -1171,7 +1172,7 @@ public final class JsSemanticEmitter {
             emit(target + " = " + slot(payload.table()) + ".get("
                 + jsString(payload.key()) + ");");
             SemanticOp boundary = boundaryChildOf(op);
-            if (boundary != null) {
+            if (boundary != null && !defersContextualRead(boundary)) {
                 emitBoundaryCheck(boundary, target,
                     descriptorOf(boundary));
             }
@@ -1229,8 +1230,36 @@ public final class JsSemanticEmitter {
                 // at its own origin, exactly like the retained emission.
                 return;
             }
-            emitBoundaryCheck(boundary, target, descriptorOf(boundary),
-                payload.elementBoundaryOpId());
+            if (!defersContextualRead(boundary)) {
+                emitBoundaryCheck(boundary, target, descriptorOf(boundary),
+                    payload.elementBoundaryOpId());
+            }
+        }
+
+        /**
+         * Whether one boundary cell is the deferred contextual read: a
+         * {@code CONTEXTUAL_TABLE_READ} over a composite carrier (a
+         * function, an array or the bytes carrier) passes the raw read
+         * through unvalidated, exactly like the shared oracle and the
+         * LuaJIT/JVM emitters — the consuming declared cell (a parameter
+         * or declaration crossing) owns the projection at its own origin,
+         * so a masking read-site E8001 never precedes the recorded
+         * family.
+         */
+        private boolean defersContextualRead(SemanticOp boundary) {
+            if (boundary == null
+                    || !(boundary.payload()
+                        instanceof KindPayload.BoundaryPayload payload)
+                    || payload.kind() != BoundaryKind.CONTEXTUAL_TABLE_READ) {
+                return false;
+            }
+            RuntimeDescriptor descriptor = payload.descriptor();
+            RuntimeDescriptor inner = descriptor
+                instanceof RuntimeDescriptor.Nullable nullable
+                    ? nullable.inner() : descriptor;
+            return inner instanceof RuntimeDescriptor.Func
+                || inner instanceof RuntimeDescriptor.Array
+                || inner instanceof RuntimeDescriptor.Bytes;
         }
 
         /** Whether one element boundary is the array read's bounds-only cell. */
@@ -1313,7 +1342,7 @@ public final class JsSemanticEmitter {
                 emit(target + " = $rt.optRead(" + slot(payload.value()) + ");");
             }
             SemanticOp boundary = boundaryChildOf(op);
-            if (boundary != null) {
+            if (boundary != null && !defersContextualRead(boundary)) {
                 emitBoundaryCheck(boundary, target, descriptorOf(boundary));
             }
         }
@@ -1369,9 +1398,41 @@ public final class JsSemanticEmitter {
                 default -> {
                 }
             }
-            emit(inputSlot + " = $rt.checkType("
-                + jsString(descriptor.canonicalSpecText()) + ", " + inputSlot
-                + ", " + spanArgs(boundary) + ");");
+            emit(inputSlot + " = " + boundaryCheckExpr(boundary, inputSlot)
+                + ";");
+        }
+
+        /**
+         * The admission expression of one committed boundary cell: the
+         * recorded descriptor check at the boundary's own origin,
+         * replacing the input with the admitted value (the int cell's
+         * {@code -0} normalization included).
+         */
+        private String boundaryCheckExpr(SemanticOp boundary, String input) {
+            return "$rt.checkType("
+                + jsString(descriptorOf(boundary).canonicalSpecText()) + ", "
+                + input + ", " + spanArgs(boundary) + ")";
+        }
+
+        /**
+         * One recorded parameter cell of a call or async start: a
+         * {@code DEAL_TO_HOST}+{@code HOST_PARAMETER} cell (a host-family
+         * callee — a host function, a host-materialized value or a
+         * conversion intrinsic) runs the pinned E8010 composition at its
+         * one-based parameter position and the call origin instead of the
+         * generic descriptor check, whose E8001 arm would mask the
+         * recorded family; every other family runs its own admitted
+         * descriptor check.
+         */
+        private void emitCallParameter(SemanticOp boundary, String inputSlot,
+                                       RuntimeDescriptor descriptor, int index) {
+            if (boundary.failurePolicy() == FailurePolicyId.HOST_PARAMETER) {
+                emit(inputSlot + " = $rt.hostParam(" + index + ", "
+                    + jsString(descriptor.canonicalSpecText()) + ", "
+                    + inputSlot + ", " + spanArgs(boundary) + ");");
+                return;
+            }
+            emitBoundaryCheck(boundary, inputSlot, descriptor);
         }
 
         private RuntimeDescriptor descriptorOf(SemanticOp boundary) {
@@ -1446,11 +1507,11 @@ public final class JsSemanticEmitter {
         private static String intrinsicWrapper(IntrinsicKind kind) {
             return switch (kind) {
                 case INT_CONVERT -> "$rt.function(\"(number)->int\", (v, $f, $l,"
-                    + " $c) => $rt.intConvert(v, $f, $l, $c))";
+                    + " $c) => $rt.intConvert(v, $f, $l, $c), \"HOST\")";
                 case NUMBER_CONVERT -> "$rt.function(\"(int)->number\", (v, $f,"
-                    + " $l, $c) => $rt.numberConvert(v, $f, $l, $c))";
+                    + " $l, $c) => $rt.numberConvert(v, $f, $l, $c), \"HOST\")";
                 case BYTES_NEW -> "$rt.function(\"(int)->bytes\", (v, $f, $l,"
-                    + " $c) => $rt.bytes(v, $f, $l, $c))";
+                    + " $c) => $rt.bytes(v, $f, $l, $c), \"HOST\")";
             };
         }
 
@@ -1528,7 +1589,7 @@ public final class JsSemanticEmitter {
                 currentCallSpan = previousSpan;
             }
             indent--;
-            emit("}" + suffix);
+            emit("}, " + jsString("DEAL_BODY") + suffix);
         }
 
         /**
@@ -1647,13 +1708,19 @@ public final class JsSemanticEmitter {
             indent++;
             emit("const $src = " + (thunkFn == null ? sourceExpr
                 : thunkFn + "()") + ";");
+            // The resolved source is recorded on the carrier: the emitted
+            // dynamic dispatch of an adapter callee reads the source's own
+            // class tag to select the recorded per-source return cell, and
+            // the source is resolved exactly once per invocation (a thunk
+            // source's single re-execution included).
+            emit(slotOf(op) + ".$src = $src;");
             emit("$rt.checkFunctionSig("
                 + jsString(payload.sourceSignature().canonicalSpecText())
                 + ", $src.$sig, $src, $file, $line, $column);");
             emit("return $src.$f(" + adapterInnerArguments(sourceArity)
                 + ");");
             indent--;
-            emit("});");
+            emit("}, " + jsString("ADAPTER") + ");");
         }
 
         /**
@@ -1895,18 +1962,19 @@ public final class JsSemanticEmitter {
                     + spanArgs(op) + ");");
                 return;
             }
-            if (payload.callee() instanceof KindPayload.CallCallee.Dynamic) {
-                throw unsupported(op, "the CALL " + op.opId() + " carries a"
-                    + " dynamic callee: the runtime execution-class dispatch"
-                    + " belongs to a realized later decomposition unit");
+            if (payload.callee() instanceof KindPayload.CallCallee.Dynamic
+                    dynamicCallee) {
+                emitDynamicCall(op, payload, dynamicCallee);
+                return;
             }
             List<String> arguments = new ArrayList<>();
-            for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
-                SemanticOp boundary = opsById.get(boundaryId);
+            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                SemanticOp boundary = opsById.get(
+                    payload.parameterBoundaryOpIds().get(i));
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                emitBoundaryCheck(boundary, slot(boundaryPayload.input()),
-                    boundaryPayload.descriptor());
+                emitCallParameter(boundary, slot(boundaryPayload.input()),
+                    boundaryPayload.descriptor(), i + 1);
                 arguments.add(slot(boundaryPayload.input()));
             }
             if (binding instanceof FunctionExecutionBinding.IntrinsicFunction
@@ -1949,6 +2017,130 @@ public final class JsSemanticEmitter {
             }
             emit(slotOf(op) + " = " + calleeExpr(op, payload) + ".$f("
                 + String.join(", ", callArguments) + ");");
+        }
+
+        /**
+         * The CALL arm of a runtime-resolved callee: the recorded
+         * parameter cells run once in one-based order, the carrier's own
+         * private class tag selects exactly one class path, and the
+         * recorded per-class return cell runs once — the DEAL-body cell by
+         * the invocation site only when it is the call-owned form (a
+         * callee-owned body runs its own cell inside), the
+         * {@code HOST_TO_DEAL} cell for the HOST class, and for an adapter
+         * carrier the D15-resolved source's own tag selects the same
+         * paths. A carrier without a resolvable class fails closed with
+         * the pinned E8001 {@code expected function} projection at the
+         * call origin; no class is selected from the checked descriptor,
+         * a callee spelling or an argument type.
+         */
+        private void emitDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
+                                     KindPayload.CallCallee.Dynamic callee) {
+            KindPayload.DynamicReturnBoundary cells = payload.dynamicReturnBoundary();
+            if (cells == null) {
+                throw unsupported(op, "the dynamic CALL " + op.opId()
+                    + " records no DynamicReturnBoundary cell set (producer"
+                    + " defect)");
+            }
+            SemanticOp dealCell = opsById.get(cells.dealBodyBoundaryOpId());
+            SemanticOp hostCell = opsById.get(cells.hostBoundaryOpId());
+            if (dealCell == null || hostCell == null
+                    || !(hostCell.payload()
+                        instanceof KindPayload.BoundaryPayload hostPayload)
+                    || hostPayload.kind() != BoundaryKind.HOST_TO_DEAL) {
+                throw unsupported(op, "the dynamic CALL " + op.opId()
+                    + " records a return-cell set that resolves to no"
+                    + " FUNCTION_RETURN/HOST_TO_DEAL pair (producer defect)");
+            }
+            List<String> arguments = new ArrayList<>();
+            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                SemanticOp boundary = opsById.get(
+                    payload.parameterBoundaryOpIds().get(i));
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                emitCallParameter(boundary, slot(boundaryPayload.input()),
+                    boundaryPayload.descriptor(), i + 1);
+                arguments.add(slot(boundaryPayload.input()));
+            }
+            boolean callOwnedDealCell = callOwnedCell(dealCell);
+            String id = Long.toString(op.opId().id());
+            String carrier = "$dc" + id;
+            String classSlot = "$dk" + id;
+            String sourceClass = "$ds" + id;
+            String result = slotOf(op);
+            String invoke = carrier + ".$f("
+                + (arguments.isEmpty() ? ""
+                    : String.join(", ", arguments) + ", ")
+                + spanArgs(op) + ")";
+            emit("{");
+            indent++;
+            emit("const " + carrier + " = " + slot(callee.callee()) + ";");
+            emit("const " + classSlot + " = $rt.dynClass(" + carrier
+                + ");");
+            emit("if (" + classSlot + " === \"DEAL_BODY\") {");
+            indent++;
+            emit(result + " = " + invoke + ";");
+            if (callOwnedDealCell) {
+                emitBoundaryCheck(dealCell, result, descriptorOf(dealCell));
+            }
+            indent--;
+            emit("} else if (" + classSlot + " === \"ADAPTER\") {");
+            indent++;
+            emit(result + " = " + invoke + ";");
+            emit("const " + sourceClass + " = $rt.dynClass(" + carrier
+                + ".$src);");
+            emit("if (" + sourceClass + " === null) {");
+            indent++;
+            emit("$rt.dynFail(" + carrier + ".$src, " + spanArgs(op)
+                + ");");
+            indent--;
+            emit("} else if (" + sourceClass + " === \"DEAL_BODY\") {");
+            indent++;
+            if (callOwnedDealCell) {
+                emitBoundaryCheck(dealCell, result, descriptorOf(dealCell));
+            }
+            indent--;
+            emit("} else if (" + sourceClass + " === \"HOST\") {");
+            indent++;
+            emitBoundaryCheck(hostCell, result, descriptorOf(hostCell));
+            indent--;
+            emit("}");
+            indent--;
+            emit("} else if (" + classSlot + " === \"HOST\") {");
+            indent++;
+            emit(result + " = " + invoke + ";");
+            emitBoundaryCheck(hostCell, result, descriptorOf(hostCell));
+            indent--;
+            emit("} else {");
+            indent++;
+            emit("$rt.dynFail(" + carrier + ", " + spanArgs(op) + ");");
+            indent--;
+            emit("}");
+            indent--;
+            emit("}");
+        }
+
+        /**
+         * Whether one recorded DEAL-body/task cell is the call-owned form:
+         * its parent {@code RETURN} names no lowered body of the closure
+         * (the record shape the validator's dynamic arm requires). The
+         * callee-owned form's parent names the callee body, whose own
+         * RETURN runs the recorded cell inside the class path.
+         */
+        private boolean callOwnedCell(SemanticOp cell) {
+            OpId parentId = cell.origin() == null ? null
+                : cell.origin().parentOpId();
+            SemanticOp parent = parentId == null ? null : opsById.get(parentId);
+            if (parent == null || parent.kind() != SemanticOpKind.RETURN
+                    || !(parent.payload()
+                        instanceof KindPayload.ReturnPayload returned)) {
+                return false;
+            }
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                if (moduleUnit.functions().containsKey(returned.function())) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /**
@@ -2100,15 +2292,23 @@ public final class JsSemanticEmitter {
                     + " adapter invocation (producer defect)");
             }
             List<String> arguments = new ArrayList<>();
-            for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
-                SemanticOp boundary = opsById.get(boundaryId);
+            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                SemanticOp boundary = opsById.get(
+                    payload.parameterBoundaryOpIds().get(i));
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                emitBoundaryCheck(boundary, slot(boundaryPayload.input()),
-                    boundaryPayload.descriptor());
+                emitCallParameter(boundary, slot(boundaryPayload.input()),
+                    boundaryPayload.descriptor(), i + 1);
                 arguments.add(slot(boundaryPayload.input()));
             }
             String target = startSlot(op.opId());
+            SemanticOp await = awaitOfStart.get(op.opId());
+            if (payload.callee() instanceof KindPayload.CallCallee.Dynamic
+                    dynamicCallee) {
+                emitDynamicAsyncStart(op, payload, dynamicCallee, arguments,
+                    await);
+                return;
+            }
             FunctionExecutionBinding binding = resolvedBindingOf(payload.callee());
             if (binding instanceof FunctionExecutionBinding.ExternalFunction
                     external) {
@@ -2133,7 +2333,6 @@ public final class JsSemanticEmitter {
             }
             List<String> callArguments = new ArrayList<>(arguments);
             callArguments.add(spanArgs(op));
-            SemanticOp await = awaitOfStart.get(op.opId());
             if (await != null) {
                 // The awaited form carries the await site's own span triple
                 // after the call-site triple: a host async wrapper splits
@@ -2143,6 +2342,102 @@ public final class JsSemanticEmitter {
             }
             emit(target + " = " + asyncCalleeExpr(op, payload, binding)
                 + ".$f(" + String.join(", ", callArguments) + ");");
+        }
+
+        /**
+         * The ASYNC_START arm of a runtime-resolved callee: one native
+         * start of the resolved class's single operation. A DEAL-body
+         * carrier starts the callee body (its own task cell runs inside; a
+         * call-owned recorded task cell runs once in the caller-side task
+         * wrapper before the token completes), an adapter carrier starts
+         * its D15-resolved source class the same way, and a HOST carrier
+         * starts the occurrence's async entry, whose operation handle and
+         * completion checks the typed wrapper owns. The caller's single
+         * AWAIT drains the published operation and runs the single
+         * ASYNC_COMPLETION cell; an unresolvable carrier fails closed at
+         * the start origin.
+         */
+        private void emitDynamicAsyncStart(SemanticOp op,
+                                           KindPayload.AsyncStartPayload payload,
+                                           KindPayload.CallCallee.Dynamic callee,
+                                           List<String> arguments,
+                                           SemanticOp await) {
+            SemanticOp taskCell = payload.returnBoundaryOpId() == null ? null
+                : opsById.get(payload.returnBoundaryOpId());
+            boolean callOwnedTaskCell = taskCell != null
+                && callOwnedCell(taskCell);
+            String id = Long.toString(op.opId().id());
+            String carrier = "$dc" + id;
+            String classSlot = "$dk" + id;
+            String sourceClass = "$ds" + id;
+            String value = "$dv" + id;
+            String target = startSlot(op.opId());
+            StringBuilder callArguments = new StringBuilder();
+            if (!arguments.isEmpty()) {
+                callArguments.append(String.join(", ", arguments))
+                    .append(", ");
+            }
+            callArguments.append(spanArgs(op));
+            if (await != null) {
+                callArguments.append(", ").append(spanArgs(await));
+            }
+            emit("{");
+            indent++;
+            emit("const " + carrier + " = " + slot(callee.callee()) + ";");
+            emit("const " + classSlot + " = $rt.dynClass(" + carrier
+                + ");");
+            emit("if (" + classSlot + " === \"DEAL_BODY\") {");
+            indent++;
+            if (callOwnedTaskCell) {
+                emit(target + " = (async () => {");
+                indent++;
+                emit("const " + value + " = await " + carrier + ".$f("
+                    + callArguments + ");");
+                emit("return " + boundaryCheckExpr(taskCell, value) + ";");
+                indent--;
+                emit("})();");
+            } else {
+                emit(target + " = " + carrier + ".$f(" + callArguments
+                    + ");");
+            }
+            indent--;
+            emit("} else if (" + classSlot + " === \"ADAPTER\") {");
+            indent++;
+            emit(target + " = (async () => {");
+            indent++;
+            emit("const " + value + " = await " + carrier + ".$f("
+                + callArguments + ");");
+            emit("const " + sourceClass + " = $rt.dynClass(" + carrier
+                + ".$src);");
+            emit("if (" + sourceClass + " === null) {");
+            indent++;
+            emit("$rt.dynFail(" + carrier + ".$src, " + spanArgs(op)
+                + ");");
+            indent--;
+            emit("}");
+            if (callOwnedTaskCell) {
+                emit("if (" + sourceClass + " === \"DEAL_BODY\") {");
+                indent++;
+                emit("return " + boundaryCheckExpr(taskCell, value) + ";");
+                indent--;
+                emit("}");
+            }
+            emit("return " + value + ";");
+            indent--;
+            emit("})();");
+            indent--;
+            emit("} else if (" + classSlot + " === \"HOST\") {");
+            indent++;
+            emit(target + " = " + carrier + ".$f(" + callArguments
+                + ");");
+            indent--;
+            emit("} else {");
+            indent++;
+            emit("$rt.dynFail(" + carrier + ", " + spanArgs(op) + ");");
+            indent--;
+            emit("}");
+            indent--;
+            emit("}");
         }
 
         /**

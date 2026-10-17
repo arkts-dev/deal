@@ -9,7 +9,9 @@
 // and the implementation-module registry the JavaScript semantic-IR renderer
 // links through (initModule/moduleSurface/moduleState/publishModule/
 // readModule/callExport/throwValue) and the carrier-neutral table index
-// members of the emitted TABLE_* arms (tableGet/tableSet/tableDelete):
+// members of the emitted TABLE_* arms (tableGet/tableSet/tableDelete),
+// the dynamic callee dispatch's private class resolution and
+// HOST_PARAMETER cell (dynClass/dynFail/hostParam):
 // output-runtime-scoped private records,
 // the recorded THROW transport, and representation adapters only — no literal
 // semantic authority. It loads standalone under node v24 from
@@ -2843,20 +2845,86 @@ const $rt = {
   // (js-backend-runtime-artifact D7) =====
 
   // function: the canonical wrapper factory — a plain object (prototype
-  // Object.prototype) with exactly the three $-keyed own properties
-  // $kind: "function", $sig: sig (stored verbatim — signature comparison
-  // happens in checkType/checkFunctionSig, which compare the string
-  // exactly), and $f: f (the exact function reference — never re-wrapped,
-  // identity-preserving). The wrapper is the passive shape: function
-  // performs no checks itself; the parameter/return checks live in the
-  // emitted wrapper bodies (js-backend-runtime D6). All $-keys, plain
-  // syntax; no shared wrapper state; the factory is pure
-  // (deal/runtime.lua:516-519).
-  function: function $function(sig, f) {
-    return { $kind: "function", $sig: sig, $f: f };
+  // Object.prototype) with the $-keyed own properties $kind: "function",
+  // $sig: sig (stored verbatim — signature comparison happens in
+  // checkType/checkFunctionSig, which compare the string exactly), and
+  // $f: f (the exact function reference — never re-wrapped,
+  // identity-preserving). The optional cls argument is the private
+  // execution-class tag of the semantic-IR renderer's dynamic callee
+  // dispatch ("DEAL_BODY" for a lowered closure, "ADAPTER" for an
+  // arity-adaptation wrapper, "HOST" for a host surface entry, a
+  // host-materialized value or a conversion intrinsic); it is absent for
+  // the wrappers of producers that carry no class tag. The wrapper is the
+  // passive shape: function performs no checks itself; the
+  // parameter/return checks live in the emitted wrapper bodies
+  // (js-backend-runtime D6). All $-keys, plain syntax; no shared wrapper
+  // state; the factory is pure (deal/runtime.lua:516-519).
+  function: function $function(sig, f, cls) {
+    const $wrapper = { $kind: "function", $sig: sig, $f: f };
+    if (cls !== $undefined) {
+      $wrapper.$cls = cls;
+    }
+    return $wrapper;
+  },
+
+  // ===== Dynamic callee dispatch (semantic-IR renderer) =====
+  // The private execution-class resolution the emitted dynamic CALL/
+  // ASYNC_START arms read (wiki:javascript-semantic-ir-emission,
+  // js_carriers; the shared DynamicReturnBoundaryProtocol selects the
+  // class path and the recorded return cell by this class). The class is
+  // read from the carrier's own tag — never from a checked descriptor, a
+  // callee spelling or an argument type. A lowered closure and a
+  // recursive-group member carry "DEAL_BODY" (their $f is the body's own
+  // invoker, so the body runs under the lexical module state it was
+  // created in); an adaptation wrapper carries "ADAPTER" (the source it
+  // resolved for the invocation is recorded on the carrier, and the
+  // source's own tag selects the class path); every other DEAL function
+  // wrapper — a host surface entry, a host-materialized value or a
+  // conversion-intrinsic carrier — is the "HOST" class. A value that is
+  // not a DEAL function wrapper carries no resolvable class (null), and
+  // the emitted arm fails closed at the call origin.
+  dynClass: function $dynClass(v) {
+    if (v === $undefined || v === null || v.$kind !== "function") {
+      return null;
+    }
+    if (v.$cls === "DEAL_BODY" || v.$cls === "ADAPTER") {
+      return v.$cls;
+    }
+    return "HOST";
+  },
+
+  // dynFail: the dynamic dispatch's fail-closed residue — a carrier whose
+  // class is not resolvable raises the pinned E8001 "expected function"
+  // projection (the same row and actual-kind token the canonical
+  // function-boundary check produces) at the call origin, never a guessed
+  // class path and never a silent no-op.
+  dynFail: function $dynFail(v, file, line, column) {
+    $rt.fail("E8001", "expected function", file, line, column, "function",
+      $kindOf(v));
   },
   // ===== Host ABI (js-v12-host-abi-completion D1-D5) =====
 
+  // hostParam: one emitted HOST_PARAMETER cell — the recorded
+  // DEAL_TO_HOST parameter boundary of a host-family callee (a host
+  // function, a host-materialized value or a conversion intrinsic). The
+  // composition is the typed wrapper's own parameter arm: the declared
+  // parameter descriptor checked at the one-based position, and the
+  // single E8010 "parameter {index} type mismatch: {inner}" projection
+  // with the declared descriptor as expected and the value's Lua-side
+  // carrier kind as actual at the call origin. The admitted value is
+  // returned; a non-DEAL error propagates unchanged.
+  hostParam: function $hostParam(index, descriptor, v, file, line, column) {
+    try {
+      $rt.checkType(descriptor, v, file, line, column);
+    } catch ($e) {
+      if (!($e instanceof $DEALError)) {
+        throw $e;
+      }
+      $rt.fail("E8010", "parameter " + index + " type mismatch: " + $e.message,
+        file, line, column, descriptor, $luaKindOf(v));
+    }
+    return v;
+  },
   // hostFunction: the checked wrapper for one declared sync host
   // function export (D2) — the JS mirror of from_lua_function's
   // call-time enforcement (deal/runtime.lua:819-949). The returned
@@ -2906,6 +2974,7 @@ const $rt = {
     const $isNullRet = $retDesc === "null";
     return {
       $kind: "function",
+      $cls: "HOST",
       $sig: descriptor,
       $f: function(...args) {
         const $n = args.length;
@@ -2993,6 +3062,7 @@ const $rt = {
     const $retDesc = $asyncReturnDescriptor(descriptor);
     return {
       $kind: "function",
+      $cls: "HOST",
       $sig: descriptor,
       $f: async function(...args) {
         const $n = args.length;

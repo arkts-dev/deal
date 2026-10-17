@@ -129,6 +129,8 @@ public class JsSemanticEmitterTest {
             testAwaitedFailureTransport(tmpRoot, node);
             testAsyncExportAbiAndEntryLegs(tmpRoot, node);
             testCallbackCrossing(tmpRoot, node);
+            testDynamicCalleeDispatch(tmpRoot, node);
+            testHostParameterCellAndDeferredReads(tmpRoot, node);
             testDeclarationProjection(tmpRoot);
             testFailClosedAndSeamPurity(tmpRoot);
         } finally {
@@ -2021,6 +2023,361 @@ public class JsSemanticEmitterTest {
                 + run.output());
     }
 
+    /**
+     * ISSUE-0800 review cycle 1, finding 1: the runtime-resolved dynamic
+     * callee — the carrier's private class tag selects the class path and
+     * the recorded per-class return cell, the recorded parameter cells run
+     * once, and the intrinsic-as-callback shape (the existing JS-lane
+     * corpus program) renders and executes. The drive passes a module-level
+     * closure, a nested closure, an arity-extension adapter over a body,
+     * an adapter over the conversion intrinsic and the intrinsic itself
+     * through function-typed parameters, and the same carriers through
+     * awaited dynamic starts, all under the real Node binary.
+     */
+    private static void testDynamicCalleeDispatch(Path tmpRoot, boolean node)
+            throws Exception {
+        System.out.println("-- the dynamic callee dispatches on the carrier's"
+            + " private class tag; the intrinsic-as-callback corpus shape"
+            + " executes under Node --");
+        Path root = Files.createTempDirectory(tmpRoot, "dynamic");
+        Fixture fixture = compileFixture(root, """
+            import * as lib from "./dynlib";
+
+            async function inner(x: int): int { return x + 1; }
+
+            async function callIt(f: async (x: int) => int, x: int): int {
+              return await f(x);
+            }
+
+            async function callWide(f: async (x: int, y: int) => int,
+                                    x: int, y: int): int {
+              return await f(x, y);
+            }
+
+            function factorial(n: int): int {
+              if (n === 0) { return 1; }
+              return n * factorial(n - 1);
+            }
+
+            function one(x: int): int { return x; }
+
+            function applyInt(f: (x: int) => int, x: int): int {
+              return f(x);
+            }
+
+            function applyNumber(f: (x: int) => number, x: int): number {
+              return f(x);
+            }
+
+            function applyTwo(f: (x: int, y: int) => int,
+                              x: int, y: int): int {
+              return f(x, y);
+            }
+
+            function applyTwoNumber(f: (x: number, y: number) => int,
+                                    x: number, y: number): int {
+              return f(x, y);
+            }
+
+            function nested(base: int): int {
+              let add = function(x: int): int { return x + base; };
+              return applyInt(add, 10);
+            }
+
+            export function syncResults(): int {
+              let a: int = applyInt(factorial, 5);
+              let b: int = nested(7);
+              let c: number = applyNumber(number, 7);
+              let takesTwo: (x: int, y: int) => int = one;
+              let d: int = applyTwo(takesTwo, 10, 20);
+              let g: (x: number, y: number) => int = int;
+              let e: int = applyTwoNumber(g, 9.0, 1.0);
+              let h: int = applyInt(lib.bump, 5);
+              if (a !== 120 || b !== 17 || c !== 7.0 || d !== 10 || e !== 9
+                  || h !== 105) {
+                throw { code: "TEST_FAIL", message: "dynamic" };
+              }
+              return a + b + d + e + h;
+            }
+
+            export async function run(): int {
+              let a: int = await callIt(inner, 1);
+              let wide: async (x: int, y: int) => int = inner;
+              let b: int = await callWide(wide, 10, 99);
+              let c: int = await callIt(inner, 2);
+              let d: int = await callIt(lib.afetch, 1);
+              if (a !== 2 || b !== 11 || c !== 3 || d !== 201) {
+                throw { code: "TEST_FAIL", message: "dynamic-async" };
+              }
+              return a + b + c + d;
+            }
+
+            export function main(): null { return null; }
+            """, Map.of("src/dynlib.deal", """
+                export function bump(x: int): int { return x + 100; }
+
+                export async function afetch(x: int): int { return x + 200; }
+                """));
+        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
+            fixture.project(), fixture.tables(), fixture.registries(), null);
+        check(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+            "the shared authority runs the dynamic-callee program: "
+                + oracle.terminal());
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        String artifact = emission.modules().stream()
+            .filter(a -> a.artifactRelativePath().equals("app.js"))
+            .findFirst().orElseThrow().source();
+        check(artifact.contains("$rt.dynClass("),
+            "the dynamic call sites resolve the carrier's private class"
+                + " tag instead of a descriptor");
+        boolean classesTagged = artifact.contains(", \"DEAL_BODY\")")
+                && artifact.contains(", \"HOST\")")
+                && artifact.contains(", \"ADAPTER\")");
+        check(classesTagged,
+            "the closure, intrinsic and adapter carriers each carry their"
+                + " closed class tag");
+        check(artifact.contains(".$src = $src;"),
+            "the adapter records the source it resolved for the dispatch's"
+                + " per-source cell selection");
+        check(artifact.contains("$rt.dynFail("),
+            "a carrier without a resolvable class fails closed at the call"
+                + " origin");
+        Path out = stage(fixture, "dynamic", false);
+        if (!node) {
+            skip("the dynamic callee drive needs node");
+            return;
+        }
+        Files.writeString(out.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const app = require("./app.js");
+            (async () => {
+              const out = {};
+              out.sync = app.syncResults.$f();
+              out.async = await $rt.invokeAsyncExport(app, "run", "int");
+              console.log(JSON.stringify(out));
+            })();
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the dynamic-callee driver exits 0: "
+            + run.output());
+        check(run.output().contains("\"sync\":261"),
+            "a closure, a nested closure, a cross-module published entry,"
+                + " the conversion intrinsic and the two adapter carriers"
+                + " cross their dynamic call sites with the declared"
+                + " results: " + run.output());
+        check(run.output().contains("\"async\":{\"$ok\":true,"
+                + "\"$value\":217}"),
+            "the awaited dynamic starts run the same carriers once and"
+                + " complete at the single await: " + run.output());
+
+        // The existing JS-lane corpus program the migration must not lose:
+        // the function-typed parameter's dynamic call dispatches the
+        // conversion-intrinsic carrier under the real Node binary.
+        Fixture corpus = compileFixture(
+            Files.createTempDirectory(tmpRoot, "corpus-callback"),
+            ConformanceHarnessMetadata.stripClassificationHeaders(
+                Files.readString(Path.of("test", "conformance",
+                    "backend-runtime", "functions",
+                    "intrinsic-as-callback.deal"), StandardCharsets.UTF_8)));
+        JsProjectEmission corpusEmission = JsSemanticEmitter
+            .emitProductionProject(corpus.emissionInput(false));
+        check(corpusEmission.modules().size() == 1,
+            "the corpus program renders one artifact");
+        Path corpusOut = stage(corpus, "corpus-callback", false);
+        if (node) {
+            Files.writeString(corpusOut.resolve("driver.js"), """
+                const app = require("./app.js");
+                console.log(JSON.stringify({
+                  value: app.test_intrinsic_as_callback.$f()}));
+                """, StandardCharsets.UTF_8);
+            NodeRun corpusRun = runNode(corpusOut, "driver.js");
+            checkEq(0, corpusRun.status(), "the intrinsic-as-callback corpus"
+                + " program exits 0: " + corpusRun.output());
+            check(corpusRun.output().contains("\"value\":7"),
+                "the corpus program's passed-and-called conversion intrinsic"
+                    + " returns its converted value: " + corpusRun.output());
+        } else {
+            skip("the intrinsic-as-callback corpus drive needs node");
+        }
+    }
+
+    /**
+     * ISSUE-0800 review cycle 1, finding 2: the recorded host-family cells.
+     * The intrinsic call's parameter cell runs the E8010
+     * {@code HOST_PARAMETER} composition (the runtime cell the typed host
+     * wrapper's own parameter arm composes) instead of a masking E8001
+     * generic check, and a deferred contextual read passes the raw value to
+     * the consuming declared cell, whose own origin the artifact reports
+     * (the shared oracle's rule and origin) instead of the read site.
+     */
+    private static void testHostParameterCellAndDeferredReads(Path tmpRoot,
+                                                              boolean node)
+            throws Exception {
+        System.out.println("-- the HOST_PARAMETER cell and the deferred"
+            + " contextual read realize the recorded family/origin --");
+        Path root = Files.createTempDirectory(tmpRoot, "host-cell");
+        Fixture fixture = compileFixture(root, """
+            export function callInt(v: number): int {
+              let f: (x: number) => int = int;
+              return f(v);
+            }
+
+            export function bytesFrom(t: table): bytes {
+              let b: bytes = t.v;
+              return b;
+            }
+
+            export function functionFrom(t: table): (x: int) => int {
+              let f: (x: int) => int = t.f;
+              let r: int = f(1);
+              return f;
+            }
+
+            export function main(): null { return null; }
+            """);
+        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
+            fixture.project(), fixture.tables(), fixture.registries(), null);
+        check(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+            "the shared authority runs the host-cell program's init: "
+                + oracle.terminal());
+        JsProjectEmission emission =
+            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
+        String artifact = emission.modules().get(0).source();
+        check(artifact.contains("$rt.hostParam(1, \"number\""),
+            "the intrinsic call's DEAL_TO_HOST+HOST_PARAMETER cell is the"
+                + " E8010 composition, not a generic E8001 check");
+        check(!artifact.contains("checkType(\"number\""),
+            "no generic descriptor check masks the recorded host family");
+        Path out = stage(fixture, "host-cell", false);
+        if (!node) {
+            skip("the host-cell drive needs node");
+            return;
+        }
+        Files.writeString(out.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const app = require("./app.js");
+            const out = {};
+            out.admitted = $rt.hostParam(1, "int", 7, "p.deal", 1, 1);
+            try {
+              $rt.hostParam(1, "bytes", 5, "p.deal", 10, 10);
+            } catch (e) {
+              out.cell = { code: e.code, message: e.message,
+                expected: e.expected, actual: e.actual, file: e.file,
+                line: e.line, column: e.column };
+            }
+            try {
+              app.bytesFrom.$f(new Map([["v", 5]]));
+            } catch (e) {
+              out.bytes = { code: e.code, message: e.message, file: e.file,
+                line: e.line, column: e.column };
+            }
+            try {
+              app.functionFrom.$f(new Map([["f", 1]]));
+            } catch (e) {
+              out.fn = { code: e.code, message: e.message, file: e.file,
+                line: e.line, column: e.column };
+            }
+            console.log(JSON.stringify(out));
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the host-cell driver exits 0: "
+            + run.output());
+        check(run.output().contains("\"admitted\":7"),
+            "the host-parameter cell returns the admitted value: "
+                + run.output());
+        check(run.output().contains("\"cell\":{\"code\":\"E8010\","
+                + "\"message\":\"parameter 1 type mismatch: expected"
+                + " bytes\",\"expected\":\"bytes\",\"actual\":"
+                + "\"number\",\"file\":\"p.deal\",\"line\":10,"
+                + "\"column\":10}"),
+            "the recorded HOST_PARAMETER cell composes the pinned E8010"
+                + " tuple at the call origin (the host-bytes-param-mismatch"
+                + " corpus expectation): " + run.output());
+        check(run.output().contains("\"bytes\":{\"code\":\"E8001\","
+                + "\"message\":\"expected bytes\""),
+            "the deferred bytes contextual read passes the raw value to"
+                + " the consuming declaration cell's own E8001 projection: "
+                + run.output());
+        check(run.output().contains("\"fn\":{\"code\":\"E8001\","
+                + "\"message\":\"expected function\""),
+            "the deferred function contextual read passes the raw value to"
+                + " the consuming declaration cell's own function row: "
+                + run.output());
+
+        // The deferred reads' authoritative origin: the shared authority
+        // and the emitted artifact both report the consuming declaration
+        // cell's own annotation span, never the read site.
+        Fixture bytesFailure = compileFixture(
+            Files.createTempDirectory(tmpRoot, "host-cell-bytes"), """
+            export function bytesFrom(t: table): bytes {
+              let b: bytes = t.v;
+              return b;
+            }
+
+            export function main(): null {
+              let t: table = { v: 5 };
+              let b: bytes = bytesFrom(t);
+              return null;
+            }
+            """);
+        checkDeferredReadOrigin(bytesFailure, "bytes", node);
+        Fixture functionFailure = compileFixture(
+            Files.createTempDirectory(tmpRoot, "host-cell-fn"), """
+            export function functionFrom(t: table): (x: int) => int {
+              let f: (x: int) => int = t.f;
+              return f;
+            }
+
+            export function main(): null {
+              let t: table = { f: 1 };
+              let f: (x: int) => int = functionFrom(t);
+              return null;
+            }
+            """);
+        checkDeferredReadOrigin(functionFailure, "function", node);
+    }
+
+    /**
+     * The shared authority and the emitted artifact report the same code,
+     * message and origin for one deferred contextual read's consuming
+     * declaration crossing.
+     */
+    private static void checkDeferredReadOrigin(Fixture fixture, String what,
+                                                boolean node)
+            throws Exception {
+        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
+            fixture.project(), fixture.tables(), fixture.registries(), null);
+        check(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure,
+            "the shared authority rejects the deferred " + what
+                + " contextual read at the consuming declaration crossing: "
+                + oracle.terminal());
+        if (!(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal
+                    .DealFailure failure)) {
+            return;
+        }
+        deal.semantic.SemanticRuntimeModel.ErrorSnapshot snapshot =
+            failure.error();
+        if (!node) {
+            skip("the deferred " + what + " origin drive needs node");
+            return;
+        }
+        Path out = stage(fixture, "deferred-" + what, false);
+        NodeRun run = runNode(out, entryPath(out));
+        checkEq(1, run.status(), "the deferred " + what + " read exits 1: "
+            + run.output());
+        check(run.output().contains("DEAL_ERROR_CODE: " + snapshot.code()
+                + " " + snapshot.message() + " at " + snapshot.origin()),
+            "the deferred " + what + " read raises the shared tuple at the"
+                + " consuming declaration cell's own origin (never the read"
+                + " site): " + run.output());
+    }
+
     // =========================================================================
     // 5. The structural declaration projection
     // =========================================================================
@@ -2143,6 +2500,10 @@ public class JsSemanticEmitterTest {
                     + " carries no frontend object (" + type + ")");
         }
 
+        // The async slice is realized (ISSUE-0800): the same program that
+        // the foundation once rejected now renders the native async body
+        // and the single await; the host import arm above remains the
+        // fail-closed unsupported slice.
         Path root = Files.createTempDirectory(tmpRoot, "failclosed");
         Fixture fixture = compileFixture(root, """
             async function work(): int {
@@ -2158,18 +2519,14 @@ public class JsSemanticEmitterTest {
               return null;
             }
             """);
-        try {
+        JsProjectEmission asyncEmission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
-            check(false, "the async-operation slice fails closed");
-        } catch (SharedEmissionFailure failure) {
-            passed++;
-            check(failure.diagnosticRange() != null,
-                "the async fail-closed failure carries the offending"
-                    + " operation's own origin");
-            check(failure.getMessage().contains("ASYNC_START"),
-                "the failure names the unsupported op and slice: "
-                    + failure.getMessage());
-        }
+        passed++;
+        String asyncSource = asyncEmission.modules().get(0).source();
+        check(asyncSource.contains("async ("),
+            "the declared async body is the native async function");
+        check(asyncSource.contains("await "),
+            "the awaited operation is the native await");
 
         // The malformed input shape is rejected before any rendering.
         try {
