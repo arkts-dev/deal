@@ -1,0 +1,13 @@
+// @spec: Syntactic grammar — Semicolon rules
+// @description: The v1.3 grammar has no empty-statement production, so a statement-position ';' at module top level is outside Program/TopLevelDeclaration — including the old optional semicolon after a block-ending declaration; each required terminator stays owned by its production (v1.3 Semicolon rules)
+// @expected: compile-error E1059
+// @features: parser, semicolon, empty-statement, top-level
+
+function helper(): int { return 1; };
+
+;
+
+export function main(): null {
+  let x: int = helper();
+  return null;
+}

@@ -174,6 +174,15 @@ public enum DiagnosticCode {
      */
     E1058(Phase.FRONTEND, "Type name admits at most one qualifier"),
 
+    /**
+     * Statement-position semicolon: the v1.3 Syntactic grammar has no
+     * empty-statement production, so a {@code ';'} in {@code Program},
+     * {@code Statement*}, or {@code Block} position is outside every
+     * production. Every required terminator is consumed by its own
+     * production instead.
+     */
+    E1059(Phase.FRONTEND, "Unexpected ';'"),
+
     // =========================================================================
     // E2xxx — name resolution, module resolution, and project configuration (FRONTEND)
     // =========================================================================
