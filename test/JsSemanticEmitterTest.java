@@ -67,7 +67,12 @@ import java.util.stream.Stream;
  * fail-closed unsupported-slice contract with the offending operation's own
  * origin), the ISSUE-0799 class drive (the per-attempt defaults,
  * imported-provider construction, field commits, the public helper ABI and
- * the JSON walkers), and the ISSUE-0800 call/boundary realization (native
+ * the JSON walkers), its ISSUE-0811 public-role acceptance (the exact
+ * META/C$new/C$fromJson/C$toJson/C$fields keys and signatures, C$new's
+ * origin absence and unmutated provided input, the untagged defaults-only
+ * factory transfer with no default at registration, and the optional-null
+ * three states through the public helpers), and the ISSUE-0800 call/boundary
+ * realization (native
  * {@code ASYNC_START}/{@code AWAIT} under real Promises, the async adapter
  * and cross-module async entry, the direct-run/require entry split with
  * the uncaught-main presentation, the {@code $rt.invokeAsyncExport} legs
@@ -1195,12 +1200,15 @@ public class JsSemanticEmitterTest {
     // =========================================================================
 
     /**
-     * The composed class drive (ISSUE-0799): one legal module-class project
-     * exercised through real Node artifacts — fresh and re-executed defaults,
-     * provided/optional skips, retained references, imported provider
-     * construction, field read/write/delete/has, the public helper ABI
-     * (META, full-construction C$new, hidden C$fields and the generated
-     * wrappers) and the JSON roundtrip with its specified null failures.
+     * The composed class drive (ISSUE-0799, ISSUE-0811 acceptance): one legal
+     * module-class project exercised through real Node artifacts — fresh and
+     * re-executed defaults, provided/optional skips, retained references,
+     * imported provider construction, field read/write/delete/has, the public
+     * helper ABI (the exact META/C$new/C$fromJson/C$toJson/C$fields keys and
+     * signatures, C$new arity and origin absence, the untagged defaults-only
+     * factory transfer with no default run at registration, unmutated provided
+     * input and no instance on failure) and the JSON roundtrip with its
+     * specified null failures and optional-null three states.
      */
     private static void testClassConstructionAndJson(Path tmpRoot, boolean node)
             throws Exception {
@@ -1233,6 +1241,11 @@ public class JsSemanticEmitterTest {
               many: lib.Point[] = [];
             }
 
+            export class Fault {
+              err: Error = {};
+              errs: Error[] = [];
+            }
+
             export function main(): null {
               let a: Bag = {};
               let b: Bag = {};
@@ -1250,6 +1263,27 @@ public class JsSemanticEmitterTest {
               let p2: lib.Point = {};
               if (p1.y !== 0 || p2.x !== 0) { throw { code: "TEST_FAIL", message: "provider defaults" }; }
               if (lib.Point$toJson(p1) !== "{\\"x\\":2,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
+              // The optional-nullable three states survive source literals and
+              // the generated helpers: missing stays absent, a present null
+              // stays present-null, a present value stays present.
+              let pm: lib.Point = { x: 1 };
+              let pn: lib.Point = { x: 1, opt: null };
+              let pv: lib.Point = { x: 1, opt: 2 };
+              if (has(pm.opt)) { throw { code: "TEST_FAIL", message: "missing optional" }; }
+              if (!has(pn.opt)) { throw { code: "TEST_FAIL", message: "present null" }; }
+              if (pn.opt !== null) { throw { code: "TEST_FAIL", message: "present null read" }; }
+              if (!has(pv.opt)) { throw { code: "TEST_FAIL", message: "present value" }; }
+              if (lib.Point$toJson(pm) !== "{\\"x\\":1,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
+              if (lib.Point$toJson(pn) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
+              if (lib.Point$toJson(pv) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":2}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
+              let dm: lib.Point | null = lib.Point$fromJson("{\\"x\\":1}");
+              let dn: lib.Point | null = lib.Point$fromJson("{\\"x\\":1,\\"opt\\":null}");
+              if (dm !== null) {
+                if (has(dm.opt)) { throw { code: "TEST_FAIL", message: "decoded missing optional" }; }
+              }
+              if (dn !== null) {
+                if (!has(dn.opt)) { throw { code: "TEST_FAIL", message: "decoded present null" }; }
+              }
               let f: Form = { name: "Ada", point: { x: 3 }, many: [{ y: 4 }] };
               let s: string = Form$toJson(f);
               let g: Form | null = Form$fromJson(s);
@@ -1275,6 +1309,7 @@ public class JsSemanticEmitterTest {
                 export class Point {
                   x: int = 0;
                   y: int = 0;
+                  opt?: int | null;
                 }
                 """));
 
@@ -1349,6 +1384,37 @@ public class JsSemanticEmitterTest {
             "the generated JSON helper drives the canonical walker over the"
                 + " class's own descriptor array and reads the imported"
                 + " provider's published descriptor array");
+        // ISSUE-0811: the public roles keep their exact keys and signatures.
+        check(appSource != null && appSource.contains(
+                "$rt.publishModule(\"app\", \"Form$new\", (provided, $file,"
+                    + " $line, $column) => $rt.classPlan(\"@src/Form\", $pForm,"
+                    + " provided, $file, $line, $column));"),
+            "the public constructor is the raw four-parameter"
+                + " C$new(provided,file,line,column) over the class plan");
+        check(appSource != null && appSource.contains(
+                "$rt.function(\"(string)->?@src/Form\",")
+                && appSource.contains(
+                    "$rt.function(\"(@src/Form)->string\","),
+            "the generated JSON helpers carry the pinned declared signatures");
+        check(appSource != null && appSource.contains("\"Fault$new\",")
+                && !appSource.contains("\"Fault$fields\""),
+            "a non-jsonable exported class publishes META and C$new and no"
+                + " C$fields descriptor export");
+        check(appSource != null && appSource.contains("descriptor: \"Error\"")
+                && appSource.contains("descriptor: \"[Error]\"")
+                && !appSource.contains("@/Error")
+                && !appSource.contains("@$builtin"),
+            "the builtin Error descriptor is exactly Error, recursively, and"
+                + " no superseded alias spelling occurs in the artifact");
+        // The app module's own factory entry id (the project-wide registry
+        // allocation): the drive observes that entry, never a guessed id.
+        java.util.regex.Matcher factoryId = Pattern.compile(
+            "\\$rt\\.registerFactory\\(\"app\", (\\d+), \\(\\$provided\\)")
+            .matcher(appSource == null ? "" : appSource);
+        boolean factoryRegistered = factoryId.find();
+        check(factoryRegistered,
+            "the entry module registers its exported class's factory entry");
+        String appFactoryId = factoryRegistered ? factoryId.group(1) : "";
         JsProjectEmission second =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
         for (int i = 0; i < emission.modules().size(); i++) {
@@ -1365,13 +1431,48 @@ public class JsSemanticEmitterTest {
         }
         Path out = stage(fixture, "classes", false);
         Files.writeString(out.resolve("driver.js"), """
+            const rt = require("./deal/runtime.js");
+            // The private linkage observes registration and transfer
+            // without adding a public surface: the emitted defaults thunks
+            // reached through the factory are the only cross-module calls.
+            let factoryCalls = 0;
+            const realCallFactory = rt.callFactory;
+            rt.callFactory = function () {
+              factoryCalls++;
+              return realCallFactory.apply(rt, arguments);
+            };
             const app = require("./app.js");
             const lib = require("./lib.js");
-            const rt = require("./deal/runtime.js");
             const out = {state: rt.moduleState("app"),
               exports: Object.keys(app).sort().join(","),
               meta: app.Form, fields: app.Form$fields,
-              libExports: Object.keys(lib).sort().join(",")};
+              libExports: Object.keys(lib).sort().join(","),
+              factoryCallsAtRequire: factoryCalls};
+            // The public roles: exact keys, arity and signatures.
+            out.formKeys = Object.keys(app.Form);
+            out.newArity = app.Form$new.length;
+            out.newIsRaw = typeof app.Form$new === "function"
+              && app.Form$new.$kind === undefined;
+            out.sigs = {from: app.Form$fromJson.$sig,
+              to: app.Form$toJson.$sig,
+              libFrom: lib.Point$fromJson.$sig,
+              libTo: lib.Point$toJson.$sig,
+              fromKind: app.Form$fromJson.$kind,
+              toKind: app.Form$toJson.$kind,
+              faultFields: app.Fault$fields === undefined};
+            out.fieldRoles = app.Form$fields.map(function (e) {
+              return Object.keys(e).join(",");
+            });
+            // Registration executes no default: the app factory transfers
+            // the omitted defaults only when it is called, and the nested
+            // provider default is its one linkage call.
+            const beforeTransfer = factoryCalls;
+            const transfer = realCallFactory.call(rt, "app",
+              __APP_FACTORY_ID__, []);
+            out.transfer = {keys: Object.keys(transfer),
+              kind: transfer.$kind, cls: transfer.$classname,
+              nested: transfer.point.$classname,
+              calls: factoryCalls - beforeTransfer};
             // The public C$new performs full construction (provided defaults).
             const made = app.Form$new({name: "Eve"}, "d.js", 1, 1);
             out.made = {name: made.name, score: made.score,
@@ -1386,6 +1487,69 @@ public class JsSemanticEmitterTest {
             } catch (e) {
               out.extra = e.$dealCode + ":" + e.message;
             }
+            // The provided input is never mutated and a failed construction
+            // publishes no instance; an omitted origin stays absent.
+            const given = {name: "Ada"};
+            const snapshot = JSON.stringify(given);
+            const madeGiven = app.Form$new(given, "d.js", 40, 40);
+            out.given = {unchanged: JSON.stringify(given) === snapshot,
+              kind: given.$kind, madeName: madeGiven.name,
+              madePoint: madeGiven.point.$classname};
+            const bad = {zz: 1, extra: 2};
+            const badSnapshot = JSON.stringify(bad);
+            try {
+              app.Form$new(bad, "d.js", 41, 41);
+              out.badExtra = "none";
+            } catch (e) {
+              out.badExtra = e.$dealCode + ":" + e.message + ":at="
+                + e.file + ":" + e.line + ":" + e.column;
+            }
+            out.bad = {unchanged: JSON.stringify(bad) === badSnapshot,
+              kind: bad.$kind};
+            const typed = {name: 5};
+            const typedSnapshot = JSON.stringify(typed);
+            try {
+              app.Form$new(typed, "d.js", 42, 42);
+              out.typed = "none";
+            } catch (e) {
+              out.typed = e.$dealCode + ":" + e.message + ":at="
+                + e.file + ":" + e.line + ":" + e.column;
+            }
+            out.typedInput = {unchanged:
+              JSON.stringify(typed) === typedSnapshot, kind: typed.$kind};
+            let absent;
+            try {
+              app.Form$new({zz: 1});
+              absent = "none";
+            } catch (e) {
+              absent = [e.file === undefined, e.line === undefined,
+                e.column === undefined];
+            }
+            out.absent = absent;
+            // The optional-nullable three states through the public helpers.
+            const nilStates = [lib.Point$new({x: 1}, "d.js", 10, 10),
+              lib.Point$new({x: 1, opt: null}, "d.js", 11, 11),
+              lib.Point$new({x: 1, opt: 2}, "d.js", 12, 12)];
+            out.nilStates = nilStates.map(function (p) {
+              return [rt.has(p, "opt"), rt.optRead(p.opt)];
+            });
+            out.nilJson = nilStates.map(function (p, i) {
+              return lib.Point$toJson.$f(p, "d.js", 20 + i, 20 + i);
+            });
+            const decodedMissing = lib.Point$fromJson.$f("{\\"x\\":1}",
+              "d.js", 30, 30);
+            const decodedNull = lib.Point$fromJson.$f(
+              "{\\"x\\":1,\\"opt\\":null}", "d.js", 31, 31);
+            out.decodedStates = [
+              [rt.has(decodedMissing, "opt"),
+                rt.optRead(decodedMissing.opt)],
+              [rt.has(decodedNull, "opt"), rt.optRead(decodedNull.opt)]];
+            // The builtin Error identity is exactly Error.
+            const fault = app.Fault$new({}, "d.js", 50, 50);
+            out.fault = {errKind: fault.err.$kind,
+              errCls: fault.err.$classname, code: fault.err.code,
+              errsLen: fault.errs.length,
+              metaKeys: Object.keys(app.Fault)};
             // The generated wrappers keep the public helper ABI.
             const text = app.Form$toJson.$f(made, "d.js", 4, 4);
             const back = app.Form$fromJson.$f(text, "d.js", 5, 5);
@@ -1406,16 +1570,84 @@ public class JsSemanticEmitterTest {
                 + e.file + ":" + e.line + ":" + e.column;
             }
             console.log(JSON.stringify(out));
-            """);
+            """.replace("__APP_FACTORY_ID__", appFactoryId));
         NodeRun run = runNode(out, "driver.js");
         checkEq(0, run.status(), "the class driver exits 0: " + run.output());
         check(run.output().contains("\"state\":\"INITIALIZED\""),
             "the entry module's init completed: " + run.output());
         check(run.output().contains(
-                "\"exports\":\"Form,Form$fields,Form$fromJson,Form$new,Form$toJson,main\""),
+                "\"exports\":\"Fault,Fault$new,Form,Form$fields,Form$fromJson,"
+                    + "Form$new,Form$toJson,main\""),
             "the module surface carries the class metadata, the constructor,"
                 + " the hidden descriptor export and the generated wrappers"
                 + " alongside the declared exports: " + run.output());
+        check(run.output().contains("\"formKeys\":[\"$kind\",\"$classname\"]")
+                && run.output().contains("\"newArity\":4")
+                && run.output().contains("\"newIsRaw\":true"),
+            "the class META is the exact two-key pair and C$new is the raw"
+                + " four-parameter callable: " + run.output());
+        check(run.output().contains("\"sigs\":{\"from\":"
+                + "\"(string)->?@src/Form\",\"to\":\"(@src/Form)->string\","
+                + "\"libFrom\":\"(string)->?@src/Point\",\"libTo\":"
+                + "\"(@src/Point)->string\",\"fromKind\":\"function\","
+                + "\"toKind\":\"function\",\"faultFields\":true}"),
+            "the generated JSON helpers are function wrappers carrying the"
+                + " exact declared signatures and only jsonable classes carry"
+                + " C$fields: " + run.output());
+        check(run.output().contains("\"fieldRoles\":[\"name,jtype,optional,"
+                + "nullable,hasDefault,evaluator\",\"name,jtype,optional,"
+                + "nullable,hasDefault\",\"name,jtype,optional,nullable,"
+                + "hasDefault,evaluator\",\"name,jtype,className,fields,"
+                + "optional,nullable,hasDefault,evaluator\",\"name,jtype,"
+                + "element,optional,nullable,hasDefault,evaluator\"]"),
+            "the descriptor array keeps the pinned per-role keys in declaration"
+                + " order: " + run.output());
+        check(run.output().contains("\"factoryCallsAtRequire\":0"),
+            "registration executes no default (no factory call during init): "
+                + run.output());
+        check(run.output().contains("\"transfer\":{\"keys\":[\"name\","
+                + "\"score\",\"point\",\"many\"],\"nested\":"
+                + "\"@src/Point\",\"calls\":1}"),
+            "the defaults-only transfer carries the omitted required defaults"
+                + " in declaration order, no optional and no public tag, and"
+                + " runs its nested provider default: " + run.output());
+        check(run.output().contains("\"given\":{\"unchanged\":true,"
+                + "\"madeName\":\"Ada\",\"madePoint\":\"@src/Point\"}"),
+            "C$new copies the provided input without mutating it: "
+                + run.output());
+        check(run.output().contains("\"badExtra\":\"E8007:extra field 'zz'"
+                + " in class '@src/Form':at=d.js:41:41\"")
+                && run.output().contains("\"bad\":{\"unchanged\":true}"),
+            "a failed extra-key construction publishes no instance and"
+                + " mutates nothing: " + run.output());
+        check(run.output().contains("\"typed\":\"E8001:expected string"
+                + ":at=d.js:42:42\"")
+                && run.output().contains("\"typedInput\":{\"unchanged\":"
+                + "true}"),
+            "an invalid provided carrier publishes no instance and mutates"
+                + " nothing: " + run.output());
+        check(run.output().contains("\"absent\":[true,true,true]"),
+            "an omitted call-site origin stays absent on the failure: "
+                + run.output());
+        check(run.output().contains("\"nilStates\":[[false,null],"
+                + "[true,null],[true,2]]"),
+            "the optional-nullable three states survive public construction"
+                + " (missing differs from present null): " + run.output());
+        check(run.output().contains("\"nilJson\":[\"{\\\"x\\\":1,"
+                + "\\\"y\\\":0}\",\"{\\\"x\\\":1,\\\"y\\\":0,"
+                + "\\\"opt\\\":null}\",\"{\\\"x\\\":1,\\\"y\\\":0,"
+                + "\\\"opt\\\":2}\"]"),
+            "toJson omits the missing optional, keeps a present null and"
+                + " serializes a present value: " + run.output());
+        check(run.output().contains("\"decodedStates\":[[false,null],"
+                + "[true,null]]"),
+            "fromJson keeps the missing and present-null states distinct: "
+                + run.output());
+        check(run.output().contains("\"fault\":{\"errKind\":\"class\","
+                + "\"errCls\":\"Error\",\"code\":\"\",\"errsLen\":0,"
+                + "\"metaKeys\":[\"$kind\",\"$classname\"]}"),
+            "an Error field constructs the exact builtin Error instance and"
+                + " its array default is fresh: " + run.output());
         check(run.output().contains("\"meta\":{\"$kind\":\"class\","
                 + "\"$classname\":\"@src/Form\"}"),
             "the exported class value is exactly the META pair with its"
