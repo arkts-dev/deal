@@ -751,17 +751,49 @@ function $isNumericDescriptor($desc) {
 }
 
 // $hostProjectArg: the host-facing projection of one checked host-call
-// parameter (the JVM __hostProjectArg numeric row and the LuaJIT
-// __hostParamAdmit/__hostAsyncArg carrier unwrap): a declared int/number
-// position hands the raw host the number a read-side variant carrier
-// carries, because the public host scalar ABI is the host's own number —
-// never the runtime's internal carrier object. Every other position
-// crosses unchanged (the carrier only reaches a numeric boundary). The
-// projection runs after the declared-cell check, so the admitted carrier
-// keeps its own variant at the boundary and only the host-facing value
-// is re-represented.
-function $hostProjectArg($desc, $v) {
-  return $isNumericDescriptor($desc) ? $numOf($v) : $v;
+// parameter (the JVM __hostProjectArg declared-cell rows and the LuaJIT
+// __hostParamAdmit/__hostAsyncArg carrier unwrap). The crossing hands
+// the raw host the declared value, never the runtime's internal
+// representation:
+//
+//   - a declared int/number position hands the number a read-side
+//     variant carrier carries, because the public host scalar ABI is the
+//     host's own number;
+//   - a declared array position hands the host-visible native Array the
+//     declared array ABI names (the JVM __hostArrayFromDeal carrier and
+//     the LuaJIT 1..n table), whatever carrier the checked value had —
+//     the std/json decoded-array marked Map included;
+//   - a class position hands a class instance whose declared fields are
+//     projected the same way (a decoded-array field is a native Array, a
+//     decoded-null field is the language null, an unwrapped numeric
+//     field keeps its recorded variant), because the host reads the
+//     declared fields directly (the generated $Host$... view in the JVM
+//     lane);
+//   - a decoded JSON null at a nullable position is the language null;
+//   - a table position keeps the DEAL table carrier (the host reads it
+//     through the runtime members, exactly like the JVM/JVM-lane table
+//     crossing), so effects the host performs on a table parameter stay
+//     observable to its caller;
+//   - every other value (scalars, null, strings, bytes carriers,
+//     function wrappers, host objects) crosses unchanged.
+//
+// The projection runs after the declared-cell check, so an admitted
+// carrier keeps its own variant at the boundary and only the
+// host-facing value is re-represented ($hostProjectValue). $memo is the
+// invoking call's own projection memo: the parameters of one call form
+// one value graph, so two parameters that are the same DEAL container
+// reach the host as the same projected container (the caller's alias
+// behaviour, the reference lane's shared table).
+function $hostProjectArg($desc, $v, $memo) {
+  if ($isNumericDescriptor($desc)) {
+    return $numOf($v);
+  }
+  // Only a reference value can hold a carrier (a class instance, a
+  // container, a runtime wrapper); every scalar crosses as itself.
+  if ($v === null || $v === $undefined || typeof $v !== "object") {
+    return $v;
+  }
+  return $hostProjectValue($v, true, $memo);
 }
 
 // $hostProjectCompletion: the host-facing projection of one checked
@@ -790,36 +822,99 @@ function $hostProjectArg($desc, $v) {
 //     function wrappers, the $MISSING sentinel, host objects) crosses
 //     unchanged.
 //
+// A completion has no declared array form to rebuild at the top level, so
+// a decoded-array carrier keeps its array mark rather than becoming a
+// native Array: the value is a table-typed DEAL value whose table
+// representation is the runtime's own carrier. The host-parameter
+// projection ($hostProjectArg) is the crossing whose declared type names
+// the array, and it selects the native-array form of the same walk.
+//
 // The copy is identity-preserving per source container (one projected
 // container per source container), so a shared reference stays shared
 // and a cyclic completion terminates instead of recursing; the walk is
 // an explicit frame stack, so a finite nested completion has no
 // call-stack bound; the DEAL-side value is never mutated.
 function $hostProjectCompletion($v) {
-  const $memo = new $Map();
+  return $hostProjectValue($v, false);
+}
+
+// $hostProjectValue: the one carrier-complete DEAL-to-host projection
+// walk behind both host-boundary crossings — the checked host-call
+// parameters ($hostProjectArg) and the async-export completions
+// ($hostProjectCompletion). Every carrier the runtime can hold is
+// re-represented:
+//
+//   - a read-side numeric carrier becomes the number it carries, at the
+//     top level and at every nested leaf (a carrier's own recorded kind
+//     stays on the copied container's slot marks below);
+//   - the std/json decoded-null carrier becomes the language null (the
+//     reference's __NULL projection) — JS null is DEAL null, and both
+//     the shared encoder and the boundary members read it as the same
+//     null leaf, so a decoded object/array keeps its null slots;
+//   - a native Array is copied with every element projected and its
+//     per-slot number-variant marks carried over ($jsonNumberMarks), and
+//     a decoded-array marked Map is either copied with its array mark
+//     ($nativeArrays false) or rebuilt as the host-visible native Array
+//     ($nativeArrays true) — the declared array's own identity/alias
+//     behaviour: one copy per source container, the same copy for every
+//     alias of it, and every copy keeps the exact int/number
+//     classification, so re-encoding it through the shared walks spells
+//     what the DEAL-side value spells (the Lua __a/__nK carrier copy);
+//   - a class instance is copied with every own property projected (the
+//     declared fields and the $kind/$classname tag pair), so no numeric
+//     or decode carrier survives inside a class-typed crossing and a
+//     host that reads a declared field sees the declared value;
+//   - a plain table keeps the runtime's table carrier in the parameter
+//     mode ($nativeArrays true — the host reads it through the runtime
+//     members and its effects stay on the DEAL value) and is copied in
+//     the completion mode (a completion is published to the host, so the
+//     host-visible graph holds no DEAL carrier and no shared mutable
+//     table is handed out);
+//   - every other value (scalars, null, strings, bytes carriers,
+//     function wrappers, the $MISSING sentinel, host objects) crosses
+//     unchanged.
+//
+// The copy is identity-preserving per source container (one projected
+// container per source container), so a shared reference stays shared,
+// a caller-supplied $memo extends that to every value of one crossing
+// (the parameters of one host call), and a cyclic value terminates
+// instead of recursing; the walk is an explicit frame stack, so a finite
+// nested value has no call-stack bound; the DEAL-side value is never
+// mutated.
+function $hostProjectValue($v, $nativeArrays, $memo) {
+  const $seen = $memo === $undefined ? new $Map() : $memo;
   const $stack = [];
   // The per-slot variant marks of one copied container: a container's
   // marks are its own stored classification, so the copy starts from the
   // same marks and the recorded kind of a stored read carrier (below)
-  // overrides the position it occupies.
-  const $carryMarks = function ($source, $copy) {
+  // overrides the position it occupies. $shift re-keys a decoded-array
+  // Map's 1-based "1".."n" marks onto the 0-based "0".."n-1"
+  // positions of the native Array the same slots become.
+  const $carryMarks = function ($source, $copy, $shift) {
     const $marks = $jsonNumberMarks.get($source);
-    if ($marks !== $undefined) {
-      $jsonNumberMarks.set($copy, new $Map($marks));
+    if ($marks === $undefined) {
+      return;
     }
+    const $copied = new $Map();
+    for (const $mark of $marks) {
+      const $key = $mark[0];
+      const $index = $shift === true ? $arrayFormIndex($key) : null;
+      $copied.set($index === null ? $key : String($index - 1), $mark[1]);
+    }
+    $jsonNumberMarks.set($copy, $copied);
   };
   const $project = function ($value) {
     if ($isNumCarrier($value)) {
       return $value.d;
     }
     if ($Array.isArray($value)) {
-      const $mapped = $memo.get($value);
+      const $mapped = $seen.get($value);
       if ($mapped !== $undefined) {
         return $mapped;
       }
       const $copy = [];
-      $memo.set($value, $copy);
-      $carryMarks($value, $copy);
+      $seen.set($value, $copy);
+      $carryMarks($value, $copy, false);
       $stack.push({ kind: 1, source: $value, copy: $copy, index: 0, keys: null });
       return $copy;
     }
@@ -829,16 +924,50 @@ function $hostProjectCompletion($v) {
       if ($rt.isJsonNullTable($value)) {
         return null;
       }
-      const $mapped = $memo.get($value);
+      const $mapped = $seen.get($value);
       if ($mapped !== $undefined) {
         return $mapped;
       }
-      const $copy = new $Map();
-      $memo.set($value, $copy);
       if ($rt.isJsonArrayTable($value)) {
+        if ($nativeArrays === true) {
+          // The declared array ABI's host-facing carrier: the decoded
+          // array's 1..n slots become the native Array's 0..n-1
+          // positions in element order.
+          const $array = [];
+          $seen.set($value, $array);
+          $carryMarks($value, $array, true);
+          let $max = 0;
+          for (const $key of $value.keys()) {
+            const $index = $arrayFormIndex($key);
+            if ($index !== null && $index > $max) {
+              $max = $index;
+            }
+          }
+          $stack.push({ kind: 4, source: $value, copy: $array, index: 1,
+            max: $max });
+          return $array;
+        }
+        const $copy = new $Map();
+        $seen.set($value, $copy);
         $rt.markJsonArrayTable($copy);
+        $carryMarks($value, $copy, false);
+        const $keys = [];
+        for (const $key of $value.keys()) {
+          $keys.push($key);
+        }
+        $stack.push({ kind: 2, source: $value, copy: $copy, index: 0, keys: $keys });
+        return $copy;
       }
-      $carryMarks($value, $copy);
+      if ($nativeArrays === true) {
+        // A table position keeps the DEAL table carrier: the host reads
+        // it through the runtime members and a host effect on it is
+        // observable to its caller, exactly like the JVM/LuaJIT table
+        // crossing (a table is passed by reference identity).
+        return $value;
+      }
+      const $copy = new $Map();
+      $seen.set($value, $copy);
+      $carryMarks($value, $copy, false);
       const $keys = [];
       for (const $key of $value.keys()) {
         $keys.push($key);
@@ -848,13 +977,13 @@ function $hostProjectCompletion($v) {
     }
     if ($value !== null && typeof $value === "object"
         && $value.$kind === "class") {
-      const $mapped = $memo.get($value);
+      const $mapped = $seen.get($value);
       if ($mapped !== $undefined) {
         return $mapped;
       }
       const $copy = {};
-      $memo.set($value, $copy);
-      $carryMarks($value, $copy);
+      $seen.set($value, $copy);
+      $carryMarks($value, $copy, false);
       $stack.push({ kind: 3, source: $value, copy: $copy, index: 0,
         keys: Object.keys($value) });
       return $copy;
@@ -898,6 +1027,22 @@ function $hostProjectCompletion($v) {
       $frame.copy.push($project($element));
       if ($isNumCarrier($element)) {
         $setNumberVariant($frame.copy, String($i), $element.k === "number");
+      }
+      continue;
+    }
+    if ($frame.kind === 4) {
+      // A decoded array becoming the host-visible native Array: the
+      // marked Map's 1..max slots in element order, each projected, with
+      // its recorded number variant re-keyed onto the native position.
+      if ($frame.index > $frame.max) {
+        $stack.pop();
+        continue;
+      }
+      const $i = $frame.index++;
+      const $element = $frame.source.get(String($i));
+      $frame.copy.push($project($element));
+      if ($isNumCarrier($element)) {
+        $setNumberVariant($frame.copy, String($i - 1), $element.k === "number");
       }
       continue;
     }
@@ -3558,16 +3703,21 @@ const $rt = {
           }
         }
         // The raw host observes the declared host-facing value: each
-        // declared int/number position is projected to the number its
-        // read-side variant carrier carries (the JVM/LuaJIT declared-cell
-        // projection), never the runtime's internal carrier object. The
+        // declared position is projected to the value its declared ABI
+        // names (an int/number to the number its read-side variant
+        // carrier carries, an array to the host-visible native Array, a
+        // class instance to a copy whose declared fields are projected
+        // the same way), never the runtime's internal carrier object. The
         // projection reads the checked value, exactly like the JVM
         // wrapper's __hostParamCheck-then-__hostProjectArg sequence, so a
         // nullable position's admitted language-null representation
-        // reaches the raw host as its declared value.
+        // reaches the raw host as its declared value; one memo covers the
+        // whole argument list, so aliased parameters stay aliased.
         const $hostArgs = [];
+        const $argMemo = new $Map();
         for (let $i = 0; $i < $paramDescs.length; $i++) {
-          $hostArgs.push($hostProjectArg($paramDescs[$i], $checkedArgs[$i]));
+          $hostArgs.push($hostProjectArg($paramDescs[$i], $checkedArgs[$i],
+            $argMemo));
         }
         const $r = f(...$hostArgs);
         if ($isNullRet) {
@@ -3668,11 +3818,13 @@ const $rt = {
           }
         }
         // The raw async host observes the declared host-facing value at
-        // every declared numeric parameter (the sync crossing's same
-        // checked-value projection).
+        // every declared parameter (the sync crossing's same checked-value
+        // projection, with one memo for the whole argument list).
         const $hostArgs = [];
+        const $argMemo = new $Map();
         for (let $i = 0; $i < $paramDescs.length; $i++) {
-          $hostArgs.push($hostProjectArg($paramDescs[$i], $checkedArgs[$i]));
+          $hostArgs.push($hostProjectArg($paramDescs[$i], $checkedArgs[$i],
+            $argMemo));
         }
         const $op = f(...$hostArgs);
         if (!($op && typeof $op.then === "function")) {

@@ -172,6 +172,7 @@ public class JsBackendTest {
             testJsonableDecodedArrayFieldNode();
             testJsonDecodedArrayVariantNode();
             testHostBoundaryNumericCarrierNode();
+            testHostDecodedArrayParamNode();
             testHostCompletionCarrierNode();
             testJsonStoredFunctionE8001();
             testJsonableRuntimeWalkers();
@@ -6175,6 +6176,189 @@ public class JsBackendTest {
                 + " values and the invoker its projected completion"
                 + " (scalar, nested leaves and preserved aliases, no internal"
                 + " carrier key): " + run.output() + " (exit "
+                + run.exitCode() + ")");
+    }
+
+    /**
+     * The host-parameter projection is carrier-complete (the ISSUE-0828
+     * review finding): a declared host parameter hands the host the
+     * declared DEAL value, never an internal std/json decode carrier.
+     * Driven through the production frontend -> JsBackend emission ->
+     * deployed runtime chain under node, over the rest_join-style host
+     * boundary:
+     * <ul>
+     *   <li>a {@code string[]} obtained from {@code std/json.parse} object
+     *       content arrives as a native Array — the pre-fix projection
+     *       passed the array-marked Map and the host's {@code parts.join}
+     *       threw;</li>
+     *   <li>a decoded JSON null nested in a {@code (int|null)[]} arrives as
+     *       the language null, not the marked null Map;</li>
+     *   <li>two parameters aliasing one DEAL array arrive as one projected
+     *       container (the identity and alias contract);</li>
+     *   <li>the array's per-slot number variant survives the crossing, so
+     *       the echoed array re-encodes its {@code 1e17} leaf as
+     *       {@code 1.0E17} exactly like the DEAL-side array;</li>
+     *   <li>a declared host-class parameter arrives with its declared
+     *       fields projected the same way, so an array field filled from
+     *       decoded content is a native Array the host can join.</li>
+     * </ul>
+     */
+    private static void testHostDecodedArrayParamNode() throws Exception {
+        System.out.println("-- Node: the host-parameter projection is"
+            + " carrier-complete --");
+        if (!nodeAvailable) { skipNode("host decoded-array parameter projection"); return; }
+
+        writeFile("hostparam_proj/deal.json", """
+            {"languageVersion": "1.3", "backend": "js",
+             "moduleRoots": ["src"], "output": "out",
+             "externals": {
+               "host/rest_join": {"declaration": "bindings/rest_join.d.deal"},
+               "host/cfg": {"declaration": "bindings/cfg.d.deal"}}}
+            """);
+        writeFile("hostparam_proj/bindings/rest_join.d.deal", """
+            export function join(sep: string, parts: string[]): string;
+            export function shape(parts: string[]): string;
+            export function observe(parts: (int | null)[], alias: (int | null)[]): string;
+            export function echoNumbers(nums: number[]): number[];
+            """);
+        writeFile("hostparam_proj/bindings/cfg.d.deal", """
+            export class Endpoint {
+              path: string;
+            }
+
+            export class ServerConfig {
+              port: int;
+              endpoint: Endpoint;
+              tags?: string[];
+              note?: string | null;
+            }
+
+            export function describe(s: ServerConfig): string;
+            """);
+        writeFile("hostparam_proj/src/main.deal", """
+            import * as json from "std/json";
+            import * as host from "host/rest_join";
+            import * as cfg from "host/cfg";
+
+            export function main(): null { return null; }
+
+            export function run(): string {
+              let t: table = json.parse("{\\"items\\":[\\"a\\",\\"b\\"]}");
+              let xs: string[] = t.items;
+              let joined: string = host.join("-", xs);
+              let shape: string = host.shape(xs);
+              let empty: string[] = [];
+              let joinedEmpty: string = host.join("+", empty);
+
+              let u: table = json.parse("{\\"nums\\":[1,null,3]}");
+              let ns: (int | null)[] = u.nums;
+              let observed: string = host.observe(ns, ns);
+
+              let v: table = json.parse("{\\"ms\\":[1e17,1.5]}");
+              let ms: number[] = v.ms;
+              let echoed: number[] = host.echoNumbers(ms);
+              let box: table = { xs: echoed };
+              let variants: string = json.stringify(box);
+
+              let w: table = json.parse("{\\"tags\\":[\\"x\\",\\"y\\"]}");
+              let sc: cfg.ServerConfig = { port: 7, endpoint: { path: "/p" },
+                tags: w.tags, note: null };
+              let field: string = cfg.describe(sc);
+
+              return "joined=" + joined + "\\n"
+                + "empty=" + joinedEmpty + "\\n"
+                + "shape=" + shape + "\\n"
+                + "observed=" + observed + "\\n"
+                + "variants=" + variants + "\\n"
+                + "field=" + field;
+            }
+            """);
+        Path entry = tmpDir.resolve("hostparam_proj/src/main.deal")
+            .toAbsolutePath();
+        int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+        check(exit == 0, "the host decoded-array parameter project compiles"
+            + " through the public deal compile: exit=" + exit);
+        if (exit != 0) {
+            return;
+        }
+        // The host implementations the emitted relative requires resolve
+        // (the conformance harness's <outputRoot>/<raw specifier>.js
+        // deployment shape).
+        writeFile("hostparam_proj/out/host/rest_join.js", """
+            "use strict";
+
+            module.exports = {
+              join: function (sep, parts) {
+                return Array.isArray(parts) ? parts.join(sep) : "not-array";
+              },
+              shape: function (parts) {
+                if (!Array.isArray(parts)) { return "not-array"; }
+                return "array:" + parts.length + ":" + parts.join(",");
+              },
+              observe: function (parts, alias) {
+                if (!Array.isArray(parts) || !Array.isArray(alias)) {
+                  return "not-array";
+                }
+                const slot = parts[1] === null ? "null" : String(parts[1]);
+                return Array.isArray(parts) ? "array:" + parts.length + ":"
+                  + String(parts[0]) + "," + slot + "," + String(parts[2])
+                  + (parts === alias ? ":same" : ":different") : "not-array";
+              },
+              echoNumbers: function (nums) { return nums; },
+            };
+            """);
+        writeFile("hostparam_proj/out/host/cfg.js", """
+            "use strict";
+
+            const $rt = require("../deal/runtime");
+
+            module.exports = {
+              Endpoint: {
+                $kind: "class",
+                $classname: "@$external/host/cfg/Endpoint",
+              },
+
+              Endpoint_defaults: {
+                path: "/",
+              },
+
+              ServerConfig: {
+                $kind: "class",
+                $classname: "@$external/host/cfg/ServerConfig",
+              },
+
+              ServerConfig_defaults: {
+                port: 8080,
+                endpoint: $rt.MISSING,
+                tags: $rt.MISSING,
+                note: $rt.MISSING,
+              },
+
+              describe: function (s) {
+                if (!Array.isArray(s.tags)) { return "not-array-field"; }
+                return s.endpoint.path + ":" + s.port + ":" + s.tags.join(",");
+              },
+            };
+            """);
+        writeFile("hostparam_proj/out/hostparam_runner.js", String.join("\n",
+            "\"use strict\";",
+            "const $entry = require(\"./main\");",
+            "process.stdout.write($entry.run.$f() + \"\\n\");",
+            ""));
+        NodeResult run = runNodeScript(
+            tmpDir.resolve("hostparam_proj/out").toAbsolutePath(),
+            "hostparam_runner.js");
+        check(run.exitCode() == 0 && run.output().equals(String.join("\n",
+                "joined=a-b",
+                "empty=",
+                "shape=array:2:a,b",
+                "observed=array:3:1,null,3:same",
+                "variants={\"xs\":[1.0E17,1.5]}",
+                "field=/p:7:x,y")),
+            "a declared host parameter hands the host the declared DEAL value"
+                + " (native array, language null, preserved alias and number"
+                + " variant) and a declared host-class parameter hands it"
+                + " projected declared fields: " + run.output() + " (exit "
                 + run.exitCode() + ")");
     }
 
