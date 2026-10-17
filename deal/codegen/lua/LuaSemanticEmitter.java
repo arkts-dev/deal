@@ -4726,12 +4726,35 @@ public final class LuaSemanticEmitter {
                 out.append("__provT[").append(luaString(field.name()))
                     .append("] = __pvT\n");
             }
+            // (1b) The deterministic extra-key guard in provided-source
+            // order: the loaded <C>_defaults key membership is the
+            // accepted-key authority (the runtime's own overlay test reads
+            // the deep copy's raw keys, so rawget is the exact membership
+            // predicate), and the runtime's overlay iterates the provided
+            // table in pairs() order, so the first supplied name outside
+            // the loaded map is pinned here — the same first-extra order
+            // the oracle's host construction scans and the JVM host arm
+            // pre-scans, and the same guard shape the FFI_PLAN arm emits.
+            String hostDefaults = "__hdT" + op.opId().id();
+            out.append(hostDefaults).append(" = ")
+                .append(hostDefaultsExpr(op, payload.classId())).append("\n");
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                out.append("if rawget(").append(hostDefaults).append(", ")
+                    .append(luaString(field.name())).append(") == nil then\n");
+                out.append("  __eT = __arm(\"CLASS_EXTRA_FIELD\", {field = ")
+                    .append(luaString(field.name())).append(", classId = ")
+                    .append(luaString(payload.classId().text())).append("}, ")
+                    .append(luaString(originOf(op))).append(", nil, nil)\n");
+                emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
+                out.append("  error(__eT, 0)\n");
+                out.append("end\n");
+            }
             // (2)-(4) The deep copy, the provided overlay with the extra-key
             // rejection, the sentinel removal, and the tag: the deployed
             // runtime construction entry.
             out.append("__okB, __instT = pcall(__rt.class_, ")
                 .append(luaString(payload.classId().text())).append(", ")
-                .append(hostDefaultsExpr(op, payload.classId())).append(", __provT, ")
+                .append(hostDefaults).append(", __provT, ")
                 .append(classLiteralOriginArgs(op)).append(")\n");
             out.append("if not __okB then\n");
             out.append("  __eT = __hostError(__instT, ")
