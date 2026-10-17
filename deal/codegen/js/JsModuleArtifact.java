@@ -15,11 +15,14 @@ import java.util.Objects;
  * artifact.
  *
  * <p>{@code mappings} is {@code null} when maps are ineffective and an
- * ordered list, possibly empty, otherwise. The list carries coordinates
- * only: the production owner calculates the source/generated display
- * strings from the checked source facts, the live output root and
- * {@code SourceMapPaths}, records them through the existing generator, and
- * serializes the sidecar.</p>
+ * ordered list, possibly empty, otherwise: this module's own share of the
+ * emission's single {@link deal.codegen.SourceMapRecorder}, recorded at the
+ * mapped groups' generated positions during emission. The list carries
+ * coordinates only: the production owner calculates the source/generated
+ * display strings from the checked source facts, the live output root and
+ * {@link deal.codegen.SourceMapPaths}, records them through the existing
+ * {@link SourceMapGenerator}, and serializes the one version-1 sidecar of
+ * this module.</p>
  *
  */
 public record JsModuleArtifact(

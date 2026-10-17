@@ -16,7 +16,14 @@ import java.util.Set;
  *
  * <p>The result contains content and mappings only. It is not publish
  * success: the production owner stages every module and serializes every
- * sidecar inside the existing exclusive-root transaction.</p>
+ * sidecar inside the existing exclusive-root transaction. Each artifact's
+ * ordered coordinate list is that module's own share of the emission's
+ * single source-map recorder, so the owner's one version-1
+ * {@code <module>.deal.map.json} sidecar per implementation artifact is
+ * assembled from {@link deal.codegen.SourceMapPaths}' live-root projection
+ * of the module's own source and artifact and the existing
+ * {@link deal.codegen.SourceMapGenerator} serializer — never from a stage
+ * tree or from generated text.</p>
  *
  */
 public record JsProjectEmission(

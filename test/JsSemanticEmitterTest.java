@@ -4,6 +4,7 @@ import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.SharedEmissionFailure;
 import deal.codegen.SourceMapGenerator;
+import deal.codegen.SourceMapPaths;
 import deal.codegen.js.JsEmissionInput;
 import deal.codegen.js.JsModuleArtifact;
 import deal.codegen.js.JsProjectEmission;
@@ -78,7 +79,14 @@ import java.util.stream.Stream;
  * declared validation and first-failure stop, the unlocated raw-shape
  * guard under require and direct execution, the deployed stdlib surface
  * behind the relative require, and the host-declaration class
- * construction).
+ * construction), and the ISSUE-0802 source mapping (the one shared
+ * {@code SourceMapRecorder} recording during emission, the local/foreign
+ * placement through the recorded parent op with no invented coordinate, the
+ * wrapper/entry groups at their local declaration sites, one strict
+ * version-1 {@code <module>.deal.map.json} per implementation artifact with
+ * the owner's {@code SourceMapPaths} live-root projection, single-source
+ * bounds, the supplementary-Unicode path roundtrip, the empty list and the
+ * internal map-off rendering, and the independent byte-identical rebuild).
  */
 public class JsSemanticEmitterTest {
 
@@ -125,6 +133,8 @@ public class JsSemanticEmitterTest {
         try {
             testArtifactSetAndDeterminism(tmpRoot);
             testSourceMapCoordinates(tmpRoot);
+            testSourceMapSidecars(tmpRoot);
+            testSourceMapForeignPlacement(tmpRoot, node);
             testValuesContainersAndControl(tmpRoot, node);
             testNullableEqualityNilEquivalence(tmpRoot, node);
             testCellsClosuresAndAdapters(tmpRoot, node);
@@ -176,6 +186,16 @@ public class JsSemanticEmitterTest {
         Map<ModuleId, CanonicalModuleIdentity> identities) {
 
         JsEmissionInput emissionInput(boolean sourceMap) {
+            return emissionInput(sourceMap, root.resolve("out").toAbsolutePath());
+        }
+
+        /**
+         * The rendering input whose owner-supplied source display names are
+         * the {@link SourceMapPaths} project-relative projection against the
+         * live output root — exactly the strings the production owner hands
+         * the renderer and the sidecars (`ProductionProjectEmission`).
+         */
+        JsEmissionInput emissionInput(boolean sourceMap, Path liveOutputRoot) {
             Map<ModuleId, JsSourceFile> sourceFiles = new LinkedHashMap<>();
             for (CheckedModuleInput module : checkedProject.modules()) {
                 if (module.kind() != deal.semantic.CheckedModuleKind
@@ -183,20 +203,32 @@ public class JsSemanticEmitterTest {
                     continue;
                 }
                 sourceFiles.put(module.moduleId(), new JsSourceFile(
-                    module.sourceId(), "src/" + displayPath(root, module)));
+                    module.sourceId(), SourceMapPaths.sourceDisplay(
+                        module.sourceId(), liveOutputRoot)));
             }
             return new JsEmissionInput(project, tables, registries, seeds,
                 namespaces, RuntimeDeclarationProjection.project(surface,
                     identities, seeds), sourceFiles, sourceMap);
         }
-    }
 
-    private static String displayPath(Path root, CheckedModuleInput module) {
-        try {
-            return root.relativize(module.sourcePath()).toString()
-                .replace('\\', '/');
-        } catch (IllegalArgumentException outsideRoot) {
-            return module.moduleId().path() + ".deal";
+        /** One implementation unit's authoritative source id. */
+        String sourceId(ModuleId module) {
+            for (CheckedModuleInput candidate : checkedProject.modules()) {
+                if (candidate.moduleId().equals(module)) {
+                    return candidate.sourceId();
+                }
+            }
+            throw new IllegalStateException("no source id for " + module);
+        }
+
+        /** One implementation unit's source file path. */
+        Path sourcePath(ModuleId module) {
+            for (CheckedModuleInput candidate : checkedProject.modules()) {
+                if (candidate.moduleId().equals(module)) {
+                    return candidate.sourcePath();
+                }
+            }
+            throw new IllegalStateException("no source path for " + module);
         }
     }
 
@@ -225,15 +257,45 @@ public class JsSemanticEmitterTest {
             Map<String, String> extraSources,
             Map<String, String> externals,
             Set<String> callbackExports) throws Exception {
-        writeFileIn(root, "src/app.deal", appSource);
+        return compileFixtureAt(root, root.resolve("src"), appSource,
+            extraSources, externals, callbackExports);
+    }
+
+    /** One fixture whose sources live in the {@code src} directory. */
+    private static Fixture compileFixtureAt(Path root, Path sourceDir,
+            String appSource, Map<String, String> extraSources)
+            throws Exception {
+        return compileFixtureAt(root, sourceDir, appSource, extraSources,
+            Map.of(), Set.of());
+    }
+
+    /**
+     * Compiles one fixture project from an explicit source directory through
+     * the production frontend, lowers it once, and produces the
+     * seeds/namespaces/declaration surface of the canonical rendering input.
+     * The source directory is what the sidecar and comment display names are
+     * projected from, so a fixture can carry any path text the owner may
+     * legitimately supply (a supplementary-Unicode directory included).
+     */
+    private static Fixture compileFixtureAt(Path root, Path sourceDir,
+            String appSource, Map<String, String> extraSources,
+            Map<String, String> externals,
+            Set<String> callbackExports) throws Exception {
+        Files.createDirectories(sourceDir);
+        Files.writeString(sourceDir.resolve("app.deal"), appSource,
+            StandardCharsets.UTF_8);
         for (Map.Entry<String, String> extra : extraSources.entrySet()) {
-            writeFileIn(root, extra.getKey(), extra.getValue());
+            // The extra sources are project-root-relative paths, exactly the
+            // spelling the fixture harness always accepted.
+            Path target = root.resolve(extra.getKey());
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, extra.getValue(), StandardCharsets.UTF_8);
         }
-        Path entry = root.resolve("src/app.deal").toAbsolutePath();
+        Path entry = sourceDir.resolve("app.deal").toAbsolutePath();
         Path output = root.resolve("out").toAbsolutePath();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry, output, false, false, false, false, Backend.LUAJIT,
-            externals, List.of(root.resolve("src").toAbsolutePath()),
+            externals, List.of(sourceDir.toAbsolutePath()),
             Path.of(".").toAbsolutePath().normalize(), null,
             invocation());
         boolean compiled = orchestrator.compile();
@@ -561,6 +623,809 @@ public class JsSemanticEmitterTest {
         }
         check(app.mappings().stream().anyMatch(m -> m.sourceLine() == 3),
             "an emitted statement group maps to its own source line");
+    }
+
+    // =========================================================================
+    // 1b. Version-1 per-module sidecars from the recorded coordinates
+    // =========================================================================
+
+    /**
+     * One strict version-1 sidecar: the parsed top-level keys in their
+     * recorded order, the {@code source}/{@code generated} display strings
+     * and the ordered mapping tuples. Parsed by the strict reader below, so
+     * an extra key, a missing key, a non-integer coordinate or a differently
+     * ordered entry fails rather than passing a substring probe.
+     */
+    private record Sidecar(String version, String source, String generated,
+                           List<int[]> mappings) {
+    }
+
+    /**
+     * ISSUE-0802: the recorded coordinates of every artifact are exactly the
+     * per-module version-1 sidecar set the production owner will stage —
+     * one {@code <module>.deal.map.json} per implementation artifact, its own
+     * {@code SourceMapPaths} source and its own artifact as {@code generated},
+     * coordinate-only mappings, single-source bounds and a supplementary
+     * Unicode path roundtrip; the internal map-off rendering carries no
+     * comment and no sidecar mapping while keeping its runtime metadata; and
+     * an independent rebuild of the same sources in another root reproduces
+     * byte-identical sidecars (no nonce, temp or run data).
+     */
+    private static void testSourceMapSidecars(Path tmpRoot) throws Exception {
+        System.out.println("-- version-1 per-module sidecars: exact keys,"
+            + " own source/artifact paths, single-source bounds, empty units,"
+            + " supplementary Unicode and an independent byte-identical"
+            + " rebuild --");
+        String supplementary = "\uD83D\uDE00";
+        Path root = Files.createTempDirectory(tmpRoot, "sidecars-" + supplementary);
+        Path sourceDir = root.resolve(supplementary + "src");
+        Fixture fixture = compileFixtureAt(root, sourceDir, """
+            import * as util from "./util";
+            import * as empty from "./empty";
+
+            export function main(): null {
+              let total: int = 0;
+              for (let i: int = 0; i < 3; i = i + 1) { total = total + i; }
+              let y: int = util.addOne(total);
+              if (y !== 4) { throw { code: "TEST_FAIL", message: "cross" }; }
+              while (total > 0) { total = total - 1; }
+              return null;
+            }
+            """, Map.of(
+                supplementary + "src/util.deal", """
+                    export function addOne(x: int): int {
+                      return x + 1;
+                    }
+                    """,
+                supplementary + "src/empty.deal", """
+                    // an implementation unit with no statements
+                    """));
+        Path liveRoot = root.resolve("build" + supplementary + "/js");
+        JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(true, liveRoot));
+        String projectRootDisplay = liveRoot.toAbsolutePath().normalize()
+            .resolve("..").resolve("..").normalize()
+            .relativize(sourceDir.resolve("app.deal").toAbsolutePath())
+            .toString();
+        check(projectRootDisplay.startsWith(supplementary),
+            "the fixture's source directory carries a supplementary character:"
+                + " " + projectRootDisplay);
+
+        // Exactly one sidecar per implementation artifact, at the module's own
+        // relative path, and every artifact's source is declared once.
+        List<String> wholeClosureSidecars = new ArrayList<>();
+        for (JsModuleArtifact artifact : emission.modules()) {
+            wholeClosureSidecars.add(artifact.moduleId().path()
+                .replace('.', '/') + ".deal.map.json");
+        }
+        checkEq(emission.modules().stream().map(
+                JsSemanticEmitterTest::sidecarName).toList(),
+            wholeClosureSidecars,
+            "the closure declares one sidecar name per artifact, at the"
+                + " module's own relative path");
+
+        verifyEmissionSidecars(fixture, emission, liveRoot, root);
+
+        // The empty implementation unit keeps its own sidecar and its own
+        // coordinates; a module that recorded no mappable position still
+        // serializes the pinned empty array (the owner's branch).
+        JsModuleArtifact emptyArtifact = emission.modules().stream()
+            .filter(a -> a.moduleId().equals(new ModuleId("empty")))
+            .findFirst().orElseThrow();
+        check(emptyArtifact.mappings() != null,
+            "the empty implementation unit carries an effective map list");
+        check(parseSidecarStrict(sidecarName(emptyArtifact),
+                sidecarJson(fixture, emptyArtifact, liveRoot)).source()
+                .equals(SourceMapPaths.sourceDisplay(
+                    fixture.sourceId(new ModuleId("empty")), liveRoot)),
+            "the empty implementation unit's sidecar names its own source");
+        Sidecar emptyList = parseSidecarStrict("empty-map",
+            new SourceMapGenerator().toJson("src/empty.deal",
+                "build/js/empty.js"));
+        checkEq(0, emptyList.mappings().size(),
+            "a module with no recorded position serializes the pinned empty"
+                + " mappings array");
+        check(!new SourceMapGenerator().toJson("src/empty.deal",
+                "build/js/empty.js").contains("\"version\": 2"),
+            "the sidecar dialect is version 1 only");
+
+        // The supplementary Unicode path roundtrips through the sidecar text
+        // and the emitted source comment (a surrogate pair stays intact).
+        Sidecar supplementarySidecar = parseSidecarStrict("supplementary",
+            sidecarJson(fixture, emission.modules().stream()
+                .filter(a -> a.moduleId().equals(new ModuleId("app")))
+                .findFirst().orElseThrow(), liveRoot));
+        check(supplementarySidecar.source().contains(supplementary),
+            "the sidecar source string roundtrips the supplementary"
+                + " character: " + supplementarySidecar.source());
+        check(supplementarySidecar.generated().contains(supplementary),
+            "the sidecar generated string roundtrips the supplementary"
+                + " character: " + supplementarySidecar.generated());
+        check(supplementarySidecar.source().codePointCount(0,
+                supplementarySidecar.source().length())
+                == supplementarySidecar.source().length() - 1,
+            "the supplementary character stays one code point (one surrogate"
+                + " pair): " + supplementarySidecar.source());
+
+        // A group whose recorded origin is not this module's own source and
+        // that no recorded parent links stays unmapped: no coordinate is
+        // invented, and the artifact's mapping list is the pinned empty one
+        // (its sidecar still exists).
+        JsEmissionInput canonical = fixture.emissionInput(true, liveRoot);
+        Map<ModuleId, JsSourceFile> elsewhere = new LinkedHashMap<>();
+        for (Map.Entry<ModuleId, JsSourceFile> entry
+                : canonical.sourceFiles().entrySet()) {
+            elsewhere.put(entry.getKey(), new JsSourceFile(
+                "elsewhere/" + entry.getKey().path() + ".deal",
+                entry.getValue().displayName()));
+        }
+        JsProjectEmission unlocated = JsSemanticEmitter.emitProductionProject(
+            new JsEmissionInput(canonical.project(), canonical.tables(),
+                canonical.registries(), canonical.seeds(),
+                canonical.namespaces(), canonical.declarations(), elsewhere,
+                true));
+        for (JsModuleArtifact artifact : unlocated.modules()) {
+            check(artifact.mappings() != null,
+                "an artifact with no located group still carries an ordered"
+                    + " list (" + artifact.artifactRelativePath() + ")");
+            check(artifact.mappings().isEmpty(),
+                "a group whose origin is not its module's own source and that"
+                    + " no recorded parent links invents no coordinate ("
+                    + artifact.artifactRelativePath() + ")");
+            check(!sourceCommentLines(artifact.source()).findAny()
+                    .isPresent(), "such an artifact opens no source comment ("
+                    + artifact.artifactRelativePath() + ")");
+            checkEq(0, parseSidecarStrict(sidecarName(artifact),
+                    sidecarJson(fixture, artifact, liveRoot)).mappings().size(),
+                sidecarName(artifact) + " carries the empty mappings array");
+        }
+
+        // The internal map-off rendering: no list, no comments, unchanged
+        // runtime metadata.
+        JsProjectEmission unmapped = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(false, liveRoot));
+        for (JsModuleArtifact artifact : unmapped.modules()) {
+            check(artifact.mappings() == null,
+                "the internal map-off rendering records no mapping list ("
+                    + artifact.artifactRelativePath() + ")");
+            check(!sourceCommentLines(artifact.source()).findAny().isPresent(),
+                "the internal map-off rendering emits no source comment ("
+                    + artifact.artifactRelativePath() + ")");
+        }
+        JsModuleArtifact unmappedApp = unmapped.modules().stream()
+            .filter(a -> a.moduleId().equals(new ModuleId("app")))
+            .findFirst().orElseThrow();
+        check(unmappedApp.source().contains(
+                fixture.sourceId(new ModuleId("app"))),
+            "the map-off artifact still embeds its runtime source metadata");
+        // Mapping adds comments and nothing else: removing exactly the
+        // source-comment lines reproduces the map-off bytes, so no generated
+        // statement, effect or coordinate was relocated.
+        for (int i = 0; i < emission.modules().size(); i++) {
+            JsModuleArtifact mappedArtifact = emission.modules().get(i);
+            JsModuleArtifact plainArtifact = unmapped.modules().get(i);
+            String stripped = mappedArtifact.source().lines()
+                .filter(line -> sourceCommentLines(line).findAny().isEmpty())
+                .reduce(new StringBuilder(), (text, line) -> text.append(line)
+                    .append('\n'), StringBuilder::append).toString();
+            checkEq(plainArtifact.source(), stripped,
+                mappedArtifact.artifactRelativePath() + " differs from its"
+                    + " map-off bytes only by the mapped source comments");
+        }
+
+        // An independent rebuild in another root reproduces byte-identical
+        // sidecars: the coordinates and the projected path strings carry no
+        // nonce, temp or run data.
+        Path secondRoot = Files.createTempDirectory(tmpRoot,
+            "sidecars-rebuild-" + supplementary);
+        Path secondSourceDir = secondRoot.resolve(supplementary + "src");
+        Fixture second = compileFixtureAt(secondRoot, secondSourceDir, """
+            import * as util from "./util";
+            import * as empty from "./empty";
+
+            export function main(): null {
+              let total: int = 0;
+              for (let i: int = 0; i < 3; i = i + 1) { total = total + i; }
+              let y: int = util.addOne(total);
+              if (y !== 4) { throw { code: "TEST_FAIL", message: "cross" }; }
+              while (total > 0) { total = total - 1; }
+              return null;
+            }
+            """, Map.of(
+                supplementary + "src/util.deal", """
+                    export function addOne(x: int): int {
+                      return x + 1;
+                    }
+                    """,
+                supplementary + "src/empty.deal", """
+                    // an implementation unit with no statements
+                    """));
+        Path secondLiveRoot = secondRoot.resolve("build" + supplementary
+            + "/js");
+        JsProjectEmission rebuilt = JsSemanticEmitter.emitProductionProject(
+            second.emissionInput(true, secondLiveRoot));
+        checkEq(emission.modules().size(), rebuilt.modules().size(),
+            "the independent rebuild renders the same artifact set");
+        for (int i = 0; i < emission.modules().size(); i++) {
+            JsModuleArtifact first = emission.modules().get(i);
+            JsModuleArtifact other = rebuilt.modules().get(i);
+            checkEq(sidecarJson(fixture, first, liveRoot),
+                sidecarJson(second, other, secondLiveRoot),
+                first.artifactRelativePath() + " sidecar is byte-identical"
+                    + " across independent roots");
+            checkEq(first.mappings(), other.mappings(),
+                first.artifactRelativePath() + " records the same coordinates"
+                    + " across independent roots");
+        }
+    }
+
+    /**
+     * ISSUE-0802: the local/foreign mapping split across a real module edge.
+     * The caller artifact carries the provider-annotated parameter boundary
+     * at its execution position, its physical group maps to the local
+     * initiating call (never to the provider coordinates under the caller
+     * source), the provider's own sidecar keeps the provider's checks, and a
+     * real Node invocation keeps the authoritative provider tuple with one
+     * check and one retained caller effect per attempt.
+     */
+    private static void testSourceMapForeignPlacement(Path tmpRoot,
+                                                      boolean node)
+            throws Exception {
+        System.out.println("-- foreign-origin boundary children stay at their"
+            + " execution position and map through the local initiating call;"
+            + " provider checks stay in the provider sidecar --");
+        Path root = Files.createTempDirectory(tmpRoot, "maps-foreign");
+        StringBuilder provider = new StringBuilder();
+        for (int i = 0; i < 15; i++) {
+            provider.append("// provider filler line ").append(i).append('\n');
+        }
+        // The declared parameter sits beyond the caller's own source bounds,
+        // so a leaked provider coordinate would also fail the bound check.
+        provider.append("export function need(n: int): int {\n");
+        provider.append("  let seen: int = 0;\n");
+        provider.append("  return n + seen;\n");
+        provider.append("}\n");
+        List<String> providerLines = provider.toString().lines().toList();
+        int providerParamLine = 0;
+        int providerReturnLine = 0;
+        for (int i = 0; i < providerLines.size(); i++) {
+            if (providerLines.get(i).startsWith("export function need(")) {
+                providerParamLine = i + 1;
+            }
+            if (providerLines.get(i).contains("return n + seen;")) {
+                providerReturnLine = i + 1;
+            }
+        }
+        // The recorded parameter annotation is the declared type's own span.
+        int providerParamColumn = providerParamLine == 0 ? 0
+            : providerLines.get(providerParamLine - 1).indexOf("int") + 1;
+        check(providerParamLine > 0 && providerReturnLine > 0
+                && providerParamColumn > 0,
+            "the provider fixture declares its boundary annotation");
+        Fixture fixture = compileFixture(root, """
+            import * as lib from "./lib";
+
+            export class Counter {
+              n: int = 0;
+            }
+
+            export function attempt(c: Counter, t: table): int {
+              c.n = c.n + 1;
+              return lib.need(t.v);
+            }
+
+            export function main(): null { return null; }
+            """, Map.of("src/lib.deal", provider.toString()));
+        Path liveRoot = root.resolve("build/js");
+        JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(true, liveRoot));
+        JsModuleArtifact app = artifactOf(emission, "app");
+        JsModuleArtifact lib = artifactOf(emission, "lib");
+        String appDisplay = SourceMapPaths.sourceDisplay(
+            fixture.sourceId(app.moduleId()), liveRoot);
+        String libDisplay = SourceMapPaths.sourceDisplay(
+            fixture.sourceId(lib.moduleId()), liveRoot);
+        List<String> appLines = app.source().lines().toList();
+        List<String> appSource = Files.readAllLines(
+            fixture.sourcePath(app.moduleId()), StandardCharsets.UTF_8);
+        List<String> libSource = Files.readAllLines(
+            fixture.sourcePath(lib.moduleId()), StandardCharsets.UTF_8);
+        String providerSource = fixture.sourceId(lib.moduleId());
+
+        // The parameter boundary keeps the provider's own tuple at its
+        // execution position inside the caller artifact, exactly once.
+        // The emitted runtime arguments carry the provider's source id as a
+        // JS string literal, then the annotation's line and column.
+        String providerTuple = "\"" + providerSource + "\", "
+            + providerParamLine + ", " + providerParamColumn;
+        checkEq(1, countOccurrences(app.source(), providerTuple),
+            "the cross-module parameter boundary appears once in the caller"
+                + " artifact with the provider's authoritative tuple");
+        check(appSource.size() < providerParamLine,
+            "the provider annotation lies beyond the caller's own source"
+                + " bounds, so a leaked provider coordinate is detectable");
+
+        // Its physical group maps to the local initiating call.
+        int callLine = 0;
+        int callColumn = 0;
+        for (int i = 0; i < appSource.size(); i++) {
+            int at = appSource.get(i).indexOf("lib.need(");
+            if (at >= 0) {
+                callLine = i + 1;
+                callColumn = at + 1;
+            }
+        }
+        check(callLine > 0 && callColumn > 0,
+            "the caller fixture declares the cross-module call");
+        int boundaryLine = -1;
+        for (int i = 0; i < appLines.size(); i++) {
+            if (appLines.get(i).contains(providerTuple)
+                    && appLines.get(i).contains("$rt.checkType(\"int\"")) {
+                boundaryLine = i + 1;
+            }
+        }
+        check(boundaryLine > 0,
+            "the provider-annotated boundary is emitted in the caller"
+                + " artifact");
+        int groupCommentLine = -1;
+        Pattern localComment = Pattern.compile(
+            "\\s*// " + Pattern.quote(appDisplay) + ":([0-9]+):([0-9]+)");
+        for (int i = boundaryLine - 1; i >= 1 && boundaryLine > 0; i--) {
+            if (localComment.matcher(appLines.get(i - 1)).matches()) {
+                groupCommentLine = i;
+                break;
+            }
+        }
+        check(groupCommentLine > 0,
+            "the boundary's physical group opens a source comment");
+        if (groupCommentLine > 0) {
+            checkEq("// " + appDisplay + ":" + callLine + ":" + callColumn,
+                appLines.get(groupCommentLine - 1).strip(),
+                "the foreign child's group maps to the local initiating call,"
+                    + " never to the provider coordinates");
+        }
+
+        Sidecar appSidecar = parseSidecarStrict("app-sidecar",
+            sidecarJson(fixture, app, liveRoot));
+        boolean localMapping = false;
+        boolean foreignCoordinate = false;
+        for (int[] mapping : appSidecar.mappings()) {
+            if (groupCommentLine > 0 && mapping[0] == groupCommentLine
+                    && mapping[1] == appLines.get(groupCommentLine - 1)
+                        .indexOf("// ") + 1
+                    && mapping[2] == callLine && mapping[3] == callColumn) {
+                localMapping = true;
+            }
+            if (mapping[2] == providerParamLine
+                    && mapping[3] == providerParamColumn) {
+                foreignCoordinate = true;
+            }
+            check(mapping[2] <= appSource.size(),
+                "the caller sidecar keeps every source coordinate inside the"
+                    + " caller's own source file: " + mapping[2]);
+        }
+        check(localMapping,
+            "the caller sidecar maps the boundary group to the local call");
+        check(!foreignCoordinate,
+            "the caller sidecar never carries the provider coordinates under"
+                + " the caller source");
+
+        // The provider's own check groups stay in the provider sidecar at the
+        // provider's annotations.
+        Sidecar libSidecar = parseSidecarStrict("lib-sidecar",
+            sidecarJson(fixture, lib, liveRoot));
+        int expectedReturnLine = providerReturnLine;
+        boolean providerReturnMapped = libSidecar.mappings().stream()
+            .anyMatch(mapping -> mapping[2] == expectedReturnLine);
+        check(providerReturnMapped,
+            "the provider sidecar maps the provider's own return boundary to"
+                + " its annotation");
+        for (int[] mapping : libSidecar.mappings()) {
+            check(mapping[2] <= libSource.size(),
+                "the provider sidecar keeps every source coordinate inside"
+                    + " the provider's own source file: " + mapping[2]);
+        }
+        check(lib.source().contains(libDisplay + ":" + providerReturnLine + ":"),
+            "the provider artifact's own comment spells the provider"
+                + " annotation");
+
+        if (!node) {
+            skip("the foreign-placement drive needs the real Node binary");
+            return;
+        }
+        Path out = stage(fixture, "maps-foreign", true);
+        Files.writeString(out.resolve("driver.js"), """
+            const app = require("./app.js");
+            const counter = app.Counter$new({}, "d.js", 1, 1);
+            const out = {before: counter.n, errors: []};
+            for (let i = 0; i < 2; i++) {
+              try {
+                app.attempt.$f(counter, new Map([["v", 1.5]]));
+              } catch (e) {
+                out.errors.push({code: e.code, message: e.message,
+                  file: e.file, line: e.line, column: e.column});
+              }
+            }
+            out.after = counter.n;
+            console.log(JSON.stringify(out));
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the foreign-placement driver exits 0: "
+            + run.output());
+        check(run.output().contains("\"before\":0"),
+            "the caller's effect starts unexecuted: " + run.output());
+        String expectedTuple = "\"file\":\"" + providerSource.replace("\\", "\\\\")
+            + "\",\"line\":" + providerParamLine + ",\"column\":"
+            + providerParamColumn;
+        checkEq(2, countOccurrences(run.output(), "\"code\":\"E8001\""),
+            "each attempt reports exactly one DEAL failure: " + run.output());
+        checkEq(2, countOccurrences(run.output(), expectedTuple),
+            "each failure keeps the authoritative provider tuple: "
+                + run.output());
+        check(run.output().contains("expected int"),
+            "the provider boundary family keeps its expected token: "
+                + run.output());
+        check(run.output().contains("\"after\":2"),
+            "the caller's effect ran exactly once per attempt (no"
+                + " duplicated check or effect): " + run.output());
+    }
+
+    /** One artifact of an emission by module path, or a failure. */
+    private static JsModuleArtifact artifactOf(JsProjectEmission emission,
+                                               String modulePath) {
+        return emission.modules().stream()
+            .filter(artifact -> artifact.moduleId()
+                .equals(new ModuleId(modulePath)))
+            .findFirst()
+            .orElseThrow(() -> new IllegalStateException(
+                "no artifact for module '" + modulePath + "'"));
+    }
+
+    /**
+     * Verifies one emission's complete sidecar set against its own artifacts
+     * and source files (the reused acceptance of every map drive): exactly
+     * one strict version-1 {@code <module>.deal.map.json} per implementation
+     * artifact, the owner's {@link SourceMapPaths} projection of that
+     * module's own source and artifact, the recorded coordinate list in
+     * order, one source comment per mapping with the same generated
+     * line/column, and every source coordinate inside the module's own
+     * source file.
+     */
+    private static void verifyEmissionSidecars(Fixture fixture,
+            JsProjectEmission emission, Path liveRoot, Path projectRoot)
+            throws IOException {
+        List<String> sidecars = new ArrayList<>();
+        for (JsModuleArtifact artifact : emission.modules()) {
+            sidecars.add(sidecarName(artifact));
+        }
+        checkEq(emission.modules().size(), sidecars.size(),
+            "every implementation artifact declares exactly one sidecar");
+        checkEq(sidecars.size(), (int) sidecars.stream().distinct().count(),
+            "no two artifacts share one sidecar path: " + sidecars);
+        for (JsModuleArtifact artifact : emission.modules()) {
+            String name = sidecarName(artifact);
+            String json = sidecarJson(fixture, artifact, liveRoot);
+            Sidecar sidecar = parseSidecarStrict(name, json);
+            checkEq("1", sidecar.version(),
+                name + " carries the pinned version");
+            String expectedSource = SourceMapPaths.sourceDisplay(
+                fixture.sourceId(artifact.moduleId()), liveRoot);
+            checkEq(expectedSource, sidecar.source(),
+                name + " names its own project-relative source");
+            String expectedGenerated = SourceMapPaths.generatedDisplay(liveRoot,
+                liveRoot.resolve(artifact.artifactRelativePath()));
+            checkEq(expectedGenerated, sidecar.generated(),
+                name + " names that module's own artifact path");
+            checkEq(artifact.artifactRelativePath().substring(
+                    artifact.artifactRelativePath().lastIndexOf('/') + 1),
+                sidecar.generated().substring(
+                    sidecar.generated().lastIndexOf('/') + 1),
+                name + " maps the generated artifact of the same module");
+            check(!sidecar.source().contains(projectRoot.toString())
+                    && !sidecar.generated().contains(projectRoot.toString()),
+                name + " carries no absolute run path: " + json);
+            check(!sidecar.source().contains("deal-stage-")
+                    && !sidecar.generated().contains("deal-stage-")
+                    && !sidecar.source().contains("deal-publish")
+                    && !sidecar.generated().contains("deal-publish"),
+                name + " carries no stage nonce: " + json);
+
+            // The recorded tuples are exactly the artifact's coordinate list.
+            List<int[]> recorded = new ArrayList<>();
+            for (SourceMapGenerator.Mapping mapping : artifact.mappings()) {
+                recorded.add(new int[] {mapping.generatedLine(),
+                    mapping.generatedColumn(), mapping.sourceLine(),
+                    mapping.sourceColumn()});
+            }
+            checkEq(recorded.size(), sidecar.mappings().size(),
+                name + " carries every recorded coordinate");
+            boolean sameTuples = true;
+            for (int i = 0; i < Math.min(recorded.size(),
+                    sidecar.mappings().size()); i++) {
+                sameTuples &= java.util.Arrays.equals(recorded.get(i),
+                    sidecar.mappings().get(i));
+            }
+            check(sameTuples, name + " carries the recorded tuples in order");
+
+            // The mapped comment and the recorded mapping are one set: every
+            // source-comment line of the artifact is a mapping, in order, so
+            // no group is commented without a mapping and no mapping is
+            // recorded without its comment.
+            List<String> artifactText = artifact.source().lines().toList();
+            List<Integer> commentLines = new ArrayList<>();
+            for (int i = 0; i < artifactText.size(); i++) {
+                if (sourceCommentLines(artifactText.get(i)).findAny()
+                        .isPresent()) {
+                    commentLines.add(i + 1);
+                }
+            }
+            checkEq(artifact.mappings().size(), commentLines.size(),
+                name + " records exactly one mapping per source comment");
+            for (int i = 0; i < Math.min(commentLines.size(),
+                    artifact.mappings().size()); i++) {
+                SourceMapGenerator.Mapping mapping = artifact.mappings().get(i);
+                String comment = artifactText.get(commentLines.get(i) - 1);
+                checkEq("// " + expectedSource + ":" + mapping.sourceLine()
+                        + ":" + mapping.sourceColumn(),
+                    comment.strip(),
+                    name + " maps the " + i + "th source comment");
+                checkEq(mapping.generatedLine(), commentLines.get(i),
+                    name + " records the comment's own generated line");
+                checkEq(comment.indexOf("// ") + 1, mapping.generatedColumn(),
+                    name + " records the comment's own generated column");
+            }
+
+            // Single-source bounds: every mapping lies inside this module's
+            // own source file and its own artifact, and the mapped generated
+            // line is exactly the source comment carrying those coordinates.
+            List<String> sourceLines = Files.readAllLines(
+                fixture.sourcePath(artifact.moduleId()),
+                StandardCharsets.UTF_8);
+            for (int[] mapping : sidecar.mappings()) {
+                check(mapping[0] >= 1 && mapping[0] <= artifactText.size(),
+                    name + " maps a real generated line: " + mapping[0]);
+                check(mapping[2] >= 1 && mapping[2] <= sourceLines.size(),
+                    name + " maps a real source line of its own file: "
+                        + mapping[2] + " of " + sourceLines.size());
+                if (mapping[0] >= 1 && mapping[0] <= artifactText.size()) {
+                    String generatedLine = artifactText.get(mapping[0] - 1);
+                    check(generatedLine.contains(expectedSource + ":"
+                            + mapping[2] + ":" + mapping[3]),
+                        name + " maps the comment carrying its source"
+                            + " position: " + generatedLine.strip());
+                }
+                if (mapping[2] >= 1 && mapping[2] <= sourceLines.size()) {
+                    check(mapping[3] >= 1
+                            && mapping[3] <= sourceLines.get(mapping[2] - 1)
+                                .length() + 1,
+                        name + " maps a real source column: " + mapping[3]);
+                }
+            }
+        }
+    }
+
+    /** One artifact's version-1 sidecar path: {@code <module>.deal.map.json}. */
+    private static String sidecarName(JsModuleArtifact artifact) {
+        return artifact.moduleId().path().replace('.', '/')
+            + ".deal.map.json";
+    }
+
+    /**
+     * One artifact's sidecar JSON exactly as the production owner assembles
+     * it: the artifact's coordinate list recorded into the shared
+     * {@link SourceMapGenerator} and serialized with the owner's
+     * {@link SourceMapPaths} live-root projection — the module's own source
+     * file as {@code source}, the module's own artifact as {@code generated}.
+     */
+    private static String sidecarJson(Fixture fixture, JsModuleArtifact artifact,
+                                      Path liveOutputRoot) {
+        SourceMapGenerator generator = new SourceMapGenerator();
+        if (artifact.mappings() != null) {
+            for (SourceMapGenerator.Mapping mapping : artifact.mappings()) {
+                generator.emitStatement(mapping.generatedLine(),
+                    mapping.generatedColumn(), mapping.sourceLine(),
+                    mapping.sourceColumn());
+            }
+        }
+        Path generated = liveOutputRoot.resolve(artifact.artifactRelativePath());
+        String[] paths = SourceMapPaths.projectRelative(
+            fixture.sourceId(artifact.moduleId()), liveOutputRoot, generated);
+        return generator.toJson(paths[0], paths[1]);
+    }
+
+    /** The source-comment lines of one emitted artifact. */
+    private static Stream<String> sourceCommentLines(String source) {
+        Pattern marker = Pattern.compile(
+            "^\\s*// [^\\s]+:[0-9]+:[0-9]+$");
+        return source.lines().filter(line -> marker.matcher(line).matches());
+    }
+
+    /**
+     * The strict version-1 reader: the top-level object carries exactly the
+     * four pinned keys in the pinned order, {@code version} is the number 1,
+     * {@code source}/{@code generated} are strings, and every mapping entry
+     * carries exactly the four pinned integer keys in the pinned order. Any
+     * other key, order, type or trailing text fails.
+     */
+    private static Sidecar parseSidecarStrict(String name, String json) {
+        Cursor cursor = new Cursor(json);
+        cursor.objectStart();
+        String versionKey = cursor.string();
+        cursor.keySeparator();
+        String version = cursor.number();
+        cursor.valueSeparator();
+        String sourceKey = cursor.string();
+        cursor.keySeparator();
+        String source = cursor.string();
+        cursor.valueSeparator();
+        String generatedKey = cursor.string();
+        cursor.keySeparator();
+        String generated = cursor.string();
+        cursor.valueSeparator();
+        String mappingsKey = cursor.string();
+        cursor.keySeparator();
+        cursor.arrayStart();
+        List<int[]> mappings = new ArrayList<>();
+        List<List<String>> mappingKeys = new ArrayList<>();
+        while (cursor.hasMoreArrayItems()) {
+            cursor.objectStart();
+            List<String> keys = new ArrayList<>();
+            int[] tuple = new int[4];
+            for (int i = 0; i < 4; i++) {
+                if (i > 0) {
+                    cursor.valueSeparator();
+                }
+                keys.add(cursor.string());
+                cursor.keySeparator();
+                tuple[i] = Integer.parseInt(cursor.number());
+            }
+            checkEq(4, keys.size(),
+                name + " spells exactly the four mapping keys");
+            mappingKeys.add(List.copyOf(keys));
+            cursor.objectEnd();
+            mappings.add(tuple);
+        }
+        cursor.arrayEnd();
+        cursor.objectEnd();
+        cursor.end();
+        checkEq("version", versionKey, name + " spells the version key");
+        checkEq("source", sourceKey, name + " spells the source key");
+        checkEq("generated", generatedKey, name + " spells the generated key");
+        checkEq("mappings", mappingsKey, name + " spells the mappings key");
+        for (List<String> keys : mappingKeys) {
+            checkEq(List.of("generatedLine", "generatedColumn", "sourceLine",
+                    "sourceColumn"), keys,
+                name + " spells the mapping keys in the pinned order");
+        }
+        return new Sidecar(version, source, generated, mappings);
+    }
+
+    /** A minimal strict JSON cursor over the pinned sidecar shape. */
+    private static final class Cursor {
+        private final String text;
+        private int at;
+
+        Cursor(String text) {
+            this.text = text;
+        }
+
+        void objectStart() {
+            expect('{');
+            skipWhitespace();
+        }
+
+        void objectEnd() {
+            expect('}');
+            skipWhitespace();
+        }
+
+        void arrayStart() {
+            expect('[');
+            skipWhitespace();
+        }
+
+        void arrayEnd() {
+            expect(']');
+            skipWhitespace();
+        }
+
+        boolean hasMoreArrayItems() {
+            skipWhitespace();
+            if (at < text.length() && text.charAt(at) == ']') {
+                return false;
+            }
+            if (at < text.length() && text.charAt(at) == ',') {
+                at++;
+                skipWhitespace();
+            }
+            return at < text.length() && text.charAt(at) != ']';
+        }
+
+        void keySeparator() {
+            expect(':');
+            skipWhitespace();
+        }
+
+        void valueSeparator() {
+            expect(',');
+            skipWhitespace();
+        }
+
+        String string() {
+            if (at >= text.length() || text.charAt(at) != '"') {
+                throw new IllegalStateException("expected a JSON string at "
+                    + at + " in: " + text);
+            }
+            at++;
+            StringBuilder value = new StringBuilder();
+            while (at < text.length()) {
+                char c = text.charAt(at++);
+                if (c == '"') {
+                    skipWhitespace();
+                    return value.toString();
+                }
+                if (c == '\\') {
+                    char escape = text.charAt(at++);
+                    switch (escape) {
+                        case '"' -> value.append('"');
+                        case '\\' -> value.append('\\');
+                        case 'n' -> value.append('\n');
+                        case 'r' -> value.append('\r');
+                        case 't' -> value.append('\t');
+                        case 'u' -> {
+                            value.append((char) Integer.parseInt(
+                                text.substring(at, at + 4), 16));
+                            at += 4;
+                        }
+                        default -> throw new IllegalStateException(
+                            "unsupported escape \\" + escape);
+                    }
+                    continue;
+                }
+                value.append(c);
+            }
+            throw new IllegalStateException("unterminated JSON string");
+        }
+
+        String number() {
+            int start = at;
+            while (at < text.length()
+                    && "-0123456789".indexOf(text.charAt(at)) >= 0) {
+                at++;
+            }
+            if (start == at) {
+                throw new IllegalStateException("expected a JSON number at "
+                    + at + " in: " + text);
+            }
+            String number = text.substring(start, at);
+            skipWhitespace();
+            return number;
+        }
+
+        void end() {
+            skipWhitespace();
+            if (at != text.length()) {
+                throw new IllegalStateException("trailing sidecar text at "
+                    + at + " in: " + text);
+            }
+        }
+
+        private void expect(char c) {
+            skipWhitespace();
+            if (at >= text.length() || text.charAt(at) != c) {
+                throw new IllegalStateException("expected '" + c + "' at "
+                    + at + " in: " + text);
+            }
+            at++;
+            skipWhitespace();
+        }
+
+        private void skipWhitespace() {
+            while (at < text.length()
+                    && Character.isWhitespace(text.charAt(at))) {
+                at++;
+            }
+        }
     }
 
     // =========================================================================
@@ -1312,6 +2177,11 @@ public class JsSemanticEmitterTest {
                     + ")");
             }
         }
+        Path classLiveRoot = root.resolve("build/js");
+        verifyEmissionSidecars(fixture,
+            JsSemanticEmitter.emitProductionProject(
+                fixture.emissionInput(true, classLiveRoot)),
+            classLiveRoot, root);
         check(libSource != null && appSource != null,
             "the class fixture emits both implementation artifacts");
         check(libSource != null && libSource.contains(
@@ -1752,6 +2622,11 @@ public class JsSemanticEmitterTest {
                 .anyMatch(m -> m.sourceLine() == 16),
             "the cross-module async call group maps to its own local"
                 + " source line");
+        Path asyncLiveRoot = root.resolve("build/js");
+        verifyEmissionSidecars(fixture,
+            JsSemanticEmitter.emitProductionProject(
+                fixture.emissionInput(true, asyncLiveRoot)),
+            asyncLiveRoot, root);
 
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
@@ -2699,6 +3574,11 @@ public class JsSemanticEmitterTest {
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
         String app = sourceOf(emission, "app");
         String util = sourceOf(emission, "util");
+        Path hostLiveRoot = root.resolve("build/js");
+        verifyEmissionSidecars(fixture,
+            JsSemanticEmitter.emitProductionProject(
+                fixture.emissionInput(true, hostLiveRoot)),
+            hostLiveRoot, root);
         checkEq(2, countOf(app, "$rt.loadHost("),
             "one typed host surface per source HOST import declaration (two"
                 + " source aliases of one resolved file emit two loads)");
