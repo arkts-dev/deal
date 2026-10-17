@@ -16,13 +16,18 @@ import deal.semantic.DescriptorService;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
+import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.BoundaryContext;
 import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassLayout;
+import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
@@ -79,6 +84,45 @@ public class HostModuleLoadEmissionTest {
 
     private static final String PROBE_SPECIFIER = "host/abi_probe";
     private static final String CFG_SPECIFIER = "host/cfg";
+    private static final String ORDER_SPECIFIER = "host/order";
+    private static final ClassId ORDER_CONFIG =
+        new ClassId("$external/host/order", "Config");
+
+    /**
+     * The HOST construction's accepted-key ordering fixture: two declared
+     * optional fields ({@code fallback}, {@code peers}) are absent from
+     * the loaded {@code Config_defaults} map, so a literal providing both
+     * supplies two names outside the accepted-key authority.
+     */
+    private static final String ORDER_DECLARATION_SOURCE = """
+        export class Config {
+          port: int;
+          fallback?: int;
+          peers?: int[];
+        }
+
+        export function ping(): string;
+        """;
+
+    /** The construction literal with the provided field order substituted. */
+    private static final String ORDER_APP_TEMPLATE = """
+        import * as cfg from "host/order";
+
+        export function main(): null {
+          let c: cfg.Config = {%s};
+          return null;
+        }
+        """;
+
+    /** The deployed host implementation: {@code Config_defaults} carries only {@code port}. */
+    private static final String ORDER_LUA = """
+        return {
+          ping = function() return "pong" end,
+          Config = { __kind = "class", __classname = "@$external/host/order/Config" },
+          Config_defaults = { port = 1 },
+        }
+        """;
+
     private static final String MISSING_SPECIFIER = "host/missing_export";
     private static final String ARRAY_SPECIFIER = "host/array_probe";
     private static final String ERROR_SPECIFIER = "host/error_probe";
@@ -608,6 +652,135 @@ public class HostModuleLoadEmissionTest {
             + "source alias");
         checkEq(2, readCells.size(), "the two source aliases' reads carry two distinct "
             + "occurrence cells");
+    }
+
+    /**
+     * The HOST construction's deterministic extra-key scan: the loaded
+     * {@code <C>_defaults} key membership is the accepted-key authority,
+     * and the first provided-source name outside it fails with the exact
+     * E8007 tuple the oracle renders — before any field boundary check, in
+     * the provided order, never the runtime table's hash order. Two
+     * declared optional fields ({@code fallback}, {@code peers}) are
+     * absent from the loaded map, so the two provided orders name two
+     * different first-extra fields and a hash-order scan cannot satisfy
+     * both.
+     */
+    private static void testOrderedExtraKeyScan(List<Path> roots) throws Exception {
+        System.out.println("-- the HOST construction's extra-key scan: the first "
+            + "provided-source name absent from the loaded <C>_defaults fails "
+            + "with the oracle's exact E8007 tuple, in provided order --");
+        expectOrderedExtraKeyScan(roots, "port: 2, fallback: 3, peers: []", "fallback");
+        expectOrderedExtraKeyScan(roots, "port: 2, peers: [], fallback: 3", "peers");
+    }
+
+    private static void expectOrderedExtraKeyScan(List<Path> roots, String provided,
+            String firstExtra) throws Exception {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/order.d.deal", ORDER_DECLARATION_SOURCE);
+        sources.put("src/app.deal", ORDER_APP_TEMPLATE.formatted(provided));
+        Fixture fixture = compileProject(sources,
+            Map.of(ORDER_SPECIFIER, "src/order.d.deal"));
+        Baseline baseline = prepare(fixture, false, roots);
+        if (baseline.result().project() == null) {
+            fail("the host-order fixture '" + provided + "' lowers: "
+                + baseline.result().diagnostics());
+            return;
+        }
+        ExecutableLoweredProject project = baseline.result().project();
+        SemanticOp construction = orderedConstruction(project);
+        String message = "extra field '" + firstExtra
+            + "' in class '@$external/host/order/Config'";
+        String origin = construction.origin().sourceId() + ":"
+            + construction.origin().span().startLine() + ":"
+            + construction.origin().span().startColumn();
+
+        // The oracle: the same provided-source scan over the same loaded map.
+        SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
+            @Override
+            public Map<String, SemanticOracle.Value> loadedClassDefaults(
+                    ClassId classId) {
+                if (!ORDER_CONFIG.equals(classId)) {
+                    return null;
+                }
+                Map<String, SemanticOracle.Value> defaults = new LinkedHashMap<>();
+                defaults.put("port", new SemanticOracle.Value.IntValue(1));
+                return defaults;
+            }
+        };
+        Map<ClassId, ClassLayout> declarationLayouts = new LinkedHashMap<>();
+        for (ClassId classId : baseline.result().seeds().classIds()) {
+            declarationLayouts.put(classId,
+                baseline.result().seeds().registrationFor(classId).layout());
+        }
+        SemanticRuntimeModel.ConsumerRun oracleRun =
+            SemanticOracle.executeProjectInits(project, baseline.result().tables(),
+                baseline.result().registries(), responder, declarationLayouts);
+        if (oracleRun.terminal()
+                instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
+            checkEq("E8007", failure.error().code(),
+                "the oracle names the pinned E8007 for '" + provided + "'");
+            checkEq(message, failure.error().message(),
+                "the oracle reports the first provided-source extra field for '"
+                    + provided + "'");
+            checkEq(origin, failure.error().origin(),
+                "the oracle carries the literal origin for '" + provided + "'");
+        } else {
+            fail("the oracle does not fail the construction for '" + provided
+                + "': " + oracleRun.terminal());
+        }
+
+        // The real LuaJIT artifact: the same tuple through the published chunk.
+        Path workspace = Files.createTempDirectory("host-order-lua");
+        try {
+            Path artifact = workspace.resolve("project.lua");
+            Files.writeString(artifact, baseline.lua(), StandardCharsets.UTF_8);
+            deployRuntime(workspace);
+            writeFileIn(workspace, "host/order.lua", ORDER_LUA);
+            Path probe = workspace.resolve("probe.lua");
+            Files.writeString(probe, orderedExtraKeyProbe(artifact, message, origin),
+                StandardCharsets.UTF_8);
+            ProcessOutcome run = runProcess(List.of("luajit",
+                probe.toAbsolutePath().toString()), workspace, true);
+            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
+                "the LuaJIT artifact names the first provided-source extra field '"
+                    + firstExtra + "' for '" + provided + "': " + run.output());
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /** The lowered {@code CLASS_NEW(HOST_DEFAULTS)} of the ordered-extra-key fixture. */
+    private static SemanticOp orderedConstruction(ExecutableLoweredProject project) {
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_NEW
+                        && op.payload() instanceof KindPayload.ClassNewPayload payload
+                        && payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
+                    return op;
+                }
+            }
+        }
+        throw new IllegalStateException("the fixture carries no"
+            + " CLASS_NEW(HOST_DEFAULTS) construction");
+    }
+
+    /** The LuaJIT probe: the construction fails with the pinned E8007 tuple. */
+    private static String orderedExtraKeyProbe(Path artifact, String message,
+            String origin) {
+        return """
+            local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+            dofile("%s")
+            local ok, err = __dealMain()
+            if ok then fail("the construction succeeded") end
+            if type(err) ~= "table" or err.__d ~= true then
+              fail("not a DEAL failure: " .. tostring(type(err)))
+            end
+            if err.code ~= "E8007" then fail("code: " .. tostring(err.code)) end
+            if err.m ~= %s then fail("message: " .. tostring(err.m)) end
+            if err.o ~= %s then fail("origin: " .. tostring(err.o)) end
+            print("PROBE-OK")
+            """.formatted(artifact.toAbsolutePath().toString(), luaString(message),
+                luaString(origin));
     }
 
     private static void testLuaArtifactText(Baseline fixture, Baseline aliases)
@@ -1789,6 +1962,7 @@ public class HostModuleLoadEmissionTest {
             + "(ISSUE-0650) ===\n");
         List<Path> roots = new ArrayList<>();
         try {
+            testOrderedExtraKeyScan(roots);
             Baseline abi = prepare(abiFixture(ABI_APP_SOURCE), true, roots);
             Baseline aliases = prepare(abiFixture(TWO_ALIAS_APP_SOURCE), false, roots);
             Baseline hostReads = prepare(abiFixture(HOST_READ_APP_SOURCE), false, roots);
