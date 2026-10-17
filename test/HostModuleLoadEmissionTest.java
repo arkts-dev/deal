@@ -248,6 +248,39 @@ public class HostModuleLoadEmissionTest {
 
     private static final String MISSING_DECLARATION_APP_SOURCE = MISSING_APP_SOURCE;
 
+    /**
+     * The table-parameter host declaration (ISSUE-0830): the declared
+     * parameter is the table value, so a DEAL function value must take the
+     * closed host parameter cell before the raw host is called.
+     */
+    private static final String TABLE_PARAM_SPECIFIER = "host/table_param";
+    private static final String TABLE_PARAM_DECLARATION_SOURCE = """
+        export function consume(t: table): string;
+        """;
+
+    /** The function value held in a table and read at the declared table cell. */
+    private static final String TABLE_PARAM_APP_SOURCE = """
+        import * as host from "host/table_param";
+
+        export function test_function_value_at_table_param(): null {
+          let holder: table = {};
+          holder.f = function(): int { return 1; };
+          let out: string = host.consume(holder.f);
+          return null;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** The deployed host: reaching it prints, so a crossing is observable. */
+    private static final String TABLE_PARAM_LUA = """
+        return {
+          consume = function(t) print("HOST-CALLED") return "ADMITTED" end,
+        }
+        """;
+
     /** The deployed LuaJIT host implementation of host/abi_probe. */
     private static final String PROBE_LUA = """
         _HOST_PROBE_LOADS = (_HOST_PROBE_LOADS or 0) + 1
@@ -522,6 +555,14 @@ public class HostModuleLoadEmissionTest {
         sources.put("src/app.deal", ARRAY_APP_SOURCE);
         return compileProject(sources,
             Map.of(ARRAY_SPECIFIER, "src/array_probe.d.deal"));
+    }
+
+    private static Fixture tableParamFixture() throws Exception {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/table_param.d.deal", TABLE_PARAM_DECLARATION_SOURCE);
+        sources.put("src/app.deal", TABLE_PARAM_APP_SOURCE);
+        return compileProject(sources,
+            Map.of(TABLE_PARAM_SPECIFIER, "src/table_param.d.deal"));
     }
 
     private static Fixture errorFixture() throws Exception {
@@ -862,12 +903,78 @@ public class HostModuleLoadEmissionTest {
         }
     }
 
+    /**
+     * The table-declared host parameter at a contextual-read function
+     * value (ISSUE-0830): the emitted artifact's loaded matcher must keep
+     * the function carrier's own token, so the call fails with the closed
+     * E8010 host parameter cell whose inner reason is the table kind arm
+     * and the host module is never invoked.
+     */
+    private static void testLuaHostTableParameterFunctionCarrier(
+            Baseline fixture) throws Exception {
+        System.out.println("-- the table-declared host parameter at a function"
+            + " value: the closed E8010 cell on the LuaJIT artifact --");
+        Path workspace = Files.createTempDirectory("host-table-param-lua");
+        try {
+            SemanticLowerer.ProjectLoweringResult result = fixture.result();
+            if (result.project() == null) {
+                fail("the table-parameter fixture lowers: "
+                    + result.diagnostics());
+                return;
+            }
+            Path artifact = workspace.resolve("project.lua");
+            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
+            deployRuntime(workspace);
+            writeFileIn(workspace, "host/table_param.lua", TABLE_PARAM_LUA);
+            Path probe = workspace.resolve("probe.lua");
+            Files.writeString(probe, """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("%s")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                local entry = surface["test_function_value_at_table_param"]
+                if entry == nil then fail("missing export") end
+                local crossed, e = pcall(entry.f)
+                if crossed then
+                  fail("the function value crossed the table-declared host parameter")
+                end
+                if type(e) ~= "table" or e[__dealCarrierKeys.d] ~= true then
+                  fail("not a DEAL error: " .. tostring(e))
+                end
+                if e.code ~= "E8010" then fail("code: " .. tostring(e.code)) end
+                if e.m ~= "parameter 1 type mismatch: expected table" then
+                  fail("message: " .. tostring(e.m))
+                end
+                if e.e ~= "table" then fail("expected: " .. tostring(e.e)) end
+                -- The host parameter cell's own actual projection is the
+                -- carrier-kind token (every table-shaped carrier projects
+                -- table), exactly the JVM host cell's __hostKind value.
+                if e.a ~= "table" then fail("actual: " .. tostring(e.a)) end
+                print("PROBE-OK")
+                """.formatted(artifact.toAbsolutePath().toString()),
+                StandardCharsets.UTF_8);
+            ProcessOutcome run = runProcess(List.of("luajit",
+                probe.toAbsolutePath().toString()), workspace, true);
+            check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
+                "the function value at the table-declared host parameter takes"
+                    + " the E8010 cell: exit=" + run.exitCode()
+                    + " stdout=" + escaped(run.stdout())
+                    + " stderr=" + escaped(run.stderr()));
+            check(!run.stdout().contains("HOST-CALLED"),
+                "the raw host is never reached with the function carrier: "
+                    + escaped(run.stdout()));
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
     // =========================================================================
     // 2. The LuaJIT load under real luajit
     // =========================================================================
 
     private static void testLuaExecution(Baseline fixture, Baseline missing,
-            Baseline cfgFixture) throws Exception {
+            Baseline cfgFixture, Baseline tableParam) throws Exception {
         System.out.println("-- the LuaJIT load under real luajit: one load per "
             + "module, one shared surface value, the pinned E8011 --");
         Path workspace = Files.createTempDirectory("host-load-lua");
@@ -899,6 +1006,14 @@ public class HostModuleLoadEmissionTest {
         } finally {
             deleteRecursively(workspace);
         }
+
+        // ISSUE-0830: a contextual-read function value at a table-declared
+        // host parameter takes the closed host parameter cell on the
+        // published LuaJIT artifact. The emitted chunk's function carrier
+        // ([fn]/sig/csig/fid, no [kind]) is a function value: the loaded
+        // matcher keeps its own function token, so the raw host is never
+        // reached and the host never observes the internal carrier table.
+        testLuaHostTableParameterFunctionCarrier(tableParam);
 
         // The pinned E8011 at the import origin (6:1, the corpus pin): the
         // closed HOST_LOAD_MISSING_EXPORT arm, no expected/actual field.
@@ -1970,9 +2085,10 @@ public class HostModuleLoadEmissionTest {
             Baseline cfg = prepare(cfgOnlyFixture(), true, roots);
             Baseline array = prepare(arrayFixture(), true, roots);
             Baseline errors = prepare(errorFixture(), false, roots);
+            Baseline tableParam = prepare(tableParamFixture(), false, roots);
             testLuaArtifactText(abi, aliases);
             testHostReadCorrelation(hostReads);
-            testLuaExecution(aliases, missing, cfg);
+            testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
             testJvmToolchain(abi);

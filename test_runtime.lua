@@ -386,6 +386,28 @@ test("carriers are rejected at a table descriptor (v1.3)", function()
   assert_boundary_error(function()
     __rt.check_table({ [__K.a] = true, [__K.n] = 0 })
   end, "E8001", "expected table", "table", "array")
+  -- The emitted chunk's function carriers carry no [kind] mark: the
+  -- closure/adapter shape ({[fn], sig, csig, fid}) and the host ABI
+  -- wrapper's [f] mark project the function token exactly like the
+  -- emitted prelude's __typedBoundaryKind, so a produced function value
+  -- never passes a table descriptor.
+  local chunkFn = {
+    [__K.fn] = function() return 1 end,
+    [__K.sig] = "function(;int)",
+    [__K.csig] = "()->int",
+    [__K.fid] = "m#f",
+  }
+  assert(__rt.typed_kind(chunkFn) == "function",
+    "the chunk function carrier projects the function token")
+  assert_boundary_error(function() __rt.check_table(chunkFn) end,
+    "E8001", "expected table", "table", "function")
+  assert_boundary_error(function() __rt.check_type("table", chunkFn) end,
+    "E8001", "expected table", "table", "function")
+  local markedFn = { [__K.f] = function() end }
+  assert(__rt.typed_kind(markedFn) == "function",
+    "the host-wrapper [f] mark projects the function token")
+  assert_boundary_error(function() __rt.check_table(markedFn) end,
+    "E8001", "expected table", "table", "function")
   -- The language null and the absent marker keep their own tokens.
   assert_boundary_error(function() __rt.check_table(__rt.__NULL) end,
     "E8001", "expected table", "table", "null")
@@ -1002,6 +1024,36 @@ test("the host parameter cell rejects a forged carrier (ISSUE-0830)", function()
     __rt.class_("@m/C", {}, {})) == __rt.__NULL)
   assert(__rt.from_lua_function("([int])->null", raw).f(
     { [__K.a] = true, [__K.n] = 0 }) == __rt.__NULL)
+end)
+
+test("the host parameter cell rejects a chunk function carrier at a table parameter (ISSUE-0830)", function()
+  -- The emitted chunk's function carrier ([fn]/sig/csig/fid, no [kind])
+  -- is a function value: the loaded matcher keeps its own token, so a
+  -- table-declared host parameter takes the closed parameter cell instead
+  -- of exposing the internal carrier table to the host.
+  local raw = function(item) return __rt.__NULL end
+  local wrapped = __rt.from_lua_function("(table)->null", raw)
+  local before = #host_arm_calls
+  local before_inner = #host_inner_calls
+  local err = assert_error(function()
+    wrapped.f({
+      [__K.fn] = function() return 1 end,
+      [__K.sig] = "function(;int)",
+      [__K.csig] = "()->int",
+      [__K.fid] = "m#f",
+    })
+  end, "E8010")
+  assert(err.message == "arm:HOST_PARAMETER_CELL", tostring(err.message))
+  assert(#host_arm_calls == before + 1)
+  assert(host_arm_calls[#host_arm_calls].values.index == 1)
+  assert(#host_inner_calls == before_inner + 1)
+  assert(host_inner_calls[#host_inner_calls].id == "TYPED_BOUNDARY_KIND")
+  assert(host_inner_calls[#host_inner_calls].values.kind == "table")
+  -- The table values keep their cell: the chunk's shared table carrier
+  -- and a plain table reach the raw host unchanged.
+  local tableCarrier = { [__K.t] = true, [__K.keys] = {}, [__K.order] = {} }
+  assert(wrapped.f(tableCarrier) == __rt.__NULL)
+  assert(wrapped.f({ a = 1 }) == __rt.__NULL)
 end)
 
 test("from_lua_function rejects wrong arg count (too few)", function()

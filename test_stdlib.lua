@@ -478,6 +478,27 @@ test("table.keys with non-table raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
+test("table.keys rejects the emitted chunk's function carrier (ISSUE-0830)", function()
+  -- The emitted chunk's closure/adapter carrier carries the private
+  -- [fn]/sig/csig/fid marks and no [kind] mark; it is a function value,
+  -- never the table a keys walk could read.
+  local __rt = require("deal.runtime")
+  local chunkFn = {
+    [__rt.__keys.fn] = function() return 1 end,
+    [__rt.__keys.sig] = "function(;int)",
+    [__rt.__keys.csig] = "()->int",
+    [__rt.__keys.fid] = "m#f",
+  }
+  assert(__rt.typed_kind(chunkFn) == "function",
+    "the chunk function carrier projects the function token")
+  local err = assert_error(function() tablelib.keys.f(chunkFn) end)
+  assert(type(err) == "table", "error should be a table")
+  assert(err.code == "E8001", tostring(err.code))
+  assert(err.message == "expected table", tostring(err.message))
+  assert(err.expected == "table", tostring(err.expected))
+  assert(err.actual == "function", tostring(err.actual))
+end)
+
 -- ===========================================================================
 -- std/json tests
 -- ===========================================================================
@@ -995,6 +1016,12 @@ test("json.stringify rejects a carrier at the declared table parameter cell", fu
       actual = "@m/C" },
     { name = "function wrapper",
       value = __rt.function_("()->null", function() return __rt.__NULL end),
+      actual = "function" },
+    { name = "emitted chunk function carrier",
+      value = { [__rt.__keys.fn] = function() end,
+        [__rt.__keys.sig] = "function(;null)",
+        [__rt.__keys.csig] = "()->null",
+        [__rt.__keys.fid] = "m#f" },
       actual = "function" },
     { name = "bytes", value = __rt.bytes_new(1), actual = "bytes" },
     { name = "async handle", value = __rt.async_start(function() end),

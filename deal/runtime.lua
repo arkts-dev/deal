@@ -352,7 +352,9 @@ end
 -- typed boundary reports as its "actual" projection (the emitted
 -- prelude's __typedBoundaryKind and this runtime agree). A DEAL table is
 -- "table" whatever string keys it carries — a user table can never
--- project a carrier kind — and a produced carrier keeps its own token.
+-- project a carrier kind — and a produced carrier keeps its own token:
+-- the emitted chunk's function carriers ([fn]/[f], no [kind]) project
+-- function exactly like the prelude classifies them.
 function __rt.typed_kind(v)
   if v == nil or v == __rt.__MISSING then return "nil" end
   if v == __rt.__NULL then return "null" end
@@ -375,6 +377,13 @@ function __rt.typed_kind(v)
   if v[__K.d] then return "Error" end
   if v[__K.c] then return v[__K.id] or "class instance" end
   if v[__K.a] then return "array" end
+  -- The emitted chunk's function carriers: the closure/adapter shape
+  -- ({[fn], sig, csig, fid}) and the host ABI wrapper's own [f] mark
+  -- carry no [kind] mark, so they are classified by the same marks the
+  -- emitted prelude's __typedBoundaryKind reads. A produced function
+  -- value therefore keeps its own token and never passes a table
+  -- descriptor; a DEAL table cannot name either private mark.
+  if v[__K.fn] ~= nil or v[__K.f] then return "function" end
   if v[__K.jn] then return "number" end
   return "table"
 end
@@ -383,10 +392,10 @@ function __rt.check_table(v, file, line, column)
   -- The strict table split: the language-null sentinel is not a table, the
   -- internal absent marker is not a table, and a produced carrier of
   -- another kind (a class instance, a bytes buffer, a function wrapper,
-  -- an async handle, an array, a numeric-variant carrier) keeps its own
-  -- kind and never passes a table descriptor. A plain table — and the
-  -- emitted chunk's shared table carrier — is the table value whatever
-  -- string keys it carries.
+  -- the emitted chunk's own function carrier, an async handle, an array,
+  -- a numeric-variant carrier) keeps its own kind and never passes a
+  -- table descriptor. A plain table — and the emitted chunk's shared
+  -- table carrier — is the table value whatever string keys it carries.
   if v == __rt.__NULL then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
       "expected table", file, line, column, "table", "null"))
