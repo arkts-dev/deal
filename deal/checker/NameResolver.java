@@ -167,9 +167,11 @@ public final class NameResolver {
         return new CanonicalClassIdentity(moduleIdentity, className);
     }
 
-    /** A Class type carrying the layer-resolved identity. */
+    /** A Class type carrying the layer-resolved identity and the
+     * defining provider module (the declaring module's own wiring key). */
     private Type.Class classTypeFor(String name, String wiringPath) {
-        return Types.classType(name, classIdentityFor(wiringPath, name));
+        return Types.classType(name, classIdentityFor(wiringPath, name),
+            Types.providerModule(wiringPath));
     }
 
     /** The intrinsic Error class type (E2's synthesis). */
@@ -332,6 +334,12 @@ public final class NameResolver {
             modulesInProgress.add(path);
             Map<String, Type> exports = moduleResolver.resolveModule(
                 path, modulePath, modulesInProgress);
+            Map<String, Symbol.ClassSymbol> importedClasses =
+                moduleResolver.resolveModuleClassSymbols(
+                    path, modulePath, modulesInProgress);
+            Map<String, Symbol.FunctionSymbol> importedFunctions =
+                moduleResolver.resolveModuleFunctionSymbols(
+                    path, modulePath, modulesInProgress);
             // An import binding named `bytes` shadows the lowest-tier
             // bytes intrinsic (imports resolve at step 4, intrinsics at
             // step 5); the intrinsic root binding must be removed before
@@ -339,7 +347,8 @@ public final class NameResolver {
             if (isShadowableIntrinsic(alias)) {
                 root.remove(alias);
             }
-            root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span()));
+            root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span(),
+                importedClasses, importedFunctions));
         } catch (ModuleResolver.CffiImportWithoutNativeLibraryException e) {
             // The C FFI manifest policy (docs/spec-v1.3.md §Package manifest):
             // importing a C FFI declaration file without an externals
@@ -476,7 +485,8 @@ public final class NameResolver {
         }
 
         Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-        root.define(name, new Symbol.FunctionSymbol(name, ft));
+        root.define(name, new Symbol.FunctionSymbol(name, ft,
+            fd.params().stream().map(Parameter::type).toList(), modulePath));
     }
 
     /**
@@ -650,24 +660,18 @@ public final class NameResolver {
     }
 
     /**
-     * The local class declaration a type annotation names, or
+     * The local or imported class declaration a type annotation names, or
      * {@code null} when the annotation does not pin one (primitives,
-     * imported classes, function types). The pin travels on the declared
-     * variable so the assignment gate can tell two same-named class
-     * declarations of one module apart (ISSUE-0717 defect snippet 47).
+     * function types, unresolvable surfaces). The pin travels on the
+     * declared variable so the assignment gate can tell two same-named
+     * class declarations apart (ISSUE-0717 defect snippet 47) and the
+     * exact receiver resolution can select the declaring provider of a
+     * qualified annotation (ISSUE-0809): a bare name resolves its local
+     * symbol, a qualified name the alias's own declared class symbol, and
+     * nullable/array wrappers recurse to their inner class leaf.
      */
     public Symbol.ClassSymbol declaredClassSymbolOf(TypeNode tn) {
-        if (tn instanceof NamedType nt) {
-            Symbol sym = currentScope.resolve(nt.name());
-            if (sym instanceof Symbol.ClassSymbol cs) {
-                return cs;
-            }
-            return null;
-        }
-        if (tn instanceof NullableType nt) {
-            return declaredClassSymbolOf(nt.innerType());
-        }
-        return null;
+        return classSymbolInScope(currentScope, tn);
     }
 
     /**
@@ -752,7 +756,8 @@ public final class NameResolver {
             }
 
             Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-            currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft));
+            currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft,
+                fd.params().stream().map(Parameter::type).toList(), modulePath));
         }
 
         SymbolTable saved = currentScope;
@@ -1042,14 +1047,16 @@ public final class NameResolver {
             case "bytes" -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
-                    yield Types.classType(cs.name(), cs.identity());
+                    yield Types.classType(cs.name(), cs.identity(),
+                        Types.providerModule(cs.modulePath()));
                 }
                 yield Type.Bytes.INSTANCE;
             }
             default -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
-                    yield Types.classType(cs.name(), cs.identity());
+                    yield Types.classType(cs.name(), cs.identity(),
+                        Types.providerModule(cs.modulePath()));
                 }
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
                         .withMissingSymbol("TYPE", name, modulePath, List.of("class")));
@@ -1132,6 +1139,71 @@ public final class NameResolver {
         } catch (ModuleResolver.ModuleNotFoundException e) {
             return null;
         }
+    }
+
+    /**
+     * Resolves the exact module-level class declaration a class-typed
+     * annotation names in this module's scope, or {@code null} for a
+     * primitive/function/foreign-surfaceless annotation: a qualified
+     * spelling resolves the alias's own declared class symbol (the
+     * imported module's class surface), a bare name its local symbol.
+     * Two same-named classes of sibling modules in one directory share
+     * one canonical identity, so the declared symbol — never an
+     * identity-first or textual lookup — names the declaration the
+     * annotation selected.
+     */
+    public Symbol.ClassSymbol resolveTypeNodeClassSymbol(TypeNode typeNode) {
+        return classSymbolInScope(root, typeNode);
+    }
+
+    /**
+     * The declaring module's exact declared class symbol of one
+     * annotation: this module's scope for a same-module (or empty)
+     * declaring module, the module resolver's declared-symbol surface
+     * otherwise (implementation modules carry their own checked symbol
+     * tables; declaration modules resolve through their synthesized
+     * resolver). {@code null} when no exact class declaration resolves.
+     */
+    public Symbol.ClassSymbol resolveTypeNodeClassSymbolInModule(
+            TypeNode typeNode, String modulePath) {
+        if (modulePath == null || modulePath.isEmpty()
+                || modulePath.equals(this.modulePath)) {
+            return resolveTypeNodeClassSymbol(typeNode);
+        }
+        try {
+            return moduleResolver.resolveTypeNodeClassSymbolInModule(
+                typeNode, modulePath, this.modulePath);
+        } catch (ModuleResolver.ModuleNotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The exact class symbol one annotation names in the supplied scope
+     * (the same shape {@code TypeChecker#exactAnnotationClassSymbol}
+     * consumes): the local declaration of a bare name, the imported
+     * module's own class symbol of a qualified name, and the recursive
+     * inner forms of nullable/array annotations.
+     */
+    public static Symbol.ClassSymbol classSymbolInScope(SymbolTable scope,
+                                                        TypeNode typeNode) {
+        if (scope == null || typeNode == null) {
+            return null;
+        }
+        return switch (typeNode) {
+            case NamedType nt -> {
+                Symbol sym = scope.resolve(nt.name());
+                yield sym instanceof Symbol.ClassSymbol cs ? cs : null;
+            }
+            case QualifiedType qt -> {
+                Symbol sym = scope.resolve(qt.moduleName());
+                yield sym instanceof Symbol.ModuleSymbol ms
+                    ? ms.classSymbols().get(qt.typeName()) : null;
+            }
+            case NullableType nt -> classSymbolInScope(scope, nt.innerType());
+            case ArrayType at -> classSymbolInScope(scope, at.elementType());
+            default -> null;
+        };
     }
 
     /**

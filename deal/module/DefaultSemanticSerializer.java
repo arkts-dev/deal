@@ -130,7 +130,8 @@ public final class DefaultSemanticSerializer {
             Map<String, List<PlannedDefaultClass>> plannedClasses) {
         Objects.requireNonNull(modules, "modules");
         Objects.requireNonNull(plannedClasses, "plannedClasses");
-        return new Serializer(modules, plannedClasses, List.of()).run();
+        return new Serializer(modules, plannedClasses, List.of(),
+            Map.of()).run();
     }
 
     public static Result serialize(
@@ -142,7 +143,30 @@ public final class DefaultSemanticSerializer {
         Objects.requireNonNull(additionalDigestDemands,
             "additionalDigestDemands");
         return new Serializer(modules, plannedClasses,
-            additionalDigestDemands).run();
+            additionalDigestDemands, Map.of()).run();
+    }
+
+    /**
+     * The whole-project overload: {@code projectProviders} is every
+     * resolved module's own planning snapshot, keyed by its dotted
+     * module path (ISSUE-0809 exact provider carriage). A function-body
+     * construction whose exact checked declaration lives in a module the
+     * consuming unit reaches only through an imported declaration
+     * resolves that module's snapshot for its provider digest, never an
+     * identity-equal sibling import.
+     */
+    public static Result serialize(
+            Map<String, DefaultSerializerModuleInput> modules,
+            Map<String, List<PlannedDefaultClass>> plannedClasses,
+            List<DefaultResourceOccurrence> additionalDigestDemands,
+            Map<String, DefaultPlanImport> projectProviders) {
+        Objects.requireNonNull(modules, "modules");
+        Objects.requireNonNull(plannedClasses, "plannedClasses");
+        Objects.requireNonNull(additionalDigestDemands,
+            "additionalDigestDemands");
+        Objects.requireNonNull(projectProviders, "projectProviders");
+        return new Serializer(modules, plannedClasses,
+            additionalDigestDemands, projectProviders).run();
     }
 
     // =========================================================================
@@ -242,12 +266,24 @@ public final class DefaultSemanticSerializer {
 
         private final List<DefaultResourceOccurrence> additionalDemands;
 
+        /**
+         * Every resolved module's own planning snapshot, keyed by its
+         * dotted module path: the exact declaration a function body
+         * constructs through an imported declaration resolves its
+         * provider here (never an identity-equal sibling import).
+         */
+        private final Map<String, DefaultPlanImport> projectProviders;
+
         Serializer(Map<String, DefaultSerializerModuleInput> modules,
                    Map<String, List<PlannedDefaultClass>> plannedClasses,
-                   List<DefaultResourceOccurrence> additionalDemands) {
+                   List<DefaultResourceOccurrence> additionalDemands,
+                   Map<String, DefaultPlanImport> projectProviders) {
             this.modules.putAll(modules);
             this.plannedClasses.putAll(plannedClasses);
             this.additionalDemands = List.copyOf(additionalDemands);
+            this.projectProviders = Map.copyOf(
+                Objects.requireNonNull(projectProviders,
+                    "projectProviders"));
             for (DefaultSerializerModuleInput input : modules.values()) {
                 moduleByUri.put(input.location().semanticModuleIdentity()
                     .canonicalResolvedSourceUri(), input);
@@ -1627,7 +1663,9 @@ public final class DefaultSemanticSerializer {
                     return input.nameResolver().resolveTypeNode(
                         typeNode);
                 },
-                Map.of());
+                Map.of(),
+                input.checkResult().exactClassDeclarations(),
+                projectProviders);
             List<DefaultIrNode> statements = recorder.recordFunctionBody(
                 fd, moduleScope);
             Set<Site> siteSet = new LinkedHashSet<>();

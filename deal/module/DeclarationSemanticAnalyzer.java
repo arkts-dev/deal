@@ -12,14 +12,17 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 import deal.identity.CanonicalClassIdentity;
 import deal.types.Type;
 import deal.types.Types;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -60,8 +63,23 @@ public final class DeclarationSemanticAnalyzer {
      */
     public static Result analyze(DefaultDeclarationModuleInput input,
                                  ModuleIdentityAssembly identityAssembly) {
+        return analyze(input, identityAssembly, Map.of());
+    }
+
+    /**
+     * The whole-project overload: {@code projectProviders} is every
+     * resolved module's own planning snapshot, keyed by its dotted
+     * module path (ISSUE-0809 exact provider carriage): an extern-C
+     * declaration default whose class-valued annotation resolves in a
+     * module this declaration reaches through its own imports resolves
+     * that module's snapshot, never an identity-equal sibling.
+     */
+    public static Result analyze(DefaultDeclarationModuleInput input,
+                                 ModuleIdentityAssembly identityAssembly,
+                                 Map<String, DefaultPlanImport> projectProviders) {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(identityAssembly, "identityAssembly");
+        Objects.requireNonNull(projectProviders, "projectProviders");
         List<CompilerDiagnostic> diagnostics = new ArrayList<>();
 
         // 1. Hoist declaration symbols over the declaration's own AST:
@@ -144,7 +162,7 @@ public final class DeclarationSemanticAnalyzer {
                     identityResult).identity();
             PlannedDefaultClass plannedClass = planStructClass(cd, root,
                 classIdentity, input, checked, resolver, declaringContext,
-                diagnostics);
+                projectProviders, diagnostics);
             if (plannedClass != null) {
                 planned.add(plannedClass);
             }
@@ -161,10 +179,12 @@ public final class DeclarationSemanticAnalyzer {
             CanonicalClassIdentity classIdentity,
             DefaultDeclarationModuleInput input, CheckResult checked,
             NameResolver resolver, DefaultDeclaringContext declaringContext,
+            Map<String, DefaultPlanImport> projectProviders,
             List<CompilerDiagnostic> diagnostics) {
         List<CompilerDiagnostic> classDiagnostics = new ArrayList<>();
         List<CompilerClassDefaultEntry> entries = new ArrayList<>();
         List<DefaultResourceOccurrence> occurrences = new ArrayList<>();
+        Map<DiagnosticRange, String> classLiteralProviders = new LinkedHashMap<>();
         Set<SemanticResourceIdentity> seen = new LinkedHashSet<>();
         Set<String> fieldNames = new LinkedHashSet<>();
 
@@ -263,8 +283,11 @@ public final class DeclarationSemanticAnalyzer {
                     resolver.setCurrentScope(resolutionScope);
                     return resolver.resolveTypeNode(typeNode);
                 },
-                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()));
+                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()),
+                checked.exactClassDeclarations(),
+                projectProviders);
             DefaultIrNode ir = recorder.record(def, root, fieldType);
+            classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());
             if (!recorder.awaitDiagnostics().isEmpty()) {
                 failed = true;
@@ -291,7 +314,8 @@ public final class DeclarationSemanticAnalyzer {
         CompilerClassDefaultPlan plan = new CompilerClassDefaultPlan(
             classIdentity, input.location().semanticModuleIdentity(),
             entries, Set.of());
-        return new PlannedDefaultClass(plan, cd, occurrences);
+        return new PlannedDefaultClass(plan, cd, occurrences,
+            classLiteralProviders);
     }
 
 }

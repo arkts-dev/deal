@@ -58,6 +58,26 @@ final class StubModuleResolver implements ModuleResolver {
         throw new ModuleNotFoundException("Module not found: " + modulePath);
     }
 
+    /**
+     * The imported module's own declared class symbols by declared name
+     * (the exact declaring occurrence route): the stub serves the class
+     * symbols registered for that module path, so a harness can model
+     * two same-named declarations of one canonical identity (an imported
+     * one and the local one) without a textual or identity-first match.
+     */
+    @Override
+    public Map<String, Symbol.ClassSymbol> resolveModuleClassSymbols(
+            String modulePath, String importingModule,
+            Set<String> modulesInProgress) {
+        Map<String, Symbol.ClassSymbol> declared = new HashMap<>();
+        for (Map.Entry<String, Symbol.ClassSymbol> entry : classSymbols.entrySet()) {
+            if (entry.getKey().startsWith(modulePath + ":")) {
+                declared.put(entry.getValue().name(), entry.getValue());
+            }
+        }
+        return declared;
+    }
+
     @Override
     public Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath,
                                                   String importingModule)

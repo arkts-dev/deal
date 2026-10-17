@@ -21,6 +21,7 @@ import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryContext;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryOutcome;
@@ -1114,6 +1115,17 @@ public final class SemanticOracle {
          */
         final Map<ModuleId, ModuleInitLifecycle> moduleInitLifecycles =
             new LinkedHashMap<>();
+        /**
+         * The generated JSON plan entries of the closure keyed by the
+         * canonical class identity: the emitted plan table carries the
+         * unique plan-bearing declaration's layout when one exists (the
+         * emission order's last declaration otherwise), so the JSON walks
+         * resolve the same declaration the emitted plan table carries —
+         * never a first-declaration or order-dependent sibling.
+         */
+        final Map<ClassId, ClassLayout> jsonPlanLayouts = new LinkedHashMap<>();
+        /** The declaring unit of each {@link #jsonPlanLayouts} entry. */
+        private final Map<ClassId, ModuleId> jsonPlanOwners = new LinkedHashMap<>();
 
         Execution(LoweredModuleUnit unit, StructuredBodyTable table, HostResponder responder) {
             this(unit, table, responder, Map.of());
@@ -1155,6 +1167,76 @@ public final class SemanticOracle {
             classLayouts.putAll(this.declarationLayouts);
 
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
+            resolveJsonPlanLayouts();
+        }
+
+        /**
+         * Resolves the closure's generated JSON plan entries with the same
+         * selection the shared emitters apply: a canonical identity the
+         * closure declares more than once carries the unique plan-bearing
+         * declaration's layout under the key (the emission order's last
+         * declaration otherwise).
+         */
+        private void resolveJsonPlanLayouts() {
+            for (UnitState state : units.values()) {
+                for (Map.Entry<ClassId, ClassLayout> entry
+                        : state.unit.classLayouts().entrySet()) {
+                    ClassId classId = entry.getKey();
+                    ModuleId previous = jsonPlanOwners.get(classId);
+                    UnitState previousState =
+                        previous == null ? null : units.get(previous);
+                    if (previous == null
+                            || jsonPlanBearing(state.unit, classId)
+                            || !jsonPlanBearing(previousState == null
+                                ? null : previousState.unit, classId)) {
+                        jsonPlanLayouts.put(classId, entry.getValue());
+                        jsonPlanOwners.put(classId, state.unit.moduleId());
+                    }
+                }
+            }
+            ClassLayout error = classLayouts.get(ClassId.ERROR);
+            if (error != null) {
+                jsonPlanLayouts.put(ClassId.ERROR, error);
+            }
+        }
+
+        /**
+         * Whether one unit's own declaration of a canonical class identity
+         * is plan-bearing (the unit generates the generated JSON helper
+         * ops of the identity).
+         */
+        private static boolean jsonPlanBearing(LoweredModuleUnit unit,
+                                               ClassId classId) {
+            if (unit == null) {
+                return false;
+            }
+            for (SemanticOp op : unit.ops()) {
+                KindPayload payload = op.payload();
+                if (payload instanceof KindPayload.JsonFromClassPayload from
+                        && from.layout().classId().equals(classId)) {
+                    return true;
+                }
+                if (payload instanceof KindPayload.JsonToClassPayload to
+                        && to.layout().classId().equals(classId)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The JSON walk's layout-resolution view of one JSON op: the
+         * closure's plan-owner layouts with the executing unit's own
+         * declaration of the op's class overlaid (the walk validates the
+         * payload layout against the map's entry of its own class).
+         */
+        private Map<ClassId, ClassLayout> jsonLayoutView(SemanticOp op,
+                                                         ClassId classId) {
+            ClassLayout exact = stateOf(op.opId()).unit.classLayouts().get(classId);
+            if (exact == null || exact.equals(jsonPlanLayouts.get(classId))) {
+                return jsonPlanLayouts;
+            }
+            return new ExactLayoutMap(jsonPlanLayouts, classId, exact);
         }
 
         Execution(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
@@ -1230,6 +1312,7 @@ public final class SemanticOracle {
             classLayouts.putAll(this.declarationLayouts);
 
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
+            resolveJsonPlanLayouts();
         }
 
         /** One module's validated execution state (ops, children, ownership). */
@@ -1337,6 +1420,90 @@ public final class SemanticOracle {
                     + "the executable closure (producer defect)");
             }
             return state;
+        }
+
+        /**
+         * One class operation's exact layout-resolution view: the
+         * operation's recorded construction entry's owner module's own
+         * declared layout (an imported provider), the executing unit's own
+         * declared layout (a same-module declaration or a record-less
+         * local), otherwise the merged identity-keyed map. Two same-named
+         * declarations of sibling modules in one directory share the
+         * canonical class id, so the merged map alone cannot select the
+         * declared layout.
+         */
+        private Map<ClassId, ClassLayout> layoutView(SemanticOp op, ClassId classId,
+                                                     ClassFactoryId classFactoryRef) {
+            ClassLayout exact = null;
+            if (classFactoryRef != null) {
+                for (Map.Entry<ModuleId, UnitState> entry : units.entrySet()) {
+                    ClassFactoryRegistry registry = registries.get(entry.getKey());
+                    if (registry == null) {
+                        registry = entry.getValue().unit.classFactories();
+                    }
+                    if (registry.factoryFor(classFactoryRef) != null) {
+                        exact = entry.getValue().unit.classLayouts().get(classId);
+                        break;
+                    }
+                }
+            }
+            if (exact == null) {
+                exact = stateOf(op.opId()).unit.classLayouts().get(classId);
+            }
+            if (exact == null || exact.equals(classLayouts.get(classId))) {
+                return classLayouts;
+            }
+            return new ExactLayoutMap(classLayouts, classId, exact);
+        }
+
+        /**
+         * The exact declared layout of every constructed class instance
+         * (identity-keyed): an instance's field order is its construction's
+         * declaring layout, so a name-keyed operation on the instance
+         * (HAS_FIELD, the transferred default read) resolves through the
+         * instance's own declaration even when a same-identity sibling
+         * declaration reaches the merged layout map.
+         */
+        final IdentityHashMap<Value.ClassValue, ClassLayout> instanceLayouts =
+            new IdentityHashMap<>();
+
+        /** Registers one published instance's exact declared layout. */
+        private void recordInstanceLayout(Value published, ClassLayout layout) {
+            if (layout != null && published instanceof Value.ClassValue instance) {
+                instanceLayouts.put(instance, layout);
+            }
+        }
+
+        /** The merged layout map with one class's exact declared layout. */
+        private static final class ExactLayoutMap
+                extends java.util.AbstractMap<ClassId, ClassLayout> {
+            private final Map<ClassId, ClassLayout> base;
+            private final ClassId classId;
+            private final ClassLayout exact;
+
+            ExactLayoutMap(Map<ClassId, ClassLayout> base, ClassId classId,
+                           ClassLayout exact) {
+                this.base = base;
+                this.classId = classId;
+                this.exact = exact;
+            }
+
+            @Override
+            public ClassLayout get(Object key) {
+                return classId.equals(key) ? exact : base.get(key);
+            }
+
+            @Override
+            public boolean containsKey(Object key) {
+                return classId.equals(key) || base.containsKey(key);
+            }
+
+            @Override
+            public Set<Map.Entry<ClassId, ClassLayout>> entrySet() {
+                Map<ClassId, ClassLayout> merged = new LinkedHashMap<>(base);
+                merged.put(classId, exact);
+                return merged.entrySet();
+            }
         }
 
         /** Resolves one op id in its owning unit. */
@@ -2288,7 +2455,10 @@ public final class SemanticOracle {
             }
             if (receiver instanceof Value.ClassValue classValue) {
 
-                ClassLayout layout = classLayouts.get(classValue.classId());
+                ClassLayout layout = instanceLayouts.get(classValue);
+                if (layout == null) {
+                    layout = classLayouts.get(classValue.classId());
+                }
                 if (layout == null || layout.fields().size() != classValue.fields().size()) {
                     throw new IllegalStateException("HAS_FIELD " + op.opId()
                         + " class instance " + classValue.classId()
@@ -2375,7 +2545,8 @@ public final class SemanticOracle {
             List<OpId> defaultChildIds = jsonDefaultChildrenOf(state,
                 payload.layout());
             Value produced = oracleValueOf(ClassOpsExecutor.executeJsonFromClass(op,
-                priorValues, defaultChildIds, defaultOps, classLayouts,
+                priorValues, defaultChildIds, defaultOps,
+                jsonLayoutView(op, payload.layout().classId()),
                 JsonClassAlgorithmAdapter.parser(), nestedClassFactory(op),
                 bodyRunner(op)));
             return publish(op, produced);
@@ -2388,11 +2559,17 @@ public final class SemanticOracle {
             priorValues.put(payload.classValue(),
                 executorValueOf(valueOf(payload.classValue())));
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-                ClassOpsExecutor.executeJsonToClass(op, priorValues, classLayouts,
+                ClassOpsExecutor.executeJsonToClass(op, priorValues,
+                    jsonLayoutView(op, payload.layout().classId()),
                     JsonClassAlgorithmAdapter.stringifier(), activeCallOriginOf(op));
             return switch (outcome) {
-                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
-                    publish(op, oracleValueOf(success.value()));
+                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success -> {
+                    Value published = oracleValueOf(success.value());
+                    recordInstanceLayout(published,
+                        jsonLayoutView(op, payload.layout().classId())
+                            .get(payload.layout().classId()));
+                    yield publish(op, published);
+                }
                 case ClassOpsExecutor.Outcome.Failure<ClassOpsExecutor.Value> failure ->
                     throw DealFailure.of(failure.failure().failure(),
                         failure.failure().origin(), List.copyOf(frames));
@@ -2423,8 +2600,18 @@ public final class SemanticOracle {
 
         private ClassOpsExecutor.NestedClassFactory nestedClassFactory(SemanticOp triggering) {
             return (classId, providedFields) -> {
+                // The plan owner of a multiple-declaration identity: the
+                // generated plan table carries exactly that declaration's
+                // layout and defaults, so the nested decode's default
+                // filling resolves the owner module's CLASS_FACTORY — never
+                // a unit-order-first sibling's.
+                ModuleId planOwner = jsonPlanOwners.get(classId);
                 SemanticOp factoryOp = null;
                 for (UnitState candidateState : units.values()) {
+                    if (planOwner != null
+                            && !candidateState.unit.moduleId().equals(planOwner)) {
+                        continue;
+                    }
                     for (SemanticOp candidate : candidateState.unit.ops()) {
                         if (candidate.kind() != SemanticOpKind.CLASS_FACTORY) {
                             continue;
@@ -2453,11 +2640,14 @@ public final class SemanticOracle {
                     }
                 }
                 ClassOpsExecutor.BodyRunner runner = this::runDefaultBlockBody;
+                Map<ClassId, ClassLayout> factoryLayoutView = layoutView(factoryOp,
+                    ((KindPayload.ClassFactoryPayload) factoryOp.payload()).classId(),
+                    null);
                 emitStartParented(factoryOp, triggering.opId(), List.of());
                 ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome;
                 try {
                     outcome = ClassOpsExecutor.executeClassFactory(factoryOp, triggering,
-                        ownerDefaultOps, classLayouts, providedFields, runner);
+                        ownerDefaultOps, factoryLayoutView, providedFields, runner);
                 } catch (DealFailure failure) {
                     emitFailureParented(factoryOp, triggering.opId(), failure);
                     throw failure;
@@ -2473,6 +2663,10 @@ public final class SemanticOracle {
                 ClassOpsExecutor.Value.Class transferInstance =
                     (ClassOpsExecutor.Value.Class) success.value();
                 Value transferValue = oracleValueOf(transferInstance);
+                recordInstanceLayout(transferValue,
+                    factoryLayoutView.get(
+                        ((KindPayload.ClassFactoryPayload) factoryOp.payload())
+                            .classId()));
                 if (factoryOp.result() instanceof ValueId factoryResult) {
                     putValue(factoryResult, transferValue);
                 }
@@ -2501,9 +2695,11 @@ public final class SemanticOracle {
                 }
             }
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome;
+            Map<ClassId, ClassLayout> classLayoutView = layoutView(op,
+                payload.classId(), payload.classFactoryRef());
             switch (payload.defaultOwner()) {
                 case LOCAL -> outcome = ClassOpsExecutor.executeClassNewLocal(op,
-                    priorValues, defaultOps, boundaryOps, classLayouts,
+                    priorValues, defaultOps, boundaryOps, classLayoutView,
                     checkRunner(op, payload, boundaryOps, null),
                     bodyRunner(op));
                 case SHARED_FACTORY -> {
@@ -2569,7 +2765,8 @@ public final class SemanticOracle {
                     ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> transfer;
                     try {
                         transfer = ClassOpsExecutor.executeClassFactory(factoryOp, op,
-                            ownerDefaultOps, classLayouts, providedNames, recordingRunner);
+                            ownerDefaultOps, layoutView(factoryOp, payload.classId(), null),
+                            providedNames, recordingRunner);
                     } catch (DealFailure failure) {
                         emitFailureParented(factoryOp, op.opId(), failure);
                         throw failure;
@@ -2584,6 +2781,8 @@ public final class SemanticOracle {
                             + "(producer defect)");
                     }
                     Value transferValue = oracleValueOf(transferInstance);
+                    recordInstanceLayout(transferValue,
+                        classLayoutView.get(payload.classId()));
                     if (!(transferValue instanceof Value.ClassValue transferClassValue)) {
                         throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
                             + " transfer converted to a non-instance value "
@@ -2607,7 +2806,7 @@ public final class SemanticOracle {
                     };
                     outcome = ClassOpsExecutor.executeClassNewSharedFactory(op,
                         priorValues, registry, ownerState.opsById, boundaryOps,
-                        classLayouts, checkRunner(op, payload, boundaryOps,
+                        classLayoutView, checkRunner(op, payload, boundaryOps,
                             (ValueId) factoryOp.result()), replayRunner);
                 }
                 case HOST_DEFAULTS -> {
@@ -2710,8 +2909,12 @@ public final class SemanticOracle {
                     + " outside the executable owners (producer defect)");
             }
             return switch (outcome) {
-                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
-                    publish(op, oracleValueOf(success.value()));
+                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success -> {
+                    Value published = oracleValueOf(success.value());
+                    recordInstanceLayout(published,
+                        classLayoutView.get(payload.classId()));
+                    yield publish(op, published);
+                }
                 case ClassOpsExecutor.Outcome.Failure<ClassOpsExecutor.Value> failure ->
                     throw DealFailure.of(failure.failure().failure(),
                         failure.failure().origin(), List.copyOf(frames));
@@ -2842,7 +3045,10 @@ public final class SemanticOracle {
         /** The present value of one named declaration-order field of a class instance. */
         private Value classFieldOf(SemanticOp op, Value.ClassValue instance,
                                    String fieldName) {
-            ClassLayout layout = classLayouts.get(instance.classId());
+            ClassLayout layout = instanceLayouts.get(instance);
+            if (layout == null) {
+                layout = classLayouts.get(instance.classId());
+            }
             if (layout == null || layout.fields().size() != instance.fields().size()) {
                 throw new IllegalStateException("CLASS_NEW " + op.opId()
                     + " instance " + instance.classId()
@@ -3162,7 +3368,8 @@ public final class SemanticOracle {
                         fieldCommitValues(op, payload.classValue(), payload.value());
                     applyFieldCommit(op, payload.classValue(),
                         ClassOpsExecutor.executeFieldWrite(op, priorValues,
-                            boundaries.get(0), boundaries.get(1), classLayouts,
+                            boundaries.get(0), boundaries.get(1),
+                            layoutView(op, payload.classId(), payload.classFactoryRef()),
                             sequentialBoundaryRunner(boundaries)));
                 }
                 case KindPayload.FieldDeletePayload payload -> {
@@ -3172,7 +3379,8 @@ public final class SemanticOracle {
                         fieldCommitValues(op, payload.classValue(), null);
                     applyFieldCommit(op, payload.classValue(),
                         ClassOpsExecutor.executeFieldDelete(op, priorValues,
-                            boundaries.get(0), classLayouts,
+                            boundaries.get(0),
+                            layoutView(op, payload.classId(), payload.classFactoryRef()),
                             sequentialBoundaryRunner(boundaries)));
                 }
                 default -> throw new IllegalStateException(
@@ -3296,7 +3504,9 @@ public final class SemanticOracle {
                 executorValueOf(resolvedSlot(op, payload.classValue())));
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
                 ClassOpsExecutor.executeFieldRead(op, priorValues, boundaries.get(0),
-                    boundaries.get(1), classLayouts, sequentialBoundaryRunner(boundaries));
+                    boundaries.get(1),
+                    layoutView(op, payload.classId(), payload.classFactoryRef()),
+                    sequentialBoundaryRunner(boundaries));
             return switch (outcome) {
                 case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
                     publish(op, oracleValueOf(success.value()));

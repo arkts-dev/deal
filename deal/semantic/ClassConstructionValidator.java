@@ -80,6 +80,91 @@ public final class ClassConstructionValidator {
             ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses) {
+        return validate(unit, table, factories, jsonDefaults, ownInterface,
+            sharedFactories, declarationClasses, Map.of());
+    }
+
+    /**
+     * The composed per-module production admission with the supplied
+     * provider-keyed shared-factory facts: two same-named classes of
+     * distinct sibling modules in one directory share one canonical
+     * class identity, so the recorded construction entry — never the
+     * identity-keyed first match — selects the exact declaring provider
+     * of a {@code CLASS_NEW(SHARED_FACTORY)}.
+     */
+    public static Optional<CompilerDiagnostic> validate(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            ClassFactoryRegistry factories,
+            JsonDefaultChildTable jsonDefaults,
+            ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts) {
+        return validate(unit, table, factories, jsonDefaults, ownInterface,
+            sharedFactories, declarationClasses, providerFactoryFacts, Set.of());
+    }
+
+    /**
+     * The composed per-module production admission with the project-wide
+     * set of canonical class identities that carry more than one
+     * plan-bearing ({@code @jsonable}) declaration: the generated JSON
+     * plan key is the canonical class identity, so exactly one
+     * plan-bearing declaration resolves the nested link exactly while a
+     * same-identity declaration without a generated plan registers no
+     * plan and never makes the key ambiguous. Only the genuine two-plan
+     * collision fails the nested link closed.
+     */
+    public static Optional<CompilerDiagnostic> validate(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            ClassFactoryRegistry factories,
+            JsonDefaultChildTable jsonDefaults,
+            ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
+            Set<ClassId> ambiguousJsonPlanClassIds) {
+        return validate(unit, table, factories, jsonDefaults, ownInterface,
+            sharedFactories, declarationClasses, providerFactoryFacts,
+            ambiguousJsonPlanClassIds, Map.of());
+    }
+
+    /**
+     * The declaration one canonical class identity's generated JSON plan
+     * carries (the plan owner): its declaring module and, when that
+     * declaration is exported, its construction entry. Two same-named
+     * declarations of sibling modules in one directory share one canonical
+     * identity, so a nested JSON link resolves through this recorded owner
+     * — never through the unit-local sibling layout an identity-keyed
+     * lookup would mask it with.
+     */
+    public record ClassPlanOwner(ModuleId module, ClassFactoryId constructionEntry) {
+        public ClassPlanOwner {
+            Objects.requireNonNull(module, "module must not be null");
+        }
+    }
+
+    /**
+     * The composed per-module production admission with the recorded plan
+     * owners of the project-wide multiple-declaration class identities:
+     * the generated JSON plan table is keyed by the canonical class
+     * identity and carries exactly the owner declaration's layout (the
+     * unique plan-bearing declaration when one exists, the emission
+     * order's last declaration otherwise), so every nested JSON link
+     * validates that layout instead of the unit-local sibling.
+     */
+    public static Optional<CompilerDiagnostic> validate(
+            LoweredModuleUnit unit,
+            StructuredBodyTable table,
+            ClassFactoryRegistry factories,
+            JsonDefaultChildTable jsonDefaults,
+            ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+            Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
+            Set<ClassId> ambiguousJsonPlanClassIds,
+            Map<ClassId, ClassPlanOwner> jsonPlanOwners) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
@@ -88,8 +173,15 @@ public final class ClassConstructionValidator {
         Objects.requireNonNull(sharedFactories, "sharedFactories must not be null");
         Objects.requireNonNull(declarationClasses,
             "declarationClasses must not be null");
+        Objects.requireNonNull(providerFactoryFacts,
+            "providerFactoryFacts must not be null");
+        Objects.requireNonNull(ambiguousJsonPlanClassIds,
+            "ambiguousJsonPlanClassIds must not be null");
+        Objects.requireNonNull(jsonPlanOwners,
+            "jsonPlanOwners must not be null");
         Context context = new Context(unit, table, factories, jsonDefaults, ownInterface,
-            sharedFactories, declarationClasses);
+            sharedFactories, declarationClasses, providerFactoryFacts,
+            ambiguousJsonPlanClassIds, jsonPlanOwners);
         Optional<CompilerDiagnostic> failure = context.checkFactoryCoherence();
         if (failure.isPresent()) {
             return failure;
@@ -671,6 +763,31 @@ public final class ClassConstructionValidator {
         private final ExternalModuleInterface ownInterface;
         private final Map<ClassId, SharedFactoryFacts> sharedFactories;
         /**
+         * The provider-keyed shared-factory facts of the accumulated
+         * project closure (the declared class occurrence's construction
+         * entry to its facts): a {@code CLASS_NEW(SHARED_FACTORY)}
+         * resolves its exact declaring provider through its recorded
+         * construction entry, never through the (possibly ambiguous)
+         * canonical class identity alone.
+         */
+        private final Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts;
+        /**
+         * The project-wide canonical class identities carrying more than
+         * one plan-bearing ({@code @jsonable}) declaration: only those make
+         * the generated JSON plan key (the canonical identity) unable to
+         * select one plan.
+         */
+        private final Set<ClassId> ambiguousJsonPlanClassIds;
+        /**
+         * The recorded plan owners of the project-wide
+         * multiple-declaration class identities: the declaration the
+         * generated JSON plan table carries under the canonical key. A
+         * nested JSON link validates this owner's layout rather than the
+         * unit-local sibling the identity-keyed context would mask it
+         * with.
+         */
+        private final Map<ClassId, ClassPlanOwner> jsonPlanOwners;
+        /**
          * The declaration classes' registered layouts and owner members of
          * the project's class registration seeds (K10): a host declaration
          * class's payload layout and its field operations resolve through
@@ -694,7 +811,10 @@ public final class ClassConstructionValidator {
                 ClassFactoryRegistry factories, JsonDefaultChildTable jsonDefaults,
                 ExternalModuleInterface ownInterface,
                 Map<ClassId, SharedFactoryFacts> sharedFactories,
-                Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses) {
+                Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
+                Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
+                Set<ClassId> ambiguousJsonPlanClassIds,
+                Map<ClassId, ClassPlanOwner> jsonPlanOwners) {
             this.unit = unit;
             this.table = table;
             this.factories = factories;
@@ -702,6 +822,9 @@ public final class ClassConstructionValidator {
             this.ownInterface = ownInterface;
             this.sharedFactories = Map.copyOf(sharedFactories);
             this.declarationClasses = Map.copyOf(declarationClasses);
+            this.providerFactoryFacts = Map.copyOf(providerFactoryFacts);
+            this.ambiguousJsonPlanClassIds = Set.copyOf(ambiguousJsonPlanClassIds);
+            this.jsonPlanOwners = Map.copyOf(jsonPlanOwners);
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
             }
@@ -715,8 +838,24 @@ public final class ClassConstructionValidator {
             layoutContext.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
             for (Map.Entry<ClassId, SharedFactoryFacts> entry : this.sharedFactories
                     .entrySet()) {
-                layoutContext.put(entry.getKey(), entry.getValue().layout());
-                interfaceContext.put(entry.getKey(), entry.getValue().interfaceEntry());
+                // A unit's own layout (and a declaration class's registered
+                // layout) wins over an accumulated foreign provider's for
+                // the same canonical identity: two same-named siblings in
+                // one directory share it, and the unit-local consumer's
+                // own declaration is the lexical one.
+                layoutContext.putIfAbsent(entry.getKey(), entry.getValue().layout());
+                interfaceContext.putIfAbsent(entry.getKey(),
+                    entry.getValue().interfaceEntry());
+            }
+            for (SharedFactoryFacts facts : this.providerFactoryFacts.values()) {
+                // The exact declaring provider's layout/interface entry of
+                // one construction occurrence; a same-identity sibling's
+                // facts never overwrite the identity view a unit-local
+                // consumer resolves (the recorded construction entry is
+                // the selection fact).
+                layoutContext.putIfAbsent(facts.classId(), facts.layout());
+                interfaceContext.putIfAbsent(facts.classId(),
+                    facts.interfaceEntry());
             }
             for (ClassInterface entry : ownInterface.classes()) {
                 interfaceContext.put(entry.classId(), entry);
@@ -736,6 +875,20 @@ public final class ClassConstructionValidator {
             return FailureContractRegistry.e6005(detail(rule, origin));
         }
 
+        /**
+         * Builds the E6005 diagnostic of one failing rule naming an
+         * offending op: the diagnostic carries that op's own source origin
+         * as its range (never a guessed anchor). A failure with no produced
+         * offending op keeps the canonical synthetic range.
+         */
+        private CompilerDiagnostic defect(String rule, String origin,
+                                          SemanticOp op) {
+            return op == null
+                ? defect(rule, origin)
+                : FailureContractRegistry.e6005(detail(rule, origin),
+                    op.origin().span().range());
+        }
+
         private Optional<CompilerDiagnostic> fail(String rule, String origin) {
             return Optional.of(defect(rule, origin));
         }
@@ -748,10 +901,7 @@ public final class ClassConstructionValidator {
          */
         private Optional<CompilerDiagnostic> fail(String rule, String origin,
                                                   SemanticOp op) {
-            return Optional.of(op == null
-                ? defect(rule, origin)
-                : FailureContractRegistry.e6005(detail(rule, origin),
-                    op.origin().span().range()));
+            return Optional.of(defect(rule, origin, op));
         }
 
         /** The op named by the id, or {@code null}. */
@@ -823,6 +973,153 @@ public final class ClassConstructionValidator {
         /** The shared factory facts of one imported class, or {@code null}. */
         private SharedFactoryFacts factsOf(ClassId classId) {
             return sharedFactories.get(classId);
+        }
+
+        /**
+         * The shared factory facts of one exact declaring provider,
+         * selected by the recorded construction entry, or the
+         * identity-keyed fallback when no provider-keyed facts carry the
+         * entry (the single-provider case).
+         */
+        private SharedFactoryFacts factsOf(ClassId classId, ClassFactoryId entry) {
+            if (entry != null) {
+                SharedFactoryFacts provider = providerFactoryFacts.get(entry);
+                if (provider != null) {
+                    return provider;
+                }
+            }
+            return factsOf(classId);
+        }
+
+        /** The unit's own interface entry of one class id, or {@code null}. */
+        private ClassInterface ownClassEntry(ClassId classId) {
+            for (ClassInterface entry : ownInterface.classes()) {
+                if (entry.classId().equals(classId)) {
+                    return entry;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Whether one canonical class identity carries more than one
+         * declaration in the unit's resolution context: the unit's own
+         * layout and the declared providers' shared-factory facts. Two
+         * same-named classes of sibling modules in one directory share one
+         * canonical identity, so such an identity has no single layout and
+         * a field operation of it must carry its exact declaring-provider
+         * reference.
+         */
+        private boolean identityAmbiguous(ClassId classId) {
+            java.util.Set<ClassFactoryId> entries = new java.util.LinkedHashSet<>();
+            for (SharedFactoryFacts facts : providerFactoryFacts.values()) {
+                if (facts.classId().equals(classId)) {
+                    entries.add(facts.interfaceEntry().constructionEntry());
+                }
+            }
+            for (SharedFactoryFacts facts : sharedFactories.values()) {
+                if (facts.classId().equals(classId)) {
+                    entries.add(facts.interfaceEntry().constructionEntry());
+                }
+            }
+            int count = entries.size();
+            if (unit.classLayouts().containsKey(classId)) {
+                count++;
+            }
+            return count > 1;
+        }
+
+        /**
+         * Whether one canonical class identity carries more than one
+         * plan-bearing ({@code @jsonable}) declaration in the project: the
+         * generated JSON plan key is the canonical class identity, so
+         * exactly one plan-bearing declaration resolves the nested link
+         * exactly, while a same-identity declaration without a generated
+         * plan registers no plan and cannot collide with it.
+         */
+        private boolean jsonPlanIdentityAmbiguous(ClassId classId) {
+            return ambiguousJsonPlanClassIds.contains(classId);
+        }
+
+        /**
+         * One field operation's exact declaring-provider layout
+         * resolution: the payload's recorded construction entry selects the
+         * exact declaring provider's facts (an imported declaration) or the
+         * unit's own interface entry (a local exported declaration); a
+         * record-less operation of a single-declaration identity keeps the
+         * identity-keyed layout. An unresolvable recorded reference or a
+         * record-less operation of a multiple-declaration identity fails
+         * closed with the named rule — never a first alias or a unit-local
+         * mask — and every failure carries the offending operation's own
+         * source origin as its range.
+         */
+        private FieldLayoutResolution fieldLayoutResolution(ClassId classId,
+                                                            ClassFactoryId ref,
+                                                            String operation,
+                                                            SemanticOp op) {
+            if (ref != null) {
+                SharedFactoryFacts provider = providerFactoryFacts.get(ref);
+                if (provider != null) {
+                    if (!provider.classId().equals(classId)) {
+                        return FieldLayoutResolution.failure(defect(
+                            FIELD_OPERATION_SHAPE, operation + " " + op.opId()
+                                + " carries classFactoryRef " + ref + " of "
+                                + provider.classId() + ", not its own classId "
+                                + classId + " (the recorded reference must name the"
+                                + " operation's exact declaring provider)", op));
+                    }
+                    return FieldLayoutResolution.layout(provider.layout());
+                }
+                ClassInterface own = ownClassEntry(classId);
+                if (own != null && own.constructionEntry().equals(ref)) {
+                    return FieldLayoutResolution.layout(
+                        unit.classLayouts().get(classId));
+                }
+                return FieldLayoutResolution.failure(defect(
+                    FIELD_OPERATION_SHAPE, operation + " " + op.opId()
+                        + " carries classFactoryRef " + ref + " which resolves no"
+                        + " registered declaration of " + classId + " (an exact"
+                        + " declaring provider reference must name a project"
+                        + " declaration's construction entry or the unit's own"
+                        + " exported class entry)", op));
+            }
+            if (identityAmbiguous(classId)) {
+                ClassLayout own = unit.classLayouts().get(classId);
+                if (own != null) {
+                    // The unit's own declaration is the only local
+                    // candidate; the one lowering records the exact
+                    // declaring-provider reference of every ambiguous
+                    // imported receiver, so a record-less operation of an
+                    // identity the unit itself declares is the unit's own
+                    // declaration (never an imported sibling's mask).
+                    return FieldLayoutResolution.layout(own);
+                }
+                return FieldLayoutResolution.failure(defect(
+                    FIELD_OPERATION_SHAPE, operation + " " + op.opId() + " of "
+                        + classId + " carries no exact declaring-provider reference"
+                        + " while the canonical class identity has more than one"
+                        + " declared provider (same-directory sibling declarations):"
+                        + " the operation fails closed rather than selecting a first"
+                        + " alias or an identity-keyed first match", op));
+            }
+            return FieldLayoutResolution.layout(layoutContext.get(classId));
+        }
+
+        /**
+         * One field operation's resolved layout ({@code null} for an
+         * unresolvable single-declaration identity) or the named failure.
+         */
+        private record FieldLayoutResolution(ClassLayout layout,
+                                             CompilerDiagnostic failure) {
+
+            static FieldLayoutResolution layout(ClassLayout layout) {
+                return new FieldLayoutResolution(layout, null);
+            }
+
+            static FieldLayoutResolution failure(CompilerDiagnostic failure) {
+                return new FieldLayoutResolution(null,
+                    Objects.requireNonNull(failure, "failure must not be null"));
+            }
         }
 
         /**
@@ -1140,6 +1437,16 @@ public final class ClassConstructionValidator {
                     + "payload's classId", op);
             }
             ClassLayout resolved = layoutContext.get(payload.classId());
+            // The recorded construction entry of a SHARED_FACTORY
+            // construction selects the exact declaring provider's layout:
+            // a same-identity sibling's layout never masks the payload's
+            // (the two declarations share one canonical ClassId).
+            SharedFactoryFacts exactProvider = payload.classFactoryRef() == null
+                ? null : providerFactoryFacts.get(payload.classFactoryRef());
+            if (exactProvider != null
+                    && exactProvider.layout().equals(payload.layout())) {
+                resolved = exactProvider.layout();
+            }
             if (resolved == null) {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                     + " classId " + payload.classId() + " does not resolve in the "
@@ -1153,7 +1460,8 @@ public final class ClassConstructionValidator {
                     + payload.classId() + ": the payload's layout must be exactly the "
                     + "resolved layout", op);
             }
-            boolean own = unit.classLayouts().containsKey(payload.classId());
+            boolean own = unit.classLayouts().containsKey(payload.classId())
+                && exactProvider == null;
 
             // The closed default-owner shape.
             List<String> providedNames = new ArrayList<>();
@@ -1229,7 +1537,8 @@ public final class ClassConstructionValidator {
                             + ": the pinned imported shape carries an empty child list "
                             + "(defaults transfer to the owner's factory)", op);
                     }
-                    SharedFactoryFacts facts = factsOf(payload.classId());
+                    SharedFactoryFacts facts = factsOf(payload.classId(),
+                        payload.classFactoryRef());
                     if (facts == null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of imported class " + payload.classId() + " has no "
@@ -1632,7 +1941,12 @@ public final class ClassConstructionValidator {
             if (field != null) {
                 return fail(FIELD_OPERATION_SHAPE, field, children.get(1));
             }
-            ClassLayout layout = layoutContext.get(payload.classId());
+            FieldLayoutResolution resolution = fieldLayoutResolution(
+                payload.classId(), payload.classFactoryRef(), "FIELD_READ", op);
+            if (resolution.failure() != null) {
+                return Optional.of(resolution.failure());
+            }
+            ClassLayout layout = resolution.layout();
             ClassLayout.FieldLayout fieldLayout = layout == null
                 ? null : fieldOf(layout, payload.field());
             if (fieldLayout == null) {
@@ -1662,32 +1976,30 @@ public final class ClassConstructionValidator {
             KindPayload.FieldWritePayload payload =
                 (KindPayload.FieldWritePayload) op.payload();
             // The CLASS_FIELD_ASSIGNMENT descriptor is the field's
-            // declared descriptor from the unit's local layout (the
-            // lowerer produces class-field writes of locally declared
-            // classes, of the compiler-owned builtin Error class, and of
-            // the project's declaration classes — the host declaration
-            // class's registered layout is the same entry K10 resolves).
-            ClassLayout layout = unit.classLayouts().get(payload.classId());
-            if (layout == null && ClassId.ERROR.equals(payload.classId())) {
-
-                layout = ClassLayout.BUILTIN_ERROR;
+            // declared descriptor of the exact declaring provider the
+            // operation's recorded construction entry names: the unit's own
+            // exported declaration, the compiler-owned builtin Error
+            // layout, a declaration class's registered layout, or the exact
+            // imported provider's shared-factory facts. A record-less
+            // operation resolves the unit's own layout, the builtin Error
+            // layout, the declaration classes' registered layouts, or the
+            // imported provider's facts — and fails closed on a
+            // multiple-declaration identity.
+            FieldLayoutResolution resolution = fieldLayoutResolution(
+                payload.classId(), payload.classFactoryRef(), "FIELD_WRITE", op);
+            if (resolution.failure() != null) {
+                return Optional.of(resolution.failure());
             }
-            if (layout == null) {
-                ClassRegistrationSeeds.ClassRegistration declaration =
-                    declarationClasses.get(payload.classId());
-                if (declaration != null) {
-
-                    layout = declaration.layout();
-                }
-            }
+            ClassLayout layout = resolution.layout();
             ClassLayout.FieldLayout fieldLayout = layout == null
                 ? null : fieldOf(layout, payload.field());
             if (fieldLayout == null) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_WRITE " + op.opId()
                     + " of " + payload.classId() + "." + payload.field()
                     + " violates the pinned shape: the class must resolve in the unit's "
-                    + "own classLayouts, the builtin Error layout, or the declaration "
-                    + "classes' registered layouts and the field must be a declared "
+                    + "own classLayouts, the builtin Error layout, the declaration "
+                    + "classes' registered layouts, or the exact declaring provider's "
+                    + "shared-factory facts and the field must be a declared "
                     + "field (the CLASS_FIELD_ASSIGNMENT descriptor is the field's "
                     + "declared descriptor from that layout)", op);
             }
@@ -1733,8 +2045,14 @@ public final class ClassConstructionValidator {
                 return fail(FIELD_OPERATION_SHAPE, receiver, children.get(0));
             }
             // When the layout resolves, a required-field delete is never
-            // produced (checker E4004).
-            ClassLayout layout = layoutContext.get(payload.classId());
+            // produced (checker E4004); the layout is the exact declaring
+            // provider's of the operation's recorded construction entry.
+            FieldLayoutResolution resolution = fieldLayoutResolution(
+                payload.classId(), payload.classFactoryRef(), "FIELD_DELETE", op);
+            if (resolution.failure() != null) {
+                return Optional.of(resolution.failure());
+            }
+            ClassLayout layout = resolution.layout();
             ClassLayout.FieldLayout fieldLayout = layout == null
                 ? null : fieldOf(layout, payload.field());
             if (fieldLayout != null && fieldLayout.required()) {
@@ -2131,6 +2449,80 @@ public final class ClassConstructionValidator {
                     checkJsonableDescriptor(owner, field, nullable.inner(), visited);
                 case RuntimeDescriptor.Class classDescriptor -> {
                     ClassId nested = classDescriptor.classId();
+                    if (jsonPlanIdentityAmbiguous(nested)) {
+                        // The generated JSON plan table is keyed by the
+                        // canonical class identity and more than one of the
+                        // identity's declarations generates a plan, so no
+                        // single nested plan is selectable: the link fails
+                        // closed rather than emitting a project whose nested
+                        // walk may consume a sibling declaration's plan. A
+                        // same-identity declaration without a generated plan
+                        // registers none and keeps the single-plan link
+                        // exact.
+                        yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
+                            + " field '" + field + "' references nested class " + nested
+                            + " whose canonical identity carries more than one"
+                            + " plan-bearing (@jsonable) declaration (same-directory"
+                            + " sibling declarations): the generated JSON plan key"
+                            + " cannot select the exact declaration, so the link"
+                            + " fails closed with no partial project");
+                    }
+                    ClassPlanOwner planOwner = jsonPlanOwners.get(nested);
+                    if (planOwner != null) {
+                        // The recorded plan owner of a multiple-declaration
+                        // identity: the generated plan table carries exactly
+                        // this declaration's layout, so the nested link
+                        // validates the owner's own layout (this unit's
+                        // declaration) or the owner's exact
+                        // shared-factory facts — never the unit-local
+                        // sibling an identity-keyed lookup would select.
+                        if (planOwner.module().equals(unit.moduleId())) {
+                            ClassLayout ownLayout = unit.classLayouts().get(nested);
+                            if (ownLayout == null) {
+                                yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                    + owner + " field '" + field + "' nested class "
+                                    + nested + " is the recorded plan owner of this"
+                                    + " unit but the unit declares no such layout (a"
+                                    + " fact defect)");
+                            }
+                            ClassInterface ownEntry = ownClassEntry(nested);
+                            if (ownEntry != null
+                                    && factories.factoryFor(
+                                        ownEntry.constructionEntry()) == null) {
+                                yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                    + owner + " field '" + field + "' nested class "
+                                    + nested + " is exported but has no registered "
+                                    + "factory under its constructionEntry: the nested "
+                                    + "JSON decode triggers the nested CLASS_FACTORY");
+                            }
+                            yield checkNestedJsonable(ownLayout, visited);
+                        }
+                        SharedFactoryFacts ownerFacts = factsOf(nested,
+                            planOwner.constructionEntry());
+                        if (ownerFacts == null) {
+                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                + owner + " field '" + field + "' references imported"
+                                + " nested class " + nested + " without shared-factory"
+                                + " facts: the SharedFactoryFacts context must cover"
+                                + " every imported class the unit's class constructs"
+                                + " reference");
+                        }
+                        if (planOwner.constructionEntry() != null
+                                && !planOwner.constructionEntry().equals(
+                                    ownerFacts.interfaceEntry().constructionEntry())) {
+                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
+                                + owner + " field '" + field + "' nested class "
+                                + nested + " resolves shared-factory facts of"
+                                + " construction entry "
+                                + ownerFacts.interfaceEntry().constructionEntry()
+                                + ", not the recorded plan owner's "
+                                + planOwner.constructionEntry() + " (same-directory"
+                                + " sibling declarations): the nested link fails"
+                                + " closed rather than selecting another"
+                                + " declaration's plan");
+                        }
+                        yield checkNestedJsonable(ownerFacts.layout(), visited);
+                    }
                     ClassLayout nestedLayout = layoutContext.get(nested);
                     if (nestedLayout == null) {
                         yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
@@ -2147,7 +2539,7 @@ public final class ClassConstructionValidator {
                                 + " resolves to a layout that differs from the unit's "
                                 + "own layout");
                         }
-                        ClassInterface ownEntry = interfaceContext.get(nested);
+                        ClassInterface ownEntry = ownClassEntry(nested);
                         if (ownEntry != null) {
 
                             if (factories.factoryFor(ownEntry.constructionEntry())

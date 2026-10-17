@@ -66,6 +66,28 @@ public abstract class EmitterSessionBase {
     protected final Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>();
 
     protected final Map<ClassId, ClassLayout> classLayouts = new LinkedHashMap<>();
+    /**
+     * The generated JSON plan entries of the session closure keyed by the
+     * canonical class identity: the plan table carries exactly one
+     * declaration's plan under the key, so a multiple-declaration
+     * identity resolves the unique plan-bearing declaration when one
+     * exists (the emission order's last declaration otherwise) — never a
+     * first declaration and never an order-dependent sibling. The plan
+     * emission and the plan's default-op lookup consume these records;
+     * the construction/field layout context stays {@link #classLayouts}.
+     */
+    protected final Map<ClassId, ClassLayout> jsonPlanLayouts = new LinkedHashMap<>();
+    /** The declaring module of each {@link #jsonPlanLayouts} entry. */
+    protected final Map<ClassId, ModuleId> jsonPlanOwners = new LinkedHashMap<>();
+    /**
+     * The generated carrier classes' layouts keyed by the canonical class
+     * identity: two same-named declarations of sibling modules in one
+     * directory share one identity but may declare different fields, so
+     * the one carrier of the identity carries the union of every
+     * declaration's field names (first-seen order) — a construction site
+     * of either declaration always finds its own fields' slots.
+     */
+    protected final Map<ClassId, ClassLayout> carrierLayouts = new LinkedHashMap<>();
     /** Each block id to its owning unit's membership table. */
     protected final Map<BlockId, StructuredBodyTable> blockTableOf = new LinkedHashMap<>();
     /** Each op id to its single membership block (the transfer-closure source). */
@@ -352,6 +374,40 @@ public abstract class EmitterSessionBase {
         tables.put(moduleUnit.moduleId(), moduleTable);
         registries.put(moduleUnit.moduleId(), registry);
         classLayouts.putAll(moduleUnit.classLayouts());
+        for (Map.Entry<ClassId, ClassLayout> entry
+                : moduleUnit.classLayouts().entrySet()) {
+            ClassId classId = entry.getKey();
+            ModuleId previous = jsonPlanOwners.get(classId);
+            if (previous == null
+                    || jsonPlanBearing(moduleUnit, classId)
+                    || !jsonPlanBearing(units.get(previous), classId)) {
+                jsonPlanLayouts.put(classId, entry.getValue());
+                jsonPlanOwners.put(classId, moduleUnit.moduleId());
+            }
+        }
+        for (Map.Entry<ClassId, ClassLayout> entry
+                : moduleUnit.classLayouts().entrySet()) {
+            ClassLayout existing = carrierLayouts.get(entry.getKey());
+            if (existing == null) {
+                carrierLayouts.put(entry.getKey(), entry.getValue());
+                continue;
+            }
+            java.util.Set<String> names = new LinkedHashSet<>();
+            List<ClassLayout.FieldLayout> merged = new ArrayList<>();
+            for (ClassLayout.FieldLayout field : existing.fields()) {
+                names.add(field.name());
+                merged.add(field);
+            }
+            for (ClassLayout.FieldLayout field : entry.getValue().fields()) {
+                if (names.add(field.name())) {
+                    merged.add(field);
+                }
+            }
+            if (merged.size() != existing.fields().size()) {
+                carrierLayouts.put(entry.getKey(),
+                    new ClassLayout(entry.getKey(), merged));
+            }
+        }
         for (Map.Entry<BlockId, List<OpId>> entry : moduleTable.blockOps().entrySet()) {
             blockTableOf.put(entry.getKey(), moduleTable);
             for (OpId memberId : entry.getValue()) {
@@ -622,9 +678,47 @@ public abstract class EmitterSessionBase {
         return null;
     }
 
-    /** The class's CLASS_DEFAULT op of one field, or null (no declared default). */
-    protected final SemanticOp classDefaultOpOf(ClassId classId, String field) {
-        for (SemanticOp candidate : opsById.values()) {
+    /**
+     * Whether one unit's own declaration of a canonical class identity is
+     * plan-bearing (the unit generates the {@code JSON_FROM_CLASS} /
+     * {@code JSON_TO_CLASS} helper ops of the identity): two same-named
+     * declarations of sibling modules in one directory share one canonical
+     * identity, and the generated plan table carries exactly one plan
+     * under the key — the unique plan-bearing declaration when one exists.
+     */
+    protected static boolean jsonPlanBearing(LoweredModuleUnit unit,
+                                             ClassId classId) {
+        if (unit == null) {
+            return false;
+        }
+        for (SemanticOp op : unit.ops()) {
+            KindPayload payload = op.payload();
+            if (payload instanceof KindPayload.JsonFromClassPayload from
+                    && from.layout().classId().equals(classId)) {
+                return true;
+            }
+            if (payload instanceof KindPayload.JsonToClassPayload to
+                    && to.layout().classId().equals(classId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The declaring unit's {@code CLASS_DEFAULT} op of one field of one
+     * canonical class identity, or null (no declared default). The lookup
+     * is scoped to the plan's declaring unit: the identity-keyed session
+     * scan could select a same-identity sibling's default op for a field
+     * of the emitted plan's own declaration.
+     */
+    protected final SemanticOp classDefaultOpOf(ModuleId owner, ClassId classId,
+                                                String field) {
+        LoweredModuleUnit owningUnit = units.get(owner);
+        if (owningUnit == null) {
+            return null;
+        }
+        for (SemanticOp candidate : owningUnit.ops()) {
             if (candidate.kind() != SemanticOpKind.CLASS_DEFAULT) {
                 continue;
             }

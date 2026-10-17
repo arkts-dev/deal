@@ -6,12 +6,14 @@ import deal.ast.ExpressionNode;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticCode;
 import deal.identity.CanonicalClassIdentity;
 import deal.types.Type;
 import deal.types.Types;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -56,8 +58,23 @@ public final class DefaultSemanticPlanner {
      */
     public static Result plan(DefaultPlanModuleInput input,
                               ModuleIdentityAssembly identityAssembly) {
+        return plan(input, identityAssembly, Map.of());
+    }
+
+    /**
+     * The whole-project overload: {@code projectProviders} is every
+     * resolved module's own planning snapshot, keyed by its dotted
+     * module path (ISSUE-0809 exact provider carriage). A class-valued
+     * default whose declared type lives in a module this one imports
+     * only through an imported declaration resolves that module's own
+     * snapshot, never an identity-equal sibling import.
+     */
+    public static Result plan(DefaultPlanModuleInput input,
+                              ModuleIdentityAssembly identityAssembly,
+                              Map<String, DefaultPlanImport> projectProviders) {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(identityAssembly, "identityAssembly");
+        Objects.requireNonNull(projectProviders, "projectProviders");
         List<CompilerDiagnostic> diagnostics = new ArrayList<>();
         List<PlannedDefaultClass> planned = new ArrayList<>();
 
@@ -80,7 +97,8 @@ public final class DefaultSemanticPlanner {
                 ((ModuleIdentityAssembly.ClassIdentityResult.Identity)
                     identityResult).identity();
             PlannedDefaultClass plannedClass = planClass(cd, scope,
-                classIdentity, input, declaringContext, diagnostics);
+                classIdentity, input, declaringContext, projectProviders,
+                diagnostics);
             if (plannedClass != null) {
                 planned.add(plannedClass);
             }
@@ -97,10 +115,16 @@ public final class DefaultSemanticPlanner {
             SymbolTable scope, CanonicalClassIdentity classIdentity,
             DefaultPlanModuleInput input,
             DefaultDeclaringContext declaringContext,
+            Map<String, DefaultPlanImport> projectProviders,
             List<CompilerDiagnostic> diagnostics) {
         List<CompilerDiagnostic> classDiagnostics = new ArrayList<>();
         List<CompilerClassDefaultEntry> entries = new ArrayList<>();
         List<DefaultResourceOccurrence> occurrences = new ArrayList<>();
+        // The recorded contextual class-literal provider aliases of every
+        // default expression (literal range to import alias): the one
+        // lowering consumes them so a same-directory sibling pair's
+        // construction names its exact declaring provider.
+        Map<DiagnosticRange, String> classLiteralProviders = new LinkedHashMap<>();
         Set<SemanticResourceIdentity> seen = new LinkedHashSet<>();
 
         // Field type resolution runs against the class declaration's
@@ -197,8 +221,11 @@ public final class DefaultSemanticPlanner {
                     input.nameResolver().setCurrentScope(resolutionScope);
                     return input.nameResolver().resolveTypeNode(typeNode);
                 },
-                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()));
+                DefaultIrRecorder.qualifiedClassAliasesOf(cf.type()),
+                input.checkResult().exactClassDeclarations(),
+                projectProviders);
             DefaultIrNode ir = recorder.record(def, scope, fieldType);
+            classLiteralProviders.putAll(recorder.classLiteralProviders());
             classDiagnostics.addAll(recorder.awaitDiagnostics());
             if (!recorder.awaitDiagnostics().isEmpty()) {
                 failed = true;
@@ -238,7 +265,8 @@ public final class DefaultSemanticPlanner {
         CompilerClassDefaultPlan plan = new CompilerClassDefaultPlan(
             classIdentity, input.location().semanticModuleIdentity(),
             entries, Set.of());
-        return new PlannedDefaultClass(plan, cd, occurrences);
+        return new PlannedDefaultClass(plan, cd, occurrences,
+            classLiteralProviders);
     }
 
     /**

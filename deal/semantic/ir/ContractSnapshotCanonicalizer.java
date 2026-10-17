@@ -912,15 +912,21 @@ public final class ContractSnapshotCanonicalizer {
                     p.classDefaultOpIds().stream().map(ContractSnapshotCanonicalizer::semanticIdJson).toList())),
                 CanonicalJson.e("classId", semanticIdJson(p.classId())));
             case KindPayload.FieldReadPayload p -> CanonicalJson.obj(
+                CanonicalJson.e("classFactoryRef", p.classFactoryRef() == null
+                    ? CanonicalJson.nullValue() : semanticIdJson(p.classFactoryRef())),
                 CanonicalJson.e("classId", semanticIdJson(p.classId())),
                 CanonicalJson.e("classValue", semanticIdJson(p.classValue())),
                 CanonicalJson.e("field", CanonicalJson.str(p.field())));
             case KindPayload.FieldWritePayload p -> CanonicalJson.obj(
+                CanonicalJson.e("classFactoryRef", p.classFactoryRef() == null
+                    ? CanonicalJson.nullValue() : semanticIdJson(p.classFactoryRef())),
                 CanonicalJson.e("classId", semanticIdJson(p.classId())),
                 CanonicalJson.e("classValue", semanticIdJson(p.classValue())),
                 CanonicalJson.e("field", CanonicalJson.str(p.field())),
                 CanonicalJson.e("value", semanticIdJson(p.value())));
             case KindPayload.FieldDeletePayload p -> CanonicalJson.obj(
+                CanonicalJson.e("classFactoryRef", p.classFactoryRef() == null
+                    ? CanonicalJson.nullValue() : semanticIdJson(p.classFactoryRef())),
                 CanonicalJson.e("classId", semanticIdJson(p.classId())),
                 CanonicalJson.e("classValue", semanticIdJson(p.classValue())),
                 CanonicalJson.e("field", CanonicalJson.str(p.field())));

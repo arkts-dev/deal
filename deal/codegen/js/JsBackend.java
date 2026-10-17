@@ -1157,7 +1157,8 @@ public final class JsBackend {
                 case "bytes" -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
-                        yield Types.classType(nt.name(), cs.identity());
+                        yield Types.classType(nt.name(), cs.identity(),
+                            Types.providerModule(cs.modulePath()));
                     }
                     if (innermostClassFrame(localClassScopes, nt.name()) >= 0) {
                         yield localClassType(nt.name());
@@ -1167,7 +1168,8 @@ public final class JsBackend {
                 default -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
-                        yield Types.classType(nt.name(), cs.identity());
+                        yield Types.classType(nt.name(), cs.identity(),
+                            Types.providerModule(cs.modulePath()));
                     }
                     yield Type.Error.INSTANCE;
                 }
@@ -1957,7 +1959,9 @@ public final class JsBackend {
 
     /** A Class type for a class declared in this module. */
     private Type.Class localClassType(String name) {
-        return Types.classType(name, localClassIdentity(name));
+        String mp = modulePath != null ? modulePath : sourcePath;
+        return Types.classType(name, localClassIdentity(name),
+            Types.providerModule(mp));
     }
 
     /** A Class type for a class declared in the given wiring path. */
@@ -1971,7 +1975,8 @@ public final class JsBackend {
                     + "represented (internal invariant violation)");
         }
         return Types.classType(name,
-            new CanonicalClassIdentity(moduleIdentity, name));
+            new CanonicalClassIdentity(moduleIdentity, name),
+            Types.providerModule(wiringPath));
     }
 
     /**

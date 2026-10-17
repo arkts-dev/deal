@@ -910,7 +910,7 @@ public final class LuaSemanticEmitter {
                 }
             }
 
-            for (ClassLayout layout : classLayouts.values()) {
+            for (ClassLayout layout : jsonPlanLayouts.values()) {
                 emitJsonPlan(layout);
             }
 
@@ -4554,7 +4554,7 @@ public final class LuaSemanticEmitter {
                     + " outside the emitted owners (producer defect)");
             }
 
-            emitExtraKeyRejection(op, payload, layout);
+            emitExtraKeyRejection(op, payload, payload.layout());
             if (payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
                 emitClassNewBuiltinDefaults(op, payload, layout);
                 return;
@@ -4798,7 +4798,7 @@ public final class LuaSemanticEmitter {
                     .append("\n");
             }
             // (2) The deterministic extra-key guard.
-            emitExtraKeyRejection(op, payload, layout);
+            emitExtraKeyRejection(op, payload, payload.layout());
             // (3) The runtime's four phases over the loaded plan entry.
             out.append("__okB, __instT = pcall(__rt.class_plan_, ")
                 .append(luaString(payload.classId().text())).append(", ")
@@ -7024,7 +7024,9 @@ public final class LuaSemanticEmitter {
                     .append(", desc = ").append(luaString(jsonDescriptorText(field.descriptor())))
                     .append(", optional = ").append(field.required() ? "false" : "true")
                     .append(", k = ").append(luaString(staticKind(field.descriptor())));
-                SemanticOp defaultOp = classDefaultOpOf(layout.classId(), field.name());
+                SemanticOp defaultOp = classDefaultOpOf(
+                    jsonPlanOwners.get(layout.classId()), layout.classId(),
+                    field.name());
                 if (defaultOp != null && field.required()) {
                     out.append(", dk = ").append(luaString(opKey(defaultOp.opId())))
                         .append(", dd = ")

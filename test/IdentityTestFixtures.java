@@ -34,9 +34,15 @@ public final class IdentityTestFixtures {
             className);
     }
 
-    /** A Class type carrying the standalone identity. */
+    /**
+     * A Class type carrying the standalone identity and the stub module's
+     * own wiring path as its defining provider (ISSUE-0809): a stub
+     * harness that registers an imported declaration binds the provider,
+     * so a same-named local declaration of another provider stays a
+     * distinct declaration at the assignment boundaries.
+     */
     public static Type.Class classType(String name, String modulePath) {
-        return Types.classType(name, identityOf(modulePath, name));
+        return Types.classType(name, identityOf(modulePath, name), modulePath);
     }
 
     /** The intrinsic builtin {@code Error} class type (E2's synthesis). */

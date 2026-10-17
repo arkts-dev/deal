@@ -3,6 +3,7 @@ package deal.semantic;
 import deal.ast.ProgramNode;
 import deal.checker.CheckResult;
 import deal.checker.SymbolTable;
+import deal.diagnostics.DiagnosticRange;
 import deal.semantic.ir.ModuleId;
 import deal.types.Type;
 
@@ -28,6 +29,15 @@ import java.util.Objects;
  * {@code checkResult == null} by construction: they are never
  * type-checked and never populate the checked project input.</p>
  *
+ * <p>{@code classLiteralProviders} carries the dependency graph's
+ * recorded contextual class-literal provider aliases of the module (the
+ * literal's source range to the import alias whose exact declaration
+ * supplied the construction context): two sibling modules in one
+ * directory share one canonical class identity, so the recorded provider
+ * occurrence — never an identity scan or a first alias — selects the
+ * declaring provider. An absent entry means the literal's context is
+ * same-module or unresolvable there.</p>
+ *
  */
 public record ModuleFact(
     String sourcePath,
@@ -38,8 +48,23 @@ public record ModuleFact(
     Map<String, Type> exports,
     SymbolTable symbolTable,
     CheckResult checkResult,
-    List<ImportFact> imports
+    List<ImportFact> imports,
+    Map<DiagnosticRange, String> classLiteralProviders
 ) {
+
+    /**
+     * The fact bundle without the recorded class-literal provider
+     * aliases (the retained harness constructors): an absent map records
+     * no contextual imported-class literal, so consumers resolve by the
+     * checked identity route exactly as before.
+     */
+    public ModuleFact(String sourcePath, ModuleId moduleId,
+            boolean isDeclarationFile, boolean isSpecStdlibModule,
+            ProgramNode ast, Map<String, Type> exports, SymbolTable symbolTable,
+            CheckResult checkResult, List<ImportFact> imports) {
+        this(sourcePath, moduleId, isDeclarationFile, isSpecStdlibModule, ast,
+            exports, symbolTable, checkResult, imports, Map.of());
+    }
 
     /**
      * One orchestrator-resolved import fact in source order: the import
@@ -65,5 +90,6 @@ public record ModuleFact(
         // synthetics) is part of the pinned fact source.
         exports = Collections.unmodifiableMap(new LinkedHashMap<>(exports));
         imports = List.copyOf(imports);
+        classLiteralProviders = Map.copyOf(classLiteralProviders);
     }
 }

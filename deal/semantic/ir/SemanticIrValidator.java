@@ -744,9 +744,73 @@ public final class SemanticIrValidator {
             closure.put(unit.modulePath(), unit);
         }
         Map<ClassId, SharedFactoryFacts> sharedFactories = new LinkedHashMap<>();
+        Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts =
+            new LinkedHashMap<>();
         Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses =
             classSeeds.registrations();
+        // The complete project's materialized units, the generated
+        // plan-bearing ({@code @jsonable}) declarations and their plan
+        // owners: the generated JSON plan key is the canonical class
+        // identity, so an identity carrying more than one plan-bearing
+        // declaration is ambiguous while an identity carrying more than
+        // one declaration resolves the unique plan-bearing declaration's
+        // layout (the emission order's last declaration otherwise). A unit
+        // whose facts do not materialize contributes nothing to the
+        // counts; its own admission below reports its defect at the pinned
+        // position (the materialization runs before the unit loop so the
+        // counts cover later modules too, and its result is reused — never
+        // recomputed).
+        List<LoweredModuleUnit> materialized =
+            new ArrayList<>(units.size());
+        List<RawUnitMaterializer.Defect> materializationDefects =
+            new ArrayList<>(units.size());
+        Map<ClassId, List<ModuleId>> planDeclarations = new LinkedHashMap<>();
+        Map<ClassId, List<ModuleId>> planBearers = new LinkedHashMap<>();
         for (RawUnit unit : units) {
+            LoweredModuleUnit typed;
+            try {
+                typed = RawUnitMaterializer.materialize(unit);
+                materializationDefects.add(null);
+            } catch (RawUnitMaterializer.Defect defect) {
+                typed = null;
+                materializationDefects.add(defect);
+            }
+            materialized.add(typed);
+            if (typed == null) {
+                continue;
+            }
+            Map<ClassId, ClassLayout> declarations = typed.classLayouts();
+            Set<ClassId> unitPlanClasses = new LinkedHashSet<>();
+            for (SemanticOp op : typed.ops()) {
+                if (op.kind() == SemanticOpKind.JSON_FROM_CLASS
+                        && op.payload()
+                            instanceof KindPayload.JsonFromClassPayload payload) {
+                    unitPlanClasses.add(payload.layout().classId());
+                } else if (op.kind() == SemanticOpKind.JSON_TO_CLASS
+                        && op.payload()
+                            instanceof KindPayload.JsonToClassPayload payload) {
+                    unitPlanClasses.add(payload.layout().classId());
+                }
+            }
+            for (ClassId classId : declarations.keySet()) {
+                planDeclarations.computeIfAbsent(classId,
+                    key -> new ArrayList<>()).add(typed.moduleId());
+                if (unitPlanClasses.contains(classId)) {
+                    planBearers.computeIfAbsent(classId,
+                        key -> new ArrayList<>()).add(typed.moduleId());
+                }
+            }
+        }
+        Set<ClassId> ambiguousJsonPlanClassIds = new LinkedHashSet<>();
+        for (Map.Entry<ClassId, List<ModuleId>> entry : planBearers.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                ambiguousJsonPlanClassIds.add(entry.getKey());
+            }
+        }
+        Map<ClassId, ClassConstructionValidator.ClassPlanOwner> jsonPlanOwners =
+            planOwners(planDeclarations, planBearers, interfaceIndex);
+        for (int index = 0; index < units.size(); index++) {
+            RawUnit unit = units.get(index);
             ExternalModuleInterface ownInterface =
                 interfaceIndex.modules().get(new ModuleId(unit.modulePath()));
             Optional<CompilerDiagnostic> failure =
@@ -758,11 +822,10 @@ public final class SemanticIrValidator {
             if (failure.isPresent()) {
                 return failure;
             }
-            LoweredModuleUnit typed;
-            try {
-                typed = RawUnitMaterializer.materialize(unit);
-            } catch (RawUnitMaterializer.Defect defect) {
-                return materializationFailure(unit, facts, defect);
+            LoweredModuleUnit typed = materialized.get(index);
+            if (typed == null) {
+                return materializationFailure(unit, facts,
+                    materializationDefects.get(index));
             }
             failure = checkBindings(typed);
             if (failure.isPresent()) {
@@ -772,12 +835,14 @@ public final class SemanticIrValidator {
                 failure = ClassConstructionValidator.validate(typed,
                     typed.bodyTable(), typed.classFactories(),
                     typed.jsonDefaults(), ownInterface, sharedFactories,
-                    declarationClasses);
+                    declarationClasses, providerFactoryFacts,
+                    ambiguousJsonPlanClassIds, jsonPlanOwners);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
-            accumulateSharedFactoryFacts(ownInterface, typed, sharedFactories);
+            accumulateSharedFactoryFacts(ownInterface, typed, sharedFactories,
+                providerFactoryFacts);
         }
         return checkProjectClassFacts(interfaceIndex, classSeeds, units, entryModule, facts);
     }
@@ -827,9 +892,52 @@ public final class SemanticIrValidator {
      * actually produces a value. Later modules in dependency order resolve
      * their imported constructions through exactly these facts.
      */
+    /**
+     * The recorded plan owners of a raw project's multiple-declaration
+     * class identities: the declaration the generated JSON plan table
+     * carries under the canonical key (the unique plan-bearing
+     * declaration when one exists, the unit order's last declaration
+     * otherwise) and its construction entry when the owner module exports
+     * the class. The typed and text surfaces apply the identical
+     * selection, so a nested JSON link validates the owner declaration's
+     * layout instead of a unit-local sibling.
+     */
+    private static Map<ClassId, ClassConstructionValidator.ClassPlanOwner> planOwners(
+            Map<ClassId, List<ModuleId>> declarations,
+            Map<ClassId, List<ModuleId>> planBearers,
+            ProjectInterfaceIndex interfaceIndex) {
+        Map<ClassId, ClassConstructionValidator.ClassPlanOwner> owners =
+            new LinkedHashMap<>();
+        for (Map.Entry<ClassId, List<ModuleId>> entry : declarations.entrySet()) {
+            if (entry.getValue().size() <= 1) {
+                continue;
+            }
+            List<ModuleId> bearers = planBearers.get(entry.getKey());
+            int bearerCount = bearers == null ? 0 : bearers.size();
+            ModuleId owner = bearerCount == 1
+                ? bearers.get(0)
+                : entry.getValue().get(entry.getValue().size() - 1);
+            ClassFactoryId constructionEntry = null;
+            ExternalModuleInterface ownerInterface =
+                interfaceIndex.modules().get(owner);
+            if (ownerInterface != null) {
+                for (ClassInterface classEntry : ownerInterface.classes()) {
+                    if (classEntry.classId().equals(entry.getKey())) {
+                        constructionEntry = classEntry.constructionEntry();
+                        break;
+                    }
+                }
+            }
+            owners.put(entry.getKey(), new ClassConstructionValidator.ClassPlanOwner(
+                owner, constructionEntry));
+        }
+        return owners;
+    }
+
     private static void accumulateSharedFactoryFacts(ExternalModuleInterface ownInterface,
                                                      LoweredModuleUnit unit,
-                                                     Map<ClassId, SharedFactoryFacts> accumulated) {
+                                                     Map<ClassId, SharedFactoryFacts> accumulated,
+                                                     Map<ClassFactoryId, SharedFactoryFacts> providerAccumulated) {
         if (ownInterface == null) {
             return;
         }
@@ -853,8 +961,13 @@ public final class SemanticIrValidator {
             if (factoryOp == null || !(factoryOp.result() instanceof ValueId result)) {
                 continue;
             }
-            accumulated.put(classEntry.classId(), new SharedFactoryFacts(
-                classEntry.classId(), classEntry, layout, factoryOpId, result));
+            SharedFactoryFacts facts = new SharedFactoryFacts(
+                classEntry.classId(), classEntry, layout, factoryOpId, result);
+            accumulated.put(classEntry.classId(), facts);
+            // The exact declared occurrence's facts: the construction entry
+            // is unique per declaration, so two same-named siblings sharing
+            // one canonical identity never overwrite each other here.
+            providerAccumulated.put(classEntry.constructionEntry(), facts);
         }
     }
 

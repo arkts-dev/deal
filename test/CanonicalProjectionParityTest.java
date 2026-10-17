@@ -575,6 +575,7 @@ public class CanonicalProjectionParityTest {
                 moduleFixture.rawSource(), moduleFixture.corpusPath());
         }
         Path root = Files.createTempDirectory("projection-parity");
+        liveScratchRoots.add(root);
         try {
             return compileInto(root, spec, compilationSet, byPath, driverSource,
                 hostDeclarations);
@@ -731,6 +732,9 @@ public class CanonicalProjectionParityTest {
             }
         } catch (java.io.IOException ignored) {
             // best effort
+        }
+        if (!Files.exists(path)) {
+            liveScratchRoots.remove(path);
         }
     }
 
@@ -9081,7 +9085,11 @@ public class CanonicalProjectionParityTest {
                 byPath.put(fixture.corpusPath(), fixture);
             }
             CorpusSnapshot previous = corpusSnapshot;
-            Set<Path> before = scratchRoots("projection-parity");
+            // The leak check reads this process's own allocated roots: the
+            // shared temporary directory is written by concurrent compiles
+            // of other working directories on the same host, so a filesystem
+            // listing alone can neither hide a leak nor invent one.
+            Set<Path> before = new LinkedHashSet<>(liveScratchRoots);
             corpusSnapshot = new CorpusSnapshot(discovery, byPath);
             try {
                 compile(new Case("fixture", "main", Entry.MAIN, List.of(),
@@ -9099,8 +9107,8 @@ public class CanonicalProjectionParityTest {
             } finally {
                 corpusSnapshot = previous;
             }
-            Set<Path> after = scratchRoots("projection-parity");
-            check(after.equals(before), "the rejected compile leaves no "
+            Set<Path> after = new LinkedHashSet<>(liveScratchRoots);
+            check(after.equals(before), "the rejected compile leaves no owned "
                 + "projection-parity scratch root behind: " + after);
         } finally {
             for (Path root : roots) {
@@ -9108,6 +9116,16 @@ public class CanonicalProjectionParityTest {
             }
         }
     }
+
+    /**
+     * The scratch roots this process allocated and has not removed: the
+     * rejected-input leak check snapshots this ownership set, so a
+     * concurrent compile in another working directory sharing the host's
+     * temporary directory can neither hide this process's leak nor invent
+     * one.
+     */
+    private static final Set<Path> liveScratchRoots =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** A scratch corpus root carrying one {@code backend-runtime} fixture. */
     private static Path scratchCorpus(String label, String raw) throws Exception {
@@ -9126,17 +9144,6 @@ public class CanonicalProjectionParityTest {
             out.append("// padding line ").append(i).append('\n');
         }
         return out.toString();
-    }
-
-    /** The temporary roots whose file name starts with {@code prefix}. */
-    private static Set<Path> scratchRoots(String prefix) throws Exception {
-        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
-        Set<Path> roots = new LinkedHashSet<>();
-        try (var listing = Files.list(tmp)) {
-            listing.filter(p -> p.getFileName().toString().startsWith(prefix))
-                .forEach(roots::add);
-        }
-        return roots;
     }
 
     // =========================================================================

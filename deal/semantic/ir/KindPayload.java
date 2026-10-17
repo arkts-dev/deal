@@ -947,8 +947,18 @@ public sealed interface KindPayload
         }
     }
 
-    /** {@code FIELD_READ} — class value, class, and field; presence-aware read. */
-    record FieldReadPayload(ValueId classValue, ClassId classId, String field)
+    /**
+     * {@code FIELD_READ} — class value, class, and field; presence-aware
+     * read. {@code classFactoryRef} is the exact declaring declaration's
+     * construction entry when the receiver's checked declaration names one
+     * (two same-named classes of sibling modules in one directory share
+     * one canonical identity, so the recorded entry — never an
+     * identity-keyed first match — selects the declaring provider's
+     * layout); {@code null} for a unit-local, declaration-seeded, or
+     * unambiguous identity.
+     */
+    record FieldReadPayload(ValueId classValue, ClassId classId, String field,
+                            ClassFactoryId classFactoryRef)
         implements KindPayload {
 
         public FieldReadPayload {
@@ -956,10 +966,20 @@ public sealed interface KindPayload
             Objects.requireNonNull(classId, "classId must not be null");
             Objects.requireNonNull(field, "field must not be null");
         }
+
+        /** The identity-keyed field read (no exact declaring provider). */
+        public FieldReadPayload(ValueId classValue, ClassId classId, String field) {
+            this(classValue, classId, field, null);
+        }
     }
 
-    /** {@code FIELD_WRITE} — class value, class, field, and value (commit op). */
-    record FieldWritePayload(ValueId classValue, ClassId classId, String field, ValueId value)
+    /**
+     * {@code FIELD_WRITE} — class value, class, field, and value (commit
+     * op), with the same exact declaring-provider reference as
+     * {@link FieldReadPayload}.
+     */
+    record FieldWritePayload(ValueId classValue, ClassId classId, String field,
+                             ValueId value, ClassFactoryId classFactoryRef)
         implements KindPayload {
 
         public FieldWritePayload {
@@ -968,16 +988,32 @@ public sealed interface KindPayload
             Objects.requireNonNull(field, "field must not be null");
             Objects.requireNonNull(value, "value must not be null");
         }
+
+        /** The identity-keyed field write (no exact declaring provider). */
+        public FieldWritePayload(ValueId classValue, ClassId classId, String field,
+                                 ValueId value) {
+            this(classValue, classId, field, value, null);
+        }
     }
 
-    /** {@code FIELD_DELETE} — class value, class, and field (commit op). */
-    record FieldDeletePayload(ValueId classValue, ClassId classId, String field)
+    /**
+     * {@code FIELD_DELETE} — class value, class, and field (commit op),
+     * with the same exact declaring-provider reference as
+     * {@link FieldReadPayload}.
+     */
+    record FieldDeletePayload(ValueId classValue, ClassId classId, String field,
+                              ClassFactoryId classFactoryRef)
         implements KindPayload {
 
         public FieldDeletePayload {
             Objects.requireNonNull(classValue, "classValue must not be null");
             Objects.requireNonNull(classId, "classId must not be null");
             Objects.requireNonNull(field, "field must not be null");
+        }
+
+        /** The identity-keyed field delete (no exact declaring provider). */
+        public FieldDeletePayload(ValueId classValue, ClassId classId, String field) {
+            this(classValue, classId, field, null);
         }
     }
 

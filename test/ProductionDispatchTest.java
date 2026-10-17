@@ -221,6 +221,40 @@ public class ProductionDispatchTest {
         reverseSiblingImports(CONTEXTUAL_BODY_CODEC_FIRST);
 
     /**
+     * The callee-parameter and declared-return provider fixture beside a
+     * same-identity local declaration (review cycle 5, finding 1): the
+     * entry declares its own {@code Ir} (default 5) in the provider's
+     * directory, so the import's {@code useIr} parameter and {@code g}'s
+     * parameter and {@code make}'s declared return all name an
+     * identity-equal sibling: those literals construct the imported
+     * declaration's 7 while the explicitly annotated local literal stays
+     * the entry's own 5.
+     */
+    private static String localProviderBody(String firstImport,
+            String secondImport) {
+        return "import * as console from \"std/console\";\n"
+            + firstImport + secondImport
+            + "\n"
+            + "class Ir { a: int = 5; }\n"
+            + "\n"
+            + "function g(x: ir.Ir): int { return x.a; }\n"
+            + "function make(): ir.Ir { return {}; }\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  let n: int = ir.useIr({});\n"
+            + "  let m: int = g({});\n"
+            + "  let r: ir.Ir = make();\n"
+            + "  let local: Ir = {};\n"
+            + "  if (n === 7 && m === 7 && r.a === 7 && local.a === 5) {\n"
+            + "    console.log(\"ok\");\n"
+            + "  } else {\n"
+            + "    console.log(\"wrong\");\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n";
+    }
+
+    /**
      * The shadowed-local-callee collision (review cycle 4): a nested
      * function declaration shadows a same-named module-level function
      * whose parameter names the codec sibling, while the nested
@@ -1243,6 +1277,490 @@ public class ProductionDispatchTest {
         }
     }
 
+
+    /**
+     * The same-name sibling pair on the shared-IR production lanes
+     * (ISSUE-0809): {@code src/m/ir.deal} and {@code src/m/codec.deal}
+     * both export {@code Ir} with different defaults, so one canonical
+     * class identity covers two declarations. The recorded contextual
+     * provider selects the exact declaring provider, so the released
+     * LuaJIT and JVM artifacts construct the demanded default (7, never
+     * the sibling's 93) and print {@code ok} with an empty stderr and
+     * exit 0.
+     */
+    private static void testProductionSameNameSiblingSharedIr()
+            throws Exception {
+        System.out.println("-- public compilation: same-name sibling class"
+            + " declarations on the shared-IR production lanes --");
+        for (boolean codecFirst : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = "same-name sibling " + backend
+                    + (codecFirst ? " (codec first)" : " (ir first)");
+                Path project = Files.createTempDirectory(
+                    "production-same-name-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/m/ir.deal", CONTEXTUAL_IR_SOURCE);
+                    write(project, "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE);
+                    write(project, "src/main.deal", codecFirst
+                        ? CONTEXTUAL_BODY_CODEC_FIRST
+                        : CONTEXTUAL_BODY_IR_FIRST);
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /**
+     * The standalone callee-parameter and declared-return provider lanes
+     * (review cycle 5, finding 1): with the entry's own same-identity
+     * {@code Ir} declaration present, the imported parameter/return
+     * contexts must still construct the imported declaration (7) on the
+     * real LuaJIT and JVM production lanes, in either import order, and
+     * the explicitly annotated local literal must stay the entry's own
+     * declaration (5).
+     */
+    private static void testProductionLocalDeclarationBesideCalleeProvider()
+            throws Exception {
+        System.out.println("-- public compilation: the imported callee-parameter "
+            + "and declared-return providers beside a same-identity local "
+            + "declaration on the shared-IR production lanes --");
+        for (boolean codecFirst : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = "local-beside-provider " + backend
+                    + (codecFirst ? " (codec first)" : " (ir first)");
+                Path project = Files.createTempDirectory(
+                    "production-local-provider-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/ir.deal", CONTEXTUAL_IR_SOURCE);
+                    write(project, "src/codec.deal", CONTEXTUAL_CODEC_SOURCE);
+                    write(project, "src/main.deal", codecFirst
+                        ? localProviderBody(
+                            "import * as codec from \"./codec\";\n",
+                            "import * as ir from \"./ir\";\n")
+                        : localProviderBody(
+                            "import * as ir from \"./ir\";\n",
+                            "import * as codec from \"./codec\";\n"));
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /**
+     * The call-result receiver and function-typed callee fixture (review
+     * cycle 1 findings 1 and 2): the callee's declared return carries the
+     * provider, so the chained read, the inferred binding's read/write
+     * and the function-typed argument literal all select that declaration
+     * (7 and the written 11), never the sibling's 93.
+     */
+    private static final String CALL_RECEIVER_IR_SOURCE = """
+        export class Ir { a: int = 7; nick?: string; }
+        export function make(): Ir { return { a: 7 }; }
+        export function useIr(x: Ir): int { return x.a; }
+        """;
+
+    private static final String CALL_RECEIVER_CODEC_SOURCE = """
+        export class Ir { a: int = 93; nick: int = 1; }
+        """;
+
+    private static String callReceiverBody(String firstImport,
+            String secondImport) {
+        return "import * as console from \"std/console\";\n"
+            + firstImport + secondImport
+            + "\n"
+            + "function wrap(): ir.Ir { return { a: 7 }; }\n"
+            + "\n"
+            + "export function main(): null {\n"
+            + "  let v: int = ir.make().a;\n"
+            + "  let f: (x: ir.Ir) => int = ir.useIr;\n"
+            + "  let n: int = f({});\n"
+            + "  let y = ir.make();\n"
+            + "  y.a = 11;\n"
+            + "  let w: int = y.a;\n"
+            + "  let q: int = wrap().a;\n"
+            + "  let z = ir.make();\n"
+            + "  let had: boolean = has(z.nick);\n"
+            + "  delete z.nick;\n"
+            + "  if (v === 7 && n === 7 && w === 11 && q === 7 && !had) {\n"
+            + "    console.log(\"ok\");\n"
+            + "  } else {\n"
+            + "    console.log(\"wrong\");\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n";
+    }
+
+    /**
+     * The call-result receiver lanes (review cycle 1 findings 1 and 2):
+     * a receiver whose type is the callee's declared return, an inferred
+     * binding of it, and a function-typed callee's argument literal all
+     * select the declared provider's declaration beside a same-identity
+     * sibling on the real LuaJIT and JVM production lanes, in either
+     * import order, printing {@code ok} with an empty stderr and exit 0.
+     */
+    private static void testProductionCallReceiverProviderBesideSameIdentityLocal()
+            throws Exception {
+        System.out.println("-- public compilation: the call-result receiver "
+            + "and function-typed callee providers beside a same-identity "
+            + "sibling on the shared-IR production lanes --");
+        for (boolean codecFirst : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = "call-receiver provider " + backend
+                    + (codecFirst ? " (codec first)" : " (ir first)");
+                Path project = Files.createTempDirectory(
+                    "production-call-receiver-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/m/ir.deal", CALL_RECEIVER_IR_SOURCE);
+                    write(project, "src/m/codec.deal", CALL_RECEIVER_CODEC_SOURCE);
+                    write(project, "src/main.deal", codecFirst
+                        ? callReceiverBody(
+                            "import * as codec from \"./m/codec\";\n",
+                            "import * as ir from \"./m/ir\";\n")
+                        : callReceiverBody(
+                            "import * as ir from \"./m/ir\";\n",
+                            "import * as codec from \"./m/codec\";\n"));
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /**
+     * The class-field nested literal (finding 1): the enclosing class's
+     * field declares the identity-equal sibling provider, and the entry
+     * provides a nested literal whose expectation names that field's
+     * declaration.
+     */
+    private static final String NESTED_FIELD_PROVIDER_IR_SOURCE = """
+        import * as codec from "./codec";
+        export class Ir { inner: codec.Ir = {}; a: int = 7; }
+        """;
+
+    private static final String NESTED_FIELD_PROVIDER_CODEC_SOURCE = """
+        export class Ir { b: int = 93; }
+        """;
+
+    private static final String NESTED_FIELD_PROVIDER_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        export function main(): null {
+          let x: ir.Ir = { inner: {} };
+          if (x.inner.b === 93 && x.a === 7) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /**
+     * The transitive provider literal (finding 2): the entry imports
+     * only the intermediate module, whose field declaration names the
+     * identity-equal sibling provider's class in the same directory.
+     */
+    private static final String TRANSITIVE_PROVIDER_IR_SOURCE = """
+        import * as codec from "./codec";
+        export class Part { z: string = "ir"; }
+        export class Outer { inner: codec.Part = {}; }
+        """;
+
+    private static final String TRANSITIVE_PROVIDER_CODEC_SOURCE = """
+        export class Part { b: int = 93; }
+        """;
+
+    private static final String TRANSITIVE_PROVIDER_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as ir from "./m/ir";
+        export function main(): null {
+          let x: ir.Outer = { inner: {} };
+          if (x.inner.b === 93) { console.log("ok"); }
+          return null;
+        }
+        """;
+
+    /**
+     * The class-field and transitive provider lanes (review cycle 2
+     * findings 1 and 2): the field's declared provider owns the nested
+     * literal, and a declaration reached only through an imported
+     * declaration resolves through the whole-project provider index —
+     * never the identity-equal sibling that shares the canonical module
+     * identity. Both run through the release-owned production invocation
+     * on the real LuaJIT and JVM lanes, printing {@code ok} with an empty
+     * stderr and exit 0.
+     */
+    private static void testProductionNestedFieldAndTransitiveProviders()
+            throws Exception {
+        System.out.println("-- public compilation: the class-field and "
+            + "transitive same-identity providers own their nested literals on "
+            + "the shared-IR production lanes --");
+        for (String backend : List.of("luajit", "jvm")) {
+            record Scenario(String label, String irSource, String codecSource,
+                            String mainSource) {}
+            List<Scenario> scenarios = List.of(
+                new Scenario("class-field provider " + backend,
+                    NESTED_FIELD_PROVIDER_IR_SOURCE,
+                    NESTED_FIELD_PROVIDER_CODEC_SOURCE,
+                    NESTED_FIELD_PROVIDER_MAIN_SOURCE),
+                new Scenario("transitive provider " + backend,
+                    TRANSITIVE_PROVIDER_IR_SOURCE,
+                    TRANSITIVE_PROVIDER_CODEC_SOURCE,
+                    TRANSITIVE_PROVIDER_MAIN_SOURCE));
+            for (Scenario scenario : scenarios) {
+                Path project = Files.createTempDirectory(
+                    "production-nested-provider-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/m/ir.deal", scenario.irSource());
+                    write(project, "src/m/codec.deal", scenario.codecSource());
+                    write(project, "src/main.deal", scenario.mainSource());
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + scenario.label() + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + scenario.label() + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(scenario.label(), out);
+                    } else {
+                        checkSiblingJvmRun(scenario.label(), project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
+    /**
+     * The plan-imported/non-plan-local same-identity JSON fixture (review
+     * cycle 4, finding 1): the imported sibling is the only plan-bearing
+     * ({@code @jsonable}) declaration while the entry's own same-identity
+     * sibling generates none, so the emitted plan table carries the
+     * imported declaration's layout and the nested JSON round trip walks
+     * its fields. The construction and the nested link must agree on the
+     * imported declaration under the real backends.
+     */
+    private static final String PLAN_IMPORTED_OTHER_SOURCE = """
+        // @jsonable
+        export class Point { a: int = 7; }
+        """;
+
+    private static final String PLAN_IMPORTED_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as other from "./other";
+
+        export class Point { nick: string = "local"; }
+
+        // @jsonable
+        export class Wrap { p: other.Point = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
+            throw { code: "WRONG", message: s };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The local-plan mirror (review cycle 2): the entry's own declaration
+     * is the only plan-bearing declaration while the imported sibling
+     * generates none, so the local declaration owns the plan and the
+     * nested round trip — the production lanes must keep both directions
+     * exact.
+     */
+    private static final String PLAN_LOCAL_OTHER_SOURCE = """
+        export class Point { nick: string = ""; }
+        """;
+
+    private static final String PLAN_LOCAL_MAIN_SOURCE = """
+        import * as console from "std/console";
+        import * as other from "./other";
+
+        // @jsonable
+        export class Point { nick: string = "l"; }
+
+        // @jsonable
+        export class Wrap { p: Point = {}; }
+
+        export function main(): null {
+          let w: Wrap = {};
+          let s: string = Wrap$toJson(w);
+          if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
+            throw { code: "WRONG", message: s };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The plan-imported/non-plan-local same-identity JSON link and its
+     * local-plan mirror on the shared-IR production lanes (review cycle
+     * 4, finding 1): the generated plan table carries the unique
+     * plan-bearing declaration's layout under the canonical identity in
+     * both directions, so the nested construction, plan walk and emitted
+     * artifact agree and the real LuaJIT and JVM artifacts print
+     * {@code ok} with an empty stderr and exit 0.
+     */
+    private static void testProductionPlanOwnerJsonLinks()
+            throws Exception {
+        System.out.println("-- public compilation: the plan-imported/"
+            + "non-plan-local and local-plan same-identity JSON links"
+            + " execute the exact plan-bearing declaration --");
+        for (boolean importedPlan : new boolean[] { true, false }) {
+            for (String backend : List.of("luajit", "jvm")) {
+                String label = (importedPlan ? "imported plan" : "local plan")
+                    + " " + backend;
+                Path project = Files.createTempDirectory(
+                    "production-plan-owner-");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "stdlib": "1.3",
+                          "moduleRoots": ["src"],
+                          "dependencies": {},
+                          "externals": {},
+                          "backend": "%s",
+                          "output": "out"
+                        }
+                        """.formatted(backend));
+                    write(project, "src/other.deal", importedPlan
+                        ? PLAN_IMPORTED_OTHER_SOURCE : PLAN_LOCAL_OTHER_SOURCE);
+                    write(project, "src/main.deal", importedPlan
+                        ? PLAN_IMPORTED_MAIN_SOURCE : PLAN_LOCAL_MAIN_SOURCE);
+
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    check(compile.exitCode() == 0,
+                        "the " + label + " public compile succeeds: "
+                            + compile.stderr());
+                    check(compile.stderr().isEmpty(),
+                        "the " + label + " public compile emits no"
+                            + " diagnostic: " + compile.stderr());
+                    if (compile.exitCode() != 0) {
+                        continue;
+                    }
+                    Path out = project.resolve("out");
+                    if (backend.equals("luajit")) {
+                        checkSiblingLuaRun(label, out);
+                    } else {
+                        checkSiblingJvmRun(label, project, out);
+                    }
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
     private static void testProductionSiblingModuleProviderIdentity()
             throws Exception {
         System.out.println("-- public compilation: sibling class-declaring"
@@ -1575,21 +2093,51 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The shadowing-initializer assignment collision (review 0005): the
-     * assignment inside a shadowing let's own initializer targets the
-     * enclosing binding (the pending declaration is not visible there,
-     * docs/spec-v1.3.md §Name resolution — Declaration order), so the literal keeps that
-     * binding's declared provider — the enclosing annotation names
-     * {@code ir} even when the not-yet-visible inner declaration names
-     * the identity-equal sibling and the import that happens to come
-     * first. Asserted in both import orders for the enclosing block and
-     * the loop-head form, with the exact defining range, one
-     * import-order-independent digest, and the published artifact
-     * outcome.
+     * The shadowing-initializer crossing (review 0005; ISSUE-0809 review
+     * cycle 2): the assignment inside a shadowing let's own initializer
+     * targets the enclosing binding (the pending declaration is not
+     * visible there, docs/spec-v1.3.md §Name resolution — Declaration
+     * order), so the constructed literal carries that binding's declared
+     * provider — the enclosing annotation names {@code ir} even when the
+     * not-yet-visible inner declaration names the identity-equal sibling
+     * and the import that happens to come first. The inner declaration of
+     * another provider never retags that value: both import orders are
+     * refused with E3019 at the shadowing initializers and nothing is
+     * published, so the import order can never decide the demanded
+     * default.
      */
-    private static void testProductionShadowingInitializerCollision() throws Exception {
-        checkCollision(new CollisionCase("shadowing-initializer", SHADOW_IR_SOURCE, SHADOW_CODEC_SOURCE,
-            List.of(SHADOW_MAIN_CODEC_FIRST, SHADOW_MAIN_IR_FIRST), false, false, true, false, true));
+    private static void testProductionShadowingInitializerCrossingRejected()
+            throws Exception {
+        Path root = Files.createTempDirectory("production-shadowing-initializer-");
+        try {
+            write(root, "deal.json", DEAL_JSON_JS);
+            write(root, "src/m/ir.deal", SHADOW_IR_SOURCE);
+            write(root, "src/m/codec.deal", SHADOW_CODEC_SOURCE);
+            String[] entries = { "src/main.deal", "src/main_ir_first.deal" };
+            String[] sources = { SHADOW_MAIN_CODEC_FIRST, SHADOW_MAIN_IR_FIRST };
+            for (int i = 0; i < entries.length; i++) {
+                String label = i == 0 ? "codec-first" : "ir-first";
+                write(root, entries[i], sources[i]);
+                ArmCompile compile = compileWithInvocation(root, entries[i],
+                    productionInvocation());
+                check(!compile.success(),
+                    "the shadowing same-identity crossing is refused (" + label + ")");
+                List<CompilerDiagnostic> diagnostics =
+                    compile.orchestrator().diagnostics();
+                long crossings = diagnostics.stream()
+                    .filter(d -> "E3019".equals(d.code())).count();
+                checkEq(2L, crossings,
+                    "the block initializer and the loop-head initializer are "
+                        + "named as crossings (" + label + "): " + diagnostics);
+                check(diagnostics.stream().noneMatch(d -> "E6005".equals(d.code())),
+                    "the crossing is a frontend rejection, never a lowering "
+                        + "fail-close (" + label + "): " + diagnostics);
+                check(!Files.exists(root.resolve("out")),
+                    "the refused crossing publishes no artifact (" + label + ")");
+            }
+        } finally {
+            deleteRecursively(root);
+        }
     }
 
     /**
@@ -5664,6 +6212,11 @@ public class ProductionDispatchTest {
         testProductionJvmTwoModule();
         testProductionLuaJitTwoModuleSurfaces();
         testProductionSiblingModuleProviderIdentity();
+        testProductionSameNameSiblingSharedIr();
+        testProductionLocalDeclarationBesideCalleeProvider();
+        testProductionCallReceiverProviderBesideSameIdentityLocal();
+        testProductionNestedFieldAndTransitiveProviders();
+        testProductionPlanOwnerJsonLinks();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionShadowedLocalCalleeCollision();
@@ -5671,7 +6224,7 @@ public class ProductionDispatchTest {
         testProductionDeclaredContextSiblingCollision();
         testProductionIdentifierAssignmentCollision();
         testProductionMemberAssignmentCollision();
-        testProductionShadowingInitializerCollision();
+        testProductionShadowingInitializerCrossingRejected();
         testConversionOverflowTerminal();
         Path sync = Files.createTempDirectory("production-dispatch-sync-");
         try {
