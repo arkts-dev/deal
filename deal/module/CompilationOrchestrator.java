@@ -233,13 +233,13 @@ public final class CompilationOrchestrator {
     private IOException pendingStageFailure;
 
     /**
-     * The IR dumps a LuaJIT/JVM compile generated in their existing
-     * phase-1/3 sites, in generation order: they are held until the one
-     * production arm has accepted the compile ({@link #stageIrDumps()}),
-     * so a rejected compile stages neither a dump nor an artifact and no
-     * staging fault can
-     * preempt its diagnostic. The JS arm keeps its immediate phase-1/3
-     * staging (the JS path is unchanged by the cutover).
+     * The IR dumps a compile generated in its existing phase-1/3 sites, in
+     * generation order: they are held until the one production arm has
+     * accepted the compile ({@link #stageIrDumps()}), so a rejected compile
+     * stages neither a dump nor an artifact and no staging fault can
+     * preempt its diagnostic. Every backend — {@code Backend.JS} included —
+     * holds its dumps here; no arm stages a dump ahead of the emission that
+     * accepts it.
      */
     private final List<PendingIrDump> pendingIrDumps = new ArrayList<>();
 

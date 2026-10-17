@@ -98,7 +98,7 @@ public final class ProductionProjectEmission {
 
     /** The two outcomes of one production arm run. */
     public enum Outcome {
-        /** The one project artifact (and the LuaJIT copies) staged. */
+        /** The one project artifact and the target's deployment copies staged. */
         EMITTED,
         /** Nothing staged; the carried E6005/E6000 is the compile failure. */
         FAILED
