@@ -12,27 +12,34 @@
 //               marked-Map shape conversion with the per-slot
 //               number-variant marks), under the "(string)->table"
 //               boundary (entry checkString, exit checkTable);
-//   stringify — the widened instance-aware entry gate (a Map or a class
-//               instance passes; everything else fails through
-//               $rt.checkTable with E8001 "expected table"), the shared
+//   stringify — the declared "(table)->string" parameter check at the
+//               entry (entry checkTable — the std/json.lua check_table
+//               mirror, and what the shared STDLIB_PARAMETER cell of the
+//               cataloged call runs on the other lanes: the JS production
+//               lane emits a raw stdlib module call, so this entry check
+//               is the std/json.stringify parameter boundary), the shared
 //               $rt.jsonStringifyText finite-acyclic validation/text walk
 //               (the std/json.lua encode_value mirror: the closed
 //               JSON_STRINGIFY_UNSUPPORTED arm for unsupported carriers,
 //               invalid scalar sequences and nonfinite numbers; the
 //               closed cycle arm for a path-local container re-entry),
-//               under the "(table)->string" boundary (exit checkString).
+//               then the declared-return checkString at exit. The entry
+//               check is the strict table split $rt.checkTable applies:
+//               an unmarked table passes; the two JSON decode carriers
+//               (a decoded JSON array, a decoded JSON null) and every
+//               other carrier — Array, plain object, class instance,
+//               wrapper, MISSING, undefined, primitives — raise the
+//               shared E8001 "expected table" typed-boundary tuple with
+//               the runtime's $kindOf actual label. A table argument that
+//               merely CONTAINS decoded carriers, class instances, or any
+//               other non-JSON-shaped value keeps the walk's own arms.
 //
-// Hand-written and trusted: the module captures the host globals it uses
-// at module top under $-names (js-stdlib-modules D3) — $Map and the
-// nil-equivalent $undefined. Object/String may be spelled bare inside
-// trusted files (the runtime's own D10 note). The module is pure and
-// stateless; beyond the checks/error spine it consults the three shared
-// runtime members (jsonParseText/jsonParseValue/jsonStringifyText) and
-// checkTable/checkString.
-
-// ===== Host-global capture (js-stdlib-modules D3) =====
-const $Map = Map;
-const $undefined = void 0;
+// Hand-written and trusted: the module is pure and stateless; beyond the
+// checks/error spine it consults the three shared runtime members
+// (jsonParseText/jsonParseValue/jsonStringifyText) and
+// checkTable/checkString, and it reads no host global at all (the
+// js-stdlib-modules D3 $-capture convention applies to the globals a
+// module uses; this module uses none).
 
 const $rt = require("../deal/runtime");
 
@@ -40,16 +47,14 @@ const $rt = require("../deal/runtime");
 // wrappers (js-stdlib-modules D1-D2) =====
 const $json = {};
 
-// stringify: the widened instance-aware entry gate — a Map or a class
-// instance passes; everything else (Array, wrapper, plain object, a
-// standalone MISSING, undefined, primitives) falls through $rt.checkTable
-// with E8001 "expected table" and the runtime's $kindOf actual label —
-// then the shared $rt.jsonStringifyText validation/text walk and the
-// declared-return checkString at exit.
+// stringify: the declared (table) parameter check at the entry — the
+// strict $rt.checkTable split, exactly the boundary the cataloged call's
+// STDLIB_PARAMETER cell applies on the LuaJIT/JVM lanes and in the
+// shared oracle (E8001 "expected table", expected "table", actual
+// $kindOf) — then the shared $rt.jsonStringifyText validation/text walk
+// and the declared-return checkString at exit.
 $json.stringify = $rt.function("(table)->string", function(v, $file, $line, $column) {
-  if (!(v instanceof $Map) && !(typeof v === "object" && v !== null && v.$kind === "class")) {
-    $rt.checkTable(v, $file, $line, $column);
-  }
+  $rt.checkTable(v, $file, $line, $column);
   return $rt.checkString($rt.jsonStringifyText(v, [], $file, $line, $column), $file, $line, $column);
 });
 

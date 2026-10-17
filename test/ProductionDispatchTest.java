@@ -4546,6 +4546,157 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
+    // The std/json decode carriers at the declared (table) parameter (v1.3)
+    // =========================================================================
+
+    /**
+     * The three carrier exports of the JS-lane tuple leg. The entry module
+     * keeps its {@code (): null} {@code main}, so each carrier is driven
+     * through an ordinary zero-arity export exactly like the production
+     * lane protocol drives a fixture's own export.
+     */
+    private static final String JSON_CARRIER_TUPLE_V13_SOURCE = """
+        import * as json from "std/json";
+
+        class Box {
+          label: string = "b";
+        }
+
+        export function arrayCarrier(): string {
+          let doc: table = json.parse("{\\"xs\\":[1,2]}");
+          return json.stringify(doc.xs);
+        }
+
+        export function nullCarrier(): string {
+          let doc: table = json.parse("{\\"n\\":null}");
+          return json.stringify(doc.n);
+        }
+
+        export function classCarrier(): string {
+          let holder: table = {};
+          let box: Box = {};
+          holder.box = box;
+          return json.stringify(holder.box);
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The compiled contextual-read call form at the declared std/json
+     * {@code table} parameter, pinned field-exact on the JS production
+     * lane: code, message, expected, actual, and the failing call
+     * expression's own source position, through a real node execution of
+     * the published artifact. The JS production lane emits a raw stdlib
+     * module call, so the std/json entry's declared table check is that
+     * lane's parameter boundary and reports at the call expression — the
+     * origin the recorded {@code STDLIB_PARAMETER} cell carries. The
+     * LuaJIT/JVM lanes record both that cell and the contextual read's
+     * own boundary (the read cell fires first, at the read expression),
+     * and the cross-lane outcome agreement over the same three carriers
+     * is registered as the corpus fixture
+     * {@code backend-runtime/stdlib/json/json-stringify-contextual-read-carrier}
+     * driven through this suite's boundary-corpus leg and the JS corpus
+     * lane.
+     */
+    private static void testStdlibJsonCarrierBoundaryV13ProductionDrive()
+            throws Exception {
+        System.out.println("-- the declared std/json table parameter at a"
+            + " contextual read used as a call argument: the js lane's"
+            + " carrier tuple --");
+        Path project = Files.createTempDirectory("json-carrier-tuple-js-");
+        try {
+            write(project, "deal.json", DEAL_JSON_JS);
+            write(project, "src/main.deal", JSON_CARRIER_TUPLE_V13_SOURCE);
+            ProjectOutcome compile = productionCompile(project, "src/main.deal",
+                "out");
+            check(compile.exitCode() == 0,
+                "the js std/json carrier-tuple compile succeeds: "
+                    + compile.stderr());
+            if (compile.exitCode() != 0) {
+                return;
+            }
+            Path out = project.resolve("out");
+            // The probe drives each compiled export once and prints the
+            // caught tuple: code, message, expected, actual, and the
+            // reported source position.
+            write(out, "tuple.js", """
+                "use strict";
+                const $rt = require("./deal/runtime");
+                const $entry = require("./main");
+                for (const $name of ["arrayCarrier", "nullCarrier", "classCarrier"]) {
+                  try {
+                    const $value = $entry[$name].$f();
+                    console.log($name + "|admitted|" + $value);
+                  } catch ($e) {
+                    const $err = $rt.reifyError($e);
+                    console.log($name + "|" + $err.code + "|" + $err.message
+                      + "|" + $err.expected + "|" + $err.actual + "|" + $err.file
+                      + "|" + $err.line + "|" + $err.column);
+                  }
+                }
+                """);
+            BoundedProcess.BoundedResult run = runBounded(out, "node",
+                "tuple.js");
+            check(run.exitCode() == 0,
+                "the js std/json carrier-tuple probe runs clean: exit="
+                    + run.exitCode() + " output=" + boundedOutput(run));
+            String sourceFile = project.resolve("src/main.deal")
+                .toAbsolutePath().normalize().toString();
+            int[] arrayAt = sourcePositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
+                "json.stringify(doc.xs)");
+            int[] nullAt = sourcePositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
+                "json.stringify(doc.n)");
+            int[] classAt = sourcePositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
+                "json.stringify(holder.box)");
+            String expected = String.join("\n",
+                "arrayCarrier|E8001|expected table|table|array|" + sourceFile
+                    + "|" + arrayAt[0] + "|" + arrayAt[1],
+                "nullCarrier|E8001|expected table|table|null|" + sourceFile
+                    + "|" + nullAt[0] + "|" + nullAt[1],
+                "classCarrier|E8001|expected table|table|class|" + sourceFile
+                    + "|" + classAt[0] + "|" + classAt[1],
+                "");
+            checkEq(expected, run.stdout(),
+                "the js artifact reports the shared expected-table tuple for"
+                    + " the two decode carriers and the class instance at the"
+                    + " contextual-read call form");
+            check(run.stderr().isEmpty(),
+                "the js carrier-tuple probe writes no stderr, got '"
+                    + run.stderr() + "'");
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * The one-based line and column of the first occurrence of
+     * {@code needle} in {@code source}: the drive's own derivation of the
+     * failing call expression's reported position (never a hand-counted
+     * literal).
+     */
+    private static int[] sourcePositionOf(String source, String needle) {
+        int index = source.indexOf(needle);
+        if (index < 0) {
+            throw new IllegalStateException("the fixture source carries no '"
+                + needle + "' occurrence");
+        }
+        int line = 1;
+        int column = 1;
+        for (int i = 0; i < index; i++) {
+            if (source.charAt(i) == '\n') {
+                line++;
+                column = 1;
+            } else {
+                column++;
+            }
+        }
+        return new int[] { line, column };
+    }
+
+    // =========================================================================
     // ISSUE-0791: the boundary fixtures whose pin lives in a driven export
     // =========================================================================
 
@@ -4598,6 +4749,16 @@ public class ProductionDispatchTest {
             driveBoundaryCorpusFixture(
                 "stdlib/json/json-parse-top-level-null-table-error",
                 "test_json_parse_top_level_null", true, drivers);
+            // The declared (table) parameter of a contextual table read
+            // used as a std/json.stringify argument ("Reading table
+            // fields" context 4): the two decode carriers and a class
+            // instance take the shared expected-table boundary on the
+            // release-owned production CLI artifacts under both real
+            // tools.
+            driveBoundaryCorpusFixture(
+                "stdlib/json/json-stringify-contextual-read-carrier",
+                "test_json_stringify_contextual_read_carrier", false,
+                drivers);
         } finally {
             deleteRecursively(drivers);
         }
@@ -6532,6 +6693,7 @@ public class ProductionDispatchTest {
         testFailClosedStagesNothingWithDumps();
         testV12SplitCaptureControls();
         testArrayReadV13ProductionDrive();
+        testStdlibJsonCarrierBoundaryV13ProductionDrive();
         testV12CornerCaseCorpusProductionDrive();
         testV13BoundaryCorpusProductionDrive();
         testRetainedDefaultCallWitnessBothTargets();

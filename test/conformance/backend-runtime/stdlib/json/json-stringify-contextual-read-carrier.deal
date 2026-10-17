@@ -1,0 +1,67 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: A contextual table read used as a std/json.stringify argument is runtime-checked against the declared (table) parameter: the decoded JSON array, the decoded JSON null and a class instance read out of a table take the shared E8001 expected-table boundary and never reach the encoder (v1.3)
+// @expected: runtime-ok
+// @features: stdlib, json, v1.3
+
+import * as json from "std/json";
+
+class Box {
+  label: string = "b";
+}
+
+export function test_json_stringify_contextual_read_carrier(): null {
+  let doc: table = json.parse("{\"xs\":[1,2],\"n\":null}");
+  let arrayAdmitted: string = "";
+  let arrayCode: string = "";
+  let arrayMessage: string = "";
+  try {
+    arrayAdmitted = json.stringify(doc.xs);
+  } catch (e) {
+    arrayCode = e.code;
+    arrayMessage = e.message;
+  }
+  if (arrayAdmitted !== "") {
+    throw { code: "TEST_FAIL", message: "the decoded JSON array was admitted at the declared table parameter: " + arrayAdmitted };
+  }
+  if (arrayCode !== "E8001" || arrayMessage !== "expected table") {
+    throw { code: "TEST_FAIL", message: "the decoded JSON array did not take the expected-table boundary: " + arrayCode + "/" + arrayMessage };
+  }
+  let nullAdmitted: string = "";
+  let nullCode: string = "";
+  let nullMessage: string = "";
+  try {
+    nullAdmitted = json.stringify(doc.n);
+  } catch (e) {
+    nullCode = e.code;
+    nullMessage = e.message;
+  }
+  if (nullAdmitted !== "") {
+    throw { code: "TEST_FAIL", message: "the decoded JSON null was admitted at the declared table parameter: " + nullAdmitted };
+  }
+  if (nullCode !== "E8001" || nullMessage !== "expected table") {
+    throw { code: "TEST_FAIL", message: "the decoded JSON null did not take the expected-table boundary: " + nullCode + "/" + nullMessage };
+  }
+  let holder: table = {};
+  let box: Box = {};
+  holder.box = box;
+  let classAdmitted: string = "";
+  let classCode: string = "";
+  let classMessage: string = "";
+  try {
+    classAdmitted = json.stringify(holder.box);
+  } catch (e) {
+    classCode = e.code;
+    classMessage = e.message;
+  }
+  if (classAdmitted !== "") {
+    throw { code: "TEST_FAIL", message: "the class instance was admitted at the declared table parameter: " + classAdmitted };
+  }
+  if (classCode !== "E8001" || classMessage !== "expected table") {
+    throw { code: "TEST_FAIL", message: "the class instance did not take the expected-table boundary: " + classCode + "/" + classMessage };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

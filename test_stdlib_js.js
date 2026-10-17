@@ -536,10 +536,13 @@ test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and m
     "unsupported type for JSON encoding: string");
   // The array-marked Map comes from the shared decode conversion (the
   // declared parse exit rejects a top-level array, so the decode
-  // producer is the runtime member).
+  // producer is the runtime member). It can never reach the declared
+  // stringify parameter (the entry table check rejects the carrier), so
+  // the key-side arm is driven through the shared encode row the walk
+  // consumes.
   const marked = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   marked.set("\uD800", 3);
-  assertErrorMessage(function() { json.stringify.$f(marked, "f.js", 1, 1); }, "E8001",
+  assertErrorMessage(function() { rt.jsonStringifyText(marked, [], "f.js", 1, 1); }, "E8001",
     "unsupported type for JSON encoding: string");
 });
 
@@ -547,29 +550,51 @@ test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and m
 // JSON-shape round-trips (Verification 2)
 // ===========================================================================
 
-test("json round-trip: stringify of the null-marked decode carrier === \"null\"", function() {
+test("json round-trip: stringify of the null-marked decode carrier is the expected-table boundary", function() {
   const parsed = rt.jsonParseValue(null, "f.js", 1, 1);
-  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "null", "null round-trip");
-  // The decoded null is language null, not a table: a table-parameter
-  // boundary (std/table.keys) rejects it with the shared token.
+  // The decoded null is language null, not a table: the declared
+  // (table)->string entry check (the std/json.lua check_table mirror and
+  // the boundary the cataloged call's STDLIB_PARAMETER cell applies on
+  // the LuaJIT/JVM lanes) rejects it with the shared tuple.
+  const carrierErr = assertErrorMessage(function() {
+    json.stringify.$f(parsed, "f.js", 1, 1);
+  }, "E8001", "expected table");
+  assertEqual(carrierErr.expected, "table",
+    "decoded null at the stringify parameter expected token");
+  assertEqual(carrierErr.actual, "null",
+    "decoded null at the stringify parameter actual kind");
+  // The shared encode row the declared call delegates to still renders
+  // the decoded null as the JSON null (a nested null argument position).
+  assertEqual(rt.jsonStringifyText(parsed, [], "f.js", 1, 1), "null", "null round-trip");
+  // The same carrier is rejected by every table parameter.
   const err = assertErrorMessage(function() { table.keys.$f(parsed, "f.js", 1, 1); },
     "E8001", "expected table");
   assertEqual(err.expected, "table", "decoded null at a table parameter expected token");
   assertEqual(err.actual, "null", "decoded null at a table parameter actual kind");
 });
 
-test("json round-trip: stringify of the array-marked decode carrier === \"[1,2]\"", function() {
+test("json round-trip: stringify of the array-marked decode carrier is the expected-table boundary", function() {
   const parsed = rt.jsonParseValue([1, 2], "f.js", 1, 1);
-  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[1,2]", "array round-trip");
-  // The decoded array is the array carrier, not a table: a
-  // table-parameter boundary rejects it with the shared token, while the
+  // The decoded array is the array carrier, not a table: the declared
+  // (table)->string entry check rejects it with the shared tuple, so a
+  // JSON array read out of a table can never be stringified as if it
+  // were the declared table argument.
+  const carrierErr = assertErrorMessage(function() {
+    json.stringify.$f(parsed, "f.js", 1, 1);
+  }, "E8001", "expected table");
+  assertEqual(carrierErr.expected, "table",
+    "decoded array at the stringify parameter expected token");
+  assertEqual(carrierErr.actual, "array",
+    "decoded array at the stringify parameter actual kind");
+  // The shared encode row still renders the carrier as the JSON array
+  // (its nested-table argument position).
+  assertEqual(rt.jsonStringifyText(parsed, [], "f.js", 1, 1), "[1,2]", "array round-trip");
+  // A table-parameter boundary rejects it with the same token, while the
   // array boundary admits it.
   const err = assertErrorMessage(function() { table.keys.$f(parsed, "f.js", 1, 1); },
     "E8001", "expected table");
   assertEqual(err.expected, "table", "decoded array at a table parameter expected token");
   assertEqual(err.actual, "array", "decoded array at a table parameter actual kind");
-  // The array boundary admits the same carrier unchanged (the decode
-  // mark is inert outside the table descriptor family).
   const strings = rt.jsonParseValue(["1", "2"], "f.js", 1, 1);
   assertEqual(rt.checkArray("[string]", strings, "f.js", 1, 1), strings,
     "the array boundary admits the decoded array unchanged");
@@ -612,24 +637,27 @@ test("a real nested array element keeps the array reference kind", function() {
 
 test("json round-trip: an empty decoded array stays the JSON array", function() {
   const parsed = rt.jsonParseValue([], "f.js", 1, 1);
-  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "[]", "empty array round-trip");
+  assertEqual(rt.jsonStringifyText(parsed, [], "f.js", 1, 1), "[]", "empty array round-trip");
 });
 
 test("json round-trip: a mixed-key mutation falls back to the object form", function() {
   const parsed = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   parsed.set("x", 9);
-  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), '{"1":1,"2":2,"x":9}', "mixed-key object form");
+  assertEqual(rt.jsonStringifyText(parsed, [], "f.js", 1, 1), '{"1":1,"2":2,"x":9}',
+    "mixed-key object form");
 });
 
 // An absent (deleted) slot is the internal missing value, never a present
 // JSON null: the shared encoder rejects it as a value-representation
 // failure at the position, exactly like the LuaJIT/JVM rows
 // (test/AsyncExportInvokerProductionTest.testAbsentAndNullSlotsBothTargets
-// pins the same rule for the emitted artifacts).
+// pins the same rule for the emitted artifacts). The carrier itself can
+// never reach the declared stringify parameter (the entry table check
+// rejects it), so the row is driven through the shared encoder.
 test("json round-trip: a missing middle index is a representation failure", function() {
   const parsed = rt.jsonParseValue([1, 2, 3], "f.js", 1, 1);
   parsed.delete("2");
-  assertErrorMessage(function() { json.stringify.$f(parsed, "f.js", 1, 1); }, "E8001",
+  assertErrorMessage(function() { rt.jsonStringifyText(parsed, [], "f.js", 1, 1); }, "E8001",
     "unsupported type for JSON encoding: nil");
 });
 
@@ -645,20 +673,27 @@ test("json round-trip: a __proto__-keyed table round-trips through stringify and
   assertEqual(reparsed.get("ok"), true, "the parse round-trip keeps the sibling entry");
 });
 
-test("json.stringify rejects a root class value (no implicit table conversion)", function() {
+test("json.stringify rejects a root class value at the declared table parameter", function() {
   const defaults = function() {
     return { ["name"]: "default-name", ["opt"]: rt.MISSING, ["nick"]: null };
   };
   const inst = rt.makeClass("User", "@app.main/User", defaults, { ["name"]: "x" }, "f.js", 9, 4);
-  // A class instance is a table-carried value on the carrier-kind
-  // projection and never its canonical identity: the widened entry gate
-  // admits the carrier, and the walk rejects it with the closed
-  // unsupported-type projection (the reference's __c needle). Root class
-  // values are not implicitly table arguments to std/json.stringify.
+  // A class instance is its own carrier kind, never a table: the declared
+  // (table)->string entry check rejects it with the shared typed-boundary
+  // tuple (E8001 "expected table", expected "table"), exactly like the
+  // two decode carriers and the shared STDLIB_PARAMETER cell the
+  // LuaJIT/JVM lanes run. Root class values are not implicitly table
+  // arguments to std/json.stringify and never reach the encoder walk.
   const err = assertErrorMessage(function() { json.stringify.$f(inst, "f.js", 9, 4); }, "E8001",
-    "unsupported type for JSON encoding: table");
-  assertEqual(err.expected, "string, number, boolean, or table", "the arm's pinned expected text");
-  assertEqual(err.actual, "table", "the carried table token");
+    "expected table");
+  assertEqual(err.expected, "table", "the boundary's pinned expected text");
+  assertEqual(err.actual, "class", "the runtime's class-kind actual token");
+  assertSpan(err, "f.js", 9, 4);
+  // The encoder row keeps its own unsupported-carrier arm for a class
+  // instance reached through table content.
+  assertErrorMessage(function() {
+    rt.jsonStringifyText(rt.makeTable({ u: inst }), [], "f.js", 1, 1);
+  }, "E8001", "unsupported type for JSON encoding: table");
 });
 
 test("json.stringify rejects class instances inside table content", function() {
