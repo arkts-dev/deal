@@ -715,6 +715,99 @@ function $numVariantOf($v, $staticIsNumber) {
   return $staticIsNumber === true;
 }
 
+// $isNumericDescriptor: true for the declared int/number positions and
+// their nullable forms — the host-facing scalar number ABI positions of
+// one canonical descriptor text. Every other descriptor (and a
+// non-string input) is false.
+function $isNumericDescriptor($desc) {
+  if (typeof $desc !== "string") {
+    return false;
+  }
+  const $inner = $desc.length > 0 && $desc.charAt(0) === "?"
+    ? $desc.slice(1) : $desc;
+  return $inner === "int" || $inner === "number";
+}
+
+// $hostProjectArg: the host-facing projection of one checked host-call
+// parameter (the JVM __hostProjectArg numeric row and the LuaJIT
+// __hostParamAdmit/__hostAsyncArg carrier unwrap): a declared int/number
+// position hands the raw host the number a read-side variant carrier
+// carries, because the public host scalar ABI is the host's own number —
+// never the runtime's internal carrier object. Every other position
+// crosses unchanged (the carrier only reaches a numeric boundary). The
+// projection runs after the declared-cell check, so the admitted carrier
+// keeps its own variant at the boundary and only the host-facing value
+// is re-represented.
+function $hostProjectArg($desc, $v) {
+  return $isNumericDescriptor($desc) ? $numOf($v) : $v;
+}
+
+// $hostProjectCompletion: the host-facing projection of one checked
+// async-export completion (the JVM host-completion carrier projection
+// and the LuaJIT __asyncExportCompletion numeric leaf unwrap). A
+// read-side numeric carrier becomes the number it carries at the top
+// level and at every nested container leaf; a native Array or a Map
+// table is copied with every element projected; every other value
+// crosses unchanged. The copy is identity-preserving per source
+// container (one projected container per source container), so a shared
+// reference stays shared and a cyclic completion terminates instead of
+// recursing; the walk is an explicit frame stack, so a finite nested
+// completion has no call-stack bound; the DEAL-side value is never
+// mutated.
+function $hostProjectCompletion($v) {
+  const $memo = new $Map();
+  const $stack = [];
+  const $project = function ($value) {
+    if ($isNumCarrier($value)) {
+      return $value.d;
+    }
+    if ($Array.isArray($value)) {
+      const $mapped = $memo.get($value);
+      if ($mapped !== $undefined) {
+        return $mapped;
+      }
+      const $copy = [];
+      $memo.set($value, $copy);
+      $stack.push({ array: $value, copy: $copy, index: 0, keys: null });
+      return $copy;
+    }
+    if ($value instanceof $Map) {
+      const $mapped = $memo.get($value);
+      if ($mapped !== $undefined) {
+        return $mapped;
+      }
+      const $copy = new $Map();
+      $memo.set($value, $copy);
+      const $keys = [];
+      for (const $key of $value.keys()) {
+        $keys.push($key);
+      }
+      $stack.push({ array: $value, copy: $copy, index: 0, keys: $keys });
+      return $copy;
+    }
+    return $value;
+  };
+  const $root = $project($v);
+  while ($stack.length > 0) {
+    const $frame = $stack[$stack.length - 1];
+    if ($frame.keys === null) {
+      if ($frame.index >= $frame.array.length) {
+        $stack.pop();
+        continue;
+      }
+      $frame.copy.push($project($frame.array[$frame.index++]));
+      continue;
+    }
+    if ($frame.index >= $frame.keys.length) {
+      $stack.pop();
+      continue;
+    }
+    const $key = $frame.keys[$frame.index++];
+    $frame.copy.set($key, $project($frame.array.get($key)));
+  }
+  return $root;
+}
+
 // $setNumberVariant/$clearNumberVariant: the container-slot mark
 // maintenance of every committed write (the Lua __numKey mirror). A
 // committed write records the written value's own variant, so the
@@ -2399,8 +2492,11 @@ const $rt = {
       // int-variant carrier passes, a number-variant carrier passes
       // exactly when its double is an integral in-range value and
       // otherwise takes the number rows in the shared order. The
-      // admitted value is returned unchanged — the boundary never
-      // re-types a Value.Number into a Value.Int.
+      // admitted value is never re-typed between Value.Number and
+      // Value.Int, but the int value model has no negative zero: a
+      // zero-valued carrier is republished with d = 0 exactly like the
+      // plain path's v = v + 0 step (the Lua int cell's admitCarrier),
+      // so int(-0.0) is 0 on every lane.
       if (v.k === "number") {
         const $d = v.d;
         if ($d !== $d) {
@@ -2415,6 +2511,9 @@ const $rt = {
         if ($d < -2147483648 || $d > 2147483647) {
           $rt.fail("E8004", "int out of safe range", file, line, column);
         }
+      }
+      if (v.d === 0 && 1 / v.d < 0) {
+        return $numCarrier(v.k, 0);
       }
       return v;
     }
@@ -3285,10 +3384,14 @@ const $rt = {
   //    string surrogates — re-raises E8010 "parameter {i} type
   //    mismatch: {inner}" with the declared descriptor as expected and
   //    $kindOf(arg) as actual (the reference's pcall composition).
-  // 4. f is invoked exactly once with the user arguments; a
-  //    function-typed argument is the checked DEAL wrapper delivered
-  //    unchanged (DEAL→host adaptation, D2 — the host invokes through
-  //    .$f).
+  // 4. f is invoked exactly once with the user arguments; a declared
+  //    int/number position is projected to the number its read-side
+  //    variant carrier carries (the host-facing scalar ABI — the JVM
+  //    __hostProjectArg numeric row and the LuaJIT __hostParamAdmit
+  //    unwrap), so the raw host never observes the internal carrier
+  //    object; a function-typed argument is the checked DEAL wrapper
+  //    delivered unchanged (DEAL→host adaptation, D2 — the host invokes
+  //    through .$f).
   // 5. The single result checks against the declared return
   //    descriptor: a zero-result return (undefined) raises E8010
   //    "return value 1 type mismatch: expected {D}, got nothing" for
@@ -3327,9 +3430,10 @@ const $rt = {
         if ($nargs > $paramDescs.length) {
           $rt.fail("E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
         }
+        const $checkedArgs = [];
         for (let $i = 0; $i < $paramDescs.length; $i++) {
           try {
-            $rt.checkType($paramDescs[$i], args[$i], $file, $line, $column);
+            $checkedArgs.push($rt.checkType($paramDescs[$i], args[$i], $file, $line, $column));
           } catch ($e) {
             if (!($e instanceof $DEALError)) {
               throw $e;
@@ -3337,7 +3441,19 @@ const $rt = {
             $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
           }
         }
-        const $r = f(...args.slice(0, $nargs));
+        // The raw host observes the declared host-facing value: each
+        // declared int/number position is projected to the number its
+        // read-side variant carrier carries (the JVM/LuaJIT declared-cell
+        // projection), never the runtime's internal carrier object. The
+        // projection reads the checked value, exactly like the JVM
+        // wrapper's __hostParamCheck-then-__hostProjectArg sequence, so a
+        // nullable position's admitted language-null representation
+        // reaches the raw host as its declared value.
+        const $hostArgs = [];
+        for (let $i = 0; $i < $paramDescs.length; $i++) {
+          $hostArgs.push($hostProjectArg($paramDescs[$i], $checkedArgs[$i]));
+        }
+        const $r = f(...$hostArgs);
         if ($isNullRet) {
           if ($r === $undefined) {
             $rt.fail("E8010", "return value 1 type mismatch: expected null, got nothing", $file, $line, $column, "null", "nothing");
@@ -3424,9 +3540,10 @@ const $rt = {
         if ($nargs > $paramDescs.length) {
           $rt.fail("E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
         }
+        const $checkedArgs = [];
         for (let $i = 0; $i < $paramDescs.length; $i++) {
           try {
-            $rt.checkType($paramDescs[$i], args[$i], $file, $line, $column);
+            $checkedArgs.push($rt.checkType($paramDescs[$i], args[$i], $file, $line, $column));
           } catch ($e) {
             if (!($e instanceof $DEALError)) {
               throw $e;
@@ -3434,7 +3551,14 @@ const $rt = {
             $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
           }
         }
-        const $op = f(...args.slice(0, $nargs));
+        // The raw async host observes the declared host-facing value at
+        // every declared numeric parameter (the sync crossing's same
+        // checked-value projection).
+        const $hostArgs = [];
+        for (let $i = 0; $i < $paramDescs.length; $i++) {
+          $hostArgs.push($hostProjectArg($paramDescs[$i], $checkedArgs[$i]));
+        }
+        const $op = f(...$hostArgs);
         if (!($op && typeof $op.then === "function")) {
           const $got = $op === $undefined ? "nothing" : $kindOf($op);
           $rt.fail("E8010", "host async function must return an async operation, got " + $got, $file, $line, $column, "async operation", $got);
@@ -3630,8 +3754,12 @@ const $rt = {
   // validated byte-exact through $rt.checkType(returnDescriptor, v) — a
   // rejected operation or a completion mismatch yields
   // { $ok: false, $error } with the reified code/message/file/line/
-  // column; a valid completion yields { $ok: true, $value }. No retry,
-  // no second invocation, no mutation. The member is $rt-only: DEAL
+  // column; a valid completion yields { $ok: true, $value } with the
+  // checked value projected to the host-facing representation (a
+  // read-side numeric carrier becomes the number it carries at the top
+  // level and at every nested container leaf; the projection copies
+  // containers identity-preservingly and mutates nothing). No retry, no
+  // second invocation, no mutation. The member is $rt-only: DEAL
   // source can never name it (no identifier may contain $), no artifact
   // exports it, and no generated invocation shim exists.
   invokeAsyncExport: async function $invokeAsyncExport(entryExports, exportName, returnDescriptor) {
@@ -3689,7 +3817,15 @@ const $rt = {
       return { $ok: false, $error: $rt.reifyError($e) };
     }
     try {
-      return { $ok: true, $value: $rt.checkType(returnDescriptor, $v) };
+      // The checked completion crosses to the host in its declared
+      // host-facing representation: a read-side numeric carrier becomes
+      // the number it carries at the top level and at every nested
+      // container leaf, so the invoker never exposes the runtime's
+      // internal carrier keys to its host caller (the JVM/LuaJIT
+      // completion crossing's projection). Non-numeric values are
+      // unchanged and the checked value is never mutated.
+      return { $ok: true,
+        $value: $hostProjectCompletion($rt.checkType(returnDescriptor, $v)) };
     } catch ($e) {
       return { $ok: false, $error: $rt.reifyError($e) };
     }

@@ -2622,7 +2622,12 @@ public final class JsBackend {
      * any other index commits the nil-equivalent through the
      * carrier-agnostic {@code $rt.arrayDelete} (a native Array's slot, a
      * std/json decoded-array marked Map's array-form key; both keep the
-     * length). Class field delete writes
+     * length). The append-at-length guard compares the index's numeric
+     * value through {@code $rt.numOf}: the checked index may be a
+     * read-side numeric variant carrier (a decoded number-typed element
+     * read), and an object never coincides with the numeric length under
+     * {@code ===}, so the guarded no-op would otherwise commit a write at
+     * the length and grow the array. Class field delete writes
      * {@code $rt.MISSING} via the own-property-safe {@code $rt.setProp};
      * table delete is the Map {@code .delete} call.
      */
@@ -2639,7 +2644,8 @@ public final class JsBackend {
                 line("if ($idx < 0 || $idx > $rt.arrayLength($arr)) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                     + spanArgs(idx.span()) + "); }");
-                line("if ($idx !== $rt.arrayLength($arr)) { $rt.arrayDelete($arr, $idx); }");
+                line("if ($rt.numOf($idx) !== $rt.arrayLength($arr)) { "
+                    + "$rt.arrayDelete($arr, $idx); }");
                 indent--;
                 line("}");
                 return;

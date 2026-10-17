@@ -171,6 +171,7 @@ public class JsBackendTest {
             testJsonDecodedArrayReadLengthNode();
             testJsonableDecodedArrayFieldNode();
             testJsonDecodedArrayVariantNode();
+            testHostBoundaryNumericCarrierNode();
             testJsonStoredFunctionE8001();
             testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
@@ -2519,11 +2520,12 @@ public class JsBackendTest {
             + "$rt.fail(\"E8002\", \"array index out of bounds\", "
             + "\"jstest-delemit.deal\", 3, 10); }"),
             "the E8002 bounds gate precedes the write");
-        check(js.contains("if ($idx !== $rt.arrayLength($arr)) { "
+        check(js.contains("if ($rt.numOf($idx) !== $rt.arrayLength($arr)) { "
             + "$rt.arrayDelete($arr, $idx); }"),
-            "the nil-out commit is guarded by $idx !== $rt.arrayLength($arr) "
-                + "(no write emitted at i === length)");
-        check(!js.replace("if ($idx !== $rt.arrayLength($arr)) { "
+            "the nil-out commit is guarded by $rt.numOf($idx) !== "
+                + "$rt.arrayLength($arr) (no write emitted at i === length, "
+                + "carrier index included)");
+        check(!js.replace("if ($rt.numOf($idx) !== $rt.arrayLength($arr)) { "
             + "$rt.arrayDelete($arr, $idx); }", "").contains("$rt.arrayDelete("),
             "the only element write is the guarded nil-out");
         check(js.contains("$rt.arrayDelete($arr, $idx);"),
@@ -5916,6 +5918,32 @@ public class JsBackendTest {
               delete nsb[0];
               nsb[0] = 1e21;
               if (json.stringify(t3b) !== "{\\"values\\":[1.0E21]}") { return 0; }
+              // A delete whose checked index is a read-side variant
+              // carrier: an index equal to the length is the guarded
+              // no-op (the carrier's numeric value, not the object, is
+              // compared to the length) and an in-range carrier index
+              // still commits exactly one slot.
+              let t3c: table = json.parse("{\\"a\\":[1,2],\\"b\\":[2.0000000000000000001]}");
+              let xsA: int[] = t3c.a;
+              let xsB: int[] = t3c.b;
+              delete xsA[xsB[0]];
+              if (xsA.length !== 2) { return 0; }
+              if (json.stringify(t3c) !== "{\\"a\\":[1,2],\\"b\\":[2.0]}") { return 0; }
+              let t3d: table = json.parse("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
+              let xsC: int[] = t3d.a;
+              let xsD: int[] = t3d.b;
+              delete xsC[xsD[0]];
+              if (xsC.length !== 3) { return 0; }
+              let gone: boolean = false;
+              try {
+                let missing: int = xsC[1];
+              } catch (e) {
+                if (e.code === "E8001" && e.message === "expected int") { gone = true; }
+              }
+              if (!gone) { return 0; }
+              let dnil: string = "";
+              try { dnil = json.stringify(t3d); } catch (e) { dnil = e.code + "|" + e.message; }
+              if (dnil !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
 
               // (2) The element read materializes the slot's own variant at
               // the positions the declared kind cannot express.
@@ -5956,6 +5984,17 @@ public class JsBackendTest {
               // The conversions produce the target representation.
               if (int(xs5[0]) !== 1) { return 0; }
               if (number(xs4[0] - 2147483647) !== 0.0) { return 0; }
+              // The int value model has no negative zero: a number-variant
+              // read carrier whose double is -0 normalizes at the int
+              // boundary (the plain path's v = v + 0), so int(-0.0) is
+              // the int zero and the following number()/write spells 0.0
+              // on every lane.
+              let tz: table = json.parse("{\\"ys\\":[1.5]}");
+              let negZero: number[] = tz.ys;
+              negZero[0] = -0.0;
+              let zn: number = number(int(negZero[0]));
+              negZero[0] = zn;
+              if (json.stringify(tz) !== "{\\"ys\\":[0.0]}") { return 0; }
 
               // (3) A deleted slot is the internal missing value: both
               // encode walks raise the closed nil failure; a genuinely
@@ -5993,6 +6032,149 @@ public class JsBackendTest {
                 + " slot (the closed nil failure, never a fabricated JSON"
                 + " null; a present null element keeps its slot): "
                 + run.output() + " (exit " + run.exitCode() + ")");
+    }
+
+    /**
+     * The host boundary and the decoded-array read carrier (the ISSUE-0827
+     * review cycle-4 finding): a checked host call hands the raw host the
+     * declared host-facing number, never the runtime's internal read-side
+     * variant carrier, and the async-export invoker projects a checked
+     * completion's numeric carriers to their numbers at the top level and
+     * every nested container leaf (the JVM host-cell/completion projection
+     * and the LuaJIT __hostParamAdmit/__hostAsyncArg/__asyncExportCompletion
+     * rules). The drive is the production frontend -> JsBackend emission ->
+     * deployed runtime chain under node over a manifest-declared host
+     * module: a number-variant carrier and an int-variant carrier (a decoded
+     * int slot read at a declared number position) reach the sync and async
+     * host functions as their numbers, a nullable numeric position still
+     * receives the language null, a scalar completion is its number, a
+     * nested completion and its aliased inner array are projected with
+     * their identities preserved, and no internal carrier key reaches the
+     * host caller.
+     */
+    private static void testHostBoundaryNumericCarrierNode() throws Exception {
+        System.out.println("-- Node: host numeric parameters and async-export"
+            + " completions project read carriers --");
+        if (!nodeAvailable) { skipNode("host numeric carrier projection"); return; }
+
+        writeFile("carrier_proj/deal.json", """
+            {"languageVersion": "1.3", "backend": "js",
+             "moduleRoots": ["src"], "output": "out",
+             "externals": {"host/probe": {"declaration": "bindings/probe.d.deal"}}}
+            """);
+        writeFile("carrier_proj/bindings/probe.d.deal", """
+            export function isNumber(x: number): boolean;
+            export function isInteger(x: number): boolean;
+            export function isAbsent(x: number | null): boolean;
+            export async function echo(x: number): number;
+            """);
+        writeFile("carrier_proj/src/main.deal", """
+            import * as json from "std/json";
+            import * as h from "host/probe";
+
+            export function main(): null { return null; }
+
+            export async function probe(): int {
+              let t: table = json.parse("{\\"xs\\":[7.5,1]}");
+              let xs: number[] = t.xs;
+              let count: int = 0;
+              if (h.isNumber(xs[0])) { count = count + 1; }
+              if (h.isNumber(xs[1])) { count = count + 2; }
+              if (h.isInteger(xs[1])) { count = count + 4; }
+              if (h.isAbsent(null)) { count = count + 8; }
+              let nt: table = json.parse("{\\"ys\\":[null]}");
+              let nys: (number | null)[] = nt.ys;
+              if (h.isAbsent(nys[0])) { count = count + 64; }
+              let echoed: number = await h.echo(xs[0]);
+              if (echoed === 7.5) { count = count + 16; }
+              if (h.isNumber(echoed)) { count = count + 32; }
+              return count;
+            }
+
+            export async function run(): number {
+              let t: table = json.parse("{\\"xs\\":[7.5]}");
+              let xs: number[] = t.xs;
+              return xs[0];
+            }
+
+            export async function nested(): number[] {
+              let t: table = json.parse("{\\"xs\\":[1,7.5]}");
+              let xs: number[] = t.xs;
+              return [xs[0], xs[1], 8.25];
+            }
+
+            export async function shared(): number[][] {
+              let t: table = json.parse("{\\"xs\\":[1]}");
+              let xs: number[] = t.xs;
+              return [xs, xs];
+            }
+
+            export async function tabled(): table {
+              let t: table = json.parse("{\\"xs\\":[7.5]}");
+              let xs: number[] = t.xs;
+              let out: table = { x: xs[0] };
+              return out;
+            }
+            """);
+        Path entry = tmpDir.resolve("carrier_proj/src/main.deal")
+            .toAbsolutePath();
+        int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+        check(exit == 0, "the host-carrier project compiles through the"
+            + " public deal compile: exit=" + exit);
+        if (exit != 0) {
+            return;
+        }
+        writeFile("carrier_proj/out/host/probe.js", """
+            "use strict";
+            module.exports = {
+              isNumber: function (x) { return typeof x === "number"; },
+              isInteger: function (x) { return typeof x === "number" && Number.isInteger(x); },
+              isAbsent: function (x) { return x === null; },
+              echo: async function (x) { return x; },
+            };
+            """);
+        writeFile("carrier_proj/out/carrier_runner.js", String.join("\n",
+            "\"use strict\";",
+            "const $rt = require(\"./deal/runtime\");",
+            "const $entry = require(\"./main\");",
+            "const $out = [];",
+            "(async () => {",
+            "  $out.push(\"probe=\" + await $entry.probe.$f());",
+            "  const $scalar = await $rt.invokeAsyncExport($entry, \"run\", \"number\");",
+            "  $out.push(\"scalar=\" + ($scalar.$ok === true",
+            "    && typeof $scalar.$value === \"number\"",
+            "    && $scalar.$value === 7.5 ? \"ok\" : \"bad:\" + JSON.stringify($scalar)));",
+            "  const $nested = await $rt.invokeAsyncExport($entry, \"nested\", \"[number]\");",
+            "  $out.push(\"nested=\" + ($nested.$ok === true",
+            "    && JSON.stringify($nested.$value) === \"[1,7.5,8.25]\"",
+            "    ? \"ok\" : \"bad:\" + JSON.stringify($nested)));",
+            "  const $shared = await $rt.invokeAsyncExport($entry, \"shared\", \"[[number]]\");",
+            "  const $tabled = await $rt.invokeAsyncExport($entry, \"tabled\", \"table\");",
+            "  $out.push(\"tabled=\" + ($tabled.$ok === true",
+            "    && typeof $rt.tableGet($tabled.$value, \"x\") === \"number\"",
+            "    && $rt.tableGet($tabled.$value, \"x\") === 7.5",
+            "    ? \"ok\" : \"bad:\" + JSON.stringify($tabled)));",
+            "  $out.push(\"shared=\" + ($shared.$ok === true",
+            "    && Array.isArray($shared.$value) && $shared.$value.length === 2",
+            "    && $shared.$value[0] === $shared.$value[1]",
+            "    ? \"ok\" : \"bad:\" + JSON.stringify($shared)));",
+            "  process.stdout.write($out.join(\"\\n\") + \"\\n\");",
+            "})().catch((e) => { process.stderr.write(\"RUNNER \" + e + \"\\n\"); process.exit(1); });",
+            ""));
+        NodeResult run = runNodeScript(
+            tmpDir.resolve("carrier_proj/out").toAbsolutePath(),
+            "carrier_runner.js");
+        check(run.exitCode() == 0 && run.output().equals(String.join("\n",
+                "probe=127",
+                "scalar=ok",
+                "nested=ok",
+                "tabled=ok",
+                "shared=ok")),
+            "the production artifact hands the host its declared numeric"
+                + " values and the invoker its projected completion"
+                + " (scalar, nested leaves and preserved aliases, no internal"
+                + " carrier key): " + run.output() + " (exit "
+                + run.exitCode() + ")");
     }
 
     private static void testJsonStoredFunctionE8001() throws Exception {
