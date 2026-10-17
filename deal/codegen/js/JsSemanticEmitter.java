@@ -207,7 +207,6 @@ public final class JsSemanticEmitter {
             new LinkedHashMap<>();
         /** Classes carrying generated JSON helpers (the jsonable fact). */
         private final Set<ClassId> jsonableClasses = new LinkedHashSet<>();
-        /** Each class field's {@code CLASS_DEFAULT} op, by class identity. */
         /** Per-owning-module {@code CLASS_DEFAULT} ops: a canonical class
          * identity may cover same-named declarations of sibling modules,
          * and each declaring unit's plan uses that unit's own default ops

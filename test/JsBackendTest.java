@@ -6,7 +6,6 @@ import deal.ast.ExportDeclaration;
 import deal.ast.ProgramNode;
 import deal.ast.StatementNode;
 import deal.checker.CheckResult;
-import deal.checker.ModuleResolver;
 import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
@@ -50,7 +49,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -105,7 +103,7 @@ public class JsBackendTest {
             testJsonableEmissionPins();
             testJsonableRoundTripNode();
             testOrchestratorJsonableCrossModule();
-            PreparedJs nestedExport = prepareJsUnshaped("""
+            PreparedJs nestedExport = prepareJs("""
                 export class Outer { x: int = 1; }
                 export function test(): int { return 1; }
                 """, "moduleclass-export");
@@ -273,47 +271,8 @@ public class JsBackendTest {
      * own modulePath — the two must agree byte-for-byte for class
      * identities to cross typed boundaries.
      */
+    @SuppressWarnings("deprecation")
     private static Frontend compileFrontend(String source, String filename) {
-        return compileFrontend(source, filename, "Main",
-            new StubModuleResolver());
-    }
-
-    /** Frontend compile with an explicit module resolver (module probes). */
-    @SuppressWarnings("deprecation")
-    private static Frontend compileFrontend(String source, String filename,
-                                            ModuleResolver moduleResolver) {
-        return compileFrontend(source, filename, "Main", moduleResolver);
-    }
-
-    @SuppressWarnings("deprecation")
-    private static Frontend compileFrontend(String source, String filename,
-                                            String modulePath,
-                                            ModuleResolver moduleResolver) {
-        return compileFrontend(source, filename, modulePath, moduleResolver,
-            true);
-    }
-
-    /**
-     * Frontend compile WITHOUT the module-shape validation pass (the
-     * {@code LuaAbiBackendTest} harness shape): the backend-level
-     * surface exercises backend contracts the shape rules do not cover —
-     * a nested {@code export class} is frontend-rejected (E1050), but
-     * the JS backend's scope-local export path
-     * (js-v12-completion-architecture D4) still has to hold for the AST
-     * shape.
-     */
-    @SuppressWarnings("deprecation")
-    private static Frontend compileFrontendUnshaped(String source,
-                                                    String filename) {
-        return compileFrontend(source, filename, "Main",
-            new StubModuleResolver(), false);
-    }
-
-    @SuppressWarnings("deprecation")
-    private static Frontend compileFrontend(String source, String filename,
-                                            String modulePath,
-                                            ModuleResolver moduleResolver,
-                                            boolean shapeValidate) {
         List<CompilerDiagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
@@ -338,22 +297,19 @@ public class JsBackendTest {
             return new Frontend(null, null, errors);
         }
 
-        // Post-parse module shape validation (v1.2 module top level),
-        // mirroring the orchestrator pipeline (skipped by the unshaped
-        // backend-level surface).
-        if (shapeValidate) {
-            for (CompilerDiagnostic d : ModuleShapeValidator.validate(parseResult.program(),
-                    filename, filename.endsWith(".d.deal"))) {
-                if ("error".equals(d.severity())) {
-                    errors.add(d);
-                }
-            }
-            if (!errors.isEmpty()) {
-                return new Frontend(null, null, errors);
+        // Post-parse module shape validation (module top level), mirroring
+        // the orchestrator pipeline.
+        for (CompilerDiagnostic d : ModuleShapeValidator.validate(parseResult.program(),
+                filename, filename.endsWith(".d.deal"))) {
+            if ("error".equals(d.severity())) {
+                errors.add(d);
             }
         }
+        if (!errors.isEmpty()) {
+            return new Frontend(null, null, errors);
+        }
 
-        NameResolver nr = new NameResolver(modulePath, moduleResolver);
+        NameResolver nr = new NameResolver("Main", new StubModuleResolver());
         SymbolTable symTable;
         try {
             symTable = nr.resolve(parseResult.program());
@@ -369,7 +325,7 @@ public class JsBackendTest {
             }
         }
 
-        CheckResult result = TypeChecker.check(modulePath, symTable, nr,
+        CheckResult result = TypeChecker.check("Main", symTable, nr,
             parseResult.program());
         for (CompilerDiagnostic d : result.diagnostics()) {
             if ("error".equals(d.severity())) {
@@ -584,16 +540,7 @@ public class JsBackendTest {
         return normalized.replace(rootPrefix, "");
     }
 
-    /** A public compilation that is expected to reject: its diagnostics and
-     * its (artifact-free) staged set. */
-    private static JsEmission generateRejected(String source, String name,
-                                               String modulePath,
-                                               Map<String, String> extraSources) {
-        return generate(source, name, modulePath, extraSources, false);
-    }
-
-    private record PreparedJs(Frontend frontend, JsEmission emission,
-                              CompiledProject compiled) {
+    private record PreparedJs(Frontend frontend, JsEmission emission) {
     }
 
     private static PreparedJs prepareJs(String source, String name) {
@@ -601,11 +548,7 @@ public class JsBackendTest {
         Frontend frontend = compileFrontend(source, filename);
         JsEmission emission = frontend.program() == null ? null
             : generate(source, name);
-        return new PreparedJs(frontend, emission, null);
-    }
-
-    private static PreparedJs prepareJsUnshaped(String source, String name) {
-        return prepareJs(source, name);
+        return new PreparedJs(frontend, emission);
     }
 
     private record NodeResult(String output, int exitCode) {}
@@ -1613,34 +1556,6 @@ public class JsBackendTest {
             + " signal");
     }
 
-    /** A fixed-export module resolver for backend-level module probes. */
-    private static final class FixedModuleResolver implements ModuleResolver {
-        private final Map<String, Map<String, Type>> modules;
-
-        FixedModuleResolver(Map<String, Map<String, Type>> modules) {
-            this.modules = modules;
-        }
-
-        @Override
-        public Map<String, Type> resolveModule(String modulePath,
-                                               String importingModule,
-                                               Set<String> modulesInProgress)
-                throws ModuleNotFoundException {
-            Map<String, Type> exports = modules.get(modulePath);
-            if (exports == null) {
-                throw new ModuleNotFoundException("Module not found: " + modulePath);
-            }
-            return exports;
-        }
-
-        @Override
-        public deal.checker.Symbol.ClassSymbol resolveClassSymbol(
-                String className, String modulePath, String importingModule)
-                throws ModuleNotFoundException {
-            return null;
-        }
-    }
-
     // =========================================================================
     // Seam and manifest pins
     // =========================================================================
@@ -2574,8 +2489,7 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("// Class default @Main/P.__proto__")
-                || !js.contains("// Class default @Main/P.nick"),
+        check(!js.contains("// Class default @Main/P.__proto__"),
             "the optional __proto__ field carries no default evaluator");
         check(js.contains("\"__proto__\""),
             "provided object literal spells __proto__ as the raw key");
