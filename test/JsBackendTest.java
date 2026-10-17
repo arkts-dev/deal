@@ -3967,7 +3967,7 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.bytes((") 
+        check(js.contains("$rt.bytes((")
                 && js.contains("\"jstest-bytesemit.deal\", 3, 18)"),
             "bytes(4) lowers to $rt.bytes(4, <file>, <line>, <column>)");
         check(js.contains("$rt.bytesLength(")
