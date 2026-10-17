@@ -639,11 +639,11 @@ public final class CompilationOrchestrator {
         // Transactional publication (whole-project-artifact-publication
         // D1-D6): one fresh staging stager per compile; the stage tree
         // and the per-root lock are created lazily at the first staged
-        // write of an accepted compile (a phase-4 production artifact or
-        // deployment copy, the dumps the production arm accepted, or —
-        // on the unchanged JS path — a phase-1/3 dump) and the staged
-        // set is atomically swapped into the live output root only when
-        // the compilation succeeded.
+        // write of an accepted compile (a phase-4 artifact, deployment
+        // copy, or an accepted dump) and the staged set is atomically
+        // swapped into the live output root only when the compilation
+        // succeeded. A rejected compile publishes nothing: its held IR
+        // dumps are discarded with the rest of the stage tree.
         stager = PublicationStager.forRoot(outputRoot);
         pendingStageFailure = null;
         pendingIrDumps.clear();
@@ -778,11 +778,11 @@ public final class CompilationOrchestrator {
         codegenAll();
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // The IR dumps a LuaJIT/JVM compile generated in their existing
-        // phase-1/3 sites stage only now: the one production arm accepted
-        // the compile, so the dumps publish atomically with the artifact
-        // set. A rejection never reaches this point, discards its pending
-        // dumps, and stages nothing at all.
+        // The IR dumps the compile generated in their existing phase-1/3
+        // sites stage only now: emission accepted the compile, so the
+        // dumps publish atomically with the artifact set. A rejection
+        // never reaches this point, discards its pending dumps, and stages
+        // nothing at all.
         stageIrDumps();
         if (hasErrors) { printDiagnostics(); return false; }
 
@@ -2651,29 +2651,25 @@ public final class CompilationOrchestrator {
     /**
      * Records an IR dump for publication (D1/D5): the file is placed at
      * {@code <outputRoot>/<module-path>.ir.txt} after a successful
-     * publish, and appears atomically with the set. A LuaJIT/JVM compile
-     * generates the dump in its existing phase-1/3 site and holds it
-     * until the one production arm has accepted the compile
+     * publish, and appears atomically with the set. Every backend's
+     * compile generates the dump in its existing phase-1/3 site and holds
+     * it until the one production arm has accepted the compile
      * ({@link #stageIrDumps()}), so a rejected compile stages neither a
-     * dump nor an artifact; the JS arm stages its dump immediately. The
-     * {@link IrDumper} failure diagnostic (E6001) stays with the
-     * callers' exception handling.
+     * dump nor an artifact and a dump is never staged ahead of the
+     * emission that accepts it. The {@link IrDumper} failure diagnostic
+     * (E6001) stays with the callers' exception handling.
      */
     private void writeIrDump(String modulePath, String irText) {
         String filePath = modulePath.replace('.', '/') + ".ir.txt";
-        if (backend == Backend.JS) {
-            stageIrDump(filePath, irText);
-            return;
-        }
         pendingIrDumps.add(new PendingIrDump(filePath, irText));
     }
 
     /**
-     * Stages the dumps a LuaJIT/JVM compile held while it ran: called
-     * once, after the one production arm accepted the compile and before
-     * the publication swap. A staging write failure records the pinned
-     * publish diagnostic (D4) and stops the remaining dumps; the
-     * rejection of the publication then discards the whole stage tree.
+     * Stages the dumps a compile held while it ran: called once, after the
+     * one production arm accepted the compile and before the publication
+     * swap. A staging write failure records the pinned publish diagnostic
+     * (D4) and stops the remaining dumps; the rejection of the publication
+     * then discards the whole stage tree.
      */
     private void stageIrDumps() {
         for (PendingIrDump dump : pendingIrDumps) {

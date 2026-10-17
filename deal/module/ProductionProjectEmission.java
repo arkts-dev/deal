@@ -1,10 +1,20 @@
 package deal.module;
 
+import deal.ast.ImportDeclaration;
+import deal.ast.StatementNode;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.SourceMapGenerator;
 import deal.codegen.SourceMapPaths;
 import deal.codegen.SourceMapRecorder;
+import deal.codegen.SharedEmissionFailure;
+import deal.codegen.js.JsEmissionInput;
+import deal.codegen.js.JsModuleArtifact;
+import deal.codegen.js.JsProjectEmission;
+import deal.codegen.js.JsSemanticEmitter;
+import deal.codegen.js.JsSourceFile;
+import deal.codegen.js.RuntimeDeclarationProjection;
+import deal.codegen.js.RuntimeDeclarationSurface;
 import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.FfiEmissionInput;
@@ -17,6 +27,7 @@ import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.publication.PublicationStager;
 import deal.semantic.CheckedModuleInput;
+import deal.semantic.CheckedModuleKind;
 import deal.semantic.CheckedProjectInput;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.HostDeclarationSurface;
@@ -66,6 +77,20 @@ public final class ProductionProjectEmission {
 
     /** The unchanged LuaJIT runtime deployment copy source name. */
     private static final String RUNTIME_LUA = "deal/runtime.lua";
+
+    /** The unchanged JavaScript runtime deployment copy source name. */
+    private static final String RUNTIME_JS = "deal/runtime.js";
+
+    /**
+     * The exact registered text of the JavaScript extern-C rejection (the
+     * preserved {@code FFI_UNSUPPORTED_BACKEND} arm): the frontend admits the
+     * declaration, and the JavaScript production arm rejects the importing
+     * declaration before any lowering or emission with this one message at
+     * the import statement.
+     */
+    public static final String JS_EXTERN_C_REJECTION =
+        "JavaScript backend: @extern-c imports are not supported"
+            + " (FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)";
 
     private ProductionProjectEmission() {
         // Static production entry only; no instances.
@@ -127,14 +152,22 @@ public final class ProductionProjectEmission {
      * Runs the production arm for one release-owned production compile:
      * the closure guard's whole-closure step (both HOST-kind declaration
      * kinds admitted and realized) over the closure's resolved import
-     * facts, the one project lowering, the one emission (with the one
-     * source-map recorder: the project's source comments and per-module
-     * {@code .deal.map.json} sidecars are the v1.3 default and the
-     * accepted {@code sourceMap} spelling selects nothing — the one staged
-     * project artifact with its per-module sidecars, and the complete
-     * LuaJIT deployment copies. The caller (the phase-4 dispatch)
-     * owns the arm selection, the emission record, and the publication
-     * transaction; this unit stages artifacts only.
+     * facts, the JavaScript extern-C rejection, the one project lowering,
+     * the one emission (with the one source-map recorder: the project's
+     * source comments and per-module {@code .deal.map.json} sidecars are
+     * the v1.3 default and the accepted {@code sourceMap} spelling selects
+     * nothing) — the one staged project artifact set with its per-module
+     * sidecars, and the complete LuaJIT/JavaScript deployment copies. The
+     * caller (the phase-4 dispatch) owns the arm selection, the emission
+     * record, and the publication transaction; this unit stages artifacts
+     * only.
+     *
+     * <p>The arm is selected by {@link Backend} only: LuaJIT and JVM render
+     * the one project artifact of their target, and JavaScript renders one
+     * CommonJS artifact per implementation unit through the single
+     * {@link JsSemanticEmitter#emitProductionProject} invocation over the
+     * one lowered project. No invocation purpose selects an alternate
+     * emitter, and no arm re-lowers or re-emits after a failure.</p>
      *
      */
     public static Result run(
@@ -172,16 +205,30 @@ public final class ProductionProjectEmission {
         Objects.requireNonNull(backend, "backend must not be null");
         Objects.requireNonNull(distributionHome, "distributionHome must not be null");
         Objects.requireNonNull(stager, "stager must not be null");
-        if (backend != Backend.LUAJIT && backend != Backend.JVM) {
+        if (backend != Backend.LUAJIT && backend != Backend.JVM
+                && backend != Backend.JS) {
             throw new IllegalArgumentException(
-                "the production project emission targets LuaJIT or JVM only; got "
-                    + backend);
+                "the production project emission targets LuaJIT, JVM or JS only;"
+                    + " got " + backend);
         }
 
         Optional<CompilerDiagnostic> hostImport =
             hostImportGuard(checkedProject, declarationSurface, invocation);
         if (hostImport.isPresent()) {
             return new Result(Outcome.FAILED, List.of(hostImport.get()), null, null);
+        }
+        if (backend == Backend.JS) {
+            // The preserved FFI_UNSUPPORTED_BACKEND arm: the frontend admits
+            // the extern-C declaration and validates its native metadata, and
+            // the JavaScript arm rejects the importing declaration before any
+            // lowering or emission, at the import statement. No output or map
+            // is published.
+            Optional<CompilerDiagnostic> externCImport =
+                externCImportGuard(checkedProject, declarationSurface);
+            if (externCImport.isPresent()) {
+                return new Result(Outcome.FAILED, List.of(externCImport.get()),
+                    null, null);
+            }
         }
 
         // (3) The one project lowering over the compile's declared inputs.
@@ -195,6 +242,12 @@ public final class ProductionProjectEmission {
             return new Result(Outcome.FAILED, lowering.diagnostics(), null, null);
         }
         ExecutableLoweredProject project = lowering.project();
+
+        if (backend == Backend.JS) {
+            return emitJsProject(project, lowering, checkedProject,
+                declarationSurface, declarationModuleIdentities, invocation,
+                distributionHome, stager);
+        }
 
         // (4) The one emission per target — with the one source-map
         // recorder (the v1.3 default debugging artifacts; the accepted
@@ -249,24 +302,190 @@ public final class ProductionProjectEmission {
         // is missing required deployment content: the pinned E6000 with
         // nothing published. The JVM target stages no deployment copy.
         if (backend == Backend.LUAJIT) {
-            Optional<DistributionHome.ResolvedSource> runtime =
-                stager.stageRuntimeCopy(RUNTIME_LUA, distributionHome);
-            if (runtime.isEmpty()) {
-                return new Result(Outcome.FAILED,
-                    List.of(runtimeLibraryMissing()), null, null);
-            }
-            for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-                String implementation = stdlibModule.substring("std/".length());
-                if (stager.stageStdlibCopy(implementation, "lua",
-                        distributionHome).isEmpty()) {
-                    return new Result(Outcome.FAILED,
-                        List.of(stdlibLibraryMissing(implementation, "lua")),
-                        null, null);
-                }
+            Optional<CompilerDiagnostic> deployment =
+                stageDeploymentCopies(RUNTIME_LUA, "lua", distributionHome,
+                    stager);
+            if (deployment.isPresent()) {
+                return new Result(Outcome.FAILED, List.of(deployment.get()),
+                    null, null);
             }
         }
         return new Result(Outcome.EMITTED, List.of(), project,
             artifactRelativePath);
+    }
+
+    /**
+     * The JavaScript arm of the one production project emission (design
+     * source {@code wiki:javascript-semantic-ir-production-migration},
+     * "production_owner" and "artifact_layout"): the one
+     * {@link JsSemanticEmitter#emitProductionProject} invocation over the
+     * already-lowered project returns every implementation module's CommonJS
+     * artifact and coordinate list, then this owner stages the complete set
+     * in the existing exclusive-root transaction — one artifact per
+     * implementation unit at its own {@code moduleId.path().replace('.',
+     * '/') + ".js"} path, that module's own version-1 {@code .deal.map.json}
+     * sidecar, and the complete JavaScript runtime and stdlib deployment
+     * copies.
+     *
+     * <p>{@code Result.artifactRelativePath} names the entry module's own
+     * artifact; it does not enumerate the staged set. The renderer runs once
+     * and is never re-invoked, re-lowered, or routed to an alternate emitter;
+     * an invalid input shape or a fail-closed emitter rejection becomes one
+     * E6005 {@link #SHARED_EMITTER_COVERAGE} carrying the offending
+     * operation's range when the signal identified one, and nothing is
+     * published.</p>
+     *
+     */
+    private static Result emitJsProject(
+            ExecutableLoweredProject project,
+            SemanticLowerer.ProjectLoweringResult lowering,
+            CheckedProjectInput checkedProject,
+            HostDeclarationSurface declarationSurface,
+            Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
+            CompilerInvocation invocation,
+            DistributionHome distributionHome,
+            PublicationStager stager) throws IOException {
+        JsEmissionInput input;
+        JsProjectEmission emission;
+        try {
+            input = jsEmissionInput(project, lowering, checkedProject,
+                declarationSurface, declarationModuleIdentities, stager);
+            emission = JsSemanticEmitter.emitProductionProject(input);
+        } catch (IllegalStateException emitterGap) {
+            // A SharedEmissionFailure carries the rejected op's own copied
+            // origin; a genuinely originless signal keeps the canonical
+            // synthetic projection.
+            return new Result(Outcome.FAILED,
+                List.of(sharedEmitterCoverage(project.entryModule().path(),
+                    emitterGap, invocation)), null, null);
+        } catch (IllegalArgumentException invalidInput) {
+            // An invalid or incomplete structural input shape is the same
+            // fail-closed classification: one E6005 with no artifact.
+            return new Result(Outcome.FAILED,
+                List.of(sharedEmitterCoverage(project.entryModule().path(),
+                    new SharedEmissionFailure(invalidInput.getMessage(),
+                        invalidInput, null), invocation)), null, null);
+        }
+
+        for (JsModuleArtifact artifact : emission.modules()) {
+            stager.stage(artifact.artifactRelativePath(),
+                artifact.source().getBytes(StandardCharsets.UTF_8));
+            if (artifact.hasMappings()) {
+                stager.stage(sidecarPathOf(artifact.moduleId()),
+                    jsSourceMapSidecar(artifact,
+                        input.sourceFiles().get(artifact.moduleId()), stager)
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+        }
+
+        // The complete JavaScript deployment copies: the runtime and every
+        // spec-listed stdlib implementation are required deployment content,
+        // so an unresolved copy is the pinned E6000 with nothing published.
+        Optional<CompilerDiagnostic> deployment =
+            stageDeploymentCopies(RUNTIME_JS, "js", distributionHome, stager);
+        if (deployment.isPresent()) {
+            return new Result(Outcome.FAILED, List.of(deployment.get()), null,
+                null);
+        }
+        return new Result(Outcome.EMITTED, List.of(), project,
+            emission.entryArtifactRelativePath());
+    }
+
+    /**
+     * The canonical rendering input of the JavaScript production arm over the
+     * one lowered project: the project's own admitted companions (body
+     * tables, class-factory registries, registration seeds and namespace
+     * registrations), the one structural declaration projection built from
+     * the shared declaration facts and class seeds, and one authoritative
+     * source identity per implementation unit. The renderer receives no AST,
+     * checker object, or default-expression AST: the declaration surface is
+     * the structural projection, and the source identities are the checked
+     * source facts projected through {@link SourceMapPaths} against the live
+     * output root.
+     *
+     */
+    private static JsEmissionInput jsEmissionInput(
+            ExecutableLoweredProject project,
+            SemanticLowerer.ProjectLoweringResult lowering,
+            CheckedProjectInput checkedProject,
+            HostDeclarationSurface declarationSurface,
+            Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
+            PublicationStager stager) {
+        Path root = stager.publicationRoot();
+        Map<ModuleId, JsSourceFile> sourceFiles = new LinkedHashMap<>();
+        for (CheckedModuleInput module : checkedProject.modules()) {
+            if (module.kind() != CheckedModuleKind.IMPLEMENTATION) {
+                continue;
+            }
+            sourceFiles.put(module.moduleId(), new JsSourceFile(
+                module.sourceId(),
+                SourceMapPaths.sourceDisplay(module.sourceId(), root)));
+        }
+        RuntimeDeclarationSurface declarations =
+            RuntimeDeclarationProjection.project(declarationSurface,
+                declarationModuleIdentities, lowering.seeds());
+        return new JsEmissionInput(project, lowering.tables(),
+            lowering.registries(), lowering.seeds(), lowering.namespaces(),
+            declarations, sourceFiles, true);
+    }
+
+    /** The version-1 sidecar path of one implementation artifact. */
+    private static String sidecarPathOf(ModuleId module) {
+        return module.path().replace('.', '/') + ".deal.map.json";
+    }
+
+    /**
+     * The one version-1 sidecar of one implementation artifact: the module's
+     * own recorded coordinate list serialized with the existing
+     * {@link SourceMapGenerator}, its {@code source} string exactly the
+     * renderer's owner-supplied display name (so the emitted comment and the
+     * sidecar never disagree) and its {@code generated} string the
+     * {@link SourceMapPaths} live-root projection of the module's own
+     * artifact — never a private-stage path.
+     *
+     */
+    private static String jsSourceMapSidecar(JsModuleArtifact artifact,
+            JsSourceFile sourceFile, PublicationStager stager) {
+        SourceMapGenerator generator = new SourceMapGenerator();
+        for (SourceMapGenerator.Mapping mapping : artifact.mappings()) {
+            generator.emitStatement(mapping.generatedLine(),
+                mapping.generatedColumn(), mapping.sourceLine(),
+                mapping.sourceColumn());
+        }
+        Path root = stager.publicationRoot();
+        String generatedDisplay = SourceMapPaths.generatedDisplay(root,
+            root.resolve(artifact.artifactRelativePath()));
+        return generator.toJson(sourceFile.displayName(), generatedDisplay);
+    }
+
+    /**
+     * Stages the complete deployment copies of one deployed-runtime target in
+     * the existing transaction: the runtime library and every spec-listed
+     * stdlib implementation, resolved through the one
+     * {@link DistributionHome} precedence (project-local surface, then the
+     * language distribution, then the checkout development fallback). A
+     * missing required copy yields the pinned E6000 and stages nothing
+     * further; an unused optional resource gains no requirement.
+     *
+     */
+    private static Optional<CompilerDiagnostic> stageDeploymentCopies(
+            String runtimeFileName, String extension,
+            DistributionHome distributionHome, PublicationStager stager)
+            throws IOException {
+        Optional<DistributionHome.ResolvedSource> runtime =
+            stager.stageRuntimeCopy(runtimeFileName, distributionHome);
+        if (runtime.isEmpty()) {
+            return Optional.of(runtimeLibraryMissing(runtimeFileName));
+        }
+        for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
+            String implementation = stdlibModule.substring("std/".length());
+            if (stager.stageStdlibCopy(implementation, extension,
+                    distributionHome).isEmpty()) {
+                return Optional.of(
+                    stdlibLibraryMissing(implementation, extension));
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -343,6 +562,64 @@ public final class ProductionProjectEmission {
         return Optional.empty();
     }
 
+    /**
+     * The preserved JavaScript {@code FFI_UNSUPPORTED_BACKEND} arm: over the
+     * closure's resolved import facts and the shared declaration kinds, the
+     * first resolved extern-C declaration import of the project rejects with
+     * the exact E6006 text at the importing declaration's own statement
+     * range. The guard runs before the one project lowering and before any
+     * emission, so no artifact and no source map is ever published for an
+     * extern-C-importing JavaScript project; JS stays exempt from the native
+     * metadata validation the other arms run.
+     *
+     */
+    private static Optional<CompilerDiagnostic> externCImportGuard(
+            CheckedProjectInput checkedProject,
+            HostDeclarationSurface declarationSurface) {
+        for (CheckedModuleInput module : checkedProject.modules()) {
+            if (module.kind() != CheckedModuleKind.IMPLEMENTATION) {
+                continue;
+            }
+            for (ResolvedImport importFact : module.imports()) {
+                if (importFact.kind() == ExternalModuleKind.IMPLEMENTATION) {
+                    continue;
+                }
+                HostDeclarationSurface.DeclarationFacts facts =
+                    declarationSurface.modules().get(
+                        importFact.resolvedModuleId());
+                if (facts == null || facts.kind()
+                        != HostDeclarationSurface.DeclarationKind.EXTERN_C) {
+                    continue;
+                }
+                return Optional.of(CompilerDiagnostic.error(
+                    DiagnosticCode.E6006, JS_EXTERN_C_REJECTION,
+                    importStatementRange(module, importFact)));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The importing declaration's own statement range: the module's recorded
+     * import declaration whose alias and raw specifier are the resolved
+     * import's, never a guessed coordinate or another import's span. A
+     * producer defect that records no such declaration keeps the canonical
+     * anchorless synthetic shape instead of inventing a coordinate.
+     *
+     */
+    private static DiagnosticRange importStatementRange(
+            CheckedModuleInput module, ResolvedImport importFact) {
+        for (StatementNode statement : module.ast().statements()) {
+            if (statement instanceof ImportDeclaration declaration
+                    && declaration.alias().equals(importFact.alias())
+                    && declaration.modulePath()
+                        .equals(importFact.modulePath())) {
+                return declaration.span().range();
+            }
+        }
+        return DiagnosticRange.synthetic(module.sourceId());
+    }
+
     private static CompilerDiagnostic hostModuleImportFailure(ModuleId emitting,
             String rawSpecifier, String resolvedModulePath,
             CompilerInvocation invocation) {
@@ -361,8 +638,8 @@ public final class ProductionProjectEmission {
         // The production arm owns classification and projection, not source
         // selection: a source-bearing emitter rejection signal carries the
         // range of its explicit rejected op (or detached body), and an
-        // ordinary genuinely originless IllegalStateException keeps the
-        // canonical empty-file synthetic range.
+        // ordinary genuinely originless signal keeps the canonical empty-file
+        // synthetic range.
         DiagnosticRange carried = gap instanceof DiagnosticOriginCarrier carrier
             ? carrier.diagnosticRange() : null;
         if (gap instanceof LuaSemanticEmitter.FfiProviderGap providerGap) {
@@ -401,13 +678,14 @@ public final class ProductionProjectEmission {
     }
 
     /**
-     * The pinned missing-runtime E6000 of the LuaJIT deployment copies
-     * (unchanged text and shape: an anchorless synthetic error with the
-     * runtime path note).
+     * The pinned missing-runtime E6000 of the deployment copies of one
+     * deployed-runtime target (unchanged text and shape: an anchorless
+     * synthetic error with the runtime path note).
      */
-    private static CompilerDiagnostic runtimeLibraryMissing() {
+    private static CompilerDiagnostic runtimeLibraryMissing(
+            String runtimeFileName) {
         return CompilerDiagnostic.syntheticError(DiagnosticCode.E6000,
-            "Runtime library not found: " + RUNTIME_LUA, "",
-            "missing anchor: runtime library path '" + RUNTIME_LUA + "'");
+            "Runtime library not found: " + runtimeFileName, "",
+            "missing anchor: runtime library path '" + runtimeFileName + "'");
     }
 }

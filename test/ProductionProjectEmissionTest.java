@@ -15,6 +15,11 @@ import deal.codegen.Backend;
 import deal.codegen.SharedEmissionFailure;
 import deal.codegen.SourceMapPaths;
 import deal.codegen.SourceMapRecorder;
+import deal.codegen.js.JsEmissionInput;
+import deal.codegen.js.JsSemanticEmitter;
+import deal.codegen.js.JsSourceFile;
+import deal.codegen.js.RuntimeDeclarationProjection;
+import deal.codegen.js.RuntimeDeclarationSurface;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.FfiEmissionInput;
 import deal.codegen.lua.LuaSemanticEmitter;
@@ -69,6 +74,7 @@ import deal.types.Type;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Method;
+import java.lang.reflect.RecordComponent;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -614,6 +620,87 @@ public class ProductionProjectEmissionTest {
             Map.of(EXTERN_C_SPECIFIER, "src/native.d.deal"));
     }
 
+    /**
+     * The JavaScript production drive's class/HOST/call/async/stdlib
+     * fixture: one host declaration module carrying a declared class and two
+     * declared functions, one implementation library carrying an exported
+     * {@code @jsonable} class and a sync and an async export, and the entry
+     * module that reads the host occurrence's typed surface, constructs both
+     * the host-declared and the imported class, calls across the module
+     * boundary, and awaits the cross-module async export.
+     */
+    private static final String JS_HOST_DECLARATION = """
+        export class Endpoint {
+          path: string = "";
+          port?: int;
+        }
+
+        export function alpha(): int;
+        export function describe(s: string): string;
+        """;
+
+    private static final String JS_LIB_SOURCE = """
+        // @jsonable
+        export class Point {
+          x: int = 0;
+          y: int = 0;
+        }
+
+        export function add(a: int, b: int): int {
+          return a + b;
+        }
+
+        export async function getValue(): int {
+          return 42;
+        }
+        """;
+
+    private static final String JS_APP_SOURCE = """
+        import * as lib from "./lib";
+        import * as cfg from "host/cfg";
+        import * as cfg2 from "host/cfg";
+        import * as console from "std/console";
+
+        export function main(): null {
+          if (cfg.alpha === cfg2.alpha) {
+            throw { code: "JS_PROBE", message: "one typed surface per import" };
+          }
+          if (cfg.alpha() !== cfg2.alpha()) {
+            throw { code: "JS_PROBE", message: "same host entry" };
+          }
+          let e: cfg.Endpoint = {};
+          if (e.path !== "/") {
+            throw { code: "JS_PROBE", message: "host class default" };
+          }
+          if (cfg.describe("probe") !== "/probe") {
+            throw { code: "JS_PROBE", message: "host call" };
+          }
+          let p: lib.Point = { x: cfg.alpha() };
+          let total: int = lib.add(p.x, p.y);
+          if (total !== 7) {
+            throw { code: "JS_PROBE", message: "cross-module call" };
+          }
+          if (lib.Point$toJson({ x: 3, y: 4 }) !== "{\\"x\\":3,\\"y\\":4}") {
+            throw { code: "JS_PROBE", message: "json helper" };
+          }
+          console.log("PROBE|JS|MAIN");
+          return null;
+        }
+
+        export async function worker(): int {
+          return await lib.getValue();
+        }
+        """;
+
+    private static Fixture jsFixture() throws Exception {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/cfg.d.deal", JS_HOST_DECLARATION);
+        sources.put("src/lib.deal", JS_LIB_SOURCE);
+        sources.put("src/app.deal", JS_APP_SOURCE);
+        return compileProject(sources,
+            Map.of(HOST_CFG_SPECIFIER, "src/cfg.d.deal"));
+    }
+
     /** The emitted declared-map literal of one host import (declaration order). */
     private static String declaredMapLiteral(HostDeclarationSurface surface,
             ModuleId module) {
@@ -686,25 +773,741 @@ public class ProductionProjectEmissionTest {
     // 1. The unit: one production source unit, one public static entry
     // =========================================================================
 
-    private static void testJsBackendRejection(Fixture fixture) throws Exception {
-        System.out.println("-- the JS target is rejected without staging --");
-        {
-            PublicationStager stager =
-                PublicationStager.forRoot(fixture.root().resolve("js-out"));
-            try {
-                boolean rejected = false;
-                try {
-                    emit(fixture, Backend.JS, stager, false);
-                } catch (IllegalArgumentException expected) {
-                    rejected = true;
+    // =========================================================================
+    // 1. The JS production seam: one lowering, one rendering, the complete
+    //    transactional set
+    // =========================================================================
+
+    /**
+     * The JavaScript production seam drive (design source
+     * {@code wiki:javascript-semantic-ir-production-migration},
+     * "production_owner" and "artifact_layout"): one lowering and one
+     * rendering invocation return every implementation module's CommonJS
+     * artifact, the production owner stages the complete source/map/runtime/
+     * stdlib set in the existing transaction, the exposed produced project is
+     * the run's own closure, repeated staging is byte-identical, publication
+     * replaces the whole set (stale files included), and the real staged
+     * artifacts execute under Node — the entry's direct-run main and the
+     * exported async worker over the cross-module and host boundaries.
+     */
+    private static void testJsProjectEmission(Fixture fixture, boolean node)
+            throws Exception {
+        System.out.println("-- the JS arm: one lowering and one rendering return"
+            + " every implementation artifact; the complete set stages and"
+            + " publishes atomically and the artifacts execute under Node --");
+        Path out = fixture.root().resolve("js-out");
+        String endpointClassId =
+            RuntimeDeclarationProjection.project(fixture.surface(),
+                fixture.declarationIdentities(), lower(fixture).seeds())
+                .modules().values().iterator().next()
+                .classes().get("Endpoint").classId().text();
+
+        ProductionProjectEmission.Result result;
+        Map<String, String> firstSet;
+        Sidecar appMap;
+        Sidecar libMap;
+        String appSource;
+        String libSource;
+        PublicationStager stager = PublicationStager.forRoot(out);
+        try {
+            Emission emission = emitCapturingStderr(fixture, Backend.JS, stager,
+                false);
+            result = emission.result();
+            check(result.emitted(),
+                "the JS production run emits: " + result.diagnostics());
+            checkEq("", emission.stderr(),
+                "the JS production run prints no LuaJIT/JVM warning");
+            checkEq("app.js", result.artifactRelativePath(),
+                "Result.artifactRelativePath names the entry module's own"
+                    + " artifact, not the whole set");
+
+            // The complete staged set: one artifact per implementation unit
+            // at its own CommonJS path, that module's own version-1 sidecar,
+            // and the complete runtime/stdlib deployment copies.
+            checkEq(Set.of("app.js", "lib.js", "app.deal.map.json",
+                    "lib.deal.map.json", "deal/runtime.js", "std/console.js",
+                    "std/string.js", "std/table.js", "std/json.js",
+                    "std/math.js", "std/time.js"),
+                Set.copyOf(stager.stagedSet().relativePaths()),
+                "the staged set is the complete artifact/map/runtime/stdlib"
+                    + " set: " + stager.stagedSet().relativePaths());
+
+            // The exposed produced project is this run's own closure: every
+            // one of its implementation units owns exactly one staged
+            // artifact, and no artifact exists outside that closure.
+            ExecutableLoweredProject produced = result.producedProject();
+            check(produced != null, "the JS run exposes its produced project");
+            if (produced == null) {
+                return;
+            }
+            checkEq(new ModuleId("app"), produced.entryModule(),
+                "the produced project's entry module is the entry artifact's"
+                    + " module");
+            checkEq(Set.of(new ModuleId("app"), new ModuleId("lib")),
+                produced.modules().keySet(),
+                "the produced project is the emitted closure");
+            Set<String> closureArtifacts = new java.util.TreeSet<>();
+            for (ModuleId module : produced.modules().keySet()) {
+                closureArtifacts.add(
+                    module.path().replace('.', '/') + ".js");
+            }
+            Set<String> stagedArtifacts = new java.util.TreeSet<>();
+            for (String path : stager.stagedSet().relativePaths()) {
+                if (path.endsWith(".js") && !path.startsWith("std/")
+                        && !path.equals("deal/runtime.js")) {
+                    stagedArtifacts.add(path);
                 }
-                check(rejected, "the JS target is rejected by the production unit");
-                check(stager.stagedSet().relativePaths().isEmpty(),
-                    "the rejected JS run stages nothing");
+            }
+            checkEq(closureArtifacts, stagedArtifacts,
+                "the staged artifacts are exactly the produced project's"
+                    + " implementation units (the run's actual once-lowered"
+                    + " project, never a test lowering)");
+            ExecutableLoweredProject testLowering = lower(fixture).project();
+            check(produced != testLowering,
+                "the exposed project is the run's own instance, not the"
+                    + " test's separate lowering");
+            checkEq(testLowering, produced,
+                "the exposed project is the same once-lowered closure content");
+            appSource = new String(stager.stagedSet().artifact("app.js")
+                .orElseThrow().content(), StandardCharsets.UTF_8);
+            libSource = new String(stager.stagedSet().artifact("lib.js")
+                .orElseThrow().content(), StandardCharsets.UTF_8);
+            for (SemanticOp op
+                    : produced.modules().get(produced.entryModule()).ops()) {
+                if (op.payload()
+                        instanceof KindPayload.ExportPublishPayload publish) {
+                    check(appSource.contains(publish.name()),
+                        "the entry artifact publishes the produced project's"
+                            + " export '" + publish.name() + "': " + appSource);
+                }
+            }
+
+            // One version-1 sidecar per artifact: its source string is the
+            // module's own display name and its generated string names that
+            // module's own artifact (never another module's, never a
+            // private-stage path).
+            appMap = parseSidecar(new String(stager.stagedSet()
+                .artifact("app.deal.map.json").orElseThrow().content(),
+                StandardCharsets.UTF_8));
+            libMap = parseSidecar(new String(stager.stagedSet()
+                .artifact("lib.deal.map.json").orElseThrow().content(),
+                StandardCharsets.UTF_8));
+            check(appMap.generated().endsWith("/js-out/app.js"),
+                "the entry sidecar names the entry artifact: "
+                    + appMap.generated());
+            check(libMap.generated().endsWith("/js-out/lib.js"),
+                "the library sidecar names the library artifact: "
+                    + libMap.generated());
+            verifySidecarCoordinates(appMap, appSource.lines().toList(),
+                JS_APP_SOURCE, "// ", "src/app.deal");
+            verifySidecarCoordinates(libMap, libSource.lines().toList(),
+                JS_LIB_SOURCE, "// ", "src/lib.deal");
+            checkEq(countSourceComments(appSource, "// "),
+                appMap.mappings().size(),
+                "every recorded entry mapping is one emitted source comment of"
+                    + " the entry artifact");
+            checkEq(countSourceComments(libSource, "// "),
+                libMap.mappings().size(),
+                "every recorded library mapping is one emitted source comment"
+                    + " of the library artifact");
+            firstSet = snapshotOf(stager);
+        } finally {
+            stager.discard();
+        }
+
+        // Independent byte determinism: one more run of the same project
+        // into the same live root stages byte-identical content.
+        {
+            PublicationStager repeat = PublicationStager.forRoot(out);
+            try {
+                ProductionProjectEmission.Result second =
+                    emit(fixture, Backend.JS, repeat, false);
+                check(second.emitted(),
+                    "the repeated JS run emits: " + second.diagnostics());
+                checkEq(firstSet, snapshotOf(repeat),
+                    "repeated staging of one project is byte-identical");
+                repeat.publish();
+            } finally {
+                repeat.discard();
+            }
+        }
+        checkEq(firstSet, snapshotTree(out),
+            "the published live set equals the staged set byte-for-byte");
+
+        if (!node) {
+            System.out.println("  SKIP: the JS production drive needs node");
+            return;
+        }
+
+        // The host implementation is host-owned: the compile copies no host
+        // file, and the published artifact requires the deployed relative
+        // specifier (never an ambient NODE_PATH/node_modules resolution).
+        writeFileIn(out, "host/cfg.js", """
+            "use strict";
+            const $rt = require("../deal/runtime");
+            globalThis.__hostInit = (globalThis.__hostInit || 0) + 1;
+            module.exports = {
+              Endpoint: { $kind: "class", $classname: "%s" },
+              Endpoint_defaults: { path: "/", port: $rt.MISSING },
+              alpha: function () { return 7; },
+              describe: function (s) { return "/" + s; },
+            };
+            """.formatted(endpointClassId));
+        check(appSource.contains("$require(\"./host/cfg\")"),
+            "the entry artifact requires the deployed relative host"
+                + " specifier: " + appSource);
+        ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
+        checkEq(0, entry.exitCode(),
+            "the published JS entry runs: " + entry.output());
+        checkEq("PROBE|JS|MAIN\n", entry.stdout(),
+            "the direct-run main ran once and printed its effect");
+        checkEq("", entry.stderr(),
+            "the published JS entry prints no trace protocol on stderr");
+
+        writeFileIn(out, "driver.js", """
+            const app = require("./app.js");
+            console.log("PROBE|INIT|" + globalThis.__hostInit);
+            app.worker.$f().then((value) => {
+              console.log("PROBE|ASYNC|" + value);
+            }).catch((e) => {
+              console.log("ERR " + (e && e.message));
+            });
+            """);
+        ProcessOutcome async = runProcess(List.of("node", "driver.js"), out);
+        checkEq(0, async.exitCode(),
+            "the exported async worker runs under Node: " + async.output());
+        checkEq("PROBE|INIT|1\nPROBE|ASYNC|42\n", async.stdout(),
+            "the raw host file initialized once across both source imports and"
+                + " the exported async worker awaited the cross-module async"
+                + " export");
+        checkEq("", async.stderr(),
+            "the async invocation prints no trace protocol on stderr");
+
+        // Whole-set replacement: one more publication removes the stale
+        // files a previous set (or a host deployment) left in the live root.
+        writeFileIn(out, "obsolete.js", "// stale artifact\n");
+        writeFileIn(out, "std/obsolete.js", "// stale deployment copy\n");
+        PublicationStager repeat = PublicationStager.forRoot(out);
+        try {
+            ProductionProjectEmission.Result third =
+                emit(fixture, Backend.JS, repeat, false);
+            check(third.emitted(),
+                "the repeated publication emits: " + third.diagnostics());
+            repeat.publish();
+        } finally {
+            repeat.discard();
+        }
+        check(!Files.exists(out.resolve("obsolete.js"))
+                && !Files.exists(out.resolve("std/obsolete.js")),
+            "the repeated publication removes the stale files");
+        checkEq(firstSet, snapshotTree(out),
+            "the repeated publication leaves exactly the new artifact set");
+    }
+
+    /**
+     * The direct-run failure presentation of the published JS artifacts: an
+     * uncaught DEAL error keeps the located {@code DEAL_ERROR_CODE} line on
+     * stderr and exit status 1 (the entry/failure ABI the renderer emits),
+     * with an empty stdout and no trace protocol.
+     */
+    private static void testJsEntryFailureStatus(boolean node) throws Exception {
+        System.out.println("-- the published JS entry keeps the located"
+            + " DEAL_ERROR_CODE stderr line and status 1 on an uncaught"
+            + " failure --");
+        Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
+            "src/app.deal", """
+                export function main(): null {
+                  let x: int = 2147483647 + 1;
+                  return null;
+                }
+                """)), Map.of());
+        try {
+            Path out = fixture.root().resolve("js-failing-out");
+            PublicationStager stager = PublicationStager.forRoot(out);
+            try {
+                ProductionProjectEmission.Result result =
+                    emit(fixture, Backend.JS, stager, false);
+                check(result.emitted(),
+                    "the failing-main fixture emits: " + result.diagnostics());
+                stager.publish();
             } finally {
                 stager.discard();
             }
+            if (!node) {
+                System.out.println("  SKIP: the JS entry-status drive needs node");
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            checkEq(1, run.exitCode(),
+                "the uncaught main failure exits 1: " + run.output());
+            checkEq("", run.stdout(),
+                "the failure prints nothing on stdout");
+            check(run.stderr().startsWith(
+                    "DEAL_ERROR_CODE: E8004 int out of safe range at "),
+                "the stderr line keeps the located DEAL_ERROR_CODE"
+                    + " presentation: " + run.stderr());
+            checkEq(1L, run.stderr().lines().count(),
+                "the failure prints the one presentation line: " + run.stderr());
+        } finally {
+            deleteRecursively(fixture.root());
         }
+    }
+
+    /** The occurrences of one needle in a text. */
+    private static int countOfText(String text, String needle) {
+        int count = 0;
+        int at = text.indexOf(needle);
+        while (at >= 0) {
+            count++;
+            at = text.indexOf(needle, at + 1);
+        }
+        return count;
+    }
+
+    /** The staged tree of one stager as the published-bytes snapshot. */
+    private static Map<String, String> snapshotOf(PublicationStager stager)
+            throws Exception {
+        Map<String, String> snapshot = new java.util.TreeMap<>();
+        for (String path : stager.stagedSet().relativePaths()) {
+            snapshot.put(path, java.util.Arrays.toString(stager.stagedSet()
+                .artifact(path).orElseThrow().content()));
+        }
+        return snapshot;
+    }
+
+    /**
+     * The preserved {@code FFI_UNSUPPORTED_BACKEND} arm of the JS production
+     * unit: a resolved extern-C declaration import rejects before the one
+     * project lowering and before any emission, with exactly the unchanged
+     * E6006 text at the importing declaration's own statement range, and
+     * nothing is staged or published.
+     */
+    private static void testJsExternCRejection(Fixture externC) throws Exception {
+        System.out.println("-- the JS arm rejects a resolved extern-C import"
+            + " before lowering with the exact E6006 and publishes nothing --");
+        Path out = externC.root().resolve("js-extern-out");
+        writeFileIn(out, "app.js", "// previous artifact\n");
+        writeFileIn(out, "deal/runtime.js", "// previous runtime\n");
+        Map<String, String> before = snapshotTree(out);
+        PublicationStager stager = PublicationStager.forRoot(out);
+        ProductionProjectEmission.Result result;
+        try {
+            result = emit(externC, Backend.JS, stager, false);
+            check(!result.emitted(),
+                "the extern-C import fails the JS production arm");
+            checkEq(1, result.diagnostics().size(),
+                "the rejection is one diagnostic: " + result.diagnostics());
+            CompilerDiagnostic rejection = result.firstDiagnostic();
+            checkEq("E6006", rejection == null ? null : rejection.code(),
+                "the rejection keeps the E6006 FFI_UNSUPPORTED_BACKEND code");
+            checkEq(ProductionProjectEmission.JS_EXTERN_C_REJECTION,
+                rejection == null ? null : rejection.message(),
+                "the rejection keeps the exact preserved text");
+            checkEq("JavaScript backend: @extern-c imports are not supported"
+                    + " (FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)",
+                rejection == null ? null : rejection.message(),
+                "the exact E6006 message text");
+            check(rejection != null && rejection.range().startLine() == 1
+                    && rejection.range().startColumn() == 1
+                    && rejection.range().file().endsWith("/src/app.deal"),
+                "the rejection sits at the import statement's own range, got "
+                    + (rejection == null ? "none" : rejection.range()));
+            checkEq(1L, result.diagnostics().stream()
+                    .filter(d -> "error".equals(d.severity())).count(),
+                "nothing but the one rejection is produced");
+            check(stager.stagedSet().relativePaths().isEmpty(),
+                "the rejection stages no artifact and no map: "
+                    + stager.stagedSet().relativePaths());
+        } finally {
+            stager.discard();
+        }
+        checkEq(before, snapshotTree(out),
+            "the rejection leaves the previous published set byte-identical");
+    }
+
+    /**
+     * The JS arm's fail-closed contract: the structural declaration
+     * projection and the renderer share the one E6005
+     * {@code SHARED_EMITTER_COVERAGE} projection, an emitter rejection that
+     * identified its offending operation keeps that operation's own range,
+     * and an invalid or incomplete structural input yields one E6005 with no
+     * artifact. The seam carries no AST or checker object.
+     */
+    private static void testJsFailClosedSeam(Fixture fixture) throws Exception {
+        System.out.println("-- the JS arm fails closed through the one E6005"
+            + " projection and receives no AST/checker object --");
+
+        // (1) The absent declaration-surface entry: the JS renderer rejects
+        // the HOST MODULE_IMPORT with the source-bearing shared signal
+        // carrying the import's own range, and the arm's own projection
+        // merges it into the unchanged SHARED_EMITTER_COVERAGE E6005.
+        SemanticLowerer.ProjectLoweringResult lowering = lower(fixture);
+        check(!lowering.hasErrors(),
+            "the JS fixture lowers: " + lowering.diagnostics());
+        if (!lowering.hasErrors()) {
+            LoweredModuleUnit entry =
+                lowering.project().modules().get(lowering.project().entryModule());
+            SemanticOp hostImport = null;
+            for (SemanticOp op : entry.ops()) {
+                if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                        && op.payload()
+                            instanceof KindPayload.ModuleImportPayload payload
+                        && payload.resolvedModule().equals(HOST_CFG)) {
+                    // The first source occurrence is the one the renderer's
+                    // absent-surface lookup reports.
+                    hostImport = op;
+                    break;
+                }
+            }
+            check(hostImport != null,
+                "the JS fixture lowers the HOST MODULE_IMPORT");
+            if (hostImport != null) {
+                DiagnosticRange expected = hostImport.origin().span().range();
+                SharedEmissionFailure rejection = null;
+                try {
+                    Map<ModuleId, JsSourceFile> sourceFiles =
+                        new LinkedHashMap<>();
+                    for (CheckedModuleInput module
+                            : fixture.checkedProject().modules()) {
+                        sourceFiles.put(module.moduleId(), new JsSourceFile(
+                            module.sourceId(), module.sourceId()));
+                    }
+                    JsSemanticEmitter.emitProductionProject(new JsEmissionInput(
+                        lowering.project(), lowering.tables(),
+                        lowering.registries(), lowering.seeds(),
+                        lowering.namespaces(),
+                        new RuntimeDeclarationSurface(Map.of()), sourceFiles,
+                        false));
+                } catch (SharedEmissionFailure failure) {
+                    rejection = failure;
+                }
+                check(rejection != null,
+                    "the absent declaration-surface entry fails the JS"
+                        + " renderer closed");
+                if (rejection != null) {
+                    checkEq(expected, rejection.diagnosticRange(),
+                        "the JS rejection carries the offending HOST"
+                            + " MODULE_IMPORT's own exact range");
+                    check(rejection.getMessage().contains(HOST_CFG.path())
+                            && rejection.getMessage().contains(
+                                "structural declaration surface does not"
+                                    + " carry"),
+                        "the JS rejection names the absent declaration module"
+                            + " and the structural surface: "
+                            + rejection.getMessage());
+                    // The arm's own projection of the JS renderer's real
+                    // rejection: one E6005 SHARED_EMITTER_COVERAGE that
+                    // keeps the complete emitter message and the identifying
+                    // import's own range.
+                    assertProjectedEmitterOrigin(
+                        "the JS absent declaration-surface entry", expected,
+                        rejection.getMessage(), lowering, rejection);
+                }
+            }
+        }
+
+        // (2) An incomplete structural companion at the production arm: the
+        // canonical declaration module identity of a declared class is
+        // absent, so the projection fails closed with exactly one E6005 and
+        // nothing is staged or published.
+        Path out = fixture.root().resolve("js-fail-closed-out");
+        writeFileIn(out, "app.js", "// previous artifact\n");
+        Map<String, String> before = snapshotTree(out);
+        PublicationStager stager = PublicationStager.forRoot(out);
+        ProductionProjectEmission.Result result;
+        try {
+            result = ProductionProjectEmission.run(productionInvocation(),
+                fixture.checkedProject(), fixture.index(), fixture.manifests(),
+                fixture.surface(), Map.of(),
+                fixture.externCModules(),
+                fixture.distributionHome().manifestDirectoryText(),
+                BuiltinErrorDeclaration.synthesized(
+                    fixture.checkedProject().modules().get(0).ast().span()),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                    IntrinsicKind.BYTES_NEW),
+                Set.of(), Backend.JS, false, fixture.distributionHome(), stager);
+            check(!result.emitted(),
+                "the incomplete structural companion fails the JS arm closed");
+            checkEq(1, result.diagnostics().size(),
+                "exactly one E6005: " + result.diagnostics());
+            CompilerDiagnostic failure = result.firstDiagnostic();
+            checkEq("E6005", failure == null ? null : failure.code(),
+                "the fail-closed result is E6005");
+            check(failure != null && failure.message().contains(
+                    "declaration module 'host.cfg'"),
+                "the fail-closed result names the inconsistent declaration"
+                    + " fact: " + failure);
+            check(stager.stagedSet().relativePaths().isEmpty(),
+                "the fail-closed run stages no artifact: "
+                    + stager.stagedSet().relativePaths());
+        } finally {
+            stager.discard();
+        }
+        checkEq(before, snapshotTree(out),
+            "the fail-closed run leaves the previous set byte-identical");
+
+        // (3) The seam and the arm carry no AST/checker object: the rendering
+        // input's components are semantic/structural only, and the arm
+        // projects the structural declaration surface instead of forwarding
+        // producers or routing through the AST emitter.
+        for (RecordComponent component
+                : JsEmissionInput.class.getRecordComponents()) {
+            String type = component.getType().getName();
+            check(type.startsWith("deal.semantic.ir.")
+                    || type.startsWith("deal.semantic.")
+                    || type.startsWith("deal.codegen.js.")
+                    || type.equals("boolean")
+                    || type.startsWith("java.util."),
+                "the rendering input's " + component.getName()
+                    + " carries no frontend object (" + type + ")");
+        }
+        String armSource = Files.readString(
+            Path.of("deal", "module", "ProductionProjectEmission.java"),
+            StandardCharsets.UTF_8);
+        check(!armSource.contains("JsBackend"),
+            "the production arm routes no JavaScript through the AST emitter");
+        check(armSource.contains("JsSemanticEmitter.emitProductionProject"),
+            "the production arm calls the one semantic-IR renderer");
+        check(armSource.contains("RuntimeDeclarationProjection.project"),
+            "the production arm projects the structural declaration surface");
+        check(armSource.contains("new JsEmissionInput("),
+            "the production arm builds the canonical rendering input");
+        check(!armSource.contains("CheckResult")
+                && !armSource.contains("ProgramNode"),
+            "the production arm holds no checker or program object");
+    }
+
+    /** Whether the real Node binary is available for the artifact drives. */
+    private static boolean nodeAvailable() {
+        try {
+            Process node = new ProcessBuilder("node", "--version")
+                .redirectErrorStream(true).start();
+            node.getInputStream().readAllBytes();
+            return node.waitFor() == 0;
+        } catch (java.io.IOException | InterruptedException ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * The typed-AST IR dump of a JS compile stages only with the accepted
+     * emission (the immediate JS dump staging is retired): the accepted
+     * compile starts exactly one staging transaction and publishes its dump
+     * next to the artifact set, while a JS-backend rejection discards the
+     * held dump — it is never the first staging operation, so it can neither
+     * pre-empt the backend diagnostic nor reach the live root, whose
+     * previous set stays byte-identical.
+     */
+    private static void testJsDumpDeferral() throws Exception {
+        System.out.println("-- the JS IR dump defers until the emission"
+            + " accepts the compile: an accepted compile stages one"
+            + " transaction, a rejection starts none --");
+        Path project = Files.createTempDirectory("production-js-dump-");
+        try {
+            writeFileIn(project, "src/app.deal",
+                "export function main(): null { return null; }\n");
+            Path out = project.resolve("out");
+            Path entry = project.resolve("src/app.deal").toAbsolutePath();
+
+            // The accepted control: one staging transaction carries the
+            // artifact set and the deferred typed-AST dump.
+            int[] stagingStarts = {0};
+            PublicationStager.installPublishFault(step -> {
+                if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(step)) {
+                    stagingStarts[0]++;
+                }
+            });
+            CompilationOrchestrator accepted;
+            try {
+                accepted = compileJs(project, entry, out, true, Map.of());
+            } finally {
+                PublicationStager.clearPublishFault();
+            }
+            check(accepted.compile(),
+                "the accepted JS compile with --dump-ir succeeds");
+            checkEq(1, stagingStarts[0],
+                "the accepted JS compile starts exactly one staging"
+                    + " transaction (artifact set and dump)");
+            check(Files.isRegularFile(out.resolve("app.js")),
+                "the accepted JS compile publishes its artifact");
+            check(Files.isRegularFile(out.resolve("app.ir.txt"))
+                    && Files.readString(out.resolve("app.ir.txt"),
+                        StandardCharsets.UTF_8).contains("main"),
+                "the accepted JS compile publishes the typed-AST IR dump");
+
+            // The JS-backend rejection with --dump-ir: the extern-C import
+            // rejects in phase 4, the held dump is discarded with the stage
+            // tree, and the prior live set stays untouched.
+            writeFileIn(project, "src/math.d.deal", """
+                // @extern-c
+                export function add(a: int, b: int): int;
+                """);
+            writeFileIn(project, "src/app.deal", """
+                import * as math from "native/math";
+                export function main(): null { return null; }
+                """);
+            // The previous live set carries an older dump: a rejected
+            // compile publishes no dump, so that byte survives untouched.
+            writeFileIn(out, "app.ir.txt", "previous dump\n");
+            Map<String, String> before = snapshotTree(out);
+            stagingStarts[0] = 0;
+            CompilationOrchestrator rejected;
+            try {
+                // A staging fault at the first staging operation: with the
+                // retired immediate JS dump staging the phase-1/3 dump write
+                // would be that first operation and would abort the compile
+                // before the backend rejection. Deferring the dump makes the
+                // first staging operation a phase-4 deployment copy, so the
+                // E6006 rejection is already recorded when the fault fires.
+                PublicationStager.installPublishFault(step -> {
+                    if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(
+                            step)) {
+                        stagingStarts[0]++;
+                        throw new java.io.IOException(
+                            "injected staging failure (JS dump probe)");
+                    }
+                });
+                rejected = compileJs(project, entry, out, true,
+                    Map.of("native/math",
+                        project.resolve("src/math.d.deal").toString()));
+            } finally {
+                PublicationStager.clearPublishFault();
+            }
+            check(!rejected.compile(),
+                "the extern-C-importing JS compile is rejected");
+            List<CompilerDiagnostic> rejectedErrors =
+                rejected.diagnostics().stream()
+                    .filter(d -> "error".equals(d.severity())).toList();
+            checkEq(1, rejectedErrors.size(),
+                "the rejection is the one E6006 (the dump never staged ahead"
+                    + " of it): " + rejected.diagnostics());
+            checkEq("E6006",
+                rejectedErrors.isEmpty() ? null : rejectedErrors.get(0).code(),
+                "the dump-deferral rejection keeps the E6006 backend"
+                    + " rejection");
+            checkEq("previous dump\n",
+                Files.readString(out.resolve("app.ir.txt"),
+                    StandardCharsets.UTF_8),
+                "the rejected JS compile publishes no IR dump");
+            checkEq(before, snapshotTree(out),
+                "the rejected JS compile leaves the previous set"
+                    + " byte-identical (no dump, no artifact)");
+        } finally {
+            deleteRecursively(project);
+        }
+    }
+
+    /**
+     * The project-local stdlib override of the JS arm: the deployment copy is
+     * the project's own {@code <manifestDir>/std} implementation, exactly the
+     * one {@link DistributionHome} precedence every backend consumes — the
+     * JavaScript arm neither re-derives nor prefers the distribution copy.
+     */
+    private static void testJsStdlibOverride() throws Exception {
+        System.out.println("-- the JS arm stages the project-local stdlib"
+            + " override through the one distribution precedence --");
+        Fixture fixture = jsFixture();
+        try {
+            String override = """
+                "use strict";
+                module.exports = { tag: "PROJECT-OVERRIDE" };
+                """;
+            writeFileIn(fixture.root(), "src/std/math.js", override);
+            PublicationStager stager =
+                PublicationStager.forRoot(fixture.root().resolve("js-override-out"));
+            try {
+                ProductionProjectEmission.Result result =
+                    emit(fixture, Backend.JS, stager, false);
+                check(result.emitted(),
+                    "the override project emits: " + result.diagnostics());
+                checkEq(override, new String(stager.stagedSet()
+                        .artifact("std/math.js").orElseThrow().content(),
+                        StandardCharsets.UTF_8),
+                    "the staged stdlib copy is the project-local override");
+                check(stager.stagedSet().artifact("std/console.js").isPresent(),
+                    "the untouched stdlib implementations keep their"
+                        + " distribution copies");
+            } finally {
+                stager.discard();
+            }
+        } finally {
+            deleteRecursively(fixture.root());
+        }
+    }
+
+    /**
+     * The missing-runtime negative of the JS arm (the preserved E6000): the
+     * resolution is observed in an isolated process whose working directory
+     * and distribution surface carry no runtime, so the checkout development
+     * fallback cannot satisfy the copy. The pinned text and its exact
+     * missing-anchor note are unchanged, and nothing is published.
+     */
+    private static void testJsRuntimeMissing() throws Exception {
+        System.out.println("-- the JS arm's missing runtime keeps the pinned"
+            + " E6000 text and note and publishes nothing --");
+        Path root = Files.createTempDirectory("js-runtime-missing-");
+        try {
+            writeFileIn(root, "src/app.deal", """
+                export class Box { v: int = 1; }
+
+                export function main(): null {
+                  let b: Box = {};
+                  return null;
+                }
+                """);
+            // Every stdlib implementation is deployed; only the runtime is
+            // missing, so the runtime copy is the one required resource the
+            // resolved surface does not provide.
+            Files.createDirectories(root.resolve("std"));
+            for (String module : List.of("console", "string", "table", "json",
+                    "math", "time")) {
+                Files.copy(Path.of("std", module + ".js"),
+                    root.resolve("std").resolve(module + ".js"),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            Path armOut = root.resolve("arm-out");
+            ProcessOutcome probe = runProcess(List.of("java", "-ea", "-cp",
+                absoluteClasspath(), "deal.test.ProductionArmJsProbe",
+                root.toString(), root.resolve("fixture-out").toString(),
+                armOut.toString()), root);
+            checkEq(0, probe.exitCode(),
+                "the missing-runtime probe runs: " + probe.output());
+            checkEq("RESULT failed", probe.stdout().lines()
+                    .filter(line -> line.startsWith("RESULT"))
+                    .findFirst().orElse(null),
+                "the JS arm fails without the runtime");
+            checkEq("DIAG E6000|error|Runtime library not found:"
+                    + " deal/runtime.js|missing anchor: runtime library path"
+                    + " 'deal/runtime.js'",
+                probe.stdout().lines()
+                    .filter(line -> line.startsWith("DIAG"))
+                    .findFirst().orElse(null),
+                "the pinned E6000 text and its exact missing-anchor note");
+            check(probe.stdout().lines().noneMatch(
+                    line -> line.equals("PUBLISHED")),
+                "the missing runtime publishes nothing: " + probe.stdout());
+            check(!Files.exists(armOut),
+                "the missing runtime leaves the live output root absent");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * One release-owned JS compile of one project with the dump flag; the
+     * orchestrator is returned so its diagnostics and published set are the
+     * subject (the compile result alone hides which diagnostic won).
+     */
+    private static CompilationOrchestrator compileJs(Path project, Path entry,
+            Path out, boolean dumpIr, Map<String, String> externals)
+            throws Exception {
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entry, out, false, dumpIr, false, false, Backend.JS, externals,
+            List.of(project.resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize(), null,
+            productionInvocation());
+        orchestrator.compile();
+        return orchestrator;
     }
 
     // =========================================================================
@@ -3097,9 +3900,17 @@ public class ProductionProjectEmissionTest {
         Fixture failing = null;
         Fixture host = null;
         Fixture externC = null;
+        Fixture js = null;
         try {
+            boolean node = nodeAvailable();
+            System.out.println(node
+                ? "-- node available: the real JS artifact drives run --"
+                : "-- node NOT available: the real JS artifact drives are"
+                    + " skipped --");
             fixture = twoModuleFixture(APP_SOURCE);
-            testJsBackendRejection(fixture);
+            js = jsFixture();
+            testJsProjectEmission(js, node);
+            testJsEntryFailureStatus(node);
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
@@ -3124,7 +3935,13 @@ public class ProductionProjectEmissionTest {
             testCrossModuleAsyncEmission(cross, same);
             testSourceMapEmission(fixture, failing, defaultRun);
             testProductionEmitterLanes();
+            testJsExternCRejection(externC);
+            testJsFailClosedSeam(js);
+            testJsDumpDeferral();
+            testJsRuntimeMissing();
+            testJsStdlibOverride();
         } finally {
+            deleteRecursively(js == null ? null : js.root());
             deleteRecursively(externC == null ? null : externC.root());
             deleteRecursively(host == null ? null : host.root());
             deleteRecursively(failing == null ? null : failing.root());
