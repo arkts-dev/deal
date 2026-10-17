@@ -4587,16 +4587,17 @@ public class ProductionDispatchTest {
     /**
      * The compiled contextual-read call form at the declared std/json
      * {@code table} parameter, pinned field-exact on the JS production
-     * lane: code, message, expected, actual, and the failing call
-     * expression's own source position, through a real node execution of
-     * the published artifact. The JS production lane emits a raw stdlib
-     * module call, so the std/json entry's declared table check is that
-     * lane's parameter boundary and reports at the call expression — the
-     * origin the recorded {@code STDLIB_PARAMETER} cell carries. The
-     * LuaJIT/JVM lanes record both that cell and the contextual read's
-     * own boundary (the read cell fires first, at the read expression),
-     * and the cross-lane outcome agreement over the same three carriers
-     * is registered as the corpus fixture
+     * lane: code, message, expected, actual, and the failing contextual
+     * read's own source position, through a real node execution of the
+     * published artifact. The semantic-IR JS lane lowers the same project
+     * the other lanes do, so it records both cells — the contextual
+     * read's own {@code table} boundary and the declared
+     * {@code STDLIB_PARAMETER} cell of the {@code std/json} entry — and
+     * the read cell fires first at the read expression, the origin the
+     * LuaJIT/JVM lanes report for the same form (the pinned position is
+     * the argument expression's own start, never the enclosing call's).
+     * The cross-lane outcome agreement over the same three carriers is
+     * registered as the corpus fixture
      * {@code backend-runtime/stdlib/json/json-stringify-contextual-read-carrier}
      * driven through this suite's boundary-corpus leg and the JS corpus
      * lane.
@@ -4645,12 +4646,12 @@ public class ProductionDispatchTest {
                     + run.exitCode() + " output=" + boundedOutput(run));
             String sourceFile = project.resolve("src/main.deal")
                 .toAbsolutePath().normalize().toString();
-            int[] arrayAt = sourcePositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
-                "json.stringify(doc.xs)");
-            int[] nullAt = sourcePositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
-                "json.stringify(doc.n)");
-            int[] classAt = sourcePositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
-                "json.stringify(holder.box)");
+            int[] arrayAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
+                "json.stringify(doc.xs)", "doc.xs");
+            int[] nullAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
+                "json.stringify(doc.n)", "doc.n");
+            int[] classAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
+                "json.stringify(holder.box)", "holder.box");
             String expected = String.join("\n",
                 "arrayCarrier|E8001|expected table|table|array|" + sourceFile
                     + "|" + arrayAt[0] + "|" + arrayAt[1],
@@ -4662,7 +4663,7 @@ public class ProductionDispatchTest {
             checkEq(expected, run.stdout(),
                 "the js artifact reports the shared expected-table tuple for"
                     + " the two decode carriers and the class instance at the"
-                    + " contextual-read call form");
+                    + " contextual read's own argument position");
             check(run.stderr().isEmpty(),
                 "the js carrier-tuple probe writes no stderr, got '"
                     + run.stderr() + "'");
@@ -4694,6 +4695,23 @@ public class ProductionDispatchTest {
             }
         }
         return new int[] { line, column };
+    }
+
+    /**
+     * The one-based line and column of one argument expression inside a
+     * call expression: {@code callText} locates the call in
+     * {@code source}, and {@code argumentText} is the argument's spelling
+     * within that call text.
+     */
+    private static int[] argumentPositionOf(String source, String callText,
+                                            String argumentText) {
+        int[] call = sourcePositionOf(source, callText);
+        int offset = callText.indexOf(argumentText);
+        if (offset < 0) {
+            throw new IllegalStateException("the call text '" + callText
+                + "' carries no '" + argumentText + "' argument");
+        }
+        return new int[] { call[0], call[1] + offset };
     }
 
     // =========================================================================

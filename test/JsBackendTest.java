@@ -6936,9 +6936,20 @@ public class JsBackendTest {
                 "the artifact requires ./deal/runtime");
             check(js.contains("if ($require.main === $module) {"),
                 "the entry artifact carries the entry shim");
-            check(js.matches("(?s).*try \\{\\s*\\$s\\d+ = "
-                    + "\\$g\\d+\\.\\$f\\(.*"),
-                "the shim invokes the entry's main wrapper");
+            java.util.regex.Matcher mainPublish = java.util.regex.Pattern
+                .compile("\\$rt\\.publishModule\\(\"orch_main\", \"main\", "
+                    + "(\\$s\\d+)\\);")
+                .matcher(js);
+            boolean mainPublished = mainPublish.find();
+            check(mainPublished,
+                "the entry publishes its exported main wrapper");
+            if (mainPublished) {
+                check(js.matches("(?s).*if \\(\\$require\\.main === \\$module\\)"
+                        + " \\{\\s*try \\{\\s*\\$s\\d+ = "
+                        + java.util.regex.Pattern.quote(mainPublish.group(1))
+                        + "\\.\\$f\\(.*"),
+                    "the shim invokes the entry's published main wrapper");
+            }
             check(js.contains("[\"log\"].$f(")
                     && js.contains("\"js-orchestrator-main\""),
                 "the console.log call emits through the stdlib member wrapper");

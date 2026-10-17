@@ -2653,6 +2653,17 @@ public class CheckerTest {
         }
     }
 
+    /** Number of non-overlapping occurrences of {@code needle}. */
+    private static int countOf(String text, String needle) {
+        int count = 0;
+        int index = text.indexOf(needle);
+        while (index >= 0) {
+            count++;
+            index = text.indexOf(needle, index + needle.length());
+        }
+        return count;
+    }
+
     /**
      * ISSUE-0717 review 0007: a class-typed object literal under a
      * same-named shadowing declaration is laid out by the declaration the
@@ -2669,17 +2680,6 @@ public class CheckerTest {
      * layouts. LuaJIT/JVM stay outside this correction (the duplicate
      * layout still fails closed before emission).
      */
-    /** Number of non-overlapping occurrences of {@code needle}. */
-    private static int countOf(String text, String needle) {
-        int count = 0;
-        int index = text.indexOf(needle);
-        while (index >= 0) {
-            count++;
-            index = text.indexOf(needle, index + needle.length());
-        }
-        return count;
-    }
-
     static void testClassProvenanceContextualConstructionUnderShadowing() {
         System.out.println("-- public deal compile: target-context construction "
             + "under a same-named shadowing declaration --");
