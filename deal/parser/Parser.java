@@ -421,7 +421,21 @@ public final class Parser {
             case DELETE    -> parseDeleteStatement();
             case TRY       -> parseTryStatement();
             case THROW     -> parseThrowStatement();
-            case SEMICOLON -> { advance(); yield null; }
+            // The v1.3 Syntactic grammar has no empty-statement
+            // production: Program ::= ImportDeclaration*
+            // TopLevelDeclaration*, Statement* and Block ::= '{'
+            // Statement* '}'. A ';' in statement position is therefore
+            // outside every production — including the old
+            // optional-semicolon form after a block-ending declaration —
+            // and reports E1059 at its own scalar range. The statement's
+            // real terminator stays owned by the production that carries
+            // it (checked by checkStatementTerminator), so this arm only
+            // handles a ';' that no production consumed.
+            case SEMICOLON -> {
+                error(DiagnosticCode.E1059, "Unexpected ';'", peek());
+                advance();
+                yield null;
+            }
             case EOF       -> null;
             case RBRACE    -> { advance(); error(DiagnosticCode.E1041, "Unexpected '}'", previous()); yield null; }
             default        -> parseExpressionStatement();

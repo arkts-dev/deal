@@ -1,0 +1,12 @@
+// @spec: Syntactic grammar — Semicolon rules
+// @description: The v1.3 grammar has no empty-statement production, so a statement-position ';' inside a Block is outside Statement — a leading ';' and the old optional semicolon after a block-ending if statement are both rejected (v1.3 Semicolon rules)
+// @expected: compile-error E1059
+// @features: parser, semicolon, empty-statement, block
+
+export function main(): null {
+  ;
+  if (true) {
+    return null;
+  };
+  return null;
+}

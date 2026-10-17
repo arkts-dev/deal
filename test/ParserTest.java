@@ -141,6 +141,7 @@ public class ParserTest {
 
         // v1.2 grammar boundaries (ISSUE-0717 defect snippets 48, 59, 60)
         testSemicolonStrictness();
+        testStraySemicolonRejected();
         testTrailingParameterComma();
         testComparisonChaining();
 
@@ -1165,6 +1166,74 @@ public class ParserTest {
             + "class C { x: int = 0; }\n"
             + "function g(): null { return null; }\n");
         assertNoParseErrors(ok, "explicit terminators and block endings");
+    }
+
+    /**
+     * The v1.3 Syntactic grammar has no empty-statement production: a
+     * statement-position {@code ';'} is outside {@code Program},
+     * {@code Statement*}, and {@code Block}. Both the module top level and
+     * a block report E1059 at the semicolon's own scalar range — including
+     * the old optional-semicolon form after a block-ending declaration —
+     * while every required terminator stays owned by its production.
+     */
+    static void testStraySemicolonRejected() {
+        System.out.println("-- Stray statement-position ';' (v1.3 grammar) --");
+
+        // Top level: a bare ';' produces no statement.
+        ParseResult bare = parse(";");
+        assertParseError(bare, "E1059", "bare top-level semicolon");
+        assertStmtCount(bare.program(), 0, "bare top-level semicolon");
+
+        // Top level: the old optional terminator after a block-ending
+        // function declaration is not a production position.
+        ParseResult afterDeclaration = parse(
+            "function g(): null { return null; };\n");
+        assertParseError(afterDeclaration, "E1059",
+            "semicolon after a block-ending declaration");
+        assertStmtCount(afterDeclaration.program(), 1,
+            "semicolon after a block-ending declaration");
+
+        // Block level: a stray ';' as the first statement and after a
+        // block-ending if statement.
+        ParseResult blockStart = parse(
+            "export function main(): null {\n  ;\n  return null;\n}\n");
+        assertParseError(blockStart, "E1059", "block-leading semicolon");
+        ParseResult afterBlock = parse(
+            "function f(): null { if (true) { } ; return null; }\n");
+        assertParseError(afterBlock, "E1059",
+            "semicolon after a block-ending statement");
+
+        // The diagnostic is a SOURCE error at the ';' itself.
+        ParseResult ranged = parseFile(
+            "export function main(): null {\n  ;\n  return null;\n}\n",
+            "stray.deal");
+        CompilerDiagnostic stray = diagOf(ranged, "E1059");
+        if (stray == null) {
+            fail("stray semicolon: missing E1059 diagnostic");
+        } else {
+            check("error".equals(stray.severity()),
+                "stray semicolon severity is error, got " + stray.severity());
+            check(stray.line() == 2 && stray.column() == 3,
+                "stray semicolon at (2,3), got (" + stray.line() + ","
+                    + stray.column() + ")");
+            check(stray.range().scalarLength() == 1,
+                "stray semicolon span length 1, got "
+                    + stray.range().scalarLength());
+            check(stray.range().origin() == RangeOrigin.SOURCE,
+                "stray semicolon range is SOURCE, got "
+                    + stray.range().origin());
+            check("stray.deal".equals(stray.file()),
+                "stray semicolon keeps the file, got " + stray.file());
+        }
+
+        // A ';' that a production carries is that production's own
+        // terminator — never a stray statement.
+        ParseResult owned = parse(
+            "export function main(): null {\n"
+            + "  let f: () => null = function(): null { return null; };\n"
+            + "  return null;\n"
+            + "}\n");
+        assertNoParseErrors(owned, "terminator owned by a declaration");
     }
 
     /**
