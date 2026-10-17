@@ -130,6 +130,7 @@ public class JsSemanticEmitterTest {
             testAsyncExportAbiAndEntryLegs(tmpRoot, node);
             testCallbackCrossing(tmpRoot, node);
             testDynamicCalleeDispatch(tmpRoot, node);
+            testAdapterPerExecutionSource(tmpRoot, node);
             testHostParameterCellAndDeferredReads(tmpRoot, node);
             testDeclarationProjection(tmpRoot);
             testFailClosedAndSeamPurity(tmpRoot);
@@ -2201,6 +2202,110 @@ public class JsSemanticEmitterTest {
         } else {
             skip("the intrinsic-as-callback corpus drive needs node");
         }
+    }
+
+    /**
+     * ISSUE-0800 review cycle 2, finding 1: one adapt site that executes
+     * more than once creates one wrapper per execution, and each wrapper
+     * records the source it resolved on its own instance. A retained
+     * earlier wrapper therefore still names its own source class for the
+     * dynamic dispatch's per-source return cell selection; recording the
+     * source on the adapt op's reusable result slot would let a later
+     * execution overwrite the earlier carrier's record and fail the
+     * retained wrapper closed with a spurious E8001.
+     */
+    private static void testAdapterPerExecutionSource(Path tmpRoot,
+                                                      boolean node)
+            throws Exception {
+        System.out.println("-- one adapt site executed twice records the"
+            + " resolved source on each created wrapper instance --");
+        Path root = Files.createTempDirectory(tmpRoot, "adapter-fresh");
+        Fixture fixture = compileFixture(root, """
+            function one(x: int): int { return x; }
+
+            async function aone(x: int): int { return x; }
+
+            export function loopAdapters(): int {
+              let fs: ((x: int, y: int) => int)[] = [];
+              let i: int = 0;
+              while (i < 2) {
+                let f: (x: int, y: int) => int = one;
+                fs[i] = f;
+                i = i + 1;
+              }
+              let a: int = fs[0](1, 2);
+              let b: int = fs[1](10, 20);
+              if (a !== 1 || b !== 10) {
+                throw { code: "TEST_FAIL", message: "retained" };
+              }
+              return a + b;
+            }
+
+            export async function asyncLoopAdapters(): int {
+              let fs: (async (x: int, y: int) => int)[] = [];
+              let i: int = 0;
+              while (i < 2) {
+                let f: async (x: int, y: int) => int = aone;
+                fs[i] = f;
+                i = i + 1;
+              }
+              let a: int = await fs[0](1, 2);
+              let b: int = await fs[1](10, 20);
+              if (a !== 1 || b !== 10) {
+                throw { code: "TEST_FAIL", message: "retained-async" };
+              }
+              return a + b;
+            }
+
+            export function main(): null { return null; }
+            """);
+        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
+            fixture.project(), fixture.tables(), fixture.registries(), null);
+        check(oracle.terminal()
+                instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+            "the shared authority runs the retained adapters: "
+                + oracle.terminal());
+        String artifact = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(false)).modules().stream()
+            .filter(a -> a.artifactRelativePath().equals("app.js"))
+            .findFirst().orElseThrow().source();
+        check(artifact.contains("const $aw"),
+            "the adapter wrapper is created through a fresh per-execution"
+                + " binding the invocation records its source on");
+        check(Pattern.compile("\\$aw\\d+\\.\\$src = \\$src;")
+                .matcher(artifact).find(),
+            "the resolved source is recorded on the created wrapper"
+                + " instance, not on the reusable result slot");
+        check(!Pattern.compile("\\$s\\d+\\.\\$src")
+                .matcher(artifact).find(),
+            "no adapter invocation writes the source through the adapt op's"
+                + " result slot");
+        Path out = stage(fixture, "adapter-fresh", false);
+        if (!node) {
+            skip("the retained-adapter drive needs node");
+            return;
+        }
+        Files.writeString(out.resolve("driver.js"), """
+            const $rt = require("./deal/runtime.js");
+            const app = require("./app.js");
+            (async () => {
+              const sync = app.loopAdapters.$f();
+              const async = await $rt.invokeAsyncExport(app,
+                "asyncLoopAdapters", "int");
+              console.log(JSON.stringify({sync, async}));
+            })();
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "both retained loop-created adapters call"
+            + " their own sources dynamically: " + run.output());
+        check(run.output().contains("\"sync\":11"),
+            "the two retained sync adapters keep their own resolved source"
+                + " (no spurious E8001 for the earlier wrapper): "
+                + run.output());
+        check(run.output().contains("\"async\":{\"$ok\":true,"
+                + "\"$value\":11}"),
+            "the two retained async adapters complete through the same"
+                + " per-instance record: " + run.output());
     }
 
     /**

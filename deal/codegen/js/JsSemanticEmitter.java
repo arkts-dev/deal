@@ -1701,19 +1701,30 @@ public final class JsSemanticEmitter {
             // invocation returns the source's single operation as a real
             // Promise (the converted completion), never a second start.
             String keyword = payload.targetSignature().isAsync() ? "async " : "";
-            emit(slotOf(op) + " = $rt.function("
+            // The wrapper is created through a block-scoped binding that is
+            // fresh per execution of this adapt op: one adapt site in a loop
+            // creates one wrapper per iteration, and each wrapper keeps its
+            // own resolved-source record. The result slot publishes the
+            // current execution's wrapper only.
+            String wrapper = "$aw" + op.opId().id();
+            emit("{");
+            indent++;
+            emit("const " + wrapper + " = $rt.function("
                 + jsString(payload.targetSignature().canonicalSpecText())
                 + ", " + keyword + "(" + adapterParameters(targetArity)
                 + ") => {");
             indent++;
             emit("const $src = " + (thunkFn == null ? sourceExpr
                 : thunkFn + "()") + ";");
-            // The resolved source is recorded on the carrier: the emitted
-            // dynamic dispatch of an adapter callee reads the source's own
-            // class tag to select the recorded per-source return cell, and
-            // the source is resolved exactly once per invocation (a thunk
-            // source's single re-execution included).
-            emit(slotOf(op) + ".$src = $src;");
+            // The resolved source is recorded on the carrier instance the
+            // invocation runs in: the emitted dynamic dispatch of an adapter
+            // callee reads the source's own class tag to select the recorded
+            // per-source return cell, and the source is resolved exactly once
+            // per invocation (a thunk source's single re-execution included).
+            // The binding, never the adapt op's reusable result slot, holds
+            // the wrapper, so a later execution cannot overwrite an earlier
+            // retained wrapper's record.
+            emit(wrapper + ".$src = $src;");
             emit("$rt.checkFunctionSig("
                 + jsString(payload.sourceSignature().canonicalSpecText())
                 + ", $src.$sig, $src, $file, $line, $column);");
@@ -1721,6 +1732,9 @@ public final class JsSemanticEmitter {
                 + ");");
             indent--;
             emit("}, " + jsString("ADAPTER") + ");");
+            emit(slotOf(op) + " = " + wrapper + ";");
+            indent--;
+            emit("}");
         }
 
         /**
