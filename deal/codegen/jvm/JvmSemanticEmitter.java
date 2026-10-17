@@ -911,15 +911,40 @@ public final class JvmSemanticEmitter {
                 throw rejectedOp(defaultOp, "CLASS_DEFAULT " + defaultOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
+            List<String> keys = defaultBlockStateKeys(payload.defaultBlock());
             out.append("  private static Object ").append(defaultFn(defaultOp.opId()))
                 .append("() {\n");
+            // The invocation-local attempt scratch: the default block's own
+            // slots and cells are saved before the block runs and restored
+            // in a finally, so a default re-entered by a nested or
+            // re-entrant construction restores the enclosing attempt's
+            // operands on the success and the failure path alike (the same
+            // private-state discipline the function-invocation save applies
+            // to a body). The produced value travels in the return, never
+            // in a restored slot.
+            int bodyIndent = 2;
+            if (!keys.isEmpty()) {
+                out.append("    Object[] __dsv = new Object[]{")
+                    .append(String.join(", ", keys)).append("};\n");
+                out.append("    try {\n");
+                bodyIndent = 3;
+            }
             for (OpId opId : ops) {
                 if (opId.equals(defaultOp.opId()) || ownedChildren.contains(opId)) {
                     continue;
                 }
-                emitOp(opsById.get(opId), 2);
+                emitOp(opsById.get(opId), bodyIndent);
             }
-            out.append("    return ").append(slot(resultId)).append(";\n");
+            out.append(indent(bodyIndent)).append("return ")
+                .append(slot(resultId)).append(";\n");
+            if (!keys.isEmpty()) {
+                out.append("    } finally {\n");
+                for (int i = 0; i < keys.size(); i++) {
+                    out.append("      ").append(keys.get(i)).append(" = __dsv[")
+                        .append(i).append("];\n");
+                }
+                out.append("    }\n");
+            }
             out.append("  }\n");
         }
 
@@ -4832,8 +4857,10 @@ public final class JvmSemanticEmitter {
             for (KindPayload.ProvidedField field : payload.providedFields()) {
                 provided.add(field.name());
             }
+            java.util.Map<ValueId, String> defaultAttempts = java.util.Map.of();
             switch (payload.defaultOwner()) {
-                case LOCAL -> emitClassNewLocalDefaults(op, payload, provided, indent);
+                case LOCAL -> defaultAttempts =
+                    emitClassNewLocalDefaults(op, payload, provided, indent);
                 case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided,
                     indent);
                 case HOST_DEFAULTS -> {
@@ -4918,7 +4945,12 @@ public final class JvmSemanticEmitter {
                         .append(javaString(entry.field())).append(");\n");
                     inputExpr = extracted;
                 } else {
-                    inputExpr = slot(boundaryPayload.input());
+                    // A defaulted field's value is the enclosing attempt's own
+                    // produced value (the attempt-local entry), never the
+                    // class-default shared slot a nested attempt overwrites.
+                    String attempt = defaultAttempts.get(boundaryPayload.input());
+                    inputExpr = attempt != null ? attempt
+                        : slot(boundaryPayload.input());
                 }
                 emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor(), indent);
                 String checked = "__c_" + boundary.opId().id();
@@ -5146,13 +5178,29 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        private void emitClassNewLocalDefaults(SemanticOp op,
-                KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
-                int indent) {
-            for (OpId defaultOpId : payload.classDefaultOpIds()) {
+        /**
+         * The attempt-local scratch array name of one construction: a local
+         * of the enclosing method invocation (a loop body's block declares
+         * its own), so re-entrancy and recursion always write a fresh
+         * attempt's entries.
+         */
+        private String attemptScratch(OpId classNewOp) {
+            return "__dA" + classNewOp.id();
+        }
+
+        /**
+         * The construction's omitted required defaults in declaration order:
+         * the complement of the skip-provided rule. A provided field neither
+         * executes its default nor needs a default slot; an omitted optional
+         * field has no default at all (the lowering emits no child for it).
+         */
+        private java.util.List<SemanticOp> omittedDefaults(SemanticOp owner,
+                java.util.List<OpId> defaultOpIds, java.util.Set<String> provided) {
+            java.util.List<SemanticOp> running = new ArrayList<>();
+            for (OpId defaultOpId : defaultOpIds) {
                 SemanticOp defaultOp = opsById.get(defaultOpId);
                 if (defaultOp == null) {
-                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
+                    throw rejectedOp(owner, owner.kind().name() + " " + owner.opId()
                         + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
                         + "(producer defect)");
                 }
@@ -5161,12 +5209,51 @@ public final class JvmSemanticEmitter {
                 if (provided.contains(defaultPayload.field())) {
                     continue; // the skip-provided rule
                 }
-                emitClassDefaultCall(op, defaultOp, indent);
+                running.add(defaultOp);
             }
+            return running;
         }
 
-        /** One CLASS_DEFAULT child execution (START, method, terminal). */
-        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp, int indent) {
+        /**
+         * The LOCAL construction's omitted required defaults: each runs once
+         * in declaration order and publishes its produced value into the
+         * construction attempt's own scratch — a method-local array, so a
+         * default that re-enters the construction (the same class built
+         * inside a default, directly or through a helper) writes only its
+         * own attempt's entries. The declaration order field boundaries read
+         * those entries, never the class-default shared slots a nested
+         * attempt overwrites.
+         */
+        private java.util.Map<ValueId, String> emitClassNewLocalDefaults(SemanticOp op,
+                KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
+                int indent) {
+            java.util.List<SemanticOp> running = omittedDefaults(op,
+                payload.classDefaultOpIds(), provided);
+            java.util.Map<ValueId, String> attempts = new java.util.LinkedHashMap<>();
+            if (running.isEmpty()) {
+                return attempts;
+            }
+            String scratch = attemptScratch(op.opId());
+            out.append(indent(indent)).append("Object[] ").append(scratch)
+                .append(" = new Object[").append(running.size()).append("];\n");
+            for (int i = 0; i < running.size(); i++) {
+                SemanticOp defaultOp = running.get(i);
+                String entry = scratch + "[" + i + "]";
+                emitClassDefaultCall(op, defaultOp, entry, indent);
+                if (defaultOp.result() instanceof ValueId result) {
+                    attempts.put(result, entry);
+                }
+            }
+            return attempts;
+        }
+
+        /**
+         * One CLASS_DEFAULT child execution (START, method, terminal): the
+         * produced value is published to the op's result slot and to the
+         * enclosing attempt's own entry.
+         */
+        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp,
+                                          String attemptEntry, int indent) {
             if (trace) {
                 out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                     .append(javaString(opKey(defaultOp.opId())))
@@ -5178,6 +5265,8 @@ public final class JvmSemanticEmitter {
             if (defaultOp.result() instanceof ValueId resultId) {
                 out.append(indent(indent)).append("  ").append(slot(resultId))
                     .append(" = ").append(defaultFn(defaultOp.opId())).append("();\n");
+                out.append(indent(indent)).append("  ").append(attemptEntry)
+                    .append(" = ").append(slot(resultId)).append(";\n");
             } else {
                 out.append(indent(indent)).append("  ")
                     .append(defaultFn(defaultOp.opId())).append("();\n");
@@ -5234,6 +5323,17 @@ public final class JvmSemanticEmitter {
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
+            // The factory's default children in declaration order, skipping
+            // any child whose field the caller provides.
+            java.util.List<SemanticOp> running = omittedDefaults(factoryOp,
+                factoryPayload.classDefaultOpIds(), provided);
+            // The transfer attempt's own scratch: the produced default
+            // values live in this attempt's method-local array, never in the
+            // owner module's class-default shared slots, which a default that
+            // re-enters the construction (directly or through a helper)
+            // overwrites.
+            java.util.Map<OpId, String> attemptEntries = new java.util.LinkedHashMap<>();
+            java.util.List<SemanticOp> filled = new ArrayList<>();
             // The owner-side factory group (the module transfer, the
             // CLASS_FACTORY envelope, the defaults, and the transfer
             // instance) opens its own mapped group in the owner module, so
@@ -5244,6 +5344,15 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("MODULE = ")
                 .append(javaString(ownerPath)).append(";\n");
             out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
+            if (!running.isEmpty()) {
+                String scratch = attemptScratch(op.opId());
+                out.append(indent(indent)).append("Object[] ").append(scratch)
+                    .append(" = new Object[").append(running.size()).append("];\n");
+                for (int i = 0; i < running.size(); i++) {
+                    attemptEntries.put(running.get(i).opId(),
+                        scratch + "[" + i + "]");
+                }
+            }
             if (trace) {
                 out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                     .append(javaString(opKey(factoryOp.opId())))
@@ -5252,21 +5361,8 @@ public final class JvmSemanticEmitter {
                     .append(", ").append(javaString(opKey(op.opId())))
                     .append(", List.of(), null, null);\n");
             }
-            // The factory's default children in declaration order,
-            // skipping any child whose field the caller provides.
-            java.util.List<SemanticOp> filled = new ArrayList<>();
-            for (OpId defaultOpId : factoryPayload.classDefaultOpIds()) {
-                SemanticOp defaultOp = opsById.get(defaultOpId);
-                if (defaultOp == null) {
-                    throw rejectedOp(factoryOp, "CLASS_FACTORY " + factoryOp.opId()
-                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
-                        + "(producer defect)");
-                }
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                if (provided.contains(defaultPayload.field())) {
-                    continue;
-                }
+            for (SemanticOp defaultOp : running) {
+                String entry = attemptEntries.get(defaultOp.opId());
                 if (trace) {
                     out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                         .append(javaString(opKey(defaultOp.opId())))
@@ -5278,6 +5374,8 @@ public final class JvmSemanticEmitter {
                 if (defaultOp.result() instanceof ValueId resultId) {
                     out.append(indent(indent)).append("  ").append(slot(resultId))
                         .append(" = ").append(defaultFn(defaultOp.opId())).append("();\n");
+                    out.append(indent(indent)).append("  ").append(entry)
+                        .append(" = ").append(slot(resultId)).append(";\n");
                 } else {
                     out.append(indent(indent)).append("  ")
                         .append(defaultFn(defaultOp.opId())).append("();\n");
@@ -5326,9 +5424,13 @@ public final class JvmSemanticEmitter {
             for (SemanticOp defaultOp : filled) {
                 KindPayload.ClassDefaultPayload defaultPayload =
                     (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                String value = attemptEntries.get(defaultOp.opId());
+                if (value == null) {
+                    value = slot((ValueId) defaultOp.result());
+                }
                 out.append(indent(indent)).append(instName).append('.')
                     .append(fieldSlot(defaultPayload.field())).append(" = ")
-                    .append(slot((ValueId) defaultOp.result())).append(";\n");
+                    .append(value).append(";\n");
                 out.append(indent(indent)).append(instName).append('.')
                     .append(fieldFlag(defaultPayload.field())).append(" = true;\n");
             }

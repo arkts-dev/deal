@@ -770,6 +770,24 @@ public abstract class EmitterSessionBase {
         return result;
     }
 
+    /**
+     * The private-state keys of one detached {@code CLASS_DEFAULT} block:
+     * every value slot its ops read or write and every cell they allocate,
+     * in first-reference order (the same collection the body-invocation
+     * save uses, over the default block). The construction arms restore
+     * exactly these keys around every default invocation, so a nested or
+     * re-entrant attempt inside a default never overwrites the enclosing
+     * attempt's operands. The default block carries no captures: a
+     * detached default allocates every cell it reads (its free references
+     * are module-level cells, restored like the rest of the block state).
+     */
+    protected final List<String> defaultBlockStateKeys(BlockId defaultBlock) {
+        java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<>();
+        collectBodyStateKeys(defaultBlock, keys, new java.util.HashSet<>(),
+            java.util.Set.of());
+        return List.copyOf(keys);
+    }
+
     /** True iff the boundary input value is the chain's normalize slot. */
     protected final boolean slotEqualsChainSlot(ValueId input,
                                         SemanticOp chain) {

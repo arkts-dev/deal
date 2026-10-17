@@ -196,6 +196,246 @@ public class ProjectLoweringTest {
         export function version(): int;
         """;
 
+    /**
+     * The host declaration of the ISSUE-0810 re-entrant-default subject:
+     * the host counter and the retained array provider the existing
+     * corpus host fixture also implements.
+     */
+    private static final String RETAINED_DEFAULT_DECLARATION = """
+        export function retained(): int[];
+        export function provideFirst(): int[];
+        export function bump(): null;
+        export function calls(): int;
+        """;
+
+    /**
+     * The ISSUE-0810 re-entrant-default subject: the class default's first
+     * operand (the host counter read before the nested attempt) must keep
+     * its own value when the nested construction inside {@code build}
+     * re-enters the same default block. The correct composition is
+     * {@code 0 * 1000 + 1100}; an overwritten operand composes the nested
+     * attempt's counter read ({@code 1 * 1000 + 1100}) and throws.
+     */
+    private static final String DEFAULT_REENTRANCY_APP_SOURCE = """
+        import * as console from "std/console";
+        import * as state from "host/retained_default";
+
+        class A {
+          x: int = combine(state.calls(), build());
+        }
+
+        function combine(a: int, b: int): int {
+          return a * 1000 + b;
+        }
+
+        function build(): int {
+          if (state.calls() >= 1) {
+            return 100;
+          }
+          state.provideFirst();
+          let inner: A = {};
+          return inner.x;
+        }
+
+        export function main(): null {
+          let a: A = {};
+          if (a.x !== 1100) {
+            throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The ISSUE-0810 failed-nested-attempt subject: the nested construction's
+     * default raises after its own first operand ran, the helper catches the
+     * failure and returns 5, and the enclosing attempt composes
+     * {@code 0 * 1000 + 5}. The restore must run on the failure path too: a
+     * clobbered enclosing operand composes {@code 1 * 1000 + 5} and throws.
+     */
+    private static final String DEFAULT_REENTRANCY_FAILURE_APP_SOURCE = """
+        import * as console from "std/console";
+        import * as state from "host/retained_default";
+
+        class A {
+          x: int = combine(state.calls(), build());
+        }
+
+        function combine(a: int, b: int): int {
+          return a * 1000 + b;
+        }
+
+        function build(): int {
+          if (state.calls() >= 1) {
+            throw { code: "INNER_FAIL", message: "inner attempt fails" };
+          }
+          state.provideFirst();
+          try {
+            let inner: A = {};
+          } catch (e) {
+          }
+          return 5;
+        }
+
+        export function main(): null {
+          let a: A = {};
+          if (a.x !== 5) {
+            throw { code: "OPERAND_OVERWRITE", message: "a failed nested attempt overwrote the enclosing operands" };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The ISSUE-0810 two-required-default subject: the class declares two
+     * omitted required defaults and the second one constructs the class
+     * again, so the nested attempt re-enters both default blocks. The
+     * enclosing attempt's first default value ({@code 0}, the counter read
+     * before the nested attempt) must survive the nested attempt, and the
+     * enclosing attempt's second default still produces {@code 7}. A shared
+     * default-result slot carries the nested attempt's {@code 1} into the
+     * enclosing construction and fails the first tripwire.
+     */
+    private static final String DEFAULT_TWO_DEFAULTS_APP_SOURCE = """
+        import * as console from "std/console";
+        import * as state from "host/retained_default";
+
+        class A {
+          x: int = state.calls();
+          y: int = build();
+        }
+
+        function build(): int {
+          if (state.calls() >= 1) {
+            return 100;
+          }
+          state.provideFirst();
+          let inner: A = {};
+          return 7;
+        }
+
+        export function main(): null {
+          let a: A = {};
+          if (a.x !== 0) {
+            throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
+          }
+          if (a.y !== 7) {
+            throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The ISSUE-0810 two-required-default failed-nested-attempt subject: the
+     * nested construction's first default produces its own value and the
+     * nested second default then raises; the helper catches the failure. The
+     * enclosing attempt keeps its own first default value ({@code 0}) and
+     * publishes {@code y = 7}.
+     */
+    private static final String DEFAULT_TWO_DEFAULTS_FAILURE_APP_SOURCE = """
+        import * as console from "std/console";
+        import * as state from "host/retained_default";
+
+        class A {
+          x: int = state.calls();
+          y: int = build();
+        }
+
+        function build(): int {
+          if (state.calls() >= 1) {
+            throw { code: "INNER_FAIL", message: "the nested attempt fails" };
+          }
+          state.provideFirst();
+          try {
+            let inner: A = {};
+          } catch (e) {
+          }
+          return 7;
+        }
+
+        export function main(): null {
+          let a: A = {};
+          if (a.x !== 0) {
+            throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the enclosing attempt's first default value" };
+          }
+          if (a.y !== 7) {
+            throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The provider module of the ISSUE-0810 imported-class subject: the
+     * two-required-default class is imported by the consumer, so the
+     * consumer's construction runs the owner's defaults-only transfer
+     * (SHARED_FACTORY). The nested construction inside the second default is
+     * the owner's own LOCAL construction of the same class, so both attempts
+     * run the owner's same default blocks.
+     */
+    private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_LIB_SOURCE = """
+        import * as state from "host/retained_default";
+
+        export class A {
+          x: int = state.calls();
+          y: int = build();
+        }
+
+        function build(): int {
+          if (state.calls() >= 1) {
+            return 100;
+          }
+          state.provideFirst();
+          let inner: A = {};
+          return 7;
+        }
+        """;
+
+    /** The failed-nested-attempt form of the imported-class provider module. */
+    private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_FAILURE_LIB_SOURCE = """
+        import * as state from "host/retained_default";
+
+        export class A {
+          x: int = state.calls();
+          y: int = build();
+        }
+
+        function build(): int {
+          if (state.calls() >= 1) {
+            throw { code: "INNER_FAIL", message: "the nested attempt fails" };
+          }
+          state.provideFirst();
+          try {
+            let inner: A = {};
+          } catch (e) {
+          }
+          return 7;
+        }
+        """;
+
+    /** The consumer of the imported two-required-default class. */
+    private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_APP_SOURCE = """
+        import * as console from "std/console";
+        import * as lib from "lib";
+
+        export function main(): null {
+          let a: lib.A = {};
+          if (a.x !== 0) {
+            throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred default value" };
+          }
+          if (a.y !== 7) {
+            throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
+          }
+          console.log("ok");
+          return null;
+        }
+        """;
+
     /** The main fixture: source calls, an adapter, cross-module calls, and a host import. */
     private static final String APP_SOURCE = """
         import * as u from "util";
@@ -2144,6 +2384,114 @@ public class ProjectLoweringTest {
                     Map.of()).isEmpty(),
                 "the class-carrying unit passes the class-construction validator "
                     + "(the composed chain's class arm)");
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    /**
+     * ISSUE-0810: the per-construction default invocation carries
+     * invocation-local attempt scratch. A default that re-enters its own
+     * class's construction (through a module-level helper) must not
+     * overwrite the enclosing attempt's operand slots: the outer
+     * attempt's first operand (the host counter read before the nested
+     * attempt) keeps its own value, so the outer default composes
+     * {@code 0 * 1000 + 1100} and the probe succeeds. A clobbered attempt
+     * composes the nested attempt's counter read and fails the probe with
+     * the named tripwire, so the same subject pins the Oracle and both
+     * production emitters. The two-required-default subjects pin the other
+     * half: each attempt's produced default values are its own, so a nested
+     * attempt (completing or failing) never replaces an enclosing attempt's
+     * earlier default value — in the same-module LOCAL arm and in the
+     * imported SHARED_FACTORY transfer alike.
+     */
+    private static void testDefaultReentrantAttemptScratch() throws Exception {
+        System.out.println("-- the per-construction default invocation's "
+            + "invocation-local attempt scratch: a nested construction inside a "
+            + "default keeps the enclosing attempt's operands --");
+        executeReentrantDefaultOracle(DEFAULT_REENTRANCY_APP_SOURCE,
+            "the nested construction completes", Map.of());
+        executeReentrantDefaultOracle(DEFAULT_REENTRANCY_FAILURE_APP_SOURCE,
+            "the failed nested attempt restores the enclosing operands", Map.of());
+        executeReentrantDefaultOracle(DEFAULT_TWO_DEFAULTS_APP_SOURCE,
+            "the nested construction keeps the enclosing attempt's produced "
+                + "default values", Map.of());
+        executeReentrantDefaultOracle(DEFAULT_TWO_DEFAULTS_FAILURE_APP_SOURCE,
+            "the failed nested attempt keeps the enclosing attempt's produced "
+                + "default values", Map.of());
+        executeReentrantDefaultOracle(IMPORTED_DEFAULT_TWO_DEFAULTS_APP_SOURCE,
+            "the imported class's transfer keeps the enclosing attempt's "
+                + "produced default values",
+            Map.of("src/lib.deal", IMPORTED_DEFAULT_TWO_DEFAULTS_LIB_SOURCE));
+        executeReentrantDefaultOracle(IMPORTED_DEFAULT_TWO_DEFAULTS_APP_SOURCE,
+            "the imported class's transfer keeps the enclosing attempt's "
+                + "produced default values after a failed nested attempt",
+            Map.of("src/lib.deal",
+                IMPORTED_DEFAULT_TWO_DEFAULTS_FAILURE_LIB_SOURCE));
+    }
+
+    /**
+     * One re-entrant-default subject through the Oracle: the host responder
+     * counts every {@code provideFirst} omission and answers {@code calls()}
+     * with that counter, so the subject's exact tripwire observes whether a
+     * nested attempt overwrote the enclosing attempt's operand slot or one of
+     * its produced default values. {@code extraSources} carries the provider
+     * module of an imported-class subject.
+     */
+    private static void executeReentrantDefaultOracle(String source, String what,
+            Map<String, String> extraSources) throws Exception {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/retained_default.d.deal", RETAINED_DEFAULT_DECLARATION);
+        sources.putAll(extraSources);
+        RealProject project = compileProject(source, sources,
+            Map.of("host/retained_default", "src/retained_default.d.deal"));
+        try {
+            SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
+            check(!result.hasErrors() && result.project() != null,
+                "the re-entrant-default subject lowers through the one project "
+                    + "lowering: " + result.diagnostics());
+            if (result.project() == null) {
+                return;
+            }
+            int[] calls = {0};
+            SemanticRuntimeModel.ConsumerRun run =
+                SemanticOracle.executeProjectInits(result.project(), result.tables(),
+                    result.registries(), new SemanticOracle.HostResponder() {
+                        @Override
+                        public SyncOutcome call(ModuleId module, String export,
+                                RuntimeDescriptor.Func descriptor,
+                                List<SemanticOracle.Value> args) {
+                            if (!"host.retained_default".equals(module.path())) {
+                                return new SyncOutcome.Thrown("E9001",
+                                    "unknown host module " + module.path());
+                            }
+                            return switch (export) {
+                                case "calls" -> new SyncOutcome.Returned(
+                                    new SemanticOracle.Value.IntValue(calls[0]));
+                                case "provideFirst" -> {
+                                    calls[0]++;
+                                    yield new SyncOutcome.Returned(
+                                        new SemanticOracle.Value.ArrayValue(
+                                            List.of(), RuntimeDescriptor.Int.INSTANCE,
+                                            false));
+                                }
+                                default -> new SyncOutcome.Thrown("E9001",
+                                    "unknown host export " + export);
+                            };
+                        }
+                    });
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the oracle " + what + ": " + run.comparisonReport());
+            List<String> consoleWrites = new ArrayList<>();
+            for (SemanticRuntimeModel.EffectEvent effect : run.effects()) {
+                if (effect.kind()
+                        == SemanticRuntimeModel.EffectEvent.Kind.CONSOLE_WRITE) {
+                    consoleWrites.add(effect.text());
+                }
+            }
+            checkEq(List.of("ok"), consoleWrites,
+                "the oracle's probe reaches the console write exactly once: "
+                    + run.comparisonReport());
         } finally {
             deleteRecursively(project.root());
         }
@@ -6861,6 +7209,7 @@ public class ProjectLoweringTest {
             testCommonAdmissionMembershipParity(baseline);
             testCommonAdmissionBindingAndClassParity();
             testInProjectClassArm();
+            testDefaultReentrantAttemptScratch();
             importedProject = compileProject(IMPORTED_CLASS_APP_SOURCE,
                 Map.of("src/util.deal", IMPORTED_CLASS_UTIL_SOURCE), Map.of());
             LoweredProject imported = new LoweredProject(importedProject,
