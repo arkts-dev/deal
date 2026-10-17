@@ -1207,8 +1207,11 @@ public class JsSemanticEmitterTest {
      * helper ABI (the exact META/C$new/C$fromJson/C$toJson/C$fields keys and
      * signatures, C$new arity and origin absence, the untagged defaults-only
      * factory transfer with no default run at registration, unmutated provided
-     * input and no instance on failure) and the JSON roundtrip with its
-     * specified null failures and optional-null three states.
+     * input and no instance on failure), the source-literal supplied-expression
+     * order before omitted defaults, the raw host extra-key scan before any
+     * default, the per-construction Error[] default, and the JSON roundtrip
+     * with its specified null failures and optional-null three states. Both
+     * the driver (require-only) and the entry artifact itself execute.
      */
     private static void testClassConstructionAndJson(Path tmpRoot, boolean node)
             throws Exception {
@@ -1232,6 +1235,18 @@ public class JsSemanticEmitterTest {
               return { v: 7 };
             }
 
+            // A source literal's supplied expressions must run before any
+            // omitted required default: the default's distinct failure would
+            // otherwise replace the supplied expression's failure.
+            function defaultBoom(): int {
+              throw { code: "DEFAULT_ORDER", message: "default ran before supplied" };
+            }
+
+            class FailOrder {
+              first: int = defaultBoom();
+              second: int = 0;
+            }
+
             // @jsonable
             export class Form {
               name: string = "";
@@ -1247,6 +1262,14 @@ public class JsSemanticEmitterTest {
             }
 
             export function main(): null {
+              let order: int[] = [];
+              let note: (n: int) => int = function(n: int): int {
+                order[order.length] = n;
+                return n;
+              };
+              let suppliedBoom: () => int = function(): int {
+                throw { code: "SUPPLIED_ORDER", message: "supplied expression first" };
+              };
               let a: Bag = {};
               let b: Bag = {};
               a.items[0] = 5;
@@ -1263,6 +1286,19 @@ public class JsSemanticEmitterTest {
               let p2: lib.Point = {};
               if (p1.y !== 0 || p2.x !== 0) { throw { code: "TEST_FAIL", message: "provider defaults" }; }
               if (lib.Point$toJson(p1) !== "{\\"x\\":2,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
+              // A source literal evaluates its supplied expressions
+              // left-to-right, then applies the omitted required defaults.
+              let ordered: lib.Point = { x: note(1), opt: note(2) };
+              if (order.length !== 2 || order[0] !== 1 || order[1] !== 2) { throw { code: "TEST_FAIL", message: "supplied order" }; }
+              if (ordered.y !== 0) { throw { code: "TEST_FAIL", message: "default after supplied" }; }
+              let orderCode: string = "";
+              try {
+                let failed: FailOrder = { second: suppliedBoom() };
+                orderCode = "NOFAIL";
+              } catch (e) {
+                orderCode = e.code;
+              }
+              if (orderCode !== "SUPPLIED_ORDER") { throw { code: "TEST_FAIL", message: "supplied expression before default" }; }
               // The optional-nullable three states survive source literals and
               // the generated helpers: missing stays absent, a present null
               // stays present-null, a present value stays present.
@@ -1497,6 +1533,10 @@ public class JsSemanticEmitterTest {
               madePoint: madeGiven.point.$classname};
             const bad = {zz: 1, extra: 2};
             const badSnapshot = JSON.stringify(bad);
+            // The raw host ABI adapter scans the provided keys before it
+            // applies any omitted default, so the nested provider default
+            // must not run for the rejected attempt.
+            const beforeBad = factoryCalls;
             try {
               app.Form$new(bad, "d.js", 41, 41);
               out.badExtra = "none";
@@ -1505,7 +1545,7 @@ public class JsSemanticEmitterTest {
                 + e.file + ":" + e.line + ":" + e.column;
             }
             out.bad = {unchanged: JSON.stringify(bad) === badSnapshot,
-              kind: bad.$kind};
+              kind: bad.$kind, calls: factoryCalls - beforeBad};
             const typed = {name: 5};
             const typedSnapshot = JSON.stringify(typed);
             try {
@@ -1544,11 +1584,14 @@ public class JsSemanticEmitterTest {
               [rt.has(decodedMissing, "opt"),
                 rt.optRead(decodedMissing.opt)],
               [rt.has(decodedNull, "opt"), rt.optRead(decodedNull.opt)]];
-            // The builtin Error identity is exactly Error.
+            // The builtin Error identity is exactly Error, and each
+            // construction receives its own Error[] default array.
             const fault = app.Fault$new({}, "d.js", 50, 50);
+            const secondFault = app.Fault$new({}, "d.js", 51, 51);
             out.fault = {errKind: fault.err.$kind,
               errCls: fault.err.$classname, code: fault.err.code,
               errsLen: fault.errs.length,
+              fresh: secondFault.errs !== fault.errs,
               metaKeys: Object.keys(app.Fault)};
             // The generated wrappers keep the public helper ABI.
             const text = app.Form$toJson.$f(made, "d.js", 4, 4);
@@ -1573,6 +1616,13 @@ public class JsSemanticEmitterTest {
             """.replace("__APP_FACTORY_ID__", appFactoryId));
         NodeRun run = runNode(out, "driver.js");
         checkEq(0, run.status(), "the class driver exits 0: " + run.output());
+        // The driver only requires the entry, so the emitted source-literal
+        // checks in main run on the real entry artifact itself: running it
+        // makes it the direct-run entry and the guard executes main once.
+        NodeRun entry = runNode(out, entryPath(out));
+        checkEq(0, entry.status(),
+            "the class entry artifact executes its source literals under the"
+                + " direct-run guard and exits 0: " + entry.output());
         check(run.output().contains("\"state\":\"INITIALIZED\""),
             "the entry module's init completed: " + run.output());
         check(run.output().contains(
@@ -1617,9 +1667,11 @@ public class JsSemanticEmitterTest {
                 + run.output());
         check(run.output().contains("\"badExtra\":\"E8007:extra field 'zz'"
                 + " in class '@src/Form':at=d.js:41:41\"")
-                && run.output().contains("\"bad\":{\"unchanged\":true}"),
-            "a failed extra-key construction publishes no instance and"
-                + " mutates nothing: " + run.output());
+                && run.output().contains("\"bad\":{\"unchanged\":true,"
+                    + "\"calls\":0}"),
+            "a failed extra-key construction rejects before any omitted"
+                + " default runs, publishes no instance and mutates nothing: "
+                + run.output());
         check(run.output().contains("\"typed\":\"E8001:expected string"
                 + ":at=d.js:42:42\"")
                 && run.output().contains("\"typedInput\":{\"unchanged\":"
@@ -1645,9 +1697,11 @@ public class JsSemanticEmitterTest {
                 + run.output());
         check(run.output().contains("\"fault\":{\"errKind\":\"class\","
                 + "\"errCls\":\"Error\",\"code\":\"\",\"errsLen\":0,"
+                + "\"fresh\":true,"
                 + "\"metaKeys\":[\"$kind\",\"$classname\"]}"),
             "an Error field constructs the exact builtin Error instance and"
-                + " its array default is fresh: " + run.output());
+                + " each construction receives its own Error[] default: "
+                + run.output());
         check(run.output().contains("\"meta\":{\"$kind\":\"class\","
                 + "\"$classname\":\"@src/Form\"}"),
             "the exported class value is exactly the META pair with its"
