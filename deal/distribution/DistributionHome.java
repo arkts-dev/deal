@@ -40,8 +40,8 @@ import java.util.Optional;
  * first tier that provides the requested file wins. The project-local
  * tier applies to stdlib files only — no project-local location is
  * pinned for the runtime sources, which resolve classpath → distribution
- * home → CWD (the order {@code copyRuntimeLibrary}/{@code
- * copyJsRuntimeLibrary} gain, removing the implicit CWD dependency of
+ * home → CWD (the one deployment-copy order the production arm's runtime
+ * and stdlib staging consumes, removing the implicit CWD dependency of
  * the legacy fallback).</p>
  *
  * <p><b>Read-only and deterministic.</b> Resolution performs reads only
