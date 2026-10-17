@@ -359,6 +359,49 @@ test("nullable nested class accepts null and values", function() {
 // Table fields: D9 Map shape, JSON-shaped end to end (D4)
 // =========================================================================
 
+test("a failed nested decode fails the enclosing decode, never a present null", function() {
+  const childFields = [f("value", "int", false, false)];
+  const fields = [f("child", "class", true, true,
+    { className: "@m/Child", fields: childFields })];
+  const thunk = () => ({ child: rt.MISSING });
+  // Every nested gate/validation failure collapses to the language null of
+  // the whole call: a nullable class field never absorbs a failed nested
+  // decode as a present null, and no partial instance publishes (only a
+  // JSON null token reaches the nullable null arm).
+  assertNull(rt.jsonFromJson("@m/Maybe", fields, thunk,
+    '{"child":{"value":1,"extra":2}}', ...LOC),
+    "nested extra key through a nullable class field");
+  assertNull(rt.jsonFromJson("@m/Maybe", fields, thunk,
+    '{"child":{"value":"no"}}', ...LOC),
+    "nested provided-kind failure through a nullable class field");
+  const arrayFields = [f("children", "array", false, false,
+    { element: elem("class", true, { className: "@m/Child", fields: childFields }) })];
+  const arrayThunk = () => ({ children: [] });
+  assertNull(rt.jsonFromJson("@m/Maybe", arrayFields, arrayThunk,
+    '{"children":[{"value":1,"extra":2}]}', ...LOC),
+    "nested failure through a nullable class-array element");
+  // A genuine JSON null token in the same positions still decodes as a
+  // present null: the three presence states stay distinct.
+  const nil = rt.jsonFromJson("@m/Maybe", fields, thunk, '{"child":null}', ...LOC);
+  assert(nil !== null && nil.child === null, "explicit null nested still decodes");
+  const nilElement = rt.jsonFromJson("@m/Maybe", arrayFields, arrayThunk,
+    '{"children":[null]}', ...LOC);
+  assert(nilElement !== null && nilElement.children[0] === null,
+    "explicit null element still decodes");
+  // Completed effects remain and nothing retries: the omitted-required
+  // evaluators that already ran keep their effects when a later final
+  // validation fails, and the call still returns the language null with no
+  // partial instance published.
+  let runs = 0;
+  const effectFields = [f("a", "int", false, false),
+    f("b", "string", false, false)];
+  effectFields[0].evaluator = function () { runs++; return 1; };
+  effectFields[1].evaluator = function () { runs++; return 42; };
+  assertNull(rt.jsonFromJson("@m/Maybe", effectFields, null, "{}", ...LOC),
+    "a final-validation failure after the defaults decodes to null");
+  assertEqual(runs, 2, "both completed evaluator effects remain");
+});
+
 test("table fields decode to the D9 Map shape and roundtrip nested arrays", function() {
   const fields = [f("data", "table", false, false)];
   const thunk = () => ({ data: rt.makeTable({}) });
