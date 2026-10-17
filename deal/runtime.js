@@ -647,9 +647,17 @@ function $arrayFormIndex($key) {
 // names and a fractional token that rounds to an integral double is
 // never admitted at an int position.
 
-// $jsonNumberMarks: container -> $Map(key -> true) for every slot that
-// holds the number variant. Keyed by native parsed containers and by the
-// converted marked-Map tables; never exported (like the shape marks).
+// $jsonNumberMarks: container -> $Map(key -> true|false) for every slot
+// whose numeric variant the container records: true is the number
+// variant, false an explicitly int-classified slot. Decoded graphs store
+// only the number variant (an int-classified token needs no mark — the
+// absence of a number mark is the int/default spelling), so the decoded
+// and written slot marks keep their meaning; the one explicit int mark
+// exists for the host completion projection's class-instance copy
+// ($hostProjectCompletion), whose unwrapped fields must still re-encode
+// with the variant they were read with. Keyed by native parsed
+// containers, the converted marked-Map tables and those projected class
+// copies; never exported (like the shape marks).
 const $jsonNumberMarks = new WeakMap();
 
 function $markNumberVariant($container, $key) {
@@ -661,9 +669,23 @@ function $markNumberVariant($container, $key) {
   $marks.set($key, true);
 }
 
+function $markIntVariant($container, $key) {
+  let $marks = $jsonNumberMarks.get($container);
+  if ($marks === $undefined) {
+    $marks = new $Map();
+    $jsonNumberMarks.set($container, $marks);
+  }
+  $marks.set($key, false);
+}
+
 function $isNumberVariant($container, $key) {
   const $marks = $jsonNumberMarks.get($container);
-  return $marks !== $undefined && $marks.has($key);
+  return $marks !== $undefined && $marks.get($key) === true;
+}
+
+function $isIntVariant($container, $key) {
+  const $marks = $jsonNumberMarks.get($container);
+  return $marks !== $undefined && $marks.get($key) === false;
 }
 
 // $numCarrier/$isNumCarrier/$numOf: the read-side number-variant carrier
@@ -744,19 +766,48 @@ function $hostProjectArg($desc, $v) {
 
 // $hostProjectCompletion: the host-facing projection of one checked
 // async-export completion (the JVM host-completion carrier projection
-// and the LuaJIT __asyncExportCompletion numeric leaf unwrap). A
-// read-side numeric carrier becomes the number it carries at the top
-// level and at every nested container leaf; a native Array or a Map
-// table is copied with every element projected; every other value
-// crosses unchanged. The copy is identity-preserving per source
-// container (one projected container per source container), so a shared
-// reference stays shared and a cyclic completion terminates instead of
-// recursing; the walk is an explicit frame stack, so a finite nested
-// completion has no call-stack bound; the DEAL-side value is never
-// mutated.
+// and the LuaJIT __asyncExportCompletion projection). The crossing hands
+// the host the declared value, never the runtime's internal
+// representation, for every carrier the checked completion can hold:
+//
+//   - a read-side numeric carrier becomes the number it carries, at the
+//     top level and at every nested leaf;
+//   - the std/json decoded-null carrier becomes the language null (the
+//     reference's __NULL projection): JS null is DEAL null, and both the
+//     shared encoder and the boundary members read it as the same null
+//     leaf, so a decoded object/array keeps its null slots;
+//   - a native Array or a Map table is copied with every element
+//     projected and its per-slot number-variant marks carried over
+//     ($jsonNumberMarks), and a decoded-array marked Map keeps the array
+//     mark on the copy — so the host-visible graph preserves the decoded
+//     graph's array-ness and its exact int/number classification, and
+//     re-encoding it through the shared walks spells exactly what the
+//     DEAL-side value spells (the Lua __a/__nK carrier copy);
+//   - a class instance is copied with every own property projected (the
+//     declared fields and the $kind/$classname tag pair), so no numeric
+//     or decode carrier survives inside a class-typed completion;
+//   - every other value (scalars, null, strings, bytes carriers,
+//     function wrappers, the $MISSING sentinel, host objects) crosses
+//     unchanged.
+//
+// The copy is identity-preserving per source container (one projected
+// container per source container), so a shared reference stays shared
+// and a cyclic completion terminates instead of recursing; the walk is
+// an explicit frame stack, so a finite nested completion has no
+// call-stack bound; the DEAL-side value is never mutated.
 function $hostProjectCompletion($v) {
   const $memo = new $Map();
   const $stack = [];
+  // The per-slot variant marks of one copied container: a container's
+  // marks are its own stored classification, so the copy starts from the
+  // same marks and the recorded kind of a stored read carrier (below)
+  // overrides the position it occupies.
+  const $carryMarks = function ($source, $copy) {
+    const $marks = $jsonNumberMarks.get($source);
+    if ($marks !== $undefined) {
+      $jsonNumberMarks.set($copy, new $Map($marks));
+    }
+  };
   const $project = function ($value) {
     if ($isNumCarrier($value)) {
       return $value.d;
@@ -768,21 +819,44 @@ function $hostProjectCompletion($v) {
       }
       const $copy = [];
       $memo.set($value, $copy);
-      $stack.push({ array: $value, copy: $copy, index: 0, keys: null });
+      $carryMarks($value, $copy);
+      $stack.push({ kind: 1, source: $value, copy: $copy, index: 0, keys: null });
       return $copy;
     }
     if ($value instanceof $Map) {
+      // The decoded JSON null is the language null, not a table: it has
+      // no content to copy, so it projects to the host null directly.
+      if ($rt.isJsonNullTable($value)) {
+        return null;
+      }
       const $mapped = $memo.get($value);
       if ($mapped !== $undefined) {
         return $mapped;
       }
       const $copy = new $Map();
       $memo.set($value, $copy);
+      if ($rt.isJsonArrayTable($value)) {
+        $rt.markJsonArrayTable($copy);
+      }
+      $carryMarks($value, $copy);
       const $keys = [];
       for (const $key of $value.keys()) {
         $keys.push($key);
       }
-      $stack.push({ array: $value, copy: $copy, index: 0, keys: $keys });
+      $stack.push({ kind: 2, source: $value, copy: $copy, index: 0, keys: $keys });
+      return $copy;
+    }
+    if ($value !== null && typeof $value === "object"
+        && $value.$kind === "class") {
+      const $mapped = $memo.get($value);
+      if ($mapped !== $undefined) {
+        return $mapped;
+      }
+      const $copy = {};
+      $memo.set($value, $copy);
+      $carryMarks($value, $copy);
+      $stack.push({ kind: 3, source: $value, copy: $copy, index: 0,
+        keys: Object.keys($value) });
       return $copy;
     }
     return $value;
@@ -790,12 +864,41 @@ function $hostProjectCompletion($v) {
   const $root = $project($v);
   while ($stack.length > 0) {
     const $frame = $stack[$stack.length - 1];
-    if ($frame.keys === null) {
-      if ($frame.index >= $frame.array.length) {
+    if ($frame.kind === 3) {
+      // A class instance: every own property (a declared field, the
+      // $kind/$classname tag pair) copies through setProp, so a field
+      // named __proto__ stays an own property of the copy.
+      if ($frame.index >= $frame.keys.length) {
         $stack.pop();
         continue;
       }
-      $frame.copy.push($project($frame.array[$frame.index++]));
+      const $key = $frame.keys[$frame.index++];
+      const $element = $frame.source[$key];
+      $rt.setProp($frame.copy, $key, $project($element));
+      if ($isNumCarrier($element)) {
+        // The unwrapped field keeps its own variant on the copy, so the
+        // class walk's declared int/number rows spell the projected
+        // instance exactly like the DEAL-side instance it stands for
+        // (the JVM Long/Double carrier row).
+        if ($element.k === "number") {
+          $markNumberVariant($frame.copy, $key);
+        } else {
+          $markIntVariant($frame.copy, $key);
+        }
+      }
+      continue;
+    }
+    if ($frame.kind === 1) {
+      if ($frame.index >= $frame.source.length) {
+        $stack.pop();
+        continue;
+      }
+      const $i = $frame.index++;
+      const $element = $frame.source[$i];
+      $frame.copy.push($project($element));
+      if ($isNumCarrier($element)) {
+        $setNumberVariant($frame.copy, String($i), $element.k === "number");
+      }
       continue;
     }
     if ($frame.index >= $frame.keys.length) {
@@ -803,7 +906,11 @@ function $hostProjectCompletion($v) {
       continue;
     }
     const $key = $frame.keys[$frame.index++];
-    $frame.copy.set($key, $project($frame.array.get($key)));
+    const $element = $frame.source.get($key);
+    $frame.copy.set($key, $project($element));
+    if ($isNumCarrier($element)) {
+      $setNumberVariant($frame.copy, $key, $element.k === "number");
+    }
   }
   return $root;
 }
@@ -1965,9 +2072,16 @@ function $jsonToDocument($identity, $v, $fields, $path, $fieldPath, $file, $line
     if ($value === $MISSING) {
       continue; // absent optional: omitted (three-state roundtrip)
     }
+    // The field's recorded numeric variant: a projected class-instance
+    // completion records the variant of every numeric field it unwrapped
+    // ($hostProjectCompletion), so the declared int/number rows spell the
+    // copy exactly like the DEAL-side instance. A DEAL-side instance
+    // records nothing and keeps the declared-type spelling.
+    const $fieldVariant = $isNumberVariant($v, $name) ? true
+      : ($isIntVariant($v, $name) ? false : $undefined);
     $parts.push($jsonEscapeText($name) + ":"
       + $jsonToValue($entry, $value, $path, $fieldPathFor($fieldPath, $name),
-        $file, $line, $column, $undefined));
+        $file, $line, $column, $fieldVariant));
   }
   return "{" + $parts.join(",") + "}";
 }
@@ -1983,12 +2097,14 @@ function $fieldPathFor($base, $name) {
 // spine with the forwarded location, except the int32 range gate
 // (E8004). Table fields walk the shared finite-acyclic JSON text
 // encoder with the typed-boundary projection. $variant is the recorded
-// number variant of a decoded-array slot ($true for the number
-// classification, $false for the int classification, $undefined
-// outside a decoded carrier); the "int" and "number" rows consult it
-// for a plain number. A read-side variant carrier is judged by its own
-// recorded kind first (the shared model's Value.Int/Value.Number rows,
-// never the declared position).
+// variant of the walked position: $true for the number classification
+// and $false for the int classification of a decoded-array slot or of a
+// host-projected class-instance field ($hostProjectCompletion records
+// the variant of every field it unwrapped), $undefined outside such a
+// record. The "int" and "number" rows consult it for a plain number. A
+// read-side variant carrier is judged by its own recorded kind first
+// (the shared model's Value.Int/Value.Number rows, never the declared
+// position).
 function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
     $variant) {
   const $walkFail = function () {
@@ -3818,12 +3934,16 @@ const $rt = {
     }
     try {
       // The checked completion crosses to the host in its declared
-      // host-facing representation: a read-side numeric carrier becomes
-      // the number it carries at the top level and at every nested
-      // container leaf, so the invoker never exposes the runtime's
-      // internal carrier keys to its host caller (the JVM/LuaJIT
-      // completion crossing's projection). Non-numeric values are
-      // unchanged and the checked value is never mutated.
+      // host-facing representation ($hostProjectCompletion): a read-side
+      // numeric carrier becomes the number it carries at the top level
+      // and at every nested leaf, a decoded JSON null becomes the
+      // language null, the decoded-array carrier and every container
+      // copy keep their number-variant marks, and a class instance is
+      // copied field by field — so the invoker never exposes the
+      // runtime's internal carrier objects to its host caller and the
+      // host-visible graph keeps the decoded value's own classification
+      // (the JVM/LuaJIT completion crossing's projection). The checked
+      // value is never mutated.
       return { $ok: true,
         $value: $hostProjectCompletion($rt.checkType(returnDescriptor, $v)) };
     } catch ($e) {

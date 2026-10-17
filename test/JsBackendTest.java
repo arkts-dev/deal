@@ -172,6 +172,7 @@ public class JsBackendTest {
             testJsonableDecodedArrayFieldNode();
             testJsonDecodedArrayVariantNode();
             testHostBoundaryNumericCarrierNode();
+            testHostCompletionCarrierNode();
             testJsonStoredFunctionE8001();
             testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
@@ -6174,6 +6175,186 @@ public class JsBackendTest {
                 + " values and the invoker its projected completion"
                 + " (scalar, nested leaves and preserved aliases, no internal"
                 + " carrier key): " + run.output() + " (exit "
+                + run.exitCode() + ")");
+    }
+
+    /**
+     * The async-export completion projection is carrier-complete (the
+     * ISSUE-0827 review finding): the host-visible completion keeps the
+     * decoded graph's own shape and classification instead of losing it to
+     * the projection. Driven through the production frontend -> JsBackend
+     * emission -> deployed runtime chain under node:
+     * <ul>
+     *   <li>a decoded object completion keeps the decoded-array carrier and
+     *       the number-variant leaf's canonical text ({@code 1.0E17}), its
+     *       int leaf's integer text, and its decoded JSON null as the
+     *       language null — the pre-fix projection re-spelled the number as
+     *       an integer and rendered the array as an object;</li>
+     *   <li>a decoded {@code (int|null)[]} completion is still the array
+     *       carrier with its null slot ({@code [1,null]}), not an object
+     *       with an empty table in the null position;</li>
+     *   <li>a class-typed completion is a copy whose numeric field is the
+     *       declared host number, holds no internal carrier, and re-encodes
+     *       through the generated helper exactly like the DEAL-side
+     *       instance;</li>
+     *   <li>a table completion holding one decoded array twice keeps one
+     *       projected container per source container (the identity and
+     *       alias contract).</li>
+     * </ul>
+     */
+    private static void testHostCompletionCarrierNode() throws Exception {
+        System.out.println("-- Node: the async-export completion projection keeps"
+            + " the decoded carriers --");
+        if (!nodeAvailable) { skipNode("host completion carrier projection"); return; }
+
+        writeFile("completion_proj/deal.json", """
+            {"languageVersion": "1.3", "backend": "js",
+             "moduleRoots": ["src"], "output": "out"}
+            """);
+        writeFile("completion_proj/src/main.deal", """
+            import * as json from "std/json";
+
+            // @jsonable
+            export class C {
+              n: number = 0.0;
+            }
+
+            export function main(): null { return null; }
+
+            export async function decoded(): table {
+              return json.parse("{\\"n\\":1e17,\\"i\\":2,\\"xs\\":[1.5,1],\\"z\\":null}");
+            }
+
+            export async function nullable(): (int | null)[] {
+              let t: table = json.parse("{\\"xs\\":[1,null]}");
+              let xs: (int | null)[] = t.xs;
+              return xs;
+            }
+
+            export async function box(): C {
+              let t: table = json.parse("{\\"xs\\":[1]}");
+              let xs: number[] = t.xs;
+              let c: C = {};
+              c.n = xs[0];
+              return c;
+            }
+
+            export async function aliased(): table {
+              let t: table = json.parse("{\\"xs\\":[1.5]}");
+              let xs: number[] = t.xs;
+              return { a: xs, b: xs };
+            }
+            """);
+        Path entry = tmpDir.resolve("completion_proj/src/main.deal")
+            .toAbsolutePath();
+        int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+        check(exit == 0, "the completion-carrier project compiles through the"
+            + " public deal compile: exit=" + exit);
+        if (exit != 0) {
+            return;
+        }
+        writeFile("completion_proj/out/completion_runner.js", String.join("\n",
+            "\"use strict\";",
+            "const $rt = require(\"./deal/runtime\");",
+            "const $entry = require(\"./main\");",
+            "const $out = [];",
+            "// The host-visible graph must hold no runtime carrier object at any",
+            "// depth (the internal $jn key).",
+            "const $hasCarrier = (v) => {",
+            "  const $seen = new Set();",
+            "  const $walk = (x) => {",
+            "    if (x === null || typeof x !== \"object\") return false;",
+            "    if ($seen.has(x)) return false;",
+            "    $seen.add(x);",
+            "    if (x.$jn === true) return true;",
+            "    if (x instanceof Map) {",
+            "      for (const $child of x.values()) if ($walk($child)) return true;",
+            "      return false;",
+            "    }",
+            "    if (Array.isArray(x)) {",
+            "      for (const $child of x) if ($walk($child)) return true;",
+            "      return false;",
+            "    }",
+            "    for (const $key of Object.keys(x)) if ($walk(x[$key])) return true;",
+            "    return false;",
+            "  };",
+            "  return $walk(v);",
+            "};",
+            "(async () => {",
+            "  const $decoded = await $rt.invokeAsyncExport($entry, \"decoded\", \"table\");",
+            "  if ($decoded.$ok !== true) {",
+            "    $out.push(\"decoded=FAIL:\" + JSON.stringify($decoded));",
+            "  } else {",
+            "    const $d = $decoded.$value;",
+            "    $out.push(\"decoded=\" + $rt.jsonStringifyText($d));",
+            "    $out.push(\"decodedArray=\" + $rt.isJsonArrayTable($rt.tableGet($d, \"xs\")));",
+            "    $out.push(\"decodedNull=\" + $rt.tableGet($d, \"z\"));",
+            "    $out.push(\"decodedNullTable=\" + $rt.isJsonNullTable($rt.tableGet($d, \"z\")));",
+            "    $out.push(\"decodedInt=\" + $rt.tableGet($d, \"i\"));",
+            "    $out.push(\"decodedCheck=\" + ($rt.checkType(\"table\", $d) === $d));",
+            "  }",
+            "  const $nullable = await $rt.invokeAsyncExport($entry, \"nullable\", \"[?int]\");",
+            "  if ($nullable.$ok !== true) {",
+            "    $out.push(\"nullable=FAIL:\" + JSON.stringify($nullable));",
+            "  } else {",
+            "    const $n = $nullable.$value;",
+            "    $out.push(\"nullable=\" + $rt.jsonStringifyText($n));",
+            "    $out.push(\"nullableArray=\" + $rt.isJsonArrayTable($n));",
+            "    $out.push(\"nullableLength=\" + $rt.arrayLength($n));",
+            "    $out.push(\"nullableSlot=\" + $rt.arrayAt($n, 1));",
+            "    $out.push(\"nullableCheck=\" + ($rt.checkType(\"[?int]\", $n) === $n));",
+            "  }",
+            "  const $box = await $rt.invokeAsyncExport($entry, \"box\", $entry.C.$classname);",
+            "  if ($box.$ok !== true) {",
+            "    $out.push(\"box=FAIL:\" + JSON.stringify($box));",
+            "  } else {",
+            "    const $b = $box.$value;",
+            "    $out.push(\"boxType=\" + typeof $b.n + \":\" + ($b.n === 1));",
+            "    $out.push(\"boxTags=\" + ($b.$kind === \"class\"",
+            "      && $b.$classname === $entry.C.$classname));",
+            "    $out.push(\"boxWalk=\" + $entry.C$toJson.$f($b, \"runner.js\", 1, 1));",
+            "    $out.push(\"boxCheck=\" + ($rt.checkType($entry.C.$classname, $b) === $b));",
+            "    $out.push(\"boxCarrier=\" + $hasCarrier($b));",
+            "  }",
+            "  const $aliased = await $rt.invokeAsyncExport($entry, \"aliased\", \"table\");",
+            "  if ($aliased.$ok !== true) {",
+            "    $out.push(\"alias=FAIL:\" + JSON.stringify($aliased));",
+            "  } else {",
+            "    const $a = $aliased.$value;",
+            "    $out.push(\"alias=\" + ($rt.tableGet($a, \"a\") === $rt.tableGet($a, \"b\")));",
+            "    $out.push(\"aliasText=\" + $rt.jsonStringifyText($rt.tableGet($a, \"a\")));",
+            "    $out.push(\"aliasCarrier=\" + $hasCarrier($a));",
+            "  }",
+            "  process.stdout.write($out.join(\"\\n\") + \"\\n\");",
+            "})().catch((e) => { process.stderr.write(\"RUNNER \" + e + \"\\n\"); process.exit(1); });",
+            ""));
+        NodeResult run = runNodeScript(
+            tmpDir.resolve("completion_proj/out").toAbsolutePath(),
+            "completion_runner.js");
+        check(run.exitCode() == 0 && run.output().equals(String.join("\n",
+                "decoded={\"n\":1.0E17,\"i\":2,\"xs\":[1.5,1],\"z\":null}",
+                "decodedArray=true",
+                "decodedNull=null",
+                "decodedNullTable=false",
+                "decodedInt=2",
+                "decodedCheck=true",
+                "nullable=[1,null]",
+                "nullableArray=true",
+                "nullableLength=2",
+                "nullableSlot=null",
+                "nullableCheck=true",
+                "boxType=number:true",
+                "boxTags=true",
+                "boxWalk={\"n\":1}",
+                "boxCheck=true",
+                "boxCarrier=false",
+                "alias=true",
+                "aliasText=[1.5]",
+                "aliasCarrier=false")),
+            "the invoker's completion projection keeps the decoded array"
+                + " carrier, the number-variant spelling, the language null and"
+                + " the class field's declared number, with no internal carrier"
+                + " in the host-visible graph: " + run.output() + " (exit "
                 + run.exitCode() + ")");
     }
 
