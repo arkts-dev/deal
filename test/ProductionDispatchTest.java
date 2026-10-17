@@ -1859,14 +1859,17 @@ public class ProductionDispatchTest {
 
     /**
      * The declaration-file class as a {@code @jsonable} field type (review
-     * cycle 3, finding 1): a declaration module's class with visible declared
-     * {@code C$fromJson}/{@code C$toJson} is a jsonable field type (spec
-     * JSON serialization), and the declaration module carries no
-     * implementation lowering, so the generated JSON descriptor array inlines
-     * the declaration's own declared fields — never a {@code $rt.readModule}
-     * read of a module that has no implementation record and never the host
-     * ABI's synthesized {@code $fields} entry shape. The real Node artifact
-     * decodes and re-encodes a nested declared-class value.
+     * cycle 4, findings 1-2): the checker admits it — the visible declared
+     * {@code C$fromJson}/{@code C$toJson} are the jsonability fact (spec
+     * §JSON serialization) — but a declaration module carries no
+     * implementation lowering, so the class has no plan, factory or default
+     * evaluator and no production consumer realizes a nested
+     * declaration-class walk. The shared JSON layout validation therefore
+     * keeps the link fail closed on every backend: exactly one E6005
+     * {@code JSON_LAYOUT_COHERENCE}, no project emission and no published
+     * artifact. The shape never compiles on one lane and reaches a runtime
+     * walk as an infrastructure exception on another, and no nested
+     * declaration descriptor is emitted without its declared defaults.
      */
     private static final String DECLARED_JSON_MODEL_DECLARATION = """
         export class Model { n: int = 0; }
@@ -1882,77 +1885,82 @@ public class ProductionDispatchTest {
         export class Holder { m: M.Model | null = null; }
 
         export function main(): null {
-          let h: Holder | null = Holder$fromJson("{\\\"m\\\":{\\\"n\\\":5}}");
+          let h: Holder | null = Holder$fromJson("{\\\"m\\\":{}}");
           if (h !== null) {
-            let s: string = Holder$toJson(h);
-            if (s !== "{\\\"m\\\":{\\\"n\\\":5}}") {
-              throw { code: "WRONG", message: s };
-            }
-          } else {
-            throw { code: "NULL", message: "decode" };
+            console.log(Holder$toJson(h));
           }
-          console.log("ok");
           return null;
         }
         """;
 
-    private static void testProductionDeclarationClassJsonField()
+    private static void testProductionDeclarationClassJsonFieldFailsClosed()
             throws Exception {
-        System.out.println("-- public compilation: a declaration-file class is"
-            + " a @jsonable field type and its metadata walks under Node --");
-        Path project = Files.createTempDirectory(
-            "production-declared-json-");
-        try {
-            write(project, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
-                  "moduleRoots": ["src"],
-                  "dependencies": {},
-                  "externals": {"model": {"declaration": "bindings/model.d.deal"}},
-                  "backend": "js",
-                  "output": "out"
-                }
-                """);
-            write(project, "bindings/model.d.deal",
-                DECLARED_JSON_MODEL_DECLARATION);
-            write(project, "src/main.deal", DECLARED_JSON_MODEL_MAIN);
+        System.out.println("-- declaration-file class as a @jsonable field"
+            + " type: the shared JSON layout validation fails closed on every"
+            + " production lane --");
+        for (String backend : List.of("js", "luajit", "jvm")) {
+            Path project = Files.createTempDirectory(
+                "production-declared-json-");
+            try {
+                write(project, "deal.json", """
+                    {
+                      "languageVersion": "1.3",
+                      "stdlib": "1.3",
+                      "moduleRoots": ["src"],
+                      "dependencies": {},
+                      "externals": {"model": {"declaration": "bindings/model.d.deal"}},
+                      "backend": "%s",
+                      "output": "out"
+                    }
+                    """.formatted(backend));
+                write(project, "bindings/model.d.deal",
+                    DECLARED_JSON_MODEL_DECLARATION);
+                write(project, "src/main.deal", DECLARED_JSON_MODEL_MAIN);
+                Path out = project.resolve("out");
 
-            ProjectOutcome compile = productionCompile(project,
-                "src/main.deal", "out");
-            check(compile.exitCode() == 0,
-                "the declaration-class JSON compile succeeds: "
-                    + compile.stderr());
-            check(compile.stderr().isEmpty(),
-                "the declaration-class JSON compile emits no diagnostic: "
-                    + compile.stderr());
-            if (compile.exitCode() != 0) {
-                return;
+                ArmCompile arm = compileWithInvocation(project,
+                    "src/main.deal", productionInvocation());
+                check(!arm.success(), backend + ": the declaration-class JSON"
+                    + " project fails closed");
+                List<CompilerDiagnostic> errors = arm.orchestrator()
+                    .diagnostics().stream()
+                    .filter(d -> "error".equals(d.severity())).toList();
+                checkEq(1, errors.size(), backend + ": exactly one error"
+                    + " diagnostic: " + arm.orchestrator().diagnostics());
+                if (errors.size() == 1) {
+                    check(errors.get(0).code().equals("E6005")
+                            && errors.get(0).message().contains(
+                                "references imported nested class "
+                                    + "@$external/model/Model without"
+                                    + " shared-factory facts"),
+                        backend + ": the one failure is the pinned E6005"
+                            + " JSON_LAYOUT_COHERENCE nested"
+                            + " declaration-class rule: "
+                            + errors.get(0).message());
+                }
+                checkEq(0, arm.orchestrator().semanticEmissionCount(),
+                    backend + ": the rejected compile records no project"
+                        + " emission");
+                checkEq(List.of(), artifactFiles(out), backend
+                    + ": the rejected compile publishes no artifact");
+                if ("js".equals(backend)) {
+                    // The public CLI carries the same failure, status and
+                    // absent artifact set.
+                    ProjectOutcome compile = productionCompile(project,
+                        "src/main.deal", "out");
+                    checkEq(1, compile.exitCode(), "js: the public compile"
+                        + " rejects the declaration-class JSON field");
+                    check(compile.stderr().contains("E6005")
+                            && compile.stderr().contains(
+                                "without shared-factory facts"),
+                        "js: the public diagnostic carries the E6005 nested"
+                            + " declaration-class rule: " + compile.stderr());
+                    checkEq(List.of(), artifactFiles(out), "js: the public"
+                        + " rejection publishes no artifact");
+                }
+            } finally {
+                deleteRecursively(project);
             }
-            Path out = project.resolve("out");
-            String mainJs = Files.readString(out.resolve("main.js"));
-            check(mainJs.contains("{ name: \"m\", jtype: \"class\","
-                    + " className: \"@$external/model/Model\", fields:"
-                    + " [{ name: \"n\", jtype: \"int\", optional: false,"
-                    + " nullable: false, hasDefault: true }]"),
-                "the @jsonable descriptor inlines the declaration's own"
-                    + " fields: " + mainJs);
-            check(!mainJs.contains("Model$fields"),
-                "the declaration module's nested metadata is never read"
-                    + " through the implementation-module registry: " + mainJs);
-            // The host implementation is host-owned: the compile stages none.
-            write(out, "model.js", """
-                "use strict";
-                module.exports = {
-                  Model: { $kind: "class", $classname: "@$external/model/Model" },
-                  Model$defaults: { n: 0 },
-                  Model$fromJson: function (s) { return null; },
-                  Model$toJson: function (v) { return "{}"; },
-                };
-                """);
-            checkSiblingJsRun("declaration-class JSON field", out);
-        } finally {
-            deleteRecursively(project);
         }
     }
 
@@ -6904,7 +6912,7 @@ public class ProductionDispatchTest {
         testProductionNestedFieldAndTransitiveProviders();
         testProductionPlanOwnerJsonLinks();
         testProductionSameIdentitySiblingLayouts();
-        testProductionDeclarationClassJsonField();
+        testProductionDeclarationClassJsonFieldFailsClosed();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionShadowedLocalCalleeCollision();

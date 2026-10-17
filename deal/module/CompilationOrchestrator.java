@@ -2262,27 +2262,6 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Resolves one import statement through the T6 resolver and records
-     * the raw-path &rarr; compiled-module-path resolution when the
-     * imported module is known; returns the imported module, or null
-     * when the import resolves to no known module (the raw path was
-     * already resolved by discovery).
-     */
-    private ModuleInfo resolveImport(ImportDeclaration imp, ModuleInfo info,
-            Map<String, String> importResolutions) {
-        String resolvedSource = resolveImportPath(imp.modulePath(),
-            Path.of(info.sourcePath), imp.span());
-        if (resolvedSource == null) {
-            return null;
-        }
-        ModuleInfo imported = modules.get(resolvedSource);
-        if (imported != null) {
-            importResolutions.put(imp.modulePath(), imported.modulePath);
-        }
-        return imported;
-    }
-
-    /**
      * The per-compilation canonical identity surface (emitter page D1;
      * js-v12-completion-architecture D3): one identity index over the
      * module-path classification, consumed by the Lua and JS emitters'

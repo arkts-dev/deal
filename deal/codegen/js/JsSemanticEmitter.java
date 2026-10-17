@@ -236,22 +236,11 @@ public final class JsSemanticEmitter {
         private final Map<ClassId, ClassLayout> seedLayouts =
             new LinkedHashMap<>();
         /**
-         * The structural declared classes of the compilation's declaration
-         * modules, by canonical identity: a declaration-file class used as a
-         * {@code @jsonable} field type renders its nested descriptor array
-         * from this surface. The declaration module has no implementation
-         * unit (so no published {@code C$fields} record) and the host ABI's
-         * synthesized {@code C$fields} entry shape is not the JSON descriptor
-         * shape, so the projected declaration is the only exact field fact.
-         */
-        private final Map<ClassId,
-            RuntimeDeclarationSurface.RuntimeDeclaredClass> declaredClasses =
-            new LinkedHashMap<>();
-        /**
          * The declaration module of a class identity outside the
          * implementation closure (a HOST declaration's class): its public
-         * surface is the only declaration the identity has, so a nested
-         * link naming it is never a same-identity sibling selection.
+         * surface is the only declaration the identity has. Such a class has
+         * no implementation unit, so it publishes no JSON descriptor array to
+         * read.
          */
         private final Map<ClassId, ModuleId> declarationModuleOfClass =
             new LinkedHashMap<>();
@@ -553,13 +542,6 @@ public final class JsSemanticEmitter {
             for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
                     : input.seeds().registrations().entrySet()) {
                 seedLayouts.put(entry.getKey(), entry.getValue().layout());
-            }
-            for (RuntimeDeclarationSurface.RuntimeDeclarationModule declared
-                    : input.declarations().modules().values()) {
-                for (RuntimeDeclarationSurface.RuntimeDeclaredClass declaredClass
-                        : declared.classes().values()) {
-                    declaredClasses.put(declaredClass.classId(), declaredClass);
-                }
             }
             for (Map.Entry<ModuleId, ExternalModuleInterface> entry
                     : input.project().interfaceIndex().modules().entrySet()) {
@@ -3953,28 +3935,25 @@ public final class JsSemanticEmitter {
 
         /** The nested descriptor array of one class-valued field. */
         private String nestedFieldsText(ClassId nested, Set<ClassId> stack) {
-            RuntimeDeclarationSurface.RuntimeDeclaredClass declared =
-                declaredClasses.get(nested);
-            if (declared != null) {
-                return declaredFieldsArrayText(declared, stack);
-            }
             ModuleId owner = jsonPlanOwners.get(nested);
             if (owner == null) {
-                // A class outside the implementation closure (a HOST
-                // declaration's class) has exactly one declaration: its
-                // declaration module owns the declared descriptor surface.
-                owner = declarationModuleOfClass.get(nested);
-                if (owner != null && !units.containsKey(owner)) {
-                    // A declaration module carries no implementation unit
-                    // and no structural declared class for this identity: a
-                    // published $fields read would resolve no record.
+                ModuleId declarationModule =
+                    declarationModuleOfClass.get(nested);
+                if (declarationModule != null
+                        && !units.containsKey(declarationModule)) {
+                    // A declaration-file class has no implementation unit, so
+                    // it generates no C$fields record and no class-default
+                    // evaluator: a nested JSON walk over it cannot be
+                    // rendered. The shared JSON layout validation rejects the
+                    // link before rendering, so reaching this is a producer
+                    // defect.
                     throw new SharedEmissionFailure("the class " + nested
                         + " of a jsonable field is declared by the module '"
-                        + owner.path() + "' which the structural declaration"
-                        + " surface does not carry (producer defect)", null);
+                        + declarationModule.path() + "' which has no"
+                        + " implementation unit: the nested"
+                        + " declaration-class walk has no plan, factory or"
+                        + " default evaluator (producer defect)", null);
                 }
-            }
-            if (owner == null) {
                 throw new SharedEmissionFailure("the class " + nested
                     + " of a jsonable field resolves in no declaration of"
                     + " the project closure (producer defect)", null);
@@ -3993,95 +3972,6 @@ public final class JsSemanticEmitter {
             // published descriptor array, never a same-identity sibling's.
             return "$rt.readModule(" + jsString(owner.path()) + ", "
                 + jsString(nested.name() + "$fields") + ")";
-        }
-
-        /**
-         * The nested descriptor array of one declaration-file class: the
-         * declared fields in declaration order projected into the closed JSON
-         * descriptor shape, recursively through class/array element
-         * descriptors. The declaration module has no implementation unit and
-         * no generated {@code C$fields} export (a {@code $rt.readModule} read
-         * of it is empty), and the host ABI's synthesized {@code C$fields}
-         * entry shape is not the JSON descriptor shape, so this projected
-         * declaration is the only exact nested field fact.
-         */
-        private String declaredFieldsArrayText(
-                RuntimeDeclarationSurface.RuntimeDeclaredClass declared,
-                Set<ClassId> stack) {
-            if (!stack.add(declared.classId())) {
-                throw new SharedEmissionFailure("the @jsonable field's"
-                    + " declaration-file class " + declared.classId()
-                    + " closes a class-valued descriptor cycle: the nested"
-                    + " JSON walk needs a finite descriptor array (producer"
-                    + " defect)", null);
-            }
-            StringBuilder array = new StringBuilder("[");
-            for (int i = 0; i < declared.fields().size(); i++) {
-                if (i > 0) {
-                    array.append(", ");
-                }
-                array.append(declaredFieldEntryText(
-                    declared.fields().get(i), stack));
-            }
-            array.append("]");
-            stack.remove(declared.classId());
-            return array.toString();
-        }
-
-        /** One declared-class field's nested descriptor entry. */
-        private String declaredFieldEntryText(
-                RuntimeDeclarationSurface.RuntimeDeclaredField field,
-                Set<ClassId> stack) {
-            RuntimeDescriptor descriptor = field.descriptor();
-            boolean nullable = descriptor instanceof RuntimeDescriptor.Nullable;
-            RuntimeDescriptor base = nullable
-                ? ((RuntimeDescriptor.Nullable) descriptor).inner() : descriptor;
-            StringBuilder entry = new StringBuilder("{ name: ")
-                .append(jsString(field.name()))
-                .append(", jtype: ").append(jsString(jsonJType(base)));
-            switch (base) {
-                case RuntimeDescriptor.Class classDescriptor -> {
-                    entry.append(", className: ")
-                        .append(jsString(classDescriptor.classId().text()))
-                        .append(", fields: ")
-                        .append(nestedFieldsText(classDescriptor.classId(), stack));
-                }
-                case RuntimeDescriptor.Array array -> entry.append(", element: ")
-                    .append(declaredElementEntryText(array.element(), stack));
-                default -> {
-                }
-            }
-            // A declaration-file class carries no lowered CLASS_DEFAULT
-            // evaluator: its defaults belong to the declaration's own
-            // surface, so the nested entry keeps only the declared flag.
-            return entry.append(", optional: ").append(!field.required())
-                .append(", nullable: ").append(nullable)
-                .append(", hasDefault: ").append(field.hasDefault())
-                .append(" }").toString();
-        }
-
-        /** One declared-class array element's descriptor entry. */
-        private String declaredElementEntryText(RuntimeDescriptor element,
-                                                Set<ClassId> stack) {
-            boolean nullable = element instanceof RuntimeDescriptor.Nullable;
-            RuntimeDescriptor base = nullable
-                ? ((RuntimeDescriptor.Nullable) element).inner() : element;
-            StringBuilder entry = new StringBuilder("{ jtype: ")
-                .append(jsString(jsonJType(base)));
-            switch (base) {
-                case RuntimeDescriptor.Class classDescriptor -> {
-                    entry.append(", className: ")
-                        .append(jsString(classDescriptor.classId().text()))
-                        .append(", fields: ")
-                        .append(nestedFieldsText(classDescriptor.classId(), stack));
-                }
-                case RuntimeDescriptor.Array array -> entry.append(", element: ")
-                    .append(declaredElementEntryText(array.element(), stack));
-                default -> {
-                }
-            }
-            return entry.append(", optional: false, nullable: ")
-                .append(nullable).append(" }").toString();
         }
 
         /** One array element's descriptor entry (no name/default roles). */

@@ -8,11 +8,13 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The project-wide source-map recorder of the shared LuaJIT/JVM production
- * emitters: one {@link SourceMapGenerator} per constituent module of the
- * lowered project, so the one shared project artifact (one Lua chunk or one
- * JVM entry class) maps back to each constituent source file through its own
- * {@code <module>.deal.map.json} sidecar.
+ * The project-wide source-map recorder of the shared production emitters
+ * (LuaJIT, JVM and JavaScript): one {@link SourceMapGenerator} per
+ * constituent implementation module of the lowered project, so every emitted
+ * artifact — the one shared project artifact of LuaJIT/JVM or the one
+ * CommonJS artifact per implementation unit of JavaScript — maps back to its
+ * own source file through that module's {@code <module>.deal.map.json}
+ * sidecar.
  *
  * <p>The recorder also carries the per-module display source names that the
  * emitted source comments and the sidecars share: the project-relative

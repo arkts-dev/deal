@@ -2553,30 +2553,18 @@ public final class ClassConstructionValidator {
                         }
                         yield checkNestedJsonable(nestedLayout, visited);
                     }
-                    ClassRegistrationSeeds.ClassRegistration declaration =
-                        declarationClasses.get(nested);
-                    if (declaration != null) {
-                        // A declaration-file class: its visible declared
-                        // C$fromJson/C$toJson made it a jsonable field type at
-                        // the checker (E4007), and the declaration module
-                        // carries no implementation lowering, so no
-                        // SharedFactoryFacts entry exists (the nested decode
-                        // is the declaration's descriptor walk, not an
-                        // implementation factory). The registered layout is
-                        // the declaration's exact field surface; a differing
-                        // layout is a fact defect, never a silent selection.
-                        if (!declaration.layout().equals(nestedLayout)) {
-                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
-                                + owner + " field '" + field + "' nested declaration"
-                                + " class " + nested + " resolves to a layout that"
-                                + " differs from its class registration seed");
-                        }
-                        yield checkNestedJsonable(nestedLayout, visited);
-                    }
                     // An imported nested class: the SharedFactoryFacts
                     // context must carry its interface entry and layout
                     // (the nested decode resolves the owner factory
                     // through the project's factory registries).
+                    // A declaration-file class is not admitted here even
+                    // when the checker's visible declared C$fromJson/C$toJson
+                    // make it a jsonable field type: a declaration module
+                    // carries no implementation lowering (no plan, factory or
+                    // default evaluator), and no production consumer realizes
+                    // a nested declaration-class walk. The nested link stays
+                    // fail closed on every backend instead of compiling on one
+                    // lane and failing at runtime on another.
                     SharedFactoryFacts facts = factsOf(nested);
                     if (facts == null) {
                         yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
