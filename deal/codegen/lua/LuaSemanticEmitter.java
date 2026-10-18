@@ -8601,54 +8601,78 @@ end
 -- (ISSUE-0836): the value model's int/number variant carriers — the
 -- std/json decode graph's numeric leaves and the read-side variant
 -- materialization — cross to the raw host as the number each one stands
--- for, at a declared numeric position and inside the array elements and
--- class fields a declared reference position carries. The raw host
--- therefore observes the declared DEAL value, exactly like the shared JVM
--- runtime's boxed-carrier unwrap and the JS $hostProjectValue's numeric
--- leaves, and no internal carrier table ever reaches it.
+-- for, at a declared numeric position and inside the array elements,
+-- object members and class fields a declared reference position carries.
+-- The raw host therefore observes the declared DEAL value, exactly like
+-- the shared JVM runtime's boxed-carrier unwrap and the JS
+-- $hostProjectValue's numeric leaves, and no internal carrier table ever
+-- reaches it. A decoded object's members take the same projection as an
+-- array's elements: the std/json parse stores its numeric leaves as the
+-- variant carriers at every depth (an object member included), so the
+-- raw host that reads one observes the number it stands for instead of
+-- the carrier table (the raw Lua arithmetic error the unprojected
+-- carrier produced).
 --
--- An array carrier projects its own slots in place: the array/object
--- identity and alias contract (ISSUE-0814) keeps one table for the DEAL
--- value and every host-visible alias, so a host's in-place write stays
--- observable on the DEAL side, and a repeated parameter is the same
--- table. Each projected number-variant slot records its own variant in
--- the carrier's per-slot marks (the marks __numKey writes and __readVar
--- materializes from), so an echoed decoded array re-encodes the exact
--- int/number spelling it had; an int-variant slot clears a stale mark.
--- The walk is identity-memoized, so a finite self-referential table
--- terminates, and every other value — a null sentinel, an absent slot, a
--- class instance, a plain table, a scalar — crosses unchanged. It rides
--- the chunk's factory store like the other host-crossing helpers, so a
--- retained export keeps its own chunk's projection without spending a
--- main-chunk local.
+-- An array or object carrier projects its own slots in place: the
+-- array/object identity and alias contract (ISSUE-0814) keeps one table
+-- for the DEAL value and every host-visible alias, so a host's in-place
+-- write stays observable on the DEAL side, and a repeated parameter is
+-- the same table. Each projected number-variant slot records its own
+-- variant in the carrier's per-slot marks (the marks __numKey writes and
+-- __readVar materializes from), so an echoed decoded table re-encodes
+-- the exact int/number spelling it had; an int-variant slot clears a
+-- stale mark. The walk is identity-memoized, so a finite
+-- self-referential table terminates, and every other value — a null
+-- sentinel, an absent slot, a class instance, a plain table, a scalar —
+-- crosses unchanged. It rides the chunk's factory store like the other
+-- host-crossing helpers, so a retained export keeps its own chunk's
+-- projection without spending a main-chunk local.
 __factories.__hostNumProject = function(v, seen)
   if type(v) ~= "table" then return v end
   if v[__dealCarrierKeys.jn] then return v.d end
-  if v[__dealCarrierKeys.a] == nil then return v end
+  local isArray = v[__dealCarrierKeys.a] ~= nil
+  if not isArray and v[__dealCarrierKeys.t] == nil then return v end
   if seen == nil then seen = {} end
   if seen[v] then return v end
   seen[v] = true
-  local n = v[__dealCarrierKeys.n]
-  if type(n) ~= "number" then n = #v end
   local marks = v[__dealCarrierKeys.nK]
   if type(marks) ~= "table" then marks = nil end
-  for i = 1, n do
-    local element = v[i]
-    if type(element) == "table" then
-      if element[__dealCarrierKeys.jn] then
-        v[i] = element.d
-        if element.k == "number" then
-          if marks == nil then
-            marks = {}
-            v[__dealCarrierKeys.nK] = marks
-          end
-          marks[i] = true
-        elseif marks ~= nil then
-          marks[i] = nil
+  local function slot(k)
+    local element = v[k]
+    if type(element) ~= "table" then return end
+    if element[__dealCarrierKeys.jn] then
+      v[k] = element.d
+      if element.k == "number" then
+        if marks == nil then
+          marks = {}
+          v[__dealCarrierKeys.nK] = marks
         end
-      elseif element[__dealCarrierKeys.a] ~= nil then
-        __factories.__hostNumProject(element, seen)
+        marks[k] = true
+      elseif marks ~= nil then
+        marks[k] = nil
       end
+    elseif element[__dealCarrierKeys.a] ~= nil
+        or element[__dealCarrierKeys.t] ~= nil then
+      __factories.__hostNumProject(element, seen)
+    end
+  end
+  if isArray then
+    local n = v[__dealCarrierKeys.n]
+    if type(n) ~= "number" then n = #v end
+    for i = 1, n do slot(i) end
+    return v
+  end
+  -- The object carrier's user string keys, in the recorded insertion
+  -- order when the carrier records one.
+  local order = v[__dealCarrierKeys.order]
+  if type(order) == "table" then
+    for i = 1, #order do
+      local k = order[i]
+      if type(k) == "string" then slot(k) end
+    end
+  else
+    for k in pairs(v) do
+      if type(k) == "string" then slot(k) end
     end
   end
   return v
@@ -12650,13 +12674,53 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           frames[#frames + 1] = {kind = "namespace", value = v, order = ns.order, index = 1}
           return
         end
-        if v[__dealCarrierKeys.t] then
+        if v[__dealCarrierKeys.t] ~= nil or v[__dealCarrierKeys.keys] ~= nil
+            or v[__dealCarrierKeys.order] ~= nil or v[__dealCarrierKeys.nK] ~= nil then
           if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "{"
+          -- The object key selection is the shipped std/json encoder's:
+          -- the recorded insertion order first, then the remaining string
+          -- keys, then the presence map's present keys the order list does
+          -- not name. The presence map is the present-key authority for an
+          -- object carrier: the JSON_PARSE graph records a present null
+          -- member as a presence/order key with no stored value, so the
+          -- member stays a JSON null and a raw nil outside a recorded
+          -- present key stays the missing value (the array and
+          -- inferred-frame rule).
+          local keys = {}
+          local seen = {}
+          local presence = v[__dealCarrierKeys.keys]
+          if type(presence) ~= "table" then presence = nil end
+          local order = v[__dealCarrierKeys.order]
+          if type(order) == "table" then
+            for i = 1, #order do
+              local k = order[i]
+              if type(k) == "string" and not seen[k]
+                  and (v[k] ~= nil or (presence ~= nil and presence[k] == true)) then
+                keys[#keys + 1] = k
+                seen[k] = true
+              end
+            end
+          end
+          for k, _ in pairs(v) do
+            if type(k) == "string" and not seen[k] then
+              keys[#keys + 1] = k
+              seen[k] = true
+            end
+          end
+          if presence ~= nil then
+            for k, present in pairs(presence) do
+              if type(k) == "string" and present == true and not seen[k] then
+                keys[#keys + 1] = k
+                seen[k] = true
+              end
+            end
+          end
           local marks = v[__dealCarrierKeys.nK]
           if type(marks) ~= "table" then marks = nil end
-          frames[#frames + 1] = {kind = "table", value = v, order = __tableKeyList(v), index = 1, marks = marks}
+          frames[#frames + 1] = {kind = "table", value = v, order = keys,
+            presence = presence, index = 1, marks = marks}
           return
         end
         -- The class instance is a table-carried value on the carrier-kind
@@ -12679,23 +12743,51 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         if v[__dealCarrierKeys.kind] == "class" or v[__dealCarrierKeys.kind] == "async" then
           sfFail(v); return
         end
-        -- Every remaining table is the table value: the deployed matcher's
-        -- table row admits a plain Lua table at a declared table position
-        -- and the LuaJIT value mapping calls it the table, so the
-        -- host-crossed table (a host return or a host-driven callback
-        -- argument), and a table the chunk wrote before its first write
-        -- created the presence/order marks, encodes as a JSON object over
-        -- its present string keys in the recorded insertion order
-        -- followed by Lua iteration order (__tableKeyList), exactly like
-        -- the shipped std/json.lua encoder. Only the closed carriers
-        -- above are rejected; a path-local re-entry is the closed cycle
-        -- arm.
+        -- A plain Lua table (the LuaJIT table representation the host
+        -- side and the shipped std/json realization produce) is the JSON
+        -- object/array shape of its keys, exactly the shipped encoder's
+        -- inference: the dense positive-integer form is the array (a
+        -- missing slot is the closed missing arm at its own index), every
+        -- other table the string-keyed object with the recorded per-slot
+        -- number marks. This keeps the two realizations agreeing on a
+        -- host table the ordinary DEAL boundaries already admitted.
+        local plainArray = true
+        local maxIdx = 0
+        for k, _ in pairs(v) do
+          if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+            plainArray = false
+            break
+          end
+          if k > maxIdx then maxIdx = k end
+        end
+        if plainArray and maxIdx > 0 then
+          if path[v] then sfCycle(); return end
+          path[v] = true
+          out[#out + 1] = "["
+          local marks = v[__dealCarrierKeys.nK]
+          if type(marks) ~= "table" then marks = nil end
+          frames[#frames + 1] = {kind = "array", value = v, index = 1,
+            maxIdx = maxIdx, marks = marks}
+          return
+        end
         if path[v] then sfCycle(); return end
         path[v] = true
         out[#out + 1] = "{"
+        local keys = {}
+        local texts = {}
+        for k, _ in pairs(v) do
+          if type(k) == "string" then
+            keys[#keys + 1] = k
+            texts[#texts + 1] = k
+          elseif type(k) == "number" then
+            keys[#keys + 1] = k
+            texts[#texts + 1] = string.format("%.17g", k)
+          end
+        end
         local marks = v[__dealCarrierKeys.nK]
         if type(marks) ~= "table" then marks = nil end
-        frames[#frames + 1] = {kind = "table", value = v, order = __tableKeyList(v), index = 1, marks = marks}
+        frames[#frames + 1] = {kind = "table", value = v, order = keys,
+          texts = texts, index = 1, marks = marks}
         return
       end
       if t == "function" then sfFail(v); return end
@@ -12707,7 +12799,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       while #frames > 0 do
         local frame = frames[#frames]
         if frame.kind == "array" then
-          if frame.index > frame.value[__dealCarrierKeys.n] then
+          local limit = frame.maxIdx
+          if limit == nil then limit = frame.value[__dealCarrierKeys.n] end
+          if frame.index > limit then
             out[#out + 1] = "]"
             path[frame.value] = nil
             frames[#frames] = nil
@@ -12752,9 +12846,18 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             frame.index = i + 1
             if i > 1 then out[#out + 1] = "," end
             local k = frame.order[i]
-            out[#out + 1] = __jsonEscape(k)
+            local text = frame.texts ~= nil and frame.texts[i] or k
+            out[#out + 1] = __jsonEscape(text)
             out[#out + 1] = ":"
-            sfEmit(frames, frame.value[k], frame.marks ~= nil and frame.marks[k] == true)
+            local element = frame.value[k]
+            if element == nil and frame.presence ~= nil
+                and frame.presence[k] == true then
+              -- A recorded present null member: the JSON_PARSE graph
+              -- keeps it as a presence/order key with no stored value.
+              out[#out + 1] = "null"
+            else
+              sfEmit(frames, element, frame.marks ~= nil and frame.marks[k] == true)
+            end
           end
         end
       end

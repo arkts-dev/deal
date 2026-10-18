@@ -792,13 +792,12 @@ end
 
 test("json.parse classifies exact decimal lexemes (v1.3)", function()
   -- The lexeme's mathematical value decides the int/number variant before
-  -- binary64 rounding. This standalone module carries Lua numbers, so the
-  -- observable facts are the normalized zero, the exact integral values,
-  -- and the acceptance of the signed32 edges; the variant itself is
-  -- pinned through the canonical text of the compiled-artifact fixtures
-  -- (stdlib/json/int32-boundary-parse, jsonable/table-field-roundtrip).
-  -- The declared (string)->table exit admits an object root only, so every
-  -- lexeme is carried by one member of the document.
+  -- binary64 rounding. The direct realization records that decision in
+  -- the decoded graph's per-slot __K.nK marks, so the canonical text of
+  -- the shipped stringify proves the same variant the compiled artifact
+  -- fixtures pin (stdlib/json/int32-boundary-parse). The declared
+  -- (string)->table exit admits an object root only, so every lexeme is
+  -- carried by one member of the document.
   local function lexeme(text)
     return json.parse.f('{"v":' .. text .. '}').v
   end
@@ -829,6 +828,83 @@ test("json.parse classifies exact decimal lexemes (v1.3)", function()
   -- crashes the bounded classification.
   assert(lexeme("123456789012345678901234567890") > 1e29,
     "an out-of-range integer token converts to binary64")
+end)
+
+-- The decoded-graph variant record (DEAL v1.3): the direct realization
+-- keeps the exact classification per slot at every depth, exactly the
+-- emitted LuaJIT prelude's parse marks, the shared JVM runtime's boxed
+-- variant and the JS runtime's recorded variant. A number-variant leaf is
+-- marked and renders the canonical decimal text; an int-variant leaf is
+-- unmarked and renders the integer text. The four pinned tokens are the
+-- review's direct evidence set: -2147483649 (below the signed32 lower
+-- bound), 0.1 (the shortest round-tripping decimal), 1e20 (the pinned
+-- exponent form) and 2147483647.00000001 (a fractional token that rounds
+-- to an integral binary64 value yet stays the number variant).
+test("json.parse records the exact int/number variant in the decoded graph (v1.3)", function()
+  local function roundtrip(text)
+    return json.stringify.f(json.parse.f(text))
+  end
+  assert(roundtrip('{"v":-2147483649}') == '{"v":-2.147483649E9}',
+    "-2147483649 stays the number variant, got: " .. roundtrip('{"v":-2147483649}'))
+  assert(roundtrip('{"v":0.1}') == '{"v":0.1}',
+    "0.1 keeps the canonical decimal text, got: " .. roundtrip('{"v":0.1}'))
+  assert(roundtrip('{"v":1e20}') == '{"v":1.0E20}',
+    "1e20 keeps the pinned exponent form, got: " .. roundtrip('{"v":1e20}'))
+  assert(roundtrip('{"v":2147483647.00000001}') == '{"v":2.147483647E9}',
+    "a fractional token rounding to an integral value stays the number variant, got: "
+      .. roundtrip('{"v":2147483647.00000001}'))
+  -- The marks are recorded at every depth, in objects and in arrays.
+  assert(roundtrip('{"v":{"o":{"n":0.1}}}') == '{"v":{"o":{"n":0.1}}}',
+    "a nested object slot keeps its recorded variant, got: "
+      .. roundtrip('{"v":{"o":{"n":0.1}}}'))
+  assert(roundtrip('{"v":{"xs":[0.1,-2147483649,1]}}')
+      == '{"v":{"xs":[0.1,-2.147483649E9,1]}}',
+    "an array slot keeps its recorded variant, got: "
+      .. roundtrip('{"v":{"xs":[0.1,-2147483649,1]}}'))
+  -- An int-variant leaf stays unmarked: 1.0, 1e0, -0.0 and the signed32
+  -- edges keep the integer text.
+  local ints = json.parse.f('{"a":1.0,"b":1e0,"c":-0.0,"d":2147483647}')
+  local intMarks = ints[__K.nK]
+  assert(intMarks == nil or (intMarks.a == nil and intMarks.b == nil
+      and intMarks.c == nil and intMarks.d == nil),
+    "int-variant leaves record no number mark")
+  assert(roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}')
+      == '{"v":{"xs":[1,1,0,2.147483648E9]}}',
+    "int leaves keep the integer text and the out-of-range integral token is the number variant, got: "
+      .. roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}'))
+  -- The marks are the same private map the emitted chunk reads; the
+  -- decoded value graph is not mutated by the encode.
+  local parsed = json.parse.f('{"v":0.1}')
+  assert(parsed[__K.nK] ~= nil and parsed[__K.nK].v == true,
+    "the decoded graph marks the number-variant slot")
+  assert(json.stringify.f(parsed) == '{"v":0.1}', "the encode keeps the text")
+  assert(parsed[__K.nK].v == true, "the encode leaves the mark in place")
+end)
+
+-- The chunk table carrier's present-null member (DEAL v1.3): the emitted
+-- JSON_PARSE graph records a present null object member as a presence/order
+-- key with no stored value, and the shared table carrier may also hold the
+-- __NULL sentinel. Both forms are a JSON null member; a raw nil slot the
+-- presence map does not record is the missing value and never becomes null.
+test("json.stringify keeps a present-null member of a chunk table carrier (v1.3)", function()
+  local __rt = require("deal.runtime")
+  local carrier = {[__K.t] = true, [__K.keys] = { n = true, x = true },
+    [__K.order] = { "n", "x" }, x = 1}
+  assert(json.stringify.f(carrier) == '{"n":null,"x":1}',
+    "the presence-recorded null member keeps its JSON null, got: "
+      .. json.stringify.f(carrier))
+  local sentinel = {[__K.t] = true, [__K.keys] = { n = true, x = true },
+    [__K.order] = { "n", "x" }, n = __rt.__NULL, x = 1}
+  assert(json.stringify.f(sentinel) == '{"n":null,"x":1}',
+    "the __NULL member keeps its JSON null, got: "
+      .. json.stringify.f(sentinel))
+  local nested = {[__K.t] = true, [__K.keys] = { o = true },
+    [__K.order] = { "o" },
+    o = {[__K.t] = true, [__K.keys] = { n = true },
+      [__K.order] = { "n" }}}
+  assert(json.stringify.f({ v = nested }) == '{"v":{"o":{"n":null}}}',
+    "a nested present-null member stays JSON null, got: "
+      .. json.stringify.f({ v = nested }))
 end)
 
 test("json.parse rejects decoded-key duplicates at the second key (v1.3)", function()

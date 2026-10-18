@@ -12,7 +12,13 @@
 -- shape rejection (DEAL v1.3): parse classifies the numeric lexeme's
 -- exact mathematical decimal value before any binary64 rounding — an
 -- integral value inside [-2147483648, 2147483647] becomes DEAL int
--- (-0/-0.0 normalize to 0) and every other lexeme becomes number; a
+-- (-0/-0.0 normalize to 0) and every other lexeme becomes number. The
+-- decoded object/array graph records that variant per slot in the
+-- container's private [__K.nK] marks (a number-variant leaf is marked,
+-- an int-variant leaf is unmarked) at every depth, and the encoder
+-- renders a marked leaf through the canonical decimal text, so the
+-- shipped realization keeps exactly the classification the emitted
+-- LuaJIT prelude, the JS runtime and the JVM runtime keep; a
 -- member key whose decoded scalar text equals an earlier key of the same
 -- object is a parse failure ("duplicate key" at the second key's opening
 -- quote). stringify raises Error on non-JSON-shaped values through the
@@ -65,8 +71,11 @@
 -- encoding, so a host that stringifies the written table never observes
 -- the private marks. The per-slot [__K.nK] marks select the number-variant
 -- spelling for a marked slot. None of these private table-object keys is
--- ever an encoded member, and the null/absent/unsupported/cycle behavior
--- is unchanged.
+-- ever an encoded member. The presence map is the present-key authority for
+-- an object carrier: the chunk's JSON_PARSE graph records a present null
+-- member as a presence/order key with no stored value, so it stays a JSON
+-- null member; a raw nil outside such a recorded key is the missing value
+-- (the array and inferred-frame rule, ISSUE-0844).
 
 local __rt = require("deal.runtime")
 
@@ -552,17 +561,24 @@ local function encode_value(v, file, line, column, path)
       -- without the order list keeps the string-key order. A table that
       -- carries only the recorded per-slot [__K.nK] marks takes the same
       -- object encoding, so no private mark is ever enumerated. The
-      -- private marks are table-object keys, so they can never be user
-      -- keys, and they are never members of the encoded object.
+      -- presence map is the present-key authority for an object carrier:
+      -- the chunk's JSON_PARSE graph records a present null member as a
+      -- presence/order key with no stored value, so that member is a JSON
+      -- null while a raw nil outside a recorded present key stays the
+      -- missing value (the array and inferred-frame rule). The private
+      -- marks are table-object keys, so they can never be user keys, and
+      -- they are never members of the encoded object.
       if val[__K.t] ~= nil or val[__K.keys] ~= nil
           or val[__K.order] ~= nil or val[__K.nK] ~= nil then
         local keys = {}
         local seen = {}
+        local presence = type(val[__K.keys]) == 'table' and val[__K.keys] or nil
         local order = val[__K.order]
         if type(order) == 'table' then
           for i = 1, #order do
             local k = order[i]
-            if type(k) == 'string' and not seen[k] and val[k] ~= nil then
+            if type(k) == 'string' and not seen[k]
+                and (val[k] ~= nil or (presence ~= nil and presence[k] == true)) then
               keys[#keys + 1] = k
               seen[k] = true
             end
@@ -574,8 +590,17 @@ local function encode_value(v, file, line, column, path)
             seen[k] = true
           end
         end
+        if presence ~= nil then
+          for k, present in pairs(presence) do
+            if type(k) == 'string' and present == true and not seen[k] then
+              keys[#keys + 1] = k
+              seen[k] = true
+            end
+          end
+        end
         out[#out + 1] = '{'
-        frames[#frames + 1] = {kind = 'object', value = val, keys = keys, index = 1, marks = marks}
+        frames[#frames + 1] = {kind = 'object', value = val, keys = keys,
+          presence = presence, index = 1, marks = marks}
         return
       end
       -- Check if it's an array (sequential integer keys starting at 1)
@@ -636,7 +661,15 @@ local function encode_value(v, file, line, column, path)
           key_str = '"' .. escape(tostring(k), file, line, column) .. '"'
         end
         out[#out + 1] = key_str .. ':'
-        emit(frame.value[k], frame.marks ~= nil and frame.marks[k] == true)
+        local element = frame.value[k]
+        if element == nil and frame.presence ~= nil
+            and frame.presence[k] == true then
+          -- A recorded present null member: the chunk's JSON_PARSE graph
+          -- keeps it as a presence/order key with no stored value.
+          out[#out + 1] = 'null'
+        else
+          emit(element, frame.marks ~= nil and frame.marks[k] == true)
+        end
       end
     end
   end
@@ -735,6 +768,10 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   -- a frame on the stack and returns the __OPENED sentinel. The frame loop
   -- of parse_value then drives the open container.
   local __OPENED = {}
+  -- One value at the cursor: a scalar returns its value and its recorded
+  -- int/number variant, a container opens a frame on the stack and
+  -- returns the __OPENED sentinel (a container carries no number mark of
+  -- its own; its slots record their own).
   local function parse_scalar_or_open(frames)
     skip_ws()
     if pos > len then
@@ -745,22 +782,22 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     if c == '{' then
       pos = pos + 1
       frames[#frames + 1] = {kind = 'object', obj = {}, seen = {}, state = 0}
-      return __OPENED
+      return __OPENED, false
     elseif c == '[' then
       pos = pos + 1
       frames[#frames + 1] = {kind = 'array', arr = {}, state = 4, index = 1}
-      return __OPENED
+      return __OPENED, false
     elseif c == '"' then
-      return parse_string()
+      return parse_string(), false
     elseif c == 't' then
       expect_literal("true")
-      return true
+      return true, false
     elseif c == 'f' then
       expect_literal("false")
-      return false
+      return false, false
     elseif c == 'n' then
       expect_literal("null")
-      return __rt.__NULL
+      return __rt.__NULL, false
     elseif c == '-' or (c >= '0' and c <= '9') then
       return parse_number()
     else
@@ -779,7 +816,21 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   function parse_value()
     local frames = {}
     local completed
+    local completed_number = false
     local have_completed = false
+    -- The per-slot variant record: a completed number-variant leaf marks
+    -- its own slot in the container's private [__K.nK] map (the same map
+    -- __numKey writes and the encoder reads); an int-variant leaf records
+    -- nothing. The map is a table-object key, so no decoded member name
+    -- can shadow it and the encoder never enumerates it.
+    local function mark_number(container, slot)
+      local marks = container[__K.nK]
+      if type(marks) ~= 'table' then
+        marks = {}
+        container[__K.nK] = marks
+      end
+      marks[slot] = true
+    end
     while true do
       if have_completed then
         if #frames == 0 then
@@ -788,18 +839,26 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
         local parent = frames[#frames]
         if parent.kind == 'array' then
           parent.arr[parent.index] = completed
+          if completed_number then
+            mark_number(parent.arr, parent.index)
+          end
           parent.index = parent.index + 1
           parent.state = 5
         else
           parent.obj[parent.key] = completed
+          if completed_number then
+            mark_number(parent.obj, parent.key)
+          end
           parent.state = 3
         end
         completed = nil
+        completed_number = false
         have_completed = false
       elseif #frames == 0 then
-        local parsed = parse_scalar_or_open(frames)
+        local parsed, is_number = parse_scalar_or_open(frames)
         if parsed ~= __OPENED then
           completed = parsed
+          completed_number = is_number
           have_completed = true
         else
           -- The root frame: this branch is reached only with an empty
@@ -840,9 +899,10 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
             frame.key = key
             frame.state = 2
           elseif frame.state == 2 then
-            local parsed = parse_scalar_or_open(frames)
+            local parsed, is_number = parse_scalar_or_open(frames)
             if parsed ~= __OPENED then
               completed = parsed
+              completed_number = is_number
               have_completed = true
             end
           else
@@ -872,9 +932,10 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
               frame.state = 2
             end
           elseif frame.state == 2 then
-            local parsed = parse_scalar_or_open(frames)
+            local parsed, is_number = parse_scalar_or_open(frames)
             if parsed ~= __OPENED then
               completed = parsed
+              completed_number = is_number
               have_completed = true
             end
           else
@@ -1019,13 +1080,13 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     -- binary64 rounding; -0/-0.0 normalize to the integer 0.
     local exact = json_int_or_nil(num_str)
     if exact ~= nil then
-      return exact
+      return exact, false
     end
     local n = tonumber(num_str)
     if n == nil then
       parse_error("invalid number")
     end
-    return n
+    return n, true
   end
 
   local result = parse_value()

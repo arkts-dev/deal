@@ -1097,6 +1097,114 @@ public class HostModuleLoadEmissionTest {
         "");
 
     /**
+     * The dynamic-table host declaration (ISSUE-0695 acceptance
+     * remediation): one host module whose real Lua implementation returns a
+     * plain JSON-shaped Lua table, returns the shipped {@code std/json}
+     * decode graph, echoes a DEAL table, and reads a decoded object member
+     * with raw Lua arithmetic.
+     */
+    private static final String TABLE_PROBE_DECLARATION_SOURCE = """
+        export function returnPlain(): table;
+        export function returnParsed(): table;
+        export function returnParsedVariant(): table;
+        export async function returnAsyncPlain(): table;
+        export function observeMember(o: table): string;
+        export function stringifyCarrier(t: table): string;
+        export function echo(t: table): table;
+        """;
+
+    /**
+     * The dynamic-table drive: every path crosses a plain Lua host table in
+     * one direction or the other. The decoded document carries a present
+     * null, a number-variant leaf and a decoded array, so the emitted
+     * stringify, the shipped module the raw host calls, and the echoed
+     * carrier must all agree with the compiled walk.
+     */
+    private static final String TABLE_PROBE_APP_SOURCE = """
+        import * as json from "std/json";
+        import * as host from "host/tab_probe";
+
+        export function main(): null {
+          return null;
+        }
+
+        export function run(): string {
+          let plain: table = host.returnPlain();
+          let decoded: table = json.parse("{\\"n\\":null,\\"v\\":0.1,\\"xs\\":[1,0.1,-2147483649]}");
+          let echoed: table = host.echo(decoded);
+          let member: string = host.observeMember(json.parse("{\\"o\\":{\\"v\\":41}}").o);
+          return json.stringify(plain) + "\\n"
+            + json.stringify(decoded) + "\\n"
+            + host.stringifyCarrier(decoded) + "\\n"
+            + json.stringify(echoed) + "\\n"
+            + member + "\\n"
+            + json.stringify(host.returnParsed()) + "\\n"
+            + json.stringify(host.returnParsedVariant());
+        }
+
+        export async function runAsync(): string {
+          let t: table = await host.returnAsyncPlain();
+          return json.stringify(t);
+        }
+        """;
+
+    /**
+     * The deployed raw host: it returns plain Lua tables (the LuaJIT table
+     * representation), returns the deployed {@code std/json} decode graph,
+     * echoes the carrier it was handed, reads a decoded object member as a
+     * number, and stringifies the DEAL carrier with the shipped module.
+     */
+    private static final String TABLE_PROBE_HOST_LUA = """
+        local rt = require("deal.runtime")
+        local json = require("std.json")
+
+        return {
+          returnPlain = function()
+            return { xs = { 1, 2 } }
+          end,
+
+          returnParsed = function()
+            return json.parse.f("{\\"n\\":null}")
+          end,
+
+          returnParsedVariant = function()
+            return json.parse.f("{\\"v\\":0.1}")
+          end,
+
+          returnAsyncPlain = function()
+            return rt.async_start(function()
+              return { xs = { 1, 2 } }
+            end)
+          end,
+
+          observeMember = function(o)
+            return "v=" .. tostring(o.v + 1)
+          end,
+
+          stringifyCarrier = function(t)
+            return json.stringify.f(t)
+          end,
+
+          echo = function(t)
+            return t
+          end,
+        }
+        """;
+
+    /** The transcript the dynamic-table crossing must produce. */
+    private static final String TABLE_PROBE_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "{\"xs\":[1,2]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2.147483649E9]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2.147483649E9]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2.147483649E9]}",
+        "v=42",
+        "{\"n\":null}",
+        "{\"v\":0.1}",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
      * The LuaJIT host projection is carrier-complete for the value model's
      * numeric-variant carriers (ISSUE-0836): a decoded {@code number[]},
      * {@code (int | null)[]} and a decoded numeric class field cross a real
@@ -1172,6 +1280,89 @@ public class HostModuleLoadEmissionTest {
                     + " decoded numeric class field hands the raw host the"
                     + " declared DEAL values, and the echoed decoded array"
                     + " keeps its own int/number variants: exit="
+                    + run.exitCode() + " stdout=" + escaped(run.stdout())
+                    + " stderr=" + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The dynamic-table host crossing (ISSUE-0695 acceptance remediation):
+     * a plain Lua table the real host returns at a declared {@code table}
+     * position is admitted by the ordinary DEAL boundaries — the plain-table
+     * JSON-shaped inference (nested arrays, recorded marks and a present-null
+     * member included) and the TABLE_KEYS string-key fallback — instead of
+     * rejecting it with the false E8001; the host that stringifies a DEAL
+     * carrier with the deployed {@code std/json} module observes the same
+     * text as the compiled walk (the present-null member and the recorded
+     * number variant included); and a decoded object member crossing to the
+     * raw host is the declared number, so the host's own arithmetic works
+     * instead of raising the internal-carrier raw Lua error. The async
+     * completion crossing admits and encodes a plain table the same way.
+     */
+    private static void testLuaHostTableProjection() throws Exception {
+        System.out.println("-- the dynamic-table host crossing: the published"
+            + " LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-table-lua");
+        try {
+            writeFileIn(root, "deal.json", """
+                {"languageVersion": "1.3", "backend": "luajit",
+                 "moduleRoots": ["src"], "output": "out",
+                 "externals": {"host/tab_probe":
+                   {"declaration": "bindings/tab_probe.d.deal"}}}
+                """);
+            writeFileIn(root, "bindings/tab_probe.d.deal",
+                TABLE_PROBE_DECLARATION_SOURCE);
+            writeFileIn(root, "src/app.deal", TABLE_PROBE_APP_SOURCE);
+            Path entry = root.resolve("src/app.deal").toAbsolutePath();
+            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+            check(exit == 0, "the dynamic-table project compiles through the"
+                + " public deal compile: exit=" + exit);
+            if (exit != 0) {
+                return;
+            }
+            Path out = root.resolve("out");
+            check(Files.isRegularFile(out.resolve("app.lua")),
+                "the published artifact set carries the entry artifact");
+            writeFileIn(out, "host/tab_probe.lua", TABLE_PROBE_HOST_LUA);
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                local entry = surface["run"]
+                if entry == nil then fail("missing run export") end
+                local ok2, res = pcall(entry.f)
+                if not ok2 then
+                  local e = res
+                  fail("run: " .. tostring(e.code) .. "|" .. tostring(e.m)
+                    .. "|" .. tostring(e.e) .. "|" .. tostring(e.a))
+                end
+                local asyncEntry = surface["runAsync"]
+                if asyncEntry == nil then fail("missing runAsync export") end
+                local okA, handle = pcall(asyncEntry.f)
+                if not okA then fail("runAsync: " .. tostring(handle)) end
+                if type(handle) ~= "table"
+                    or handle[__dealCarrierKeys.kind] ~= "async" then
+                  fail("runAsync did not return an async operation")
+                end
+                if handle.__result ~= "{\\"xs\\":[1,2]}" then
+                  fail("runAsync completion: " .. tostring(handle.__result))
+                end
+                print("TRANSCRIPT-BEGIN")
+                print(res)
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"), out, true);
+            check(run.exitCode() == 0 && run.stdout().equals(TABLE_PROBE_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "a plain host table is admitted by the DEAL JSON and table"
+                    + " boundaries at the host return, the host stringifies the"
+                    + " DEAL carrier with the deployed std/json module to the"
+                    + " same text, and a decoded object member crosses as its"
+                    + " number: exit="
                     + run.exitCode() + " stdout=" + escaped(run.stdout())
                     + " stderr=" + escaped(run.stderr()));
         } finally {
@@ -2488,6 +2679,7 @@ public class HostModuleLoadEmissionTest {
             testHostReadCorrelation(hostReads);
             testLuaHostDecodedNumericCarrier();
             testLuaHostTableValue();
+            testLuaHostTableProjection();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
