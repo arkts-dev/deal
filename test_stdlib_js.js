@@ -192,6 +192,32 @@ test("string.length rejects a non-string with E8001 and the forwarded span", fun
   assertSpan(err, "t3.deal", 5, 6);
 });
 
+test("string.length publishes the shared typed-boundary token for a carrier", function() {
+  // The shipped stdlib module's declared parameter cell is the runtime
+  // matcher: a class instance and the builtin Error project their carried
+  // canonical class atom as the actual kind — the identical closed tuple
+  // the LuaJIT stdlib's __rt.check_string rows publish — never the generic
+  // "object" spelling of the carrier.
+  const instance = {};
+  rt.setProp(instance, "$kind", "class");
+  rt.setProp(instance, "$classname", "@m/C");
+  const errorValue = rt.errorValue("E_USER", "boom");
+  let err = assertErrorCode(function() { string.length.$f(instance, "t3.deal", 5, 6); }, "E8001");
+  assertEqual(err.message, "expected string", "class instance at the string cell message");
+  assertEqual(err.expected, "string", "class instance at the string cell expected");
+  assertEqual(err.actual, "@m/C", "class instance at the string cell actual");
+  err = assertErrorCode(function() { string.length.$f(errorValue, "t3.deal", 5, 6); }, "E8001");
+  assertEqual(err.expected, "string", "builtin Error at the string cell expected");
+  assertEqual(err.actual, "Error", "builtin Error at the string cell actual");
+  // The language null keeps its own token, never the object spelling.
+  err = assertErrorCode(function() { string.length.$f(null, "t3.deal", 5, 6); }, "E8001");
+  assertEqual(err.actual, "null", "language null at the string cell actual");
+  // The int parameter row publishes the class atom too.
+  err = assertErrorCode(function() { string.substring.$f("ab", instance, 1, "t4.deal", 7, 8); }, "E8001");
+  assertEqual(err.message, "expected int", "class instance at the int cell message");
+  assertEqual(err.actual, "@m/C", "class instance at the int cell actual");
+});
+
 test("string.substring rejects a non-int start with E8001 and the forwarded span", function() {
   const err = assertErrorCode(function() { string.substring.$f("a", 1.5, 2, "t4.deal", 7, 8); }, "E8001");
   assertEqual(err.message, "expected int, got non-integer number", "string.substring entry message");

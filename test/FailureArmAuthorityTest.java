@@ -112,6 +112,7 @@ public class FailureArmAuthorityTest {
         testCompletionSignatureDrive();
         testCompletionNullCarrierDrive();
         testTypedBoundaryBytesCarrier();
+        testTypedBoundaryClassAtomCarrier();
         testForgedCarrierTableKeys();
         testTypedBoundaryInvalidUnicode();
         testStdJsonArmDrive();
@@ -1714,6 +1715,148 @@ public class FailureArmAuthorityTest {
             "the Lua artifact renders the oracle's identical bytes-at-table tuple");
         checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(1), span)),
             "the Lua artifact renders the oracle's identical bytes-at-int tuple");
+    }
+
+    // =========================================================================
+    // 9a-1b. The typed-boundary class atom and the builtin Error
+    // =========================================================================
+
+    /**
+     * The typed-boundary actual token of a class carrier (the ISSUE-0835
+     * remediation of the ISSUE-0834 requirement): a declared class instance
+     * and the builtin Error publish their carried canonical class atom as
+     * the closed {@code actual} projection at every non-class boundary — the
+     * oracle's {@code typedBoundaryToken}, the JVM runtime's {@code actualOf},
+     * the emitted Lua prelude's {@code __typedBoundaryKind}, and the shipped
+     * {@code deal/runtime.lua} matcher's own rows agree byte-for-byte. Before
+     * the fix the shipped runtime published the raw Lua {@code type()} of the
+     * carrier ({@code table}) on its primitive, bytes and wrong-kind rows, so
+     * the shipped stdlib and completion consumers diverged from the
+     * prelude/JVM/JS lanes. The class-identity and signature arms are
+     * unchanged and are pinned as controls.
+     */
+    static void testTypedBoundaryClassAtomCarrier() throws Exception {
+        System.out.println("-- the typed-boundary class atom and the builtin Error --");
+        String span = FailureContractRegistry.arm(FailureArmId.TYPED_BOUNDARY_KIND)
+            .origin().name();
+        String atom = "@src/app/User";
+
+        // The oracle: the closed typed-boundary projection of the carrier.
+        Tuple oracleString = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.ofClass(atom), BoundaryContext.none()),
+            "the class-at-string cell"), span);
+        checkEq(new Tuple("E8001", "expected string", span, "string", atom),
+            oracleString, "the oracle projects the carried class atom at a string "
+                + "boundary");
+        Tuple oracleInt = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Int.INSTANCE,
+            BoundaryValueView.ofClass(atom), BoundaryContext.none()),
+            "the class-at-int cell"), span);
+        Tuple oracleError = tupleOf(oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.String.INSTANCE,
+            BoundaryValueView.ofClass("Error"), BoundaryContext.none()),
+            "the builtin-Error-at-string cell"), span);
+        checkEq(new Tuple("E8001", "expected string", span, "string", "Error"),
+            oracleError, "the oracle projects the canonical bare Error atom");
+
+        // The JVM runtime consumer: the same two carriers, the same tuples.
+        deal.codegen.jvm.JvmRuntime.ClassInstance user =
+            new WalkInstance(atom, Map.of());
+        deal.codegen.jvm.JvmRuntime.DealError jvmString = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string", user));
+        check(jvmString != null, "the JVM string boundary rejects the class instance");
+        if (jvmString != null) {
+            checkEq(null, firstDifferingField(oracleString,
+                new Tuple(jvmString.code, jvmString.msg, span, jvmString.expected,
+                    jvmString.actual)),
+                "the JVM runtime renders the oracle's identical class-at-string tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmInt = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("int", "int", user));
+        check(jvmInt != null, "the JVM int boundary rejects the class instance");
+        if (jvmInt != null) {
+            checkEq(null, firstDifferingField(oracleInt,
+                new Tuple(jvmInt.code, jvmInt.msg, span, jvmInt.expected,
+                    jvmInt.actual)),
+                "the JVM runtime renders the oracle's identical class-at-int tuple");
+        }
+        deal.codegen.jvm.JvmRuntime.DealError jvmError = jvmFailure(
+            () -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string",
+                new deal.codegen.jvm.JvmRuntime.ErrorValue("E_USER", "boom")));
+        check(jvmError != null, "the JVM string boundary rejects the builtin Error");
+        if (jvmError != null) {
+            checkEq(null, firstDifferingField(oracleError,
+                new Tuple(jvmError.code, jvmError.msg, span, jvmError.expected,
+                    jvmError.actual)),
+                "the JVM runtime renders the oracle's identical Error-at-string tuple");
+        }
+
+        // The two Lua consumers under real luajit: the shipped runtime's own
+        // matcher rows and the emitted prelude's check, over the same values.
+        List<String> rows = runProbe(emittedArmsChunk(), "arms", """
+            local rt = require("deal.runtime")
+            local user = rt.class_("@src/app/User", {}, {})
+            local errv = rt.error_value("E_USER", "boom")
+            local function runtimeRow(label, fn)
+              local ok, value = pcall(fn)
+              if ok then print(label .. "|OK|") return end
+              print(label .. "|" .. tostring(value.code) .. "|"
+                .. tostring(value.expected) .. "|" .. tostring(value.actual)
+                .. "|" .. tostring(value.message))
+            end
+            runtimeRow("runtime-class-at-string", function() return rt.check_string(user) end)
+            runtimeRow("runtime-class-at-int", function() return rt.check_int(user) end)
+            runtimeRow("runtime-error-at-string", function() return rt.check_string(errv) end)
+            runtimeRow("runtime-class-at-class", function()
+              return rt.check_type("@src/app/Admin", user) end)
+            runtimeRow("runtime-class-at-function", function()
+              return rt.check_type("()->null", user) end)
+            runtimeRow("runtime-bytes-at-class", function()
+              return rt.check_type("@src/app/User", rt.bytes_new(1)) end)
+            local ok, value = pcall(__bcheck, "string", "string", user, nil)
+            row("prelude-class-at-string", ok, value)
+            ok, value = pcall(__bcheck, "int", "int", user, nil)
+            row("prelude-class-at-int", ok, value)
+            ok, value = pcall(__bcheck, "string", "string", errv, nil)
+            row("prelude-error-at-string", ok, value)
+            """, "typed-boundary-class-probe", 9, true);
+
+        checkEq(null, firstDifferingField(oracleString, luaTuple(rows.get(0), span)),
+            "the shipped runtime renders the oracle's identical class-at-string tuple: "
+                + rows.get(0));
+        checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(1), span)),
+            "the shipped runtime renders the oracle's identical class-at-int tuple: "
+                + rows.get(1));
+        checkEq(null, firstDifferingField(oracleError, luaTuple(rows.get(2), span)),
+            "the shipped runtime publishes the canonical bare Error atom: "
+                + rows.get(2));
+        // The unchanged arms: the class-identity arm carries both atoms, the
+        // function row's kind arm the failing carrier's own token, and the
+        // class row's kind arm the carrier it received.
+        checkEq("runtime-class-at-class|E8001|@src/app/Admin|" + atom
+                + "|expected instance of @src/app/Admin, got " + atom,
+            rows.get(3), "the class-identity arm keeps its two carried atoms");
+        checkEq("runtime-class-at-function|E8001|function|" + atom
+                + "|expected function",
+            rows.get(4), "the function row projects the class atom");
+        checkEq("runtime-bytes-at-class|E8001|class|bytes|expected class instance",
+            rows.get(5), "the class row's kind arm projects the bytes carrier");
+        // The emitted prelude's own projection of the same values.
+        checkEq(null, firstDifferingField(oracleString, luaTuple(rows.get(6), span)),
+            "the emitted prelude renders the oracle's identical class-at-string tuple: "
+                + rows.get(6));
+        checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(7), span)),
+            "the emitted prelude renders the oracle's identical class-at-int tuple: "
+                + rows.get(7));
+        checkEq(null, firstDifferingField(oracleError, luaTuple(rows.get(8), span)),
+            "the emitted prelude publishes the canonical bare Error atom: "
+                + rows.get(8));
+        // The two Lua consumers agree field-for-field (the shipped runtime is
+        // not a second authority).
+        checkEq(null, firstDifferingField(luaTuple(rows.get(6), span),
+                luaTuple(rows.get(0), span)),
+            "the shipped runtime and the emitted prelude publish one tuple");
     }
 
     // =========================================================================

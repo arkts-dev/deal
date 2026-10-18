@@ -111,10 +111,18 @@ end
 
 -- ===== Primitive type checks =====
 
+-- Every primitive row's wrong-kind actual is the closed typed-boundary
+-- token (__rt.typed_kind below), never the raw Lua type(): a produced
+-- carrier — a class instance (its carried canonical class atom, exactly
+-- Error for the builtin), a bytes buffer, a function wrapper, an array,
+-- an async handle — a language null and the absent marker project the
+-- same tokens here as the emitted prelude's __typedBoundaryKind, the JVM
+-- runtime's actualOf and the JS $kindOf. A raw type() projection would
+-- report "table" for every one of those carriers.
 function __rt.check_null(v, file, line, column)
   if v ~= __rt.__NULL then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "null" }, "E8001",
-      "expected null", file, line, column, "null", type(v)))
+      "expected null", file, line, column, "null", __rt.typed_kind(v)))
   end
   return v
 end
@@ -122,7 +130,7 @@ end
 function __rt.check_boolean(v, file, line, column)
   if type(v) ~= "boolean" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "boolean" }, "E8001",
-      "expected boolean", file, line, column, "boolean", type(v)))
+      "expected boolean", file, line, column, "boolean", __rt.typed_kind(v)))
   end
   return v
 end
@@ -130,7 +138,7 @@ end
 function __rt.check_int(v, file, line, column)
   if type(v) ~= "number" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "int" }, "E8001",
-      "expected int", file, line, column, "int", type(v)))
+      "expected int", file, line, column, "int", __rt.typed_kind(v)))
   end
   if v ~= v then  -- NaN check: NaN is the only value not equal to itself
     error(__rt._armErr("INT_CONVERSION_NAN", {}, "E8001",
@@ -155,7 +163,7 @@ end
 function __rt.check_number(v, file, line, column)
   if type(v) ~= "number" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "number" }, "E8001",
-      "expected number", file, line, column, "number", type(v)))
+      "expected number", file, line, column, "number", __rt.typed_kind(v)))
   end
   return v
 end
@@ -326,7 +334,7 @@ end
 function __rt.check_string(v, file, line, column)
   if type(v) ~= "string" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "string" }, "E8001",
-      "expected string", file, line, column, "string", type(v)))
+      "expected string", file, line, column, "string", __rt.typed_kind(v)))
   end
   -- v1.3 boundary rule: strings accepted from untrusted or backend-native
   -- boundaries must reject invalid encodings (malformed UTF-8 byte
@@ -406,7 +414,7 @@ function __rt.check_table(v, file, line, column)
   end
   if type(v) ~= "table" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
-      "expected table", file, line, column, "table", type(v)))
+      "expected table", file, line, column, "table", __rt.typed_kind(v)))
   end
   local projected = __rt.typed_kind(v)
   if projected ~= "table" then
@@ -488,7 +496,7 @@ local ffi = require("ffi")
 local function check_bytes(b, file, line, column)
   if type(b) ~= "table" or b[__K.kind] ~= "bytes" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "bytes" }, "E8001",
-      "expected bytes", file, line, column, "bytes", type(b)))
+      "expected bytes", file, line, column, "bytes", __rt.typed_kind(b)))
   end
   return b
 end
@@ -884,13 +892,13 @@ local function check_canonical_ast(ast, v, file, line, column)
     if type(v) ~= "table" or v[__K.kind] ~= "class" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
         "E8001", "expected class instance", file, line, column, "class",
-        type(v)))
+        __rt.typed_kind(v)))
     end
     local actual_class = v[__K.classname]
     if actual_class == nil then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
         "E8001", "expected class instance", file, line, column, "class",
-        type(v)))
+        __rt.typed_kind(v)))
     end
     if actual_class ~= ast.name then
       error(__rt._armErr("CLASS_IDENTITY", { expected = ast.name, actual = actual_class },
@@ -955,11 +963,11 @@ local function check_canonical_ast(ast, v, file, line, column)
     -- operands.
     if type(v) ~= "table" or v[__K.kind] ~= "function" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
-        "expected function", file, line, column, "function", type(v)))
+        "expected function", file, line, column, "function", __rt.typed_kind(v)))
     end
     if type(v.sig) ~= "string" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
-        "expected function", file, line, column, "function", type(v)))
+        "expected function", file, line, column, "function", __rt.typed_kind(v)))
     end
     if v.sig ~= ast.text then
       error(__rt._armErr("FUNCTION_SIGNATURE_MISMATCH",

@@ -109,6 +109,41 @@ test("string.length with non-string raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
+test("string.length publishes the shared typed-boundary token for a carrier", function()
+  -- The shipped stdlib module's declared parameter cell is the runtime
+  -- matcher: a class instance and the builtin Error project their carried
+  -- canonical class atom as the actual kind — the same closed token the JS
+  -- stdlib's $rt.checkString ($kindOf) and the compiled artifact lanes
+  -- publish — never the raw Lua table spelling of the carrier.
+  local rt = require("deal.runtime")
+  local instance = rt.class_("@m/C", { a = 1 }, {})
+  local err_value = rt.error_value("E_USER", "boom")
+  local err = assert_error_code(function() strings.length.f(instance) end, "E8001")
+  assert(err.message == "expected string", tostring(err.message))
+  assert(err.expected == "string", tostring(err.expected))
+  assert(err.actual == "@m/C", tostring(err.actual))
+  err = assert_error_code(function() strings.length.f(err_value) end, "E8001")
+  assert(err.message == "expected string", tostring(err.message))
+  assert(err.expected == "string", tostring(err.expected))
+  assert(err.actual == "Error", tostring(err.actual))
+  -- Every other carrier keeps its own closed token (the bytes buffer and the
+  -- language null are not the table spelling either).
+  err = assert_error_code(function() strings.length.f(rt.bytes_new(1)) end, "E8001")
+  assert(err.actual == "bytes", tostring(err.actual))
+  err = assert_error_code(function() strings.length.f(rt.__NULL) end, "E8001")
+  assert(err.actual == "null", tostring(err.actual))
+  -- The same class atom crosses a second shipped check (substring's own
+  -- parameter row) and keeps the fixed expected token.
+  err = assert_error_code(function() strings.substring.f(instance, 0, 1) end, "E8001")
+  assert(err.expected == "string" and err.actual == "@m/C",
+    tostring(err.expected) .. " / " .. tostring(err.actual))
+  -- An int parameter row publishes the class atom too (the int kind arm).
+  err = assert_error_code(function() strings.substring.f("ab", instance, 1) end, "E8001")
+  assert(err.message == "expected int", tostring(err.message))
+  assert(err.expected == "int" and err.actual == "@m/C",
+    tostring(err.expected) .. " / " .. tostring(err.actual))
+end)
+
 -- ----- substring -----
 
 test("string.substring returns correct substring", function()

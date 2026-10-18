@@ -430,6 +430,124 @@ test("a class instance may declare fields named after the carrier keys (v1.3)", 
     "the instance is still the declared class value")
 end)
 
+-- ============ the typed-boundary actual token of every carrier ============
+-- Every typed boundary publishes the closed typed-boundary token
+-- (__rt.typed_kind) as its "actual" projection — the same token the emitted
+-- prelude's __typedBoundaryKind, the JVM runtime's actualOf and the JS
+-- $kindOf publish. A class instance therefore publishes its carried
+-- canonical class atom (exactly Error for the builtin) and never the raw Lua
+-- table spelling, at every non-class boundary as well as at the class and
+-- function rows' wrong-kind arms.
+test("a class instance publishes its carried class atom at every boundary (v1.3)", function()
+  local instance = __rt.class_("@m/C", { a = 1 }, {})
+  assert(__rt.typed_kind(instance) == "@m/C", "the instance's closed token is its atom")
+  -- The primitive rows.
+  assert_boundary_error(function() __rt.check_string(instance) end,
+    "E8001", "expected string", "string", "@m/C")
+  assert_boundary_error(function() __rt.check_int(instance) end,
+    "E8001", "expected int", "int", "@m/C")
+  assert_boundary_error(function() __rt.check_number(instance) end,
+    "E8001", "expected number", "number", "@m/C")
+  assert_boundary_error(function() __rt.check_boolean(instance) end,
+    "E8001", "expected boolean", "boolean", "@m/C")
+  assert_boundary_error(function() __rt.check_null(instance) end,
+    "E8001", "expected null", "null", "@m/C")
+  -- The bytes and function rows replace their raw type() projection too.
+  assert_boundary_error(function() __rt.check_type("bytes", instance) end,
+    "E8001", "expected bytes", "bytes", "@m/C")
+  assert_boundary_error(function() __rt.check_type("()->null", instance) end,
+    "E8001", "expected function", "function", "@m/C")
+  -- A same-kind class crossing keeps the identity arm and its carried atom.
+  assert_boundary_error(function() __rt.check_type("@m/D", instance) end,
+    "E8001", "expected instance of @m/D, got @m/C", "@m/D", "@m/C")
+end)
+
+test("the builtin Error publishes the canonical Error atom at every boundary (v1.3)", function()
+  local err_value = __rt.error_value("E_USER", "boom")
+  assert(__rt.typed_kind(err_value) == "Error",
+    "the Error value's closed token is the canonical builtin atom")
+  assert_boundary_error(function() __rt.check_string(err_value) end,
+    "E8001", "expected string", "string", "Error")
+  assert_boundary_error(function() __rt.check_int(err_value) end,
+    "E8001", "expected int", "int", "Error")
+  assert_boundary_error(function() __rt.check_number(err_value) end,
+    "E8001", "expected number", "number", "Error")
+  assert_boundary_error(function() __rt.check_boolean(err_value) end,
+    "E8001", "expected boolean", "boolean", "Error")
+  assert_boundary_error(function() __rt.check_null(err_value) end,
+    "E8001", "expected null", "null", "Error")
+  assert_boundary_error(function() __rt.check_type("bytes", err_value) end,
+    "E8001", "expected bytes", "bytes", "Error")
+  assert_boundary_error(function() __rt.check_type("()->null", err_value) end,
+    "E8001", "expected function", "function", "Error")
+  -- The Error descriptor's own cell still admits the Error value and still
+  -- rejects a foreign class instance by its carried atom (the identity arm).
+  assert(__rt.check_type("Error", err_value) == err_value,
+    "the Error descriptor admits the builtin Error value")
+  assert_boundary_error(function()
+    __rt.check_type("Error", __rt.class_("@m/C", { a = 1 }, {}))
+  end, "E8001", "expected instance of Error, got @m/C", "Error", "@m/C")
+end)
+
+test("every other carrier keeps its own closed token at a boundary (v1.3)", function()
+  -- The array, bytes, function, async, null and absent carriers never
+  -- project the raw table spelling of a primitive row, and each of them is
+  -- rejected at the class and function rows by its own token.
+  local array = { [__K.a] = true, [__K.n] = 0 }
+  local bytes = __rt.bytes_new(1)
+  local wrapper = __rt.function_("()->null", function() return __rt.__NULL end)
+  local handle = __rt.async_create(function() return __rt.__NULL end)
+  local function rejects(value, token, descriptor, message, expected)
+    assert_boundary_error(function() __rt.check_type(descriptor, value) end,
+      "E8001", message, expected, token)
+  end
+  for _, carrier in ipairs({
+    { "array", array }, { "bytes", bytes }, { "function", wrapper },
+    { "async-operation", handle }, { "null", __rt.__NULL },
+    { "nil", __rt.__MISSING },
+  }) do
+    local token, value = carrier[1], carrier[2]
+    assert(__rt.typed_kind(value) == token, "the carrier's closed token is " .. token)
+    rejects(value, token, "string", "expected string", "string")
+    rejects(value, token, "int", "expected int", "int")
+    rejects(value, token, "boolean", "expected boolean", "boolean")
+    rejects(value, token, "@m/C", "expected class instance", "class")
+    if token ~= "function" then
+      rejects(value, token, "()->null", "expected function", "function")
+    else
+      assert(__rt.check_type("()->null", value) == value,
+        "the function row admits the matching function wrapper")
+      -- The signature arm (E8010), never the kind arm, rejects a mismatched
+      -- wrapper, and its two fields stay the canonical texts.
+      local mismatch = assert_error(function()
+        __rt.check_type("(int)->null", value)
+      end, "E8010")
+      assert(mismatch.expected == "(int)->null"
+        and mismatch.actual == "()->null",
+        "the signature arm keeps the two canonical texts")
+    end
+    if token ~= "bytes" then
+      rejects(value, token, "bytes", "expected bytes", "bytes")
+    else
+      assert(__rt.check_type("bytes", value) == value,
+        "the bytes row admits the bytes carrier")
+    end
+  end
+  -- A set member is still rejected at the table row by its own token.
+  assert_boundary_error(function() __rt.check_table(array) end,
+    "E8001", "expected table", "table", "array")
+  assert_boundary_error(function() __rt.check_table(handle) end,
+    "E8001", "expected table", "table", "async-operation")
+  -- The fixed int-conversion tokens are unchanged (the refinement ladder is
+  -- not a typed-boundary kind arm).
+  local nan = assert_error(function() __rt.check_int(0/0) end, "E8001")
+  assert(nan.expected == "int" and nan.actual == "NaN", "NaN keeps its token")
+  local infinity = assert_error(function() __rt.check_int(1/0) end, "E8001")
+  assert(infinity.actual == "infinity", "infinity keeps its token")
+  local fractional = assert_error(function() __rt.check_int(1.5) end, "E8001")
+  assert(fractional.actual == "number", "a fractional number keeps its token")
+end)
+
 
 
 -- ==================== check_nullable tests ====================
