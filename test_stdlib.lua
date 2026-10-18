@@ -1022,6 +1022,44 @@ test("json.stringify encodes the chunk table carrier over its user keys (v1.3)",
     "a non-JSON member keeps the unsupported arm, got: " .. tostring(err.message))
 end)
 
+-- A plain table the emitted chunk wrote through MEMBER_WRITE: __orderAdd
+-- gives it __K.keys/__K.order on the first write and __numKey records the
+-- written slot's variant in __K.nK, but the table itself carries no __K.t
+-- because it was not constructed through TABLE_NEW. A host that receives
+-- the table and calls the shipped stringify must see the JSON object it
+-- stands for — the recorded insertion order, the number-variant spelling
+-- of a marked slot — never the private carrier keys as members (the
+-- defect encoded the key/order maps as "table: 0x..." members and the
+-- number-variant slot through the int spelling).
+test("json.stringify encodes a chunk-written plain table with variant marks (v1.3)", function()
+  local written = { [__K.keys] = { x = true, y = true, z = true },
+    [__K.order] = { "x", "y", "z" },
+    [__K.nK] = { x = true, z = true },
+    x = 1.0, y = 7, z = -0.0 }
+  assert(written[__K.t] == nil,
+    "the written plain table carries no TABLE_NEW mark")
+  local text = json.stringify.f(written)
+  assert(text == '{"x":1.0,"y":7,"z":-0.0}',
+    "a written plain table keeps its insertion order and per-slot variants, got: "
+      .. text)
+  assert(string.find(text, "table:", 1, true) == nil,
+    "no private carrier key is encoded, got: " .. text)
+  assert(json.stringify.f({ nested = written })
+      == '{"nested":{"x":1.0,"y":7,"z":-0.0}}',
+    "a nested written plain table encodes as an object")
+  -- A table that records only the per-slot variant marks (no presence or
+  -- order list) takes the same object encoding, never the mark as a
+  -- member.
+  local marksOnly = { [__K.nK] = { amount = true }, amount = 1.0 }
+  assert(json.stringify.f(marksOnly) == '{"amount":1.0}',
+    "per-slot variant marks alone still select the object carrier, got: "
+      .. json.stringify.f(marksOnly))
+  -- The encoder reads the marks; it never mutates the written table.
+  assert(written[__K.keys].x == true and written[__K.order][1] == "x"
+      and written[__K.nK].x == true and written.x == 1.0,
+    "the written plain table is not mutated")
+end)
+
 test("json.parse decodes the full RFC 8259 escape table", function()
   local text = '"' .. '\\"' .. '\\\\' .. '\\/' .. '\\b' .. '\\f' .. '\\n' .. '\\r' .. '\\t' .. '"'
   local r = json.parse.f('{"v":' .. text .. '}').v

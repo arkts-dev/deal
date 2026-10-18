@@ -57,10 +57,14 @@
 -- Double.toString decimal text — and a chunk table carrier ([__K.t] with
 -- the presence map [__K.keys] and the insertion-order list [__K.order])
 -- encodes as an object over exactly its user string keys in the recorded
--- order. The per-slot [__K.nK] marks select the number-variant spelling
--- for a marked slot. None of these private table-object keys is ever an
--- encoded member, and the null/absent/unsupported/cycle behavior is
--- unchanged.
+-- order. A table a chunk wrote outside TABLE_NEW carries only the
+-- presence/order marks [__orderAdd] creates on the first write (and the
+-- per-slot [__K.nK] marks [__numKey] records); it takes the same object
+-- encoding, so a host that stringifies the written table never observes
+-- the private marks. The per-slot [__K.nK] marks select the number-variant
+-- spelling for a marked slot. None of these private table-object keys is
+-- ever an encoded member, and the null/absent/unsupported/cycle behavior
+-- is unchanged.
 
 local __rt = require("deal.runtime")
 
@@ -535,13 +539,17 @@ local function encode_value(v, file, line, column, path)
       end
       -- The chunk table carrier's own marks ([__K.t], the presence map
       -- __K.keys and the insertion-order list __K.order — __orderAdd
-      -- creates the latter two on a chunk table the first time it is
-      -- written): the carrier is an object over exactly its user string
-      -- keys, in the recorded insertion order; a carrier without the order
-      -- list keeps the string-key order. The private marks are table-object
-      -- keys, so they can never be user keys, and they are never members of
-      -- the encoded object.
-      if val[__K.t] ~= nil or val[__K.keys] ~= nil or val[__K.order] ~= nil then
+      -- creates the latter two on a table the first time a chunk field
+      -- write reaches it, a plain table the chunk did not construct
+      -- through TABLE_NEW included): the carrier is an object over exactly
+      -- its user string keys, in the recorded insertion order; a carrier
+      -- without the order list keeps the string-key order. A table that
+      -- carries only the recorded per-slot [__K.nK] marks takes the same
+      -- object encoding, so no private mark is ever enumerated. The
+      -- private marks are table-object keys, so they can never be user
+      -- keys, and they are never members of the encoded object.
+      if val[__K.t] ~= nil or val[__K.keys] ~= nil
+          or val[__K.order] ~= nil or val[__K.nK] ~= nil then
         local keys = {}
         local seen = {}
         local order = val[__K.order]
