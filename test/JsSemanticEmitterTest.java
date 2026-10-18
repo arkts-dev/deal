@@ -4019,7 +4019,14 @@ public class JsSemanticEmitterTest {
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
             const out = {};
+            const tuple = function (e) {
+              return { code: e.code, message: e.message,
+                expected: e.expected, actual: e.actual, file: e.file,
+                line: e.line, column: e.column };
+            };
             out.admitted = $rt.hostParam(1, "int", 7, "p.deal", 1, 1);
+            out.nullAdmitted = $rt.hostParam(1, "?int", null, "p.deal", 2, 1)
+              === null;
             try {
               $rt.hostParam(1, "bytes", 5, "p.deal", 10, 10);
             } catch (e) {
@@ -4039,13 +4046,113 @@ public class JsSemanticEmitterTest {
               out.fn = { code: e.code, message: e.message, file: e.file,
                 line: e.line, column: e.column };
             }
-            console.log(JSON.stringify(out));
+            // The host parameter/return arms' carrier-kind projection (the
+            // canonical failure projection's LANGUAGE_NULL -> table token):
+            // the DEAL language-null sentinel crossing the host boundary is
+            // a Lua table carrier, exactly like __rt.__NULL on LuaJIT and the
+            // JVM __hostKind(null).
+            try {
+              $rt.hostParam(1, "int", null, "p.deal", 11, 1);
+            } catch (e) {
+              out.nullParam = tuple(e);
+            }
+            try {
+              $rt.hostParam(1, "int", undefined, "p.deal", 12, 1);
+            } catch (e) {
+              out.nilParam = tuple(e);
+            }
+            try {
+              $rt.hostFunction("()->int", function () {
+                return null;
+              }).$f("p.deal", 13, 1);
+            } catch (e) {
+              out.nullReturn = tuple(e);
+            }
+            // The loadHost shape guards keep their raw-surface vocabulary
+            // (the JS value the host supplied, never the language carrier
+            // kind): a raw number is number, the JS null is null and the
+            // absent marker nil.
+            out.rawShapes = {};
+            for (const [name, raw] of [["number", 17], ["null", null],
+                ["nil", undefined]]) {
+              try {
+                $rt.loadHost(raw, {}, "host/raw", "p.deal", 1, 1);
+              } catch (e) {
+                out.rawShapes[name] = tuple(e);
+              }
+            }
+            (async () => {
+              try {
+                await $rt.hostAsyncFunction("async(int)->int", function (x) {
+                  return Promise.resolve(x);
+                }).$f(null, "p.deal", 14, 1);
+              } catch (e) {
+                out.nullAsyncParam = tuple(e);
+              }
+              try {
+                await $rt.hostAsyncFunction("async()->int", function () {
+                  return null;
+                }).$f("p.deal", 15, 1);
+              } catch (e) {
+                out.asyncShape = tuple(e);
+              }
+              console.log(JSON.stringify(out));
+            })();
             """, StandardCharsets.UTF_8);
         NodeRun run = runNode(out, "driver.js");
         checkEq(0, run.status(), "the host-cell driver exits 0: "
             + run.output());
         check(run.output().contains("\"admitted\":7"),
             "the host-parameter cell returns the admitted value: "
+                + run.output());
+        check(run.output().contains("\"nullAdmitted\":true"),
+            "the nullable host position admits the language null: "
+                + run.output());
+        check(run.output().contains("\"nullParam\":{\"code\":\"E8010\","
+                + "\"message\":\"parameter 1 type mismatch: expected int\","
+                + "\"expected\":\"int\",\"actual\":\"table\","
+                + "\"file\":\"p.deal\",\"line\":11,\"column\":1}"),
+            "a language-null host parameter reports the canonical table"
+                + " carrier kind (the LuaJIT __carrierKind(__NULL) and JVM"
+                + " __hostKind(null) token, never the JS null spelling): "
+                + run.output());
+        check(run.output().contains("\"nilParam\":{\"code\":\"E8010\","
+                + "\"message\":\"parameter 1 type mismatch: expected int\","
+                + "\"expected\":\"int\",\"actual\":\"nil\""),
+            "the absent host parameter keeps the nil carrier kind: "
+                + run.output());
+        check(run.output().contains("\"nullReturn\":{\"code\":\"E8010\","
+                + "\"message\":\"return value 1 type mismatch: expected"
+                + " int\",\"expected\":\"int\",\"actual\":\"table\""),
+            "a host return of the language null reports the canonical"
+                + " table carrier kind: " + run.output());
+        check(run.output().contains("\"nullAsyncParam\":{\"code\":"
+                + "\"E8010\",\"message\":\"parameter 1 type mismatch:"
+                + " expected int\",\"expected\":\"int\","
+                + "\"actual\":\"table\""),
+            "an async host parameter crossing the language null reports"
+                + " the canonical table carrier kind: " + run.output());
+        check(run.output().contains("\"asyncShape\":{\"code\":\"E8010\","
+                + "\"message\":\"host async function must return an async"
+                + " operation, got table\",\"expected\":\"async operation\","
+                + "\"actual\":\"table\""),
+            "the async-shape cell keeps the carrier-kind projection: "
+                + run.output());
+        check(run.output().contains("\"rawShapes\":{\"number\":{\"code\":"
+                + "\"E8011\",\"message\":\"host module did not return a"
+                + " module object\",\"expected\":\"table\","
+                + "\"actual\":\"number\""),
+            "the raw loadHost shape guard keeps the raw number token: "
+                + run.output());
+        check(run.output().contains("\"null\":{\"code\":\"E8011\","
+                + "\"message\":\"host module did not return a module"
+                + " object\",\"expected\":\"table\",\"actual\":\"null\""),
+            "the raw loadHost shape guard keeps the JS null token: "
+                + run.output());
+        check(run.output().contains("\"nil\":{\"code\":\"E8011\","
+                + "\"message\":\"host module did not return a module"
+                + " object\",\"expected\":\"table\",\"actual\":\"nil\""),
+            "the raw loadHost shape guard keeps the absent/nil token: "
                 + run.output());
         check(run.output().contains("\"cell\":{\"code\":\"E8010\","
                 + "\"message\":\"parameter 1 type mismatch: expected"

@@ -184,18 +184,33 @@ function $elemKindOf($v) {
 // $luaKindOf: the Lua type() projection of a value — the "actual" label
 // of the checks whose messages are composed from a value's Lua-side
 // carrier kind rather than the runtime's own value form (the host
-// boundary's parameter/return arms, deal/runtime.lua:983/1025, and the
-// std/json unsupported-type arm, std/json.lua:136): every table-carried
-// value is a Lua table — the DEAL-null sentinel, Maps, Arrays, the bytes
-// carrier, class instances, and the function/class wrappers included —
-// a raw JS function stays "function", and primitives keep their names.
+// boundary's parameter/return arms, deal/runtime.lua:983/1025): every
+// table-carried value is a Lua table — the DEAL-null sentinel (the
+// canonical carrier-kind projection maps language null to the table
+// token, never the JS "null" spelling), Maps, Arrays, the bytes carrier,
+// class instances, and the function/class wrappers included — a raw JS
+// function stays "function", and primitives keep their names.
 function $luaKindOf($v) {
   if ($v === $undefined) return "nil";
-  if ($v === null) return "null";
   if (typeof $v === "object" || typeof $v === "function") {
     return typeof $v === "function" ? "function" : "table";
   }
   return typeof $v;
+}
+
+// $rawShapeKind: the loadHost shape guards' raw-surface projection — the
+// JS-side vocabulary of a raw host module value, never the language
+// carrier kind: the absent marker is "nil", the JS null is "null", a
+// raw number is "number" (not the typed-boundary int token), every other
+// raw object is the Lua table shape and a raw function "function". The
+// guards reject a host surface the loader cannot shape, so their actual
+// names the JS value the host supplied rather than a DEAL carrier it
+// never produced.
+function $rawShapeKind($v) {
+  if ($v === $undefined) return "nil";
+  if ($v === null) return "null";
+  if (typeof $v === "number") return "number";
+  return $luaKindOf($v);
 }
 
 // ===== Canonical descriptor parser (js-v12-completion-architecture D3) =====
@@ -3961,10 +3976,10 @@ const $rt = {
     const $inModule = typeof $modulePath === "string"
       ? " in module '" + $modulePath + "'" : "";
     if (declaredMap === null || typeof declaredMap !== "object") {
-      $rt.fail("E8011", "host module declarations must be a table", $undefined, $undefined, $undefined, "table", $luaKindOf(declaredMap));
+      $rt.fail("E8011", "host module declarations must be a table", $undefined, $undefined, $undefined, "table", $rawShapeKind(declaredMap));
     }
     if (rawExports === null || typeof rawExports !== "object") {
-      $rt.fail("E8011", "host module did not return a module object", $undefined, $undefined, $undefined, "table", $luaKindOf(rawExports));
+      $rt.fail("E8011", "host module did not return a module object", $undefined, $undefined, $undefined, "table", $rawShapeKind(rawExports));
     }
     const $surface = {};
     const $names = Object.keys(declaredMap);
@@ -3994,11 +4009,11 @@ const $rt = {
             $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has signature mismatch: expected " + $desc + ", got " + String($v.$sig), file, line, column, $desc, $v.$sig);
           }
           if (typeof $v.$f !== "function") {
-            $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has non-function $f", file, line, column, "function", $luaKindOf($v.$f));
+            $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has non-function $f", file, line, column, "function", $rawShapeKind($v.$f));
           }
           $f = $v.$f;
         } else {
-          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a function", file, line, column, "function", $luaKindOf($v));
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a function", file, line, column, "function", $rawShapeKind($v));
         }
         $surface[$name] = $parsed.$async
             ? $rt.hostAsyncFunction($desc, $f)
@@ -4008,7 +4023,7 @@ const $rt = {
           $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has an unsupported declared descriptor: " + $desc, file, line, column);
         }
         if ($v === null || typeof $v !== "object" || $v.$kind !== "class") {
-          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a class meta", file, line, column, "class", $luaKindOf($v));
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a class meta", file, line, column, "class", $rawShapeKind($v));
         }
         if ($v.$classname !== $desc) {
           $rt.fail("E8011", "host class export '" + $name + "'" + $inModule + " has identity mismatch: expected " + $desc + ", got " + String($v.$classname), file, line, column, $desc, $v.$classname);
@@ -4031,7 +4046,7 @@ const $rt = {
         if ($hostDefaults === $undefined
             || !(typeof $hostDefaults === "function"
                 || $isPlainObject($hostDefaults))) {
-          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " is missing its defaults", file, line, column, "table", $luaKindOf($hostDefaults));
+          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " is missing its defaults", file, line, column, "table", $rawShapeKind($hostDefaults));
         }
         // The preserved defaults-map seam (host-module-abi D2, ISSUE-0331
         // gate closure): the host defaults — the plain object, or the

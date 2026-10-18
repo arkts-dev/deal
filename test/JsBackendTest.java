@@ -6252,7 +6252,14 @@ public class JsBackendTest {
      *       {@code 1.0E17} exactly like the DEAL-side array;</li>
      *   <li>a declared host-class parameter arrives with its declared
      *       fields projected the same way, so an array field filled from
-     *       decoded content is a native Array the host can join.</li>
+     *       decoded content is a native Array the host can join;</li>
+     *   <li>a language null crossing a non-nullable host parameter or
+     *       return reports the canonical carrier-kind token {@code table}
+     *       (the LuaJIT {@code __carrierKind(__NULL)} and JVM
+     *       {@code __hostKind(null)} projection), never the JS {@code null}
+     *       spelling, so the public host-boundary failure tuple agrees with
+     *       the LuaJIT/JVM lanes and the closed carrier-kind
+     *       projection.</li>
      * </ul>
      */
     private static void testHostDecodedArrayParamNode() throws Exception {
@@ -6272,6 +6279,8 @@ public class JsBackendTest {
             export function shape(parts: string[]): string;
             export function observe(parts: (int | null)[], alias: (int | null)[]): string;
             export function echoNumbers(nums: number[]): number[];
+            export function echoInt(value: int): int;
+            export function value(): int;
             """);
         writeFile("hostparam_proj/bindings/cfg.d.deal", """
             export class Endpoint {
@@ -6324,6 +6333,16 @@ public class JsBackendTest {
                 + "variants=" + variants + "\\n"
                 + "field=" + field;
             }
+
+            export function nullParam(): table {
+              let t: table = { v: null };
+              let x: int = host.echoInt(t.v);
+              return { ok: x };
+            }
+
+            export function nullReturn(): int {
+              return host.value();
+            }
             """);
         Path entry = tmpDir.resolve("hostparam_proj/src/main.deal")
             .toAbsolutePath();
@@ -6357,6 +6376,8 @@ public class JsBackendTest {
                   + (parts === alias ? ":same" : ":different") : "not-array";
               },
               echoNumbers: function (nums) { return nums; },
+              echoInt: function (value) { return value; },
+              value: function () { return null; },
             };
             """);
         writeFile("hostparam_proj/out/host/cfg.js", """
@@ -6412,6 +6433,38 @@ public class JsBackendTest {
                 + " variant) and a declared host-class parameter hands it"
                 + " projected declared fields: " + run.output() + " (exit "
                 + run.exitCode() + ")");
+
+        // The language-null host crossing: the carrier-kind projection maps
+        // the DEAL null sentinel to the table token on every consumer
+        // (FailureProjections.carrierKindToken(LANGUAGE_NULL), the LuaJIT
+        // prelude's __carrierKind(__NULL) and the JVM __hostKind(null)), so
+        // a production JS artifact reports the same public failure tuple.
+        writeFile("hostparam_proj/out/host_null_runner.js", String.join("\n",
+            "\"use strict\";",
+            "const $entry = require(\"./main\");",
+            "const $lines = [];",
+            "for (const $name of [\"nullParam\", \"nullReturn\"]) {",
+            "  try {",
+            "    $entry[$name].$f();",
+            "    $lines.push($name + \"=none\");",
+            "  } catch (e) {",
+            "    $lines.push($name + \"=\" + e.code + \"|\" + e.message",
+            "      + \"|\" + e.expected + \"|\" + e.actual);",
+            "  }",
+            "}",
+            "process.stdout.write($lines.join(\"\\n\") + \"\\n\");",
+            ""));
+        NodeResult nullRun = runNodeScript(
+            tmpDir.resolve("hostparam_proj/out").toAbsolutePath(),
+            "host_null_runner.js");
+        check(nullRun.exitCode() == 0 && nullRun.output().equals(String.join(
+                "\n",
+                "nullParam=E8010|parameter 1 type mismatch: expected int|int|table",
+                "nullReturn=E8010|return value 1 type mismatch: expected int|int|table")),
+            "a language null crossing a declared host boundary reports the"
+                + " canonical table carrier kind (matching the LuaJIT and JVM"
+                + " projections, never the JS null spelling): " + nullRun.output()
+                + " (exit " + nullRun.exitCode() + ")");
     }
 
     /**
