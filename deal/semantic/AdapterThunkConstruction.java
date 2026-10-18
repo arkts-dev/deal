@@ -49,18 +49,20 @@ public final class AdapterThunkConstruction {
                     + "duplicate op " + op.opId() + " (producer defect)");
             }
         }
-        SemanticOp last = sourceOps.get(sourceOps.size() - 1);
         ValueId produced = producedValueOf(sourceOps);
-        if (!(last.resultType() instanceof RuntimeDescriptor.Func)) {
-            throw new IllegalArgumentException("the thunk's source expression is "
-                + "function-typed: its final producing op " + last.opId() + " carries "
-                + "result type " + last.resultType() + " instead of a function "
-                + "descriptor (producer defect)");
+        SemanticOp producing = sourceOps.get(sourceOps.size() - 1);
+        for (int i = sourceOps.size() - 1; i >= 0; i--) {
+            SemanticOp candidate = sourceOps.get(i);
+            if (produced.equals(candidate.result())) {
+                producing = candidate;
+                break;
+            }
         }
-        if (last.result() == null || !last.result().equals(produced)) {
-            throw new IllegalArgumentException("the thunk's final op must produce the "
-                + "source expression's value " + produced + "; got result "
-                + last.result() + " (producer defect)");
+        if (!(producing.resultType() instanceof RuntimeDescriptor.Func)) {
+            throw new IllegalArgumentException("the thunk's source expression is "
+                + "function-typed: its final producing op " + producing.opId()
+                + " carries result type " + producing.resultType()
+                + " instead of a function descriptor (producer defect)");
         }
         java.util.Set<BindingGeneration> seenCaptures = new java.util.HashSet<>();
         for (BindingGeneration capture : capturedBindings) {
@@ -75,9 +77,13 @@ public final class AdapterThunkConstruction {
     }
 
     /**
-     * The source expression's produced value: the final producing op's
-     * result — the value the thunk re-execution publishes at every
-     * invocation (E7's protocol consumes it).
+     * The source expression's produced value: the result of the final
+     * <em>producing</em> op — the value the thunk re-execution publishes
+     * at every invocation (E7's protocol consumes it). A source
+     * expression's lowering may end with non-producing companion ops
+     * (for example a call's trailing return/boundary child, which the
+     * invoking arm executes inline and which publishes no value); those
+     * trailing companions never select the produced value.
      *
      */
     public static ValueId producedValueOf(List<SemanticOp> sourceOps) {
@@ -86,12 +92,17 @@ public final class AdapterThunkConstruction {
             throw new IllegalArgumentException("an empty thunk op list has no produced "
                 + "value (producer defect)");
         }
-        SemanticOp last = sourceOps.get(sourceOps.size() - 1);
-        if (!(last.result() instanceof ValueId value)) {
-            throw new IllegalArgumentException("the thunk's final producing op "
-                + last.opId() + " publishes no value result (producer defect)");
+        for (int i = sourceOps.size() - 1; i >= 0; i--) {
+            SemanticOp op = sourceOps.get(i);
+            if (op == null) {
+                throw new IllegalArgumentException("a thunk source op must not be null");
+            }
+            if (op.result() instanceof ValueId value) {
+                return value;
+            }
         }
-        return value;
+        throw new IllegalArgumentException("the thunk's source expression publishes no "
+            + "value result (producer defect)");
     }
 
     /**

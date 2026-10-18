@@ -1309,8 +1309,12 @@ public final class SemanticIrValidator {
             && hasFunctionKey(unit, returnedFunction);
         RawBinding registration = bindingForAllocation(unit, calleeValue.id());
         String shape = registration == null ? null : registration.shape();
+        boolean runtimeResolvedAdapter = registration != null
+            && "adapter".equals(shape)
+            && "REEVALUATE_THUNK".equals(registration.captureMode());
         String kindName = invocation.kind();
-        if (shape == null || "dynamicFunctionValue".equals(shape)) {
+        if (shape == null || "dynamicFunctionValue".equals(shape)
+                || runtimeResolvedAdapter) {
             return calleeOwned
                 ? calleeOwnedFailure(kindName, invocation.opId(), cellOpId, returnedFunction,
                     calleeValue)
@@ -3802,16 +3806,30 @@ public final class SemanticIrValidator {
 
     private static Optional<String> dynamicCalleeClassClause(RawUnit unit, RawOp invocation,
                                                              String site) {
-        String shape = dynamicCalleeRegistrationShape(unit, invocation);
-        if (shape == null || "loweredBody".equals(shape)
-                || "dynamicFunctionValue".equals(shape)) {
+        BindingInfo callee = dynamicCalleeRegistration(unit, invocation);
+        if (callee == null || "loweredBody".equals(callee.shape())
+                || "dynamicFunctionValue".equals(callee.shape())
+                || runtimeResolvedAdapter(callee)) {
             return Optional.empty();
         }
         return Optional.of("the " + site + " op " + invocation.opId()
-            + " resolves its callee value to the static class '" + shape
-            + "': a Dynamic callee admits the producer rule's dynamic registration or a"
-            + " same-walk loweredBody registration only (a statically classified callee"
-            + " belongs to the Static/Indirect arms of the closed call table)");
+            + " resolves its callee value to the static class '" + callee.shape()
+            + "': a Dynamic callee admits the producer rule's dynamic registration, a"
+            + " same-walk loweredBody registration, or an adapter whose source is"
+            + " re-evaluated per invocation (a statically classified callee belongs to the"
+            + " Static/Indirect arms of the closed call table)");
+    }
+
+    /**
+     * Whether one adapter registration's source expression is re-evaluated
+     * per invocation (the {@code REEVALUATE_THUNK} capture mode): the source
+     * value's execution class is therefore selected at execution, so the
+     * invocation records the closed dynamic return-boundary set through the
+     * DYNAMIC callee arm instead of one statically selected cell.
+     */
+    private static boolean runtimeResolvedAdapter(BindingInfo callee) {
+        return "adapter".equals(callee.shape())
+            && "REEVALUATE_THUNK".equals(callee.captureMode());
     }
 
     /**
@@ -3820,7 +3838,7 @@ public final class SemanticIrValidator {
      * (the producer rule's admitted absent case) or the callee record is
      * malformed (R-ENUM owns that).
      */
-    private static String dynamicCalleeRegistrationShape(RawUnit unit, RawOp invocation) {
+    private static BindingInfo dynamicCalleeRegistration(RawUnit unit, RawOp invocation) {
         CanonicalJson.Value calleeValue = payloadValue(invocation.payload(), "callee");
         if (!(calleeValue instanceof CanonicalJson.Obj callee)) {
             return null;
@@ -3837,7 +3855,7 @@ public final class SemanticIrValidator {
         }
         for (RawBinding binding : unit.bindings()) {
             if (binding.allocationId() == calleeId.id()) {
-                return binding.shape();
+                return BindingInfo.fromBinding(binding);
             }
         }
         return null;
@@ -3934,19 +3952,21 @@ public final class SemanticIrValidator {
 
     /** The resolved binding shape plus the closed owner/mode positions. */
     private record BindingInfo(String shape, String executionOwner, String targetSignature,
-                               String descriptor, String exportName) {
+                               String descriptor, String exportName, String captureMode) {
 
         static BindingInfo fromJson(CanonicalJson.Obj binding) {
             return new BindingInfo(optionalString(binding, "type"),
                 optionalString(binding, "executionOwner"),
                 optionalString(binding, "targetSignature"),
                 optionalString(binding, "descriptor"),
-                optionalString(binding, "exportName"));
+                optionalString(binding, "exportName"),
+                optionalString(binding, "captureMode"));
         }
 
         static BindingInfo fromBinding(RawBinding binding) {
             return new BindingInfo(binding.shape(), binding.executionOwner(),
-                binding.targetSignature(), binding.descriptor(), binding.exportName());
+                binding.targetSignature(), binding.descriptor(), binding.exportName(),
+                binding.captureMode());
         }
     }
 

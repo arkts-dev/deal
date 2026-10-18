@@ -1066,6 +1066,31 @@ public class AdapterShapeMapPayloadTest {
         check(AdapterThunkConstruction.producedValueOf(List.of(call)).equals(callResult),
             "the thunk's produced value is the call's function-typed result");
 
+        // The call's lowering may end with a non-producing companion (the
+        // call's return/boundary child, which the invoking arm runs inline
+        // and which publishes no value): the produced value is the final
+        // *producing* op, never the trailing companion — the
+        // ISSUE-0833/review remediation of the call-result arity-extension
+        // adapter source.
+        SemanticOp returnCompanion = irValueOp(new OpId(MODULE, 8203L),
+            SemanticOpKind.BOUNDARY,
+            new KindPayload.BoundaryPayload(deal.semantic.ir.BoundaryKind.FUNCTION_RETURN,
+                INT_TO_NULL.returnType(), callResult,
+                new deal.semantic.ir.BoundaryRealization.RuntimeValidation("test")),
+            null, null, List.of(callResult), List.of(INT_TO_NULL));
+        check(AdapterThunkConstruction.producedValueOf(List.of(call, returnCompanion))
+                .equals(callResult),
+            "the thunk's produced value skips the call's trailing non-producing"
+                + " return companion and selects the final producing value");
+        AdaptSourceRef.Thunk companionThunk = AdapterThunkConstruction.buildThunk(
+            new BlockId(8006L), List.of(call, returnCompanion), List.of(capture));
+        check(companionThunk.capturedBindings().equals(List.of(capture))
+                && AdapterThunkConstruction.blockMembershipOf(new BlockId(8006L),
+                    List.of(call, returnCompanion)).get(new BlockId(8006L))
+                    .equals(List.of(call.opId(), returnCompanion.opId())),
+            "a thunk over the call result plus its trailing return companion wraps"
+                + " both ops in source order with the same produced value");
+
         // Fail-closed negatives.
         boolean emptyRejected = false;
         try {
