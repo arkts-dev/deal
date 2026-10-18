@@ -108,10 +108,14 @@ const $jsonNullTables = new WeakSet();
 // plain-Map "table" label) and a decoded JSON null is language null
 // ("null") — agreeing with the shared boundary executor and the
 // LuaJIT/JVM realizations; wrappers and class instances are identified by
-// their $kind tag before the Map/Array branches; Maps (the T1 $Map
-// capture) are tables; Arrays (the T1 $Array capture) are arrays;
-// Uint8Arrays (the v1.3 bytes carrier, js-v12-int32-bytes D3) are bytes;
-// everything else reports the JS typeof name.
+// their $kind tag before the Map/Array branches — a class instance (the
+// builtin Error carrier included) projects its carried canonical class
+// atom, the shared typed-boundary token of ActualKind.CLASS, so the
+// "class" spelling stays the expected token of a class descriptor and
+// never becomes an actual; Maps (the T1 $Map capture) are tables; Arrays
+// (the T1 $Array capture) are arrays; Uint8Arrays (the v1.3 bytes
+// carrier, js-v12-int32-bytes D3) are bytes; everything else reports the
+// JS typeof name.
 function $kindOf($v) {
   if ($v === $undefined) return "nil";
   if ($v === null) return "null";
@@ -119,7 +123,9 @@ function $kindOf($v) {
   if ($jsonArrayTables.has($v)) return "array";
   if ($isNumCarrier($v)) return $v.k;
   if ($v.$kind === "function") return "function";
-  if ($v.$kind === "class") return "class";
+  if ($v.$kind === "class") {
+    return typeof $v.$classname === "string" ? $v.$classname : "class instance";
+  }
   if ($v instanceof $Map) return "table";
   if ($Array.isArray($v)) return "array";
   if ($v instanceof $Uint8Array) return "bytes";

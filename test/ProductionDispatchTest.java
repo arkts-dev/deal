@@ -4753,10 +4753,13 @@ public class ProductionDispatchTest {
     // =========================================================================
 
     /**
-     * The three carrier exports of the JS-lane tuple leg. The entry module
-     * keeps its {@code (): null} {@code main}, so each carrier is driven
-     * through an ordinary zero-arity export exactly like the production
-     * lane protocol drives a fixture's own export.
+     * The four carrier exports of the tuple drive. The entry module keeps
+     * its {@code (): null} {@code main}, so each carrier is driven through
+     * an ordinary zero-arity export exactly like the production lane
+     * protocol drives a fixture's own export. The last two carriers are
+     * class instances — a declared class and the builtin {@code Error} —
+     * carried through a table slot so the contextual read supplies the
+     * runtime {@code table} value the declared std/json parameter rejects.
      */
     private static final String JSON_CARRIER_TUPLE_V13_SOURCE = """
         import * as json from "std/json";
@@ -4782,6 +4785,13 @@ public class ProductionDispatchTest {
           return json.stringify(holder.box);
         }
 
+        export function errorCarrier(): string {
+          let holder: table = {};
+          let failure: Error = {};
+          holder.failure = failure;
+          return json.stringify(holder.failure);
+        }
+
         export function main(): null {
           return null;
         }
@@ -4789,89 +4799,195 @@ public class ProductionDispatchTest {
 
     /**
      * The compiled contextual-read call form at the declared std/json
-     * {@code table} parameter, pinned field-exact on the JS production
-     * lane: code, message, expected, actual, and the failing contextual
-     * read's own source position, through a real node execution of the
-     * published artifact. The semantic-IR JS lane lowers the same project
-     * the other lanes do, so it records both cells — the contextual
-     * read's own {@code table} boundary and the declared
-     * {@code STDLIB_PARAMETER} cell of the {@code std/json} entry — and
-     * the read cell fires first at the read expression, the origin the
-     * LuaJIT/JVM lanes report for the same form (the pinned position is
-     * the argument expression's own start, never the enclosing call's).
-     * The cross-lane outcome agreement over the same three carriers is
+     * {@code table} parameter, pinned field-exact on all three production
+     * lanes from one project source: code, message, expected, actual, and
+     * the failing contextual read's own source position, through a real
+     * execution of each published artifact (node, luajit, java). Every
+     * lane records both cells — the contextual read's own {@code table}
+     * boundary and the declared {@code STDLIB_PARAMETER} cell of the
+     * {@code std/json} entry — and the read cell fires first at the read
+     * expression (the pinned position is the argument expression's own
+     * start, never the enclosing call's), so the lanes must agree byte for
+     * byte on the same tuple.
+     *
+     * <p>The two class instances project their carried canonical class
+     * atom — the shared {@code FailureProjections.typedBoundaryToken} for
+     * {@code ActualKind.CLASS}: the declared class projects
+     * {@code @<configuredRoot>/<ClassName>} (the configured root text and
+     * the file-stem-free relative module components) and the builtin
+     * {@code Error} instance its {@code Error} atom. {@code class} stays
+     * the expected token of a class descriptor and never becomes an
+     * actual, on any lane.</p>
+     *
+     * <p>The cross-lane outcome agreement over the same carriers is
      * registered as the corpus fixture
      * {@code backend-runtime/stdlib/json/json-stringify-contextual-read-carrier}
      * driven through this suite's boundary-corpus leg and the JS corpus
-     * lane.
+     * lane.</p>
      */
     private static void testStdlibJsonCarrierBoundaryV13ProductionDrive()
             throws Exception {
         System.out.println("-- the declared std/json table parameter at a"
-            + " contextual read used as a call argument: the js lane's"
-            + " carrier tuple --");
-        Path project = Files.createTempDirectory("json-carrier-tuple-js-");
+            + " contextual read used as a call argument: the carrier tuple"
+            + " on the three production lanes --");
+        Path project = Files.createTempDirectory("json-carrier-tuple-");
         try {
-            write(project, "deal.json", DEAL_JSON_JS);
             write(project, "src/main.deal", JSON_CARRIER_TUPLE_V13_SOURCE);
-            ProjectOutcome compile = productionCompile(project, "src/main.deal",
-                "out");
-            check(compile.exitCode() == 0,
-                "the js std/json carrier-tuple compile succeeds: "
-                    + compile.stderr());
-            if (compile.exitCode() != 0) {
-                return;
-            }
-            Path out = project.resolve("out");
-            // The probe drives each compiled export once and prints the
-            // caught tuple: code, message, expected, actual, and the
-            // reported source position.
-            write(out, "tuple.js", """
-                "use strict";
-                const $rt = require("./deal/runtime");
-                const $entry = require("./main");
-                for (const $name of ["arrayCarrier", "nullCarrier", "classCarrier"]) {
-                  try {
-                    const $value = $entry[$name].$f();
-                    console.log($name + "|admitted|" + $value);
-                  } catch ($e) {
-                    const $err = $rt.reifyError($e);
-                    console.log($name + "|" + $err.code + "|" + $err.message
-                      + "|" + $err.expected + "|" + $err.actual + "|" + $err.file
-                      + "|" + $err.line + "|" + $err.column);
-                  }
-                }
-                """);
-            BoundedProcess.BoundedResult run = runBounded(out, "node",
-                "tuple.js");
-            check(run.exitCode() == 0,
-                "the js std/json carrier-tuple probe runs clean: exit="
-                    + run.exitCode() + " output=" + boundedOutput(run));
             String sourceFile = project.resolve("src/main.deal")
                 .toAbsolutePath().normalize().toString();
+            // The pinned tuple: the failing contextual read's own argument
+            // position, and the carried canonical class atom for the two
+            // class instances (the declared class and the builtin Error).
             int[] arrayAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
                 "json.stringify(doc.xs)", "doc.xs");
             int[] nullAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
                 "json.stringify(doc.n)", "doc.n");
             int[] classAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
                 "json.stringify(holder.box)", "holder.box");
+            int[] errorAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
+                "json.stringify(holder.failure)", "holder.failure");
             String expected = String.join("\n",
                 "arrayCarrier|E8001|expected table|table|array|" + sourceFile
-                    + "|" + arrayAt[0] + "|" + arrayAt[1],
+                    + ":" + arrayAt[0] + ":" + arrayAt[1],
                 "nullCarrier|E8001|expected table|table|null|" + sourceFile
-                    + "|" + nullAt[0] + "|" + nullAt[1],
-                "classCarrier|E8001|expected table|table|class|" + sourceFile
-                    + "|" + classAt[0] + "|" + classAt[1],
+                    + ":" + nullAt[0] + ":" + nullAt[1],
+                "classCarrier|E8001|expected table|table|@src/Box|" + sourceFile
+                    + ":" + classAt[0] + ":" + classAt[1],
+                "errorCarrier|E8001|expected table|table|Error|" + sourceFile
+                    + ":" + errorAt[0] + ":" + errorAt[1],
                 "");
-            checkEq(expected, run.stdout(),
-                "the js artifact reports the shared expected-table tuple for"
-                    + " the two decode carriers and the class instance at the"
-                    + " contextual read's own argument position");
-            check(run.stderr().isEmpty(),
-                "the js carrier-tuple probe writes no stderr, got '"
-                    + run.stderr() + "'");
+            for (String backend : List.of("js", "luajit", "jvm")) {
+                write(project, "deal.json", switch (backend) {
+                    case "js" -> DEAL_JSON_JS;
+                    case "luajit" -> DEAL_JSON_LUA;
+                    default -> DEAL_JSON_JVM;
+                });
+                String outName = "out-" + backend;
+                ProjectOutcome compile = productionCompile(project,
+                    "src/main.deal", outName);
+                check(compile.exitCode() == 0, "the " + backend
+                    + " std/json carrier-tuple compile succeeds: "
+                    + compile.stderr());
+                if (compile.exitCode() != 0) {
+                    continue;
+                }
+                BoundedProcess.BoundedResult run = carrierTupleRun(project,
+                    backend, project.resolve(outName));
+                checkEqualCapture("the " + backend + " std/json carrier"
+                    + " tuple", backend, run, 0, expected);
+            }
         } finally {
             deleteRecursively(project);
+        }
+    }
+
+    /**
+     * One published carrier-tuple artifact under the real toolchain of its
+     * backend: each of the four carriers is driven once (the production
+     * lane protocol's zero-arity export drive) and the caught runtime error
+     * prints its exact tuple as {@code name|code|message|expected|actual|
+     * origin}. All three probes report the origin as the one
+     * {@code file:line:column} spelling the LuaJIT/JVM artifacts already
+     * publish, so one expected transcript pins all lanes.
+     */
+    private static BoundedProcess.BoundedResult carrierTupleRun(Path project,
+            String backend, Path out) throws Exception {
+        List<String> carriers = List.of("arrayCarrier", "nullCarrier",
+            "classCarrier", "errorCarrier");
+        if ("js".equals(backend)) {
+            write(out, "tuple.js", """
+                "use strict";
+                const $rt = require("./deal/runtime");
+                const $entry = require("./main");
+                for (const $name of ["arrayCarrier", "nullCarrier",
+                    "classCarrier", "errorCarrier"]) {
+                  try {
+                    const $value = $entry[$name].$f();
+                    console.log($name + "|admitted|" + $value);
+                  } catch ($e) {
+                    const $err = $rt.reifyError($e);
+                    console.log($name + "|" + $err.code + "|" + $err.message
+                      + "|" + $err.expected + "|" + $err.actual + "|"
+                      + $err.file + ":" + $err.line + ":" + $err.column);
+                  }
+                }
+                """);
+            return runBounded(out, "node", "tuple.js");
+        }
+        if ("luajit".equals(backend)) {
+            Path probe = project.resolve("carrier-tuple.lua");
+            Files.writeString(probe, """
+                local surface = dofile(arg[1])
+                local ok, err = __dealMain()
+                if not ok then error(err, 0) end
+                for i = 2, #arg do
+                  local name = arg[i]
+                  local okX, errX = pcall(surface[name].f)
+                  if okX then
+                    print(name .. '|admitted|' .. tostring(errX))
+                  else
+                    if type(errX) ~= 'table' or not errX[__dealCarrierKeys.d] then
+                      error(errX, 0)
+                    end
+                    print(name .. '|' .. errX.code .. '|' .. errX.m .. '|'
+                      .. (errX.e or '') .. '|' .. (errX.a or '') .. '|'
+                      .. tostring(errX.o))
+                  end
+                end
+                """);
+            List<String> command = new java.util.ArrayList<>(List.of(
+                "luajit", probe.toString(), out.resolve("main.lua").toString()));
+            command.addAll(carriers);
+            return runBounded(project, command.toArray(String[]::new));
+        }
+        String classpath = absoluteClasspath();
+        Path artifact = out.resolve("Main.java");
+        check(Files.isRegularFile(artifact), "the production CLI stages the"
+            + " JVM artifact " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return runBounded(project, "java", "-version");
+        }
+        BoundedProcess.BoundedResult javac = runBounded(project,
+            javacCommand(classpath, out, List.of(artifact.toString())));
+        check(javac.exitCode() == 0, "the emitted JVM carrier-tuple"
+            + " artifacts accept the probe: " + javac.stderr());
+        if (javac.exitCode() != 0) {
+            return javac;
+        }
+        List<String> command = new java.util.ArrayList<>(List.of("java", "-cp",
+            out + File.pathSeparator + classpath,
+            CarrierTupleChild.class.getName(), "Main", "main"));
+        command.addAll(carriers);
+        return runBounded(out, command.toArray(String[]::new));
+    }
+
+    /**
+     * The JVM leg's probe: entry {@code main} once, then each named
+     * zero-arity export, printing the caught {@code DealError}'s tuple in
+     * the same {@code name|code|message|expected|actual|origin} shape the
+     * node and luajit probes print.
+     */
+    public static final class CarrierTupleChild {
+        public static void main(String[] args) throws Throwable {
+            java.lang.invoke.MethodHandles.publicLookup().findStatic(
+                Class.forName(args[0]), "dealMain",
+                java.lang.invoke.MethodType.methodType(void.class)).invokeExact();
+            deal.codegen.jvm.JvmRuntime.Table surface =
+                deal.codegen.jvm.JvmRuntime.exportSurface(args[1]);
+            for (int i = 2; i < args.length; i++) {
+                String name = args[i];
+                try {
+                    ((deal.codegen.jvm.JvmRuntime.FunctionValue)
+                        surface.read(name)).fn.invoke(new Object[0]);
+                    System.out.println(name + "|admitted|");
+                } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                    System.out.println(name + "|" + error.code + "|"
+                        + error.msg + "|"
+                        + (error.expected == null ? "" : error.expected)
+                        + "|" + (error.actual == null ? "" : error.actual)
+                        + "|" + error.origin);
+                }
+            }
         }
     }
 

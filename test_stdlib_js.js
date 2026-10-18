@@ -682,18 +682,32 @@ test("json.stringify rejects a root class value at the declared table parameter"
   // (table)->string entry check rejects it with the shared typed-boundary
   // tuple (E8001 "expected table", expected "table"), exactly like the
   // two decode carriers and the shared STDLIB_PARAMETER cell the
-  // LuaJIT/JVM lanes run. Root class values are not implicitly table
-  // arguments to std/json.stringify and never reach the encoder walk.
+  // LuaJIT/JVM lanes run. The actual is the carried canonical class atom
+  // (the shared FailureProjections.typedBoundaryToken for
+  // ActualKind.CLASS); "class" is only ever the expected token of a class
+  // descriptor. Root class values are not implicitly table arguments to
+  // std/json.stringify and never reach the encoder walk.
   const err = assertErrorMessage(function() { json.stringify.$f(inst, "f.js", 9, 4); }, "E8001",
     "expected table");
   assertEqual(err.expected, "table", "the boundary's pinned expected text");
-  assertEqual(err.actual, "class", "the runtime's class-kind actual token");
+  assertEqual(err.actual, "@app.main/User",
+    "the class instance projects its carried canonical class atom");
   assertSpan(err, "f.js", 9, 4);
   // The encoder row keeps its own unsupported-carrier arm for a class
   // instance reached through table content.
   assertErrorMessage(function() {
     rt.jsonStringifyText(rt.makeTable({ u: inst }), [], "f.js", 1, 1);
   }, "E8001", "unsupported type for JSON encoding: table");
+});
+
+test("json.stringify rejects a builtin Error instance at the declared table parameter", function() {
+  const err = assertErrorMessage(function() {
+    json.stringify.$f(rt.errorValue("E_X", "boom"), "f.js", 3, 5);
+  }, "E8001", "expected table");
+  assertEqual(err.expected, "table", "the boundary's pinned expected text");
+  assertEqual(err.actual, "Error",
+    "the builtin Error instance projects its carried canonical class atom");
+  assertSpan(err, "f.js", 3, 5);
 });
 
 test("json.stringify rejects class instances inside table content", function() {
