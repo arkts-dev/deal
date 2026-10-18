@@ -37,6 +37,18 @@
 -- emitted chunk's table admission and the JS runtime's checkTable — a
 -- decoded array or null never masquerades as a table return. Nested
 -- containers and the top-level scalar results keep their representation.
+--
+-- Decoded arrays keep their array shape (DEAL v1.3 JSON containers): every
+-- array the parser completes carries the private array carrier pair — the
+-- array mark and the array's logical length — that the emitted chunk and
+-- the LuaJIT host projection write, so a nested array, empty arrays
+-- included, remains a JSON array of the decoded table representation
+-- instead of collapsing into an indistinguishable {}. stringify reads that
+-- mark (and the chunk carrier a declared T[] host parameter crosses into
+-- DEAL as) before any numeric-key inference, so a nested decoded empty
+-- array encodes as [] and a chunk array carrier encodes as the array of its
+-- elements, never as an object holding private carrier keys; unmarked
+-- tables keep the existing numeric-key inference and object encoding.
 
 local __rt = require("deal.runtime")
 
@@ -230,6 +242,22 @@ local function unsupported(v, file, line, column)
     file, line, column, "string, number, boolean, or table", actual))
 end
 
+-- The decoded-array mark: every array the parser completes carries the
+-- private array carrier pair the emitted chunk and the LuaJIT host
+-- projection use — the array mark __K.a and the array's logical length
+-- __K.n — so a decoded array keeps its array shape in the JSON-shaped
+-- table representation at every depth. An empty array is therefore a
+-- marked zero-length array, never the {} a mark-less table collapses
+-- into, and the encoder below reads exactly the marks the chunk writes
+-- (a host-projected declared T[] carrier and a chunk-constructed array
+-- carry them too). The marks are table-object keys, so no user key and no
+-- decoded JSON member name can shadow or forge one.
+local function mark_decoded_array(arr, length)
+  arr[__K.a] = true
+  arr[__K.n] = length
+  return arr
+end
+
 -- The stack-safe walk: an explicit frame stack replaces the recursion, so
 -- a finite nested value has no Lua call-stack bound; the path set keeps
 -- the path-local cycle guard (entered on open, removed on close).
@@ -292,6 +320,28 @@ local function encode_value(v, file, line, column, path)
         error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
       end
       path[val] = true
+      -- The private array mark selects array mode before the numeric-key
+      -- inference: a decoded JSON array (marked by parse, an empty array
+      -- included) and the emitted chunk's own array carrier — the carrier
+      -- a declared T[] host parameter crosses into DEAL as — are arrays
+      -- even when they carry no numeric key, and their private marks are
+      -- never encoded as object members. The recorded length is the
+      -- logical length; a carrier without a usable length falls back to
+      -- the table's own border, never to object mode.
+      local markedLen = nil
+      if val[__K.a] then
+        local declared = val[__K.n]
+        if type(declared) == 'number' and declared >= 0 and declared % 1 == 0 then
+          markedLen = declared
+        else
+          markedLen = #val
+        end
+      end
+      if markedLen ~= nil then
+        out[#out + 1] = '['
+        frames[#frames + 1] = {kind = 'array', value = val, index = 1, maxIdx = markedLen}
+        return
+      end
       -- Check if it's an array (sequential integer keys starting at 1)
       local isArray = true
       local maxIdx = 0
@@ -579,7 +629,7 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
             skip_ws()
             if peek() == ']' then
               pos = pos + 1
-              completed = frame.arr
+              completed = mark_decoded_array(frame.arr, 0)
               frames[#frames] = nil
               have_completed = true
             else
@@ -596,7 +646,7 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
             local c = peek()
             if c == ']' then
               pos = pos + 1
-              completed = frame.arr
+              completed = mark_decoded_array(frame.arr, frame.index - 1)
               frames[#frames] = nil
               have_completed = true
             elseif c == ',' then

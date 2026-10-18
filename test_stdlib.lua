@@ -854,6 +854,73 @@ test("json.stringify rejects a path-local cycle with the closed arm (v1.3)", fun
   assert(ok.a.v == 1 and ok.b.v == 1, "a shared acyclic child serializes twice")
 end)
 
+-- The decoded-array mark (ISSUE-0837): the shipped Lua realization of the
+-- JSON-shaped table representation keeps array shape at every depth. The
+-- mark pair is the emitted chunk's own array carrier pair (the array mark
+-- and the logical length), which is also what the LuaJIT host projection
+-- writes for a declared T[] host parameter.
+test("json.parse marks every decoded array, empty arrays included (v1.3)", function()
+  local parsed = json.parse.f('{"empty":[],"one":[1],"deep":{"nested":[[],{"k":1}]}}')
+  assert(parsed.empty[__K.a] == true, "an empty decoded array carries the array mark")
+  assert(parsed.empty[__K.n] == 0, "an empty decoded array records the zero length")
+  assert(parsed.one[__K.a] == true, "a decoded array carries the array mark")
+  assert(parsed.one[__K.n] == 1, "a decoded array records its length")
+  assert(parsed.one[1] == 1, "the decoded array keeps its element")
+  assert(parsed[__K.a] == nil, "the decoded object root is not the array carrier")
+  assert(parsed.deep[__K.a] == nil, "a decoded nested object stays a plain table")
+  assert(parsed.deep.nested[__K.a] == true and parsed.deep.nested[__K.n] == 2,
+    "an array nested in an object records its own marks")
+  assert(parsed.deep.nested[1][__K.a] == true and parsed.deep.nested[1][__K.n] == 0,
+    "an empty array nested in an array records the zero length")
+  assert(parsed.deep.nested[2][__K.a] == nil,
+    "an object nested in an array stays a plain table")
+end)
+
+test("json.stringify encodes nested decoded arrays, empty arrays included (v1.3)", function()
+  -- The defect: a decoded nested empty array was indistinguishable from {},
+  -- so the encoder produced {"items":{}} where every other lane and the
+  -- compiled LuaJIT lane produce {"items":[]}.
+  assert(json.stringify.f(json.parse.f('{"items":[]}')) == '{"items":[]}',
+    "a nested empty decoded array encodes as []")
+  assert(json.stringify.f(json.parse.f('{"items":[1,2]}')) == '{"items":[1,2]}',
+    "a nested decoded array encodes as its elements")
+  assert(json.stringify.f(json.parse.f('{"a":[[],[]]}')) == '{"a":[[],[]]}',
+    "arrays nested in arrays keep every empty boundary")
+  assert(json.stringify.f(json.parse.f('{"a":[1,[2],{"b":[]}]}')) == '{"a":[1,[2],{"b":[]}]}',
+    "mixed decoded nesting keeps every array boundary")
+  -- The encoder does not mutate the decoded carriers it reads.
+  local parsed = json.parse.f('{"items":[]}')
+  assert(json.stringify.f(parsed) == '{"items":[]}', "the first encode keeps the array")
+  assert(parsed.items[__K.a] == true and parsed.items[__K.n] == 0,
+    "encoding leaves the decoded array marks in place")
+  -- A round-trip keeps the marks: the re-decoded document is still arrays.
+  local again = json.parse.f(json.stringify.f(parsed))
+  assert(again.items[__K.a] == true and again.items[__K.n] == 0,
+    "the round-trip keeps the nested empty array mark")
+end)
+
+test("json.stringify encodes the emitted chunk array carrier as an array (v1.3)", function()
+  -- The carrier a declared T[] host parameter crosses into DEAL as, and the
+  -- carrier an emitted chunk constructs: the private array mark, the logical
+  -- length, the per-slot variant marks, and the elements. The encoder reads
+  -- the mark before the numeric-key inference, so the carrier is a JSON
+  -- array and none of its private table-object keys reach the output.
+  local carrier = {[__K.a] = true, [__K.n] = 2, [__K.nK] = {}, 1, 2}
+  assert(json.stringify.f({ items = carrier }) == '{"items":[1,2]}',
+    "a nested chunk array carrier encodes as an array")
+  assert(json.stringify.f({ items = {[__K.a] = true, [__K.n] = 0, [__K.nK] = {}} }) == '{"items":[]}',
+    "an empty chunk array carrier encodes as []")
+  local nested = {[__K.a] = true, [__K.n] = 2, [__K.nK] = {},
+    "a", {[__K.a] = true, [__K.n] = 0, [__K.nK] = {}}}
+  assert(json.stringify.f({ items = nested }) == '{"items":["a",[]]}',
+    "a chunk array carrier's nested array element encodes as []")
+  local text = json.stringify.f({ items = carrier })
+  assert(string.find(text, "table:", 1, true) == nil,
+    "no private carrier key is encoded, got: " .. text)
+  assert(carrier[__K.a] == true and carrier[__K.n] == 2 and carrier[1] == 1,
+    "the carrier is not mutated")
+end)
+
 test("json.parse decodes the full RFC 8259 escape table", function()
   local text = '"' .. '\\"' .. '\\\\' .. '\\/' .. '\\b' .. '\\f' .. '\\n' .. '\\r' .. '\\t' .. '"'
   local r = json.parse.f('{"v":' .. text .. '}').v
