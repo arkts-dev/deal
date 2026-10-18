@@ -850,6 +850,57 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
+    /**
+     * Class-default construction terminated by the fields the literals provide:
+     * a provided field skips its default (docs/spec-v1.3.md §Construction), so
+     * the self-referential {@code Self} and the mutually defaulting {@code A}/
+     * {@code B} pair each construct only the shape their literal supplied and
+     * never re-enter their own default.
+     */
+    private static final String PROVIDED_FIELD_DEFAULT_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export function main(): null {
+          let self: Self = {};
+          let child: Self | null = self.child;
+          if (child !== null) {
+            if (child.child !== null) {
+              throw { code: "JS_PROBE", message: "provided child field" };
+            }
+          } else {
+            throw { code: "JS_PROBE", message: "self default child" };
+          }
+
+          let outer: A = {};
+          if (outer.b.a !== null) {
+            throw { code: "JS_PROBE", message: "provided mutual field" };
+          }
+          let b: B = {};
+          let a: A | null = b.a;
+          if (a !== null) {
+            if (a.b.a !== null) {
+              throw { code: "JS_PROBE", message: "mutual provided field" };
+            }
+          } else {
+            throw { code: "JS_PROBE", message: "mutual default a" };
+          }
+          console.log("PROBE|JS|PROVIDED-DEFAULTS");
+          return null;
+        }
+
+        class Self {
+          child: Self | null = { child: null };
+        }
+
+        class A {
+          b: B = { a: null };
+        }
+
+        class B {
+          a: A | null = {};
+        }
+        """;
+
     private static Fixture jsFixture() throws Exception {
         Map<String, String> sources = new LinkedHashMap<>();
         sources.put("src/cfg.d.deal", JS_HOST_DECLARATION);
@@ -1622,6 +1673,41 @@ public class ProductionProjectEmissionTest {
                 "the mutual and self-referential defaults construct only at"
                     + " the deferred call and terminate");
             checkEq("", run.stderr(), "the deferred-default run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * A class default whose literal provides the recursive field terminates:
+     * the construction skips the provided field's default, so neither the
+     * self-referential nor the mutual variant re-enters its own default.
+     */
+    private static void testProvidedFieldDefaultTermination(boolean node)
+            throws Exception {
+        Path root = Files.createTempDirectory("js-provided-defaults-");
+        try {
+            writeFileIn(root, "src/app.deal", PROVIDED_FIELD_DEFAULT_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the provided-field class defaults compile through the public"
+                    + " JS arm (a supplied field adds no construction edge): "
+                    + orchestrator.diagnostics());
+            if (!node) {
+                System.out.println("  SKIP: the provided-field default Node"
+                    + " drive needs node");
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            checkEq(0, run.exitCode(),
+                "the provided-field default artifact runs: " + run.output());
+            checkEq("PROBE|JS|PROVIDED-DEFAULTS\n", run.stdout(),
+                "the self-referential and mutual provided-field defaults"
+                    + " construct only their supplied shapes and terminate");
+            checkEq("", run.stderr(),
+                "the provided-field default run reports no failure");
         } finally {
             deleteRecursively(root);
         }
@@ -4568,6 +4654,7 @@ public class ProductionProjectEmissionTest {
             testJsEntryFailureStatus(node);
             testDeclarationOrderAndCallResultAdapter(node);
             testAdapterRuntimeResolutionAndDeferredDefaults(node);
+            testProvidedFieldDefaultTermination(node);
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);

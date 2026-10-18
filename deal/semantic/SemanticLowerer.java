@@ -4384,11 +4384,12 @@ public final class SemanticLowerer {
          * construction identity without depending on the target's lowering
          * position — mutual function-valued defaults lower in declaration
          * order. Only the defaults a construction really evaluates are part of
-         * the construction graph; a class literal inside a function expression
-         * is deferred to the call, so it orders nothing. A direct construction
-         * cycle (a default that constructs a class whose own default
-         * constructs this one) has no terminating reading and fails closed
-         * before any default lowers.</p>
+         * the construction graph: a provided field skips its default, an
+         * optional field runs none, and a class literal inside a function
+         * expression is deferred to the call, so none of them orders anything.
+         * A direct construction cycle (a default that constructs a class whose
+         * own omitted required default constructs this one) has no terminating
+         * reading and fails closed before any default lowers.</p>
          */
         private void hoistModuleLevelClassDeclarations(List<StatementNode> statements) {
             if (!classCore || !fullProgram) {
@@ -4420,13 +4421,18 @@ public final class SemanticLowerer {
             for (ClassDeclaration declaration : declarations) {
                 preRegisterClassDefaults(declaration);
             }
-            Set<ClassDeclaration> open =
-                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-            Set<ClassDeclaration> visited =
-                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            Set<ClassDefaultNode> open = new HashSet<>();
+            Set<ClassDefaultNode> visited = new HashSet<>();
             for (ClassDeclaration declaration : declarations) {
-                rejectEagerConstructionCycle(declaration, declarationsByClass,
-                    open, visited);
+                ClassId classId = classIdOf(declaration);
+                for (ClassField field : declaration.fields()) {
+                    if (field.optional() || field.defaultExpr().isEmpty()) {
+                        continue;
+                    }
+                    rejectEagerConstructionCycle(
+                        new ClassDefaultNode(classId, field.name()),
+                        declarationsByClass, open, visited);
+                }
             }
             for (ClassDeclaration declaration : declarations) {
                 lowerClassDeclaration(declaration, exportedDeclarations.contains(declaration));
@@ -4436,39 +4442,56 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Rejects a class-default construction cycle: a default expression that
-         * constructs a class whose own default constructs this one never
-         * terminates. Only directly evaluated literals are edges — a literal
+         * One required-present defaulted field's evaluation: the construction
+         * node of the default-construction graph. A cycle through these nodes
+         * is a construction that re-enters its own default and never
+         * terminates.
+         */
+        private record ClassDefaultNode(ClassId classId, String field) {
+
+            private ClassDefaultNode {
+                Objects.requireNonNull(classId, "classId must not be null");
+                Objects.requireNonNull(field, "field must not be null");
+            }
+        }
+
+        /**
+         * Rejects a class-default construction cycle: evaluating a default
+         * expression that constructs a class whose own omitted required default
+         * reaches this default again never terminates. Only the defaults the
+         * construction really evaluates are edges — a field the literal
+         * provides skips its default, an optional field runs none, and a literal
          * inside a function expression is deferred to the call, after the
-         * enclosing construction completed, so it can never make the
+         * enclosing construction completed, so none of them make the
          * construction non-terminating.
          */
-        private void rejectEagerConstructionCycle(ClassDeclaration declaration,
+        private void rejectEagerConstructionCycle(ClassDefaultNode node,
                 Map<ClassId, ClassDeclaration> declarationsByClass,
-                Set<ClassDeclaration> open, Set<ClassDeclaration> visited) {
-            if (visited.contains(declaration)) {
+                Set<ClassDefaultNode> open, Set<ClassDefaultNode> visited) {
+            if (visited.contains(node)) {
                 return;
             }
-            if (!open.add(declaration)) {
+            if (!open.add(node)) {
+                ClassDeclaration declaration = declarationsByClass.get(node.classId());
                 throw new ConstructUnlowered("cyclic class-default construction: "
-                    + "class '" + declaration.name() + "' is reached again"
+                    + "class '" + (declaration == null ? node.classId().text()
+                        : declaration.name()) + "' is reached again"
                     + " while evaluating the default expressions that construct it"
                     + " (a default that constructs a class whose own default"
                     + " constructs this one never terminates; a defaulted"
-                    + " construction cycle is not lowerable)", declaration.span());
+                    + " construction cycle is not lowerable)",
+                    declaration == null ? programSpan : declaration.span());
             }
             try {
-                for (ClassId dependency : eagerDefaultConstructionDependencies(declaration)) {
-                    ClassDeclaration provider = declarationsByClass.get(dependency);
-                    if (provider != null) {
-                        rejectEagerConstructionCycle(provider, declarationsByClass,
-                            open, visited);
-                    }
+                for (ClassDefaultNode dependency
+                        : eagerDefaultConstructionDependencies(node, declarationsByClass)) {
+                    rejectEagerConstructionCycle(dependency, declarationsByClass,
+                        open, visited);
                 }
             } finally {
-                open.remove(declaration);
+                open.remove(node);
             }
-            visited.add(declaration);
+            visited.add(node);
         }
 
         /**
@@ -4537,24 +4560,74 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The module-level classes one declaration's default expressions
-         * construct as part of the default's own evaluation: every class-typed
-         * object literal in a field default, in source order including nested
-         * literals and array/table members, but never inside a function
-         * expression (that body runs only when the closure is called, after the
-         * enclosing construction completed). A literal whose type is not a class
-         * constructs no class and adds no edge.
+         * The default nodes one default evaluation descends into: every
+         * class-typed object literal in the default expression, in source order
+         * including nested literals and array/table members, contributes the
+         * required-present defaulted fields of its class that the literal omits
+         * — exactly the defaults that construction evaluates. A field the
+         * literal provides and an optional field add no edge, and a literal
+         * inside a function expression is deferred to the call, so it is never
+         * walked (the closure body runs only after the enclosing construction
+         * completed). A literal whose type is not a local class declaration
+         * constructs no local default and adds no edge.
          */
-        private List<ClassId> eagerDefaultConstructionDependencies(
-                ClassDeclaration declaration) {
-            List<ClassId> dependencies = new ArrayList<>();
-            for (ClassField field : declaration.fields()) {
-                if (field.defaultExpr().isEmpty()) {
+        private List<ClassDefaultNode> eagerDefaultConstructionDependencies(
+                ClassDefaultNode node,
+                Map<ClassId, ClassDeclaration> declarationsByClass) {
+            ClassDeclaration declaration = declarationsByClass.get(node.classId());
+            ClassField field = classFieldOf(declaration, node.field());
+            if (field == null || field.defaultExpr().isEmpty()) {
+                throw new ConstructUnlowered("the construction graph reaches "
+                    + node.classId() + "." + node.field() + ", which is no"
+                    + " defaulted field of the declaration (producer defect)",
+                    declaration == null ? programSpan : declaration.span());
+            }
+            List<ClassLiteralSite> sites = new ArrayList<>();
+            collectClassLiteralSites(field.defaultExpr().get(), sites);
+            List<ClassDefaultNode> dependencies = new ArrayList<>();
+            for (ClassLiteralSite site : sites) {
+                ClassDeclaration provider = declarationsByClass.get(site.classId());
+                if (provider == null) {
                     continue;
                 }
-                collectClassLiteralIds(field.defaultExpr().get(), dependencies);
+                for (ClassField providerField : provider.fields()) {
+                    if (providerField.optional()
+                            || providerField.defaultExpr().isEmpty()
+                            || site.providedFields().contains(providerField.name())) {
+                        continue;
+                    }
+                    dependencies.add(new ClassDefaultNode(site.classId(),
+                        providerField.name()));
+                }
             }
             return dependencies;
+        }
+
+        /** The declaration's field of one name, or null when it declares none. */
+        private static ClassField classFieldOf(ClassDeclaration declaration, String name) {
+            if (declaration == null) {
+                return null;
+            }
+            for (ClassField field : declaration.fields()) {
+                if (field.name().equals(name)) {
+                    return field;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * One class-typed object literal site of a default expression: the
+         * literal's class and the field names the literal provides (so a
+         * construction of it never evaluates those fields' defaults).
+         */
+        private record ClassLiteralSite(ClassId classId, Set<String> providedFields) {
+
+            private ClassLiteralSite {
+                Objects.requireNonNull(classId, "classId must not be null");
+                Objects.requireNonNull(providedFields,
+                    "providedFields must not be null");
+            }
         }
 
         /**
@@ -4644,8 +4717,12 @@ public final class SemanticLowerer {
                 && classLayouts.containsKey(classId);
         }
 
-        /** Collects the checked class identity of every class literal in one expression. */
-        private void collectClassLiteralIds(ExpressionNode node, List<ClassId> classIds) {
+        /**
+         * Collects every class-typed object literal site of one expression with
+         * the field names the literal provides.
+         */
+        private void collectClassLiteralSites(ExpressionNode node,
+                List<ClassLiteralSite> sites) {
             switch (node) {
                 case ObjectLiteralExpr literal -> {
                     Type type = checks.typeMap().get(literal);
@@ -4654,47 +4731,51 @@ public final class SemanticLowerer {
                             DescriptorService.semanticModulePath(classType.identity()),
                             classType.name());
                         if (constructsLocalDeclaration(literal, classType, classId)) {
-                            classIds.add(classId);
+                            Set<String> provided = new LinkedHashSet<>();
+                            for (Property property : literal.properties()) {
+                                provided.add(property.name());
+                            }
+                            sites.add(new ClassLiteralSite(classId, Set.copyOf(provided)));
                         }
                     }
                     for (Property property : literal.properties()) {
-                        collectClassLiteralIds(property.value(), classIds);
+                        collectClassLiteralSites(property.value(), sites);
                     }
                 }
                 case ArrayLiteralExpr array -> {
                     for (ExpressionNode element : array.elements()) {
-                        collectClassLiteralIds(element, classIds);
+                        collectClassLiteralSites(element, sites);
                     }
                 }
                 case CallExpr call -> {
-                    collectClassLiteralIds(call.callee(), classIds);
+                    collectClassLiteralSites(call.callee(), sites);
                     for (ExpressionNode argument : call.args()) {
-                        collectClassLiteralIds(argument, classIds);
+                        collectClassLiteralSites(argument, sites);
                     }
                 }
                 case BinaryExpr binary -> {
-                    collectClassLiteralIds(binary.left(), classIds);
-                    collectClassLiteralIds(binary.right(), classIds);
+                    collectClassLiteralSites(binary.left(), sites);
+                    collectClassLiteralSites(binary.right(), sites);
                 }
-                case UnaryExpr unary -> collectClassLiteralIds(unary.expr(), classIds);
+                case UnaryExpr unary -> collectClassLiteralSites(unary.expr(), sites);
                 case MemberAccessExpr access ->
-                    collectClassLiteralIds(access.object(), classIds);
+                    collectClassLiteralSites(access.object(), sites);
                 case IndexExpr index -> {
-                    collectClassLiteralIds(index.array(), classIds);
-                    collectClassLiteralIds(index.index(), classIds);
+                    collectClassLiteralSites(index.array(), sites);
+                    collectClassLiteralSites(index.index(), sites);
                 }
-                case HasExpr has -> collectClassLiteralIds(has.object(), classIds);
+                case HasExpr has -> collectClassLiteralSites(has.object(), sites);
                 case AssignmentExpr assignment -> {
-                    collectClassLiteralIds(assignment.target(), classIds);
-                    collectClassLiteralIds(assignment.value(), classIds);
+                    collectClassLiteralSites(assignment.target(), sites);
+                    collectClassLiteralSites(assignment.value(), sites);
                 }
                 case TemplateLiteralExpr template -> {
                     for (ExpressionNode part : template.parts()) {
-                        collectClassLiteralIds(part, classIds);
+                        collectClassLiteralSites(part, sites);
                     }
                 }
                 case AwaitExpression await ->
-                    collectClassLiteralIds(await.callee(), classIds);
+                    collectClassLiteralSites(await.callee(), sites);
                 // A function expression's body runs only when the closure is
                 // called, after the enclosing default's own construction
                 // completed: a literal inside it constructs nothing during the
