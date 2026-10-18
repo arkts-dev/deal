@@ -26,7 +26,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class JsConformanceTest {
@@ -59,10 +58,24 @@ public class JsConformanceTest {
         COMPANION
     }
 
-    private record Classified(TestFile test, Kind kind, String expectedCode) {}
+    private record Classified(TestFile test, Kind kind) {}
 
     private record Outcome(TestFile test, Classified classified,
             boolean pass, String message) {}
+
+    /** The corpus-coordinate projection of one materialized source: the
+     * fixture's corpus-relative path and the number of classification
+     * header lines the harness removed, so a Node origin (the physical
+     * project file and its stripped line number) projects back to the raw
+     * corpus coordinate the sidecar pins. */
+    private record SourcePin(String corpusPath, int headerLines) {}
+
+    /** One passing runtime-error observation retained for the exact-verdict
+     * negative control: the real Node capture and the js sidecar
+     * expectation it matched. */
+    private record RuntimeErrorObservation(TestFile test, NodeResult result,
+            deal.test.conformance.SidecarExpectations
+                .RuntimeExpectation.Executed pinned) {}
 
     private record OrchestratorRun(boolean success,
                                    List<CompilerDiagnostic> diagnostics,
@@ -100,6 +113,11 @@ public class JsConformanceTest {
     private static final AtomicInteger nodeExecuted = new AtomicInteger();
 
     private static final List<Outcome> outcomes =
+        Collections.synchronizedList(new ArrayList<>());
+
+    /** Every passing runtime-error observation (the exact-verdict negative
+     * control runs over one of them after the worker pool). */
+    private static final List<RuntimeErrorObservation> runtimeErrorObservations =
         Collections.synchronizedList(new ArrayList<>());
     /** Corpus-relative paths of every file materialized into an
      * importing fixture's temp project (companions included). */
@@ -149,17 +167,6 @@ public class JsConformanceTest {
         .toAbsolutePath().normalize();
 
     private static final long SUBPROCESS_TIMEOUT_SECONDS = 120;
-
-    /** The lane driver's raw captured-error transport file (the JS
-     * counterpart of the shared lane contract's payload transport): the
-     * driver writes the caught DEAL error's own fields here, so the lane
-     * re-serializes them through the shared canonical serializer instead of
-     * comparing a prefix of a program stream. */
-    private static final String ERROR_TRANSPORT_FILE = "lane_error.json";
-
-    /** The corpus identity namespace of the pinned descriptor tokens
-     * ({@code @conformance/<corpusPath>/<Class>}). */
-    private static final String CORPUS_IDENTITY_NAMESPACE = "conformance";
 
     /** Companion accounting expectations, computed before the pool runs:
      * every companion corpus-relative path, the companions reachable
@@ -223,13 +230,6 @@ public class JsConformanceTest {
             // children before any fixture runs.
             validateCorpusCaptureControls();
 
-            // The runtime-error assertion controls next: the exact error
-            // assertion (message, coordinates, pinned optional fields, and
-            // no-DEAL-payload honesty) is exercised through the live verdict
-            // before any fixture runs, so a regression to code-substring
-            // acceptance cannot pass.
-            validateRuntimeErrorAssertionControls();
-
             List<TestFile> tests = discoverTests();
             List<Classified> classified = classifyAll(tests);
             computeCompanionAccounting(tests, classified);
@@ -275,6 +275,11 @@ public class JsConformanceTest {
             } finally {
                 pool.shutdownNow();
             }
+
+            // The exact-verdict negative control runs over a real accepted
+            // Node observation before the report: the lane must refuse a
+            // wrong message, actual token and origin on the same capture.
+            validateRuntimeErrorVerdictControls();
 
             List<Outcome> sorted = new ArrayList<>(outcomes);
             sorted.sort(Comparator.comparing(
@@ -465,17 +470,15 @@ public class JsConformanceTest {
                         + "companions are classified support modules that "
                         + "are never node-executed standalone");
                 }
-                result.add(new Classified(test, Kind.COMPANION, ""));
+                result.add(new Classified(test, Kind.COMPANION));
             } else if (expected.startsWith("compile-ok")) {
-                result.add(new Classified(test, Kind.FRONTEND, ""));
+                result.add(new Classified(test, Kind.FRONTEND));
             } else if (expected.startsWith("compile-error ")) {
-                result.add(new Classified(test, Kind.FRONTEND,
-                    expected.substring("compile-error ".length()).trim()));
+                result.add(new Classified(test, Kind.FRONTEND));
             } else if (expected.startsWith("runtime-ok")) {
-                result.add(new Classified(test, Kind.APPLICABLE, ""));
+                result.add(new Classified(test, Kind.APPLICABLE));
             } else if (expected.startsWith("runtime-error ")) {
-                result.add(new Classified(test, Kind.APPLICABLE,
-                    expected.substring("runtime-error ".length()).trim()));
+                result.add(new Classified(test, Kind.APPLICABLE));
             } else {
                 // Unknown @expected is a harness failure, never a skip.
                 throw new IllegalStateException("unknown @expected '"
@@ -1013,18 +1016,32 @@ public class JsConformanceTest {
         TestFile test = classified.test();
         applicableTotal.incrementAndGet();
 
+        Path scratchRoot = null;
         Path projectRoot = null;
         try {
-            projectRoot = Files.createTempDirectory("deal_js_conf_");
+            // The corpus-coordinate project root: the root component is
+            // named `conformance` and every source keeps its
+            // corpus-relative path, so the compiler's public class atoms
+            // are the pinned corpus identities (`@conformance/<module
+            // path>/<Class>`) and both the physical source path and the
+            // stripped line project back to the sidecar's raw coordinate.
+            scratchRoot = Files.createTempDirectory("deal_js_conf_");
+            projectRoot = scratchRoot.resolve("conformance");
+            Files.createDirectories(projectRoot);
 
             // 1. Materialize the test file and its transitive companion
-            // closure into the temp project root (flat stem namespace;
-            // the corpus has no duplicate stems). Relative imports
-            // resolve on disk from the corpus directories.
+            // closure into the corpus-relative project root. Relative
+            // imports resolve on disk from the corpus directories.
             Map<String, Path> written = new LinkedHashMap<>();
             writeModuleFiles(projectRoot, test.path(), written);
-            String entryRel = corpusStem(test.path()) + ".deal";
+            String entryRel = corpusRelOf(test.path()) + "/main.deal";
             Path entryFile = projectRoot.resolve(entryRel);
+            // The emitted artifact path is the module id's own
+            // .replace('.', '/') + ".js" spelling (the module id is the
+            // corpus path with '/' spelled '.'), so the `.deal` directory
+            // component becomes an artifact path segment.
+            String entryModulePath =
+                (corpusRelOf(test.path()) + "/main").replace('.', '/');
             Path outputRoot = projectRoot.resolve("out");
 
             // 2. The production manifest: languageVersion "1.3" plus the
@@ -1053,7 +1070,7 @@ public class JsConformanceTest {
                             d -> "error".equals(d.severity())
                                 && "E6006".equals(d.code()))
                         && !Files.exists(outputRoot.resolve(
-                            corpusStem(test.path()) + ".js"))) {
+                            entryModulePath + ".js"))) {
                         applicablePassed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] OK (compile-reject E6006 "
@@ -1073,7 +1090,7 @@ public class JsConformanceTest {
             // runtime must exist before node runs — a bypassed codegen
             // or deployment is never a pass.
             Path entryArtifact = outputRoot.resolve(
-                corpusStem(test.path()) + ".js");
+                entryModulePath + ".js");
             if (!Files.exists(entryArtifact)) {
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
@@ -1110,12 +1127,46 @@ public class JsConformanceTest {
                 Files.write(dest, hostSource);
             }
 
-            // 6. Runner: auto-invokes the entry module's zero-arity
-            // exports, driven by the real parser's export list.
+            // 6. The fixture's structured expectation: the runtime-ok and
+            // runtime-error lanes both compare through it (the exact
+            // comparator, never a code substring). The runner reports
+            // exactly the optional error fields the js sidecar pins, so
+            // the observation stays sidecar-authoritative and an unpinned
+            // field never leaks into the snapshot.
+            deal.test.conformance.SidecarExpectations
+                    .StructuredExpectationSidecar sidecar =
+                sidecarOf(test.path());
+            deal.test.conformance.SidecarExpectations.RuntimeExpectation
+                jsExpectation = sidecar == null ? null
+                    : sidecar.expectationFor("js");
+            List<String> pinnedOptionals = new ArrayList<>();
+            if (jsExpectation instanceof deal.test.conformance
+                    .SidecarExpectations.RuntimeExpectation.Executed
+                        pinnedExecuted
+                    && pinnedExecuted.isRuntimeError()) {
+                deal.test.conformance.SidecarExpectations.ErrorExpectation
+                    error = pinnedExecuted.error();
+                for (String field : List.of("expected", "actual", "frames",
+                        "cause")) {
+                    if (error.pinsOptional(field)) {
+                        pinnedOptionals.add(field);
+                    }
+                }
+            }
+
+            // 6b. Runner: auto-invokes the entry module's zero-arity
+            // exports, driven by the real parser's export list. It also
+            // owns the shared exact error framing (DEAL_ERROR_CODE plus
+            // DEAL_ERROR_SNAPSHOT on stdout, exit 1, empty stderr), which
+            // the structured comparator consumes field-exact.
             ProgramNode entryProgram = parseEntryProgram(entryFile);
             Files.writeString(outputRoot.resolve("JsConformanceRunner.js"),
                 buildJsCorpusRunner(entryProgram,
-                    corpusStem(test.path())));
+                    entryModulePath, sourcePins(written, entryFile,
+                        corpusRelOf(test.path())),
+                    corpusTokens(projectRoot, written, entryFile,
+                        corpusRelOf(test.path())),
+                    pinnedOptionals));
 
             // 7. Execute the deployed artifact set with a real node
             // subprocess.
@@ -1142,78 +1193,68 @@ public class JsConformanceTest {
             }
 
             boolean runtimeOkMode = test.expected().startsWith("runtime-ok");
-            if (runtimeOkMode) {
+            boolean runtimeErrorMode =
+                test.expected().startsWith("runtime-error ");
+            if (runtimeOkMode || runtimeErrorMode) {
                 // The JS lane is a real structured-expectation lane: the
-                // runtime-ok transcript (exact stdout bytes, exact stderr
-                // bytes) and exit code are compared field-exact against
-                // the fixture's Structured Expectation Sidecar through the
-                // landed comparator, so a wrong observation is never a
-                // pass. A fixture without a sidecar is a corpus defect;
-                // the fallback keeps the legacy exit-code gate for it.
-                deal.test.conformance.SidecarExpectations
-                        .StructuredExpectationSidecar sidecar =
-                    sidecarOf(test.path());
+                // transcript (exact stdout bytes, exact stderr bytes), the
+                // exit code, and — for runtime-error — the canonical error
+                // snapshot are compared field-exact against the fixture's
+                // Structured Expectation Sidecar through the landed
+                // comparator. There is no code-substring fallback: a
+                // runtime-error fixture without a js expectation is a
+                // corpus defect and fails the lane.
+                String mode = runtimeOkMode ? "runtime-ok" : "runtime-error";
                 Optional<String> mismatch = Optional.empty();
-                if (sidecar != null
-                        && sidecar.expectationFor("js") instanceof
-                            deal.test.conformance.SidecarExpectations
-                                .RuntimeExpectation.Executed pinned) {
-                    mismatch = structuredRuntimeVerdict(result, pinned);
-                } else if (result.exitCode != 0) {
-                    mismatch = Optional.of("runtime-ok test exited "
-                        + result.exitCode + ": " + result.stderr);
+                if (jsExpectation != null) {
+                    mismatch = structuredRuntimeVerdict(result, jsExpectation);
+                } else if (runtimeOkMode) {
+                    if (result.exitCode != 0) {
+                        mismatch = Optional.of("runtime-ok test exited "
+                            + result.exitCode + ": " + result.stderr);
+                    }
+                } else {
+                    mismatch = Optional.of("the runtime-error fixture "
+                        + "carries no js sidecar expectation — a missing "
+                        + "exact expectation is a corpus defect, never a "
+                        + "pass");
                 }
                 if (mismatch.isPresent()) {
                         applicableFailed.incrementAndGet();
                         log("  [" + test.relativePath()
-                            + "] FAIL (runtime-ok structured expectation): "
+                            + "] FAIL (" + mode
+                            + " structured expectation): "
                             + mismatch.get());
                     return new Outcome(test, classified, false,
                         "structured expectation mismatch: "
                             + mismatch.get());
                 }
+                if (runtimeErrorMode) {
+                    if (!(jsExpectation instanceof deal.test.conformance
+                            .SidecarExpectations.RuntimeExpectation.Executed
+                                executed)
+                            || !executed.isRuntimeError()) {
+                            applicableFailed.incrementAndGet();
+                            log("  [" + test.relativePath()
+                                + "] FAIL (the js sidecar does not pin a "
+                                + "runtime error)");
+                        return new Outcome(test, classified, false,
+                            "the js sidecar does not pin a runtime error");
+                    }
+                    runtimeErrorObservations.add(
+                        new RuntimeErrorObservation(test, result, executed));
+                }
                     applicablePassed.incrementAndGet();
                     log("  [" + test.relativePath() + "] OK");
-                return new Outcome(test, classified, true, "runtime ok");
+                return new Outcome(test, classified, true,
+                    runtimeOkMode ? "runtime ok" : "runtime error");
             }
-
-            // The runtime-error lane is the sidecar's exact error
-            // assertion, never a code substring: the lane driver transports
-            // the caught DEAL error's own fields, the lane projects the
-            // carrier's source coordinates and generated descriptor tokens
-            // through the case's deployment map (corpus C2), frames the real
-            // stdout with the shared canonical serializer, and compares the
-            // whole observation through the landed comparator — exact
-            // transcript bytes, exact exit code, and every sidecar-pinned
-            // error field.
-            deal.test.conformance.SidecarExpectations
-                    .StructuredExpectationSidecar errorSidecar =
-                sidecarOf(test.path());
-            if (errorSidecar == null) {
-                    applicableFailed.incrementAndGet();
-                log("  [" + test.relativePath() + "] FAIL (a runtime-error "
-                    + "fixture without a Structured Expectation Sidecar is a "
-                    + "corpus defect, never a pass)");
-                return new Outcome(test, classified, false,
-                    "runtime-error fixture without a sidecar");
-            }
-            Optional<String> errorMismatch = runtimeErrorVerdict(result,
-                outputRoot, errorSidecar.expectationFor("js"),
-                deploymentOf(written, projectRoot));
-            if (errorMismatch.isPresent()) {
-                    applicableFailed.incrementAndGet();
-                log("  [" + test.relativePath()
-                    + "] FAIL (runtime-error structured expectation): "
-                    + errorMismatch.get());
-                return new Outcome(test, classified, false,
-                    "structured expectation mismatch: "
-                        + errorMismatch.get());
-            }
-                    applicablePassed.incrementAndGet();
-                log("  [" + test.relativePath()
-                    + "] OK (exact runtime-error assertion)");
-            return new Outcome(test, classified, true,
-                "runtime error exactly as the sidecar pins");
+            applicableFailed.incrementAndGet();
+            log("  [" + test.relativePath()
+                + "] FAIL (unknown runtime classification '"
+                + test.expected() + "')");
+            return new Outcome(test, classified, false,
+                "unknown runtime classification '" + test.expected() + "'");
         } catch (HarnessFailure e) {
             applicableFailed.incrementAndGet();
             log("  [" + test.relativePath()
@@ -1228,9 +1269,9 @@ public class JsConformanceTest {
             return new Outcome(test, classified, false,
                 "execution exception: " + e.getMessage());
         } finally {
-            if (projectRoot != null) {
+            if (scratchRoot != null) {
                 try {
-                    Files.walk(projectRoot).sorted(Comparator.reverseOrder())
+                    Files.walk(scratchRoot).sorted(Comparator.reverseOrder())
                         .forEach(f -> { try { Files.deleteIfExists(f); }
                             catch (IOException ignored) { } });
                 } catch (IOException ignored) { }
@@ -1416,32 +1457,43 @@ public class JsConformanceTest {
      */
     private static void writeModuleFiles(Path projectRoot, Path entry,
             Map<String, Path> written) throws IOException {
-        copyTransitively(entry,
-            entry.toAbsolutePath().normalize().getParent(),
-            projectRoot, written);
+        Path normalized = entry.toAbsolutePath().normalize();
+        Path entryDir = normalized.getParent();
+        // The canonical corpus layout: the fixture source is the entry
+        // module `main.deal` inside the directory named after its corpus
+        // file (`<fixture>.deal/`), and the companions keep their
+        // entry-directory-relative paths under that directory. The
+        // configured root is `conformance`, so a class defined in the
+        // fixture projects the pinned public atom
+        // `@conformance/<corpus path>/<Class>` — the same identity the
+        // published boundary-corpus drive pins — and an imported
+        // companion keeps its corpus-relative source path for the span
+        // projection.
+        Path fixtureDir = projectRoot.resolve(corpusRelOf(normalized));
+        copyTransitively(normalized, entryDir, fixtureDir, normalized,
+            written);
     }
 
     private static void copyTransitively(Path file, Path entryDir,
-            Path projectRoot, Map<String, Path> written)
+            Path fixtureDir, Path entryPath, Map<String, Path> written)
             throws IOException {
         Path normalized = file.toAbsolutePath().normalize();
         if (written.containsKey(normalized.toString())) return;
-        // Companions inside the entry's own corpus directory keep their
-        // subdirectory layout (the v1.2 identity carriage: two files in
-        // one directory share the module identity, so nested companions
-        // need their directories preserved to stay nominally distinct);
-        // every other companion keeps the flat stem layout.
         Path target;
-        try {
-            Path rel = entryDir.relativize(normalized);
-            if (rel.startsWith("..") || rel.getNameCount() <= 1) {
-                target = projectRoot.resolve(corpusStem(normalized)
-                    + ".deal");
-            } else {
-                target = projectRoot.resolve(rel);
+        if (normalized.equals(entryPath)) {
+            target = fixtureDir.resolve("main.deal");
+        } else {
+            try {
+                Path rel = entryDir.relativize(normalized);
+                if (rel.startsWith("..")) {
+                    target = fixtureDir.resolve(corpusStem(normalized)
+                        + ".deal");
+                } else {
+                    target = fixtureDir.resolve(rel);
+                }
+            } catch (IllegalArgumentException e) {
+                target = fixtureDir.resolve(corpusStem(normalized) + ".deal");
             }
-        } catch (IllegalArgumentException e) {
-            target = projectRoot.resolve(corpusStem(normalized) + ".deal");
         }
         if (target.getParent() != null) {
             Files.createDirectories(target.getParent());
@@ -1454,13 +1506,19 @@ public class JsConformanceTest {
             Path resolved = resolveCompanionPath(importPath,
                 normalized.getParent());
             if (resolved == null) continue;
+            copyTransitively(resolved, entryDir, fixtureDir, entryPath,
+                written);
             // An import spelling carrying an explicit .deal extension
-            // resolves to its alias-named copy in the flat project root
-            // (CompilationOrchestrator searches basePath + ".deal"
-            // first), so materialize the companion under that name
-            // before the recursive walk.
-            copyCompanionAliasIfExplicit(resolved, importPath, projectRoot);
-            copyTransitively(resolved, entryDir, projectRoot, written);
+            // resolves to its alias-named copy beside the materialized
+            // companion (CompilationOrchestrator searches
+            // basePath + ".deal" first), so materialize the alias after
+            // the recursive walk.
+            Path companionTarget = written.get(
+                resolved.toAbsolutePath().normalize().toString());
+            if (companionTarget != null) {
+                copyCompanionAliasIfExplicit(resolved, importPath,
+                    companionTarget);
+            }
         }
     }
 
@@ -1476,18 +1534,18 @@ public class JsConformanceTest {
      * repeated explicit spellings of the same companion.
      */
     private static void copyCompanionAliasIfExplicit(Path resolved,
-            String importPath, Path projectRoot) throws IOException {
+            String importPath, Path materialized) throws IOException {
         if (!importPath.endsWith(".deal")) return;
-        String aliasBase = importPath;
-        if (aliasBase.startsWith("./")) {
-            aliasBase = aliasBase.substring("./".length());
-        } else if (aliasBase.startsWith("../")) {
-            aliasBase = aliasBase.substring("../".length());
-        }
-        Path aliasTarget = projectRoot.resolve(aliasBase + ".deal");
+        // The production resolver's base for the exact specifier is the
+        // spelling's target path, and its first candidate appends .deal:
+        // the alias copy sits beside the materialized companion, at
+        // <materialized name>.deal.
+        Path aliasTarget = materialized.resolveSibling(
+            materialized.getFileName().toString() + ".deal");
         if (Files.exists(aliasTarget)) return;
 
-        Files.writeString(aliasTarget, sourceSnapshot(resolved).stripped());
+        Files.writeString(aliasTarget,
+            sourceSnapshot(resolved.toAbsolutePath().normalize()).stripped());
     }
 
     /** Relative import paths ({@code ./} / {@code ../}) appearing in the
@@ -1644,15 +1702,19 @@ public class JsConformanceTest {
      * thenable results and discarding return values (no lane prints
      * results). A thrown error or a rejected Promise — including a
      * module-load error inside the required entry artifact — is reified
-     * through the runtime and its raw fields are written to the lane's
-     * payload transport (the {@code lane_error.json} payload) with exit
-     * code 1 and no program output; the lane re-serializes those fields
-     * through the shared canonical Error Snapshot serializer, so the
-     * transport never competes with the canonical form and no stream
-     * prefix is ever compared.
+     * and reported through the shared G4.6 lane framing: exactly
+     * {@code DEAL_ERROR_CODE: <code>} and
+     * {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>} as the final two
+     * stdout lines, an empty stderr, and exit 1. The snapshot reports the
+     * mandatory code/message, the corpus-coordinate span group, and
+     * exactly the optional fields the js sidecar pins (the
+     * sidecar-authoritative field set), so the structured comparator can
+     * compare the observation field-exact — there is no code-substring
+     * observation.
      */
     private static String buildJsCorpusRunner(ProgramNode program,
-            String entryModule) {
+            String entryModule, Map<String, SourcePin> sourcePins,
+            Map<String, String> corpusTokens, List<String> pinnedOptionals) {
         boolean hasMain = false;
         List<String> zeroAry = new ArrayList<>();
         for (StatementNode stmt : program.statements()) {
@@ -1671,15 +1733,16 @@ public class JsConformanceTest {
         sb.append("// Generated by deal.test.JsConformanceTest — JS corpus runner.\n");
         sb.append("// Requires the entry artifact, invokes main once first when\n");
         sb.append("// exported, then the remaining zero-arity exported wrappers in\n");
-        sb.append("// declaration order (each exactly once, results discarded) and\n");
-        sb.append("// transports an uncaught DEAL error's raw fields to the\n");
-        sb.append("// lane payload file and exits 1 (the lane frames the\n");
-        sb.append("// canonical Error Snapshot from those fields).\n");
+        sb.append("// declaration order (each exactly once, results discarded), and\n");
+        sb.append("// reports an uncaught error through the shared G4.6 lane framing:\n");
+        sb.append("// DEAL_ERROR_CODE + DEAL_ERROR_SNAPSHOT on stdout, empty stderr,\n");
+        sb.append("// exit 1. The snapshot's source span projects the physical\n");
+        sb.append("// materialized file and stripped line back to the raw corpus\n");
+        sb.append("// coordinate, and its optional fields are exactly the js\n");
+        sb.append("// sidecar's pins.\n");
         sb.append("\"use strict\";\n");
-        sb.append("const $fs = require(\"fs\");\n");
-        sb.append("const $process = process;\n");
+        sb.append("const $path = require(\"path\");\n");
         sb.append("const $rt = require(\"./deal/runtime\");\n");
-        sb.append(transportWriterSource());
         sb.append("const $order = [");
         boolean firstEntry = true;
         if (hasMain) {
@@ -1692,10 +1755,131 @@ public class JsConformanceTest {
             firstEntry = false;
         }
         sb.append("];\n");
+        sb.append("const $sourcePins = {");
+        boolean firstPin = true;
+        for (Map.Entry<String, SourcePin> pin : sourcePins.entrySet()) {
+            if (!firstPin) sb.append(",");
+            sb.append("\n  ").append(jsStringLiteral(pin.getKey()))
+                .append(": [")
+                .append(jsStringLiteral(pin.getValue().corpusPath()))
+                .append(", ").append(pin.getValue().headerLines()).append("]");
+            firstPin = false;
+        }
+        sb.append(firstPin ? "};\n" : "\n};\n");
+        // The class-atom module-path projection: the compiler projects a
+        // class as @conformance/<module path>/<Class>, where the module
+        // path is the source's directory (the defining file name is not
+        // part of the identity). The sidecar pins the corpus file path
+        // form (@conformance/<corpus source>/<Class>), exactly the
+        // projection CanonicalProjectionParityTest applies, so the runner
+        // maps each materialized module path (and its directory) back to
+        // its corpus source path before the comparison. Class names and
+        // every other token are untouched.
+        sb.append("const $corpusTokens = {");
+        boolean firstToken = true;
+        for (Map.Entry<String, String> token : corpusTokens.entrySet()) {
+            if (!firstToken) sb.append(",");
+            sb.append("\n  ").append(jsStringLiteral(token.getKey()))
+                .append(": ").append(jsStringLiteral(token.getValue()));
+            firstToken = false;
+        }
+        sb.append(firstToken ? "};\n" : "\n};\n");
+        sb.append("""
+function $normalizeAtoms($s) {
+  if (typeof $s !== "string" || $s.indexOf("@conformance/") < 0) return $s;
+  let $out = "";
+  let $i = 0;
+  while (true) {
+    const $at = $s.indexOf("@conformance/", $i);
+    if ($at < 0) { $out += $s.slice($i); break; }
+    $out += $s.slice($i, $at);
+    let $end = $at + "@conformance/".length;
+    while ($end < $s.length && " ,\\"'()".indexOf($s.charAt($end)) < 0) $end++;
+    const $token = $s.slice($at, $end);
+    const $rest = $token.slice("@conformance/".length);
+    const $slash = $rest.lastIndexOf("/");
+    let $mapped = $token;
+    if ($slash > 0) {
+      const $modulePath = $rest.slice(0, $slash);
+      const $className = $rest.slice($slash + 1);
+      let $corpus = $corpusTokens[$modulePath];
+      if ($corpus === undefined) {
+        const $dirSlash = $modulePath.lastIndexOf("/");
+        if ($dirSlash > 0) {
+          $corpus = $corpusTokens[$modulePath.slice(0, $dirSlash)];
+        }
+      }
+      if ($corpus !== undefined) {
+        $mapped = "@conformance/" + $corpus + "/" + $className;
+      }
+    }
+    $out += $mapped;
+    $i = $end;
+  }
+  return $out;
+}
+
+""");
+        sb.append("const $pinned = [");
+        for (int i = 0; i < pinnedOptionals.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(jsStringLiteral(pinnedOptionals.get(i)));
+        }
+        sb.append("];\n");
+        sb.append("""
+function $jsonString($s) {
+  let $out = '"';
+  for (let $i = 0; $i < $s.length; ) {
+    const $cp = $s.codePointAt($i);
+    $i += $cp > 0xFFFF ? 2 : 1;
+    if ($cp === 34) $out += '\\\\"';
+    else if ($cp === 92) $out += '\\\\\\\\';
+    else if ($cp === 8) $out += '\\\\b';
+    else if ($cp === 9) $out += '\\\\t';
+    else if ($cp === 10) $out += '\\\\n';
+    else if ($cp === 12) $out += '\\\\f';
+    else if ($cp === 13) $out += '\\\\r';
+    else if ($cp < 0x20) {
+      $out += '\\\\u' + $cp.toString(16).toUpperCase().padStart(4, '0');
+    } else {
+      $out += String.fromCodePoint($cp);
+    }
+  }
+  return $out + '"';
+}
+
+function $snapshot($err) {
+  const $fields = [];
+  const $field = ($k, $v) => $jsonString($k) + ":"
+    + $jsonString($normalizeAtoms(String($v)));
+  const $intField = ($k, $v) => $jsonString($k) + ":" + String($v);
+  $fields.push($field("code", $err.code));
+  $fields.push($field("message", $err.message));
+  const $pin = typeof $err.file === "string"
+    ? ($sourcePins[$err.file] || $sourcePins[$path.resolve($err.file)])
+    : undefined;
+  if ($pin !== undefined && $err.line !== $rt.undefined
+      && $err.column !== $rt.undefined) {
+    $fields.push($field("sourceFile", $pin[0]));
+    $fields.push($intField("line", Number($err.line) + $pin[1]));
+    $fields.push($intField("column", Number($err.column)));
+  }
+  for (const $f of $pinned) {
+    const $v = $err[$f];
+    if ($v === $rt.undefined) continue;
+    if ($f === "frames" && typeof $v === "number") {
+      $fields.push($intField($f, $v));
+    } else {
+      $fields.push($field($f, $v));
+    }
+  }
+  return "{" + $fields.join(",") + "}";
+}
+
+""");
         // The entry require sits inside the async body so a load-time
         // failure (a host loadHost E8011, a module-load error) routes
-        // through the shared catch — the DEAL_ERROR_CODE stderr + exit-1
-        // contract — never a raw uncaught stack trace.
+        // through the same framing — never a raw uncaught stack trace.
         sb.append("(async () => {\n");
         sb.append("  const $entry = require(\"./").append(entryModule)
             .append("\");\n");
@@ -1705,40 +1889,100 @@ public class JsConformanceTest {
         sb.append("      await $v.$f();\n");
         sb.append("    }\n");
         sb.append("  }\n");
-        sb.append("})().catch((e) => {\n");
-        sb.append("  const $err = $rt.reifyError(e);\n");
-        sb.append("  if ($err.code !== $rt.undefined) {\n");
-        sb.append("    $laneWriteTransport($err);\n");
-        sb.append("  }\n");
-        sb.append("  $process.exitCode = 1;\n");
+        sb.append("})().catch(($e) => {\n");
+        sb.append("  const $err = $rt.reifyError($e);\n");
+        sb.append("  process.stdout.write(\"DEAL_ERROR_CODE: \" + $err.code + \"\\n\");\n");
+        sb.append("  process.stdout.write(\"DEAL_ERROR_SNAPSHOT: \" + $snapshot($err) + \"\\n\");\n");
+        sb.append("  process.exitCode = 1;\n");
         sb.append("});\n");
         return sb.toString();
     }
 
     /**
-     * The driver's payload transport writer: the raw captured error fields
-     * in a fixed field order, serialized with the host's minimal JSON
-     * escaping. The lane re-serializes them canonically, so this transport
-     * never competes with the canonical snapshot form.
+     * The class-atom module-path projection of one materialized project:
+     * every materialized module's module path and module directory map to
+     * its corpus source path (the entry's `main.deal` maps to the
+     * fixture's corpus file path, which is also its sidecar sourceFile).
+     * `$normalizeAtoms` uses the map on observed class atoms only.
      */
-    private static String transportWriterSource() {
-        return String.join("\n",
-            "const $laneWriteTransport = ($e) => {",
-            "  const $fields = { code: $e.code };",
-            "  if ($e.message !== undefined) { $fields.message = $e.message; }",
-            "  if ($e.file !== undefined) { $fields.file = $e.file; }",
-            "  if ($e.line !== undefined) { $fields.line = $e.line; }",
-            "  if ($e.column !== undefined) { $fields.column = $e.column; }",
-            "  if ($e.expected !== undefined) {",
-            "    $fields.expected = $e.expected;",
-            "  }",
-            "  if ($e.actual !== undefined) { $fields.actual = $e.actual; }",
-            "  if ($e.frames !== undefined) { $fields.frames = $e.frames; }",
-            "  if ($e.cause !== undefined) { $fields.cause = $e.cause; }",
-            "  $fs.writeFileSync(\"" + ERROR_TRANSPORT_FILE + "\",",
-            "    JSON.stringify($fields), \"utf8\");",
-            "};",
-            "");
+    private static Map<String, String> corpusTokens(Path projectRoot,
+            Map<String, Path> written, Path entryTarget,
+            String entryCorpusPath) {
+        Map<String, String> tokens = new LinkedHashMap<>();
+        Path normalizedEntry = entryTarget.toAbsolutePath().normalize();
+        Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
+        // The configured root is the project root's own directory name
+        // (`conformance`); the compiler's module paths are project-relative.
+        for (Map.Entry<String, Path> entry : written.entrySet()) {
+            Path original = Path.of(entry.getKey()).toAbsolutePath()
+                .normalize();
+            if (!original.startsWith(conformanceRoot)) {
+                continue;
+            }
+            Path target = entry.getValue().toAbsolutePath().normalize();
+            String corpusPath = target.equals(normalizedEntry)
+                ? entryCorpusPath : corpusRelOf(original);
+            String materialized = normalizedRoot.relativize(target).toString()
+                .replace('\\', '/');
+            String moduleKey = materialized.endsWith(".deal")
+                ? materialized.substring(0,
+                    materialized.length() - ".deal".length())
+                : materialized;
+            int slash = moduleKey.lastIndexOf('/');
+            if (slash > 0) {
+                tokens.putIfAbsent(moduleKey.substring(0, slash), corpusPath);
+            }
+            tokens.put(moduleKey, corpusPath);
+        }
+        return tokens;
+    }
+
+    /** One JS string literal for the generated runner (quote/backslash/
+     * newline escaped; the fixture paths and field names carry no other
+     * control characters). */
+    private static String jsStringLiteral(String text) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"' -> sb.append("\\\"");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                default -> sb.append(c);
+            }
+        }
+        return sb.append('"').toString();
+    }
+
+    /**
+     * The corpus-coordinate projection table of one materialized project:
+     * every written corpus source's physical path maps to its
+     * corpus-relative path and the number of classification header lines
+     * the harness removed (the raw-coordinate offset). A generated or
+     * non-corpus file has no entry and keeps the Node origin as observed.
+     */
+    private static Map<String, SourcePin> sourcePins(
+            Map<String, Path> written, Path entryTarget,
+            String entryCorpusPath) throws IOException {
+        Map<String, SourcePin> pins = new LinkedHashMap<>();
+        Path normalizedEntryTarget = entryTarget.toAbsolutePath().normalize();
+        for (Map.Entry<String, Path> entry : written.entrySet()) {
+            Path original = Path.of(entry.getKey()).toAbsolutePath()
+                .normalize();
+            if (!original.startsWith(conformanceRoot)) {
+                continue;
+            }
+            Path target = entry.getValue().toAbsolutePath().normalize();
+            SourceSnapshot snapshot = sourceSnapshot(original);
+            int headerLines = snapshot.raw().split("\n", -1).length
+                - snapshot.stripped().split("\n", -1).length;
+            String corpusPath = target.equals(normalizedEntryTarget)
+                ? entryCorpusPath : corpusRelOf(original);
+            pins.put(target.toString(),
+                new SourcePin(corpusPath, headerLines));
+        }
+        return pins;
     }
 
     /** One bounded node subprocess run over the deployed artifact set
@@ -1798,7 +2042,7 @@ public class JsConformanceTest {
      * comparator.
      */
     private static Optional<String> structuredRuntimeVerdict(NodeResult result,
-            deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
+            deal.test.conformance.SidecarExpectations.RuntimeExpectation
                 pinned) {
         String refusal = captureRefusal(result);
         if (refusal != null) {
@@ -1814,322 +2058,108 @@ public class JsConformanceTest {
     }
 
     /**
-     * One materialized module of one case (corpus C2): its canonical
-     * corpus-relative path, the stripped-header line rebase, and its parent
-     * directory components relative to the module root — the prefix a
-     * generated class-descriptor token carries for that module.
+     * The runtime-error exact-verdict negative control: over a real Node
+     * observation the lane accepted, the exact capture must match its js
+     * sidecar through the structured comparator, and a mutated message,
+     * actual token or source origin on that same capture must fail. A
+     * corpus run without a pinned actual-token/span observation cannot
+     * falsify the exact lane and is itself a gate failure (never a skip).
      */
-    private record DeploymentEntry(String corpusPath, int headerLinesStripped,
-            List<String> identityDirectories) {
-        DeploymentEntry {
-            identityDirectories = List.copyOf(identityDirectories);
-        }
-    }
-
-    /**
-     * The case's deployment map: every materialized source path (absolute
-     * normalized, plus the raw target spelling) mapped to its corpus
-     * identity, the module-directory index of the generated descriptor
-     * tokens, and the module root's own configured text. Built from the same
-     * materialization the compilation consumed, so the projection never
-     * guesses a module from a basename or from sidecar vocabulary.
-     */
-    private record CaseDeployment(Map<String, DeploymentEntry> byPath,
-            Map<String, List<DeploymentEntry>> byIdentityDirectories,
-            String identityRootText) {
-
-        CaseDeployment {
-            byPath = Map.copyOf(byPath);
-        }
-
-        /** The deployment entry of a captured source path, or {@code null}
-         * for an unmappable path (emitted verbatim so the comparison fails
-         * and surfaces the defect, never a fabricated corpus path). */
-        DeploymentEntry lookup(String capturedFile) {
-            if (capturedFile == null) {
-                return null;
-            }
-            DeploymentEntry direct = byPath.get(capturedFile);
-            if (direct != null) {
-                return direct;
-            }
-            try {
-                return byPath.get(Path.of(capturedFile).toAbsolutePath()
-                    .normalize().toString());
-            } catch (RuntimeException unusable) {
-                return null;
+    private static void validateRuntimeErrorVerdictControls() {
+        RuntimeErrorObservation candidate = null;
+        for (RuntimeErrorObservation observation : runtimeErrorObservations) {
+            deal.test.conformance.SidecarExpectations.ErrorExpectation error =
+                observation.pinned().error();
+            if (error != null && error.actual().isPresent()
+                    && error.pinsSpan()) {
+                candidate = observation;
+                break;
             }
         }
+        if (candidate == null) {
+            System.out.println("GATE FAILURE: no accepted runtime-error "
+                + "observation pins an actual token and a source span — the "
+                + "exact-verdict negative control cannot run");
+            System.exit(1);
+        }
+        boolean ok = true;
+        ok &= checkRuntimeErrorVerdict(candidate, candidate.result(), false,
+            "the exact Node observation matches its js sidecar");
+        Optional<deal.test.conformance.ErrorSnapshot.Framed> framed =
+            deal.test.conformance.ErrorSnapshot.parseFraming(
+            candidate.result().stdout().getBytes(StandardCharsets.UTF_8));
+        if (framed.isEmpty()) {
+            System.out.println("GATE FAILURE: the accepted runtime-error "
+                + "observation carries no canonical framing");
+            System.exit(1);
+        }
+        deal.test.conformance.SidecarExpectations.ErrorExpectation fields =
+            framed.get().fields();
+        if (fields.actual().isEmpty() || !fields.pinsSpan()) {
+            System.out.println("GATE FAILURE: the accepted runtime-error "
+                + "observation carries no actual token or source span");
+            System.exit(1);
+        }
+        var wrongMessage = new deal.test.conformance.SidecarExpectations
+            .ErrorExpectation(fields.code(),
+                fields.message() + " (negative control)", fields.sourceFile(),
+                fields.line(), fields.column(), fields.expected(),
+                fields.actual(), fields.frames(), fields.cause());
+        ok &= checkRuntimeErrorVerdict(candidate, framedResult(wrongMessage),
+            true, "a wrong message fails the exact lane");
+        var wrongActual = new deal.test.conformance.SidecarExpectations
+            .ErrorExpectation(fields.code(), fields.message(),
+                fields.sourceFile(), fields.line(), fields.column(),
+                fields.expected(),
+                Optional.of(fields.actual().get() + "-negative-control"),
+                fields.frames(), fields.cause());
+        ok &= checkRuntimeErrorVerdict(candidate, framedResult(wrongActual),
+            true, "a wrong actual token fails the exact lane");
+        var wrongOrigin = new deal.test.conformance.SidecarExpectations
+            .ErrorExpectation(fields.code(), fields.message(),
+                fields.sourceFile(), fields.line() + 1, fields.column(),
+                fields.expected(), fields.actual(), fields.frames(),
+                fields.cause());
+        ok &= checkRuntimeErrorVerdict(candidate, framedResult(wrongOrigin),
+            true, "a wrong source origin fails the exact lane");
+        if (!ok) {
+            System.out.println("GATE FAILURE: a runtime-error exact-verdict "
+                + "control failed — a wrong message, actual token or origin "
+                + "accepted by the lane is never a pass");
+            System.exit(1);
+        }
+        System.out.println("Runtime-error exact-verdict controls: the real "
+            + "Node observation matches its js sidecar field-exact; a wrong "
+            + "message, actual token and source origin are each refused ("
+            + candidate.test().relativePath() + ")");
     }
 
-    private static CaseDeployment deploymentOf(Map<String, Path> written,
-            Path projectRoot) throws IOException {
-        Map<String, DeploymentEntry> byPath = new LinkedHashMap<>();
-        Map<String, List<DeploymentEntry>> byDirectories = new LinkedHashMap<>();
-        Path root = projectRoot.toAbsolutePath().normalize();
-        for (Map.Entry<String, Path> module : written.entrySet()) {
-            Path corpusFile = Path.of(module.getKey()).toAbsolutePath()
-                .normalize();
-            Path target = module.getValue().toAbsolutePath().normalize();
-            SourceSnapshot snapshot = sourceSnapshot(corpusFile);
-            int headerLinesStripped = snapshot.raw().split("\n", -1).length
-                - snapshot.stripped().split("\n", -1).length;
-            List<String> directories = new ArrayList<>();
-            Path parent = target.getParent();
-            if (parent != null && parent.startsWith(root)) {
-                for (Path component : root.relativize(parent)) {
-                    if (!component.toString().isEmpty()) {
-                        directories.add(component.toString());
-                    }
-                }
-            }
-            DeploymentEntry entry = new DeploymentEntry(
-                corpusRelOf(corpusFile), headerLinesStripped, directories);
-            byPath.put(target.toString(), entry);
-            byPath.put(module.getValue().toString(), entry);
-            List<DeploymentEntry> sameDirectory = byDirectories
-                .computeIfAbsent(String.join("/", directories),
-                    ignored -> new ArrayList<>());
-            if (!sameDirectory.contains(entry)) {
-                sameDirectory.add(entry);
-            }
+    /** One exact-verdict control round: the observation's verdict must be
+     * present exactly when a mismatch is expected. */
+    private static boolean checkRuntimeErrorVerdict(
+            RuntimeErrorObservation candidate, NodeResult observation,
+            boolean expectMismatch, String what) {
+        Optional<String> verdict = structuredRuntimeVerdict(observation,
+            candidate.pinned());
+        boolean ok = expectMismatch ? verdict.isPresent() : verdict.isEmpty();
+        if (!ok) {
+            System.out.println("FAIL: " + what + (expectMismatch
+                ? " was accepted (no mismatch)"
+                : " did not match: " + verdict.orElse("")));
         }
-        return new CaseDeployment(byPath, byDirectories,
-            root.getFileName() == null ? "" : root.getFileName().toString());
+        return ok;
     }
 
-    /** The raw captured error fields transported by the lane driver: the
-     * product's own DEAL error value, never a lane-composed text. */
-    private record CapturedError(String code, String message, String file,
-            Integer line, Integer column, Optional<String> expected,
-            Optional<String> actual, Optional<Integer> frames,
-            Optional<String> cause) {
-
-        CapturedError {
-            Objects.requireNonNull(expected);
-            Objects.requireNonNull(actual);
-            Objects.requireNonNull(frames);
-            Objects.requireNonNull(cause);
-        }
-
-        /** True when every mandatory snapshot field is present. */
-        boolean complete() {
-            return code != null && message != null && file != null
-                && line != null && column != null;
-        }
-    }
-
-    /** Reads the driver's raw captured-error transport, or {@code null}
-     * when the run carried no DEAL error payload. */
-    private static CapturedError readErrorTransport(Path outputRoot) {
-        Path transport = outputRoot.resolve(ERROR_TRANSPORT_FILE);
-        if (!Files.isRegularFile(transport)) {
-            return null;
-        }
-        try {
-            deal.semantic.ir.CanonicalJson.Value root =
-                deal.semantic.ir.CanonicalJson.parse(
-                    Files.readString(transport, StandardCharsets.UTF_8));
-            if (!(root instanceof deal.semantic.ir.CanonicalJson.Obj obj)) {
-                return null;
-            }
-            Map<String, deal.semantic.ir.CanonicalJson.Value> fields =
-                new LinkedHashMap<>();
-            for (deal.semantic.ir.CanonicalJson.Entry entry : obj.entries()) {
-                fields.put(entry.key(), entry.value());
-            }
-            return new CapturedError(transportString(fields, "code"),
-                transportString(fields, "message"),
-                transportString(fields, "file"),
-                transportInt(fields, "line"),
-                transportInt(fields, "column"),
-                Optional.ofNullable(transportString(fields, "expected")),
-                Optional.ofNullable(transportString(fields, "actual")),
-                Optional.ofNullable(transportInt(fields, "frames")),
-                Optional.ofNullable(transportString(fields, "cause")));
-        } catch (IOException | RuntimeException unreadable) {
-            return null;
-        }
-    }
-
-    private static String transportString(
-            Map<String, deal.semantic.ir.CanonicalJson.Value> fields,
-            String key) {
-        return fields.get(key) instanceof deal.semantic.ir.CanonicalJson.Str str
-            ? str.value() : null;
-    }
-
-    private static Integer transportInt(
-            Map<String, deal.semantic.ir.CanonicalJson.Value> fields,
-            String key) {
-        return fields.get(key) instanceof deal.semantic.ir.CanonicalJson.Int value
-            ? value.value() : null;
-    }
-
-    /**
-     * The JS lane's exact runtime-error verdict: the caught error's own
-     * fields, projected through the case's deployment map and framed with
-     * the shared canonical serializer, compared field-exact against the
-     * sidecar's error assertion through the landed comparator. An
-     * incomplete capture is refused by name, a missing DEAL error payload is
-     * a failing observation, and a pinned field the product does not carry
-     * stays absent (the comparator reports the suppression — it is never
-     * fabricated from the sidecar).
-     */
-    private static Optional<String> runtimeErrorVerdict(NodeResult result,
-            Path outputRoot,
-            deal.test.conformance.SidecarExpectations.RuntimeExpectation pinned,
-            CaseDeployment deployment) {
-        String refusal = captureRefusal(result);
-        if (refusal != null) {
-            return Optional.of(refusal);
-        }
-        if (pinned instanceof
-                deal.test.conformance.SidecarExpectations.RuntimeExpectation
-                    .Rejected) {
-            // A compile-reject pin on a lane that executed is the
-            // comparator's mismatch, never a code-substring pass.
-            return deal.test.conformance.StructuredExpectationComparator
-                .compare("js", pinned, executed(result))
-                .map(deal.test.conformance.GateMismatch::message);
-        }
-        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
-            expected =
-                (deal.test.conformance.SidecarExpectations.RuntimeExpectation
-                    .Executed) pinned;
-        if (!expected.isRuntimeError() || expected.error() == null) {
-            return Optional.of("the js sidecar pins mode " + expected.mode()
-                + " for a runtime-error fixture (no error assertion exists "
-                + "to compare)");
-        }
-        CapturedError captured = readErrorTransport(outputRoot);
-        if (captured == null) {
-            return Optional.of("the lane exited " + result.exitCode
-                + " without a DEAL error payload (a runtime-error fixture "
-                + "must raise the pinned DEAL error; stderr: "
-                + result.stderr + ")");
-        }
-        if (!captured.complete()) {
-            return Optional.of("the captured DEAL error carries no complete "
-                + "DEALRuntimeError field set (code, message, file, line and "
-                + "column are mandatory): code=" + captured.code()
-                + ", message=" + captured.message() + ", file="
-                + captured.file() + ", line=" + captured.line()
-                + ", column=" + captured.column());
-        }
-        deal.test.conformance.SidecarExpectations.ErrorExpectation snapshot =
-            projectCapturedError(captured, expected.error(), deployment);
+    /** The G4.6 framing bytes of one error snapshot (the exact lane's
+     * stdout shape: the code line, the canonical snapshot line, one
+     * trailing newline). */
+    private static NodeResult framedResult(
+            deal.test.conformance.SidecarExpectations.ErrorExpectation fields) {
         String framing = deal.test.conformance.ErrorSnapshot.CODE_LINE_PREFIX
-            + snapshot.code() + "\n"
+            + fields.code() + "\n"
             + deal.test.conformance.ErrorSnapshot.SNAPSHOT_LINE_PREFIX
-            + deal.test.conformance.ErrorSnapshot.canonicalJson(snapshot)
-            + "\n";
-        byte[] stdout = concat(result.stdout.getBytes(StandardCharsets.UTF_8),
-            framing.getBytes(StandardCharsets.UTF_8));
-        return deal.test.conformance.StructuredExpectationComparator
-            .compare("js", expected,
-                new deal.test.conformance.LaneExecution.Executed(stdout,
-                    result.stderr.getBytes(StandardCharsets.UTF_8),
-                    result.exitCode))
-            .map(deal.test.conformance.GateMismatch::message);
-    }
-
-    private static deal.test.conformance.LaneExecution.Executed executed(
-            NodeResult result) {
-        return new deal.test.conformance.LaneExecution.Executed(
-            result.stdout.getBytes(StandardCharsets.UTF_8),
-            result.stderr.getBytes(StandardCharsets.UTF_8),
-            result.exitCode);
-    }
-
-    private static byte[] concat(byte[] first, byte[] second) {
-        byte[] joined = new byte[first.length + second.length];
-        System.arraycopy(first, 0, joined, 0, first.length);
-        System.arraycopy(second, 0, joined, first.length, second.length);
-        return joined;
-    }
-
-    /**
-     * Projects one captured DEAL error onto the sidecar-authoritative field
-     * set (C2): the carrier's source path maps through the deployment map
-     * and the stripped-source line rebases onto the raw corpus coordinate,
-     * generated class-descriptor tokens map through the same deployment
-     * identity, and exactly the pinned optional fields are emitted. A pinned
-     * span the captured error lacks already failed the completeness check.
-     */
-    private static deal.test.conformance.SidecarExpectations
-            .ErrorExpectation projectCapturedError(CapturedError captured,
-                deal.test.conformance.SidecarExpectations.ErrorExpectation
-                    assertion,
-                CaseDeployment deployment) {
-        DeploymentEntry module = deployment.lookup(captured.file());
-        String sourceFile = module != null ? module.corpusPath()
-            : captured.file();
-        int line = module != null
-            ? captured.line() + module.headerLinesStripped()
-            : captured.line();
-        boolean spanPinned = assertion.pinsSpan();
-        return new deal.test.conformance.SidecarExpectations.ErrorExpectation(
-            captured.code(),
-            projectDescriptorTokens(captured.message(), deployment),
-            spanPinned ? sourceFile : null,
-            spanPinned ? line : null,
-            spanPinned ? captured.column() : null,
-            pinnedOptional(assertion, "expected", captured.expected(),
-                deployment),
-            pinnedOptional(assertion, "actual", captured.actual(), deployment),
-            pinnedOptional(assertion, "frames", captured.frames(), null),
-            pinnedOptional(assertion, "cause", captured.cause(), null));
-    }
-
-    private static <T> Optional<T> pinnedOptional(
-            deal.test.conformance.SidecarExpectations.ErrorExpectation assertion,
-            String field, Optional<T> captured, CaseDeployment deployment) {
-        if (captured.isEmpty() || !assertion.pinsOptional(field)) {
-            return Optional.empty();
-        }
-        if (deployment != null && captured.get() instanceof String text) {
-            @SuppressWarnings("unchecked")
-            T projected = (T) projectDescriptorTokens(text, deployment);
-            return Optional.of(projected);
-        }
-        return captured;
-    }
-
-    /**
-     * The lane-local generated-descriptor projection: a class descriptor
-     * token whose module prefix is positively identified by the case's
-     * deployment map maps to the canonical corpus identity
-     * {@code @conformance/<corpusPath>/<Class>}. An unknown or ambiguous
-     * prefix and authored text containing {@code @} stay verbatim — never a
-     * basename guess and never sidecar vocabulary.
-     */
-    private static String projectDescriptorTokens(String text,
-            CaseDeployment deployment) {
-        String rootText = deployment.identityRootText();
-        if (text == null || text.indexOf('@') < 0 || rootText.isEmpty()) {
-            return text;
-        }
-        Pattern token = Pattern.compile("@" + Pattern.quote(rootText)
-            + "((?:/[\\p{L}\\p{N}_.\\-]+)+)");
-        Matcher matcher = token.matcher(text);
-        StringBuilder projected = new StringBuilder();
-        while (matcher.find()) {
-            String[] components = matcher.group(1).substring(1).split("/");
-            List<DeploymentEntry> modules = deployment.byIdentityDirectories()
-                .get(String.join("/",
-                    Arrays.copyOf(components, components.length - 1)));
-            String replacement = matcher.group();
-            if (modules != null && modules.size() == 1) {
-                replacement = "@" + CORPUS_IDENTITY_NAMESPACE + "/"
-                    + modules.get(0).corpusPath() + "/"
-                    + components[components.length - 1];
-            }
-            matcher.appendReplacement(projected,
-                Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(projected);
-        return projected.toString();
+            + deal.test.conformance.ErrorSnapshot.canonicalJson(fields) + "\n";
+        return new NodeResult(1, framing, "", false, false);
     }
 
     /**
@@ -2185,194 +2215,6 @@ public class JsConformanceTest {
         System.out.println("Corpus capture controls: cap-1/cap/cap+1 in "
             + "both stream positions refused or accepted exactly as the "
             + "structured verdict requires (" + CAPTURE_REFUSAL + ")");
-    }
-
-    /**
-     * The registered runtime-error assertion controls: the lane's exact
-     * verdict is exercised over a synthetic carrier, a synthetic deployment
-     * map and the shared canonical framing. An exact observation passes; a
-     * wrong message, a wrong coordinate, a suppressed pinned optional field,
-     * a compile-reject pin on an executed lane and a run without a DEAL
-     * error payload each fail — a code substring can never satisfy the
-     * assertion. Any failed control exits the suite non-zero.
-     */
-    private static void validateRuntimeErrorAssertionControls() {
-        Path controlRoot = null;
-        boolean ok = true;
-        try {
-            controlRoot = Files.createTempDirectory(
-                "js-error-assertion-control-");
-            ok &= checkRuntimeErrorAssertion(controlRoot);
-        } catch (IOException failure) {
-            System.out.println("FAIL: the runtime-error assertion controls "
-                + "could not run: " + failure);
-            ok = false;
-        } finally {
-            if (controlRoot != null) {
-                try {
-                    Path root = controlRoot;
-                    Files.walk(root).sorted(Comparator.reverseOrder())
-                        .forEach(f -> { try { Files.deleteIfExists(f); }
-                            catch (IOException ignored) { } });
-                } catch (IOException ignored) { }
-            }
-        }
-        if (!ok) {
-            System.out.println("GATE FAILURE: runtime-error assertion "
-                + "control(s) failed — a code substring is never the "
-                + "sidecar's exact error assertion");
-            System.exit(1);
-        }
-        System.out.println("Runtime-error assertion controls: exact "
-            + "message/coordinates/pinned fields accepted; wrong message, "
-            + "wrong coordinate, suppressed pinned field, executed-vs-"
-            + "compile-reject and a missing DEAL payload refused");
-    }
-
-    private static boolean checkRuntimeErrorAssertion(Path controlRoot)
-            throws IOException {
-        Path moduleRoot = controlRoot.resolve("conformance");
-        Path moduleFile = moduleRoot.resolve("modid_lib_b").resolve(
-            "lib_b.deal");
-        Files.createDirectories(moduleFile.getParent());
-        Files.writeString(moduleFile, "// @spec: control\n"
-            + "// @expected: runtime-error E8001\n"
-            + "export function f(): null {\n  return null;\n}\n");
-        Path outputRoot = controlRoot.resolve("out");
-        Files.createDirectories(outputRoot);
-        String corpusPath = "backend-runtime/modules/modid_lib_b/lib_b.deal";
-        DeploymentEntry entry = new DeploymentEntry(corpusPath, 2,
-            List.of("modid_lib_b"));
-        CaseDeployment deployment = new CaseDeployment(
-            Map.of(moduleFile.toString(), entry),
-            Map.of("modid_lib_b", List.of(entry)), "conformance");
-        String classIdentity = "@" + CORPUS_IDENTITY_NAMESPACE + "/"
-            + corpusPath + "/Point";
-        deal.test.conformance.SidecarExpectations.ErrorExpectation assertion =
-            new deal.test.conformance.SidecarExpectations.ErrorExpectation(
-                "E8001", "expected instance of " + classIdentity + ", got table",
-                corpusPath, 5, 9, Optional.of(classIdentity),
-                Optional.of("table"), Optional.empty(), Optional.empty());
-        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
-            pinned = new deal.test.conformance.SidecarExpectations
-                .RuntimeExpectation.Executed("runtime-error",
-                    framedStdout(assertion), new byte[0], 1, assertion);
-        boolean ok = true;
-        // The exact carrier passes: the generated token projects to the
-        // corpus identity and the stripped line rebases onto the raw line.
-        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
-            "E8001", "expected instance of @conformance/modid_lib_b/Point, "
-                + "got table", moduleFile, 3, 9,
-            Optional.of("@conformance/modid_lib_b/Point"), Optional.of("table")),
-            false, "the exact carrier + projection");
-        // A message differing only beyond the code fails.
-        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
-            "E8001", "expected instance", moduleFile, 3, 9,
-            Optional.of("@conformance/modid_lib_b/Point"), Optional.of("table")),
-            true, "a wrong message with the right code");
-        // A wrong column fails.
-        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
-            "E8001", "expected instance of @conformance/modid_lib_b/Point, "
-                + "got table", moduleFile, 3, 10,
-            Optional.of("@conformance/modid_lib_b/Point"), Optional.of("table")),
-            true, "a wrong column");
-        // A pinned optional the carrier does not carry fails.
-        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
-            "E8001", "expected instance of @conformance/modid_lib_b/Point, "
-                + "got table", moduleFile, 3, 9,
-            Optional.empty(), Optional.of("table")),
-            true, "a suppressed pinned expected field");
-        // No DEAL payload at all fails, even with an exit-1 capture.
-        Files.deleteIfExists(outputRoot.resolve(ERROR_TRANSPORT_FILE));
-        Optional<String> missing = runtimeErrorVerdict(
-            new NodeResult(1, "", "", false, false), outputRoot, pinned,
-            deployment);
-        if (missing.isEmpty()) {
-            System.out.println("FAIL: the runtime-error control accepted a "
-                + "run with no DEAL error payload");
-            ok = false;
-        }
-        // A compile-reject pin on a lane that executed fails.
-        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Rejected
-            rejected = new deal.test.conformance.SidecarExpectations
-                .RuntimeExpectation.Rejected("compile-reject", "E6006",
-                    OptionalInt.empty(), OptionalInt.empty());
-        Optional<String> executedVerdict = runtimeErrorVerdict(
-            new NodeResult(0, "", "", false, false), outputRoot, rejected,
-            deployment);
-        if (executedVerdict.isEmpty()) {
-            System.out.println("FAIL: the runtime-error control accepted an "
-                + "executed lane against a compile-reject pin");
-            ok = false;
-        }
-        return ok;
-    }
-
-    /** One control round: write the carrier transport, apply the live
-     * verdict through the shared comparator, and require the pinned
-     * acceptance/rejection. */
-    private static boolean expectVerdict(Path outputRoot,
-            CaseDeployment deployment,
-            deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
-                pinned,
-            CapturedError captured, boolean mustFail, String what)
-            throws IOException {
-        writeErrorTransport(outputRoot, captured);
-        Optional<String> verdict = runtimeErrorVerdict(
-            new NodeResult(1, "", "", false, false), outputRoot, pinned,
-            deployment);
-        if (mustFail == verdict.isEmpty()) {
-            System.out.println("FAIL: the runtime-error control " + what
-                + (mustFail ? " was accepted" : " was refused: "
-                    + verdict.orElse("")));
-            return false;
-        }
-        return true;
-    }
-
-    private static CapturedError capturedError(String code, String message,
-            Path file, int line, int column, Optional<String> expected,
-            Optional<String> actual) {
-        return new CapturedError(code, message, file.toString(), line, column,
-            expected, actual, Optional.empty(), Optional.empty());
-    }
-
-    private static void writeErrorTransport(Path outputRoot,
-            CapturedError captured) throws IOException {
-        List<String> fields = new ArrayList<>();
-        addTransportString(fields, "code", captured.code());
-        addTransportString(fields, "message", captured.message());
-        addTransportString(fields, "file", captured.file());
-        if (captured.line() != null) {
-            fields.add("\"line\":" + captured.line());
-        }
-        if (captured.column() != null) {
-            fields.add("\"column\":" + captured.column());
-        }
-        addTransportString(fields, "expected", captured.expected().orElse(null));
-        addTransportString(fields, "actual", captured.actual().orElse(null));
-        Files.writeString(outputRoot.resolve(ERROR_TRANSPORT_FILE),
-            "{" + String.join(",", fields) + "}", StandardCharsets.UTF_8);
-    }
-
-    private static void addTransportString(List<String> fields, String key,
-            String value) {
-        if (value == null) {
-            return;
-        }
-        fields.add("\"" + key + "\":\""
-            + value.replace("\\", "\\\\").replace("\"", "\\\"")
-            + "\"");
-    }
-
-    private static byte[] framedStdout(
-            deal.test.conformance.SidecarExpectations.ErrorExpectation
-                assertion) {
-        return (deal.test.conformance.ErrorSnapshot.CODE_LINE_PREFIX
-            + assertion.code() + "\n"
-            + deal.test.conformance.ErrorSnapshot.SNAPSHOT_LINE_PREFIX
-            + deal.test.conformance.ErrorSnapshot.canonicalJson(assertion)
-            + "\n").getBytes(StandardCharsets.UTF_8);
     }
 
     /** One cap-boundary control round in one stream position: a real

@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected table\",\"sourceFile\":\"backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal\",\"line\":10,\"column\":22,\"expected\":\"table\",\"actual\":\"number\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected table\",\"sourceFile\":\"backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal\",\"line\":10,\"column\":22,\"expected\":\"table\",\"actual\":\"int\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -19,7 +19,7 @@
       "line": 10,
       "column": 22,
       "expected": "table",
-      "actual": "number"
+      "actual": "int"
     }
   }
 }

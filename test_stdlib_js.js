@@ -176,7 +176,7 @@ test("console.log rejects a non-string with E8001 and the forwarded span", funct
   const err = assertErrorCode(function() { consoleMod.log.$f(42, "t1.deal", 1, 2); }, "E8001");
   assertEqual(err.message, "expected string", "console.log entry message");
   assertEqual(err.expected, "string", "console.log expected kind");
-  assertEqual(err.actual, "number", "console.log actual kind");
+  assertEqual(err.actual, "int", "console.log actual kind (the value-derived int token)");
   assertSpan(err, "t1.deal", 1, 2);
 });
 
@@ -371,7 +371,7 @@ test("json.parse rejects malformed JSON with the E8001 parse-error envelope", fu
 
 test("json.parse rejects a top-level scalar, array, or null with E8001 expected table", function() {
   const errNumber = assertErrorMessage(function() { json.parse.$f("42", "f.js", 1, 1); }, "E8001", "expected table");
-  assertEqual(errNumber.actual, "number", "scalar number actual kind");
+  assertEqual(errNumber.actual, "int", "scalar number actual kind (the value-derived int token)");
   const errString = assertErrorMessage(function() { json.parse.$f('"x"', "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errString.actual, "string", "scalar string actual kind");
   const errBoolean = assertErrorMessage(function() { json.parse.$f("true", "f.js", 1, 1); }, "E8001", "expected table");

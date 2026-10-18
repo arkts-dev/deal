@@ -129,7 +129,45 @@ function $kindOf($v) {
   if ($v instanceof $Map) return "table";
   if ($Array.isArray($v)) return "array";
   if ($v instanceof $Uint8Array) return "bytes";
+  if (typeof $v === "number") {
+    // The value-derived numeric classification (the Lua emitted prelude's
+    // __typedBoundaryKind and the shared JVM runtime's Integer/in-range
+    // Long projection): a plain JS number cannot carry its variant, so an
+    // integral finite value inside the signed32 int range projects the int
+    // carrier and every other numeric value (fractional, nonfinite, or
+    // integral outside signed32) the number carrier — a read-side variant
+    // carrier above keeps its own recorded token.
+    return $v % 1 === 0 && $v >= -2147483648 && $v <= 2147483647
+      ? "int" : "number";
+  }
   return typeof $v;
+}
+
+// $carrierKind: the host ABI's carrier-kind projection of one failing
+// subject (the Lua emitted prelude's __carrierKind and the shared host-arm
+// renderer): a raw number — read-side carrier or plain JS number — projects
+// the number token, a language null the table token, and every other value
+// keeps $kindOf's value-derived classification. The host async-shape arm
+// uses this projection rather than the typed-boundary classification, so
+// an integral host handle 42 reports "number" exactly like the LuaJIT and
+// JVM host wrappers, never the typed-boundary "int".
+function $carrierKind($v) {
+  if ($v === $undefined) return "nil";
+  if ($isNumCarrier($v) || typeof $v === "number") return "number";
+  if ($v === null) return "table";
+  return $kindOf($v);
+}
+
+// $completionKind: the async-completion boundary's actual projection (the
+// Lua emitted prelude's __completionBoundaryKind): every numeric carrier is
+// the single number kind — a completion value has no container slot whose
+// recorded variant the await site could read — and every other value keeps
+// $kindOf's classification. The host async wrapper's await-site completion
+// check uses this projection so an integral completion 42 reports "number"
+// exactly like the LuaJIT and JVM completion boundaries.
+function $completionKind($v) {
+  if (typeof $v === "number" || $isNumCarrier($v)) return "number";
+  return $kindOf($v);
 }
 
 // $elemKindOf: the array-element arm's reference-kind projection (the
@@ -153,6 +191,7 @@ function $elemKindOf($v) {
 // a raw JS function stays "function", and primitives keep their names.
 function $luaKindOf($v) {
   if ($v === $undefined) return "nil";
+  if ($v === null) return "null";
   if (typeof $v === "object" || typeof $v === "function") {
     return typeof $v === "function" ? "function" : "table";
   }
@@ -3847,11 +3886,24 @@ const $rt = {
         }
         const $op = f(...$hostArgs);
         if (!($op && typeof $op.then === "function")) {
-          const $got = $op === $undefined ? "nothing" : $kindOf($op);
+          const $got = $op === $undefined ? "nothing" : $carrierKind($op);
           $rt.fail("E8010", "host async function must return an async operation, got " + $got, $file, $line, $column, "async operation", $got);
         }
         const $v = await $op;
-        return $rt.checkType($retDesc, $v, $completionFile, $completionLine, $completionColumn);
+        try {
+          return $rt.checkType($retDesc, $v, $completionFile,
+            $completionLine, $completionColumn);
+        } catch ($completionError) {
+          if ($completionError instanceof $DEALError
+              && $completionError.actual === $kindOf($v)
+              && $completionError.actual !== $completionKind($v)) {
+            throw new $DEALError($completionError.code,
+              $completionError.message, $completionError.file,
+              $completionError.line, $completionError.column,
+              $completionError.expected, $completionKind($v));
+          }
+          throw $completionError;
+        }
       },
     };
   },
@@ -3909,10 +3961,10 @@ const $rt = {
     const $inModule = typeof $modulePath === "string"
       ? " in module '" + $modulePath + "'" : "";
     if (declaredMap === null || typeof declaredMap !== "object") {
-      $rt.fail("E8011", "host module declarations must be a table", $undefined, $undefined, $undefined, "table", $kindOf(declaredMap));
+      $rt.fail("E8011", "host module declarations must be a table", $undefined, $undefined, $undefined, "table", $luaKindOf(declaredMap));
     }
     if (rawExports === null || typeof rawExports !== "object") {
-      $rt.fail("E8011", "host module did not return a module object", $undefined, $undefined, $undefined, "table", $kindOf(rawExports));
+      $rt.fail("E8011", "host module did not return a module object", $undefined, $undefined, $undefined, "table", $luaKindOf(rawExports));
     }
     const $surface = {};
     const $names = Object.keys(declaredMap);
@@ -3942,11 +3994,11 @@ const $rt = {
             $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has signature mismatch: expected " + $desc + ", got " + String($v.$sig), file, line, column, $desc, $v.$sig);
           }
           if (typeof $v.$f !== "function") {
-            $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has non-function $f", file, line, column, "function", $kindOf($v.$f));
+            $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has non-function $f", file, line, column, "function", $luaKindOf($v.$f));
           }
           $f = $v.$f;
         } else {
-          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a function", file, line, column, "function", $kindOf($v));
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a function", file, line, column, "function", $luaKindOf($v));
         }
         $surface[$name] = $parsed.$async
             ? $rt.hostAsyncFunction($desc, $f)
@@ -3956,7 +4008,7 @@ const $rt = {
           $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has an unsupported declared descriptor: " + $desc, file, line, column);
         }
         if ($v === null || typeof $v !== "object" || $v.$kind !== "class") {
-          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a class meta", file, line, column, "class", $kindOf($v));
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a class meta", file, line, column, "class", $luaKindOf($v));
         }
         if ($v.$classname !== $desc) {
           $rt.fail("E8011", "host class export '" + $name + "'" + $inModule + " has identity mismatch: expected " + $desc + ", got " + String($v.$classname), file, line, column, $desc, $v.$classname);
@@ -3979,7 +4031,7 @@ const $rt = {
         if ($hostDefaults === $undefined
             || !(typeof $hostDefaults === "function"
                 || $isPlainObject($hostDefaults))) {
-          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " is missing its defaults", file, line, column, "table", $kindOf($hostDefaults));
+          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " is missing its defaults", file, line, column, "table", $luaKindOf($hostDefaults));
         }
         // The preserved defaults-map seam (host-module-abi D2, ISSUE-0331
         // gate closure): the host defaults — the plain object, or the

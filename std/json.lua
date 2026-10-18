@@ -50,17 +50,17 @@
 -- elements, never as an object holding private carrier keys; unmarked
 -- tables keep the existing numeric-key inference and object encoding.
 --
--- The runtime's other two carriers are projected the same way (the emitted
--- chunk's own JSON walk is the reference): a read-side numeric-variant
--- carrier — the [__K.jn] shape __readVar materializes — is the number it
--- carries, an int-variant carrier with the integer spelling and a
--- number-variant carrier with the closed decimal spelling (`1.0`), never an
--- object holding `k`/`d`; and a chunk table carrier (the presence map
--- __K.keys, the first-insertion order __K.order and the per-slot
--- __K.nK variant marks of a TABLE_NEW / JSON_PARSE object) encodes as the
--- JSON object of its recorded member order, with every private
--- table-object mark skipped and each marked numeric slot keeping its
--- number-variant spelling.
+-- The other two runtime carriers keep their JSON shape (ISSUE-0839): a
+-- numeric-variant carrier ({[__K.jn] = true, k = "int"|"number", d = n})
+-- encodes as the number it carries with its recorded variant spelling —
+-- the int variant's integer text, the number variant's canonical
+-- Double.toString decimal text — and a chunk table carrier ([__K.t] with
+-- the presence map [__K.keys] and the insertion-order list [__K.order])
+-- encodes as an object over exactly its user string keys in the recorded
+-- order. The per-slot [__K.nK] marks select the number-variant spelling
+-- for a marked slot. None of these private table-object keys is ever an
+-- encoded member, and the null/absent/unsupported/cycle behavior is
+-- unchanged.
 
 local __rt = require("deal.runtime")
 
@@ -210,6 +210,141 @@ local function json_int_or_nil(text)
   return value
 end
 
+-- The canonical decimal spelling (Java Double.toString parity) of one
+-- finite binary64 value: the shortest round-tripping digit string, the
+-- closest such decimal, and the even last digit when the value is exactly
+-- equidistant — the same spelling the emitted prelude (__sfNumText), the
+-- JVM JvmJson.numberText and the JS $numText publish. The JSON stringify
+-- walker uses it for a number-variant slot and a number-variant carrier,
+-- so an int-variant value keeps its integer spelling and a number-variant
+-- value keeps one fractional digit (1.0, not 1) — the recorded variant
+-- survives the text. Plain unmarked numbers keep the module's own
+-- spelling (the existing %.17g encoding).
+local function json_num_parts(rep)
+  local mant, e = string.match(rep, "^(%d+%.?%d*)e([%+%-]?%d+)$")
+  if mant then
+    local point = string.find(mant, ".", 1, true)
+    local intLen = point and (point - 1) or #mant
+    local digits = string.gsub(mant, "%.", "")
+    return digits, tonumber(e) - (#digits - intLen)
+  end
+  local point = string.find(rep, ".", 1, true)
+  local digits
+  local expo
+  if point then
+    digits = string.gsub(rep, "%.", "")
+    expo = point - #rep
+  else
+    digits = rep
+    expo = 0
+  end
+  digits = string.gsub(digits, "^0+", "")
+  if digits == "" then digits = "0" end
+  return digits, expo
+end
+local function json_num_bump(digits, up)
+  local n = #digits
+  local d = {}
+  for i = 1, n do d[i] = tonumber(string.sub(digits, i, i)) end
+  if up then
+    local i = n
+    while i >= 1 and d[i] == 9 do d[i] = 0; i = i - 1 end
+    if i == 0 then return "1" end
+    d[i] = d[i] + 1
+  else
+    local i = n
+    while i >= 1 and d[i] == 0 do d[i] = 9; i = i - 1 end
+    if i == 0 then return "9" end
+    d[i] = d[i] - 1
+  end
+  local s = ""
+  for i = 1, n do s = s..tostring(d[i]) end
+  return s
+end
+local function json_num_dec(digits, expo)
+  if #digits == 1 then return digits.."e"..expo end
+  return string.sub(digits, 1, 1).."."..string.sub(digits, 2)
+    .."e"..(expo + #digits - 1)
+end
+local function json_num_exp_digits(v)
+  local mant = string.match(string.format("%.40e", v), "^(%d+%.?%d*)e")
+  return (string.gsub(mant or "", "%.", ""))
+end
+local function json_num_digits(v, N)
+  local rep = string.format("%."..N.."g", v)
+  local digits, expo = json_num_parts(rep)
+  local pad = N - #digits
+  if pad > 0 then
+    digits = digits..string.rep("0", pad)
+    expo = expo - pad
+  end
+  if tonumber(json_num_dec(digits, expo)) ~= v then
+    -- The correctly rounded decimal lies outside the rounding interval:
+    -- the candidate is its in-interval neighbour.
+    local up = json_num_bump(digits, true)
+    if tonumber(json_num_dec(up, expo)) == v then return up, expo end
+    local dn = json_num_bump(digits, false)
+    if tonumber(json_num_dec(dn, expo)) == v then return dn, expo end
+    return nil
+  end
+  local exp = json_num_exp_digits(v)
+  local dn = json_num_bump(digits, false)
+  local dnMid = string.gsub(dn.."5", "^0+", "")
+  if string.sub(exp, 1, #dnMid) == dnMid
+      and string.gsub(string.sub(exp, #dnMid + 1), "0", "") == ""
+      and tonumber(json_num_dec(dn, expo)) == v then
+    if tonumber(string.sub(dn, #dn, #dn)) % 2 == 0 then return dn, expo end
+    return digits, expo
+  end
+  local up = json_num_bump(digits, true)
+  local upMid = digits.."5"
+  if string.sub(exp, 1, #upMid) == upMid
+      and string.gsub(string.sub(exp, #upMid + 1), "0", "") == ""
+      and tonumber(json_num_dec(up, expo)) == v then
+    if tonumber(string.sub(up, #up, #up)) % 2 == 0 then return up, expo end
+    return digits, expo
+  end
+  return digits, expo
+end
+local function json_number_text(v)
+  local neg = false
+  if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
+  if v == 0 then return neg and "-0.0" or "0.0" end
+  local digits, expo = nil, nil
+  for N = 2, 17 do
+    digits, expo = json_num_digits(v, N)
+    if digits ~= nil then break end
+  end
+  if digits == nil then digits, expo = json_num_parts(string.format("%.17g", v)) end
+  digits = string.gsub(digits, "^0+", "")
+  if digits == "" then digits = "0" end
+  local trail = 0
+  while #digits > 1 and string.sub(digits, #digits, #digits) == "0" do
+    digits = string.sub(digits, 1, #digits - 1)
+    trail = trail + 1
+  end
+  local k = expo + trail + #digits - 1
+  local ds = digits
+  local text
+  if k >= -3 and k <= 6 then
+    if k >= 0 then
+      if #ds <= k + 1 then
+        text = ds..string.rep("0", k + 1 - #ds)..".0"
+      else
+        text = string.sub(ds, 1, k + 1).."."..string.sub(ds, k + 2)
+      end
+    else
+      text = "0."..string.rep("0", -k - 1)..ds
+    end
+  else
+    local tail = string.sub(ds, 1, 1)
+    if #ds > 1 then tail = tail.."."..string.sub(ds, 2) else tail = tail..".0" end
+    text = tail.."E"..tostring(k)
+  end
+  if neg then text = "-"..text end
+  return text
+end
+
 -- The closed carrier-kind projection of one non-JSON value (the shared
 -- JSON_STRINGIFY_UNSUPPORTED arm's actual token, the emitted prelude's
 -- __stdJsonKind vocabulary): the absent marker is nil, the language-null
@@ -226,6 +361,9 @@ local function json_carrier_kind(v)
   if v == __rt.__NULL then return 'table' end
   local t = type(v)
   if t == 'table' then
+    -- The numeric-variant carrier projects its recorded numeric kind, the
+    -- same token the emitted prelude's __stdJsonKind publishes.
+    if v[__K.jn] then return 'number' end
     local kind = v[__K.kind]
     if kind == 'bytes' then return 'bytes' end
     -- A class or Error carrier is table even when it also carries the
@@ -270,108 +408,26 @@ local function mark_decoded_array(arr, length)
   return arr
 end
 
--- The closed decimal spelling of one binary64 value: the emitted chunk's
--- __jsonNumText and the JS runtime's $numText text (shortest
--- round-trippable digits, always one fractional digit, E-notation outside
--- [1e-3, 1e7)). A number-variant slot spells through this text, so a
--- number-variant value keeps its variant spelling (`1.0`) exactly like the
--- chunk's own JSON walk instead of collapsing to the int spelling ('1').
--- Non-finite values have no JSON text (nil).
-local function json_num_text(v)
-  if v ~= v or v == math.huge or v == -math.huge then return nil end
-  if v == 0 then
-    if 1 / v < 0 then return "-0.0" end
-    return "0.0"
-  end
-  local sign = ""
-  if v < 0 then sign = "-"; v = -v end
-  local digits = nil
-  local exp = nil
-  for p = 1, 17 do
-    local text = string.format("%." .. (p - 1) .. "e", v)
-    if tonumber(text) == v then
-      local lead, rest, e = string.match(text, "^(%d)%.?(%d*)e([%+%-]?%d+)$")
-      if lead ~= nil then
-        digits = lead .. rest
-        exp = tonumber(e)
-        break
-      end
-    end
-  end
-  if digits == nil then return nil end
-  digits = string.gsub(digits, "0+$", "")
-  if digits == "" then digits = "0" end
-  local text
-  if exp >= -3 and exp < 7 then
-    if exp >= 0 then
-      if #digits > exp + 1 then
-        text = string.sub(digits, 1, exp + 1) .. "." .. string.sub(digits, exp + 2)
-      else
-        text = digits .. string.rep("0", exp + 1 - #digits) .. ".0"
-      end
-    else
-      text = "0." .. string.rep("0", -exp - 1) .. digits
-    end
-  else
-    local mantissa
-    if #digits > 1 then
-      mantissa = string.sub(digits, 1, 1) .. "." .. string.sub(digits, 2)
-    else
-      mantissa = string.sub(digits, 1, 1) .. ".0"
-    end
-    text = mantissa .. "E" .. tostring(exp)
-  end
-  return sign .. text
-end
-
--- The set of every private carrier mark (ISSUE-0830), so a chunk table
--- carrier's own marks are never enumerated as object members even when a
--- mark-less fallback has to walk the raw table. DEAL source cannot name a
--- table key, so a JSON-shaped table a user built carries none of them.
-local __PRIVATE_MARKS = {}
-for _, mark in pairs(__K) do __PRIVATE_MARKS[mark] = true end
-
--- The recorded per-slot numeric-variant marks of one container carrier
--- (the emitted chunk's __K.nK), or nil when the carrier records none.
-local function variant_marks(v)
-  local marks = v[__K.nK]
-  if type(marks) == "table" then return marks end
-  return nil
-end
-
--- The member keys of one chunk table carrier: the recorded first-insertion
--- order (the __order discipline every shared table consumer reads), else
--- the carrier's own presence map in the deterministic sorted spelling,
--- else the raw table without its private marks. A hand-built carrier
--- without the shared marks (no production path builds one) keeps a
--- deterministic spelling.
-local function table_carrier_keys(v)
-  local order = v[__K.order]
-  if type(order) == "table" then return order end
-  local keys = {}
-  local presence = v[__K.keys]
-  if type(presence) == "table" then
-    for k, _ in pairs(presence) do keys[#keys + 1] = k end
-  else
-    for k, _ in pairs(v) do
-      if not __PRIVATE_MARKS[k] then keys[#keys + 1] = k end
-    end
-  end
-  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-  return keys
-end
-
 -- The stack-safe walk: an explicit frame stack replaces the recursion, so
 -- a finite nested value has no Lua call-stack bound; the path set keeps
 -- the path-local cycle guard (entered on open, removed on close).
+--
+-- The walk is carrier-complete, exactly the emitted chunk's JSON_STRINGIFY
+-- walk: a numeric-variant carrier ({[__K.jn] = true, k = "int"|"number",
+-- d = value}) renders the number it carries with its recorded variant
+-- spelling; the chunk table carrier ([__K.t] with [__K.keys]/[__K.order])
+-- renders exactly its user string keys in the recorded insertion order;
+-- the array carrier ([__K.a]/[__K.n]) renders its elements; and the
+-- per-slot number marks ([__K.nK]) select the number-variant spelling for
+-- the marked slot. No private table-object key is ever enumerated as an
+-- object member. Unmarked tables keep the numeric-key inference and the
+-- existing object encoding, and the null/absent/unsupported/cycle behavior
+-- is unchanged.
 local function encode_value(v, file, line, column, path)
   if type(path) ~= "table" then path = {} end
   local out = {}
   local frames = {}
-  -- `numberVariant` carries the enclosing container's recorded variant mark
-  -- for the value being emitted: a number-variant slot spells through the
-  -- closed decimal text (`1.0`), never the int spelling (`1`).
-  local emit = function(val, numberVariant)
+  local emit = function(val, isNumber)
     if val == __rt.__NULL then
       out[#out + 1] = 'null'
       return
@@ -396,38 +452,40 @@ local function encode_value(v, file, line, column, path)
       if val == math.huge or val == -math.huge then
         error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
       end
-      if numberVariant then
-        out[#out + 1] = json_num_text(val)
-        return
+      -- A marked number-variant slot keeps the closed decimal spelling;
+      -- an unmarked number keeps the module's existing %.17g encoding.
+      if isNumber then
+        out[#out + 1] = json_number_text(val)
+      else
+        out[#out + 1] = string.format('%.17g', val)
       end
-      out[#out + 1] = string.format('%.17g', val)
       return
     elseif t == 'boolean' then
       out[#out + 1] = val and 'true' or 'false'
       return
     elseif t == 'table' then
-      -- A read-side numeric-variant carrier (__readVar's [__K.jn] shape)
-      -- is the number it carries, never an object holding its private
-      -- fields: an int-variant carrier keeps the integer spelling, a
-      -- number-variant carrier the closed decimal spelling — exactly the
-      -- emitted chunk's JSON walk and the shared JVM/JS Int/Double split.
-      -- A non-finite carried double takes the closed non-finite arms.
+      -- The numeric-variant carrier is the number it carries: the decoded
+      -- JSON graph's numeric leaf and the read-side variant materialization
+      -- hold this shape, and the int/number variant decides the spelling
+      -- (the int variant is the integer text, the number variant the
+      -- canonical decimal text with its fractional digit). The carrier is
+      -- never enumerated as an object holding k/d.
       if val[__K.jn] then
-        local d = val.d
-        if type(d) ~= 'number' then
+        local carried = val.d
+        if type(carried) ~= 'number' then
           unsupported(val, file, line, column)
         end
-        if val.k == 'int' then
-          out[#out + 1] = tostring(d)
-          return
-        end
-        if d ~= d then
+        if carried ~= carried then
           error(__rt._err("E8001", "cannot encode NaN as JSON", file, line, column, nil, nil))
         end
-        if d == math.huge or d == -math.huge then
+        if carried == math.huge or carried == -math.huge then
           error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
         end
-        out[#out + 1] = json_num_text(d)
+        if val.k == 'int' then
+          out[#out + 1] = tostring(carried)
+        else
+          out[#out + 1] = json_number_text(carried)
+        end
         return
       end
       -- The closed carrier rejection (the emitted chunk's sfValue arm order):
@@ -454,6 +512,7 @@ local function encode_value(v, file, line, column, path)
         error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
       end
       path[val] = true
+      local marks = type(val[__K.nK]) == 'table' and val[__K.nK] or nil
       -- The private array mark selects array mode before the numeric-key
       -- inference: a decoded JSON array (marked by parse, an empty array
       -- included) and the emitted chunk's own array carrier — the carrier
@@ -462,34 +521,47 @@ local function encode_value(v, file, line, column, path)
       -- never encoded as object members. The recorded length is the
       -- logical length; a carrier without a usable length falls back to
       -- the table's own border, never to object mode.
-      local markedLen = nil
       if val[__K.a] then
+        local markedLen = nil
         local declared = val[__K.n]
         if type(declared) == 'number' and declared >= 0 and declared % 1 == 0 then
           markedLen = declared
         else
           markedLen = #val
         end
-      end
-      -- The container's recorded per-slot numeric-variant marks (a chunk
-      -- array or table carrier carries them; a decoded array carries none).
-      local marks = variant_marks(val)
-      if markedLen ~= nil then
         out[#out + 1] = '['
-        frames[#frames + 1] = {kind = 'array', value = val, index = 1,
-          maxIdx = markedLen, marks = marks}
+        frames[#frames + 1] = {kind = 'array', value = val, index = 1, maxIdx = markedLen, marks = marks}
         return
       end
-      -- The chunk table carrier (the emitted chunk's TABLE_NEW / JSON_PARSE
-      -- object shape: the presence map __K.keys, the first-insertion order
-      -- __K.order and the per-slot variant marks __K.nK): the carrier is the
-      -- JSON object of its recorded member order, and none of its private
-      -- table-object marks is ever a member. The chunk's own TABLE_KEYS and
-      -- JSON_STRINGIFY consumers read exactly these marks.
-      if val[__K.t] then
+      -- The chunk table carrier's own marks ([__K.t], the presence map
+      -- __K.keys and the insertion-order list __K.order — __orderAdd
+      -- creates the latter two on a chunk table the first time it is
+      -- written): the carrier is an object over exactly its user string
+      -- keys, in the recorded insertion order; a carrier without the order
+      -- list keeps the string-key order. The private marks are table-object
+      -- keys, so they can never be user keys, and they are never members of
+      -- the encoded object.
+      if val[__K.t] ~= nil or val[__K.keys] ~= nil or val[__K.order] ~= nil then
+        local keys = {}
+        local seen = {}
+        local order = val[__K.order]
+        if type(order) == 'table' then
+          for i = 1, #order do
+            local k = order[i]
+            if type(k) == 'string' and not seen[k] and val[k] ~= nil then
+              keys[#keys + 1] = k
+              seen[k] = true
+            end
+          end
+        end
+        for k, _ in pairs(val) do
+          if type(k) == 'string' and not seen[k] then
+            keys[#keys + 1] = k
+            seen[k] = true
+          end
+        end
         out[#out + 1] = '{'
-        frames[#frames + 1] = {kind = 'object', value = val,
-          keys = table_carrier_keys(val), index = 1, marks = marks}
+        frames[#frames + 1] = {kind = 'object', value = val, keys = keys, index = 1, marks = marks}
         return
       end
       -- Check if it's an array (sequential integer keys starting at 1)
@@ -504,8 +576,7 @@ local function encode_value(v, file, line, column, path)
       end
       if isArray and maxIdx > 0 then
         out[#out + 1] = '['
-        frames[#frames + 1] = {kind = 'array', value = val, index = 1,
-          maxIdx = maxIdx, marks = marks}
+        frames[#frames + 1] = {kind = 'array', value = val, index = 1, maxIdx = maxIdx}
         return
       end
       local keys = {}
@@ -517,7 +588,7 @@ local function encode_value(v, file, line, column, path)
     -- Unsupported types: reject with runtime error
     unsupported(val, file, line, column)
   end
-  emit(v)
+  emit(v, false)
   while #frames > 0 do
     local frame = frames[#frames]
     if frame.kind == 'array' then
@@ -529,8 +600,7 @@ local function encode_value(v, file, line, column, path)
         local i = frame.index
         frame.index = i + 1
         if i > 1 then out[#out + 1] = ',' end
-        emit(frame.value[i],
-          frame.marks ~= nil and frame.marks[i] == true)
+        emit(frame.value[i], frame.marks ~= nil and frame.marks[i] == true)
       end
     else
       if frame.index > #frame.keys then
@@ -552,8 +622,7 @@ local function encode_value(v, file, line, column, path)
           key_str = '"' .. escape(tostring(k), file, line, column) .. '"'
         end
         out[#out + 1] = key_str .. ':'
-        emit(frame.value[k],
-          frame.marks ~= nil and frame.marks[k] == true)
+        emit(frame.value[k], frame.marks ~= nil and frame.marks[k] == true)
       end
     end
   end
