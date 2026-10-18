@@ -1,5 +1,6 @@
 package deal.test;
 
+import deal.ast.AwaitExpression;
 import deal.ast.BinaryExpr;
 import deal.ast.BinaryOp;
 import deal.ast.CallExpr;
@@ -33,6 +34,7 @@ import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.BindingImmutabilityProof;
 import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
@@ -809,6 +811,40 @@ public class AdapterShapeMapPayloadTest {
                 == CaptureMode.REEVALUATE_THUNK,
             "a conversion source maps to REEVALUATE_THUNK (the closed non-identifier "
                 + "arm — the total map assigns the arm to every composite source)");
+    }
+
+    /**
+     * The awaited-value arm: an {@code await} of a direct async call whose
+     * declared return type is the adapted function value is the
+     * declaration-site VALUE — the suspension delivers the value once, and no
+     * re-executor of the source can await inside a synchronous target's thunk.
+     * A proof on the arm is a producer defect (the operand is no binding load).
+     */
+    static void testAwaitedSourceMapsToValue() {
+        System.out.println("-- AWAITED_RESULT: an await of a direct async call is the "
+            + "declaration-site VALUE arm --");
+
+        AwaitExpression awaited = new AwaitExpression(null,
+            new CallExpr(null, new IdentifierExpr(null, "make"), List.of()));
+        AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeOf(awaited,
+            name -> null);
+        check(shape == AdapterShapeMap.SourceShape.AWAITED_RESULT,
+            "an awaited source classifies AWAITED_RESULT");
+        check(AdapterShapeMap.selectMode(shape, Optional.empty())
+                == CaptureMode.VALUE,
+            "an awaited source maps to VALUE (the suspension's delivered"
+                + " function value)");
+
+        boolean rejected = false;
+        try {
+            AdapterShapeMap.selectMode(shape, Optional.of(
+                new BindingImmutabilityProof(new BindingId(0), 0)));
+        } catch (IllegalArgumentException expected) {
+            rejected = true;
+        }
+        check(rejected,
+            "a proof on the awaited arm fails closed (the payload's proof is"
+                + " present iff VALUE's operand is a binding load)");
     }
 
     /**
@@ -1634,6 +1670,7 @@ public class AdapterShapeMapPayloadTest {
         testValueOverFunctionExpression();
         testValueOverIntrinsic();
         testCompositeSourcesMapToReevaluateThunk();
+        testAwaitedSourceMapsToValue();
         testReevaluateThunkPayloadConstruction();
         testHostExternalImportReadMapsToReevaluateThunk();
         testIrLevelThunkBuilderWrapsCallResultAndFailsClosed();

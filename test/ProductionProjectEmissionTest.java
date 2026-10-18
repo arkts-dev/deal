@@ -46,10 +46,19 @@ import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncLinkKind;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryId;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.FunctionAllocationIdentity;
+import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
@@ -796,6 +805,232 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
+    /**
+     * The declaration-order fixture: {@code main} is declared before both
+     * classes and constructs them, {@code Holder}'s default constructs the
+     * later-declared {@code Counter}, and the arity-extension adapter's
+     * source is the call result of {@code make} (re-evaluated at each
+     * invocation, so the counter observes both calls).
+     */
+    private static final String CALL_RESULT_ADAPTER_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export function main(): null {
+          let c: Counter = {};
+          let f: (a: int, b: int) => int = make(c);
+          let first: int = f(4, 5);
+          let second: int = f(7, 8);
+          if (first !== 4 || second !== 7) {
+            throw { code: "JS_PROBE", message: "adapter result" };
+          }
+          if (c.n !== 2) {
+            throw { code: "JS_PROBE", message: "thunk re-execution" };
+          }
+          if (c.x !== 11) {
+            throw { code: "JS_PROBE", message: "later class default" };
+          }
+          let holder: Holder = {};
+          if (holder.counter.n !== 0) {
+            throw { code: "JS_PROBE", message: "nested later-class default" };
+          }
+          console.log("PROBE|JS|DECLARATION-ORDER");
+          return null;
+        }
+
+        class Holder {
+          counter: Counter = {};
+        }
+
+        function make(c: Counter): (a: int) => int {
+          c.n = c.n + 1;
+          return function(a: int): int { return a; };
+        }
+
+        class Counter {
+          n: int = 0;
+          x: int = 11;
+        }
+        """;
+
+    /**
+     * The awaited call-result adapter: {@code await make()} delivers the
+     * adapted function value once, so the adapter's source is the suspension's
+     * materialized value at the declaration site — a synchronous target can
+     * never re-execute an awaited source inside a thunk. The async target is
+     * the same shape with matching async markers: the adapter protocol
+     * resolves the retained source value's class at execution.
+     */
+    private static final String AWAIT_ADAPTER_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export async function entry(): int {
+          return await worker();
+        }
+
+        export async function entryAsync(): int {
+          return await asyncWorker();
+        }
+
+        async function worker(): int {
+          let f: (a: int, b: int) => int = await make();
+          let first: int = f(1, 2);
+          let second: int = f(3, 4);
+          if (first !== 41 || second !== 43) {
+            throw { code: "JS_PROBE", message: "await adapter result" };
+          }
+          console.log("PROBE|JS|AWAIT-ADAPTER");
+          return first;
+        }
+
+        async function asyncWorker(): int {
+          let f: async (a: int, b: int) => int = await makeAsync();
+          let first: int = await f(1, 2);
+          let second: int = await f(3, 4);
+          if (first !== 41 || second !== 43) {
+            throw { code: "JS_PROBE", message: "await async adapter result" };
+          }
+          console.log("PROBE|JS|AWAIT-ASYNC-ADAPTER");
+          return first;
+        }
+
+        async function make(): (a: int) => int {
+          return function(a: int): int { return a + 40; };
+        }
+
+        async function makeAsync(): async (a: int) => int {
+          return async function(a: int): int { return a + 40; };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The async arity-extension adapter over a call-result source: the
+     * adapter's target and source markers are both {@code async}, the source is
+     * the call result of {@code make} (re-evaluated per invocation), and the
+     * awaited invocation completes with the source's own promise.
+     */
+    private static final String ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export async function entry(): int {
+          return await worker();
+        }
+
+        async function worker(): int {
+          let f: async (a: int, b: int) => int = make();
+          let first: int = await f(1, 2);
+          let second: int = await f(3, 4);
+          if (first !== 41 || second !== 43) {
+            throw { code: "JS_PROBE", message: "async adapter result" };
+          }
+          console.log("PROBE|JS|ASYNC-ADAPTER");
+          return first;
+        }
+
+        function make(): async (a: int) => int {
+          return async function(a: int): int { return a + 40; };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * Mutual and self-referential function-valued class defaults: the enclosed
+     * class literals are deferred to the call, so every construction terminates
+     * and no construction cycle exists even though each class's default names
+     * the other (and {@code Self} names itself).
+     */
+    private static final String DEFERRED_DEFAULT_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export function main(): null {
+          let a: A = {};
+          let b: B = {};
+          let self: Self = {};
+          if (a.makeB().n !== 2) {
+            throw { code: "JS_PROBE", message: "mutual default a" };
+          }
+          if (b.makeA().makeB().n !== 2) {
+            throw { code: "JS_PROBE", message: "mutual default b" };
+          }
+          if (self.make().n !== 3) {
+            throw { code: "JS_PROBE", message: "self default" };
+          }
+          console.log("PROBE|JS|DEFERRED-DEFAULTS");
+          return null;
+        }
+
+        class A {
+          makeB: () => B = function(): B { return {}; };
+        }
+
+        class B {
+          n: int = 2;
+          makeA: () => A = function(): A { return {}; };
+        }
+
+        class Self {
+          n: int = 3;
+          make: () => Self = function(): Self { return {}; };
+        }
+        """;
+
+    /**
+     * Class-default construction terminated by the fields the literals provide:
+     * a provided field skips its default (docs/spec-v1.3.md §Construction), so
+     * the self-referential {@code Self} and the mutually defaulting {@code A}/
+     * {@code B} pair each construct only the shape their literal supplied and
+     * never re-enter their own default.
+     */
+    private static final String PROVIDED_FIELD_DEFAULT_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export function main(): null {
+          let self: Self = {};
+          let child: Self | null = self.child;
+          if (child !== null) {
+            if (child.child !== null) {
+              throw { code: "JS_PROBE", message: "provided child field" };
+            }
+          } else {
+            throw { code: "JS_PROBE", message: "self default child" };
+          }
+
+          let outer: A = {};
+          if (outer.b.a !== null) {
+            throw { code: "JS_PROBE", message: "provided mutual field" };
+          }
+          let b: B = {};
+          let a: A | null = b.a;
+          if (a !== null) {
+            if (a.b.a !== null) {
+              throw { code: "JS_PROBE", message: "mutual provided field" };
+            }
+          } else {
+            throw { code: "JS_PROBE", message: "mutual default a" };
+          }
+          console.log("PROBE|JS|PROVIDED-DEFAULTS");
+          return null;
+        }
+
+        class Self {
+          child: Self | null = { child: null };
+        }
+
+        class A {
+          b: B = { a: null };
+        }
+
+        class B {
+          a: A | null = {};
+        }
+        """;
+
     private static Fixture jsFixture() throws Exception {
         Map<String, String> sources = new LinkedHashMap<>();
         sources.put("src/cfg.d.deal", JS_HOST_DECLARATION);
@@ -1155,6 +1390,849 @@ public class ProductionProjectEmissionTest {
         } finally {
             deleteRecursively(fixture.root());
         }
+    }
+
+    /**
+     * The two v1.3 source shapes the integrated JS route rejected before
+     * rendering (acceptance remediation of the JS production migration):
+     * docs/spec-v1.3.md §Name resolution, Declaration order requires a
+     * function body — and a class field — to reference a class declared
+     * later in the same module, and the arity-extension adapter of
+     * §Function type compatibility admits a call-result source that is
+     * re-evaluated per invocation. Both compile through the public
+     * {@code Backend.JS} arm, the produced project records the complete
+     * declaration facts, and the published CommonJS artifact executes the
+     * real behavior under Node.
+     */
+    private static void testDeclarationOrderAndCallResultAdapter(boolean node)
+            throws Exception {
+        System.out.println("-- the JS arm compiles a later-declared class"
+            + " literal in an earlier body and a call-result arity-extension"
+            + " adapter through the public compile and runs both under Node --");
+        Path root = Files.createTempDirectory("js-declaration-order-");
+        try {
+            writeFileIn(root, "src/app.deal", CALL_RESULT_ADAPTER_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the declaration-order project compiles through the public JS"
+                    + " arm: " + orchestrator.diagnostics());
+            check(Files.exists(out.resolve("app.js")),
+                "the public compile publishes the entry artifact");
+
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            check(produced != null,
+                "the public compile records its produced project");
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the produced project carries the entry unit");
+            if (app == null) {
+                return;
+            }
+            ClassId counterId = new ClassId("src", "Counter");
+            ClassId holderId = new ClassId("src", "Holder");
+            check(app.classLayouts().containsKey(counterId)
+                    && app.classLayouts().containsKey(holderId),
+                "the unit records the complete module-level class layout"
+                    + " surface before any body: " + app.classLayouts().keySet());
+            int counterConstructions = 0;
+            int holderConstructions = 0;
+            int adapterCalls = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_NEW
+                        && op.payload()
+                            instanceof KindPayload.ClassNewPayload construction) {
+                    if (construction.classId().equals(counterId)) {
+                        counterConstructions++;
+                        check(!construction.classDefaultOpIds().isEmpty(),
+                            "the construction of the later-declared Counter"
+                                + " lists its omitted required-present default"
+                                + " op: " + construction.classDefaultOpIds());
+                    }
+                    if (construction.classId().equals(holderId)) {
+                        holderConstructions++;
+                    }
+                    continue;
+                }
+                if (op.kind() != SemanticOpKind.CALL
+                        || !(op.payload()
+                            instanceof KindPayload.CallPayload call)
+                        || !(call.callee()
+                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
+                    continue;
+                }
+                FunctionExecutionBinding calleeBinding = app.functionBindings().get(
+                    new FunctionAllocationIdentity(dynamic.callee().id()));
+                if (!(calleeBinding
+                        instanceof FunctionExecutionBinding.AdapterBinding adapter)
+                        || !(adapter.sourceRef() instanceof AdaptSourceRef.Thunk)) {
+                    continue;
+                }
+                adapterCalls++;
+                checkEq(2, call.parameterBoundaryOpIds().size(),
+                    "the arity-extension adapter call records the target"
+                        + " signature's two parameter cells");
+                check(call.returnBoundaryOpId() == null
+                        && call.dynamicReturnBoundary() != null,
+                    "the re-evaluated source records the closed dynamic"
+                        + " return-boundary set instead of one static cell: "
+                        + call.dynamicReturnBoundary());
+                if (call.dynamicReturnBoundary() != null) {
+                    KindPayload.DynamicReturnBoundary cells =
+                        call.dynamicReturnBoundary();
+                    check(opOf(app, cells.dealBodyBoundaryOpId()) != null
+                            && opOf(app, cells.hostBoundaryOpId()) != null
+                            && opOf(app, cells.externalBoundaryOpId()) != null,
+                        "one caller-side return cell per runtime source class"
+                            + " resolves in the unit: " + cells);
+                }
+            }
+            checkEq(2, counterConstructions,
+                "both the entry body and the earlier class's default construct"
+                    + " the later-declared Counter");
+            checkEq(1, holderConstructions,
+                "the entry body constructs Holder");
+            checkEq(2, adapterCalls,
+                "each of the two arity-extended call sites is one adapter"
+                    + " invocation over the carrier");
+
+            // The hoisted declaration groups keep their real local mapping:
+            // the published entry sidecar's every row is the source comment
+            // carrying the same source coordinates, and every recorded
+            // mapping is one emitted comment.
+            String artifact = Files.readString(out.resolve("app.js"),
+                StandardCharsets.UTF_8);
+            Sidecar sidecar = parseSidecar(Files.readString(
+                out.resolve("app.deal.map.json"), StandardCharsets.UTF_8));
+            check(sidecar.generated().endsWith("/out/app.js"),
+                "the entry sidecar names the published entry artifact: "
+                    + sidecar.generated());
+            verifySidecarCoordinates(sidecar, artifact.lines().toList(),
+                CALL_RESULT_ADAPTER_APP_SOURCE, "// ", "src/app.deal");
+            checkEq(countSourceComments(artifact, "// "),
+                sidecar.mappings().size(),
+                "every recorded mapping is one emitted source comment of the"
+                    + " published entry artifact");
+
+            if (!node) {
+                System.out.println("  SKIP: the declaration-order Node drive"
+                    + " needs node");
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            checkEq(0, run.exitCode(),
+                "the published artifact runs: " + run.output());
+            checkEq("PROBE|JS|DECLARATION-ORDER\n", run.stdout(),
+                "the later-declared construction, the nested earlier-class"
+                    + " default and both arity-extended invocations executed");
+            checkEq("", run.stderr(),
+                "the run prints no failure and no trace protocol");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
+    // 3b. The call-result arity-extension adapter through the production arm
+    // =========================================================================
+
+    private static void testJsCallResultAdapter(Fixture fixture, boolean node)
+            throws Exception {
+        System.out.println("-- the call-result arity-extension adapter: the"
+            + " production lowering builds the adapter from the call result and"
+            + " the published JS artifact calls the adapted function --");
+        Path out = fixture.root().resolve("js-adapter-out");
+        String appSource;
+        PublicationStager stager = PublicationStager.forRoot(out);
+        try {
+            Emission emission = emitCapturingStderr(fixture, Backend.JS, stager,
+                false);
+            ProductionProjectEmission.Result result = emission.result();
+            check(result.emitted(),
+                "the call-result adapter fixture emits through the JS arm: "
+                    + result.diagnostics());
+            checkEq("", emission.stderr(),
+                "the adapter fixture prints no LuaJIT/JVM warning");
+            checkEq("app.js", result.artifactRelativePath(),
+                "the adapter fixture's entry artifact is the entry module's"
+                    + " own artifact");
+            appSource = new String(stager.stagedSet().artifact("app.js")
+                .orElseThrow().content(), StandardCharsets.UTF_8);
+            ExecutableLoweredProject produced = result.producedProject();
+            check(produced != null,
+                "the adapter fixture's run exposes its produced project");
+            boolean thunkAdapt = false;
+            boolean dynamicInvocation = false;
+            boolean adapterCallee = false;
+            if (produced != null) {
+                LoweredModuleUnit entry =
+                    produced.modules().get(produced.entryModule());
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.FUNCTION_ADAPT
+                            && op.payload()
+                                instanceof KindPayload.FunctionAdaptPayload adapt
+                            && adapt.source()
+                                instanceof deal.semantic.ir.AdaptSourceRef.Thunk thunk) {
+                        thunkAdapt = true;
+                        check(entry.bodyTable().blockOps()
+                                .containsKey(thunk.blockId()),
+                            "the produced adapter's thunk block is a recorded"
+                                + " block of the entry unit");
+                    }
+                }
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() != SemanticOpKind.CALL
+                            || !(op.payload()
+                                instanceof KindPayload.CallPayload call)) {
+                        continue;
+                    }
+                    if (!(call.callee()
+                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
+                        continue;
+                    }
+                    if (call.dynamicReturnBoundary() == null) {
+                        continue;
+                    }
+                    dynamicInvocation = true;
+                    deal.semantic.ir.FunctionExecutionBinding callee =
+                        entry.functionBindings().get(
+                            new deal.semantic.ir.FunctionAllocationIdentity(
+                                dynamic.callee().id()));
+                    adapterCallee = callee
+                        instanceof deal.semantic.ir
+                            .FunctionExecutionBinding.AdapterBinding adapter
+                        && adapter.sourceRef()
+                            instanceof deal.semantic.ir.AdaptSourceRef.Thunk;
+                }
+            }
+            check(thunkAdapt,
+                "the produced FUNCTION_ADAPT wraps the call result as its"
+                    + " REEVALUATE_THUNK source");
+            check(dynamicInvocation && adapterCallee,
+                "the adapted invocation is the closed DYNAMIC callee arm over the"
+                    + " re-evaluated adapter source, recording the dynamic"
+                    + " return-boundary set (one cell per runtime source class)");
+            check(!appSource.contains("ISSUE-0531"),
+                "the artifact carries no fail-closed placeholder text");
+            stager.publish();
+        } finally {
+            stager.discard();
+        }
+
+        if (!node) {
+            System.out.println("  SKIP: the adapted-call drive needs node");
+            return;
+        }
+        ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
+        checkEq(0, entry.exitCode(),
+            "the published adapter artifact runs: " + entry.output());
+        checkEq("ARITY_ADAPTER|OK\n", entry.stdout(),
+            "the direct-run main called the adapted function with the leading"
+                + " arguments and the extra target argument was ignored");
+        checkEq("", entry.stderr(),
+            "the published adapter artifact prints no trace protocol on stderr");
+
+        // The public Node drive: require initializes without running main,
+        // then the published main export is called explicitly — one more
+        // execution of the adapted call through the published surface.
+        writeFileIn(out, "adapter-drive.js", """
+            const $app = require("./app.js");
+            $app.main.$f();
+            console.log("ADAPTER_DRIVE|OK");
+            """);
+        ProcessOutcome drive = runProcess(List.of("node", "adapter-drive.js"), out);
+        checkEq(0, drive.exitCode(),
+            "the Node drive calls the adapted function: " + drive.output());
+        checkEq("ARITY_ADAPTER|OK\nADAPTER_DRIVE|OK\n", drive.stdout(),
+            "the Node drive's explicit main invocation ran the adapted call"
+                + " once and the require alone ran no main");
+        checkEq("", drive.stderr(),
+            "the Node drive prints no trace protocol on stderr");
+
+        // The async twin: the awaited adapted async function (its source is
+        // the re-evaluated call result too) starts once, awaits once and
+        // returns the source's completion through the published export.
+        writeFileIn(out, "adapter-async-drive.js", """
+            const $app = require("./app.js");
+            $app.runAsync.$f().then(() => {
+              console.log("ARITY_ASYNC_DRIVE|OK");
+            }).catch((e) => {
+              console.log("ERR " + (e && e.message));
+              process.exitCode = 1;
+            });
+            """);
+        ProcessOutcome asyncDrive = runProcess(
+            List.of("node", "adapter-async-drive.js"), out);
+        checkEq(0, asyncDrive.exitCode(),
+            "the async adapted call runs under Node: " + asyncDrive.output());
+        checkEq("ARITY_ASYNC_ADAPTER|OK\nARITY_ASYNC_DRIVE|OK\n",
+            asyncDrive.stdout(),
+            "the awaited adapted async function ran its source once and"
+                + " completed with the source's value");
+        checkEq("", asyncDrive.stderr(),
+            "the async adapted call prints no trace protocol on stderr");
+    }
+
+    // =========================================================================
+    // 3c. The module-level declaration-order shapes through the production arm
+    // =========================================================================
+
+    /**
+     * The declaration-order shapes through the public production route: an
+     * earlier function body constructs a literal of a later-declared class
+     * and of a later-declared class whose omitted required field default
+     * calls a module function (docs/spec-v1.3.md §Name resolution). The one
+     * production lowering resolves both from the hoisted structural
+     * declaration facts; the complete set stages and publishes, and the
+     * published CommonJS artifact executes both constructions under Node.
+     */
+    private static void testJsForwardClassLiteral(Fixture fixture, boolean node)
+            throws Exception {
+        System.out.println("-- a later-declared class literal in an earlier"
+            + " function body (with a per-construction default) emits through"
+            + " the JS arm and executes --");
+        Path out = fixture.root().resolve("js-forward-out");
+        PublicationStager stager = PublicationStager.forRoot(out);
+        try {
+            Emission emission = emitCapturingStderr(fixture, Backend.JS, stager,
+                false);
+            ProductionProjectEmission.Result result = emission.result();
+            check(result.emitted(),
+                "the forward-class fixture emits through the JS arm: "
+                    + result.diagnostics());
+            checkEq("", emission.stderr(),
+                "the forward-class fixture prints no LuaJIT/JVM warning");
+            ExecutableLoweredProject produced = result.producedProject();
+            check(produced != null,
+                "the forward-class run exposes its produced project");
+            boolean defaultOp = false;
+            boolean localConstruction = false;
+            if (produced != null) {
+                LoweredModuleUnit entry =
+                    produced.modules().get(produced.entryModule());
+                for (SemanticOp op : entry.ops()) {
+                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                        defaultOp = true;
+                    }
+                    if (op.kind() == SemanticOpKind.CLASS_NEW
+                            && op.payload()
+                                instanceof KindPayload.ClassNewPayload classNew
+                            && classNew.defaultOwner() == DefaultOwner.LOCAL
+                            && classNew.classDefaultOpIds().size() == 1) {
+                        localConstruction = true;
+                    }
+                }
+            }
+            check(defaultOp,
+                "the later-declared class's per-construction default op is"
+                    + " produced");
+            check(localConstruction,
+                "the forward construction applies the later-declared class's"
+                    + " omitted required default");
+            stager.publish();
+        } finally {
+            stager.discard();
+        }
+
+        if (!node) {
+            System.out.println("  SKIP: the forward-class drive needs node");
+            return;
+        }
+        ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
+        checkEq(0, entry.exitCode(),
+            "the published forward-class artifact runs: " + entry.output());
+        checkEq("FORWARD_CLASS|OK\n", entry.stdout(),
+            "the artifact constructed the later-declared class literal in the"
+                + " earlier body and applied its per-construction default");
+        checkEq("", entry.stderr(),
+            "the published forward-class artifact prints no trace protocol");
+    }
+
+    /**
+     * The runtime-resolved adapter sources and the deferred class-default
+     * references of the acceptance remediation: an {@code await} source is the
+     * declaration-site value (no re-executor may await inside a synchronous
+     * thunk) and keeps the runtime-resolved nested source start of an async
+     * target, the async arity-extension adapter over a re-evaluated call result
+     * takes the closed dynamic async arm, and mutual function-valued class
+     * defaults construct nothing during the enclosing construction. Every shape
+     * compiles through the public {@code Backend.JS} arm and executes under
+     * Node; the direct construction cycle stays fail-closed.
+     */
+    private static void testAdapterRuntimeResolutionAndDeferredDefaults(boolean node)
+            throws Exception {
+        System.out.println("-- an awaited adapter source is the declaration-site"
+            + " value, the async call-result adapter starts the closed dynamic"
+            + " async arm, and deferred class defaults add no construction"
+            + " cycle --");
+        testAwaitAdapterSource(node);
+        testAsyncCallResultAdapterShape(node);
+        testDeferredClassDefaults(node);
+        testDirectDefaultConstructionCycleFailsClosed();
+    }
+
+    /** The awaited call-result adapter: a declaration-site VALUE source. */
+    private static void testAwaitAdapterSource(boolean node) throws Exception {
+        Path root = Files.createTempDirectory("js-await-adapter-");
+        try {
+            writeFileIn(root, "src/app.deal", AWAIT_ADAPTER_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the awaited adapter source compiles through the public JS arm: "
+                    + orchestrator.diagnostics());
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the awaited adapter project records its entry unit");
+            if (app == null) {
+                return;
+            }
+            int valueAdapters = 0;
+            int asyncAdapters = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.FUNCTION_ADAPT
+                        || !(op.payload()
+                            instanceof KindPayload.FunctionAdaptPayload adapt)) {
+                    continue;
+                }
+                valueAdapters++;
+                check(adapt.mode() == CaptureMode.VALUE,
+                    "the awaited adapter source is the declaration-site"
+                        + " VALUE arm: " + adapt.mode());
+                check(adapt.source() instanceof AdaptSourceRef.Value,
+                    "the awaited adapter source records the materialized"
+                        + " operand: " + adapt.source());
+                if (adapt.targetSignature().isAsync()) {
+                    asyncAdapters++;
+                }
+                SemanticOp producer = null;
+                for (SemanticOp candidate : app.ops()) {
+                    if (candidate.result()
+                            instanceof deal.semantic.ir.ValueId value
+                            && adapt.source()
+                                instanceof AdaptSourceRef.Value operand
+                            && operand.value().equals(value)) {
+                        producer = candidate;
+                        break;
+                    }
+                }
+                check(producer != null
+                        && producer.kind() == SemanticOpKind.AWAIT,
+                    "the awaited adapter source operand is the AWAIT result"
+                        + " (the suspension delivers the value once): " + producer);
+            }
+            checkEq(2, valueAdapters,
+                "the program records one adapter per awaited source (a"
+                    + " synchronous and an async target)");
+            checkEq(1, asyncAdapters,
+                "the async target keeps the awaited source as its"
+                    + " declaration-site value");
+            checkEq(2, awaitedAsyncAdapterStarts(app),
+                "each awaited invocation of the async target records the"
+                    + " runtime-resolved nested adapter start");
+            String artifact = Files.readString(out.resolve("app.js"),
+                StandardCharsets.UTF_8);
+            checkEq(0, countOfText(artifact, "const $at"),
+                "the awaited adapter source emits no thunk re-executor (a"
+                    + " synchronous re-executor cannot await)");
+            checkEq(2, countOfText(artifact, "const $av"),
+                "each awaited adapter retains the materialized source value");
+            if (!node) {
+                System.out.println("  SKIP: the awaited adapter Node drive needs node");
+                return;
+            }
+            writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
+            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
+                out);
+            checkEq(0, run.exitCode(),
+                "the awaited adapter artifact runs: " + run.output());
+            checkEq("PROBE|JS|AWAIT-ADAPTER\nINVOKE_OK: 41\n", run.stdout(),
+                "both awaited adapter invocations executed with the"
+                    + " declaration-site source value");
+            checkEq("", run.stderr(), "the awaited adapter run reports no failure");
+            ProcessOutcome asyncRun = runProcess(
+                List.of("node", "invoke.js", "entryAsync", "int"), out);
+            checkEq(0, asyncRun.exitCode(),
+                "the awaited async-target adapter artifact runs: "
+                    + asyncRun.output());
+            checkEq("PROBE|JS|AWAIT-ASYNC-ADAPTER\nINVOKE_OK: 41\n",
+                asyncRun.stdout(),
+                "both awaited invocations of the async target completed"
+                    + " through the retained source value");
+            checkEq("", asyncRun.stderr(),
+                "the awaited async-target adapter run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The async arity-extension adapter over a re-evaluated call-result
+     * source: the closed dynamic async arm starts the adapter's published
+     * identity, whose D15 resolution runs the re-evaluated source, and the
+     * single caller-side DEAL-body task cell checks the resolved completion.
+     */
+    private static void testAsyncCallResultAdapterShape(boolean node) throws Exception {
+        Path root = Files.createTempDirectory("js-async-adapter-");
+        try {
+            writeFileIn(root, "src/app.deal", ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the async call-result adapter compiles through the public JS"
+                    + " arm: " + orchestrator.diagnostics());
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the async adapter project records its entry unit");
+            if (app == null) {
+                return;
+            }
+            int adapterStarts = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.ASYNC_START
+                        || !(op.payload()
+                            instanceof KindPayload.AsyncStartPayload start)
+                        || !(start.callee()
+                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
+                    continue;
+                }
+                FunctionExecutionBinding calleeBinding = app.functionBindings().get(
+                    new FunctionAllocationIdentity(dynamic.callee().id()));
+                if (!(calleeBinding
+                        instanceof FunctionExecutionBinding.AdapterBinding adapter)
+                        || !(adapter.sourceRef() instanceof AdaptSourceRef.Thunk)) {
+                    continue;
+                }
+                adapterStarts++;
+                checkEq(ParameterBoundaryMode.RUN, start.parameterBoundaryMode(),
+                    "the closed dynamic async arm runs the target signature's"
+                        + " parameter cells at the invocation");
+                checkEq(2, start.parameterBoundaryOpIds().size(),
+                    "the start records the target signature's two parameter"
+                        + " cells");
+                SemanticOp taskCell = start.returnBoundaryOpId() == null
+                    ? null : opOf(app, start.returnBoundaryOpId());
+                check(taskCell != null
+                        && taskCell.payload()
+                            instanceof KindPayload.BoundaryPayload taskBoundary
+                        && taskBoundary.kind() == deal.semantic.ir.BoundaryKind
+                            .FUNCTION_RETURN
+                        && taskBoundary.descriptor()
+                            .equals(start.completionDescriptor()),
+                    "the runtime source class selects the single caller-side"
+                        + " DEAL-body task cell on the completion descriptor: "
+                        + taskCell);
+                check(op.result() instanceof AsyncTokenId.Canonical canonical
+                        && canonical.owner() == AsyncTokenOwner.DEAL_BODY_TASK,
+                    "the re-evaluated adapter source starts one DEAL-body"
+                        + " task token, never a nested adapter alias: "
+                        + op.result());
+            }
+            checkEq(2, adapterStarts,
+                "each awaited arity-extended call site is one closed dynamic"
+                    + " async start over the adapter carrier");
+            if (!node) {
+                System.out.println("  SKIP: the async adapter Node drive needs node");
+                return;
+            }
+            writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
+            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
+                out);
+            checkEq(0, run.exitCode(),
+                "the async call-result adapter artifact runs: " + run.output());
+            checkEq("PROBE|JS|ASYNC-ADAPTER\nINVOKE_OK: 41\n", run.stdout(),
+                "both awaited arity-extension invocations completed with the"
+                    + " re-evaluated async source");
+            checkEq("", run.stderr(), "the async adapter run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The runtime-resolved nested adapter start of every async-target adapter
+     * whose source is a retained declaration-site operand: the outer task
+     * carries the adapter with the target-signature parameter cells, an
+     * {@code ADAPTER_INNER} alias token and zero return boundaries; the nested
+     * source start names the retained value's runtime identity
+     * ({@code Dynamic}) with {@code ELIDED_BY_ADAPTER} and the single
+     * caller-side DEAL-body task cell.
+     */
+    private static int awaitedAsyncAdapterStarts(LoweredModuleUnit app) {
+        int count = 0;
+        for (SemanticOp op : app.ops()) {
+            if (op.kind() != SemanticOpKind.ASYNC_START
+                    || !(op.payload()
+                        instanceof KindPayload.AsyncStartPayload start)
+                    || !(start.callee()
+                        instanceof KindPayload.CallCallee.Static staticCallee)) {
+                continue;
+            }
+            FunctionExecutionBinding binding = staticCallee.binding();
+            if (!(binding instanceof FunctionExecutionBinding.AdapterBinding adapter)
+                    || adapter.targetSignature() == null
+                    || !adapter.targetSignature().isAsync()
+                    || adapter.sourceRef() instanceof AdaptSourceRef.Thunk) {
+                continue;
+            }
+            count++;
+            checkEq(ParameterBoundaryMode.RUN, start.parameterBoundaryMode(),
+                "the async-target adapter task runs its target-signature"
+                    + " parameter cells");
+            checkEq(2, start.parameterBoundaryOpIds().size(),
+                "the async-target adapter task records the target"
+                    + " signature's two parameter cells");
+            check(start.returnBoundaryOpId() == null,
+                "the async-target adapter task runs zero return boundaries"
+                    + " (delegation): " + start.returnBoundaryOpId());
+            check(op.result() instanceof AsyncTokenId.Alias alias
+                    && alias.linkKind() == AsyncLinkKind.ADAPTER_INNER,
+                "the async-target adapter task's token is the adapter-inner"
+                    + " alias: " + op.result());
+            SemanticOp nested = null;
+            for (SemanticOp candidate : app.ops()) {
+                if (candidate.kind() == SemanticOpKind.ASYNC_START
+                        && op.opId().equals(candidate.origin().parentOpId())) {
+                    nested = candidate;
+                    break;
+                }
+            }
+            check(nested != null,
+                "the async-target adapter task records its nested source start");
+            if (nested == null
+                    || !(nested.payload()
+                        instanceof KindPayload.AsyncStartPayload nestedStart)) {
+                continue;
+            }
+            check(nestedStart.callee() instanceof KindPayload.CallCallee.Dynamic,
+                "the retained source's nested start names the runtime-resolved"
+                    + " source identity: " + nestedStart.callee());
+            checkEq(ParameterBoundaryMode.ELIDED_BY_ADAPTER,
+                nestedStart.parameterBoundaryMode(),
+                "the nested source start runs zero parameter boundaries");
+            SemanticOp taskCell = nestedStart.returnBoundaryOpId() == null
+                ? null : opOf(app, nestedStart.returnBoundaryOpId());
+            check(taskCell != null
+                    && taskCell.payload()
+                        instanceof KindPayload.BoundaryPayload taskBoundary
+                    && taskBoundary.kind() == deal.semantic.ir.BoundaryKind
+                        .FUNCTION_RETURN
+                    && taskBoundary.descriptor()
+                        .equals(nestedStart.completionDescriptor()),
+                "the nested start records the single caller-side DEAL-body task"
+                    + " cell on the source return descriptor: " + taskCell);
+        }
+        return count;
+    }
+
+    /** Mutual and self-referential function-valued class defaults. */
+    private static void testDeferredClassDefaults(boolean node) throws Exception {
+        Path root = Files.createTempDirectory("js-deferred-defaults-");
+        try {
+            writeFileIn(root, "src/app.deal", DEFERRED_DEFAULT_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "mutual function-valued class defaults compile through the"
+                    + " public JS arm: " + orchestrator.diagnostics());
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the deferred-default project records its entry unit");
+            if (app == null) {
+                return;
+            }
+            Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+            for (SemanticOp op : app.ops()) {
+                byId.put(op.opId(), op);
+            }
+            ClassId aId = new ClassId("src", "A");
+            ClassId bId = new ClassId("src", "B");
+            ClassId selfId = new ClassId("src", "Self");
+            int constructions = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.CLASS_NEW
+                        || !(op.payload()
+                            instanceof KindPayload.ClassNewPayload construction)
+                        || !(construction.classId().equals(aId)
+                            || construction.classId().equals(bId)
+                            || construction.classId().equals(selfId))) {
+                    continue;
+                }
+                constructions++;
+                check(!construction.classDefaultOpIds().isEmpty(),
+                    "every construction of " + construction.classId()
+                        + " lists its omitted required-present default op(s): "
+                        + construction.classDefaultOpIds());
+                for (OpId defaultOpId : construction.classDefaultOpIds()) {
+                    SemanticOp defaultOp = byId.get(defaultOpId);
+                    check(defaultOp != null
+                            && defaultOp.kind() == SemanticOpKind.CLASS_DEFAULT,
+                        "the recorded default child resolves to a CLASS_DEFAULT"
+                            + " op: " + defaultOpId);
+                }
+                for (KindPayload.FieldBoundary entry : construction.fieldBoundaries()) {
+                    if (entry.kind() != deal.semantic.ir.BoundaryKind
+                            .CLASS_DEFAULT_FIELD) {
+                        continue;
+                    }
+                    SemanticOp boundary = byId.get(entry.boundaryOpId());
+                    check(boundary != null
+                            && boundary.payload()
+                                instanceof KindPayload.BoundaryPayload payload,
+                        "the default input boundary resolves: " + entry.boundaryOpId());
+                    if (!(boundary.payload()
+                            instanceof KindPayload.BoundaryPayload payload)) {
+                        continue;
+                    }
+                    SemanticOp defaultOp = byId.get(defaultOpForField(
+                        construction, entry.field(), byId));
+                    check(defaultOp != null
+                            && payload.input().equals(defaultOp.result()),
+                        "the construction's default input names the default"
+                            + " op's result identity (" + entry.field() + "): "
+                            + payload.input());
+                }
+            }
+            check(constructions >= 5,
+                "the entry body and the deferred defaults construct the"
+                    + " module-level classes: " + constructions);
+            if (!node) {
+                System.out.println("  SKIP: the deferred-default Node drive needs node");
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            checkEq(0, run.exitCode(),
+                "the deferred-default artifact runs: " + run.output());
+            checkEq("PROBE|JS|DEFERRED-DEFAULTS\n", run.stdout(),
+                "the mutual and self-referential defaults construct only at"
+                    + " the deferred call and terminate");
+            checkEq("", run.stderr(), "the deferred-default run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * A class default whose literal provides the recursive field terminates:
+     * the construction skips the provided field's default, so neither the
+     * self-referential nor the mutual variant re-enters its own default.
+     */
+    private static void testProvidedFieldDefaultTermination(boolean node)
+            throws Exception {
+        Path root = Files.createTempDirectory("js-provided-defaults-");
+        try {
+            writeFileIn(root, "src/app.deal", PROVIDED_FIELD_DEFAULT_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the provided-field class defaults compile through the public"
+                    + " JS arm (a supplied field adds no construction edge): "
+                    + orchestrator.diagnostics());
+            if (!node) {
+                System.out.println("  SKIP: the provided-field default Node"
+                    + " drive needs node");
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            checkEq(0, run.exitCode(),
+                "the provided-field default artifact runs: " + run.output());
+            checkEq("PROBE|JS|PROVIDED-DEFAULTS\n", run.stdout(),
+                "the self-referential and mutual provided-field defaults"
+                    + " construct only their supplied shapes and terminate");
+            checkEq("", run.stderr(),
+                "the provided-field default run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The recorded default op of one construction site's field, or null. */
+    private static OpId defaultOpForField(KindPayload.ClassNewPayload construction,
+            String field, Map<OpId, SemanticOp> byId) {
+        for (OpId defaultOpId : construction.classDefaultOpIds()) {
+            SemanticOp defaultOp = byId.get(defaultOpId);
+            if (defaultOp != null
+                    && defaultOp.payload()
+                        instanceof KindPayload.ClassDefaultPayload payload
+                    && payload.field().equals(field)
+                    && construction.classId().equals(payload.classId())) {
+                return defaultOpId;
+            }
+        }
+        return null;
+    }
+
+    /** A direct default construction cycle stays fail-closed with the named rule. */
+    private static void testDirectDefaultConstructionCycleFailsClosed() throws Exception {
+        Path root = Files.createTempDirectory("js-cyclic-defaults-");
+        try {
+            writeFileIn(root, "src/app.deal", """
+                class A { b: B = {}; }
+                class B { a: A = {}; }
+
+                export function main(): null {
+                  let a: A = {};
+                  return null;
+                }
+                """);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(!orchestrator.diagnostics().isEmpty(),
+                "the direct construction cycle is rejected");
+            check(orchestrator.diagnostics().stream().anyMatch(d -> "E6005"
+                    .equals(d.code()) && d.message().contains(
+                        "cyclic class-default construction")),
+                "the direct construction cycle keeps the named E6005 rule: "
+                    + orchestrator.diagnostics());
+            check(!Files.exists(out.resolve("app.js")),
+                "the rejected cycle publishes no artifact");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The async-export invocation runner of the adapter drives: the production
+     * {@code $rt.invokeAsyncExport} ABI over the published entry artifact, so
+     * each explicit invocation runs its main leg and the selected export leg
+     * once.
+     */
+    private static final String ASYNC_INVOKE_RUNNER = String.join("\n",
+        "\"use strict\";",
+        "const $rt = require(\"./deal/runtime\");",
+        "const $entry = require(\"./$MODULE\");",
+        "$rt.invokeAsyncExport($entry, process.argv[2], process.argv[3]).then((r) => {",
+        "  if (r.$ok === true) {",
+        "    process.stdout.write(\"INVOKE_OK: \" + r.$value + \"\\n\");",
+        "  } else if (typeof r.$failure === \"string\") {",
+        "    process.stdout.write(\"INVOKE_FAILURE: \" + r.$failure + \"\\n\");",
+        "  } else {",
+        "    process.stdout.write(\"INVOKE_ERROR: \" + r.$error.code + \" \"",
+        "      + r.$error.message + \"\\n\");",
+        "  }",
+        "}, (err) => {",
+        "  process.stderr.write(\"INVOKER_THREW: \" + err + \"\\n\");",
+        "  process.exit(1);",
+        "});",
+        "");
+
+    /** The recorded op of one unit, or null. */
+    private static SemanticOp opOf(LoweredModuleUnit unit, OpId opId) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.opId().equals(opId)) {
+                return op;
+            }
+        }
+        return null;
     }
 
     /** The occurrences of one needle in a text. */
@@ -1774,236 +2852,6 @@ public class ProductionProjectEmissionTest {
             check(!run.stderr().contains("R|"),
                 "the executed JVM artifact emits no trace line");
         }
-    }
-
-    // =========================================================================
-    // 3b. The call-result arity-extension adapter through the production arm
-    // =========================================================================
-
-    /**
-     * The call-result arity-extension adapter through the public production
-     * route: the fixture's adapted source is the call expression
-     * {@code make()} (a shorter {@code (a: int) => int} value assigned to the
-     * longer {@code (a: int, b: int) => int} target — docs/spec-v1.3.md
-     * §Function type compatibility and §Arity extension adapter). The one
-     * production lowering produces the adapter from the call result
-     * ({@code FUNCTION_ADAPT} over the {@code REEVALUATE_THUNK} source) and
-     * the adapted invocation records the closed dynamic return-boundary set;
-     * the complete set stages and publishes, and the published CommonJS
-     * artifact calls the adapted function under Node — the direct-run main
-     * and an explicit Node drive that calls the published {@code main}
-     * export again.
-     */
-    private static void testJsCallResultAdapter(Fixture fixture, boolean node)
-            throws Exception {
-        System.out.println("-- the call-result arity-extension adapter: the"
-            + " production lowering builds the adapter from the call result and"
-            + " the published JS artifact calls the adapted function --");
-        Path out = fixture.root().resolve("js-adapter-out");
-        String appSource;
-        PublicationStager stager = PublicationStager.forRoot(out);
-        try {
-            Emission emission = emitCapturingStderr(fixture, Backend.JS, stager,
-                false);
-            ProductionProjectEmission.Result result = emission.result();
-            check(result.emitted(),
-                "the call-result adapter fixture emits through the JS arm: "
-                    + result.diagnostics());
-            checkEq("", emission.stderr(),
-                "the adapter fixture prints no LuaJIT/JVM warning");
-            checkEq("app.js", result.artifactRelativePath(),
-                "the adapter fixture's entry artifact is the entry module's"
-                    + " own artifact");
-            appSource = new String(stager.stagedSet().artifact("app.js")
-                .orElseThrow().content(), StandardCharsets.UTF_8);
-            ExecutableLoweredProject produced = result.producedProject();
-            check(produced != null,
-                "the adapter fixture's run exposes its produced project");
-            boolean thunkAdapt = false;
-            boolean dynamicInvocation = false;
-            boolean adapterCallee = false;
-            if (produced != null) {
-                LoweredModuleUnit entry =
-                    produced.modules().get(produced.entryModule());
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() == SemanticOpKind.FUNCTION_ADAPT
-                            && op.payload()
-                                instanceof KindPayload.FunctionAdaptPayload adapt
-                            && adapt.source()
-                                instanceof deal.semantic.ir.AdaptSourceRef.Thunk thunk) {
-                        thunkAdapt = true;
-                        check(entry.bodyTable().blockOps()
-                                .containsKey(thunk.blockId()),
-                            "the produced adapter's thunk block is a recorded"
-                                + " block of the entry unit");
-                    }
-                }
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() != SemanticOpKind.CALL
-                            || !(op.payload()
-                                instanceof KindPayload.CallPayload call)) {
-                        continue;
-                    }
-                    if (!(call.callee()
-                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
-                        continue;
-                    }
-                    if (call.dynamicReturnBoundary() == null) {
-                        continue;
-                    }
-                    dynamicInvocation = true;
-                    deal.semantic.ir.FunctionExecutionBinding callee =
-                        entry.functionBindings().get(
-                            new deal.semantic.ir.FunctionAllocationIdentity(
-                                dynamic.callee().id()));
-                    adapterCallee = callee
-                        instanceof deal.semantic.ir
-                            .FunctionExecutionBinding.AdapterBinding adapter
-                        && adapter.sourceRef()
-                            instanceof deal.semantic.ir.AdaptSourceRef.Thunk;
-                }
-            }
-            check(thunkAdapt,
-                "the produced FUNCTION_ADAPT wraps the call result as its"
-                    + " REEVALUATE_THUNK source");
-            check(dynamicInvocation && adapterCallee,
-                "the adapted invocation is the closed DYNAMIC callee arm over the"
-                    + " re-evaluated adapter source, recording the dynamic"
-                    + " return-boundary set (one cell per runtime source class)");
-            check(!appSource.contains("ISSUE-0531"),
-                "the artifact carries no fail-closed placeholder text");
-            stager.publish();
-        } finally {
-            stager.discard();
-        }
-
-        if (!node) {
-            System.out.println("  SKIP: the adapted-call drive needs node");
-            return;
-        }
-        ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
-        checkEq(0, entry.exitCode(),
-            "the published adapter artifact runs: " + entry.output());
-        checkEq("ARITY_ADAPTER|OK\n", entry.stdout(),
-            "the direct-run main called the adapted function with the leading"
-                + " arguments and the extra target argument was ignored");
-        checkEq("", entry.stderr(),
-            "the published adapter artifact prints no trace protocol on stderr");
-
-        // The public Node drive: require initializes without running main,
-        // then the published main export is called explicitly — one more
-        // execution of the adapted call through the published surface.
-        writeFileIn(out, "adapter-drive.js", """
-            const $app = require("./app.js");
-            $app.main.$f();
-            console.log("ADAPTER_DRIVE|OK");
-            """);
-        ProcessOutcome drive = runProcess(List.of("node", "adapter-drive.js"), out);
-        checkEq(0, drive.exitCode(),
-            "the Node drive calls the adapted function: " + drive.output());
-        checkEq("ARITY_ADAPTER|OK\nADAPTER_DRIVE|OK\n", drive.stdout(),
-            "the Node drive's explicit main invocation ran the adapted call"
-                + " once and the require alone ran no main");
-        checkEq("", drive.stderr(),
-            "the Node drive prints no trace protocol on stderr");
-
-        // The async twin: the awaited adapted async function (its source is
-        // the re-evaluated call result too) starts once, awaits once and
-        // returns the source's completion through the published export.
-        writeFileIn(out, "adapter-async-drive.js", """
-            const $app = require("./app.js");
-            $app.runAsync.$f().then(() => {
-              console.log("ARITY_ASYNC_DRIVE|OK");
-            }).catch((e) => {
-              console.log("ERR " + (e && e.message));
-              process.exitCode = 1;
-            });
-            """);
-        ProcessOutcome asyncDrive = runProcess(
-            List.of("node", "adapter-async-drive.js"), out);
-        checkEq(0, asyncDrive.exitCode(),
-            "the async adapted call runs under Node: " + asyncDrive.output());
-        checkEq("ARITY_ASYNC_ADAPTER|OK\nARITY_ASYNC_DRIVE|OK\n",
-            asyncDrive.stdout(),
-            "the awaited adapted async function ran its source once and"
-                + " completed with the source's value");
-        checkEq("", asyncDrive.stderr(),
-            "the async adapted call prints no trace protocol on stderr");
-    }
-
-    // =========================================================================
-    // 3c. The module-level declaration-order shapes through the production arm
-    // =========================================================================
-
-    /**
-     * The declaration-order shapes through the public production route: an
-     * earlier function body constructs a literal of a later-declared class
-     * and of a later-declared class whose omitted required field default
-     * calls a module function (docs/spec-v1.3.md §Name resolution). The one
-     * production lowering resolves both from the hoisted structural
-     * declaration facts; the complete set stages and publishes, and the
-     * published CommonJS artifact executes both constructions under Node.
-     */
-    private static void testJsForwardClassLiteral(Fixture fixture, boolean node)
-            throws Exception {
-        System.out.println("-- a later-declared class literal in an earlier"
-            + " function body (with a per-construction default) emits through"
-            + " the JS arm and executes --");
-        Path out = fixture.root().resolve("js-forward-out");
-        PublicationStager stager = PublicationStager.forRoot(out);
-        try {
-            Emission emission = emitCapturingStderr(fixture, Backend.JS, stager,
-                false);
-            ProductionProjectEmission.Result result = emission.result();
-            check(result.emitted(),
-                "the forward-class fixture emits through the JS arm: "
-                    + result.diagnostics());
-            checkEq("", emission.stderr(),
-                "the forward-class fixture prints no LuaJIT/JVM warning");
-            ExecutableLoweredProject produced = result.producedProject();
-            check(produced != null,
-                "the forward-class run exposes its produced project");
-            boolean defaultOp = false;
-            boolean localConstruction = false;
-            if (produced != null) {
-                LoweredModuleUnit entry =
-                    produced.modules().get(produced.entryModule());
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        defaultOp = true;
-                    }
-                    if (op.kind() == SemanticOpKind.CLASS_NEW
-                            && op.payload()
-                                instanceof KindPayload.ClassNewPayload classNew
-                            && classNew.defaultOwner() == DefaultOwner.LOCAL
-                            && classNew.classDefaultOpIds().size() == 1) {
-                        localConstruction = true;
-                    }
-                }
-            }
-            check(defaultOp,
-                "the later-declared class's per-construction default op is"
-                    + " produced");
-            check(localConstruction,
-                "the forward construction applies the later-declared class's"
-                    + " omitted required default");
-            stager.publish();
-        } finally {
-            stager.discard();
-        }
-
-        if (!node) {
-            System.out.println("  SKIP: the forward-class drive needs node");
-            return;
-        }
-        ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
-        checkEq(0, entry.exitCode(),
-            "the published forward-class artifact runs: " + entry.output());
-        checkEq("FORWARD_CLASS|OK\n", entry.stdout(),
-            "the artifact constructed the later-declared class literal in the"
-                + " earlier body and applied its per-construction default");
-        checkEq("", entry.stderr(),
-            "the published forward-class artifact prints no trace protocol");
     }
 
     // =========================================================================
@@ -4248,6 +5096,9 @@ public class ProductionProjectEmissionTest {
             js = jsFixture();
             testJsProjectEmission(js, node);
             testJsEntryFailureStatus(node);
+            testDeclarationOrderAndCallResultAdapter(node);
+            testAdapterRuntimeResolutionAndDeferredDefaults(node);
+            testProvidedFieldDefaultTermination(node);
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);

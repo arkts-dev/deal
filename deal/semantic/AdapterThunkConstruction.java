@@ -50,19 +50,12 @@ public final class AdapterThunkConstruction {
             }
         }
         ValueId produced = producedValueOf(sourceOps);
-        SemanticOp producing = sourceOps.get(sourceOps.size() - 1);
-        for (int i = sourceOps.size() - 1; i >= 0; i--) {
-            SemanticOp candidate = sourceOps.get(i);
-            if (produced.equals(candidate.result())) {
-                producing = candidate;
-                break;
-            }
-        }
+        SemanticOp producing = producingOpOf(sourceOps, produced);
         if (!(producing.resultType() instanceof RuntimeDescriptor.Func)) {
             throw new IllegalArgumentException("the thunk's source expression is "
-                + "function-typed: its final producing op " + producing.opId()
-                + " carries result type " + producing.resultType()
-                + " instead of a function descriptor (producer defect)");
+                + "function-typed: its final producing op " + producing.opId() + " carries "
+                + "result type " + producing.resultType() + " instead of a function "
+                + "descriptor (producer defect)");
         }
         java.util.Set<BindingGeneration> seenCaptures = new java.util.HashSet<>();
         for (BindingGeneration capture : capturedBindings) {
@@ -77,13 +70,16 @@ public final class AdapterThunkConstruction {
     }
 
     /**
-     * The source expression's produced value: the result of the final
-     * <em>producing</em> op — the value the thunk re-execution publishes
-     * at every invocation (E7's protocol consumes it). A source
-     * expression's lowering may end with non-producing companion ops
-     * (for example a call's trailing return/boundary child, which the
-     * invoking arm executes inline and which publishes no value); those
-     * trailing companions never select the produced value.
+     * The source expression's produced value: the last op of the block's own
+     * (top-level) op stream that publishes a value. The invocation's owned
+     * child cells — the parameter boundaries a call emits after its own op —
+     * are members of the same block but belong to their owning op, so they are
+     * skipped exactly as the emitted re-executors skip them
+     * ({@code thunkResultSlot}); a call-result source with arguments would
+     * otherwise resolve a boundary cell that publishes no value. A trailing
+     * non-producing companion of the same op stream — for example a call's
+     * return/boundary child, which the invoking arm executes inline — never
+     * selects the produced value either.
      *
      */
     public static ValueId producedValueOf(List<SemanticOp> sourceOps) {
@@ -92,17 +88,37 @@ public final class AdapterThunkConstruction {
             throw new IllegalArgumentException("an empty thunk op list has no produced "
                 + "value (producer defect)");
         }
+        java.util.Set<OpId> members = new java.util.LinkedHashSet<>();
+        for (SemanticOp op : sourceOps) {
+            members.add(op.opId());
+        }
         for (int i = sourceOps.size() - 1; i >= 0; i--) {
-            SemanticOp op = sourceOps.get(i);
-            if (op == null) {
-                throw new IllegalArgumentException("a thunk source op must not be null");
+            SemanticOp candidate = sourceOps.get(i);
+            OpId parent = candidate.origin() == null
+                ? null : candidate.origin().parentOpId();
+            if (parent != null && members.contains(parent)) {
+                // An owned child cell of an invocation in this block.
+                continue;
             }
-            if (op.result() instanceof ValueId value) {
+            if (candidate.result() instanceof ValueId value) {
                 return value;
             }
+            // A trailing non-producing companion of the block's op stream.
         }
-        throw new IllegalArgumentException("the thunk's source expression publishes no "
-            + "value result (producer defect)");
+        throw new IllegalArgumentException("the thunk op list carries no top-level "
+            + "producing op (producer defect)");
+    }
+
+    /** The last op of the source op list that publishes the given value. */
+    private static SemanticOp producingOpOf(List<SemanticOp> sourceOps, ValueId produced) {
+        for (int i = sourceOps.size() - 1; i >= 0; i--) {
+            SemanticOp op = sourceOps.get(i);
+            if (produced.equals(op.result())) {
+                return op;
+            }
+        }
+        throw new IllegalArgumentException("the thunk's produced value " + produced
+            + " is published by no op of the source op list (producer defect)");
     }
 
     /**

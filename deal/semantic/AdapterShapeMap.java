@@ -1,5 +1,6 @@
 package deal.semantic;
 
+import deal.ast.AwaitExpression;
 import deal.ast.ExpressionNode;
 import deal.ast.FunctionExpr;
 import deal.ast.IdentifierExpr;
@@ -34,6 +35,14 @@ public final class AdapterShapeMap {
         BINDING_REFERENCE,
 
         /**
+         * An {@code await} of a direct async call ({@code AwaitExpression})
+         * whose declared return type is the adapted function value: the
+         * suspension delivers the value once, so it is a
+         * declaration-site operand.
+         */
+        AWAITED_RESULT,
+
+        /**
          * Every other (non-identifier) expression — call results,
          * member/field/index reads, conditionals, conversions, host/
          * external import reads, and any composite source.
@@ -57,7 +66,11 @@ public final class AdapterShapeMap {
      * (the checker removes the root intrinsic binding before a user
      * shadow, so the symbol fact decides — a shadowed name is a user
      * binding, never an intrinsic); any other identifier →
-     * {@link SourceShape#BINDING_REFERENCE}; every other expression →
+     * {@link SourceShape#BINDING_REFERENCE}; an {@code await} of a direct
+     * async call → {@link SourceShape#AWAITED_RESULT} (the suspension's
+     * delivered value: the enclosing async function observes it exactly
+     * once, and no re-executor of a non-identifier expression can await);
+     * every other expression →
      * {@link SourceShape#NON_IDENTIFIER_EXPRESSION} (the closed
      * non-identifier arm owns member reads, so a host/external import
      * read classifies here — no VALUE carve-out exists).
@@ -67,6 +80,9 @@ public final class AdapterShapeMap {
                                             Function<String, Symbol> resolve) {
         Objects.requireNonNull(source, "source must not be null");
         Objects.requireNonNull(resolve, "resolve must not be null");
+        if (source instanceof AwaitExpression) {
+            return SourceShape.AWAITED_RESULT;
+        }
         if (source instanceof FunctionExpr) {
             return SourceShape.FUNCTION_EXPRESSION;
         }
@@ -107,6 +123,13 @@ public final class AdapterShapeMap {
      *       recorded {@link BindingImmutabilityProof}, SHARED_CELL
      *       without it (VALUE is admissible for a binding only with the
      *       proof — the map's fallback arm for bindings);</li>
+     *   <li>{@link SourceShape#AWAITED_RESULT} → VALUE (the awaited
+     *       value is observed once at the declaration site — the only
+     *       realization an adapter over a suspension admits: a thunk
+     *       re-executor of the source would have to await, so a
+     *       synchronous target could not re-evaluate it, and the
+     *       materialized value is the same function value every
+     *       invocation);</li>
      *   <li>{@link SourceShape#NON_IDENTIFIER_EXPRESSION} →
      *       REEVALUATE_THUNK (call results, member/field/index reads,
      *       conditionals, conversions, host/external import reads — no
@@ -130,6 +153,10 @@ public final class AdapterShapeMap {
         Objects.requireNonNull(proof, "proof must not be null");
         return switch (shape) {
             case FUNCTION_EXPRESSION -> {
+                requireNoProof(proof, shape);
+                yield CaptureMode.VALUE;
+            }
+            case AWAITED_RESULT -> {
                 requireNoProof(proof, shape);
                 yield CaptureMode.VALUE;
             }
