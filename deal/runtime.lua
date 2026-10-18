@@ -136,6 +136,43 @@ function __rt.check_boolean(v, file, line, column)
 end
 
 function __rt.check_int(v, file, line, column)
+  -- The value model's numeric-variant carrier (the std/json decode graph's
+  -- numeric leaf, the read-side variant materialization and the host
+  -- crossing's carrier, ISSUE-0836) crosses a numeric boundary as the
+  -- value it stands for. An int-variant carrier is the admitted int; a
+  -- number-variant carrier runs the same refinement/range ladder as a
+  -- plain number and keeps its own recorded variant on the returned
+  -- carrier — exactly the emitted prelude's int cell, the JVM runtime's
+  -- boxed Long/Double admission and the JS checkInt. The positive-zero
+  -- normalization republishes a fresh zero-valued carrier with the
+  -- recorded variant and never mutates the input carrier.
+  if type(v) == "table" and v[__K.jn] then
+    local function admit_carrier()
+      if v.d == 0 and 1 / v.d < 0 then
+        return { [__K.jn] = true, k = v.k, d = 0 }
+      end
+      return v
+    end
+    if v.k == "int" then return admit_carrier() end
+    if v.d ~= v.d then
+      error(__rt._armErr("INT_CONVERSION_NAN", {}, "E8001",
+        "expected int, got NaN", file, line, column, "int", "NaN"))
+    end
+    if v.d == math.huge or v.d == -math.huge then
+      error(__rt._armErr("INT_CONVERSION_INFINITY", {}, "E8001",
+        "expected int, got infinity", file, line, column, "int", "infinity"))
+    end
+    if v.d % 1 ~= 0 then
+      error(__rt._armErr("INT_CONVERSION_FRACTIONAL", {}, "E8001",
+        "expected int, got non-integer number", file, line, column, "int",
+        "number"))
+    end
+    if v.d < -2147483648 or v.d > 2147483647 then
+      error(__rt._armErr("INT32_RANGE", {}, "E8004", "int out of safe range",
+        file, line, column, nil, nil))
+    end
+    return admit_carrier()
+  end
   if type(v) ~= "number" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "int" }, "E8001",
       "expected int", file, line, column, "int", __rt.typed_kind(v)))
@@ -161,6 +198,12 @@ function __rt.check_int(v, file, line, column)
 end
 
 function __rt.check_number(v, file, line, column)
+  -- Every numeric carrier is the number kind (see check_int): the value the
+  -- carrier stands for is admitted whether it carries the int or the number
+  -- variant, and the carrier itself is the admitted value (the emitted
+  -- prelude's number cell and the JVM/JS runtimes' variant-preserving
+  -- admission).
+  if type(v) == "table" and v[__K.jn] then return v end
   if type(v) ~= "number" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "number" }, "E8001",
       "expected number", file, line, column, "number", __rt.typed_kind(v)))
@@ -362,7 +405,9 @@ end
 -- "table" whatever string keys it carries — a user table can never
 -- project a carrier kind — and a produced carrier keeps its own token:
 -- the emitted chunk's function carriers ([fn]/[f], no [kind]) project
--- function exactly like the prelude classifies them.
+-- function exactly like the prelude classifies them, and a numeric
+-- carrier projects its own recorded variant ("int" or "number"), never
+-- one fixed numeric token.
 function __rt.typed_kind(v)
   if v == nil or v == __rt.__MISSING then return "nil" end
   if v == __rt.__NULL then return "null" end
@@ -392,7 +437,11 @@ function __rt.typed_kind(v)
   -- value therefore keeps its own token and never passes a table
   -- descriptor; a DEAL table cannot name either private mark.
   if v[__K.fn] ~= nil or v[__K.f] then return "function" end
-  if v[__K.jn] then return "number" end
+  -- The numeric-variant carrier keeps its own recorded token: an
+  -- int-variant carrier failing a boundary reports "int", a number-variant
+  -- carrier "number" (the emitted prelude's __typedBoundaryKind, the JVM
+  -- actualOf and the JS $kindOf read the same field).
+  if v[__K.jn] then return v.k end
   return "table"
 end
 

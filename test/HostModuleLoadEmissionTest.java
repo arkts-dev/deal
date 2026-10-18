@@ -970,6 +970,216 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
+    // 2a. The decoded numeric-carrier host crossing (ISSUE-0836)
+    // =========================================================================
+
+    /**
+     * The declared numeric positions of the carrier-projection fixture: a
+     * synchronous and an asynchronous {@code number[]} parameter, a
+     * {@code (int | null)[]}, and a declared host class with an {@code int}
+     * and a {@code number} field.
+     */
+    private static final String NUMERIC_DECLARATION_SOURCE = """
+        export class Cfg {
+          count: int;
+          ratio: number;
+        }
+
+        export async function absorbAsync(nums: number[]): string;
+        export function echoNumbers(nums: number[]): number[];
+        export function observeNumbers(nums: number[]): string;
+        export function observeInts(ns: (int | null)[]): string;
+        export function describeCfg(cfg: Cfg): string;
+        """;
+
+    /**
+     * The decoded-content program: every declared numeric host position is
+     * filled from a {@code std/json} decode graph, whose numeric leaves are
+     * the value model's private int/number variant carriers (the JSON
+     * classifier deliberately preserves the variant), and the echoed array
+     * re-encodes through the shared walker.
+     */
+    private static final String NUMERIC_APP_SOURCE = """
+        import * as json from "std/json";
+        import * as host from "host/num_probe";
+
+        export function main(): null {
+          return null;
+        }
+
+        export function run(): string {
+          let numsDoc: table = json.parse("{\\"ms\\":[1e17,1.5]}");
+          let ms: number[] = numsDoc.ms;
+          let echo: number[] = host.echoNumbers(ms);
+          let box: table = { xs: echo };
+
+          let intsDoc: table = json.parse("{\\"ns\\":[1,null,3]}");
+          let ns: (int | null)[] = intsDoc.ns;
+
+          let cfgDoc: table = json.parse("{\\"count\\":7,\\"ratio\\":2.5}");
+          let cfg: host.Cfg = { count: cfgDoc.count, ratio: cfgDoc.ratio };
+
+          return json.stringify(box) + "\\n"
+            + host.observeNumbers(ms) + "\\n"
+            + host.observeInts(ns) + "\\n"
+            + host.describeCfg(cfg);
+        }
+
+        export async function runAsync(): string {
+          let doc: table = json.parse("{\\\"asms\\\":[1e17,1.5]}");
+          let xs: number[] = doc.asms;
+          return await host.absorbAsync(xs);
+        }
+        """;
+
+    /**
+     * The deployed raw host: it reports exactly what it observes at each
+     * declared position — the element kinds of the {@code number[]} it was
+     * handed, the language null of the {@code (int | null)[]} slot, and the
+     * kinds and values of the declared class's numeric fields — and echoes
+     * the decoded array back so the DEAL side re-encodes it.
+     */
+    private static final String NUMERIC_HOST_LUA = """
+        local rt = require("deal.runtime")
+
+        return {
+          Cfg = { [__dealCarrierKeys.kind] = "class",
+                  [__dealCarrierKeys.classname] = "@$external/host/num_probe/Cfg" },
+          Cfg_defaults = { count = 0, ratio = 0.0 },
+
+          echoNumbers = function(nums)
+            return nums
+          end,
+
+          observeNumbers = function(nums)
+            return "nums=n:" .. tostring(#nums)
+              .. ":k1=" .. type(nums[1]) .. ":k2=" .. type(nums[2])
+          end,
+
+          observeInts = function(ns)
+            local second = ns[2]
+            local secondText
+            if second == rt.__NULL then
+              secondText = "null"
+            else
+              secondText = type(second)
+            end
+            return "ints=n:" .. tostring(#ns)
+              .. ":k1=" .. type(ns[1]) .. ":v1=" .. tostring(ns[1])
+              .. ":k2=" .. secondText
+              .. ":k3=" .. type(ns[3]) .. ":v3=" .. tostring(ns[3])
+          end,
+
+          describeCfg = function(cfg)
+            return "cfg=count:" .. type(cfg.count) .. ":" .. tostring(cfg.count)
+              .. ":ratio:" .. type(cfg.ratio) .. ":" .. tostring(cfg.ratio)
+          end,
+
+          absorbAsync = function(nums)
+            local kinds = {}
+            for i = 1, #nums do kinds[i] = type(nums[i]) end
+            return rt.async_start(function()
+              return "async=n:" .. tostring(#nums) .. ":k1=" .. kinds[1]
+                .. ":k2=" .. kinds[2]
+            end)
+          end,
+        }
+        """;
+
+    /** The transcript the raw host must observe (ISSUE-0836). */
+    private static final String NUMERIC_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "{\"xs\":[1.0E17,1.5]}",
+        "nums=n:2:k1=number:k2=number",
+        "ints=n:3:k1=number:v1=1:k2=null:k3=number:v3=3",
+        "cfg=count:number:7:ratio:number:2.5",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * The LuaJIT host projection is carrier-complete for the value model's
+     * numeric-variant carriers (ISSUE-0836): a decoded {@code number[]},
+     * {@code (int | null)[]} and a decoded numeric class field cross a real
+     * host parameter as the declared DEAL values — the raw host observes
+     * numbers, never the runtime's internal carrier tables — the deployed
+     * matcher admits them at the declared element/field descriptors, the
+     * array keeps its identity so the echoed decoded array re-encodes its
+     * own int/number variants ({@code 1.0E17}, {@code 1.5}), the async
+     * argument crossing hands the same declared elements to the host and
+     * its completion settles on the async export, and the published
+     * production artifact runs to completion.
+     */
+    private static void testLuaHostDecodedNumericCarrier() throws Exception {
+        System.out.println("-- the decoded numeric-carrier host crossing: the"
+            + " published LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-numeric-carrier-lua");
+        try {
+            writeFileIn(root, "deal.json", """
+                {"languageVersion": "1.3", "backend": "luajit",
+                 "moduleRoots": ["src"], "output": "out",
+                 "externals": {"host/num_probe":
+                   {"declaration": "bindings/num_probe.d.deal"}}}
+                """);
+            writeFileIn(root, "bindings/num_probe.d.deal",
+                NUMERIC_DECLARATION_SOURCE);
+            writeFileIn(root, "src/app.deal", NUMERIC_APP_SOURCE);
+            Path entry = root.resolve("src/app.deal").toAbsolutePath();
+            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+            check(exit == 0, "the decoded-numeric-carrier project compiles"
+                + " through the public deal compile: exit=" + exit);
+            if (exit != 0) {
+                return;
+            }
+            Path out = root.resolve("out");
+            Path artifact = out.resolve("app.lua");
+            check(Files.isRegularFile(artifact),
+                "the published artifact set carries the entry artifact: "
+                    + artifact);
+            writeFileIn(out, "host/num_probe.lua", NUMERIC_HOST_LUA);
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                local entry = surface["run"]
+                if entry == nil then fail("missing run export") end
+                local ok2, res = pcall(entry.f)
+                if not ok2 then
+                  local e = res
+                  fail("run: " .. tostring(e.code) .. "|" .. tostring(e.m)
+                    .. "|" .. tostring(e.e) .. "|" .. tostring(e.a))
+                end
+                local asyncEntry = surface["runAsync"]
+                if asyncEntry == nil then fail("missing runAsync export") end
+                local okA, handle = pcall(asyncEntry.f)
+                if not okA then fail("runAsync: " .. tostring(handle)) end
+                if type(handle) ~= "table"
+                    or handle[__dealCarrierKeys.kind] ~= "async" then
+                  fail("runAsync did not return an async operation")
+                end
+                if handle.__result ~= "async=n:2:k1=number:k2=number" then
+                  fail("runAsync completion: " .. tostring(handle.__result))
+                end
+                print("TRANSCRIPT-BEGIN")
+                print(res)
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"), out, true);
+            check(run.exitCode() == 0 && run.stdout().equals(NUMERIC_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "a declared host parameter of a decoded numeric array and a"
+                    + " decoded numeric class field hands the raw host the"
+                    + " declared DEAL values, and the echoed decoded array"
+                    + " keeps its own int/number variants: exit="
+                    + run.exitCode() + " stdout=" + escaped(run.stdout())
+                    + " stderr=" + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
     // 2. The LuaJIT load under real luajit
     // =========================================================================
 
@@ -2088,6 +2298,7 @@ public class HostModuleLoadEmissionTest {
             Baseline tableParam = prepare(tableParamFixture(), false, roots);
             testLuaArtifactText(abi, aliases);
             testHostReadCorrelation(hostReads);
+            testLuaHostDecodedNumericCarrier();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);

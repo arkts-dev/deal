@@ -8597,6 +8597,62 @@ local function __hostClassCell(desc, index, v, origin, isReturn)
   end
   return v
 end
+-- The carrier-complete numeric projection of one host-crossing value
+-- (ISSUE-0836): the value model's int/number variant carriers — the
+-- std/json decode graph's numeric leaves and the read-side variant
+-- materialization — cross to the raw host as the number each one stands
+-- for, at a declared numeric position and inside the array elements and
+-- class fields a declared reference position carries. The raw host
+-- therefore observes the declared DEAL value, exactly like the shared JVM
+-- runtime's boxed-carrier unwrap and the JS $hostProjectValue's numeric
+-- leaves, and no internal carrier table ever reaches it.
+--
+-- An array carrier projects its own slots in place: the array/object
+-- identity and alias contract (ISSUE-0814) keeps one table for the DEAL
+-- value and every host-visible alias, so a host's in-place write stays
+-- observable on the DEAL side, and a repeated parameter is the same
+-- table. Each projected number-variant slot records its own variant in
+-- the carrier's per-slot marks (the marks __numKey writes and __readVar
+-- materializes from), so an echoed decoded array re-encodes the exact
+-- int/number spelling it had; an int-variant slot clears a stale mark.
+-- The walk is identity-memoized, so a finite self-referential table
+-- terminates, and every other value — a null sentinel, an absent slot, a
+-- class instance, a plain table, a scalar — crosses unchanged. It rides
+-- the chunk's factory store like the other host-crossing helpers, so a
+-- retained export keeps its own chunk's projection without spending a
+-- main-chunk local.
+__factories.__hostNumProject = function(v, seen)
+  if type(v) ~= "table" then return v end
+  if v[__dealCarrierKeys.jn] then return v.d end
+  if v[__dealCarrierKeys.a] == nil then return v end
+  if seen == nil then seen = {} end
+  if seen[v] then return v end
+  seen[v] = true
+  local n = v[__dealCarrierKeys.n]
+  if type(n) ~= "number" then n = #v end
+  local marks = v[__dealCarrierKeys.nK]
+  if type(marks) ~= "table" then marks = nil end
+  for i = 1, n do
+    local element = v[i]
+    if type(element) == "table" then
+      if element[__dealCarrierKeys.jn] then
+        v[i] = element.d
+        if element.k == "number" then
+          if marks == nil then
+            marks = {}
+            v[__dealCarrierKeys.nK] = marks
+          end
+          marks[i] = true
+        elseif marks ~= nil then
+          marks[i] = nil
+        end
+      elseif element[__dealCarrierKeys.a] ~= nil then
+        __factories.__hostNumProject(element, seen)
+      end
+    end
+  end
+  return v
+end
 -- The chunk-to-wrapper class-value carrier projection (F4): one fresh
 -- runtime-representation value built from the source representation's own
 -- complete field map — the identity text is the crossing position's
@@ -8609,25 +8665,56 @@ end
 -- source value is never mutated; a value already carrying the runtime
 -- representation passes through. No null mapping exists inside this
 -- bridge: C_STRUCT and C_POINTER positions are non-nullable by the
--- declaration policy.
-local function __hostClassProject(desc, v)
+-- declaration policy. A declared field whose value is a numeric-variant
+-- carrier or an array carrier takes the same numeric projection the
+-- declared positions take (__hostNumProject): the host observes the
+-- declared number and the declared array's numbers, never an internal
+-- carrier table (ISSUE-0836). The chunk-representation copy is a fresh
+-- table, so a DEAL class instance keeps its own carrier values; a value
+-- already carrying the loaded matcher's class representation — a declared
+-- host class instance — crosses as the same object (its identity and every
+-- alias stay the DEAL instance's), and its declared string-keyed fields
+-- take the numeric projection in place: a field filled from decoded
+-- content is the declared number the host reads, never the decode carrier
+-- table. Both branches are identity-memoized, so a finite self-referential
+-- class value terminates.
+local function __hostClassProject(desc, v, seen)
   if type(v) ~= "table" then return v end
-  if v[__dealCarrierKeys.kind] == "class" then return v end
   if v[__dealCarrierKeys.d] then
     return {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
             code = v.code, message = v.m}
   end
+  if v[__dealCarrierKeys.kind] == "class" then
+    if seen == nil then seen = {} end
+    if seen[v] then return v end
+    seen[v] = true
+    for k, val in pairs(v) do
+      -- A DEAL field name is a string: every table-object key of the
+      -- instance is one of the private carrier marks (the class/kinds
+      -- tags, the chunk carrier marks, the pointer token), never a field.
+      if type(k) == "string" then
+        if type(val) == "table" and val[__dealCarrierKeys.kind] == "class" then
+          __hostClassProject(val[__dealCarrierKeys.classname], val, seen)
+        else
+          v[k] = __factories.__hostNumProject(val, seen)
+        end
+      end
+    end
+    return v
+  end
   if not v[__dealCarrierKeys.c] then return v end
+  if seen == nil then seen = {} end
   local out = {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = desc}
+  seen[v] = out
   if v[__dealCarrierKeys.ptr] ~= nil then out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr] end
   if type(v[__dealCarrierKeys.f]) == "table" then
     for k, val in pairs(v[__dealCarrierKeys.f]) do
       if type(val) == "table" and val[__dealCarrierKeys.c] then
-        out[k] = __hostClassProject(val[__dealCarrierKeys.id], val)
+        out[k] = __hostClassProject(val[__dealCarrierKeys.id], val, seen)
       elseif type(val) == "table" and val[__dealCarrierKeys.d] then
-        out[k] = __hostClassProject("Error", val)
+        out[k] = __hostClassProject("Error", val, seen)
       else
-        out[k] = val
+        out[k] = __factories.__hostNumProject(val, seen)
       end
     end
   end
@@ -8930,22 +9017,29 @@ end
 -- host-facing numeric value and the raw host observes the number its
 -- declared carrier names, never the carrier table's Lua shape (exactly
 -- like the sync crossing's declared parameter cell and the shared JVM
--- runtime's declared boxed carrier). The __MISSING absence marker is not a
--- language null and stays the absent value the loaded matcher classifies;
--- every other value crosses unchanged. The helper rides the chunk's one
--- factory store like the other host-crossing helpers, so a retained export
--- keeps its own chunk's projection (a global assignment would be clobbered
--- by the next chunk) without spending a main-chunk local.
+-- runtime's declared boxed carrier), and a numeric carrier inside a shared
+-- array carrier takes the same numeric projection (__hostNumProject). The
+-- __MISSING absence marker is not a language null and stays the absent
+-- value the loaded matcher classifies; every other value crosses
+-- unchanged. The helper rides the chunk's one factory store like the other
+-- host-crossing helpers, so a retained export keeps its own chunk's
+-- projection (a global assignment would be clobbered by the next chunk)
+-- without spending a main-chunk local.
 __factories.__hostAsyncArg = function(v)
   if v == nil or v == __NULL then return __rt.__NULL end
   if type(v) == "table" and v[__dealCarrierKeys.jn] then return v.d end
-  -- Every other value crosses unchanged in both directions, the shared
-  -- array carrier included: the chunk's null sentinel is the deployed
-  -- runtime's own __rt.__NULL (the runtime-binding preamble aliases
-  -- them), so the loaded wrapper's matcher admits a null element at a
-  -- nullable position and the raw host observes the sentinel while the
-  -- DEAL side keeps the carrier's identity, its aliases, and the host's
-  -- in-place writes (ISSUE-0814).
+  -- A numeric carrier inside a shared array carrier takes the same
+  -- declared-value projection the sync crossing's cell runs
+  -- (__hostNumProject): the raw host observes the declared numbers of the
+  -- array it was handed, and the array's per-slot variant marks keep an
+  -- echoed decoded array's exact int/number spelling.
+  if type(v) == "table" then return __factories.__hostNumProject(v) end
+  -- Every other value crosses unchanged in both directions: the chunk's
+  -- null sentinel is the deployed runtime's own __rt.__NULL (the
+  -- runtime-binding preamble aliases them), so the loaded wrapper's
+  -- matcher admits a null element at a nullable position and the raw host
+  -- observes the sentinel while the DEAL side keeps the array carrier's
+  -- identity, its aliases, and the host's in-place writes (ISSUE-0814).
   return v
 end
 -- The host-facing projection of one declared function position (H7): the
@@ -8961,17 +9055,21 @@ local function __hostFnArg(desc, inner, v)
           f = function(...) return __dealFnValue(carrier, ...) end}
 end
 -- The declared host-facing projection of one checked parameter: a
--- declared function position is bridged, every other position's carrier
--- is the Lua value itself (the shared Lua table in both directions). The
--- crossing admits a language-null representation only at a declared null
--- or nullable position (normalized to the deployed runtime's explicit
--- null sentinel, so the loaded matcher admits it and the raw host
--- observes the sentinel, never a plain nil) and renders the closed
--- parameter cell's own failure at an incompatible descriptor; the
--- __MISSING absence marker is not a language null: it takes the named
--- missing-to-null mapping at a nullable position and the closed
--- parameter cell at every other declared position, never the marker's
--- table shape.
+-- declared function position is bridged, a declared class position takes
+-- the class carrier projection, and every other position takes the
+-- carrier-complete numeric projection (__hostNumProject) — so a declared
+-- array position's numeric-variant slots reach the raw host as the
+-- declared numbers while the array table itself stays the one shared DEAL
+-- carrier, and every non-array value stays the Lua value itself (the
+-- shared Lua table in both directions). The crossing admits a
+-- language-null representation only at a declared null or nullable
+-- position (normalized to the deployed runtime's explicit null sentinel,
+-- so the loaded matcher admits it and the raw host observes the sentinel,
+-- never a plain nil) and renders the closed parameter cell's own failure
+-- at an incompatible descriptor; the __MISSING absence marker is not a
+-- language null: it takes the named missing-to-null mapping at a nullable
+-- position and the closed parameter cell at every other declared
+-- position, never the marker's table shape.
 local function __hostProjectArg(desc, inner, index, v, origin)
   v = __factories.__hostParamAdmit(desc, index, v, origin)
   if v == __rt.__NULL then return v end
@@ -8982,7 +9080,11 @@ local function __hostProjectArg(desc, inner, index, v, origin)
   if desc == "Error" or string.sub(desc, 1, 1) == "@" then
     return __hostClassProject(desc, v)
   end
-  return v
+  -- Every other declared position takes the numeric projection
+  -- (__hostNumProject): a declared array position's slots reach the raw
+  -- host as the declared numbers, and every non-array value crosses
+  -- unchanged.
+  return __factories.__hostNumProject(v)
 end
 --- The canonical DEAL error table of one host-boundary failure: the
 -- loaded runtime raises the DEALRuntimeError shape ({code, message,

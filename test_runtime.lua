@@ -548,6 +548,136 @@ test("every other carrier keeps its own closed token at a boundary (v1.3)", func
   assert(fractional.actual == "number", "a fractional number keeps its token")
 end)
 
+-- ==================== numeric-variant carrier admission (ISSUE-0836) ====================
+-- The std/json decode graph carries every numeric leaf as the private
+-- carrier {[__K.jn] = true, k = "int"|"number", d = <number>}: the value
+-- model's recorded int/number variant. The deployed matcher, the emitted
+-- prelude's own int/number cells, the JVM runtime's boxed Long/Double
+-- admission and the JS checkInt/checkNumber admit the same value, so a
+-- carrier crosses every numeric boundary as the value it stands for, and
+-- the boundary's actual projection is the carrier's own recorded token.
+
+local function number_carrier(kind, value)
+  return { [__K.jn] = true, k = kind, d = value }
+end
+
+test("an int-variant carrier is the admitted int (v1.3)", function()
+  local int_carrier = number_carrier("int", 2147483647)
+  assert(__rt.check_int(int_carrier) == int_carrier,
+    "the int-variant carrier is admitted unchanged")
+  assert(__rt.check_type("int", int_carrier) == int_carrier,
+    "the int descriptor admits the int-variant carrier")
+  assert(__rt.typed_kind(int_carrier) == "int",
+    "the int-variant carrier projects its own token")
+end)
+
+test("a number-variant carrier passes an int boundary when its value does (v1.3)", function()
+  -- A number-variant carrier is the value it stands for: an integral,
+  -- in-range value is admitted at the int boundary and keeps its own
+  -- recorded variant (the emitted prelude's int cell returns the carrier,
+  -- never a re-typed one).
+  local carrier = number_carrier("number", 5)
+  local admitted = __rt.check_type("int", carrier)
+  assert(admitted == carrier, "the admitted value is the carrier")
+  assert(admitted.k == "number", "the recorded variant is preserved")
+  assert(admitted.d == 5, "the value is preserved")
+  assert(__rt.check_type("int", number_carrier("number", -2147483648)).d == -2147483648,
+    "the signed32 minimum is admitted")
+  assert(__rt.check_type("int", number_carrier("number", 2147483647)).d == 2147483647,
+    "the signed32 maximum is admitted")
+end)
+
+test("a number-variant carrier runs the int ladder with its exact arms (v1.3)", function()
+  local nan = assert_error(function()
+    __rt.check_type("int", number_carrier("number", 0/0))
+  end, "E8001")
+  assert(nan.message == "expected int, got NaN", nan.message)
+  assert(nan.expected == "int" and nan.actual == "NaN", "the NaN tuple")
+
+  local infinity = assert_error(function()
+    __rt.check_type("int", number_carrier("number", math.huge))
+  end, "E8001")
+  assert(infinity.message == "expected int, got infinity", infinity.message)
+  assert(infinity.expected == "int" and infinity.actual == "infinity",
+    "the infinity tuple")
+
+  local negative_infinity = assert_error(function()
+    __rt.check_type("int", number_carrier("number", -math.huge))
+  end, "E8001")
+  assert(negative_infinity.actual == "infinity", negative_infinity.actual)
+
+  local fractional = assert_error(function()
+    __rt.check_type("int", number_carrier("number", 1.5))
+  end, "E8001")
+  assert(fractional.message == "expected int, got non-integer number",
+    fractional.message)
+  assert(fractional.expected == "int" and fractional.actual == "number",
+    "the fractional tuple")
+
+  local range = assert_error(function()
+    __rt.check_type("int", number_carrier("number", 2147483648))
+  end, "E8004")
+  assert(range.message == "int out of safe range", range.message)
+  assert(range.expected == nil and range.actual == nil,
+    "the range arm publishes no expected/actual")
+end)
+
+test("the int cell normalizes a carrier's -0 without mutating it (v1.3)", function()
+  local negative_zero = number_carrier("number", -0.0)
+  local admitted = __rt.check_type("int", negative_zero)
+  assert(admitted ~= negative_zero, "the normalization republishes a fresh carrier")
+  assert(admitted.d == 0 and 1 / admitted.d > 0, "the admitted zero is positive")
+  assert(admitted.k == "number", "the recorded variant is preserved")
+  assert(1 / negative_zero.d < 0, "the input carrier is never mutated")
+
+  local int_zero = number_carrier("int", -0.0)
+  local int_admitted = __rt.check_int(int_zero)
+  assert(int_admitted ~= int_zero and int_admitted.d == 0
+      and 1 / int_admitted.d > 0, "the int-variant zero normalizes too")
+  assert(int_admitted.k == "int", "the int variant is preserved")
+end)
+
+test("the number row admits both variants and keeps the carrier (v1.3)", function()
+  local number_variant = number_carrier("number", 1e17)
+  assert(__rt.check_number(number_variant) == number_variant,
+    "the number-variant carrier is admitted")
+  local int_variant = number_carrier("int", 3)
+  assert(__rt.check_type("number", int_variant) == int_variant,
+    "the int-variant carrier is admitted at a number boundary")
+  assert(__rt.typed_kind(number_variant) == "number",
+    "the number-variant carrier projects its own token")
+end)
+
+test("a numeric carrier keeps its own token at a non-numeric boundary (v1.3)", function()
+  assert_boundary_error(function()
+    __rt.check_type("string", number_carrier("number", 1))
+  end, "E8001", "expected string", "string", "number")
+  assert_boundary_error(function()
+    __rt.check_type("boolean", number_carrier("int", 1))
+  end, "E8001", "expected boolean", "boolean", "int")
+  assert_boundary_error(function()
+    __rt.check_type("table", number_carrier("number", 1))
+  end, "E8001", "expected table", "table", "number")
+end)
+
+test("an array of numeric carriers crosses the array descriptor (v1.3)", function()
+  local values = { [__K.a] = true, [__K.n] = 3,
+    [1] = number_carrier("int", 1), [2] = number_carrier("number", 2.5),
+    [3] = __rt.__NULL }
+  assert(__rt.check_type("[?number]", values) == values,
+    "the array carrier with numeric carriers and a null is admitted")
+  assert(__rt.check_type("[int]", { [__K.a] = true, [__K.n] = 2,
+    [1] = number_carrier("int", 1), [2] = number_carrier("number", 2) }) ~= nil,
+    "number-variant integral carriers are admitted at an int[] boundary")
+  local element = assert_error(function()
+    __rt.check_type("[int]", { [__K.a] = true, [__K.n] = 2,
+      [1] = number_carrier("int", 1), [2] = number_carrier("number", 1.5) })
+  end, "E8003")
+  assert(element.message == "array element 2 type mismatch", element.message)
+  assert(element.expected == "int" and element.actual == "number",
+    "the E8003 wrap keeps the element's own variant token")
+end)
+
 
 
 -- ==================== check_nullable tests ====================
