@@ -921,6 +921,100 @@ test("json.stringify encodes the emitted chunk array carrier as an array (v1.3)"
     "the carrier is not mutated")
 end)
 
+test("json.stringify encodes the emitted chunk table carrier as its members (v1.3)", function()
+  -- The chunk object carrier (TABLE_NEW / JSON_PARSE): the presence map
+  -- __K.keys, the first-insertion order __K.order and the per-slot variant
+  -- marks __K.nK. The encoder must emit the recorded member order and never
+  -- any private table-object mark — the defect encoded the carrier marks as
+  -- `"table: 0x..."` object members.
+  local carrier = {[__K.t] = true, [__K.keys] = {}, [__K.order] = {},
+    [__K.nK] = {}}
+  carrier.name = "deal"
+  carrier[__K.keys].name = true
+  carrier[__K.order][1] = "name"
+  carrier.count = 3
+  carrier[__K.keys].count = true
+  carrier[__K.order][2] = "count"
+  assert(json.stringify.f(carrier) == '{"name":"deal","count":3}',
+    "a chunk table carrier encodes as its members in insertion order, got: "
+      .. json.stringify.f(carrier))
+  -- Insertion order, never the sorted or hash spelling.
+  local ordered = {[__K.t] = true, [__K.keys] = {}, [__K.order] = {},
+    [__K.nK] = {}}
+  for _, key in ipairs({ "zeta", "alpha", "middle" }) do
+    ordered[key] = key
+    ordered[__K.keys][key] = true
+    ordered[__K.order][#ordered[__K.order] + 1] = key
+  end
+  assert(json.stringify.f(ordered)
+      == '{"zeta":"zeta","alpha":"alpha","middle":"middle"}',
+    "a chunk table carrier keeps its recorded insertion order, got: "
+      .. json.stringify.f(ordered))
+  -- Nested in an object and inside a chunk array carrier alike.
+  assert(json.stringify.f({ config = carrier }) == '{"config":{"name":"deal","count":3}}',
+    "a nested chunk table carrier encodes as an object")
+  local array = {[__K.a] = true, [__K.n] = 1, [__K.nK] = {}}
+  array[1] = carrier
+  assert(json.stringify.f({ items = array }) == '{"items":[{"name":"deal","count":3}]}',
+    "a chunk table carrier inside a chunk array carrier encodes as an object")
+  -- A marked number-variant slot keeps its number spelling.
+  local marked = {[__K.t] = true, [__K.keys] = {}, [__K.order] = {"amount"},
+    [__K.nK] = {amount = true}, amount = 1.0}
+  marked[__K.keys].amount = true
+  assert(json.stringify.f(marked) == '{"amount":1.0}',
+    "a marked number-variant slot spells through the closed decimal text, got: "
+      .. json.stringify.f(marked))
+  -- The private marks are never enumerated even on the mark-less fallback.
+  local bare = {[__K.t] = true, alpha = 1}
+  local bareText = json.stringify.f(bare)
+  assert(string.find(bareText, "table:", 1, true) == nil,
+    "no private carrier mark is a member, got: " .. bareText)
+  assert(string.find(bareText, '"alpha":1') ~= nil,
+    "the carrier's member is encoded, got: " .. bareText)
+end)
+
+test("json.stringify encodes the runtime numeric-variant carrier as its number (v1.3)", function()
+  -- __readVar materializes a read-side variant carrier as
+  -- {[__K.jn] = true, k = "int"|"number", d = <double>}: the value's own
+  -- recorded variant decides the spelling, exactly like the emitted chunk's
+  -- JSON walk and the shared JVM/JS Int/Double split.
+  local intCarrier = {[__K.jn] = true, k = "int", d = 7}
+  assert(json.stringify.f({ v = intCarrier }) == '{"v":7}',
+    "an int-variant carrier encodes as its integer, got: "
+      .. json.stringify.f({ v = intCarrier }))
+  local numberCarrier = {[__K.jn] = true, k = "number", d = 1.0}
+  assert(json.stringify.f({ v = numberCarrier }) == '{"v":1.0}',
+    "a number-variant carrier keeps its number spelling, got: "
+      .. json.stringify.f({ v = numberCarrier }))
+  assert(json.stringify.f({ v = {[__K.jn] = true, k = "number", d = 2.5} })
+      == '{"v":2.5}',
+    "a fractional number-variant carrier keeps its value")
+  -- The carrier inside a chunk array carrier is a number, not an object.
+  local array = {[__K.a] = true, [__K.n] = 2, [__K.nK] = {}}
+  array[1] = intCarrier
+  array[2] = numberCarrier
+  assert(json.stringify.f({ items = array }) == '{"items":[7,1.0]}',
+    "nested numeric carriers encode as numbers, got: "
+      .. json.stringify.f({ items = array }))
+  -- A non-finite carried double keeps the closed non-finite arms.
+  assert_json_error(function()
+    json.stringify.f({ v = {[__K.jn] = true, k = "number", d = 0.0 / 0.0} })
+  end, "cannot encode NaN as JSON")
+  assert_json_error(function()
+    json.stringify.f({ v = {[__K.jn] = true, k = "number", d = 1.0 / 0.0} })
+  end, "cannot encode Infinity as JSON")
+  -- The carrier is read, never mutated.
+  assert(intCarrier[__K.jn] == true and intCarrier.k == "int" and intCarrier.d == 7,
+    "the numeric carrier is not mutated")
+  -- A path-local re-entry through a carrier still selects the cycle arm.
+  local cyclic = {[__K.t] = true, [__K.keys] = {}, [__K.order] = {"self"},
+    [__K.nK] = {}}
+  cyclic.self = cyclic
+  cyclic[__K.keys].self = true
+  assert_json_error(function() json.stringify.f(cyclic) end,
+    "cyclic value cannot be encoded as JSON")
+end)
+
 test("json.parse decodes the full RFC 8259 escape table", function()
   local text = '"' .. '\\"' .. '\\\\' .. '\\/' .. '\\b' .. '\\f' .. '\\n' .. '\\r' .. '\\t' .. '"'
   local r = json.parse.f('{"v":' .. text .. '}').v

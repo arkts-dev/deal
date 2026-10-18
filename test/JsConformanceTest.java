@@ -26,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class JsConformanceTest {
@@ -149,6 +150,17 @@ public class JsConformanceTest {
 
     private static final long SUBPROCESS_TIMEOUT_SECONDS = 120;
 
+    /** The lane driver's raw captured-error transport file (the JS
+     * counterpart of the shared lane contract's payload transport): the
+     * driver writes the caught DEAL error's own fields here, so the lane
+     * re-serializes them through the shared canonical serializer instead of
+     * comparing a prefix of a program stream. */
+    private static final String ERROR_TRANSPORT_FILE = "lane_error.json";
+
+    /** The corpus identity namespace of the pinned descriptor tokens
+     * ({@code @conformance/<corpusPath>/<Class>}). */
+    private static final String CORPUS_IDENTITY_NAMESPACE = "conformance";
+
     /** Companion accounting expectations, computed before the pool runs:
      * every companion corpus-relative path, the companions reachable
      * (transitively) from runtime-classified fixtures, and the
@@ -210,6 +222,13 @@ public class JsConformanceTest {
             // incomplete observations are exercised over real node
             // children before any fixture runs.
             validateCorpusCaptureControls();
+
+            // The runtime-error assertion controls next: the exact error
+            // assertion (message, coordinates, pinned optional fields, and
+            // no-DEAL-payload honesty) is exercised through the live verdict
+            // before any fixture runs, so a regression to code-substring
+            // acceptance cannot pass.
+            validateRuntimeErrorAssertionControls();
 
             List<TestFile> tests = discoverTests();
             List<Classified> classified = classifyAll(tests);
@@ -1158,23 +1177,43 @@ public class JsConformanceTest {
                 return new Outcome(test, classified, true, "runtime ok");
             }
 
-            String needle = "DEAL_ERROR_CODE: "
-                + classified.expectedCode();
-            if (result.exitCode == 1 && result.stderr.contains(needle)) {
-                    applicablePassed.incrementAndGet();
-                    log("  [" + test.relativePath() + "] OK (found "
-                        + needle + ")");
-                return new Outcome(test, classified, true,
-                    "found " + needle);
+            // The runtime-error lane is the sidecar's exact error
+            // assertion, never a code substring: the lane driver transports
+            // the caught DEAL error's own fields, the lane projects the
+            // carrier's source coordinates and generated descriptor tokens
+            // through the case's deployment map (corpus C2), frames the real
+            // stdout with the shared canonical serializer, and compares the
+            // whole observation through the landed comparator — exact
+            // transcript bytes, exact exit code, and every sidecar-pinned
+            // error field.
+            deal.test.conformance.SidecarExpectations
+                    .StructuredExpectationSidecar errorSidecar =
+                sidecarOf(test.path());
+            if (errorSidecar == null) {
+                    applicableFailed.incrementAndGet();
+                log("  [" + test.relativePath() + "] FAIL (a runtime-error "
+                    + "fixture without a Structured Expectation Sidecar is a "
+                    + "corpus defect, never a pass)");
+                return new Outcome(test, classified, false,
+                    "runtime-error fixture without a sidecar");
             }
-            applicableFailed.incrementAndGet();
-            log("  [" + test.relativePath() + "] FAIL (expected exit 1"
-                + " and '" + needle + "' on stderr, got exit "
-                + result.exitCode + ", stdout: " + result.stdout
-                + ", stderr: " + result.stderr + ")");
-            return new Outcome(test, classified, false,
-                "expected exit 1 and '" + needle + "' on stderr, got exit "
-                    + result.exitCode);
+            Optional<String> errorMismatch = runtimeErrorVerdict(result,
+                outputRoot, errorSidecar.expectationFor("js"),
+                deploymentOf(written, projectRoot));
+            if (errorMismatch.isPresent()) {
+                    applicableFailed.incrementAndGet();
+                log("  [" + test.relativePath()
+                    + "] FAIL (runtime-error structured expectation): "
+                    + errorMismatch.get());
+                return new Outcome(test, classified, false,
+                    "structured expectation mismatch: "
+                        + errorMismatch.get());
+            }
+                    applicablePassed.incrementAndGet();
+                log("  [" + test.relativePath()
+                    + "] OK (exact runtime-error assertion)");
+            return new Outcome(test, classified, true,
+                "runtime error exactly as the sidecar pins");
         } catch (HarnessFailure e) {
             applicableFailed.incrementAndGet();
             log("  [" + test.relativePath()
@@ -1604,10 +1643,13 @@ public class JsConformanceTest {
      * exported wrapper in declaration order, each exactly once, awaiting
      * thenable results and discarding return values (no lane prints
      * results). A thrown error or a rejected Promise — including a
-     * module-load error inside the required entry artifact — routes
-     * through {@code $rt.reportUncaught} into the shared
-     * {@code DEAL_ERROR_CODE: <code> <message>} stderr + exit-1
-     * contract.
+     * module-load error inside the required entry artifact — is reified
+     * through the runtime and its raw fields are written to the lane's
+     * payload transport (the {@code lane_error.json} payload) with exit
+     * code 1 and no program output; the lane re-serializes those fields
+     * through the shared canonical Error Snapshot serializer, so the
+     * transport never competes with the canonical form and no stream
+     * prefix is ever compared.
      */
     private static String buildJsCorpusRunner(ProgramNode program,
             String entryModule) {
@@ -1630,10 +1672,14 @@ public class JsConformanceTest {
         sb.append("// Requires the entry artifact, invokes main once first when\n");
         sb.append("// exported, then the remaining zero-arity exported wrappers in\n");
         sb.append("// declaration order (each exactly once, results discarded) and\n");
-        sb.append("// maps uncaught errors into the DEAL_ERROR_CODE stderr + exit-1\n");
-        sb.append("// contract.\n");
+        sb.append("// transports an uncaught DEAL error's raw fields to the\n");
+        sb.append("// lane payload file and exits 1 (the lane frames the\n");
+        sb.append("// canonical Error Snapshot from those fields).\n");
         sb.append("\"use strict\";\n");
+        sb.append("const $fs = require(\"fs\");\n");
+        sb.append("const $process = process;\n");
         sb.append("const $rt = require(\"./deal/runtime\");\n");
+        sb.append(transportWriterSource());
         sb.append("const $order = [");
         boolean firstEntry = true;
         if (hasMain) {
@@ -1661,15 +1707,38 @@ public class JsConformanceTest {
         sb.append("  }\n");
         sb.append("})().catch((e) => {\n");
         sb.append("  const $err = $rt.reifyError(e);\n");
-        sb.append("  $rt.reportUncaught($err.file !== $rt.undefined\n");
-        sb.append("    ? $rt.errorValue($err.code, $err.message + \" at \" "
-            + "+ $err.file\n");
-        sb.append("        + \":\" + $err.line + \":\" + $err.column, "
-            + "$err.file,\n");
-        sb.append("        $err.line, $err.column)\n");
-        sb.append("    : $err);\n");
+        sb.append("  if ($err.code !== $rt.undefined) {\n");
+        sb.append("    $laneWriteTransport($err);\n");
+        sb.append("  }\n");
+        sb.append("  $process.exitCode = 1;\n");
         sb.append("});\n");
         return sb.toString();
+    }
+
+    /**
+     * The driver's payload transport writer: the raw captured error fields
+     * in a fixed field order, serialized with the host's minimal JSON
+     * escaping. The lane re-serializes them canonically, so this transport
+     * never competes with the canonical snapshot form.
+     */
+    private static String transportWriterSource() {
+        return String.join("\n",
+            "const $laneWriteTransport = ($e) => {",
+            "  const $fields = { code: $e.code };",
+            "  if ($e.message !== undefined) { $fields.message = $e.message; }",
+            "  if ($e.file !== undefined) { $fields.file = $e.file; }",
+            "  if ($e.line !== undefined) { $fields.line = $e.line; }",
+            "  if ($e.column !== undefined) { $fields.column = $e.column; }",
+            "  if ($e.expected !== undefined) {",
+            "    $fields.expected = $e.expected;",
+            "  }",
+            "  if ($e.actual !== undefined) { $fields.actual = $e.actual; }",
+            "  if ($e.frames !== undefined) { $fields.frames = $e.frames; }",
+            "  if ($e.cause !== undefined) { $fields.cause = $e.cause; }",
+            "  $fs.writeFileSync(\"" + ERROR_TRANSPORT_FILE + "\",",
+            "    JSON.stringify($fields), \"utf8\");",
+            "};",
+            "");
     }
 
     /** One bounded node subprocess run over the deployed artifact set
@@ -1745,6 +1814,325 @@ public class JsConformanceTest {
     }
 
     /**
+     * One materialized module of one case (corpus C2): its canonical
+     * corpus-relative path, the stripped-header line rebase, and its parent
+     * directory components relative to the module root — the prefix a
+     * generated class-descriptor token carries for that module.
+     */
+    private record DeploymentEntry(String corpusPath, int headerLinesStripped,
+            List<String> identityDirectories) {
+        DeploymentEntry {
+            identityDirectories = List.copyOf(identityDirectories);
+        }
+    }
+
+    /**
+     * The case's deployment map: every materialized source path (absolute
+     * normalized, plus the raw target spelling) mapped to its corpus
+     * identity, the module-directory index of the generated descriptor
+     * tokens, and the module root's own configured text. Built from the same
+     * materialization the compilation consumed, so the projection never
+     * guesses a module from a basename or from sidecar vocabulary.
+     */
+    private record CaseDeployment(Map<String, DeploymentEntry> byPath,
+            Map<String, List<DeploymentEntry>> byIdentityDirectories,
+            String identityRootText) {
+
+        CaseDeployment {
+            byPath = Map.copyOf(byPath);
+        }
+
+        /** The deployment entry of a captured source path, or {@code null}
+         * for an unmappable path (emitted verbatim so the comparison fails
+         * and surfaces the defect, never a fabricated corpus path). */
+        DeploymentEntry lookup(String capturedFile) {
+            if (capturedFile == null) {
+                return null;
+            }
+            DeploymentEntry direct = byPath.get(capturedFile);
+            if (direct != null) {
+                return direct;
+            }
+            try {
+                return byPath.get(Path.of(capturedFile).toAbsolutePath()
+                    .normalize().toString());
+            } catch (RuntimeException unusable) {
+                return null;
+            }
+        }
+    }
+
+    private static CaseDeployment deploymentOf(Map<String, Path> written,
+            Path projectRoot) throws IOException {
+        Map<String, DeploymentEntry> byPath = new LinkedHashMap<>();
+        Map<String, List<DeploymentEntry>> byDirectories = new LinkedHashMap<>();
+        Path root = projectRoot.toAbsolutePath().normalize();
+        for (Map.Entry<String, Path> module : written.entrySet()) {
+            Path corpusFile = Path.of(module.getKey()).toAbsolutePath()
+                .normalize();
+            Path target = module.getValue().toAbsolutePath().normalize();
+            SourceSnapshot snapshot = sourceSnapshot(corpusFile);
+            int headerLinesStripped = snapshot.raw().split("\n", -1).length
+                - snapshot.stripped().split("\n", -1).length;
+            List<String> directories = new ArrayList<>();
+            Path parent = target.getParent();
+            if (parent != null && parent.startsWith(root)) {
+                for (Path component : root.relativize(parent)) {
+                    if (!component.toString().isEmpty()) {
+                        directories.add(component.toString());
+                    }
+                }
+            }
+            DeploymentEntry entry = new DeploymentEntry(
+                corpusRelOf(corpusFile), headerLinesStripped, directories);
+            byPath.put(target.toString(), entry);
+            byPath.put(module.getValue().toString(), entry);
+            List<DeploymentEntry> sameDirectory = byDirectories
+                .computeIfAbsent(String.join("/", directories),
+                    ignored -> new ArrayList<>());
+            if (!sameDirectory.contains(entry)) {
+                sameDirectory.add(entry);
+            }
+        }
+        return new CaseDeployment(byPath, byDirectories,
+            root.getFileName() == null ? "" : root.getFileName().toString());
+    }
+
+    /** The raw captured error fields transported by the lane driver: the
+     * product's own DEAL error value, never a lane-composed text. */
+    private record CapturedError(String code, String message, String file,
+            Integer line, Integer column, Optional<String> expected,
+            Optional<String> actual, Optional<Integer> frames,
+            Optional<String> cause) {
+
+        CapturedError {
+            Objects.requireNonNull(expected);
+            Objects.requireNonNull(actual);
+            Objects.requireNonNull(frames);
+            Objects.requireNonNull(cause);
+        }
+
+        /** True when every mandatory snapshot field is present. */
+        boolean complete() {
+            return code != null && message != null && file != null
+                && line != null && column != null;
+        }
+    }
+
+    /** Reads the driver's raw captured-error transport, or {@code null}
+     * when the run carried no DEAL error payload. */
+    private static CapturedError readErrorTransport(Path outputRoot) {
+        Path transport = outputRoot.resolve(ERROR_TRANSPORT_FILE);
+        if (!Files.isRegularFile(transport)) {
+            return null;
+        }
+        try {
+            deal.semantic.ir.CanonicalJson.Value root =
+                deal.semantic.ir.CanonicalJson.parse(
+                    Files.readString(transport, StandardCharsets.UTF_8));
+            if (!(root instanceof deal.semantic.ir.CanonicalJson.Obj obj)) {
+                return null;
+            }
+            Map<String, deal.semantic.ir.CanonicalJson.Value> fields =
+                new LinkedHashMap<>();
+            for (deal.semantic.ir.CanonicalJson.Entry entry : obj.entries()) {
+                fields.put(entry.key(), entry.value());
+            }
+            return new CapturedError(transportString(fields, "code"),
+                transportString(fields, "message"),
+                transportString(fields, "file"),
+                transportInt(fields, "line"),
+                transportInt(fields, "column"),
+                Optional.ofNullable(transportString(fields, "expected")),
+                Optional.ofNullable(transportString(fields, "actual")),
+                Optional.ofNullable(transportInt(fields, "frames")),
+                Optional.ofNullable(transportString(fields, "cause")));
+        } catch (IOException | RuntimeException unreadable) {
+            return null;
+        }
+    }
+
+    private static String transportString(
+            Map<String, deal.semantic.ir.CanonicalJson.Value> fields,
+            String key) {
+        return fields.get(key) instanceof deal.semantic.ir.CanonicalJson.Str str
+            ? str.value() : null;
+    }
+
+    private static Integer transportInt(
+            Map<String, deal.semantic.ir.CanonicalJson.Value> fields,
+            String key) {
+        return fields.get(key) instanceof deal.semantic.ir.CanonicalJson.Int value
+            ? value.value() : null;
+    }
+
+    /**
+     * The JS lane's exact runtime-error verdict: the caught error's own
+     * fields, projected through the case's deployment map and framed with
+     * the shared canonical serializer, compared field-exact against the
+     * sidecar's error assertion through the landed comparator. An
+     * incomplete capture is refused by name, a missing DEAL error payload is
+     * a failing observation, and a pinned field the product does not carry
+     * stays absent (the comparator reports the suppression — it is never
+     * fabricated from the sidecar).
+     */
+    private static Optional<String> runtimeErrorVerdict(NodeResult result,
+            Path outputRoot,
+            deal.test.conformance.SidecarExpectations.RuntimeExpectation pinned,
+            CaseDeployment deployment) {
+        String refusal = captureRefusal(result);
+        if (refusal != null) {
+            return Optional.of(refusal);
+        }
+        if (pinned instanceof
+                deal.test.conformance.SidecarExpectations.RuntimeExpectation
+                    .Rejected) {
+            // A compile-reject pin on a lane that executed is the
+            // comparator's mismatch, never a code-substring pass.
+            return deal.test.conformance.StructuredExpectationComparator
+                .compare("js", pinned, executed(result))
+                .map(deal.test.conformance.GateMismatch::message);
+        }
+        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
+            expected =
+                (deal.test.conformance.SidecarExpectations.RuntimeExpectation
+                    .Executed) pinned;
+        if (!expected.isRuntimeError() || expected.error() == null) {
+            return Optional.of("the js sidecar pins mode " + expected.mode()
+                + " for a runtime-error fixture (no error assertion exists "
+                + "to compare)");
+        }
+        CapturedError captured = readErrorTransport(outputRoot);
+        if (captured == null) {
+            return Optional.of("the lane exited " + result.exitCode
+                + " without a DEAL error payload (a runtime-error fixture "
+                + "must raise the pinned DEAL error; stderr: "
+                + result.stderr + ")");
+        }
+        if (!captured.complete()) {
+            return Optional.of("the captured DEAL error carries no complete "
+                + "DEALRuntimeError field set (code, message, file, line and "
+                + "column are mandatory): code=" + captured.code()
+                + ", message=" + captured.message() + ", file="
+                + captured.file() + ", line=" + captured.line()
+                + ", column=" + captured.column());
+        }
+        deal.test.conformance.SidecarExpectations.ErrorExpectation snapshot =
+            projectCapturedError(captured, expected.error(), deployment);
+        String framing = deal.test.conformance.ErrorSnapshot.CODE_LINE_PREFIX
+            + snapshot.code() + "\n"
+            + deal.test.conformance.ErrorSnapshot.SNAPSHOT_LINE_PREFIX
+            + deal.test.conformance.ErrorSnapshot.canonicalJson(snapshot)
+            + "\n";
+        byte[] stdout = concat(result.stdout.getBytes(StandardCharsets.UTF_8),
+            framing.getBytes(StandardCharsets.UTF_8));
+        return deal.test.conformance.StructuredExpectationComparator
+            .compare("js", expected,
+                new deal.test.conformance.LaneExecution.Executed(stdout,
+                    result.stderr.getBytes(StandardCharsets.UTF_8),
+                    result.exitCode))
+            .map(deal.test.conformance.GateMismatch::message);
+    }
+
+    private static deal.test.conformance.LaneExecution.Executed executed(
+            NodeResult result) {
+        return new deal.test.conformance.LaneExecution.Executed(
+            result.stdout.getBytes(StandardCharsets.UTF_8),
+            result.stderr.getBytes(StandardCharsets.UTF_8),
+            result.exitCode);
+    }
+
+    private static byte[] concat(byte[] first, byte[] second) {
+        byte[] joined = new byte[first.length + second.length];
+        System.arraycopy(first, 0, joined, 0, first.length);
+        System.arraycopy(second, 0, joined, first.length, second.length);
+        return joined;
+    }
+
+    /**
+     * Projects one captured DEAL error onto the sidecar-authoritative field
+     * set (C2): the carrier's source path maps through the deployment map
+     * and the stripped-source line rebases onto the raw corpus coordinate,
+     * generated class-descriptor tokens map through the same deployment
+     * identity, and exactly the pinned optional fields are emitted. A pinned
+     * span the captured error lacks already failed the completeness check.
+     */
+    private static deal.test.conformance.SidecarExpectations
+            .ErrorExpectation projectCapturedError(CapturedError captured,
+                deal.test.conformance.SidecarExpectations.ErrorExpectation
+                    assertion,
+                CaseDeployment deployment) {
+        DeploymentEntry module = deployment.lookup(captured.file());
+        String sourceFile = module != null ? module.corpusPath()
+            : captured.file();
+        int line = module != null
+            ? captured.line() + module.headerLinesStripped()
+            : captured.line();
+        boolean spanPinned = assertion.pinsSpan();
+        return new deal.test.conformance.SidecarExpectations.ErrorExpectation(
+            captured.code(),
+            projectDescriptorTokens(captured.message(), deployment),
+            spanPinned ? sourceFile : null,
+            spanPinned ? line : null,
+            spanPinned ? captured.column() : null,
+            pinnedOptional(assertion, "expected", captured.expected(),
+                deployment),
+            pinnedOptional(assertion, "actual", captured.actual(), deployment),
+            pinnedOptional(assertion, "frames", captured.frames(), null),
+            pinnedOptional(assertion, "cause", captured.cause(), null));
+    }
+
+    private static <T> Optional<T> pinnedOptional(
+            deal.test.conformance.SidecarExpectations.ErrorExpectation assertion,
+            String field, Optional<T> captured, CaseDeployment deployment) {
+        if (captured.isEmpty() || !assertion.pinsOptional(field)) {
+            return Optional.empty();
+        }
+        if (deployment != null && captured.get() instanceof String text) {
+            @SuppressWarnings("unchecked")
+            T projected = (T) projectDescriptorTokens(text, deployment);
+            return Optional.of(projected);
+        }
+        return captured;
+    }
+
+    /**
+     * The lane-local generated-descriptor projection: a class descriptor
+     * token whose module prefix is positively identified by the case's
+     * deployment map maps to the canonical corpus identity
+     * {@code @conformance/<corpusPath>/<Class>}. An unknown or ambiguous
+     * prefix and authored text containing {@code @} stay verbatim — never a
+     * basename guess and never sidecar vocabulary.
+     */
+    private static String projectDescriptorTokens(String text,
+            CaseDeployment deployment) {
+        String rootText = deployment.identityRootText();
+        if (text == null || text.indexOf('@') < 0 || rootText.isEmpty()) {
+            return text;
+        }
+        Pattern token = Pattern.compile("@" + Pattern.quote(rootText)
+            + "((?:/[\\p{L}\\p{N}_.\\-]+)+)");
+        Matcher matcher = token.matcher(text);
+        StringBuilder projected = new StringBuilder();
+        while (matcher.find()) {
+            String[] components = matcher.group(1).substring(1).split("/");
+            List<DeploymentEntry> modules = deployment.byIdentityDirectories()
+                .get(String.join("/",
+                    Arrays.copyOf(components, components.length - 1)));
+            String replacement = matcher.group();
+            if (modules != null && modules.size() == 1) {
+                replacement = "@" + CORPUS_IDENTITY_NAMESPACE + "/"
+                    + modules.get(0).corpusPath() + "/"
+                    + components[components.length - 1];
+            }
+            matcher.appendReplacement(projected,
+                Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(projected);
+        return projected.toString();
+    }
+
+    /**
      * The registered corpus capture controls: the same bounded capture
      * the corpus lane runs ({@link BoundedProcess} over a real node
      * child) and the same structured runtime-ok verdict the lane applies
@@ -1797,6 +2185,194 @@ public class JsConformanceTest {
         System.out.println("Corpus capture controls: cap-1/cap/cap+1 in "
             + "both stream positions refused or accepted exactly as the "
             + "structured verdict requires (" + CAPTURE_REFUSAL + ")");
+    }
+
+    /**
+     * The registered runtime-error assertion controls: the lane's exact
+     * verdict is exercised over a synthetic carrier, a synthetic deployment
+     * map and the shared canonical framing. An exact observation passes; a
+     * wrong message, a wrong coordinate, a suppressed pinned optional field,
+     * a compile-reject pin on an executed lane and a run without a DEAL
+     * error payload each fail — a code substring can never satisfy the
+     * assertion. Any failed control exits the suite non-zero.
+     */
+    private static void validateRuntimeErrorAssertionControls() {
+        Path controlRoot = null;
+        boolean ok = true;
+        try {
+            controlRoot = Files.createTempDirectory(
+                "js-error-assertion-control-");
+            ok &= checkRuntimeErrorAssertion(controlRoot);
+        } catch (IOException failure) {
+            System.out.println("FAIL: the runtime-error assertion controls "
+                + "could not run: " + failure);
+            ok = false;
+        } finally {
+            if (controlRoot != null) {
+                try {
+                    Path root = controlRoot;
+                    Files.walk(root).sorted(Comparator.reverseOrder())
+                        .forEach(f -> { try { Files.deleteIfExists(f); }
+                            catch (IOException ignored) { } });
+                } catch (IOException ignored) { }
+            }
+        }
+        if (!ok) {
+            System.out.println("GATE FAILURE: runtime-error assertion "
+                + "control(s) failed — a code substring is never the "
+                + "sidecar's exact error assertion");
+            System.exit(1);
+        }
+        System.out.println("Runtime-error assertion controls: exact "
+            + "message/coordinates/pinned fields accepted; wrong message, "
+            + "wrong coordinate, suppressed pinned field, executed-vs-"
+            + "compile-reject and a missing DEAL payload refused");
+    }
+
+    private static boolean checkRuntimeErrorAssertion(Path controlRoot)
+            throws IOException {
+        Path moduleRoot = controlRoot.resolve("conformance");
+        Path moduleFile = moduleRoot.resolve("modid_lib_b").resolve(
+            "lib_b.deal");
+        Files.createDirectories(moduleFile.getParent());
+        Files.writeString(moduleFile, "// @spec: control\n"
+            + "// @expected: runtime-error E8001\n"
+            + "export function f(): null {\n  return null;\n}\n");
+        Path outputRoot = controlRoot.resolve("out");
+        Files.createDirectories(outputRoot);
+        String corpusPath = "backend-runtime/modules/modid_lib_b/lib_b.deal";
+        DeploymentEntry entry = new DeploymentEntry(corpusPath, 2,
+            List.of("modid_lib_b"));
+        CaseDeployment deployment = new CaseDeployment(
+            Map.of(moduleFile.toString(), entry),
+            Map.of("modid_lib_b", List.of(entry)), "conformance");
+        String classIdentity = "@" + CORPUS_IDENTITY_NAMESPACE + "/"
+            + corpusPath + "/Point";
+        deal.test.conformance.SidecarExpectations.ErrorExpectation assertion =
+            new deal.test.conformance.SidecarExpectations.ErrorExpectation(
+                "E8001", "expected instance of " + classIdentity + ", got table",
+                corpusPath, 5, 9, Optional.of(classIdentity),
+                Optional.of("table"), Optional.empty(), Optional.empty());
+        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
+            pinned = new deal.test.conformance.SidecarExpectations
+                .RuntimeExpectation.Executed("runtime-error",
+                    framedStdout(assertion), new byte[0], 1, assertion);
+        boolean ok = true;
+        // The exact carrier passes: the generated token projects to the
+        // corpus identity and the stripped line rebases onto the raw line.
+        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
+            "E8001", "expected instance of @conformance/modid_lib_b/Point, "
+                + "got table", moduleFile, 3, 9,
+            Optional.of("@conformance/modid_lib_b/Point"), Optional.of("table")),
+            false, "the exact carrier + projection");
+        // A message differing only beyond the code fails.
+        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
+            "E8001", "expected instance", moduleFile, 3, 9,
+            Optional.of("@conformance/modid_lib_b/Point"), Optional.of("table")),
+            true, "a wrong message with the right code");
+        // A wrong column fails.
+        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
+            "E8001", "expected instance of @conformance/modid_lib_b/Point, "
+                + "got table", moduleFile, 3, 10,
+            Optional.of("@conformance/modid_lib_b/Point"), Optional.of("table")),
+            true, "a wrong column");
+        // A pinned optional the carrier does not carry fails.
+        ok &= expectVerdict(outputRoot, deployment, pinned, capturedError(
+            "E8001", "expected instance of @conformance/modid_lib_b/Point, "
+                + "got table", moduleFile, 3, 9,
+            Optional.empty(), Optional.of("table")),
+            true, "a suppressed pinned expected field");
+        // No DEAL payload at all fails, even with an exit-1 capture.
+        Files.deleteIfExists(outputRoot.resolve(ERROR_TRANSPORT_FILE));
+        Optional<String> missing = runtimeErrorVerdict(
+            new NodeResult(1, "", "", false, false), outputRoot, pinned,
+            deployment);
+        if (missing.isEmpty()) {
+            System.out.println("FAIL: the runtime-error control accepted a "
+                + "run with no DEAL error payload");
+            ok = false;
+        }
+        // A compile-reject pin on a lane that executed fails.
+        deal.test.conformance.SidecarExpectations.RuntimeExpectation.Rejected
+            rejected = new deal.test.conformance.SidecarExpectations
+                .RuntimeExpectation.Rejected("compile-reject", "E6006",
+                    OptionalInt.empty(), OptionalInt.empty());
+        Optional<String> executedVerdict = runtimeErrorVerdict(
+            new NodeResult(0, "", "", false, false), outputRoot, rejected,
+            deployment);
+        if (executedVerdict.isEmpty()) {
+            System.out.println("FAIL: the runtime-error control accepted an "
+                + "executed lane against a compile-reject pin");
+            ok = false;
+        }
+        return ok;
+    }
+
+    /** One control round: write the carrier transport, apply the live
+     * verdict through the shared comparator, and require the pinned
+     * acceptance/rejection. */
+    private static boolean expectVerdict(Path outputRoot,
+            CaseDeployment deployment,
+            deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed
+                pinned,
+            CapturedError captured, boolean mustFail, String what)
+            throws IOException {
+        writeErrorTransport(outputRoot, captured);
+        Optional<String> verdict = runtimeErrorVerdict(
+            new NodeResult(1, "", "", false, false), outputRoot, pinned,
+            deployment);
+        if (mustFail == verdict.isEmpty()) {
+            System.out.println("FAIL: the runtime-error control " + what
+                + (mustFail ? " was accepted" : " was refused: "
+                    + verdict.orElse("")));
+            return false;
+        }
+        return true;
+    }
+
+    private static CapturedError capturedError(String code, String message,
+            Path file, int line, int column, Optional<String> expected,
+            Optional<String> actual) {
+        return new CapturedError(code, message, file.toString(), line, column,
+            expected, actual, Optional.empty(), Optional.empty());
+    }
+
+    private static void writeErrorTransport(Path outputRoot,
+            CapturedError captured) throws IOException {
+        List<String> fields = new ArrayList<>();
+        addTransportString(fields, "code", captured.code());
+        addTransportString(fields, "message", captured.message());
+        addTransportString(fields, "file", captured.file());
+        if (captured.line() != null) {
+            fields.add("\"line\":" + captured.line());
+        }
+        if (captured.column() != null) {
+            fields.add("\"column\":" + captured.column());
+        }
+        addTransportString(fields, "expected", captured.expected().orElse(null));
+        addTransportString(fields, "actual", captured.actual().orElse(null));
+        Files.writeString(outputRoot.resolve(ERROR_TRANSPORT_FILE),
+            "{" + String.join(",", fields) + "}", StandardCharsets.UTF_8);
+    }
+
+    private static void addTransportString(List<String> fields, String key,
+            String value) {
+        if (value == null) {
+            return;
+        }
+        fields.add("\"" + key + "\":\""
+            + value.replace("\\", "\\\\").replace("\"", "\\\"")
+            + "\"");
+    }
+
+    private static byte[] framedStdout(
+            deal.test.conformance.SidecarExpectations.ErrorExpectation
+                assertion) {
+        return (deal.test.conformance.ErrorSnapshot.CODE_LINE_PREFIX
+            + assertion.code() + "\n"
+            + deal.test.conformance.ErrorSnapshot.SNAPSHOT_LINE_PREFIX
+            + deal.test.conformance.ErrorSnapshot.canonicalJson(assertion)
+            + "\n").getBytes(StandardCharsets.UTF_8);
     }
 
     /** One cap-boundary control round in one stream position: a real
