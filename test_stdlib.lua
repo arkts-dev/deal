@@ -1322,6 +1322,48 @@ test("json.stringify rejects the absent marker with the closed nil token", funct
   assert(err.actual == "nil", "absent marker actual token, got: " .. tostring(err.actual))
 end)
 
+-- A missing array slot is never JSON null (v1.3): only __rt.__NULL is the
+-- null carrier. A deleted element of a decoded array leaves a hole the
+-- encoder must reject through the closed unsupported/nil arm — exactly the
+-- emitted chunk's missing-slot arm and the JVM/JS walks — instead of
+-- fabricating a present "null" the source document never carried.
+test("json.stringify rejects a deleted decoded-array slot with the closed nil token", function()
+  local doc = json.parse.f('{"xs":[1,2]}')
+  doc.xs[1] = nil
+  local err = assert_error_code(function()
+    json.stringify.f(doc, "caller.deal", 12, 9)
+  end, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: nil",
+    "deleted slot message, got: " .. tostring(err.message))
+  assert(err.expected == "string, number, boolean, or table",
+    "deleted slot expected text, got: " .. tostring(err.expected))
+  assert(err.actual == "nil", "deleted slot actual token, got: " .. tostring(err.actual))
+  assert(err.file == "caller.deal" and err.line == 12 and err.column == 9,
+    "the missing-slot tuple carries the call-site triplet")
+  -- A present language null in the same array frame stays the one JSON
+  -- null: the nil rejection never widens to __rt.__NULL.
+  assert(json.stringify.f(json.parse.f('{"xs":[null,2]}')) == '{"xs":[null,2]}',
+    "a decoded present null still encodes as null")
+end)
+
+-- The inferred (unmarked) array frame applies the same rule: the numeric-key
+-- inference classifies a sparse plain table as an array, so its absent slot
+-- is the missing value, not a fabricated JSON null.
+test("json.stringify rejects a sparse plain table with the closed nil token", function()
+  local err = assert_error_code(function()
+    json.stringify.f({ [2] = 2 }, "caller.deal", 3, 1)
+  end, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: nil",
+    "sparse plain table message, got: " .. tostring(err.message))
+  assert(err.expected == "string, number, boolean, or table",
+    "sparse plain table expected text, got: " .. tostring(err.expected))
+  assert(err.actual == "nil", "sparse plain table actual token, got: " .. tostring(err.actual))
+  assert(err.file == "caller.deal" and err.line == 3 and err.column == 1,
+    "the inferred-frame missing-slot tuple carries the call-site triplet")
+  -- The dense counterpart keeps encoding as the array of its elements.
+  assert(json.stringify.f({ 1, 2 }) == '[1,2]', "the dense inferred array still encodes")
+end)
+
 -- The emitted chunk's own carrier marks (the __stdJsonKind vocabulary the
 -- emitted stringify walker classifies): a class instance tagged with
 -- __c/__id, the builtin Error value tagged with __d, and a function

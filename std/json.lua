@@ -22,12 +22,14 @@
 -- reference runtime's __kind-tagged function wrapper (function), class
 -- or Error instance and decoded async handle (table), the emitted
 -- chunk's own __c/__d class and Error marks (table) and __fn/__f/__csig
--- function marks (function), plus the internal absent marker (nil) —
--- renders that arm's own text with its closed carrier-kind token
--- instead of encoding private carrier fields; a path-local
--- container re-entry keeps the closed "cyclic value cannot be encoded as
--- JSON" arm. There is no fixed nesting-depth bound. Object key order
--- follows Lua iteration order.
+-- function marks (function), plus the internal absent marker and every
+-- absent or deleted slot (nil) — a hole in a marked decoded array or in
+-- an inferred sparse table included — renders that arm's own text with
+-- its closed carrier-kind token instead of encoding private carrier
+-- fields or a fabricated JSON null (only __rt.__NULL is a JSON null);
+-- a path-local container re-entry keeps the closed "cyclic value cannot
+-- be encoded as JSON" arm. There is no fixed nesting-depth bound. Object
+-- key order follows Lua iteration order.
 --
 -- parse's declared (string)->table exit (ISSUE-0824) rejects the two
 -- non-table decode carriers with the shared typed-boundary tuple
@@ -425,8 +427,9 @@ end
 -- per-slot number marks ([__K.nK]) select the number-variant spelling for
 -- the marked slot. No private table-object key is ever enumerated as an
 -- object member. Unmarked tables keep the numeric-key inference and the
--- existing object encoding, and the null/absent/unsupported/cycle behavior
--- is unchanged.
+-- existing object encoding; the unsupported/cycle behavior is unchanged.
+-- Only the language-null carrier __rt.__NULL renders 'null': a raw nil is
+-- the missing value in every frame and takes the closed unsupported arm.
 local function encode_value(v, file, line, column, path)
   if type(path) ~= "table" then path = {} end
   local out = {}
@@ -436,12 +439,15 @@ local function encode_value(v, file, line, column, path)
       out[#out + 1] = 'null'
       return
     end
-    if val == nil then
-      out[#out + 1] = 'null'
-      return
-    end
-    -- The internal absent marker is never JSON-shaped (the shared walk's
-    -- nil carrier token), never an empty object.
+    -- A raw nil has no JSON encoding: __rt.__NULL is the only null
+    -- carrier. An absent value is the missing slot — the marked decoded
+    -- array with a deleted element and the inferred sparse table alike —
+    -- so it reaches the closed unsupported-carrier arm below with the
+    -- nil token, exactly the emitted chunk's missing-slot rejection,
+    -- instead of fabricating a present 'null'.
+    --
+    -- The internal absent marker is never JSON-shaped either (the shared
+    -- walk's nil carrier token), never an empty object.
     if val == __rt.__MISSING then
       unsupported(val, file, line, column)
     end
