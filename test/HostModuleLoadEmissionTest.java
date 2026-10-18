@@ -1180,7 +1180,195 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
-    // 2. The LuaJIT load under real luajit
+    // 2. The host-crossed table value (ISSUE-0842)
+    // =========================================================================
+
+    /**
+     * The declared table positions of the host-crossed table value: a
+     * {@code table} return, a {@code table} parameter (the host observes
+     * the DEAL value it was handed), a declared function position whose
+     * host-driven invocation passes a plain Lua table back into DEAL, and
+     * a self-referential host table (the walk's closed cycle arm).
+     */
+    private static final String HOST_TABLE_DECLARATION_SOURCE = """
+        export function makeTable(): table;
+        export function makeNested(): table;
+        export function makeCycle(): table;
+        export function describe(t: table): string;
+        export function withTable(f: (t: table) => string): string;
+        """;
+
+    /**
+     * The DEAL side of the host-crossed table value: {@code table.keys}
+     * and {@code json.stringify} consume the plain table a host hands
+     * over — the return value, the callback argument, a nested member and
+     * a table the DEAL side wrote after the crossing (the first write's
+     * recorded order beside the host's own keys) — and a
+     * self-referential host table renders the closed cycle arm.
+     */
+    private static final String HOST_TABLE_APP_SOURCE = """
+        import * as host from "host/table_probe";
+        import * as tables from "std/table";
+        import * as json from "std/json";
+
+        function joined(keys: string[]): string {
+          let out: string = "";
+          let i: int = 0;
+          while (i < keys.length) {
+            if (i > 0) {
+              out = out + ",";
+            }
+            out = out + keys[i];
+            i = i + 1;
+          }
+          return out;
+        }
+
+        function accept(t: table): string {
+          return "cb:" + joined(tables.keys(t)) + ":" + json.stringify(t);
+        }
+
+        export function run(): string {
+          let t: table = host.makeTable();
+          let first: string = "keys=" + joined(tables.keys(t))
+            + " json=" + json.stringify(t)
+            + " host=" + host.describe(t);
+
+          let nested: table = host.makeNested();
+          let second: string = "nested=" + json.stringify(host.makeNested())
+            + " keys=" + joined(tables.keys(nested));
+
+          t.extra = 9;
+          let third: string = "written=" + joined(tables.keys(t))
+            + ":" + json.stringify(t)
+            + " host=" + host.describe(t);
+
+          let fourth: string = "callback=" + host.withTable(accept);
+
+          let cycleOk: boolean = false;
+          try {
+            let encoded: string = json.stringify(host.makeCycle());
+            cycleOk = encoded === "";
+          } catch (e) {
+            cycleOk = e.code === "E8001"
+              && e.message === "cyclic value cannot be encoded as JSON";
+          }
+          if (!cycleOk) {
+            throw { code: "TEST_FAIL", message: "host table cycle arm" };
+          }
+
+          return first + "\\n" + second + "\\n" + third + "\\n" + fourth;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host: it returns plain Lua tables (the LuaJIT value
+     * mapping's table value) and reports the declared values it observes
+     * at the table parameter, so the DEAL side's writes stay visible to
+     * the host and the host's keys stay visible to DEAL.
+     */
+    private static final String HOST_TABLE_LUA = """
+        return {
+          makeTable = function() return { a = 1 } end,
+          makeNested = function() return { inner = "x" } end,
+          makeCycle = function()
+            local t = {}
+            t.self = t
+            return t
+          end,
+          describe = function(t)
+            return "a=" .. tostring(t.a) .. " extra=" .. tostring(t.extra)
+          end,
+          withTable = function(f) return f({ cb = 2 }) end,
+        }
+        """;
+
+    /** The transcript the host-crossed table value must publish. */
+    private static final String HOST_TABLE_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "keys=a json={\"a\":1} host=a=1 extra=nil",
+        "nested={\"inner\":\"x\"} keys=inner",
+        "written=extra,a:{\"extra\":9,\"a\":1} host=a=1 extra=9",
+        "callback=cb:cb:{\"cb\":2}",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * A {@code table} value crossing from a host into DEAL is the DEAL
+     * table value (the LuaJIT value mapping's ``table`` = Lua table): the
+     * declared table return, the declared table parameter and the
+     * host-driven callback argument all cross as the plain Lua table the
+     * host built, and {@code std/table.keys} and {@code std/json.stringify}
+     * consume it — no raw Lua length-of-nil failure and no false
+     * {@code JSON_STRINGIFY_UNSUPPORTED} — on the published production
+     * artifact under real luajit.
+     */
+    private static void testLuaHostTableValue() throws Exception {
+        System.out.println("-- the host-crossed table value: the published "
+            + "LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-table-lua");
+        try {
+            writeFileIn(root, "deal.json", """
+                {"languageVersion": "1.3", "backend": "luajit",
+                 "moduleRoots": ["src"], "output": "out",
+                 "externals": {"host/table_probe":
+                   {"declaration": "bindings/table_probe.d.deal"}}}
+                """);
+            writeFileIn(root, "bindings/table_probe.d.deal",
+                HOST_TABLE_DECLARATION_SOURCE);
+            writeFileIn(root, "src/app.deal", HOST_TABLE_APP_SOURCE);
+            Path entry = root.resolve("src/app.deal").toAbsolutePath();
+            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+            check(exit == 0, "the host-table project compiles through the"
+                + " public deal compile: exit=" + exit);
+            if (exit != 0) {
+                return;
+            }
+            Path out = root.resolve("out");
+            Path artifact = out.resolve("app.lua");
+            check(Files.isRegularFile(artifact),
+                "the published artifact set carries the entry artifact: "
+                    + artifact);
+            writeFileIn(out, "host/table_probe.lua", HOST_TABLE_LUA);
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                local entry = surface["run"]
+                if entry == nil then fail("missing run export") end
+                local ok2, res = pcall(entry.f)
+                if not ok2 then
+                  local e = res
+                  fail("run: " .. tostring(e.code) .. "|" .. tostring(e.m)
+                    .. "|" .. tostring(e.e) .. "|" .. tostring(e.a))
+                end
+                print("TRANSCRIPT-BEGIN")
+                print(res)
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0 && run.stdout().equals(HOST_TABLE_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "a host table return, table parameter and callback argument are"
+                    + " the DEAL table value at the table.keys and"
+                    + " json.stringify surface, and a self-referential host"
+                    + " table takes the closed cycle arm: exit="
+                    + run.exitCode() + " stdout=" + escaped(run.stdout())
+                    + " stderr=" + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
+    // 2b. The LuaJIT load under real luajit
     // =========================================================================
 
     private static void testLuaExecution(Baseline fixture, Baseline missing,
@@ -2299,6 +2487,7 @@ public class HostModuleLoadEmissionTest {
             testLuaArtifactText(abi, aliases);
             testHostReadCorrelation(hostReads);
             testLuaHostDecodedNumericCarrier();
+            testLuaHostTableValue();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
