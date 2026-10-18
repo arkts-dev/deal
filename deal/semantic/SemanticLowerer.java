@@ -4536,7 +4536,8 @@ public final class SemanticLowerer {
          * the shell op is a member of exactly its own default block until the
          * declaration's default body lowers into it.
          */
-        private ClassDefaultPlan registerClassDefault(ClassId classId, ClassField field,
+        private ClassDefaultPlan registerClassDefault(ClassId classId,
+                                                      ClassField field,
                                                       Map<String, RuntimeDescriptor> descriptors) {
             ExpressionNode defaultExpr = field.defaultExpr().get();
             BlockId defaultBlock = allocateBlock();
@@ -10583,6 +10584,11 @@ public final class SemanticLowerer {
             OpId returnBoundaryOpId = null;
             OpId externalEntryRef = null;
             BlockId bodyBlock = null;
+            // The runtime-resolved adapter source's closed return-cell set
+            // (a REEVALUATE_THUNK source re-executes the source expression
+            // per invocation, so the source's execution class is selected
+            // at execution — never here).
+            KindPayload.DynamicReturnBoundary dynamicReturnCells = null;
             // The producing host crossing of a function-typed return (M2 item
             // 1): its boundary op and owning host module register the result's
             // HostFunctionValue instead of the dynamic record.
@@ -10601,35 +10607,51 @@ public final class SemanticLowerer {
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
                     FunctionExecutionBinding source = staticSourceBinding(adapter);
-                    if (source == null && staticSourceIdentity(adapter) != null) {
-                        throw new ConstructUnlowered("adapter invocation of '"
-                            + calleeName + "' whose recorded source identity "
-                            + staticSourceIdentity(adapter)
-                            + " carries no registered execution binding "
-                            + "(producer defect)", call.span());
-                    }
                     switch (source) {
                         case null -> {
-                            // A call-result ({@code REEVALUATE_THUNK})
-                            // source: neither the source value nor its
-                            // execution class exists at the call site — the
-                            // adapter's own wrapper re-executes the thunk at
-                            // each invocation. The invocation is the
-                            // recorded adapter call over the adapter carrier
-                            // (the emitters' D15 adapter protocol runs the
-                            // re-evaluated source's own wrapper, whose single
-                            // return check is the source signature's), and
-                            // the recorded return cell is the runtime host
-                            // source's HOST_TO_DEAL family cell — exactly the
-                            // runtime-resolved-source shape
-                            // {@link FunctionExecutionBinding.DynamicFunctionValue}
-                            // takes below. A DEAL-body source runs its own
-                            // body's single return cell inside the body and no
-                            // caller-side cell.
-                            hostCrossing = emitHostReturnBoundary(
-                                adapter.sourceSignature(), result, call.span(),
-                                callOpId);
-                            returnBoundaryOpId = hostCrossing.opId();
+                            if (staticSourceIdentity(adapter) == null) {
+                                // A call-result ({@code REEVALUATE_THUNK})
+                                // source: the thunk re-executes the source
+                                // expression on every invocation, so the
+                                // source value's execution class is selected
+                                // at execution. The closed dynamic
+                                // return-cell set records exactly one
+                                // caller-side cell per runtime resolution
+                                // class (the callee runs its own cell, the
+                                // host source its HOST_TO_DEAL cell, the
+                                // retained-ABI external source its
+                                // EXTERNAL_RETURN cell), and the invocation
+                                // is the closed DYNAMIC callee arm over the
+                                // adapter's published identity.
+                                dynamicReturnCells =
+                                    new KindPayload.DynamicReturnBoundary(
+                                        emitCallOwnedReturnBoundary(signature, result,
+                                            call.span(), callOpId),
+                                        emitHostReturnBoundary(signature, result,
+                                            call.span(), callOpId).opId(),
+                                        emitExternalReturnBoundary(signature, result,
+                                            call.span(), callOpId));
+                            } else {
+                                // A retained declaration-site operand (the
+                                // {@code VALUE} capture mode — an awaited
+                                // suspension's delivered function value):
+                                // the operand is not a registered function
+                                // identity, so the invocation is the recorded
+                                // adapter call over the carrier (the emitters'
+                                // D15 adapter protocol runs the retained
+                                // source's own wrapper, whose single return
+                                // check is the source signature's), and the
+                                // recorded cell is the runtime host source's
+                                // HOST_TO_DEAL family cell — the closed table
+                                // admits every per-source return cell for an
+                                // adapter. A DEAL-body source runs its own
+                                // body's single return cell inside the body
+                                // and no caller-side cell.
+                                hostCrossing = emitHostReturnBoundary(
+                                    adapter.sourceSignature(), result, call.span(),
+                                    callOpId);
+                                returnBoundaryOpId = hostCrossing.opId();
+                            }
                         }
                         case FunctionExecutionBinding.LoweredBody body -> {
                             FunctionContext context =
@@ -10730,10 +10752,14 @@ public final class SemanticLowerer {
             }
             emit(buildOp(callOpId, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
-                    valueCarried
-                        ? new KindPayload.CallCallee.Indirect(calleeValue)
-                        : new KindPayload.CallCallee.Static(binding),
-                    signature, parameterBoundaryIds, returnBoundaryOpId, null, bodyBlock,
+                    dynamicReturnCells != null
+                        ? new KindPayload.CallCallee.Dynamic(calleeValue)
+                        : (valueCarried
+                            ? new KindPayload.CallCallee.Indirect(calleeValue)
+                            : new KindPayload.CallCallee.Static(binding)),
+                    signature, parameterBoundaryIds,
+                    dynamicReturnCells != null ? null : returnBoundaryOpId,
+                    dynamicReturnCells, bodyBlock,
                     externalEntryRef),
                 result, resultType, args, argTypes,
                 FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -11151,6 +11177,17 @@ public final class SemanticLowerer {
                         calleeValue);
                 }
                 if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
+                    if (staticSourceIdentity(adapter) == null) {
+                        // The REEVALUATE_THUNK adapter source: the thunk
+                        // re-executes the source expression per invocation,
+                        // so the source's execution class is selected at
+                        // execution — the closed DYNAMIC async arm over the
+                        // adapter's published identity records the single
+                        // DEAL-body task cell and runs no statically selected
+                        // source start.
+                        return lowerDynamicAwait(call, slot, awaitSpan,
+                            identifier.name(), calleeValue);
+                    }
                     return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                         identifier.name());
                 }
@@ -11201,6 +11238,13 @@ public final class SemanticLowerer {
                 new FunctionAllocationIdentity(dynamicCallee.id()));
             if (registration instanceof FunctionExecutionBinding.AdapterBinding
                     adapter) {
+                if (staticSourceIdentity(adapter) == null) {
+                    // The runtime-resolved adapter source (the sync arm's
+                    // twin): the closed DYNAMIC async arm over the adapter's
+                    // published identity.
+                    return lowerDynamicAwait(call, slot, awaitSpan,
+                        describeDynamicCallee(call.callee()), dynamicCallee);
+                }
                 return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                     describeDynamicCallee(call.callee()));
             }
@@ -11656,42 +11700,42 @@ public final class SemanticLowerer {
          * invocation runs the source declaration's own creation-site
          * captured cells.
          *
-         * <p>A runtime-resolved source — a call-result
-         * ({@code REEVALUATE_THUNK}) source, or a materialized source whose
-         * producing registration is the producer rule's
+         * <p>A runtime-resolved source — a retained declaration-site
+         * operand (the {@code VALUE} capture mode), or a materialized source
+         * whose producing registration is the producer rule's
          * {@code DynamicFunctionValue} — records the runtime-resolved nested
          * shape instead: the nested source start's callee is the
          * {@code Dynamic} value identity the adapter protocol resolves at
-         * execution (the thunk's produced value or the retained operand),
-         * and its recorded task cell is the single caller-side
-         * {@code FUNCTION_RETURN} the closed dynamic resolution applies to a
-         * resolved DEAL body. The source's own class — a DEAL body, a host
-         * surface entry, a retained-ABI external, or a nested adapter — is
-         * never guessed at the call site.</p>
+         * execution (the retained operand), and its recorded task cell is
+         * the single caller-side {@code FUNCTION_RETURN} the closed dynamic
+         * resolution applies to a resolved DEAL body. The source's own class
+         * — a DEAL body, a host surface entry, a retained-ABI external, or a
+         * nested adapter — is never guessed at the call site. A
+         * {@code REEVALUATE_THUNK} source never reaches this arm: the closed
+         * dynamic async arm over the adapter's published identity owns it
+         * ({@link #lowerDynamicAwait}).</p>
          */
         private ValueId lowerAdapterOverAsync(CallExpr call, ValueId slot, Span awaitSpan,
                 FunctionExecutionBinding.AdapterBinding adapter, String calleeName) {
             ValueId sourceIdentity = staticSourceIdentity(adapter);
-            FunctionExecutionBinding source = sourceIdentity == null
-                ? null
-                : registry.bindings().get(
-                    new FunctionAllocationIdentity(sourceIdentity.id()));
-            if (sourceIdentity != null && source == null) {
+            if (sourceIdentity == null) {
                 throw new ConstructUnlowered("adapter-over-async of '" + calleeName
-                    + "' whose recorded source identity " + sourceIdentity
-                    + " carries no registered execution binding (producer defect)",
-                    call.span());
+                    + "' whose source is a re-evaluated thunk (the closed dynamic"
+                    + " async arm owns it; producer defect)", call.span());
             }
+            FunctionExecutionBinding source = registry.bindings().get(
+                new FunctionAllocationIdentity(sourceIdentity.id()));
             // The runtime-resolved source arm: the adapter protocol resolves
             // the source's execution class at each invocation, so the nested
             // source start names that runtime identity (never a static
-            // body/token/return-cell shape it does not have).
+            // body/token/return-cell shape it does not have). A retained
+            // declaration-site operand (the {@code VALUE} capture mode) is
+            // never a registered function identity, and a materialized
+            // source registers the producer rule's
+            // {@code DynamicFunctionValue}.
             boolean runtimeResolved = source == null
                 || source instanceof FunctionExecutionBinding.DynamicFunctionValue;
-            ValueId runtimeSourceIdentity = runtimeResolved
-                ? (sourceIdentity != null ? sourceIdentity
-                    : thunkProducedValue(adapter, calleeName, call.span()))
-                : null;
+            ValueId runtimeSourceIdentity = runtimeResolved ? sourceIdentity : null;
             RuntimeDescriptor.Func target = adapter.targetSignature();
             RuntimeDescriptor.Func sourceSignature = adapter.sourceSignature();
             List<ValueId> args = new ArrayList<>();
@@ -11741,15 +11785,15 @@ public final class SemanticLowerer {
             if (runtimeResolved) {
                 // The runtime-resolved source: neither a static body shape nor
                 // a static execution class exists at the call site, so the
-                // nested start names the source identity the adapter protocol
-                // resolves at execution (the thunk's produced value or the
-                // retained operand) as its Dynamic callee. The single
-                // caller-side DEAL-body task cell is the closed dynamic
-                // resolution's recorded FUNCTION_RETURN on the source
-                // signature's return type; the HOST/EXTERNAL resolutions run
-                // their own terminals. The cell adds no second source
-                // declaration: the adapter carrier's own re-execution
-                // publishes the value the class resolves from.
+                // nested start names the runtime identity the adapter
+                // protocol resolves at execution (the retained operand, or the
+                // producer rule's materialized dynamic source) as its
+                // Dynamic callee. The single caller-side DEAL-body task cell
+                // is the closed dynamic resolution's recorded FUNCTION_RETURN
+                // on the source signature's return type; the HOST/EXTERNAL
+                // resolutions run their own terminals. The cell adds no second
+                // source declaration: the adapter carrier's own invocation runs
+                // the resolved source, whose class selects the terminal.
                 nestedOpId = ids.nextOpId(module, nextOrdinal++, 0);
                 nestedReturnBoundary = emitCallOwnedReturnBoundary(
                     sourceSignature, awaitResult, call.span(), nestedOpId);
@@ -11930,44 +11974,6 @@ public final class SemanticLowerer {
                 emit(boundary);
             }
             return lowerAwait(outerToken, target.returnType(), awaitSpan, awaitResult);
-        }
-
-        /**
-         * The runtime identity of one {@code REEVALUATE_THUNK} adapter source:
-         * the value the thunk's own re-execution produces. The adapter
-         * protocol resolves the source's execution class from exactly that
-         * value at each invocation, so the nested async source start names it
-         * as its Dynamic callee.
-         */
-        private ValueId thunkProducedValue(FunctionExecutionBinding.AdapterBinding adapter,
-                                           String calleeName, Span span) {
-            if (!(adapter.sourceRef() instanceof AdaptSourceRef.Thunk thunk)) {
-                throw new ConstructUnlowered("adapter-over-async of '" + calleeName
-                    + "' whose source reference " + adapter.sourceRef()
-                    + " records neither a value identity nor a thunk block"
-                    + " (producer defect)", span);
-            }
-            List<OpId> members = blockOps.get(thunk.blockId());
-            if (members == null) {
-                throw new ConstructUnlowered("adapter-over-async of '" + calleeName
-                    + "' whose thunk block " + thunk.blockId()
-                    + " has no membership row (producer defect)", span);
-            }
-            java.util.Set<OpId> memberIds = new java.util.LinkedHashSet<>(members);
-            List<SemanticOp> blockMembers = new ArrayList<>();
-            for (List<SemanticOp> target : emitTargets) {
-                for (SemanticOp op : target) {
-                    if (memberIds.contains(op.opId())) {
-                        blockMembers.add(op);
-                    }
-                }
-            }
-            for (SemanticOp op : ops) {
-                if (memberIds.contains(op.opId())) {
-                    blockMembers.add(op);
-                }
-            }
-            return AdapterThunkConstruction.producedValueOf(blockMembers);
         }
 
         /** The single {@code AWAIT} with its {@code ASYNC_COMPLETION} boundary child. */

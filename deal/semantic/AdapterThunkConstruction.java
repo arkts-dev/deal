@@ -76,7 +76,10 @@ public final class AdapterThunkConstruction {
      * are members of the same block but belong to their owning op, so they are
      * skipped exactly as the emitted re-executors skip them
      * ({@code thunkResultSlot}); a call-result source with arguments would
-     * otherwise resolve a boundary cell that publishes no value.
+     * otherwise resolve a boundary cell that publishes no value. A trailing
+     * non-producing companion of the same op stream — for example a call's
+     * return/boundary child, which the invoking arm executes inline — never
+     * selects the produced value either.
      *
      */
     public static ValueId producedValueOf(List<SemanticOp> sourceOps) {
@@ -100,8 +103,7 @@ public final class AdapterThunkConstruction {
             if (candidate.result() instanceof ValueId value) {
                 return value;
             }
-            throw new IllegalArgumentException("the thunk's final producing op "
-                + candidate.opId() + " publishes no value result (producer defect)");
+            // A trailing non-producing companion of the block's op stream.
         }
         throw new IllegalArgumentException("the thunk op list carries no top-level "
             + "producing op (producer defect)");
