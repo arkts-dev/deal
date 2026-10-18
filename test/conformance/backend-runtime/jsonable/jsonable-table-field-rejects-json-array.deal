@@ -1,0 +1,45 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: A @jsonable table field accepts only a JSON object: the empty array is a validation failure that makes fromJson return null, while the empty object and a keyed object decode and roundtrip (v1.3)
+// @expected: runtime-ok
+// @features: jsonable, table, fromJson, v1.3
+
+// @jsonable
+export class Wrapper {
+  data: table = {};
+}
+
+export function test_table_field_rejects_json_array(): null {
+  // docs/spec-v1.3.md:695: a table field's fromJson accepts only a JSON
+  // object, so [] is a validation failure and the helper returns null.
+  let rejected: Wrapper | null = Wrapper$fromJson("{\"data\":[]}");
+  if (rejected !== null) {
+    throw { code: "TEST_FAIL", message: "an empty array table field value must return null" };
+  }
+  // The empty-object positive control: {} is an empty table and stays
+  // one through the encode.
+  let empty: Wrapper | null = Wrapper$fromJson("{\"data\":{}}");
+  if (empty !== null) {
+    let emptyText: string = Wrapper$toJson(empty);
+    if (emptyText !== "{\"data\":{}}") {
+      throw { code: "TEST_FAIL", message: "an empty JSON object must decode as an empty table" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "an empty JSON object must decode" };
+  }
+  // The keyed-object positive control: a genuine JSON object still maps
+  // to the DEAL table carrier.
+  let keyed: Wrapper | null = Wrapper$fromJson("{\"data\":{\"count\":3}}");
+  if (keyed !== null) {
+    let count: int = keyed.data.count;
+    if (count !== 3) {
+      throw { code: "TEST_FAIL", message: "a keyed table field value must decode" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "a keyed JSON object must decode" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

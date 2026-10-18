@@ -759,13 +759,11 @@ public final class JvmJson {
                 return raw instanceof String string && validScalars(string) ? raw : FAIL;
             }
             case "table" -> {
-                if (raw instanceof JvmRuntime.Table) {
-                    return toLanguage(raw);
-                }
-                if (raw instanceof JvmRuntime.Array array && array.length == 0) {
-                    return new JvmRuntime.Table();
-                }
-                return FAIL;
+                // A table field accepts only a JSON object
+                // (docs/spec-v1.3.md:695): an array-shaped value of any
+                // length, the empty array included, is a rejection —
+                // never an empty table.
+                return raw instanceof JvmRuntime.Table ? toLanguage(raw) : FAIL;
             }
             default -> {
                 return FAIL;

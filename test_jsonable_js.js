@@ -423,7 +423,10 @@ test("table fields accept only a JSON object", function() {
   const fields = [f("data", "table", false, false)];
   const thunk = () => ({ data: rt.makeTable({}) });
   assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":[1,2]}', ...LOC), "array for a table field");
+  assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":[]}', ...LOC), "empty array for a table field");
   assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":5}', ...LOC), "scalar for a table field");
+  assert(rt.jsonFromJson("@m/W", fields, thunk, '{"data":{}}', ...LOC) !== null,
+    "empty object for a table field");
 });
 
 test("class instances inside table fields are rejected by the walk arm", function() {

@@ -2186,12 +2186,10 @@ public final class ClassOpsExecutor {
                     boundParsedTableContents(op, tableValue);
                     yield tableValue;
                 }
-                // The empty-array collapse: [] decodes as an empty table
-                // (the retained pins; a non-empty array-shaped value
-                // fails).
-                if (raw instanceof Value.Array empty && empty.array().size() == 0) {
-                    yield emptyTable();
-                }
+                // A table field accepts only a JSON object
+                // (docs/spec-v1.3.md:695): an array-shaped value of any
+                // length, the empty array included, is a validation
+                // failure — never an empty table.
                 throw new JsonFromFailure("expected table, got " + raw.actualKind());
             }
             case RuntimeDescriptor.Array arrayDescriptor -> {

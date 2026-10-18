@@ -557,8 +557,9 @@ public class JsonClassExecutorTest {
                 && fieldState(instance, point, "note") instanceof FieldState.Missing,
             "an omitted optional field stays missing");
 
-        // A table field accepts only a JSON object or the empty-array
-        // collapse: a non-empty array-shaped value fails.
+        // A table field accepts only a JSON object (docs/spec-v1.3.md:695):
+        // an array-shaped value of any length fails, the empty array
+        // included; the empty object is the positive control.
         ClassLayout withTable = layoutOf(POINT,
             field("data", TABLE, true));
         ValueId tableJsonId = nextValue();
@@ -569,14 +570,22 @@ public class JsonClassExecutorTest {
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
         check(nonEmptyArray instanceof Value.Null,
             "a non-empty array-shaped table field value returns null");
-        Value collapsedTable = ClassOpsExecutor.executeJsonFromClass(tableOp,
+        Value emptyArrayTable = ClassOpsExecutor.executeJsonFromClass(tableOp,
             Map.of(tableJsonId, Value.string("{\"data\":[]}")), List.of(), Map.of(),
             Map.of(POINT, withTable), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(collapsedTable instanceof Value.Class instance
-                && fieldValue(instance, withTable, "data") instanceof Value.Table table
-                && table.table().keys().isEmpty(),
-            "the empty-array collapse decodes an empty table field");
+        check(emptyArrayTable instanceof Value.Null,
+            "an empty array-shaped table field value returns null: a table"
+                + " field's fromJson admits only a JSON object");
+        Value emptyObjectTable = ClassOpsExecutor.executeJsonFromClass(tableOp,
+            Map.of(tableJsonId, Value.string("{\"data\":{}}")), List.of(), Map.of(),
+            Map.of(POINT, withTable), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
+            new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+        check(emptyObjectTable instanceof Value.Class decodedObject
+                && fieldValue(decodedObject, withTable, "data")
+                    instanceof Value.Table emptyTable
+                && emptyTable.table().keys().isEmpty(),
+            "an empty JSON object decodes an empty table field");
 
         ClassLayout strict = layoutOf(POINT, field("x", INT, true));
         ValueId strictJsonId = nextValue();

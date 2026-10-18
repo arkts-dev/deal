@@ -8013,10 +8013,10 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     if type(v) == "string" and __jsonValidUtf8(v) then return true, v end
     return false
   elseif kind == "table" then
+    -- A table field accepts only a JSON object (docs/spec-v1.3.md:695):
+    -- an array-shaped value of any length, the empty array included, is
+    -- a validation failure — never an empty table.
     if __jsonIsObject(v) then return true, __jsonToLanguage(v) end
-    if __jsonIsArray(v) and v[__dealCarrierKeys.n] == 0 then
-      return true, {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}, [__dealCarrierKeys.nK] = {}}
-    end
     return false
   elseif kind == "array" then
     if not __jsonIsArray(v) then return false end
