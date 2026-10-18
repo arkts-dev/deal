@@ -6349,6 +6349,18 @@ public final class LuaSemanticEmitter {
                         // adapter caller's frame.
                         out.append("  ").append(slot(indirect.callee()))
                             .append(" = __srcA\n");
+                    } else if (nested.payload() instanceof KindPayload
+                            .AsyncStartPayload nestedStart
+                            && nestedStart.callee()
+                                instanceof KindPayload.CallCallee.Dynamic dynamic) {
+                        // The runtime-resolved nested source start (a
+                        // call-result or otherwise materialized source): the
+                        // loaded D15 source carrier is published under the
+                        // source identity the adapter protocol resolved, so
+                        // the nested start's runtime class dispatch runs the
+                        // resolved source's own terminal.
+                        out.append("  ").append(slot(dynamic.callee()))
+                            .append(" = __srcA\n");
                     }
                     emitAsyncStart(nested);
                     out.append("  return nil\n");

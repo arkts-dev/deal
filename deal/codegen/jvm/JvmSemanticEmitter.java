@@ -6755,6 +6755,18 @@ public final class JvmSemanticEmitter {
                         // adapter caller's frame.
                         out.append(indent(indent + 1)).append(slot(indirect.callee()))
                             .append(" = __src;\n");
+                    } else if (nested.payload() instanceof KindPayload
+                            .AsyncStartPayload nestedStart
+                            && nestedStart.callee()
+                                instanceof KindPayload.CallCallee.Dynamic dynamic) {
+                        // The runtime-resolved nested source start (a
+                        // call-result or otherwise materialized source): the
+                        // loaded D15 source carrier is published under the
+                        // source identity the adapter protocol resolved, so
+                        // the nested start's runtime class dispatch runs the
+                        // resolved source's own terminal.
+                        out.append(indent(indent + 1)).append(slot(dynamic.callee()))
+                            .append(" = __src;\n");
                     }
                     emitAsyncStart(nested, indent + 1);
                     out.append(indent(indent + 1)).append("return null;\n");

@@ -46,8 +46,13 @@ import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncLinkKind;
+import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassId;
@@ -738,6 +743,113 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
+    /**
+     * The awaited call-result adapter: {@code await make()} delivers the
+     * adapted function value once, so the adapter's source is the suspension's
+     * materialized value at the declaration site — a synchronous target can
+     * never re-execute an awaited source inside a thunk.
+     */
+    private static final String AWAIT_ADAPTER_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export async function entry(): int {
+          return await worker();
+        }
+
+        async function worker(): int {
+          let f: (a: int, b: int) => int = await make();
+          let first: int = f(1, 2);
+          let second: int = f(3, 4);
+          if (first !== 41 || second !== 43) {
+            throw { code: "JS_PROBE", message: "await adapter result" };
+          }
+          console.log("PROBE|JS|AWAIT-ADAPTER");
+          return first;
+        }
+
+        async function make(): (a: int) => int {
+          return function(a: int): int { return a + 40; };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The async arity-extension adapter over a call-result source: the
+     * adapter's target and source markers are both {@code async}, the source is
+     * the call result of {@code make} (re-evaluated per invocation), and the
+     * awaited invocation completes with the source's own promise.
+     */
+    private static final String ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export async function entry(): int {
+          return await worker();
+        }
+
+        async function worker(): int {
+          let f: async (a: int, b: int) => int = make();
+          let first: int = await f(1, 2);
+          let second: int = await f(3, 4);
+          if (first !== 41 || second !== 43) {
+            throw { code: "JS_PROBE", message: "async adapter result" };
+          }
+          console.log("PROBE|JS|ASYNC-ADAPTER");
+          return first;
+        }
+
+        function make(): async (a: int) => int {
+          return async function(a: int): int { return a + 40; };
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * Mutual and self-referential function-valued class defaults: the enclosed
+     * class literals are deferred to the call, so every construction terminates
+     * and no construction cycle exists even though each class's default names
+     * the other (and {@code Self} names itself).
+     */
+    private static final String DEFERRED_DEFAULT_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export function main(): null {
+          let a: A = {};
+          let b: B = {};
+          let self: Self = {};
+          if (a.makeB().n !== 2) {
+            throw { code: "JS_PROBE", message: "mutual default a" };
+          }
+          if (b.makeA().makeB().n !== 2) {
+            throw { code: "JS_PROBE", message: "mutual default b" };
+          }
+          if (self.make().n !== 3) {
+            throw { code: "JS_PROBE", message: "self default" };
+          }
+          console.log("PROBE|JS|DEFERRED-DEFAULTS");
+          return null;
+        }
+
+        class A {
+          makeB: () => B = function(): B { return {}; };
+        }
+
+        class B {
+          n: int = 2;
+          makeA: () => A = function(): A { return {}; };
+        }
+
+        class Self {
+          n: int = 3;
+          make: () => Self = function(): Self { return {}; };
+        }
+        """;
+
     private static Fixture jsFixture() throws Exception {
         Map<String, String> sources = new LinkedHashMap<>();
         sources.put("src/cfg.d.deal", JS_HOST_DECLARATION);
@@ -1231,6 +1343,360 @@ public class ProductionProjectEmissionTest {
             deleteRecursively(root);
         }
     }
+
+    /**
+     * The runtime-resolved adapter sources and the deferred class-default
+     * references of the acceptance remediation: an {@code await} source is the
+     * declaration-site value (no re-executor may await inside a synchronous
+     * thunk), the async arity-extension adapter over a call result records the
+     * runtime-resolved nested source start, and mutual function-valued class
+     * defaults construct nothing during the enclosing construction. Every shape
+     * compiles through the public {@code Backend.JS} arm and executes under
+     * Node; the direct construction cycle stays fail-closed.
+     */
+    private static void testAdapterRuntimeResolutionAndDeferredDefaults(boolean node)
+            throws Exception {
+        System.out.println("-- an awaited adapter source is the declaration-site"
+            + " value, the async call-result adapter records the runtime-resolved"
+            + " nested source, and deferred class defaults add no construction"
+            + " cycle --");
+        testAwaitAdapterSource(node);
+        testAsyncCallResultAdapterShape(node);
+        testDeferredClassDefaults(node);
+        testDirectDefaultConstructionCycleFailsClosed();
+    }
+
+    /** The awaited call-result adapter: a declaration-site VALUE source. */
+    private static void testAwaitAdapterSource(boolean node) throws Exception {
+        Path root = Files.createTempDirectory("js-await-adapter-");
+        try {
+            writeFileIn(root, "src/app.deal", AWAIT_ADAPTER_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the awaited adapter source compiles through the public JS arm: "
+                    + orchestrator.diagnostics());
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the awaited adapter project records its entry unit");
+            if (app == null) {
+                return;
+            }
+            int valueAdapters = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.FUNCTION_ADAPT
+                        || !(op.payload()
+                            instanceof KindPayload.FunctionAdaptPayload adapt)) {
+                    continue;
+                }
+                valueAdapters++;
+                check(adapt.mode() == CaptureMode.VALUE,
+                    "the awaited adapter source is the declaration-site"
+                        + " VALUE arm: " + adapt.mode());
+                check(adapt.source() instanceof AdaptSourceRef.Value,
+                    "the awaited adapter source records the materialized"
+                        + " operand: " + adapt.source());
+                SemanticOp producer = null;
+                for (SemanticOp candidate : app.ops()) {
+                    if (candidate.result()
+                            instanceof deal.semantic.ir.ValueId value
+                            && adapt.source()
+                                instanceof AdaptSourceRef.Value operand
+                            && operand.value().equals(value)) {
+                        producer = candidate;
+                        break;
+                    }
+                }
+                check(producer != null
+                        && producer.kind() == SemanticOpKind.AWAIT,
+                    "the awaited adapter source operand is the AWAIT result"
+                        + " (the suspension delivers the value once): " + producer);
+            }
+            checkEq(1, valueAdapters,
+                "the program records exactly one adapter over the awaited source");
+            String artifact = Files.readString(out.resolve("app.js"),
+                StandardCharsets.UTF_8);
+            checkEq(0, countOfText(artifact, "const $at"),
+                "the awaited adapter source emits no thunk re-executor (a"
+                    + " synchronous re-executor cannot await)");
+            checkEq(1, countOfText(artifact, "const $av"),
+                "the awaited adapter retains the materialized source value");
+            if (!node) {
+                System.out.println("  SKIP: the awaited adapter Node drive needs node");
+                return;
+            }
+            writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
+            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
+                out);
+            checkEq(0, run.exitCode(),
+                "the awaited adapter artifact runs: " + run.output());
+            checkEq("PROBE|JS|AWAIT-ADAPTER\nINVOKE_OK: 41\n", run.stdout(),
+                "both awaited adapter invocations executed with the"
+                    + " declaration-site source value");
+            checkEq("", run.stderr(), "the awaited adapter run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The async arity-extension adapter over a call-result source. */
+    private static void testAsyncCallResultAdapterShape(boolean node) throws Exception {
+        Path root = Files.createTempDirectory("js-async-adapter-");
+        try {
+            writeFileIn(root, "src/app.deal", ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the async call-result adapter compiles through the public JS"
+                    + " arm: " + orchestrator.diagnostics());
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the async adapter project records its entry unit");
+            if (app == null) {
+                return;
+            }
+            int adapterCalls = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.ASYNC_START
+                        || !(op.payload()
+                            instanceof KindPayload.AsyncStartPayload start)
+                        || !(start.callee()
+                            instanceof KindPayload.CallCallee.Static staticCallee)
+                        || !(staticCallee.binding()
+                            instanceof FunctionExecutionBinding.AdapterBinding)) {
+                    continue;
+                }
+                adapterCalls++;
+                checkEq(ParameterBoundaryMode.RUN, start.parameterBoundaryMode(),
+                    "the outer adapter-over-async task runs its target-signature"
+                        + " parameter cells");
+                checkEq(2, start.parameterBoundaryOpIds().size(),
+                    "the outer task records the target signature's two"
+                        + " parameter cells");
+                check(start.returnBoundaryOpId() == null,
+                    "the outer adapter-over-async task runs zero return"
+                        + " boundaries (delegation): " + start.returnBoundaryOpId());
+                check(op.result() instanceof AsyncTokenId.Alias alias
+                        && alias.linkKind() == AsyncLinkKind.ADAPTER_INNER,
+                    "the outer task's token is the adapter-inner alias: "
+                        + op.result());
+                SemanticOp nested = null;
+                for (SemanticOp candidate : app.ops()) {
+                    if (candidate.kind() == SemanticOpKind.ASYNC_START
+                            && op.opId().equals(candidate.origin().parentOpId())) {
+                        nested = candidate;
+                        break;
+                    }
+                }
+                check(nested != null,
+                    "the adapter-over-async task records its nested source start");
+                if (nested == null
+                        || !(nested.payload()
+                            instanceof KindPayload.AsyncStartPayload nestedStart)) {
+                    continue;
+                }
+                check(nestedStart.callee() instanceof KindPayload.CallCallee.Dynamic,
+                    "the call-result source's nested start names the"
+                        + " runtime-resolved source identity: " + nestedStart.callee());
+                checkEq(ParameterBoundaryMode.ELIDED_BY_ADAPTER,
+                    nestedStart.parameterBoundaryMode(),
+                    "the nested source start runs zero parameter boundaries");
+                SemanticOp taskCell = nestedStart.returnBoundaryOpId() == null
+                    ? null : opOf(app, nestedStart.returnBoundaryOpId());
+                check(taskCell != null
+                        && taskCell.payload()
+                            instanceof KindPayload.BoundaryPayload taskBoundary
+                        && taskBoundary.kind() == deal.semantic.ir.BoundaryKind
+                            .FUNCTION_RETURN
+                        && taskBoundary.descriptor()
+                            .equals(nestedStart.completionDescriptor()),
+                    "the nested start records the single caller-side DEAL-body"
+                        + " task cell on the source return descriptor: " + taskCell);
+            }
+            checkEq(2, adapterCalls,
+                "each awaited arity-extended call site is one"
+                    + " adapter-over-async invocation");
+            if (!node) {
+                System.out.println("  SKIP: the async adapter Node drive needs node");
+                return;
+            }
+            writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
+            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
+                out);
+            checkEq(0, run.exitCode(),
+                "the async call-result adapter artifact runs: " + run.output());
+            checkEq("PROBE|JS|ASYNC-ADAPTER\nINVOKE_OK: 41\n", run.stdout(),
+                "both awaited arity-extension invocations completed with the"
+                    + " re-evaluated async source");
+            checkEq("", run.stderr(), "the async adapter run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** Mutual and self-referential function-valued class defaults. */
+    private static void testDeferredClassDefaults(boolean node) throws Exception {
+        Path root = Files.createTempDirectory("js-deferred-defaults-");
+        try {
+            writeFileIn(root, "src/app.deal", DEFERRED_DEFAULT_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "mutual function-valued class defaults compile through the"
+                    + " public JS arm: " + orchestrator.diagnostics());
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the deferred-default project records its entry unit");
+            if (app == null) {
+                return;
+            }
+            Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+            for (SemanticOp op : app.ops()) {
+                byId.put(op.opId(), op);
+            }
+            ClassId aId = new ClassId("src", "A");
+            ClassId bId = new ClassId("src", "B");
+            ClassId selfId = new ClassId("src", "Self");
+            int constructions = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() != SemanticOpKind.CLASS_NEW
+                        || !(op.payload()
+                            instanceof KindPayload.ClassNewPayload construction)
+                        || !(construction.classId().equals(aId)
+                            || construction.classId().equals(bId)
+                            || construction.classId().equals(selfId))) {
+                    continue;
+                }
+                constructions++;
+                check(!construction.classDefaultOpIds().isEmpty(),
+                    "every construction of " + construction.classId()
+                        + " lists its omitted required-present default op(s): "
+                        + construction.classDefaultOpIds());
+                for (OpId defaultOpId : construction.classDefaultOpIds()) {
+                    SemanticOp defaultOp = byId.get(defaultOpId);
+                    check(defaultOp != null
+                            && defaultOp.kind() == SemanticOpKind.CLASS_DEFAULT,
+                        "the recorded default child resolves to a CLASS_DEFAULT"
+                            + " op: " + defaultOpId);
+                }
+                for (KindPayload.FieldBoundary entry : construction.fieldBoundaries()) {
+                    if (entry.kind() != deal.semantic.ir.BoundaryKind
+                            .CLASS_DEFAULT_FIELD) {
+                        continue;
+                    }
+                    SemanticOp boundary = byId.get(entry.boundaryOpId());
+                    check(boundary != null
+                            && boundary.payload()
+                                instanceof KindPayload.BoundaryPayload payload,
+                        "the default input boundary resolves: " + entry.boundaryOpId());
+                    if (!(boundary.payload()
+                            instanceof KindPayload.BoundaryPayload payload)) {
+                        continue;
+                    }
+                    SemanticOp defaultOp = byId.get(defaultOpForField(
+                        construction, entry.field(), byId));
+                    check(defaultOp != null
+                            && payload.input().equals(defaultOp.result()),
+                        "the construction's default input names the default"
+                            + " op's result identity (" + entry.field() + "): "
+                            + payload.input());
+                }
+            }
+            check(constructions >= 5,
+                "the entry body and the deferred defaults construct the"
+                    + " module-level classes: " + constructions);
+            if (!node) {
+                System.out.println("  SKIP: the deferred-default Node drive needs node");
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            checkEq(0, run.exitCode(),
+                "the deferred-default artifact runs: " + run.output());
+            checkEq("PROBE|JS|DEFERRED-DEFAULTS\n", run.stdout(),
+                "the mutual and self-referential defaults construct only at"
+                    + " the deferred call and terminate");
+            checkEq("", run.stderr(), "the deferred-default run reports no failure");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The recorded default op of one construction site's field, or null. */
+    private static OpId defaultOpForField(KindPayload.ClassNewPayload construction,
+            String field, Map<OpId, SemanticOp> byId) {
+        for (OpId defaultOpId : construction.classDefaultOpIds()) {
+            SemanticOp defaultOp = byId.get(defaultOpId);
+            if (defaultOp != null
+                    && defaultOp.payload()
+                        instanceof KindPayload.ClassDefaultPayload payload
+                    && payload.field().equals(field)
+                    && construction.classId().equals(payload.classId())) {
+                return defaultOpId;
+            }
+        }
+        return null;
+    }
+
+    /** A direct default construction cycle stays fail-closed with the named rule. */
+    private static void testDirectDefaultConstructionCycleFailsClosed() throws Exception {
+        Path root = Files.createTempDirectory("js-cyclic-defaults-");
+        try {
+            writeFileIn(root, "src/app.deal", """
+                class A { b: B = {}; }
+                class B { a: A = {}; }
+
+                export function main(): null {
+                  let a: A = {};
+                  return null;
+                }
+                """);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(!orchestrator.diagnostics().isEmpty(),
+                "the direct construction cycle is rejected");
+            check(orchestrator.diagnostics().stream().anyMatch(d -> "E6005"
+                    .equals(d.code()) && d.message().contains(
+                        "cyclic class-default construction")),
+                "the direct construction cycle keeps the named E6005 rule: "
+                    + orchestrator.diagnostics());
+            check(!Files.exists(out.resolve("app.js")),
+                "the rejected cycle publishes no artifact");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The async-export invocation runner of the adapter drives: the production
+     * {@code $rt.invokeAsyncExport} ABI over the published entry artifact, so
+     * each explicit invocation runs its main leg and the selected export leg
+     * once.
+     */
+    private static final String ASYNC_INVOKE_RUNNER = String.join("\n",
+        "\"use strict\";",
+        "const $rt = require(\"./deal/runtime\");",
+        "const $entry = require(\"./$MODULE\");",
+        "$rt.invokeAsyncExport($entry, process.argv[2], process.argv[3]).then((r) => {",
+        "  if (r.$ok === true) {",
+        "    process.stdout.write(\"INVOKE_OK: \" + r.$value + \"\\n\");",
+        "  } else if (typeof r.$failure === \"string\") {",
+        "    process.stdout.write(\"INVOKE_FAILURE: \" + r.$failure + \"\\n\");",
+        "  } else {",
+        "    process.stdout.write(\"INVOKE_ERROR: \" + r.$error.code + \" \"",
+        "      + r.$error.message + \"\\n\");",
+        "  }",
+        "}, (err) => {",
+        "  process.stderr.write(\"INVOKER_THREW: \" + err + \"\\n\");",
+        "  process.exit(1);",
+        "});",
+        "");
 
     /** The recorded op of one unit, or null. */
     private static SemanticOp opOf(LoweredModuleUnit unit, OpId opId) {
@@ -4101,6 +4567,7 @@ public class ProductionProjectEmissionTest {
             testJsProjectEmission(js, node);
             testJsEntryFailureStatus(node);
             testDeclarationOrderAndCallResultAdapter(node);
+            testAdapterRuntimeResolutionAndDeferredDefaults(node);
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
