@@ -2861,40 +2861,25 @@ public final class SemanticLowerer {
             classLayouts = new java.util.LinkedHashMap<>();
 
         /**
-         * One module-level class declaration hoisted for name resolution
-         * (docs/spec-v1.3.md §Name resolution: class declarations are
-         * hoisted within the module and function bodies/class fields may
-         * reference classes declared later): the declaration, its
-         * export flag, the field layout, and the field descriptors and
-         * exact declaring field providers the declaration walk reuses.
-         * The hoist allocates no id and emits no op — it only registers
-         * the pure declaration facts every consumer site resolves
-         * against, independent of source position.
+         * The complete module-level class layout surface, computed
+         * before any body walk (docs/spec-v1.3.md §Name resolution,
+         * Declaration order: a function body and a class field may
+         * reference a class declared later in the same module). One entry
+         * per module-level class declaration, in declaration order, with
+         * the class's own declaration recorded so the declaration walk
+         * reuses exactly this layout instead of recomputing it at its
+         * position.
          */
-        private record HoistedClass(ClassDeclaration declaration, boolean exported,
-                                    deal.semantic.ir.ClassLayout layout,
-                                    Map<String, RuntimeDescriptor> descriptors,
-                                    Map<String, ModuleId> fieldProviders) {
-
-            private HoistedClass {
-                Objects.requireNonNull(declaration, "declaration must not be null");
-                Objects.requireNonNull(layout, "layout must not be null");
-                Objects.requireNonNull(descriptors, "descriptors must not be null");
-                Objects.requireNonNull(fieldProviders, "fieldProviders must not be null");
-            }
-        }
-
-        /** The module-level class declarations, hoisted in declaration order. */
-        private final java.util.LinkedHashMap<ClassId, HoistedClass> hoistedClasses =
-            new java.util.LinkedHashMap<>();
+        private final java.util.LinkedHashMap<ClassId, ClassLayoutPlan>
+            classLayoutPlans = new java.util.LinkedHashMap<>();
 
         /**
-         * The class declarations whose own walk has run (at their source
-         * position or earlier, at a forward construction site): each
-         * declaration's ops exist exactly once.
+         * The module-level class declarations whose full lowering already ran
+         * at the module hoist (identity keyed): the declaration-position walk
+         * emits nothing for them.
          */
-        private final java.util.LinkedHashSet<ClassId> loweredClassDeclarations =
-            new java.util.LinkedHashSet<>();
+        private final Set<ClassDeclaration> hoistedClassDeclarations =
+            java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 
         private final java.util.LinkedHashMap<deal.semantic.ir.ClassFactoryId, OpId>
             factoryRegistry = new java.util.LinkedHashMap<>();
@@ -4146,7 +4131,7 @@ public final class SemanticLowerer {
 
         private void hoistModuleLevelAllocs(List<StatementNode> statements,
                                             Set<FunctionDeclaration> groupMembers) {
-            hoistClassDeclarationLayouts(statements);
+            hoistModuleLevelClassLayouts(statements);
             for (StatementNode statement : statements) {
                 if (statement instanceof ExportDeclaration exportDeclaration
                         && exportDeclaration.declaration()
@@ -4310,6 +4295,275 @@ public final class SemanticLowerer {
                         context.functionId, context.bodyBlock);
                 }
             }
+            hoistModuleLevelClassDeclarations(statements);
+        }
+
+        /**
+         * Lowers every module-level class declaration before any body
+         * walk (docs/spec-v1.3.md §Name resolution, Declaration order: a
+         * function body or class field may reference a class declared
+         * later in the same module). A class's construction facts — its
+         * structural layout, the detached per-construction default blocks
+         * with their op identities, the generated JSON helpers and the
+         * exported construction entry — are declaration facts, so a class
+         * literal inside an earlier function body resolves exactly what the
+         * declaration's own source-order walk would. The declaration
+         * statement's walk position then owns no further emission
+         * ({@link #lowerClassDeclaration} is a no-op for a hoisted
+         * declaration), so no body ever observes a partially registered
+         * class.
+         *
+         * <p>Declarations lower in declaration order with one refinement: a
+         * class whose own default expression constructs another module-level
+         * class lowers after that class, because its class literal records
+         * the other declaration's default op identities at its own site. A
+         * construction cycle has no terminating reading and fails
+         * closed.</p>
+         */
+        private void hoistModuleLevelClassDeclarations(List<StatementNode> statements) {
+            if (!classCore || !fullProgram) {
+                // The class-core-only seam keeps its declaration-position
+                // walk: it carries no forward-reference contract and no
+                // project-wide construction facts to order.
+                return;
+            }
+            List<ClassDeclaration> declarations = new ArrayList<>();
+            Set<ClassDeclaration> exportedDeclarations =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            Map<ClassId, ClassDeclaration> declarationsByClass = new LinkedHashMap<>();
+            for (StatementNode statement : statements) {
+                if (statement instanceof ExportDeclaration exportDeclaration) {
+                    if (exportDeclaration.declaration()
+                            instanceof ClassDeclaration exportedClass) {
+                        exportedDeclarations.add(exportedClass);
+                        declarations.add(exportedClass);
+                    }
+                    continue;
+                }
+                if (statement instanceof ClassDeclaration classDeclaration) {
+                    declarations.add(classDeclaration);
+                }
+            }
+            for (ClassDeclaration declaration : declarations) {
+                declarationsByClass.put(classIdOf(declaration), declaration);
+            }
+            Set<ClassDeclaration> lowered =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            Set<ClassDeclaration> open =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            for (ClassDeclaration declaration : declarations) {
+                hoistOneClassDeclaration(declaration, declarationsByClass,
+                    exportedDeclarations, lowered, open);
+            }
+        }
+
+        /**
+         * Lowers one hoisted class declaration after the module-level classes
+         * its own default expressions construct (a dependency-ordered walk
+         * over the declarations; declaration order breaks every non-cyclic
+         * tie).
+         */
+        private void hoistOneClassDeclaration(ClassDeclaration declaration,
+                Map<ClassId, ClassDeclaration> declarationsByClass,
+                Set<ClassDeclaration> exportedDeclarations,
+                Set<ClassDeclaration> lowered, Set<ClassDeclaration> open) {
+            if (lowered.contains(declaration)) {
+                return;
+            }
+            if (!open.add(declaration)) {
+                throw new ConstructUnlowered("cyclic class-default construction: "
+                    + "class '" + declaration.name() + "' is reached again"
+                    + " while lowering the default expressions that construct it"
+                    + " (a default that constructs a class whose own default"
+                    + " constructs this one never terminates; a defaulted"
+                    + " construction cycle is not lowerable)", declaration.span());
+            }
+            try {
+                for (ClassId dependency : localDefaultConstructionDependencies(declaration)) {
+                    ClassDeclaration provider = declarationsByClass.get(dependency);
+                    if (provider != null) {
+                        hoistOneClassDeclaration(provider, declarationsByClass,
+                            exportedDeclarations, lowered, open);
+                    }
+                }
+            } finally {
+                open.remove(declaration);
+            }
+            lowerClassDeclaration(declaration, exportedDeclarations.contains(declaration));
+            hoistedClassDeclarations.add(declaration);
+            lowered.add(declaration);
+        }
+
+        /**
+         * The module-level classes one declaration's default expressions
+         * construct: every class-typed object literal in a field default, in
+         * source order including nested literals, array/table members and
+         * closure bodies (those bodies lower with the default expression).
+         * A literal whose type is not a class constructs no class and adds
+         * no edge.
+         */
+        private List<ClassId> localDefaultConstructionDependencies(
+                ClassDeclaration declaration) {
+            List<ClassId> dependencies = new ArrayList<>();
+            for (ClassField field : declaration.fields()) {
+                if (field.defaultExpr().isEmpty()) {
+                    continue;
+                }
+                collectClassLiteralIds(field.defaultExpr().get(), dependencies);
+            }
+            return dependencies;
+        }
+
+        /**
+         * Whether one class literal of a default expression constructs this
+         * unit's own module-level declaration — the only case whose class
+         * default op identities the hoist order has to satisfy. The
+         * attribution is exactly {@link #lowerClassLiteral}'s: the checker's
+         * recorded contextual declaration selects the literal's declaration
+         * when it names the compiled class type, a declaration of another
+         * module being an imported provider; with no recorded context the
+         * identity-keyed route is local only when the identity has one
+         * visible declaration and it is this unit's.
+         */
+        private boolean constructsLocalDeclaration(ObjectLiteralExpr literal,
+                Type.Class classType, ClassId classId) {
+            Symbol.ClassSymbol exact = ClassId.ERROR.equals(classId) ? null
+                : exactReceiverDeclaration(literal);
+            if (exact != null && classType.identity().equals(exact.identity())) {
+                String declaring = exact.modulePath();
+                return declaring == null || declaring.isEmpty()
+                    || declaring.equals(module.path());
+            }
+            return !ambiguousFieldIdentity(classId)
+                && classLayouts.containsKey(classId);
+        }
+
+        /** Collects the checked class identity of every class literal in one expression. */
+        private void collectClassLiteralIds(ExpressionNode node, List<ClassId> classIds) {
+            switch (node) {
+                case ObjectLiteralExpr literal -> {
+                    Type type = checks.typeMap().get(literal);
+                    if (type instanceof Type.Class classType) {
+                        ClassId classId = new ClassId(
+                            DescriptorService.semanticModulePath(classType.identity()),
+                            classType.name());
+                        if (constructsLocalDeclaration(literal, classType, classId)) {
+                            classIds.add(classId);
+                        }
+                    }
+                    for (Property property : literal.properties()) {
+                        collectClassLiteralIds(property.value(), classIds);
+                    }
+                }
+                case ArrayLiteralExpr array -> {
+                    for (ExpressionNode element : array.elements()) {
+                        collectClassLiteralIds(element, classIds);
+                    }
+                }
+                case CallExpr call -> {
+                    collectClassLiteralIds(call.callee(), classIds);
+                    for (ExpressionNode argument : call.args()) {
+                        collectClassLiteralIds(argument, classIds);
+                    }
+                }
+                case BinaryExpr binary -> {
+                    collectClassLiteralIds(binary.left(), classIds);
+                    collectClassLiteralIds(binary.right(), classIds);
+                }
+                case UnaryExpr unary -> collectClassLiteralIds(unary.expr(), classIds);
+                case MemberAccessExpr access ->
+                    collectClassLiteralIds(access.object(), classIds);
+                case IndexExpr index -> {
+                    collectClassLiteralIds(index.array(), classIds);
+                    collectClassLiteralIds(index.index(), classIds);
+                }
+                case HasExpr has -> collectClassLiteralIds(has.object(), classIds);
+                case AssignmentExpr assignment -> {
+                    collectClassLiteralIds(assignment.target(), classIds);
+                    collectClassLiteralIds(assignment.value(), classIds);
+                }
+                case TemplateLiteralExpr template -> {
+                    for (ExpressionNode part : template.parts()) {
+                        collectClassLiteralIds(part, classIds);
+                    }
+                }
+                case AwaitExpression await ->
+                    collectClassLiteralIds(await.callee(), classIds);
+                case FunctionExpr function ->
+                    collectClassLiteralIds(function.body(), classIds);
+                case LiteralExpr ignored -> { }
+                case IdentifierExpr ignored -> { }
+            }
+        }
+
+        /** Collects the checked class identity of every class literal in one statement subtree. */
+        private void collectClassLiteralIds(StatementNode node, List<ClassId> classIds) {
+            switch (node) {
+                case Block block -> {
+                    for (StatementNode statement : block.statements()) {
+                        collectClassLiteralIds(statement, classIds);
+                    }
+                }
+                case ReturnStatement statement -> statement.expr()
+                    .ifPresent(value -> collectClassLiteralIds(value, classIds));
+                case IfStatement statement -> {
+                    collectClassLiteralIds(statement.condition(), classIds);
+                    collectClassLiteralIds(statement.thenBlock(), classIds);
+                    statement.elseBranch().ifPresent(branch -> {
+                        switch (branch) {
+                            case Either.Left<IfStatement, Block> nested ->
+                                collectClassLiteralIds(nested.value(), classIds);
+                            case Either.Right<IfStatement, Block> otherwise ->
+                                collectClassLiteralIds(otherwise.value(), classIds);
+                        }
+                    });
+                }
+                case WhileStatement statement -> {
+                    collectClassLiteralIds(statement.condition(), classIds);
+                    collectClassLiteralIds(statement.body(), classIds);
+                }
+                case ForStatement statement -> {
+                    statement.init().ifPresent(initial -> {
+                        switch (initial) {
+                            case ForInit.VarDecl declaration ->
+                                collectClassLiteralIds(declaration.decl(), classIds);
+                            case ForInit.AssignExpr assignment ->
+                                collectClassLiteralIds(assignment.expr(), classIds);
+                        }
+                    });
+                    statement.condition()
+                        .ifPresent(condition -> collectClassLiteralIds(condition, classIds));
+                    statement.update()
+                        .ifPresent(update -> collectClassLiteralIds(update, classIds));
+                    collectClassLiteralIds(statement.body(), classIds);
+                }
+                case ForOfStatement statement -> {
+                    collectClassLiteralIds(statement.iterable(), classIds);
+                    collectClassLiteralIds(statement.body(), classIds);
+                }
+                case TryStatement statement -> {
+                    collectClassLiteralIds(statement.tryBlock(), classIds);
+                    collectClassLiteralIds(statement.catchBlock(), classIds);
+                }
+                case ThrowStatement statement ->
+                    collectClassLiteralIds(statement.expr(), classIds);
+                case ExpressionStatement statement ->
+                    collectClassLiteralIds(statement.expr(), classIds);
+                case VariableDeclaration statement ->
+                    collectClassLiteralIds(statement.initializer(), classIds);
+                case DeleteStatement statement ->
+                    collectClassLiteralIds(statement.target(), classIds);
+                // No default-expression position holds a class or function
+                // declaration (a local class is the frontend's E1057), and an
+                // import/export/break/continue statement never occurs inside an
+                // expression, so none contributes a construction edge.
+                case ClassDeclaration ignored -> { }
+                case FunctionDeclaration ignored -> { }
+                case ImportDeclaration ignored -> { }
+                case ExportDeclaration ignored -> { }
+                case BreakStatement ignored -> { }
+                case ContinueStatement ignored -> { }
+            }
         }
 
         /**
@@ -4335,171 +4589,6 @@ public final class SemanticLowerer {
                     + "identity " + identity + " carries a different "
                     + "function-binding registration (" + previous + ") than "
                     + produced + " (producer defect)");
-            }
-        }
-
-        /**
-         * Hoists every module-level class declaration's structural facts
-         * (docs/spec-v1.3.md §Name resolution: {@code class} declarations
-         * are hoisted within the module, function bodies may reference
-         * classes declared later in the same module, and class fields may
-         * reference classes declared later in the same module). The pass
-         * registers one {@link HoistedClass} per declaration in source
-         * order — the field layout and the field descriptors/providers the
-         * declaration walk reuses — and allocates no id and emits no op: a
-         * construction or field operation of a later-declared class
-         * resolves its exact structural facts, while every declaration's
-         * own ops (default thunks, the exported factory, the generated
-         * JSON helpers) still belong to its declaration walk.
-         */
-        private void hoistClassDeclarationLayouts(List<StatementNode> statements) {
-            if (!classCore) {
-                return;
-            }
-            for (StatementNode statement : statements) {
-                ClassDeclaration declaration;
-                boolean exported;
-                if (statement instanceof ExportDeclaration export
-                        && export.declaration()
-                            instanceof ClassDeclaration exportedClass) {
-                    declaration = exportedClass;
-                    exported = true;
-                } else if (statement instanceof ClassDeclaration plainClass) {
-                    declaration = plainClass;
-                    exported = false;
-                } else {
-                    continue;
-                }
-                ClassId classId = classIdOf(declaration);
-                if (classLayouts.containsKey(classId)) {
-                    throw new ConstructUnlowered("duplicate class declaration '"
-                        + declaration.name() + "' (the checker rejects duplicate class "
-                        + "names; a second layout for " + classId + " is a fact defect)",
-                        declaration.span());
-                }
-                List<deal.semantic.ir.ClassLayout.FieldLayout> fields = new ArrayList<>();
-                Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
-                Map<String, ModuleId> fieldProviders = new LinkedHashMap<>();
-                for (ClassField field : declaration.fields()) {
-                    Type fieldType = fieldTypeOf(field.type());
-                    RuntimeDescriptor descriptor;
-                    try {
-                        descriptor = DescriptorService.describe(fieldType);
-                    } catch (DescriptorService.Defect defect) {
-                        throw new ConstructUnlowered("class field '"
-                            + declaration.name() + "." + field.name()
-                            + "' of unrepresentable checked type "
-                            + typeName(fieldType) + " (" + defect.getMessage() + ")",
-                            field.span());
-                    }
-                    fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(
-                        field.name(), descriptor, !field.optional(),
-                        DefaultOwner.LOCAL));
-                    descriptors.put(field.name(), descriptor);
-                    // The field's exact declaring declaration (the checked
-                    // annotation's own class symbol): a bare name is the
-                    // module's own declaration, a qualified name the
-                    // imported module's own declared symbol. The generated
-                    // JSON plan table is keyed by the canonical class
-                    // identity, so this recorded provider selects the exact
-                    // declaration of every nested JSON link.
-                    Symbol.ClassSymbol annotationSymbol =
-                        deal.checker.NameResolver.classSymbolInScope(
-                            currentCheckerScope(), field.type());
-                    if (annotationSymbol != null
-                            && !annotationSymbol.modulePath().isEmpty()) {
-                        fieldProviders.put(field.name(),
-                            new ModuleId(annotationSymbol.modulePath()));
-                    }
-                }
-                deal.semantic.ir.ClassLayout layout =
-                    new deal.semantic.ir.ClassLayout(classId, fields);
-                classLayouts.put(classId, layout);
-                hoistedClasses.put(classId, new HoistedClass(declaration, exported,
-                    layout, Map.copyOf(descriptors), Map.copyOf(fieldProviders)));
-            }
-        }
-
-        /**
-         * Produces one not-yet-walked module-level class declaration's own
-         * ops at the module-init top from a nested context (a forward
-         * construction inside an earlier function body or class default):
-         * the declaration's detached default thunks, its exported factory,
-         * and its generated JSON helpers are module-level records, so the
-         * nested session context — emission buffer, current block, checker
-         * scope, binding frames, structure parentage, and capture
-         * collectors — is set aside for the duration and restored
-         * byte-identically. At the declaration position this is the
-         * identity context the walk already runs in, so both entry points
-         * produce the same ops.
-         */
-        private void lowerForwardClassDeclaration(ClassId classId) {
-            HoistedClass hoisted = hoistedClasses.get(classId);
-            if (hoisted == null || loweredClassDeclarations.contains(classId)) {
-                return;
-            }
-            withModuleLevelContext(() -> lowerClassDeclaration(
-                hoisted.declaration(), hoisted.exported()));
-        }
-
-        /**
-         * Runs one module-level declaration production with the session's
-         * module-init-top context: the root op list and module-init block
-         * as the emission target, the module checker scope and binding
-         * frame as the resolution environment, no structure/chain parent,
-         * no open function, no open capture collector, and no enclosing
-         * default context. Every set-aside context is restored
-         * byte-identically (an {@code ArrayDeque} session stack is saved
-         * top-first and restored by pushing its entries back in reverse).
-         */
-        private void withModuleLevelContext(Runnable production) {
-            List<List<SemanticOp>> savedTargets = new ArrayList<>(emitTargets);
-            List<BlockId> savedBlocks = new ArrayList<>(blockStack);
-            List<DefaultContext> savedDefaults = new ArrayList<>(defaultContexts);
-            List<OpId> savedChainParents = new ArrayList<>(chainParents);
-            List<OpId> savedBlockParents = new ArrayList<>(blockParents);
-            List<FunctionContext> savedFunctions = new ArrayList<>(functionStack);
-            List<Integer> savedBorders = new ArrayList<>(captureBorders);
-            List<List<CapturedCell>> savedCollectors = new ArrayList<>(captureCollectors);
-            List<StatementNode> savedScopes = new ArrayList<>(checkerScopeNodes);
-            List<Map<String, FrameEntry>> savedFrames = new ArrayList<>(bindingScopes);
-            emitTargets.clear();
-            emitTargets.add(ops);
-            blockStack.clear();
-            blockStack.add(moduleInitBlock);
-            defaultContexts.clear();
-            chainParents.clear();
-            blockParents.clear();
-            functionStack.clear();
-            captureBorders.clear();
-            captureCollectors.clear();
-            checkerScopeNodes.clear();
-            bindingScopes.clear();
-            if (!savedFrames.isEmpty()) {
-                bindingScopes.add(savedFrames.get(savedFrames.size() - 1));
-            }
-            try {
-                production.run();
-            } finally {
-                restoreStack(emitTargets, savedTargets);
-                restoreStack(blockStack, savedBlocks);
-                restoreStack(defaultContexts, savedDefaults);
-                restoreStack(chainParents, savedChainParents);
-                restoreStack(blockParents, savedBlockParents);
-                restoreStack(functionStack, savedFunctions);
-                restoreStack(captureBorders, savedBorders);
-                restoreStack(captureCollectors, savedCollectors);
-                restoreStack(checkerScopeNodes, savedScopes);
-                bindingScopes.clear();
-                bindingScopes.addAll(savedFrames);
-            }
-        }
-
-        /** Restores one top-first session stack to its saved order. */
-        private static <T> void restoreStack(ArrayDeque<T> stack, List<T> saved) {
-            stack.clear();
-            for (int i = saved.size() - 1; i >= 0; i--) {
-                stack.push(saved.get(i));
             }
         }
 
@@ -4750,27 +4839,133 @@ public final class SemanticLowerer {
             lowerExpression(statement.expr());
         }
 
-        private void lowerClassDeclaration(ClassDeclaration declaration, boolean exported) {
-            ClassId classId = classIdOf(declaration);
-            if (loweredClassDeclarations.contains(classId)) {
-                // A forward construction already produced this declaration's
-                // ops at the module-init top (the hoisted layout made the
-                // earlier construction resolvable): one walk per declaration,
-                // never a second set of default thunks or a second factory.
+        /**
+         * One module-level class declaration's complete layout surface:
+         * the {@link deal.semantic.ir.ClassLayout} the class identity
+         * resolves to, the owning declaration, and the field descriptors
+         * and exact declaring providers the declaration walk's default and
+         * JSON arms consume. The layout is a declaration fact, not a body
+         * fact, so it is complete before any function body lowers.
+         */
+        private record ClassLayoutPlan(
+            deal.semantic.ir.ClassLayout layout,
+            ClassDeclaration declaration,
+            Map<String, RuntimeDescriptor> descriptors,
+            Map<String, ModuleId> fieldProviders) {
+        }
+
+        /**
+         * Registers every module-level class declaration's layout before
+         * any body walk (docs/spec-v1.3.md §Name resolution, Declaration
+         * order): a function body or class field may construct a class
+         * declared later in the same module, so a class-literal in an
+         * earlier function body must resolve the module's own layout even
+         * though the declaration statement has not been walked yet. Only
+         * the structural layout registers here — never a default
+         * expression, a JSON helper, or a factory (registration executes
+         * no defaults). The declaration walk emits those at the
+         * declaration's own position and reuses the registered layout.
+         */
+        private void hoistModuleLevelClassLayouts(List<StatementNode> statements) {
+            if (!classCore) {
+                // Without the class arm a class declaration is the walk's
+                // foreign construct, so no layout surface is owed.
                 return;
             }
-            HoistedClass hoisted = hoistedClasses.get(classId);
-            if (hoisted == null || hoisted.declaration() != declaration) {
-                throw new ConstructUnlowered("class declaration '"
-                    + declaration.name() + "' has no hoisted declaration facts "
-                    + "(the module walk hoists every module-level class declaration "
-                    + "before any body is lowered — a producer defect)",
+            for (StatementNode statement : statements) {
+                if (statement instanceof ExportDeclaration exportDeclaration) {
+                    statement = exportDeclaration.declaration();
+                }
+                if (!(statement instanceof ClassDeclaration declaration)) {
+                    continue;
+                }
+                ClassId classId = classIdOf(declaration);
+                if (classLayoutPlans.containsKey(classId)) {
+                    throw new ConstructUnlowered("duplicate class declaration '"
+                        + declaration.name() + "' (the checker rejects duplicate"
+                        + " class names; a second layout for " + classId
+                        + " is a fact defect)", declaration.span());
+                }
+                ClassLayoutPlan plan = computeClassLayout(classId, declaration);
+                classLayoutPlans.put(classId, plan);
+                classLayouts.put(classId, plan.layout());
+            }
+        }
+
+        /**
+         * The structural layout of one class declaration: the ordered
+         * field layouts with their descriptors and the fields' exact
+         * declaring providers. Computed once per declaration, before any
+         * body walk.
+         */
+        private ClassLayoutPlan computeClassLayout(ClassId classId,
+                                                   ClassDeclaration declaration) {
+            List<deal.semantic.ir.ClassLayout.FieldLayout> fields = new ArrayList<>();
+            Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
+            Map<String, ModuleId> fieldProviders = new LinkedHashMap<>();
+            for (ClassField field : declaration.fields()) {
+                Type fieldType = fieldTypeOf(field.type());
+                RuntimeDescriptor descriptor;
+                try {
+                    descriptor = DescriptorService.describe(fieldType);
+                } catch (DescriptorService.Defect defect) {
+                    throw new ConstructUnlowered("class field '" + declaration.name()
+                        + "." + field.name() + "' of unrepresentable checked type "
+                        + typeName(fieldType) + " (" + defect.getMessage() + ")",
+                        field.span());
+                }
+                fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(field.name(),
+                    descriptor, !field.optional(), DefaultOwner.LOCAL));
+                descriptors.put(field.name(), descriptor);
+                // The field's exact declaring declaration (the checked
+                // annotation's own class symbol): a bare name is the
+                // module's own declaration, a qualified name the
+                // imported module's own declared symbol. The generated
+                // JSON plan table is keyed by the canonical class
+                // identity, so this recorded provider selects the exact
+                // declaration of every nested JSON link.
+                Symbol.ClassSymbol annotationSymbol =
+                    deal.checker.NameResolver.classSymbolInScope(
+                        currentCheckerScope(), field.type());
+                if (annotationSymbol != null
+                        && !annotationSymbol.modulePath().isEmpty()) {
+                    fieldProviders.put(field.name(),
+                        new ModuleId(annotationSymbol.modulePath()));
+                }
+            }
+            return new ClassLayoutPlan(
+                new deal.semantic.ir.ClassLayout(classId, fields), declaration,
+                descriptors, fieldProviders);
+        }
+
+        private void lowerClassDeclaration(ClassDeclaration declaration, boolean exported) {
+            if (hoistedClassDeclarations.contains(declaration)) {
+                // The module-level declaration already lowered at the hoist
+                // (its layout, defaults, helpers, and construction entry are
+                // declaration facts): the walk position owns no emission.
+                return;
+            }
+            ClassId classId = classIdOf(declaration);
+            ClassLayoutPlan plan = classLayoutPlans.get(classId);
+            if (plan != null && plan.declaration() != declaration) {
+                throw new ConstructUnlowered("duplicate class declaration '"
+                    + declaration.name() + "' (the checker rejects duplicate class names; "
+                    + "a second layout for " + classId + " is a fact defect)",
                     declaration.span());
             }
-            loweredClassDeclarations.add(classId);
-            Map<String, RuntimeDescriptor> descriptors = hoisted.descriptors();
-            Map<String, ModuleId> fieldProviders = hoisted.fieldProviders();
-            deal.semantic.ir.ClassLayout layout = hoisted.layout();
+            if (plan == null) {
+                // A class declaration outside the module-level statement
+                // list never reaches the walk in a checked project (a local
+                // class declaration is the frontend's E1057); the lazy arm
+                // keeps the layout surface complete for a directly walked
+                // statement list.
+                plan = computeClassLayout(classId, declaration);
+                classLayoutPlans.put(classId, plan);
+                classLayouts.put(classId, plan.layout());
+            }
+            Map<String, RuntimeDescriptor> descriptors = plan.descriptors();
+            Map<String, ModuleId> fieldProviders = plan.fieldProviders();
+            deal.semantic.ir.ClassLayout layout = plan.layout();
 
             List<OpId> classDefaultOpIds = new ArrayList<>();
             LinkedHashMap<String, ClassDefaultFact> defaults = new LinkedHashMap<>();
@@ -5233,16 +5428,6 @@ public final class SemanticLowerer {
             }
             ClassId classId = new ClassId(
                 DescriptorService.semanticModulePath(classType.identity()), classType.name());
-
-            // The module-level declaration-order rule (docs/spec-v1.3.md
-            // §Name resolution: class declarations are hoisted and function
-            // bodies may reference classes declared later in the same
-            // module): a construction of this unit's own not-yet-walked
-            // declaration produces the declaration's own ops (its detached
-            // default thunks above all) at the module-init top before this
-            // construction resolves them, so an earlier body constructs a
-            // later-declared class exactly like a later one.
-            lowerForwardClassDeclaration(classId);
 
             // The checker's recorded contextual declaration first: the
             // literal's own construction context (the enclosing
@@ -10153,11 +10338,6 @@ public final class SemanticLowerer {
             OpId returnBoundaryOpId = null;
             OpId externalEntryRef = null;
             BlockId bodyBlock = null;
-            // The runtime-resolved adapter source's closed return-cell set
-            // (a REEVALUATE_THUNK source re-executes the source expression
-            // per invocation, so the source's execution class is selected
-            // at execution — never here).
-            KindPayload.DynamicReturnBoundary dynamicReturnCells = null;
             // The producing host crossing of a function-typed return (M2 item
             // 1): its boundary op and owning host module register the result's
             // HostFunctionValue instead of the dynamic record.
@@ -10176,27 +10356,36 @@ public final class SemanticLowerer {
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
                     FunctionExecutionBinding source = staticSourceBinding(adapter);
-                    if (source == null) {
-                        // The REEVALUATE_THUNK source: the thunk re-executes
-                        // the source expression on every invocation, so the
-                        // source value's execution class is selected at
-                        // execution. The closed dynamic return-cell set
-                        // records exactly one caller-side cell per runtime
-                        // resolution class (the callee runs its own cell, the
-                        // host source its HOST_TO_DEAL cell, the retained-ABI
-                        // external source its EXTERNAL_RETURN cell), and the
-                        // invocation is the closed DYNAMIC callee arm over the
-                        // adapter's published identity.
-                        dynamicReturnCells = new KindPayload.DynamicReturnBoundary(
-                            emitCallOwnedReturnBoundary(signature, result, call.span(),
-                                callOpId),
-                            emitHostReturnBoundary(signature, result, call.span(),
-                                callOpId).opId(),
-                            emitExternalReturnBoundary(signature, result, call.span(),
-                                callOpId));
-                        break;
+                    if (source == null && staticSourceIdentity(adapter) != null) {
+                        throw new ConstructUnlowered("adapter invocation of '"
+                            + calleeName + "' whose recorded source identity "
+                            + staticSourceIdentity(adapter)
+                            + " carries no registered execution binding "
+                            + "(producer defect)", call.span());
                     }
                     switch (source) {
+                        case null -> {
+                            // A call-result ({@code REEVALUATE_THUNK})
+                            // source: neither the source value nor its
+                            // execution class exists at the call site — the
+                            // adapter's own wrapper re-executes the thunk at
+                            // each invocation. The invocation is the
+                            // recorded adapter call over the adapter carrier
+                            // (the emitters' D15 adapter protocol runs the
+                            // re-evaluated source's own wrapper, whose single
+                            // return check is the source signature's), and
+                            // the recorded return cell is the runtime host
+                            // source's HOST_TO_DEAL family cell — exactly the
+                            // runtime-resolved-source shape
+                            // {@link FunctionExecutionBinding.DynamicFunctionValue}
+                            // takes below. A DEAL-body source runs its own
+                            // body's single return cell inside the body and no
+                            // caller-side cell.
+                            hostCrossing = emitHostReturnBoundary(
+                                adapter.sourceSignature(), result, call.span(),
+                                callOpId);
+                            returnBoundaryOpId = hostCrossing.opId();
+                        }
                         case FunctionExecutionBinding.LoweredBody body -> {
                             FunctionContext context =
                                 contextsByFunctionId.get(body.functionId());
@@ -10296,14 +10485,10 @@ public final class SemanticLowerer {
             }
             emit(buildOp(callOpId, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
-                    dynamicReturnCells != null
-                        ? new KindPayload.CallCallee.Dynamic(calleeValue)
-                        : (valueCarried
-                            ? new KindPayload.CallCallee.Indirect(calleeValue)
-                            : new KindPayload.CallCallee.Static(binding)),
-                    signature, parameterBoundaryIds,
-                    dynamicReturnCells != null ? null : returnBoundaryOpId,
-                    dynamicReturnCells, bodyBlock,
+                    valueCarried
+                        ? new KindPayload.CallCallee.Indirect(calleeValue)
+                        : new KindPayload.CallCallee.Static(binding),
+                    signature, parameterBoundaryIds, returnBoundaryOpId, null, bodyBlock,
                     externalEntryRef),
                 result, resultType, args, argTypes,
                 FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -10721,17 +10906,6 @@ public final class SemanticLowerer {
                         calleeValue);
                 }
                 if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
-                    if (staticSourceIdentity(adapter) == null) {
-                        // The REEVALUATE_THUNK adapter source: the thunk
-                        // re-executes the source expression per invocation,
-                        // so the source's execution class is selected at
-                        // execution — the closed DYNAMIC async arm over the
-                        // adapter's published identity records the single
-                        // DEAL-body task cell and runs no statically selected
-                        // source start.
-                        return lowerDynamicAwait(call, slot, awaitSpan,
-                            identifier.name(), calleeValue);
-                    }
                     return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                         identifier.name());
                 }
@@ -10782,13 +10956,6 @@ public final class SemanticLowerer {
                 new FunctionAllocationIdentity(dynamicCallee.id()));
             if (registration instanceof FunctionExecutionBinding.AdapterBinding
                     adapter) {
-                if (staticSourceIdentity(adapter) == null) {
-                    // The runtime-resolved adapter source (the sync arm's
-                    // twin): the closed DYNAMIC async arm over the adapter's
-                    // published identity.
-                    return lowerDynamicAwait(call, slot, awaitSpan,
-                        describeDynamicCallee(call.callee()), dynamicCallee);
-                }
                 return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                     describeDynamicCallee(call.callee()));
             }
@@ -11253,8 +11420,12 @@ public final class SemanticLowerer {
                     new FunctionAllocationIdentity(sourceIdentity.id()));
             if (source == null) {
                 throw new ConstructUnlowered("adapter-over-async of '" + calleeName
-                    + "' whose source identity is not statically fixed "
-                    + "(REEVALUATE_THUNK call-result sources are ISSUE-0531's)", call.span());
+                    + "' whose source identity is not statically fixed: the nested"
+                    + " source ASYNC_START records the source declaration's own"
+                    + " body/token/return-cell shape, so a call-result"
+                    + " (REEVALUATE_THUNK) source is a named coverage gap of the"
+                    + " async adapter arm (the synchronous adapter arm realizes the"
+                    + " same source over the adapter carrier)", call.span());
             }
             RuntimeDescriptor.Func target = adapter.targetSignature();
             RuntimeDescriptor.Func sourceSignature = adapter.sourceSignature();

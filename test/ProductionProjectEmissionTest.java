@@ -50,6 +50,8 @@ import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryId;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
@@ -565,135 +567,28 @@ public class ProductionProjectEmissionTest {
         """;
 
     /**
-     * The call-result arity-extension adapter source: the adapted source is
-     * the non-identifier expression {@code make()} — the closed
-     * {@code REEVALUATE_THUNK} capture mode (the source expression is
-     * re-executed on every invocation, so the source value's execution class
-     * is selected at execution) — assigned to a longer target signature
-     * (docs/spec-v1.3.md §Function type compatibility: M &lt;= N with the
-     * extra target parameters accepted and silently ignored; §Arity
-     * extension adapter). The production lowering produces the adapter from
-     * the call result and the invocation records the closed dynamic
-     * return-boundary set, so the fixture emits and its published artifact
-     * calls the adapted function.
+     * The still-fail-closed source: a function-typed {@code for} counter (the
+     * per-iteration carry load's function identity is outside the closed
+     * lowering coverage, B5) — a legal checked program whose production
+     * lowering fails the module with the named E6005 CONSTRUCT_UNLOWERED rule
+     * before any emission. The arity-extended call-result adapter source this
+     * fixture previously named is production-covered now: the invocation is
+     * the recorded adapter call over the carrier and the runtime resolves the
+     * re-evaluated source ({@link #CALL_RESULT_ADAPTER_APP_SOURCE}).
      */
-    private static final String ADAPTER_SOURCE_APP_SOURCE = """
-        import * as c from "std/console";
-
+    private static final String FAIL_CLOSED_APP_SOURCE = """
         export function main(): null {
-          let f: (a: int, b: int) => int = make();
-          let r: int = f(1, 2);
-          if (r !== 1) {
-            throw { code: "ARITY_ADAPTER", message: "the adapted call did not run" };
+          let counter: (a: int) => int = function(a: int): int { return a; };
+          for (let f: (a: int) => int = counter; f(1) === 1; f = counter) {
+            break;
           }
-          let second: int = f(5, 9);
-          if (second !== 5) {
-            throw { code: "ARITY_ADAPTER_ARGS", message: "the extra argument changed the result" };
-          }
-          c.log("ARITY_ADAPTER|OK");
           return null;
-        }
-
-        function make(): (a: int) => int {
-          return function(a: int): int { return a; };
-        }
-
-        export async function runAsync(): null {
-          let g: async (a: int, b: int) => int = makeAsync();
-          let r: int = await g(3, 4);
-          if (r !== 3) {
-            throw { code: "ARITY_ASYNC_ADAPTER", message: "the adapted await did not run" };
-          }
-          c.log("ARITY_ASYNC_ADAPTER|OK");
-          return null;
-        }
-
-        function makeAsync(): async (a: int) => int {
-          return async function(a: int): int { return a; };
         }
         """;
 
-    private static Fixture adapterSourceFixture() throws Exception {
+    private static Fixture failClosedFixture() throws Exception {
         return compileProject(new LinkedHashMap<>(Map.of(
-                "src/app.deal", ADAPTER_SOURCE_APP_SOURCE)), Map.of());
-    }
-
-    /**
-     * The module-level declaration-order shapes (docs/spec-v1.3.md §Name
-     * resolution: {@code class} and {@code function} declarations are
-     * hoisted within the module, function bodies may reference classes
-     * declared later in the same module, and class fields may reference
-     * classes declared later in the same module): the earlier
-     * {@code main} body constructs a literal of the later-declared
-     * {@code User}, and the earlier {@code makeDefaulted} body constructs a
-     * literal of the later-declared {@code Defaulted} whose omitted required
-     * field default calls a module function.
-     */
-    private static final String FORWARD_CLASS_APP_SOURCE = """
-        import * as c from "std/console";
-
-        export function main(): null {
-          let u: User = { name: "x" };
-          let d: Defaulted = makeDefaulted();
-          if (u.name !== "x" || d.tag !== 7) {
-            throw { code: "FORWARD_CLASS", message: "the forward class shapes did not execute" };
-          }
-          c.log("FORWARD_CLASS|OK");
-          return null;
-        }
-
-        function makeDefaulted(): Defaulted {
-          return { name: "d" };
-        }
-
-        class User {
-          name: string = "";
-        }
-
-        class Defaulted {
-          name: string = "";
-          tag: int = seven();
-        }
-
-        function seven(): int {
-          return 7;
-        }
-        """;
-
-    private static Fixture forwardClassFixture() throws Exception {
-        return compileProject(new LinkedHashMap<>(Map.of(
-                "src/app.deal", FORWARD_CLASS_APP_SOURCE)), Map.of());
-    }
-
-    /**
-     * The genuinely fail-closed fixture of the atomicity drives: one
-     * checked answer no checker-valid program produces — the declared
-     * helper {@code f} carries an unrepresentable {@code Error} signature —
-     * so the production lowering fails closed with the unchanged E6005 and
-     * nothing is staged or published. The fixture root is the prepared
-     * project's (the corrupted facts are a copy over the same sources).
-     */
-    private static Fixture corruptedSignatureFixture() throws Exception {
-        Fixture prepared = compileProject(new LinkedHashMap<>(Map.of(
-                "src/app.deal", DECLARATION_ORIGIN_APP_SOURCE)), Map.of());
-        Fixture fixture = freshCheckedFacts(prepared);
-        boolean corrupted = false;
-        for (CheckedModuleInput module : fixture.checkedProject().modules()) {
-            SymbolTable table = module.checks().symbolTable();
-            if (table == null || !table.symbols().containsKey("f")) {
-                continue;
-            }
-            table.remove("f");
-            table.define("f", new Symbol.FunctionSymbol("f",
-                new Type.Func(List.of(), Type.Error.INSTANCE, false)));
-            corrupted = true;
-        }
-        if (!corrupted) {
-            deleteRecursively(fixture.root());
-            throw new IllegalStateException("the corrupted-fact fixture carries "
-                + "the checked declaration f");
-        }
-        return fixture;
+                "src/app.deal", FAIL_CLOSED_APP_SOURCE)), Map.of());
     }
 
     private static Fixture nestedDeclarationFixture() throws Exception {
@@ -793,6 +688,53 @@ public class ProductionProjectEmissionTest {
 
         export async function worker(): int {
           return await lib.getValue();
+        }
+        """;
+
+    /**
+     * The declaration-order fixture: {@code main} is declared before both
+     * classes and constructs them, {@code Holder}'s default constructs the
+     * later-declared {@code Counter}, and the arity-extension adapter's
+     * source is the call result of {@code make} (re-evaluated at each
+     * invocation, so the counter observes both calls).
+     */
+    private static final String CALL_RESULT_ADAPTER_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export function main(): null {
+          let c: Counter = {};
+          let f: (a: int, b: int) => int = make(c);
+          let first: int = f(4, 5);
+          let second: int = f(7, 8);
+          if (first !== 4 || second !== 7) {
+            throw { code: "JS_PROBE", message: "adapter result" };
+          }
+          if (c.n !== 2) {
+            throw { code: "JS_PROBE", message: "thunk re-execution" };
+          }
+          if (c.x !== 11) {
+            throw { code: "JS_PROBE", message: "later class default" };
+          }
+          let holder: Holder = {};
+          if (holder.counter.n !== 0) {
+            throw { code: "JS_PROBE", message: "nested later-class default" };
+          }
+          console.log("PROBE|JS|DECLARATION-ORDER");
+          return null;
+        }
+
+        class Holder {
+          counter: Counter = {};
+        }
+
+        function make(c: Counter): (a: int) => int {
+          c.n = c.n + 1;
+          return function(a: int): int { return a; };
+        }
+
+        class Counter {
+          n: int = 0;
+          x: int = 11;
         }
         """;
 
@@ -1155,6 +1097,149 @@ public class ProductionProjectEmissionTest {
         } finally {
             deleteRecursively(fixture.root());
         }
+    }
+
+    /**
+     * The two v1.3 source shapes the integrated JS route rejected before
+     * rendering (acceptance remediation of the JS production migration):
+     * docs/spec-v1.3.md §Name resolution, Declaration order requires a
+     * function body — and a class field — to reference a class declared
+     * later in the same module, and the arity-extension adapter of
+     * §Function type compatibility admits a call-result source that is
+     * re-evaluated per invocation. Both compile through the public
+     * {@code Backend.JS} arm, the produced project records the complete
+     * declaration facts, and the published CommonJS artifact executes the
+     * real behavior under Node.
+     */
+    private static void testDeclarationOrderAndCallResultAdapter(boolean node)
+            throws Exception {
+        System.out.println("-- the JS arm compiles a later-declared class"
+            + " literal in an earlier body and a call-result arity-extension"
+            + " adapter through the public compile and runs both under Node --");
+        Path root = Files.createTempDirectory("js-declaration-order-");
+        try {
+            writeFileIn(root, "src/app.deal", CALL_RESULT_ADAPTER_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the declaration-order project compiles through the public JS"
+                    + " arm: " + orchestrator.diagnostics());
+            check(Files.exists(out.resolve("app.js")),
+                "the public compile publishes the entry artifact");
+
+            ExecutableLoweredProject produced = orchestrator.producedProject();
+            check(produced != null,
+                "the public compile records its produced project");
+            LoweredModuleUnit app = produced == null ? null
+                : produced.modules().get(new ModuleId("app"));
+            check(app != null, "the produced project carries the entry unit");
+            if (app == null) {
+                return;
+            }
+            ClassId counterId = new ClassId("src", "Counter");
+            ClassId holderId = new ClassId("src", "Holder");
+            check(app.classLayouts().containsKey(counterId)
+                    && app.classLayouts().containsKey(holderId),
+                "the unit records the complete module-level class layout"
+                    + " surface before any body: " + app.classLayouts().keySet());
+            int counterConstructions = 0;
+            int holderConstructions = 0;
+            int adapterCalls = 0;
+            for (SemanticOp op : app.ops()) {
+                if (op.kind() == SemanticOpKind.CLASS_NEW
+                        && op.payload()
+                            instanceof KindPayload.ClassNewPayload construction) {
+                    if (construction.classId().equals(counterId)) {
+                        counterConstructions++;
+                        check(!construction.classDefaultOpIds().isEmpty(),
+                            "the construction of the later-declared Counter"
+                                + " lists its omitted required-present default"
+                                + " op: " + construction.classDefaultOpIds());
+                    }
+                    if (construction.classId().equals(holderId)) {
+                        holderConstructions++;
+                    }
+                    continue;
+                }
+                if (op.kind() != SemanticOpKind.CALL
+                        || !(op.payload()
+                            instanceof KindPayload.CallPayload call)) {
+                    continue;
+                }
+                if (!(call.callee()
+                        instanceof KindPayload.CallCallee.Static staticCallee)
+                        || !(staticCallee.binding()
+                            instanceof FunctionExecutionBinding.AdapterBinding)) {
+                    continue;
+                }
+                adapterCalls++;
+                checkEq(2, call.parameterBoundaryOpIds().size(),
+                    "the arity-extension adapter call records the target"
+                        + " signature's two parameter cells");
+                SemanticOp returnCell = call.returnBoundaryOpId() == null
+                    ? null : opOf(app, call.returnBoundaryOpId());
+                check(returnCell != null
+                        && returnCell.payload()
+                            instanceof KindPayload.BoundaryPayload boundary
+                        && boundary.kind() == deal.semantic.ir.BoundaryKind
+                            .HOST_TO_DEAL,
+                    "the call-result source records the runtime-resolved"
+                        + " source's return cell: " + returnCell);
+            }
+            checkEq(2, counterConstructions,
+                "both the entry body and the earlier class's default construct"
+                    + " the later-declared Counter");
+            checkEq(1, holderConstructions,
+                "the entry body constructs Holder");
+            checkEq(2, adapterCalls,
+                "each of the two arity-extended call sites is one adapter"
+                    + " invocation over the carrier");
+
+            // The hoisted declaration groups keep their real local mapping:
+            // the published entry sidecar's every row is the source comment
+            // carrying the same source coordinates, and every recorded
+            // mapping is one emitted comment.
+            String artifact = Files.readString(out.resolve("app.js"),
+                StandardCharsets.UTF_8);
+            Sidecar sidecar = parseSidecar(Files.readString(
+                out.resolve("app.deal.map.json"), StandardCharsets.UTF_8));
+            check(sidecar.generated().endsWith("/out/app.js"),
+                "the entry sidecar names the published entry artifact: "
+                    + sidecar.generated());
+            verifySidecarCoordinates(sidecar, artifact.lines().toList(),
+                CALL_RESULT_ADAPTER_APP_SOURCE, "// ", "src/app.deal");
+            checkEq(countSourceComments(artifact, "// "),
+                sidecar.mappings().size(),
+                "every recorded mapping is one emitted source comment of the"
+                    + " published entry artifact");
+
+            if (!node) {
+                System.out.println("  SKIP: the declaration-order Node drive"
+                    + " needs node");
+                return;
+            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            checkEq(0, run.exitCode(),
+                "the published artifact runs: " + run.output());
+            checkEq("PROBE|JS|DECLARATION-ORDER\n", run.stdout(),
+                "the later-declared construction, the nested earlier-class"
+                    + " default and both arity-extended invocations executed");
+            checkEq("", run.stderr(),
+                "the run prints no failure and no trace protocol");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** The recorded op of one unit, or null. */
+    private static SemanticOp opOf(LoweredModuleUnit unit, OpId opId) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.opId().equals(opId)) {
+                return op;
+            }
+        }
+        return null;
     }
 
     /** The occurrences of one needle in a text. */
@@ -1777,236 +1862,6 @@ public class ProductionProjectEmissionTest {
     }
 
     // =========================================================================
-    // 3b. The call-result arity-extension adapter through the production arm
-    // =========================================================================
-
-    /**
-     * The call-result arity-extension adapter through the public production
-     * route: the fixture's adapted source is the call expression
-     * {@code make()} (a shorter {@code (a: int) => int} value assigned to the
-     * longer {@code (a: int, b: int) => int} target — docs/spec-v1.3.md
-     * §Function type compatibility and §Arity extension adapter). The one
-     * production lowering produces the adapter from the call result
-     * ({@code FUNCTION_ADAPT} over the {@code REEVALUATE_THUNK} source) and
-     * the adapted invocation records the closed dynamic return-boundary set;
-     * the complete set stages and publishes, and the published CommonJS
-     * artifact calls the adapted function under Node — the direct-run main
-     * and an explicit Node drive that calls the published {@code main}
-     * export again.
-     */
-    private static void testJsCallResultAdapter(Fixture fixture, boolean node)
-            throws Exception {
-        System.out.println("-- the call-result arity-extension adapter: the"
-            + " production lowering builds the adapter from the call result and"
-            + " the published JS artifact calls the adapted function --");
-        Path out = fixture.root().resolve("js-adapter-out");
-        String appSource;
-        PublicationStager stager = PublicationStager.forRoot(out);
-        try {
-            Emission emission = emitCapturingStderr(fixture, Backend.JS, stager,
-                false);
-            ProductionProjectEmission.Result result = emission.result();
-            check(result.emitted(),
-                "the call-result adapter fixture emits through the JS arm: "
-                    + result.diagnostics());
-            checkEq("", emission.stderr(),
-                "the adapter fixture prints no LuaJIT/JVM warning");
-            checkEq("app.js", result.artifactRelativePath(),
-                "the adapter fixture's entry artifact is the entry module's"
-                    + " own artifact");
-            appSource = new String(stager.stagedSet().artifact("app.js")
-                .orElseThrow().content(), StandardCharsets.UTF_8);
-            ExecutableLoweredProject produced = result.producedProject();
-            check(produced != null,
-                "the adapter fixture's run exposes its produced project");
-            boolean thunkAdapt = false;
-            boolean dynamicInvocation = false;
-            boolean adapterCallee = false;
-            if (produced != null) {
-                LoweredModuleUnit entry =
-                    produced.modules().get(produced.entryModule());
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() == SemanticOpKind.FUNCTION_ADAPT
-                            && op.payload()
-                                instanceof KindPayload.FunctionAdaptPayload adapt
-                            && adapt.source()
-                                instanceof deal.semantic.ir.AdaptSourceRef.Thunk thunk) {
-                        thunkAdapt = true;
-                        check(entry.bodyTable().blockOps()
-                                .containsKey(thunk.blockId()),
-                            "the produced adapter's thunk block is a recorded"
-                                + " block of the entry unit");
-                    }
-                }
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() != SemanticOpKind.CALL
-                            || !(op.payload()
-                                instanceof KindPayload.CallPayload call)) {
-                        continue;
-                    }
-                    if (!(call.callee()
-                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
-                        continue;
-                    }
-                    if (call.dynamicReturnBoundary() == null) {
-                        continue;
-                    }
-                    dynamicInvocation = true;
-                    deal.semantic.ir.FunctionExecutionBinding callee =
-                        entry.functionBindings().get(
-                            new deal.semantic.ir.FunctionAllocationIdentity(
-                                dynamic.callee().id()));
-                    adapterCallee = callee
-                        instanceof deal.semantic.ir
-                            .FunctionExecutionBinding.AdapterBinding adapter
-                        && adapter.sourceRef()
-                            instanceof deal.semantic.ir.AdaptSourceRef.Thunk;
-                }
-            }
-            check(thunkAdapt,
-                "the produced FUNCTION_ADAPT wraps the call result as its"
-                    + " REEVALUATE_THUNK source");
-            check(dynamicInvocation && adapterCallee,
-                "the adapted invocation is the closed DYNAMIC callee arm over the"
-                    + " re-evaluated adapter source, recording the dynamic"
-                    + " return-boundary set (one cell per runtime source class)");
-            check(!appSource.contains("ISSUE-0531"),
-                "the artifact carries no fail-closed placeholder text");
-            stager.publish();
-        } finally {
-            stager.discard();
-        }
-
-        if (!node) {
-            System.out.println("  SKIP: the adapted-call drive needs node");
-            return;
-        }
-        ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
-        checkEq(0, entry.exitCode(),
-            "the published adapter artifact runs: " + entry.output());
-        checkEq("ARITY_ADAPTER|OK\n", entry.stdout(),
-            "the direct-run main called the adapted function with the leading"
-                + " arguments and the extra target argument was ignored");
-        checkEq("", entry.stderr(),
-            "the published adapter artifact prints no trace protocol on stderr");
-
-        // The public Node drive: require initializes without running main,
-        // then the published main export is called explicitly — one more
-        // execution of the adapted call through the published surface.
-        writeFileIn(out, "adapter-drive.js", """
-            const $app = require("./app.js");
-            $app.main.$f();
-            console.log("ADAPTER_DRIVE|OK");
-            """);
-        ProcessOutcome drive = runProcess(List.of("node", "adapter-drive.js"), out);
-        checkEq(0, drive.exitCode(),
-            "the Node drive calls the adapted function: " + drive.output());
-        checkEq("ARITY_ADAPTER|OK\nADAPTER_DRIVE|OK\n", drive.stdout(),
-            "the Node drive's explicit main invocation ran the adapted call"
-                + " once and the require alone ran no main");
-        checkEq("", drive.stderr(),
-            "the Node drive prints no trace protocol on stderr");
-
-        // The async twin: the awaited adapted async function (its source is
-        // the re-evaluated call result too) starts once, awaits once and
-        // returns the source's completion through the published export.
-        writeFileIn(out, "adapter-async-drive.js", """
-            const $app = require("./app.js");
-            $app.runAsync.$f().then(() => {
-              console.log("ARITY_ASYNC_DRIVE|OK");
-            }).catch((e) => {
-              console.log("ERR " + (e && e.message));
-              process.exitCode = 1;
-            });
-            """);
-        ProcessOutcome asyncDrive = runProcess(
-            List.of("node", "adapter-async-drive.js"), out);
-        checkEq(0, asyncDrive.exitCode(),
-            "the async adapted call runs under Node: " + asyncDrive.output());
-        checkEq("ARITY_ASYNC_ADAPTER|OK\nARITY_ASYNC_DRIVE|OK\n",
-            asyncDrive.stdout(),
-            "the awaited adapted async function ran its source once and"
-                + " completed with the source's value");
-        checkEq("", asyncDrive.stderr(),
-            "the async adapted call prints no trace protocol on stderr");
-    }
-
-    // =========================================================================
-    // 3c. The module-level declaration-order shapes through the production arm
-    // =========================================================================
-
-    /**
-     * The declaration-order shapes through the public production route: an
-     * earlier function body constructs a literal of a later-declared class
-     * and of a later-declared class whose omitted required field default
-     * calls a module function (docs/spec-v1.3.md §Name resolution). The one
-     * production lowering resolves both from the hoisted structural
-     * declaration facts; the complete set stages and publishes, and the
-     * published CommonJS artifact executes both constructions under Node.
-     */
-    private static void testJsForwardClassLiteral(Fixture fixture, boolean node)
-            throws Exception {
-        System.out.println("-- a later-declared class literal in an earlier"
-            + " function body (with a per-construction default) emits through"
-            + " the JS arm and executes --");
-        Path out = fixture.root().resolve("js-forward-out");
-        PublicationStager stager = PublicationStager.forRoot(out);
-        try {
-            Emission emission = emitCapturingStderr(fixture, Backend.JS, stager,
-                false);
-            ProductionProjectEmission.Result result = emission.result();
-            check(result.emitted(),
-                "the forward-class fixture emits through the JS arm: "
-                    + result.diagnostics());
-            checkEq("", emission.stderr(),
-                "the forward-class fixture prints no LuaJIT/JVM warning");
-            ExecutableLoweredProject produced = result.producedProject();
-            check(produced != null,
-                "the forward-class run exposes its produced project");
-            boolean defaultOp = false;
-            boolean localConstruction = false;
-            if (produced != null) {
-                LoweredModuleUnit entry =
-                    produced.modules().get(produced.entryModule());
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        defaultOp = true;
-                    }
-                    if (op.kind() == SemanticOpKind.CLASS_NEW
-                            && op.payload()
-                                instanceof KindPayload.ClassNewPayload classNew
-                            && classNew.defaultOwner() == DefaultOwner.LOCAL
-                            && classNew.classDefaultOpIds().size() == 1) {
-                        localConstruction = true;
-                    }
-                }
-            }
-            check(defaultOp,
-                "the later-declared class's per-construction default op is"
-                    + " produced");
-            check(localConstruction,
-                "the forward construction applies the later-declared class's"
-                    + " omitted required default");
-            stager.publish();
-        } finally {
-            stager.discard();
-        }
-
-        if (!node) {
-            System.out.println("  SKIP: the forward-class drive needs node");
-            return;
-        }
-        ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
-        checkEq(0, entry.exitCode(),
-            "the published forward-class artifact runs: " + entry.output());
-        checkEq("FORWARD_CLASS|OK\n", entry.stdout(),
-            "the artifact constructed the later-declared class literal in the"
-                + " earlier body and applied its per-construction default");
-        checkEq("", entry.stderr(),
-            "the published forward-class artifact prints no trace protocol");
-    }
-
-    // =========================================================================
     // 4. Atomic failure: a failing lowering; the realized cross-module sync
     //    call emits and stages
     // =========================================================================
@@ -2059,9 +1914,8 @@ public class ProductionProjectEmissionTest {
                 "the failing lowering merges the first E6005: "
                     + result.diagnostics());
             check(result.firstDiagnostic() != null
-                    && result.firstDiagnostic().message().contains(
-                        ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
-                "the corrupted declaration fact is the named fail-closed rule: "
+                    && result.firstDiagnostic().message().contains("CONSTRUCT_UNLOWERED"),
+                "the fail-closed construct is the named rule: "
                     + result.diagnostics());
             checkEq(before, snapshotTree(out),
                 "the failing lowering leaves the previous artifact set byte-identical");
@@ -4236,8 +4090,6 @@ public class ProductionProjectEmissionTest {
         Fixture host = null;
         Fixture externC = null;
         Fixture js = null;
-        Fixture adapter = null;
-        Fixture forward = null;
         try {
             boolean node = nodeAvailable();
             System.out.println(node
@@ -4248,15 +4100,12 @@ public class ProductionProjectEmissionTest {
             js = jsFixture();
             testJsProjectEmission(js, node);
             testJsEntryFailureStatus(node);
+            testDeclarationOrderAndCallResultAdapter(node);
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
-            failing = corruptedSignatureFixture();
+            failing = failClosedFixture();
             testAtomicFailures(failing);
-            adapter = adapterSourceFixture();
-            testJsCallResultAdapter(adapter, node);
-            forward = forwardClassFixture();
-            testJsForwardClassLiteral(forward, node);
             host = hostFixture();
             externC = externCFixture();
             cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
@@ -4286,8 +4135,6 @@ public class ProductionProjectEmissionTest {
             deleteRecursively(externC == null ? null : externC.root());
             deleteRecursively(host == null ? null : host.root());
             deleteRecursively(failing == null ? null : failing.root());
-            deleteRecursively(adapter == null ? null : adapter.root());
-            deleteRecursively(forward == null ? null : forward.root());
             deleteRecursively(same == null ? null : same.root());
             deleteRecursively(cross == null ? null : cross.root());
             deleteRecursively(fixture == null ? null : fixture.root());
