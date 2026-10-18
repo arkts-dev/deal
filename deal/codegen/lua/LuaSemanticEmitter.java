@@ -12153,6 +12153,41 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     end
     return value
   end
+  -- The present string keys of one table value in its own order: the
+  -- recorded insertion order of the shared table carrier (and of a table
+  -- the chunk wrote outside TABLE_NEW, whose first write creates the
+  -- presence/order marks) first, then every remaining string key in Lua
+  -- iteration order. A plain Lua table the deployed matcher admitted at
+  -- a declared table position — the LuaJIT value mapping's "table = Lua
+  -- table", the value a host return or a host-driven callback argument
+  -- crosses into DEAL as — carries no recorded order, and a host that
+  -- writes a table after the crossing adds keys the order list never
+  -- saw. The recorded order is the presence authority, never the stored
+  -- value: the chunk's language null is the raw nil, so a present null
+  -- field is an ordered key with a nil slot and a deleted field is the
+  -- key __orderRemove dropped. The private carrier marks are
+  -- table-object keys, so no user string key can be mistaken for one.
+  local function __tableKeyList(t)
+    local list = {}
+    local seen = {}
+    local order = t[__dealCarrierKeys.order]
+    if type(order) == "table" then
+      for i = 1, #order do
+        local k = order[i]
+        if type(k) == "string" and not seen[k] then
+          list[#list + 1] = k
+          seen[k] = true
+        end
+      end
+    end
+    for k, _ in pairs(t) do
+      if type(k) == "string" and not seen[k] then
+        list[#list + 1] = k
+        seen[k] = true
+      end
+    end
+    return list
+  end
   if fn == "STRING_LENGTH" then
     return __int32Gate(#__cps(__args[1]))
   elseif fn == "STRING_SUBSTRING" then
@@ -12239,9 +12274,17 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     for i = first, last do out[#out + 1] = __u8enc(cps[i]) end
     return table.concat(out)
   elseif fn == "TABLE_KEYS" then
+    -- The string keys of the table value: a module namespace's declared
+    -- export order, or the shared table carrier's recorded insertion
+    -- order followed by the string keys the carrier's order never saw.
+    -- A plain host table is the table value too (the deployed matcher's
+    -- table row admits it, and the Lua value mapping calls it the
+    -- table), so its string keys are the keys, in Lua iteration order:
+    -- no keyless `#nil` failure and no private carrier mark in the
+    -- result.
     local t = __args[1]
     local ns = __nsSurfaces[t]
-    local order = ns ~= nil and ns.order or t[__dealCarrierKeys.order]
+    local order = ns ~= nil and ns.order or __tableKeyList(t)
     local keys = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #order}
     for i = 1, #order do keys[i] = order[i] end
     return keys
@@ -12613,7 +12656,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           out[#out + 1] = "{"
           local marks = v[__dealCarrierKeys.nK]
           if type(marks) ~= "table" then marks = nil end
-          frames[#frames + 1] = {kind = "table", value = v, order = v[__dealCarrierKeys.order], index = 1, marks = marks}
+          frames[#frames + 1] = {kind = "table", value = v, order = __tableKeyList(v), index = 1, marks = marks}
           return
         end
         -- The class instance is a table-carried value on the carrier-kind
@@ -12629,7 +12672,30 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         -- carrier-kind projection's bytes member) through the same sfFail
         -- render, never the generic table fallback.
         if v[__dealCarrierKeys.kind] == "bytes" then sfFail(v); return end
-        sfFail(v)
+        -- The runtime-carried class instance and decoded async handle
+        -- keep their closed carrier kinds too (the shipped std/json.lua
+        -- encoder's own two members): never an object over their private
+        -- fields.
+        if v[__dealCarrierKeys.kind] == "class" or v[__dealCarrierKeys.kind] == "async" then
+          sfFail(v); return
+        end
+        -- Every remaining table is the table value: the deployed matcher's
+        -- table row admits a plain Lua table at a declared table position
+        -- and the LuaJIT value mapping calls it the table, so the
+        -- host-crossed table (a host return or a host-driven callback
+        -- argument), and a table the chunk wrote before its first write
+        -- created the presence/order marks, encodes as a JSON object over
+        -- its present string keys in the recorded insertion order
+        -- followed by Lua iteration order (__tableKeyList), exactly like
+        -- the shipped std/json.lua encoder. Only the closed carriers
+        -- above are rejected; a path-local re-entry is the closed cycle
+        -- arm.
+        if path[v] then sfCycle(); return end
+        path[v] = true
+        out[#out + 1] = "{"
+        local marks = v[__dealCarrierKeys.nK]
+        if type(marks) ~= "table" then marks = nil end
+        frames[#frames + 1] = {kind = "table", value = v, order = __tableKeyList(v), index = 1, marks = marks}
         return
       end
       if t == "function" then sfFail(v); return end
