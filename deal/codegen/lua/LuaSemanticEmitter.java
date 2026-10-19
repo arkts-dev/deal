@@ -4127,6 +4127,12 @@ public final class LuaSemanticEmitter {
          */
         private int emitHostParameterCells(SemanticOp op, KindPayload.CallPayload payload) {
             out.append("__hbT = {}\n");
+            // One crossing memo per host call: every declared parameter
+            // position of this call threads through it (__hostProjectArg),
+            // so a value the bridge re-represents once is the same host
+            // object at every alias of the call (two aliased arguments
+            // reach the host as one object).
+            out.append("__factories.__hostMemo = {}\n");
             int index = 1;
             for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                 SemanticOp boundary = opsById.get(boundaryId);
@@ -4167,6 +4173,10 @@ public final class LuaSemanticEmitter {
                     .append(")\n");
                 index++;
             }
+            // The crossing is complete once every declared position has its
+            // projected host value: the per-call memo is dropped, so the
+            // projected source objects are never retained past this call.
+            out.append("__factories.__hostMemo = nil\n");
             return index - 1;
         }
 
@@ -4388,18 +4398,30 @@ public final class LuaSemanticEmitter {
             KindPayload.BoundaryPayload cellPayload =
                 (KindPayload.BoundaryPayload) returnBoundary.payload();
             String declaredReturn = cellPayload.descriptor().canonicalSpecText();
-            // The class-value carrier projection (F4): on a class-typed
-            // return the wrapper's loaded value is projected into the
-            // chunk's class representation *before* the crossing's
-            // events, so the boundary's START/SUCCESS atoms and the
-            // program observe the one projected heap value — never the
-            // wrapper's raw runtime value (the trace-identity rule).
-            // A cataloged stdlib result is a plain chunk value: no
-            // projection applies.
-            if (hostValue && cellPayload.descriptor() instanceof RuntimeDescriptor.Class) {
-                out.append("__resT = __hostDealProject(")
+            // One crossing memo per return: the class-shaped projection
+            // below and the return cell's container/class projection share
+            // it, so a host object the returned value names twice (two
+            // fields or two array slots) is one DEAL value and the
+            // host-origin object is never mutated.
+            if (hostValue) {
+                out.append("__factories.__hostMemo = {}\n");
+            }
+            // The class-value carrier projection: on a class-typed
+            // return (nullable included) the wrapper's loaded value is
+            // projected into the chunk's DEAL representation *before* the
+            // crossing's events, so the boundary's START/SUCCESS atoms and
+            // the program observe the one projected heap value — never the
+            // wrapper's raw runtime value (the trace-identity rule). The
+            // projection is the host-carrier bridge's inbound direction: a
+            // HOST-kind class becomes the dual-tagged instance (top-level
+            // declared fields, __kind/__classname and the chunk __c/__id
+            // tags), the builtin Error maps to the __d carrier, and an
+            // already-DEAL value crosses identically. A cataloged stdlib
+            // result is a plain chunk value: no projection applies.
+            if (hostValue && isClassPosition(cellPayload.descriptor())) {
+                out.append("__resT = __factories.__hostCarrierIn(")
                     .append(luaString(declaredReturn)).append(", __resT, ")
-                    .append(luaString(originOf(returnBoundary))).append(")\n");
+                    .append("__factories.__hostMemo)\n");
             }
             // The boundary events' atoms are the DEAL-null-aware host
             // atom for a loaded host surface value (the deployed
@@ -4434,6 +4456,12 @@ public final class LuaSemanticEmitter {
             emitBoundarySuccessAtom(returnBoundary, atomizer + "("
                 + luaString(staticKind(cellPayload.descriptor())) + ", __resT)");
             out.append("__resT = __chkB\n");
+            if (hostValue) {
+                // The return crossing is complete: the per-return memo is
+                // dropped (the admitted DEAL value is what the program
+                // observes, never the host-side source object).
+                out.append("__factories.__hostMemo = nil\n");
+            }
         }
 
         private void emitDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
@@ -4626,6 +4654,10 @@ public final class LuaSemanticEmitter {
             emitHostReturnCellRun(op, returnBoundary, "__atom");
             out.append("  else\n");
             out.append("  __hbT = {}\n");
+            // One crossing memo per dynamic host call: every declared
+            // parameter position threads through it, so the host observes
+            // one object for two aliased arguments.
+            out.append("  __factories.__hostMemo = {}\n");
             int index = 1;
             for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                 SemanticOp parameter = opsById.get(boundaryId);
@@ -4642,6 +4674,9 @@ public final class LuaSemanticEmitter {
                     .append(")\n");
                 index++;
             }
+            // The crossing is complete once every declared position has its
+            // projected host value: the per-call memo is dropped.
+            out.append("  __factories.__hostMemo = nil\n");
             emitHostInvocationTail(op, "__dynC", index - 1, returnBoundary);
             out.append("  end\n");
         }
@@ -4846,6 +4881,18 @@ public final class LuaSemanticEmitter {
             RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
                 ? nullable.inner() : descriptor;
             return inner instanceof RuntimeDescriptor.Func;
+        }
+
+        /**
+         * Whether one declared position is a class type (nullable
+         * included): the positions whose host-to-DEAL projection shapes a
+         * class value and therefore runs before the crossing's events (the
+         * trace-identity rule).
+         */
+        private boolean isClassPosition(RuntimeDescriptor descriptor) {
+            RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
+                ? nullable.inner() : descriptor;
+            return inner instanceof RuntimeDescriptor.Class;
         }
 
         /** Whether one declared position is an array type (nullable included). */
@@ -9232,23 +9279,25 @@ end
 -- identity text tags one fresh chunk-representation value whose declared
 -- field set is the runtime instance's own non-tag keys (its phase-1
 -- admission and phase-2 fill make them exactly the declared fields) and
--- whose pointer token carries its pointer. The loaded runtime's builtin
--- Error instance (its own class representation, __kind/__classname with
--- the declared code/message fields) projects to the chunk's own Error
--- carrier (__d with the carrier's code/m slots) — the shape every
--- emitted Error read and boundary check observes — so the canonical
--- Error descriptor's declared round-trip keeps one representation on the
--- DEAL side. The source value is never mutated; a value already carrying
--- the chunk representation passes through. The projection runs before the
--- crossing's events, so the trace observes exactly one heap value per
--- class-typed crossing.
+-- whose pointer token carries its pointer. The host-to-DEAL conversion
+-- itself is the host-carrier bridge's inbound direction (__hostCarrierIn),
+-- which subsumes the landed class/array projection: a HOST-kind identity
+-- becomes the dual-tagged instance (top-level declared fields, the runtime
+-- class/identity marks, and the chunk __c/__id tags the emitted field ops
+-- and the chunk matcher read), a DEAL or extern-C identity keeps the chunk
+-- __f/__p carrier this helper's callers hold, the builtin Error instance
+-- maps to the chunk __d carrier — the shape every emitted Error read and
+-- boundary check observes — arrays become the __a carrier, and the
+-- recursion is memoized per crossing so a host object named twice is one
+-- DEAL value. The source value is never mutated; a value already carrying
+-- the chunk representation passes through. The landed identity guard keeps
+-- its E8010 code and identity-arm text (the loaded wrapper's own return
+-- cell normally rejects an identity mismatch first, so the guard is a
+-- fail-closed residue, never a second failure authority).
 local function __hostDealProject(desc, v, origin)
   if type(v) ~= "table" then return v end
   if v[__dealCarrierKeys.c] then return v end
   if v[__dealCarrierKeys.kind] ~= "class" then return v end
-  if desc == "Error" and v[__dealCarrierKeys.classname] == "Error" then
-    return {[__dealCarrierKeys.d] = true, code = v.code, m = v.message}
-  end
   if v[__dealCarrierKeys.classname] ~= desc then
     -- The bridge guard keeps its landed E8010 code while its text is the
     -- identity arm's own template (no composed spelling).
@@ -9256,19 +9305,7 @@ local function __hostDealProject(desc, v, origin)
       __renderTemplate("CLASS_IDENTITY", {expected = desc,
         actual = tostring(v[__dealCarrierKeys.classname])}), origin, desc, v[__dealCarrierKeys.classname], true), 0)
   end
-  local out = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = desc, [__dealCarrierKeys.f] = {}, [__dealCarrierKeys.p] = {}}
-  for k, val in pairs(v) do
-    if k ~= __dealCarrierKeys.classname and k ~= __dealCarrierKeys.kind and k ~= __dealCarrierKeys.ptr then
-      if type(val) == "table" and val[__dealCarrierKeys.kind] == "class" then
-        out[__dealCarrierKeys.f][k] = __hostDealProject(val[__dealCarrierKeys.classname], val, origin)
-      else
-        out[__dealCarrierKeys.f][k] = val
-      end
-      out[__dealCarrierKeys.p][k] = true
-    end
-  end
-  if v[__dealCarrierKeys.ptr] ~= nil then out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr] end
-  return out
+  return __factories.__hostCarrierIn(desc, v, {})
 end
 -- The declared parameter cell of a function-typed host position: the
 -- loaded matcher's own rule over the DEAL function carrier (byte-exact
@@ -9436,23 +9473,22 @@ local function __hostCellAtom(kind, v)
   if v == nil or v == __NULL or v == __rt.__NULL then return "null" end
   return __atom(kind, v)
 end
--- The declared return cell of one host call: the loaded wrapper's own
--- return rule, projected through the pinned E8010 return template, then
--- the host-to-DEAL projection of the admitted value (the language-null
--- sentinel and a declared array position's shared array carrier). The
--- projection recurses through declared array element positions, so a
--- nested array the host returned is a usable DEAL array at every level
--- (the chunk's own carrier mark), never a plain table the ordinary DEAL
--- boundaries would reject. A language-null position is not an array: the
--- one shared null sentinel is preserved before any recursion, so a null nested
--- array element stays the language null, never an empty array carrier a
--- host-boundary read would observe as a different value. The recursion
--- carries an identity-keyed memo through the complete return projection:
--- each raw host table maps to exactly one output carrier (registered
--- before its elements are projected, so a self-referential host table
--- terminates), and a repeated inner array the host returned becomes one
--- DEAL array observed through every alias (the reference-identity
--- contract), never two distinct carriers.
+-- The identity-preserving host-to-DEAL array projection of one declared
+-- array position (the host-driven callback adapter's parameter entry,
+-- __hostFnArg; the synchronous and asynchronous host completions delegate
+-- to the host-carrier bridge instead). The projection recurses through
+-- declared array element positions, so a nested array the host passed is a
+-- usable DEAL array at every level (the chunk's own carrier mark), never a
+-- plain table the ordinary DEAL boundaries would reject. A language-null
+-- position is not an array: the one shared null sentinel is preserved
+-- before any recursion, so a null nested array element stays the language
+-- null, never an empty array carrier a host-boundary read would observe as
+-- a different value. The recursion carries an identity-keyed memo through
+-- the complete projection: each raw host table maps to exactly one output
+-- carrier (registered before its elements are projected, so a
+-- self-referential host table terminates), and a repeated inner array the
+-- host passed becomes one DEAL array observed through every alias (the
+-- reference-identity contract), never two distinct carriers.
 --
 -- A plain host table is the declared T[] value only when it has the value
 -- mapping's 1-based contiguous storage: every key a positive integer and
@@ -9517,10 +9553,26 @@ local function __hostReturnCell(desc, v, origin, nothing)
       __carrierKind(v)), 0)
   end
   if checked == __rt.__NULL then return nil end
-  if string.sub(desc, 1, 1) == "[" or string.sub(desc, 1, 2) == "?[" then
-    return __hostToDealArray({}, desc, checked)
+  -- The host-to-DEAL projection of the admitted return value: the
+  -- host-carrier bridge's inbound direction subsumes the landed class and
+  -- array projections — a declared HOST-kind class becomes the dual-tagged
+  -- instance (top-level declared fields, the runtime class/identity marks,
+  -- and the chunk __c/__id tags), a declared T[] becomes the __a carrier
+  -- with its exact length and per-slot numeric marks, nested class fields
+  -- and arrays project recursively, a runtime function wrapper and an
+  -- already-DEAL value cross identically, the builtin Error instance maps
+  -- to the chunk __d carrier, and a declared table keeps its own identity
+  -- unless a class/function member needs re-representation (then it is a
+  -- memoized copy — the host object is never mutated). One memo per return
+  -- (the crossing memo the emitting site creates) makes two slots naming
+  -- one host instance one DEAL value and terminates a self-referential
+  -- host table.
+  local memo = __factories.__hostMemo
+  if memo == nil then
+    memo = {}
+    __factories.__hostMemo = memo
   end
-  return checked
+  return __factories.__hostCarrierIn(desc, checked, memo)
 end
 -- The DEAL function value call the host performs through the declared
 -- function bridge: the carrier's own body runs (its own return cell
@@ -9621,14 +9673,18 @@ local function __hostFnArg(desc, inner, cells, origin, v)
             return __dealFnValue(carrier, unpack(args, 1, n))
           end}
 end
--- The declared host-facing projection of one checked parameter: a
--- declared function position is bridged, a declared class position takes
--- the class carrier projection, and every other position takes the
--- carrier-complete numeric projection (__hostNumProject) — so a declared
--- array position's numeric-variant slots reach the raw host as the
--- declared numbers while the array table itself stays the one shared DEAL
--- carrier, and every non-array value stays the Lua value itself (the
--- shared Lua table in both directions). The crossing admits a
+-- The declared host-facing projection of one checked parameter: after the
+-- unchanged declared admission (__hostParamAdmit), a declared function
+-- position keeps the one projected function adapter (__hostFnArg) with its
+-- recorded parameter-entry cells, and every other declared position
+-- delegates to the host-carrier bridge's DEAL-to-host direction
+-- (__hostCarrierOut) — the declared descriptor's class identity and field
+-- map, array element descriptor, and untyped container walk decide the
+-- value's declared host representation. The bridge is total and memoized:
+-- the per-crossing memo (__factories.__hostMemo, created once per host
+-- call by the emitting site) makes two aliased arguments reach the host as
+-- one object, and the bridge never composes a failure — the declared cell
+-- below stays the only admission/failure authority. The crossing admits a
 -- language-null representation only at a declared null or nullable
 -- position (normalized to the deployed runtime's explicit null sentinel,
 -- so the loaded matcher admits it and the raw host observes the sentinel,
@@ -9636,10 +9692,7 @@ end
 -- at an incompatible descriptor; the __MISSING absence marker is not a
 -- language null: it takes the named missing-to-null mapping at a nullable
 -- position and the closed parameter cell at every other declared
--- position, never the marker's table shape. A declared function position
--- carries its recorded parameter-entry cells (the `cells` operand) to the
--- adapter the host then calls (__hostFnArg), so every host-invoked call
--- runs the DEAL function's own parameter entry.
+-- position, never the marker's table shape.
 local function __hostProjectArg(desc, inner, index, v, origin, cells)
   v = __factories.__hostParamAdmit(desc, index, v, origin)
   if v == __rt.__NULL then return v end
@@ -9647,14 +9700,17 @@ local function __hostProjectArg(desc, inner, index, v, origin, cells)
       or string.sub(inner, 1, 9) == "async(") then
     return __hostFnArg(desc, inner, cells, origin, v)
   end
-  if desc == "Error" or string.sub(desc, 1, 1) == "@" then
-    return __hostClassProject(desc, v)
+  -- The per-crossing memo: the emitting site creates one per host call and
+  -- threads every declared parameter position through it, so a value the
+  -- bridge re-represents once is the same host object at every alias. A
+  -- session that reaches this helper without a prepared memo still gets
+  -- one (the crossing stays memoized, never per argument value).
+  local memo = __factories.__hostMemo
+  if memo == nil then
+    memo = {}
+    __factories.__hostMemo = memo
   end
-  -- Every other declared position takes the numeric projection
-  -- (__hostNumProject): a declared array position's slots reach the raw
-  -- host as the declared numbers, and every non-array value crosses
-  -- unchanged.
-  return __factories.__hostNumProject(v)
+  return __factories.__hostCarrierOut(desc, v, memo)
 end
 --- The canonical DEAL error table of one host-boundary failure: the
 -- loaded runtime raises the DEALRuntimeError shape ({code, message,

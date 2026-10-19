@@ -3174,7 +3174,448 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
-    // 2c. The LuaJIT load under real luajit
+    // 2c. The synchronous host class crossings (ISSUE-0851)
+    // =========================================================================
+
+    /**
+     * The declared synchronous class positions of the carrier drive: a class
+     * parameter (declared and dynamically invoked), a nested class field and
+     * an optional array/nullable field, a class return, a class-element
+     * array return, a class-field array return, and the host return
+     * negatives (a non-class value, a foreign identity, a non-class array
+     * element).
+     */
+    private static final String SYNC_CLASS_DECLARATION_SOURCE = """
+        export class Endpoint {
+          path: string;
+        }
+
+        export class ServerConfig {
+          port: int;
+          endpoint: Endpoint;
+          tags?: string[];
+          note?: string | null;
+        }
+
+        export class Farm {
+          name: string;
+          servers: ServerConfig[];
+          primary: Endpoint;
+        }
+
+        export class Bundle {
+          label: string;
+          action: (x: int) => int;
+        }
+
+        export function describe(s: ServerConfig): string;
+        export function describePair(a: ServerConfig, b: ServerConfig): string;
+        export function make(): ServerConfig;
+        export function makeAll(): ServerConfig[];
+        export function makeFarm(): Farm;
+        export function describeBundle(b: Bundle, c: Bundle): string;
+        export function inspectHost(): string;
+        export function badClass(): ServerConfig;
+        export function foreignClass(): ServerConfig;
+        export function badArray(): ServerConfig[];
+        """;
+
+    /**
+     * The DEAL side of the synchronous class crossings: a declared class
+     * parameter (populated, and one omitting both optional fields so the
+     * host observes the absent state at the parameter), an indirect and a
+     * dynamic call with two aliased class arguments, a class return read at
+     * its top-level declared fields (the nested class field, the absent
+     * optional and the present null included), a class-element array return
+     * and a class's array field whose two slots name one host instance, the
+     * identity checks of the two class references, and the host's own
+     * unmutated-object report.
+     */
+    private static final String SYNC_CLASS_APP_SOURCE = """
+        import * as host from "host/probe";
+
+        function aliasText(same: boolean): string {
+          if (same) {
+            return "same";
+          }
+          return "different";
+        }
+
+        function check(condition: boolean, message: string): string {
+          if (!condition) {
+            throw { code: "TEST_FAIL", message: message };
+          }
+          return "ok";
+        }
+
+        function callPair(
+            f: (a: host.ServerConfig, b: host.ServerConfig) => string,
+            c: host.ServerConfig): string {
+          return f(c, c);
+        }
+
+        function bump(x: int): int {
+          let y: int = x + 1;
+          return y;
+        }
+
+        export function run(): string {
+          let cfg: host.ServerConfig = {
+            port: 9090,
+            endpoint: { path: "/api" },
+            tags: ["dev", "prod"],
+            note: null,
+          };
+          let declared: string = host.describe(cfg);
+          // Both optional fields omitted: the host observes the absent
+          // top-level state at the declared class parameter (no fabricated
+          // present null).
+          let sparse: host.ServerConfig = {
+            port: 4040,
+            endpoint: { path: "/opt" },
+          };
+          let sparseText: string = host.describe(sparse);
+          let pair: (a: host.ServerConfig, b: host.ServerConfig) => string =
+            host.describePair;
+          let indirect: string = pair(cfg, cfg);
+          let dynamic: string = callPair(host.describePair, cfg);
+
+          let made: host.ServerConfig = host.make();
+          let tagsAbsent: boolean = made.tags === null;
+          let noteNull: boolean = made.note === null;
+          let madeCheck: string = check(
+            made.port === 7
+              && made.endpoint.path === "/made"
+              && tagsAbsent
+              && noteNull,
+            "host class return fields");
+
+          let all: host.ServerConfig[] = host.makeAll();
+          let allCheck: string = check(
+            all.length === 2
+              && all[0] === all[1]
+              && all[0].port === 11
+              && all[0].endpoint.path === "/one",
+            "class-element array return");
+
+          let farm: host.Farm = host.makeFarm();
+          let farmCheck: string = check(
+            farm.name === "farm"
+              && farm.servers.length === 2
+              && farm.servers[0] === farm.servers[1]
+              && farm.servers[0].port === 21
+              && farm.servers[0].endpoint.path === "/a"
+              && farm.primary.path === "/primary",
+            "class-field array return");
+
+          // A host class's function-typed field carrying a DEAL function
+          // value: the class value needs a host-facing copy, so two aliased
+          // arguments prove the per-call crossing memo (one copy, one host
+          // object) and the function value arrives as the documented
+          // wrapper the host invokes.
+          let bundle: host.Bundle = { label: "b", action: bump };
+          let bundleText: string = host.describeBundle(bundle, bundle);
+
+          let inspect: string = host.inspectHost();
+
+          return declared + "\\n"
+            + sparseText + "\\n"
+            + "indirect=" + indirect + "\\n"
+            + "dynamic=" + dynamic + "\\n"
+            + "made=" + madeCheck + "\\n"
+            + "all=" + aliasText(all[0] === all[1]) + ":" + allCheck + "\\n"
+            + "farm=" + aliasText(farm.servers[0] === farm.servers[1]) + ":"
+            + farmCheck + "\\n" + bundleText + "\\n" + inspect;
+        }
+
+        export function badClass(): string {
+          let made: host.ServerConfig = host.badClass();
+          return "unreachable";
+        }
+
+        export function foreignClass(): string {
+          let made: host.ServerConfig = host.foreignClass();
+          return "unreachable";
+        }
+
+        export function badArray(): string {
+          let made: host.ServerConfig[] = host.badArray();
+          return "unreachable";
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host: every class value is the documented LuaJIT
+     * mapping (a runtime class instance: __kind/__classname with top-level
+     * declared fields), each declared class parameter is read at those
+     * top-level fields (nested class, array, absent optional, present
+     * null), and the returns name one host instance twice (the alias and
+     * the unmutated-object report).
+     */
+    private static final String SYNC_CLASS_LUA = """
+        local rt = require("deal.runtime")
+        local K = __dealCarrierKeys
+
+        local SC = "@$external/host/probe/ServerConfig"
+        local EP = "@$external/host/probe/Endpoint"
+        local FM = "@$external/host/probe/Farm"
+        local BUNDLE = "@$external/host/probe/Bundle"
+
+        local lastMade = nil
+        local lastMadeEndpoint = nil
+        local lastAll = nil
+        local lastFarm = nil
+        local lastFarmServers = nil
+
+        local function endpoint(path)
+          return { [K.kind] = "class", [K.classname] = EP, path = path }
+        end
+
+        local function config(port, path, tags, note)
+          local c = { [K.kind] = "class", [K.classname] = SC,
+                      port = port, endpoint = endpoint(path) }
+          if tags ~= nil then c.tags = tags end
+          if note ~= nil then c.note = note end
+          return c
+        end
+
+        local function field(value, name)
+          local v = value[name]
+          if v == rt.__NULL then return "null" end
+          return v
+        end
+
+        local M = {}
+
+        M.Endpoint = { [K.kind] = "class", [K.classname] = EP }
+        M.Endpoint_defaults = { path = "/" }
+        M.ServerConfig = { [K.kind] = "class", [K.classname] = SC }
+        M.ServerConfig_defaults = {
+          port = 8080,
+          endpoint = rt.__MISSING,
+          tags = rt.__MISSING,
+          note = rt.__MISSING,
+        }
+        M.Farm = { [K.kind] = "class", [K.classname] = FM }
+        M.Farm_defaults = { name = "", servers = rt.__MISSING,
+                            primary = rt.__MISSING }
+
+        function M.describe(s)
+          local tags = field(s, "tags")
+          local tagText = "absent"
+          if tags == "null" then
+            tagText = "null"
+          elseif type(tags) == "table" then
+            tagText = tostring(#tags) .. ":" .. tostring(tags[1])
+          end
+          return "p=" .. tostring(s.port)
+            .. ":ep=" .. tostring(s.endpoint.path)
+            .. ":tags=" .. tagText
+            .. ":note=" .. tostring(field(s, "note"))
+        end
+
+        function M.describePair(a, b)
+          return "pair=" .. tostring(rawequal(a, b))
+        end
+
+        M.Bundle = { [K.kind] = "class", [K.classname] = BUNDLE }
+        M.Bundle_defaults = { label = "", action = rt.__MISSING }
+
+        function M.describeBundle(b, c)
+          local action = b.action
+          local result = "none"
+          if type(action) == "table"
+              and action[K.kind] == "function" then
+            result = tostring(action.f(41))
+          end
+          return "bundle=" .. tostring(b.label)
+            .. ":alias=" .. tostring(rawequal(b, c))
+            .. ":action=" .. result
+        end
+
+        function M.make()
+          lastMade = config(7, "/made", nil, rt.__NULL)
+          lastMadeEndpoint = lastMade.endpoint
+          return lastMade
+        end
+
+        function M.makeAll()
+          local one = config(11, "/one", { "a" }, rt.__NULL)
+          lastAll = { one, one }
+          return lastAll
+        end
+
+        function M.makeFarm()
+          local a = config(21, "/a", { "x", "y" }, rt.__NULL)
+          lastFarmServers = { a, a }
+          lastFarm = { [K.kind] = "class", [K.classname] = FM,
+                       name = "farm", servers = lastFarmServers,
+                       primary = endpoint("/primary") }
+          return lastFarm
+        end
+
+        -- The host's own objects after the crossings: no chunk carrier mark
+        -- was written onto them and the host's own aliases are untouched.
+        function M.inspectHost()
+          local marks = false
+          if lastMade[K.c] ~= nil or lastMade[K.id] ~= nil
+              or lastMade[K.f] ~= nil or lastMade[K.p] ~= nil then
+            marks = true
+          end
+          if lastFarm[K.c] ~= nil or lastFarm[K.f] ~= nil
+              or lastFarm[K.p] ~= nil then
+            marks = true
+          end
+          return "inspect=made:" .. tostring(lastMade[K.kind]) .. ":"
+            .. tostring(lastMade.port) .. ":" .. lastMade.endpoint.path
+            .. ":ep=" .. tostring(rawequal(lastMade.endpoint, lastMadeEndpoint))
+            .. ":all=" .. tostring(rawequal(lastAll[1], lastAll[2]))
+            .. ":farm=" .. tostring(lastFarm[K.kind]) .. ":"
+            .. tostring(lastFarm.name)
+            .. ":servers=" .. tostring(rawequal(lastFarmServers[1],
+              lastFarmServers[2]))
+            .. ":marks=" .. tostring(marks)
+        end
+
+        function M.badClass()
+          return "junk"
+        end
+
+        function M.foreignClass()
+          return endpoint("/foreign")
+        end
+
+        function M.badArray()
+          return { { port = 1 } }
+        end
+
+        return M
+        """;
+
+    /** The exact transcript the synchronous class crossings must publish. */
+    private static final String SYNC_CLASS_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "p=9090:ep=/api:tags=2:dev:note=null",
+        "p=4040:ep=/opt:tags=absent:note=nil",
+        "indirect=pair=true",
+        "dynamic=pair=true",
+        "made=ok",
+        "all=same:ok",
+        "farm=same:ok",
+        "bundle=b:alias=true:action=42",
+        "inspect=made:class:7:/made:ep=true:all=true:farm=class:farm:servers=true:marks=false",
+        "badClass=E8010|return value 1 type mismatch: expected class instance",
+        "foreignClass=E8010|return value 1 type mismatch: expected instance of "
+            + "@$external/host/probe/ServerConfig, got "
+            + "@$external/host/probe/Endpoint",
+        "badArray=E8010|return value 1 type mismatch: array element 1 type mismatch",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * The synchronous host class crossings on the published LuaJIT artifact
+     * (ISSUE-0851): a populated and a sparse declared class parameter (both
+     * optional fields omitted, so the host observes the absent state) and an
+     * indirect and a dynamic call with two aliased class arguments hand the
+     * host the declared top-level fields; a class return, a class-element
+     * array return and a class's array field arrive on the DEAL side as the
+     * declared values (nested class field, array field, absent optional,
+     * present null, exact length/elements, and two slots naming one host
+     * instance as one DEAL value) while the host's own object stays
+     * unmutated; and the host return negatives keep their exact landed
+     * tuples.
+     */
+    private static void testLuaHostClassCrossings() throws Exception {
+        System.out.println("-- the synchronous host class crossings: the published"
+            + " LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-class-lua");
+        try {
+            Path out = publishLuaHost(root, "probe", SYNC_CLASS_DECLARATION_SOURCE,
+                SYNC_CLASS_APP_SOURCE, SYNC_CLASS_LUA, "host-class-crossing");
+            if (out == null) {
+                return;
+            }
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                local function result(name, entry)
+                  if entry == nil then fail("missing " .. name .. " export") end
+                  local ok, value = pcall(entry.f)
+                  if ok then return tostring(value) end
+                  if type(value) ~= "table" then
+                    return "raw:" .. tostring(value)
+                  end
+                  return tostring(value.code) .. "|" .. tostring(value.m)
+                end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                print("TRANSCRIPT-BEGIN")
+                print(result("run", surface["run"]))
+                print("badClass=" .. result("badClass", surface["badClass"]))
+                print("foreignClass="
+                  .. result("foreignClass", surface["foreignClass"]))
+                print("badArray=" .. result("badArray", surface["badArray"]))
+                print("TRANSCRIPT-END")
+                """);
+            // The emitted sites (structure): the declared-position
+            // projection keeps its one operand shape and delegates every
+            // non-function position to the bridge's outbound direction; the
+            // return cell and the wrapper projection delegate to the
+            // inbound direction; and no synchronous return site reaches the
+            // retired chunk class carrier helper (the FFI construction keeps
+            // its own call).
+            String lua = Files.readString(out.resolve("app.lua"),
+                StandardCharsets.UTF_8);
+            int projectArgAt = lua.indexOf(
+                "local function __hostProjectArg(desc, inner, index, v, origin, cells)");
+            check(projectArgAt > 0,
+                "the declared-position projection keeps its emitted operand shape");
+            check(projectArgAt > 0
+                    && lua.substring(projectArgAt, lua.indexOf("\nend", projectArgAt))
+                        .contains("__factories.__hostCarrierOut(desc, v, memo)"),
+                "the declared-position projection delegates every non-function"
+                    + " position to the bridge's outbound direction");
+            int returnCellAt = lua.indexOf(
+                "local function __hostReturnCell(desc, v, origin, nothing)");
+            check(returnCellAt > 0
+                    && lua.substring(returnCellAt, lua.indexOf("\nend", returnCellAt))
+                        .contains("__factories.__hostCarrierIn(desc, checked, memo)"),
+                "the host return cell delegates to the bridge's inbound direction");
+            int dealProjectAt = lua.indexOf(
+                "local function __hostDealProject(desc, v, origin)");
+            check(dealProjectAt > 0
+                    && lua.substring(dealProjectAt, lua.indexOf("\nend", dealProjectAt))
+                        .contains("__factories.__hostCarrierIn(desc, v, {})"),
+                "the wrapper projection delegates to the bridge's inbound"
+                    + " direction");
+            checkEq(1, countOccurrences(lua, "__hostDealProject("),
+                "no synchronous crossing composes the retired chunk class"
+                    + " carrier (only the helper declaration remains)");
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0
+                    && run.stdout().equals(SYNC_CLASS_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "a synchronous class parameter, a class return, a"
+                    + " class-element array return and a class's array field"
+                    + " carry the declared values in both directions (aliases,"
+                    + " absent/present-null and the unmutated host object"
+                    + " preserved) and the host return negatives keep their"
+                    + " exact tuples: exit=" + run.exitCode() + " stdout="
+                    + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
+    // 2d. The LuaJIT load under real luajit
     // =========================================================================
 
     private static void testLuaExecution(Baseline fixture, Baseline missing,
@@ -4323,6 +4764,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostArrayCrossings();
             testLuaHostArrayCrossingFailures();
             testLuaHostClassConstructionDefaults();
+            testLuaHostClassCrossings();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
