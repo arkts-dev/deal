@@ -9711,9 +9711,12 @@ end
      * producer diagnostic naming the signature, never a DEAL failure and
      * never a body invocation without its declared parameter entry. The
      * array/table numerics stay the landed in-place projection
-     * ({@code __hostNumProject}); class values use the emitted
+     * ({@code __hostNumProject}) and a class value's own fields take that
+     * same walk, nested class values included, so a decoded numeric slot
+     * reaches the host as the declared number while the instance keeps its
+     * identity; class values use the emitted
      * {@code __hostClassFields}/{@code __hostClassKinds} metadata; the
-     * DEAL-side value is never mutated beyond the landed in-place numeric
+     * DEAL-side value is never mutated beyond that in-place numeric
      * projection and a host-origin object is copied, never mutated. The
      * pair is emitted only in the host-binding prelude
      * (after the metadata and the helpers it composes) and never reaches a
@@ -9819,6 +9822,30 @@ __factories.__hostCarrierOut = function(desc, v, memo)
     end
     return false
   end
+  -- The landed in-place numeric projection of a class value's own fields:
+  -- a declared field holding a decoded __jn slot (directly or inside its
+  -- array/table carrier) reaches the host as the declared number while the
+  -- instance keeps its identity, its tags, and its fields. A nested class
+  -- value takes the same walk. The walk keeps its own seen set: the
+  -- crossing memo maps a source object to its target representation and
+  -- must never record a walk marker.
+  local numeric
+  numeric = function(instance, seen)
+    if type(instance) ~= "table" then return end
+    if seen[instance] then return end
+    seen[instance] = true
+    for k, val in pairs(instance) do
+      if type(k) == "string" then
+        if type(val) == "table"
+            and val[__dealCarrierKeys.kind] == "class" then
+          numeric(val, seen)
+        else
+          local projected = __factories.__hostNumProject(val)
+          if projected ~= val then instance[k] = projected end
+        end
+      end
+    end
+  end
   if v[__dealCarrierKeys.d] then
     local out = {[__dealCarrierKeys.kind] = "class",
       [__dealCarrierKeys.classname] = "Error", code = v.code, message = v.m}
@@ -9850,12 +9877,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
     local fields = fieldsOf(identity)
     if not v[__dealCarrierKeys.c] then
       memo[v] = v
-      for k, val in pairs(v) do
-        if type(k) == "string" then
-          local projected = __factories.__hostNumProject(val, memo)
-          if projected ~= val then v[k] = projected end
-        end
-      end
+      numeric(v, {})
       return v
     end
     local recreate = false
@@ -9867,6 +9889,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
     end
     if not recreate then
       memo[v] = v
+      numeric(v, {})
       return v
     end
     local out = {[__dealCarrierKeys.kind] = "class",
@@ -9990,10 +10013,13 @@ __factories.__hostCarrierOut = function(desc, v, memo)
     end
     memo[v] = out
     local function put(key, val)
-      if val == nil then return end
-      out[key] = __factories.__hostCarrierOut(nil, val, memo)
+      -- The recorded presence is the authority, never the stored value: a
+      -- present-null member is an ordered key whose copy slot stays nil,
+      -- so the key is registered before the nil test.
       out[__dealCarrierKeys.keys][key] = true
       out[__dealCarrierKeys.order][#out[__dealCarrierKeys.order] + 1] = key
+      if val == nil then return end
+      out[key] = __factories.__hostCarrierOut(nil, val, memo)
       if type(val) == "table" and val[__dealCarrierKeys.jn]
           and val.k == "number" then
         if marks == nil then
@@ -10038,9 +10064,33 @@ __factories.__hostCarrierOut = function(desc, v, memo)
   for k, val in pairs(v) do
     if type(k) == "string" then
       out[k] = __factories.__hostCarrierOut(nil, val, memo)
-    else
+    elseif k ~= __dealCarrierKeys.keys and k ~= __dealCarrierKeys.order
+        and k ~= __dealCarrierKeys.nK then
       out[k] = val
     end
+  end
+  -- A marker-created table's presence/order and per-slot numeric marks are
+  -- its own mutable state (__orderAdd, __orderRemove, and __numKey write
+  -- them): the copy carries fresh tables holding the same entries — the
+  -- present-null keys included, since the presence map is the authority —
+  -- so a later DEAL-side write to the copy never reaches the source.
+  local sourceKeys = v[__dealCarrierKeys.keys]
+  if type(sourceKeys) == "table" then
+    local keys = {}
+    for k, flag in pairs(sourceKeys) do keys[k] = flag end
+    out[__dealCarrierKeys.keys] = keys
+  end
+  local sourceOrder = v[__dealCarrierKeys.order]
+  if type(sourceOrder) == "table" then
+    local order = {}
+    for i = 1, #sourceOrder do order[i] = sourceOrder[i] end
+    out[__dealCarrierKeys.order] = order
+  end
+  local sourceMarks = v[__dealCarrierKeys.nK]
+  if type(sourceMarks) == "table" then
+    local marks = {}
+    for k, flag in pairs(sourceMarks) do marks[k] = flag end
+    out[__dealCarrierKeys.nK] = marks
   end
   return out
 end
@@ -10196,9 +10246,31 @@ __factories.__hostCarrierIn = function(desc, v, memo)
   for k, val in pairs(v) do
     if type(k) == "string" then
       out[k] = __factories.__hostCarrierIn(nil, val, memo)
-    else
+    elseif k ~= __dealCarrierKeys.keys and k ~= __dealCarrierKeys.order
+        and k ~= __dealCarrierKeys.nK then
       out[k] = val
     end
+  end
+  -- The same fresh presence/order and per-slot numeric maps as the
+  -- outbound copy: a host table the DEAL side has written to carries its
+  -- own mutable marks, and the copied table must not share them.
+  local sourceKeys = v[__dealCarrierKeys.keys]
+  if type(sourceKeys) == "table" then
+    local keys = {}
+    for k, flag in pairs(sourceKeys) do keys[k] = flag end
+    out[__dealCarrierKeys.keys] = keys
+  end
+  local sourceOrder = v[__dealCarrierKeys.order]
+  if type(sourceOrder) == "table" then
+    local order = {}
+    for i = 1, #sourceOrder do order[i] = sourceOrder[i] end
+    out[__dealCarrierKeys.order] = order
+  end
+  local sourceMarks = v[__dealCarrierKeys.nK]
+  if type(sourceMarks) == "table" then
+    local marks = {}
+    for k, flag in pairs(sourceMarks) do marks[k] = flag end
+    out[__dealCarrierKeys.nK] = marks
   end
   return out
 end

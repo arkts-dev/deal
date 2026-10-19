@@ -1412,6 +1412,81 @@ public class HostModuleLoadEmissionTest {
     local aliasTableOut = __factories.__hostCarrierOut(nil, {first = point, second = point}, {})
     say("out.alias.same", aliasTableOut.first == aliasTableOut.second)
 
+    -- Review cycle 1, finding 1: a class value's own fields take the landed
+    -- in-place numeric projection — directly, inside a field's array/table
+    -- carrier, and through a nested class value — while the instance keeps
+    -- its identity, its tags, and its fields.
+    local dualNumeric = {[K.kind] = "class",
+      [K.classname] = "@$external/host/other/Unknown",
+      [K.c] = true, [K.id] = "@$external/host/other/Unknown",
+      port = 1,
+      tags = {[K.a] = true, [K.n] = 2, "t",
+        {[K.jn] = true, k = "number", d = 7.5}},
+      root = {[K.t] = true, [K.keys] = {id = true}, [K.order] = {"id"},
+        id = {[K.jn] = true, k = "number", d = 2.5}}}
+    say("out.dual.numeric-identity",
+      __factories.__hostCarrierOut(nil, dualNumeric, {}) == dualNumeric)
+    say("out.dual.numeric-array-element", dualNumeric.tags[2])
+    say("out.dual.numeric-array-mark", dualNumeric.tags[K.nK][2] == true)
+    say("out.dual.numeric-table-member", dualNumeric.root.id)
+    local dualNested = {[K.kind] = "class",
+      [K.classname] = "@$external/host/other/Unknown",
+      [K.c] = true, [K.id] = "@$external/host/other/Unknown",
+      inner = {[K.kind] = "class",
+        [K.classname] = "@$external/host/other/Unknown",
+        [K.c] = true, [K.id] = "@$external/host/other/Unknown",
+        xs = {[K.a] = true, [K.n] = 1,
+          {[K.jn] = true, k = "number", d = 4.5}}}}
+    say("out.dual.nested-identity",
+      __factories.__hostCarrierOut(nil, dualNested, {}) == dualNested)
+    say("out.dual.nested-numeric", dualNested.inner.xs[1])
+
+    -- Review cycle 1, finding 3: the crossing memo maps a source object to
+    -- its target representation; the numeric walk keeps its own seen set,
+    -- so an aliased container is never replaced by a walk marker.
+    local aliasNumericArray = {[K.a] = true, [K.n] = 1,
+      {[K.jn] = true, k = "number", d = 3.5}}
+    local hostOriginAlias = {[K.kind] = "class",
+      [K.classname] = "@$external/host/other/Unknown", xs = aliasNumericArray}
+    local aliasCarrierTable = {[K.t] = true,
+      [K.keys] = {h = true, b = true, k = true},
+      [K.order] = {"h", "b", "k"},
+      h = hostOriginAlias, b = aliasNumericArray, k = endpointCarrier}
+    local aliasCarrierOut = __factories.__hostCarrierOut("table",
+      aliasCarrierTable, {})
+    say("out.memo.alias-kind", type(aliasCarrierOut.b))
+    say("out.memo.alias-element", aliasCarrierOut.b[1])
+    say("out.memo.alias-shared", aliasCarrierOut.b == aliasCarrierOut.h.xs)
+
+    -- Review cycle 1, finding 2: a copied table keeps its recorded
+    -- presence — a present-null member is an ordered key with a nil slot,
+    -- never a dropped key.
+    local nullMemberTable = {[K.t] = true,
+      [K.keys] = {a = true, b = true}, [K.order] = {"a", "b"},
+      a = endpointCarrier}
+    local nullMemberOut = __factories.__hostCarrierOut("table", nullMemberTable, {})
+    say("out.table.copy-null-present", nullMemberOut[K.keys].b == true)
+    say("out.table.copy-null-order", #nullMemberOut[K.order])
+    say("out.table.copy-null-order-key", nullMemberOut[K.order][2])
+    say("out.table.copy-null-absent-value", nullMemberOut.b == nil)
+
+    -- Review cycle 1, finding 4: a marker-created table's presence/order
+    -- and numeric maps are its own mutable state, so the fallback copy
+    -- carries fresh ones and the source never sees the copy's writes.
+    local markerTable = {[K.keys] = {a = true, b = true},
+      [K.order] = {"a", "b"}, [K.nK] = {a = true}, a = endpointCarrier}
+    local markerOut = __factories.__hostCarrierOut(nil, markerTable, {})
+    say("out.marker.copy", markerOut ~= markerTable)
+    say("out.marker.shares-keys", markerOut[K.keys] == markerTable[K.keys])
+    say("out.marker.shares-order", markerOut[K.order] == markerTable[K.order])
+    say("out.marker.shares-marks", markerOut[K.nK] == markerTable[K.nK])
+    say("out.marker.copied-keys",
+      markerOut[K.keys].a == true and markerOut[K.keys].b == true)
+    say("out.marker.copied-order", #markerOut[K.order])
+    markerOut[K.order][2] = "Z"
+    say("out.marker.source-order", markerTable[K.order][2])
+    say("out.marker.member-kind", markerOut.a[K.kind])
+
     -- ---- host -> DEAL ----
     local hostEndpoint = {[K.kind] = "class",
       [K.classname] = "@$external/host/carrier/Endpoint", path = "/e"}
@@ -1498,6 +1573,20 @@ public class HostModuleLoadEmissionTest {
     local aliasArrayIn = __factories.__hostCarrierIn(
       "[@$external/host/carrier/Endpoint]", {hostEndpoint, hostEndpoint}, {})
     say("in.alias.array-same", aliasArrayIn[1] == aliasArrayIn[2])
+    -- Review cycle 1, finding 4: the inbound fallback copy carries fresh
+    -- presence/order and numeric maps too, so a DEAL-side write to the copy
+    -- never reaches the host table.
+    local hostMarker = {member = hostEndpoint, [K.keys] = {member = true},
+      [K.order] = {"member"}, [K.nK] = {}}
+    local hostMarkerIn = __factories.__hostCarrierIn("table", hostMarker, {})
+    say("in.marker.copy", hostMarkerIn ~= hostMarker)
+    say("in.marker.shares-keys", hostMarkerIn[K.keys] == hostMarker[K.keys])
+    say("in.marker.shares-order", hostMarkerIn[K.order] == hostMarker[K.order])
+    say("in.marker.shares-marks", hostMarkerIn[K.nK] == hostMarker[K.nK])
+    say("in.marker.member-chunk-tag", hostMarkerIn.member[K.c])
+    say("in.marker.source-not-mutated", hostMarker.member == hostEndpoint)
+    hostMarkerIn[K.order][1] = "Z"
+    say("in.marker.source-order", hostMarker[K.order][1])
     local nullablePointIn = __factories.__hostCarrierIn("?@src/util.deal/Point", hostPoint, {})
     say("in.nullable-class.chunk-tag", nullablePointIn[K.c])
 
@@ -1606,6 +1695,27 @@ public class HostModuleLoadEmissionTest {
         out.plain.identity|true
         out.plain.numeric|4.5
         out.alias.same|true
+        out.dual.numeric-identity|true
+        out.dual.numeric-array-element|7.5
+        out.dual.numeric-array-mark|true
+        out.dual.numeric-table-member|2.5
+        out.dual.nested-identity|true
+        out.dual.nested-numeric|4.5
+        out.memo.alias-kind|table
+        out.memo.alias-element|3.5
+        out.memo.alias-shared|true
+        out.table.copy-null-present|true
+        out.table.copy-null-order|2
+        out.table.copy-null-order-key|b
+        out.table.copy-null-absent-value|true
+        out.marker.copy|true
+        out.marker.shares-keys|false
+        out.marker.shares-order|false
+        out.marker.shares-marks|false
+        out.marker.copied-keys|true
+        out.marker.copied-order|2
+        out.marker.source-order|b
+        out.marker.member-kind|class
         in.cfg.chunk-tag|true
         in.cfg.kind-tag|class
         in.cfg.classname|@$external/host/carrier/ServerConfig
@@ -1648,6 +1758,13 @@ public class HostModuleLoadEmissionTest {
         in.table.wrapper-identity|true
         in.alias.same|true
         in.alias.array-same|true
+        in.marker.copy|true
+        in.marker.shares-keys|false
+        in.marker.shares-order|false
+        in.marker.shares-marks|false
+        in.marker.member-chunk-tag|true
+        in.marker.source-not-mutated|true
+        in.marker.source-order|member
         in.nullable-class.chunk-tag|true
         out.idempotent|true
         in.idempotent|true
