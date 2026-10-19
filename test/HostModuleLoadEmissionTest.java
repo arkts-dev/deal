@@ -1250,7 +1250,8 @@ public class HostModuleLoadEmissionTest {
         }
         String lua = Files.readString(artifact, StandardCharsets.UTF_8);
         for (String name : List.of("__hostClassFields", "__hostClassKinds",
-                "__hostFnShapes", "__hostCarrierOut", "__hostCarrierIn")) {
+                "__hostFnShapes", "__hostCarrierOut", "__hostCarrierIn",
+                "__hostClassDefaultsIn")) {
             check(!lua.contains(name), "the host-free chunk carries no "
                 + name);
         }
@@ -2831,6 +2832,348 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
+    // 2b. The host-class construction defaults (ISSUE-0855)
+    // =========================================================================
+
+    /**
+     * The declared host classes whose loaded {@code <C>_defaults} entries
+     * carry the construction-default shapes: an optional array, a nested
+     * class, a present null, an absent (host {@code __MISSING}) optional, a
+     * function wrapper, and a class whose every field is optional (the one
+     * shape that reaches the runtime's own defaults-shape failure).
+     */
+    private static final String CLASS_DEFAULTS_DECLARATION_SOURCE = """
+        export class Endpoint {
+          path: string;
+        }
+
+        export class ServerConfig {
+          port: int;
+          endpoint: Endpoint;
+          tags?: string[];
+          note?: string | null;
+          memo?: string;
+          fallback?: Endpoint;
+        }
+
+        export class Bundle {
+          label: string;
+          action?: (x: int) => int;
+        }
+
+        export class OptionalOnly {
+          flag?: string;
+        }
+
+        export function inspect(): string;
+
+        export function tagsCarrier(s: ServerConfig): string;
+        """;
+
+    /**
+     * The DEAL side of the host-class construction defaults: the defaulted
+     * optional array is the DEAL array value (exact length and elements; the
+     * host observes the constructed instance's own {@code __a} carrier mark,
+     * logical length, and per-slot marks map through the declared parameter),
+     * a provided value overrides the default, the nested class default is the
+     * DEAL representation of its declared identity (the parameter entry of
+     * {@code pathOf} checks that identity), a present null default stays
+     * present, an absent default is not fabricated into a present null, the
+     * function default is the documented wrapper and is invocable, and a
+     * second construction after mutating the first instance's array reads
+     * the pristine default. The host's own defaults table is asserted
+     * unmutated through the declared {@code inspect} crossing.
+     */
+    private static final String CLASS_DEFAULTS_APP_SOURCE = """
+        import * as cfg from "host/defaults_probe";
+
+        function pathOf(e: cfg.Endpoint): string {
+          return e.path;
+        }
+
+        export function run(): string {
+          let a: cfg.ServerConfig = { port: 1, endpoint: { path: "/x" } };
+          let tags: string[] | null = a.tags;
+          if (tags !== null) {
+            if (tags.length !== 2) {
+              throw { code: "TEST_FAIL", message: "default tags length" };
+            }
+            if (tags[0] !== "a") {
+              throw { code: "TEST_FAIL", message: "default tags first" };
+            }
+            if (tags[1] !== "b") {
+              throw { code: "TEST_FAIL", message: "default tags second" };
+            }
+          } else {
+            throw { code: "TEST_FAIL", message: "default tags absent" };
+          }
+          let carrier: string = cfg.tagsCarrier(a);
+          if (carrier !== "true:2:table:0:a:b") {
+            throw { code: "TEST_FAIL", message: "default tags carrier: " + carrier };
+          }
+          if (tags !== null) {
+            tags[0] = "mutated";
+          }
+          if (!has(a.note)) {
+            throw { code: "TEST_FAIL", message: "present null default lost" };
+          }
+          if (a.note !== null) {
+            throw { code: "TEST_FAIL", message: "present null default value" };
+          }
+          if (has(a.memo)) {
+            throw { code: "TEST_FAIL", message: "absent default fabricated" };
+          }
+          if (a.memo !== null) {
+            throw { code: "TEST_FAIL", message: "absent default read" };
+          }
+          let fallback: cfg.Endpoint | null = a.fallback;
+          if (fallback !== null) {
+            if (pathOf(fallback) !== "/fb") {
+              throw { code: "TEST_FAIL", message: "nested class default value" };
+            }
+          } else {
+            throw { code: "TEST_FAIL", message: "nested class default lost" };
+          }
+          let b: cfg.ServerConfig = { port: 2, endpoint: { path: "/y" }, tags: ["z"] };
+          let bTags: string[] | null = b.tags;
+          if (bTags !== null) {
+            if (bTags.length !== 1) {
+              throw { code: "TEST_FAIL", message: "provided tags length" };
+            }
+            if (bTags[0] !== "z") {
+              throw { code: "TEST_FAIL", message: "provided tags element" };
+            }
+          } else {
+            throw { code: "TEST_FAIL", message: "provided tags lost" };
+          }
+          let c: cfg.ServerConfig = { port: 3, endpoint: { path: "/z" } };
+          let cTags: string[] | null = c.tags;
+          if (cTags !== null) {
+            if (cTags.length !== 2) {
+              throw { code: "TEST_FAIL", message: "second default tags length" };
+            }
+            if (cTags[0] !== "a") {
+              throw { code: "TEST_FAIL", message: "second default tags first" };
+            }
+            if (cTags[1] !== "b") {
+              throw { code: "TEST_FAIL", message: "second default tags second" };
+            }
+          } else {
+            throw { code: "TEST_FAIL", message: "second default tags lost" };
+          }
+          let bundle: cfg.Bundle = { label: "b" };
+          let action: ((x: int) => int) | null = bundle.action;
+          if (action !== null) {
+            let r: int = action(41);
+            if (r !== 42) {
+              throw { code: "TEST_FAIL", message: "function default result" };
+            }
+          } else {
+            throw { code: "TEST_FAIL", message: "function default lost" };
+          }
+          let state: string = cfg.inspect();
+          if (state !== "a:b:nil:nil:class:/default:true:true:7080:function:42") {
+            throw { code: "TEST_FAIL", message: "host defaults mutated: " + state };
+          }
+          return "DEFAULTS-OK";
+        }
+
+        export function badDefaults(): string {
+          let e: cfg.OptionalOnly = {};
+          return "constructed";
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed host module: its {@code ServerConfig_defaults} carries
+     * the optional {@code tags} array, the nested {@code endpoint} and
+     * {@code fallback} class instances, the present null {@code note}, and
+     * the host's {@code __MISSING} {@code memo}; {@code Bundle_defaults}
+     * carries the documented function wrapper. {@code inspect} reads the
+     * module's own defaults objects after every construction, so an
+     * in-place projection shows up as a changed element, an added carrier
+     * mark, a converted class object, or a replaced sentinel.
+     */
+    private static final String CLASS_DEFAULTS_LUA = """
+        local rt = require("deal.runtime")
+        local K = __dealCarrierKeys
+        local defaults = {
+          port = 7080,
+          endpoint = { [K.kind] = "class",
+                       [K.classname] = "@$external/host/defaults_probe/Endpoint",
+                       path = "/default" },
+          tags = { "a", "b" },
+          note = rt.__NULL,
+          memo = rt.__MISSING,
+          fallback = { [K.kind] = "class",
+                       [K.classname] = "@$external/host/defaults_probe/Endpoint",
+                       path = "/fb" },
+        }
+        local bundleDefaults = {
+          label = "bundle",
+          action = { [K.kind] = "function", sig = "(int)->int",
+                     f = function(x) return x + 1 end },
+        }
+        return {
+          Endpoint = { [K.kind] = "class",
+                       [K.classname] = "@$external/host/defaults_probe/Endpoint" },
+          Endpoint_defaults = { path = "/" },
+          ServerConfig = { [K.kind] = "class",
+                           [K.classname] = "@$external/host/defaults_probe/ServerConfig" },
+          ServerConfig_defaults = defaults,
+          Bundle = { [K.kind] = "class",
+                     [K.classname] = "@$external/host/defaults_probe/Bundle" },
+          Bundle_defaults = bundleDefaults,
+          OptionalOnly = { [K.kind] = "class",
+                           [K.classname] = "@$external/host/defaults_probe/OptionalOnly" },
+          OptionalOnly_defaults = { flag = "f" },
+          tagsCarrier = function(s)
+            local t = s.tags
+            local marks = t[K.nK]
+            local count = 0
+            if type(marks) == "table" then
+              for _ in pairs(marks) do count = count + 1 end
+            end
+            return tostring(t[K.a]) .. ":" .. tostring(t[K.n]) .. ":"
+              .. type(marks) .. ":" .. tostring(count) .. ":"
+              .. tostring(t[1]) .. ":" .. tostring(t[2])
+          end,
+          inspect = function()
+            return tostring(defaults.tags[1]) .. ":" .. tostring(defaults.tags[2])
+              .. ":" .. tostring(defaults.tags[K.a]) .. ":" .. tostring(defaults.tags[K.n])
+              .. ":" .. tostring(defaults.endpoint[K.kind]) .. ":" .. defaults.endpoint.path
+              .. ":" .. tostring(defaults.note == rt.__NULL)
+              .. ":" .. tostring(defaults.memo == rt.__MISSING)
+              .. ":" .. tostring(defaults.port)
+              .. ":" .. tostring(bundleDefaults.action[K.kind])
+              .. ":" .. tostring(bundleDefaults.action.f(41))
+          end,
+        }
+        """;
+
+    /** The exact transcript of the construction-defaults drive. */
+    private static final String CLASS_DEFAULTS_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "DEFAULTS-OK",
+        "E8001|class defaults must be a table|table|number",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * The host-class construction defaults on the published LuaJIT artifact
+     * (ISSUE-0855): the loaded {@code <C>_defaults} entry is projected
+     * host-to-DEAL per declared field through the host-carrier bridge with
+     * one memo per construction, before the runtime construction entry
+     * deep-copies it — so a defaulted optional array is the DEAL array
+     * value, a nested class default is the DEAL representation of its
+     * declared identity, a function default stays the documented wrapper
+     * and is invocable, a present null stays present, an absent default is
+     * not fabricated into a present null, a provided value overrides the
+     * default, two constructions never share a default value, and the
+     * loaded defaults table (and every host object it holds) is not
+     * mutated. The runtime's own defaults-shape failure keeps its landed
+     * tuple through the projection's pass-through.
+     */
+    private static void testLuaHostClassConstructionDefaults() throws Exception {
+        System.out.println("-- the host-class construction defaults: the "
+            + "published LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-class-defaults-lua");
+        try {
+            Path out = publishLuaHost(root, "defaults_probe",
+                CLASS_DEFAULTS_DECLARATION_SOURCE, CLASS_DEFAULTS_APP_SOURCE,
+                CLASS_DEFAULTS_LUA, "host-class-construction-defaults");
+            if (out == null) {
+                return;
+            }
+            // The emitted construction sites read the loaded <C>_defaults
+            // entry through the projection helper with the class's
+            // canonical identity (the bridge's construction-defaults
+            // position), never the raw loaded table.
+            String lua = Files.readString(out.resolve("app.lua"),
+                StandardCharsets.UTF_8);
+            for (String identity : List.of("ServerConfig", "Endpoint",
+                    "Bundle", "OptionalOnly")) {
+                String call = "__factories.__hostClassDefaultsIn(\"host.defaults_probe\", "
+                    + "\"" + identity + "\", \"@$external/host/defaults_probe/"
+                    + identity + "\")";
+                check(lua.contains(call), "the emitted construction of "
+                    + identity + " projects its loaded <C>_defaults entry"
+                    + " through __hostClassDefaultsIn with the class's"
+                    + " canonical identity: " + call);
+            }
+            check(lua.contains("__factories.__hostClassDefaultsIn = function(module, class, identity)"),
+                "the published host-binding chunk carries the construction-"
+                    + "defaults projection helper");
+            check(lua.contains("__factories.__hostCarrierIn(childDesc, val, memo)"),
+                "the construction-defaults projection delegates each declared"
+                    + " field to the host-carrier bridge with one memo per"
+                    + " construction");
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then
+                  fail("init: " .. tostring(err and err.code) .. "|"
+                    .. tostring(err and err.m))
+                end
+                local surface = __exportSurfaces["app"]
+                local ok2, res = pcall(surface["run"].f)
+                if not ok2 then
+                  fail("run: " .. tostring(res and res.code) .. "|"
+                    .. tostring(res and res.m) .. "|" .. tostring(res and res.e)
+                    .. "|" .. tostring(res and res.a))
+                end
+                print("TRANSCRIPT-BEGIN")
+                print(tostring(res))
+                -- The staged defaults-shape control: a non-table <C>_defaults
+                -- entry reaches the runtime construction entry unchanged, so
+                -- the landed E8001 defaults-shape failure is the published
+                -- one (the load validates the entry; this drive stages the
+                -- shape after the load).
+                local hostSurface = nil
+                for key, value in pairs(__exportSurfaces) do
+                  if key ~= "app" and type(value) == "table"
+                      and value["OptionalOnly_defaults"] ~= nil then
+                    hostSurface = value
+                  end
+                end
+                if hostSurface == nil then fail("no host surface") end
+                hostSurface["OptionalOnly_defaults"] = 42
+                local ok3, res3 = pcall(surface["badDefaults"].f)
+                if ok3 then fail("the non-table defaults construction succeeded") end
+                if type(res3) ~= "table" or res3[__dealCarrierKeys.d] ~= true then
+                  fail("not a DEAL failure: " .. tostring(type(res3)))
+                end
+                print(tostring(res3.code) .. "|" .. tostring(res3.m) .. "|"
+                  .. tostring(res3.e) .. "|" .. tostring(res3.a))
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0
+                    && run.stdout().equals(CLASS_DEFAULTS_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "the loaded <C>_defaults entry is projected host-to-DEAL per"
+                    + " declared field before the runtime construction"
+                    + " deep-copies it: the defaulted optional array reads as"
+                    + " the DEAL array value, a provided value overrides it,"
+                    + " the nested class default carries its declared DEAL"
+                    + " identity, a present null stays present, an absent"
+                    + " default is not fabricated, the function default is the"
+                    + " invocable wrapper, and the host's defaults table is"
+                    + " unmutated: exit=" + run.exitCode() + " stdout="
+                    + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
     // 2c. The LuaJIT load under real luajit
     // =========================================================================
 
@@ -3979,6 +4322,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostTableProjection();
             testLuaHostArrayCrossings();
             testLuaHostArrayCrossingFailures();
+            testLuaHostClassConstructionDefaults();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);

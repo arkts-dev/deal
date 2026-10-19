@@ -826,11 +826,22 @@ public final class LuaSemanticEmitter {
 
         /**
          * The emitted expression of one declared host class's loaded
-         * {@code <C>_defaults} entry (K10): the module's published surface
-         * entry — the module table {@code __rt.load_host} returned — read
-         * back by the construction site. An absent surface or entry is a
+         * {@code <C>_defaults} entry (K10; ISSUE-0855): the module's
+         * published surface entry — the module table {@code __rt.load_host}
+         * returned — read back by the construction site and projected
+         * host-to-DEAL through the host-carrier bridge per declared field,
+         * with one memo per construction, before the runtime construction
+         * entry deep-copies it. The projection's field descriptors are the
+         * emitted {@code __hostClassFields} entry of the class's canonical
+         * identity, so a defaulted array is the DEAL array carrier, a
+         * nested class default is the DEAL representation of its identity,
+         * and a function default stays the documented runtime wrapper; the
+         * loaded table itself is never mutated and keeps its exact keys
+         * (the construction's provided-field overlay and extra-key guard
+         * read that same authority). An absent surface or entry is a
          * fail-closed producer defect in the prelude helper, never a silent
-         * default.
+         * default; a non-table entry reaches the runtime's own landed
+         * defaults-shape failure unchanged.
          */
         private String hostDefaultsExpr(SemanticOp op, ClassId classId) {
             ModuleId declarationModule = hostClassModules.get(classId);
@@ -840,8 +851,10 @@ public final class LuaSemanticEmitter {
                     + " surface (the class defaults entry has exactly one source —"
                     + " a producer defect)");
             }
-            return "__hostClassDefaults(" + luaString(declarationModule.path())
-                + ", " + luaString(classId.name()) + ")";
+            return "__factories.__hostClassDefaultsIn("
+                + luaString(declarationModule.path()) + ", "
+                + luaString(classId.name()) + ", "
+                + luaString(classId.text()) + ")";
         }
 
         // -- naming ---------------------------------------------------------------
@@ -5283,9 +5296,13 @@ public final class LuaSemanticEmitter {
                 out.append("__provT[").append(luaString(field.name()))
                     .append("] = __pvT\n");
             }
-            // (1b) The deterministic extra-key guard in provided-source
-            // order: the loaded <C>_defaults key membership is the
-            // accepted-key authority (the runtime's own overlay test reads
+            // (1b) The loaded <C>_defaults entry, projected host-to-DEAL
+            // per declared field through the host-carrier bridge with one
+            // memo per construction (ISSUE-0855; the bridge's construction-
+            // defaults position), then the deterministic extra-key guard in
+            // provided-source order: the projected defaults' key membership
+            // is the accepted-key authority (the projection carries exactly
+            // the loaded table's keys; the runtime's own overlay test reads
             // the deep copy's raw keys, so rawget is the exact membership
             // predicate), and the runtime's overlay iterates the provided
             // table in pairs() order, so the first supplied name outside
@@ -5306,9 +5323,10 @@ public final class LuaSemanticEmitter {
                 out.append("  error(__eT, 0)\n");
                 out.append("end\n");
             }
-            // (2)-(4) The deep copy, the provided overlay with the extra-key
-            // rejection, the sentinel removal, and the tag: the deployed
-            // runtime construction entry.
+            // (2)-(4) The deep copy of the projected defaults, the provided
+            // overlay with the extra-key rejection, the sentinel removal,
+            // and the tag: the deployed runtime construction entry. The
+            // loaded <C>_defaults table itself is never mutated.
             out.append("__okB, __instT = pcall(__rt.class_, ")
                 .append(luaString(payload.classId().text())).append(", ")
                 .append(hostDefaults).append(", __provT, ")
@@ -10271,6 +10289,44 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     local marks = {}
     for k, flag in pairs(sourceMarks) do marks[k] = flag end
     out[__dealCarrierKeys.nK] = marks
+  end
+  return out
+end
+-- The host-to-DEAL projection of one declared host class's loaded
+-- <C>_defaults entry (ISSUE-0855; the bridge's construction-defaults
+-- position): every key of the loaded table is carried with its declared
+-- field's canonical descriptor — the emitted __hostClassFields entry of
+-- the class's canonical identity — so a defaulted array is the DEAL array
+-- carrier, a nested class default is the DEAL representation of its
+-- declared identity, a function default stays the documented runtime
+-- wrapper, a present null stays the chunk's null sentinel, and the
+-- host's absent marker stays the absent marker (the runtime
+-- construction's own missing-to-null mapping applies it). One memo spans
+-- the construction, so a repeated host default object is one DEAL value.
+-- A key outside the declared field map is projected value-directed, so the
+-- projected table carries exactly the loaded table's keys: the provided
+-- field overlay and the CLASS_EXTRA_FIELD guard read the same accepted-key
+-- authority, and the loaded table itself is never mutated (the projection
+-- is a fresh table, and a host object inside it is copied, not mutated).
+-- The projected table is what __rt.class_ deep-copies. A non-table entry
+-- is returned unchanged, so the runtime's own defaults-shape failure is
+-- the landed one. The helper rides the chunk's factory store like the
+-- other host-crossing helpers (no main-chunk local).
+__factories.__hostClassDefaultsIn = function(module, class, identity)
+  local defaults = __hostClassDefaults(module, class)
+  if type(defaults) ~= "table" then return defaults end
+  local fields = __factories.__hostClassFields[identity]
+  if fields == nil then
+    error("the host class identity '"..tostring(identity).."' has no"
+      .." __hostClassFields entry in the host-carrier metadata (a producer"
+      .." coverage defect)", 0)
+  end
+  local memo = {}
+  local out = {}
+  for k, val in pairs(defaults) do
+    local childDesc = nil
+    if type(k) == "string" then childDesc = fields[k] end
+    out[k] = __factories.__hostCarrierIn(childDesc, val, memo)
   end
   return out
 end
