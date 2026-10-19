@@ -1,0 +1,12 @@
+// @spec: Classes — Nominal typing
+// @description: A direct assignment of one same-directory sibling file declaration's value to the other declaration's annotated local is rejected by the frontend (E3019): the canonical class identity names the defining file, so the two same-named declarations are distinct nominal types and a value never retags across them.
+// @expected: compile-error E3019
+// @features: classes, modules, nominal-identity, diagnostics
+
+import * as a from "./same_name_sibling_a";
+import * as b from "./same_name_sibling_b";
+
+export function main(): null {
+  let wrong: b.Item = a.make();
+  return null;
+}

@@ -423,7 +423,19 @@ public class CanonicalProjectionParityTest {
         driver("arrays/index-negative-read", "test_array_negative_read"),
         driver("arrays/index-read-at-length", "test_array_index_at_length"),
         driver("arrays/empty-index-read", "test_array_empty_index_read"),
-        driver("arrays/nullable-index-oob", "test_nullable_array_index_oob"));
+        driver("arrays/nullable-index-oob", "test_nullable_array_index_oob"),
+        // The same-directory sibling declarations keep distinct runtime
+        // class identities: a value of one declaration crossing a typed
+        // boundary declared with the other raises the structured arm
+        // naming both exact declarations (the ISSUE-0847 reproducer and
+        // its recursive identity positions).
+        mainEntry("classes/same-name-sibling-table-crossing"),
+        mainEntry("classes/same-name-sibling-array-crossing"),
+        mainEntry("classes/same-name-sibling-nullable-crossing"),
+        mainEntry("classes/same-name-sibling-function-crossing"),
+        mainEntry("classes/same-name-sibling-field-crossing"),
+        mainEntry("classes/same-name-sibling-json-helper-crossing"),
+        mainEntry("classes/same-name-sibling-different-name-crossing"));
 
     /** The host-boundary families with a corpus pin. */
     private static final List<Case> HOST_FAMILIES = List.of(
@@ -607,12 +619,20 @@ public class CanonicalProjectionParityTest {
             if (module.getKey().equals(spec.fixtureFile())) {
                 entry = target;
             }
-            String modulePath = module.getKey().endsWith(".deal")
-                ? module.getKey().substring(0,
-                    module.getKey().length() - ".deal".length())
-                : module.getKey();
+            // The canonical module path of a materialized module is its
+            // corpus-relative source path, defining file included: the
+            // class atoms the artifact, the oracle and the sidecar all
+            // spell are the exact declaration identity, so the projection
+            // is the identity itself. The unit's own wiring path (the
+            // dotted module id) keeps the file stem, so its corpus
+            // coordinate is projected through the same table.
+            String modulePath = module.getKey();
             modulePathToCorpus.put(modulePath, module.getKey());
-            modulePathToCorpus.put(modulePath.replace('/', '.'), module.getKey());
+            String moduleStem = modulePath.endsWith(".deal")
+                ? modulePath.substring(0, modulePath.length() - ".deal".length())
+                : modulePath;
+            modulePathToCorpus.put(moduleStem, module.getKey());
+            modulePathToCorpus.put(moduleStem.replace('/', '.'), module.getKey());
             int slash = modulePath.lastIndexOf('/');
             moduleDirToCorpus.putIfAbsent(slash < 0 ? ""
                 : modulePath.substring(0, slash), module.getKey());
@@ -626,8 +646,8 @@ public class CanonicalProjectionParityTest {
             Path app = mirror.resolve("app.deal");
             Files.writeString(app, driverSource, StandardCharsets.UTF_8);
             stripped.put("app.deal", 0);
-            modulePathToCorpus.put("app", "app.deal");
             modulePathToCorpus.put("app.deal", "app.deal");
+            modulePathToCorpus.put("app", "app.deal");
             entry = app;
         } else if (spec.entry() == Entry.DRIVER) {
             String fixtureSpec = spec.fixtureFile().substring(
@@ -637,8 +657,8 @@ public class CanonicalProjectionParityTest {
                 + "\";\n\nexport function main(): null {\n  fx." + spec.probe()
                 + "();\n  return null;\n}\n", StandardCharsets.UTF_8);
             stripped.put("app.deal", 0);
-            modulePathToCorpus.put("app", "app.deal");
             modulePathToCorpus.put("app.deal", "app.deal");
+            modulePathToCorpus.put("app", "app.deal");
             entry = app;
         }
         Set<String> hostStems = new LinkedHashSet<>();
@@ -1048,8 +1068,11 @@ public class CanonicalProjectionParityTest {
     /**
      * The corpus normalization of the emitted class-identity tokens (the
      * lane's own rule): an emitted {@code @conformance/<module path>/<C>}
-     * names the declaring module by its module path; the corpus vocabulary
-     * is the module's corpus-relative {@code .deal} path.
+     * names the declaring module by its module path, the defining file
+     * included; the corpus vocabulary is the module's corpus-relative
+     * {@code .deal} path, which is the same identity for every
+     * corpus-materialized module (the drive's own {@code app.deal} entry
+     * maps to its own name).
      */
     private static String normalize(String text, Compiled compiled) {
         if (text == null || !text.contains("@conformance/")) {

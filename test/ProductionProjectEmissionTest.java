@@ -1431,8 +1431,8 @@ public class ProductionProjectEmissionTest {
             if (app == null) {
                 return;
             }
-            ClassId counterId = new ClassId("src", "Counter");
-            ClassId holderId = new ClassId("src", "Holder");
+            ClassId counterId = new ClassId("src/app.deal", "Counter");
+            ClassId holderId = new ClassId("src/app.deal", "Holder");
             check(app.classLayouts().containsKey(counterId)
                     && app.classLayouts().containsKey(holderId),
                 "the unit records the complete module-level class layout"
@@ -1994,9 +1994,9 @@ public class ProductionProjectEmissionTest {
             for (SemanticOp op : app.ops()) {
                 byId.put(op.opId(), op);
             }
-            ClassId aId = new ClassId("src", "A");
-            ClassId bId = new ClassId("src", "B");
-            ClassId selfId = new ClassId("src", "Self");
+            ClassId aId = new ClassId("src/app.deal", "A");
+            ClassId bId = new ClassId("src/app.deal", "B");
+            ClassId selfId = new ClassId("src/app.deal", "Self");
             int constructions = 0;
             for (SemanticOp op : app.ops()) {
                 if (op.kind() != SemanticOpKind.CLASS_NEW

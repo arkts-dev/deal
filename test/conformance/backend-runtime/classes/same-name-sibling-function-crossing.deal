@@ -1,0 +1,13 @@
+// @spec: Runtime execution model — Function type identity
+// @description: A same-named sibling declaration's function value crossed through a dynamic table into the other declaration's function type fails the exact function-signature check (E8010) because the class atoms inside the parameter and return descriptors name distinct declarations.
+// @expected: runtime-error E8010
+// @features: functions, classes, modules, runtime-errors, nominal-identity
+
+import * as a from "./same_name_sibling_a";
+import * as b from "./same_name_sibling_b";
+
+export function main(): null {
+  let t: table = { f: a.identity };
+  let wrong: (x: b.Item) => b.Item = t.f;
+  return null;
+}

@@ -1085,10 +1085,9 @@ public final class NameResolver {
             if (sym instanceof Symbol.ClassSymbol cs) return cs;
         }
         // Fall through to the module resolver's identity-keyed routing:
-        // two files in one directory share a module identity (the
-        // relative components exclude the file stem), so a foreign
-        // class's identity can equal this module's — the declaring
-        // module's symbol table is the only authority for it.
+        // a harness-shared (synthetic) identity can equal this module's,
+        // so the declaring module's symbol table is the only authority
+        // for a foreign class.
         try {
             return moduleResolver.resolveClassSymbol(
                 cls.name(), cls.identity().moduleIdentity(), this.modulePath);

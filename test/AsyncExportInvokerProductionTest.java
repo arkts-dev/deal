@@ -1195,13 +1195,13 @@ public class AsyncExportInvokerProductionTest {
             + " encoder as representation failures");
         for (String backend : List.of("luajit", "jvm")) {
             assertRepresentationFailure(backend, "class-completion",
-                CLASS_COMPLETION_SOURCE, "@src/C",
+                CLASS_COMPLETION_SOURCE, "@src/main.deal/C",
                 "unsupported type for JSON encoding: table");
             assertRepresentationFailure(backend, "class-array-completion",
-                CLASS_ARRAY_COMPLETION_SOURCE, "[@src/C]",
+                CLASS_ARRAY_COMPLETION_SOURCE, "[@src/main.deal/C]",
                 "unsupported type for JSON encoding: table");
             assertRepresentationFailure(backend, "nullable-class-completion",
-                NULLABLE_CLASS_COMPLETION_SOURCE, "?@src/C",
+                NULLABLE_CLASS_COMPLETION_SOURCE, "?@src/main.deal/C",
                 "unsupported type for JSON encoding: table");
             assertRepresentationFailure(backend, "function-completion",
                 FUNCTION_COMPLETION_SOURCE, "()->int",

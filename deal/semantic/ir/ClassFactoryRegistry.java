@@ -40,10 +40,11 @@ public record ClassFactoryRegistry(Map<ClassFactoryId, OpId> factories) {
      *
      * <p><b>The class descriptor namespace is never the owner.</b>
      * {@code ClassId.modulePath()} is the configured module-root text plus
-     * the class file's relative directory components ({@code @src/Address}
-     * for a class of the module {@code owner} under the root {@code src}),
-     * not the module identity the closure's units and registries are keyed
-     * by. Every {@code SHARED_FACTORY} execution consumer resolves its
+     * the path components to the class's defining file, the file name
+     * included ({@code @src/owner.deal/Address} for a class of the module
+     * {@code owner} declared in {@code src/owner.deal} under the root
+     * {@code src}), not the module identity the closure's units and
+     * registries are keyed by. Every {@code SHARED_FACTORY} execution consumer resolves its
      * owner through this method (the one delivered fact channel), never
      * from the class identity text.</p>
      *

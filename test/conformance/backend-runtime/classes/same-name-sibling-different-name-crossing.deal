@@ -1,0 +1,13 @@
+// @spec: Runtime execution model — Nominal typing
+// @description: A differently named class of the second sibling module is a different nominal type: the first same-named declaration's instance read from a dynamic table fails the differently named class's boundary (E8001) naming both exact identities, so the sibling-name defect is not confused with all class validation being absent.
+// @expected: runtime-error E8001
+// @features: classes, modules, runtime-errors, nominal-identity
+
+import * as a from "./same_name_sibling_a";
+import * as b from "./same_name_sibling_b";
+
+export function main(): null {
+  let t: table = { value: a.make() };
+  let wrong: b.Crate = t.value;
+  return null;
+}

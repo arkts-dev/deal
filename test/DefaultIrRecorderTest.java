@@ -411,9 +411,10 @@ public final class DefaultIrRecorderTest {
     // =========================================================================
 
     /**
-     * The canonical module identity shared by two sibling modules in one
-     * directory: the relative module components exclude the file stem, so
-     * two provider modules in {@code src/} are identity-equal.
+     * A harness-synthesized canonical module identity shared by two
+     * sibling provider snapshots: valid source never produces one (the
+     * canonical identity names the defining file), so this pins the
+     * defensive identity-equal provider selection.
      */
     private static final ProjectModuleIdentity SIBLING_IDENTITY =
         new ProjectModuleIdentity("src", "/proj/src", List.of());

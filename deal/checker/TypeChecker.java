@@ -2762,16 +2762,17 @@ public final class TypeChecker {
 
     /**
      * Reports the E3019 crossing when the expected and actual types name
-     * one canonical class identity through two bound, distinct defining
-     * providers (ISSUE-0809): the canonical public identity omits the
-     * defining file, so a same-spelled class of a sibling module is a
-     * distinct declaration the value never retags into. Returns
+     * two distinct declarations of one same-named class through two bound,
+     * distinct defining providers: the identity names the defining file,
+     * so a same-spelled class of a sibling file is a distinct declaration
+     * the value never retags into (and a same-module nested-shadowing
+     * declaration stays the same rule through its own provider). Returns
      * {@code true} when the crossing was reported (and the caller skips
      * its own boundary diagnostic), {@code false} otherwise.
      */
     private boolean reportClassProviderCrossing(Type expected, Type actual,
                                                 Span span) {
-        if (!Types.crossesClassProviders(expected, actual)) {
+        if (!Types.crossesClassDeclarations(expected, actual)) {
             return false;
         }
         Type.Class expectedClass = nonNullClassType(expected) instanceof Type.Class cls
@@ -2780,8 +2781,7 @@ public final class TypeChecker {
             ? typeName(expected) : expectedClass.name();
         error(DiagnosticCode.E3019,
             "Cannot assign class '" + name
-                + "' across its distinct declarations of the same "
-                + "canonical identity (module + name)",
+                + "' across its distinct declarations of the same-named class",
             span);
         return true;
     }
@@ -2789,8 +2789,9 @@ public final class TypeChecker {
     /**
      * The E3019 cross-declaration gate: the value's class provenance and
      * the target's class provenance are two distinct declarations of a
-     * same-named class, which share one canonical identity (module +
-     * name) yet own distinct runtime layouts. Applied at assignment
+     * same-named class — the same-module nested-shadowing declarations
+     * share one canonical identity, and each declaration owns its own
+     * runtime layout either way. Applied at assignment
      * expressions, declaration initialization, and nullable class
      * boundaries alike (ISSUE-0717 defect snippet 47).
      */
@@ -2807,8 +2808,7 @@ public final class TypeChecker {
         if (targetDecl != null && valueDecl != null && targetDecl != valueDecl) {
             error(DiagnosticCode.E3019,
                 "Cannot assign class '" + tc.name()
-                    + "' across its distinct declarations of the same "
-                    + "canonical identity (module + name)",
+                    + "' across its distinct declarations of the same-named class",
                 span);
         }
     }
@@ -2884,12 +2884,12 @@ public final class TypeChecker {
     }
 
     private boolean isAssignable(Type expected, Type actual) {
-        // ISSUE-0809 exact_provider_carriage: two bound providers of one
-        // canonical class identity are two declarations — a value never
+        // ISSUE-0809 exact_provider_carriage: two bound providers of two
+        // same-named declarations are two declarations — a value never
         // retags across them, regardless of the structural arms below
         // (the provider-aware Types.equals already covers the recursive
         // positions; this keeps the nominal rule explicit).
-        if (Types.crossesClassProviders(expected, actual)) return false;
+        if (Types.crossesClassDeclarations(expected, actual)) return false;
         if (Types.equals(expected, actual)) return true;
         if (expected instanceof Type.Nullable ne) {
             if (Types.equals(ne.inner(), actual)) return true;

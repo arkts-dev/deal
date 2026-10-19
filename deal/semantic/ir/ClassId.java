@@ -8,9 +8,11 @@ import java.util.Objects;
  *
  * <p>Immutable value record. The canonical text matches the
  * {@code ClassDescriptor} grammar ({@code "@" ModuleRoot "/"
- * ModuleRelativePath "/" ClassName}, parent D6): for a class declared in
- * module {@code src/app} named {@code User} the text is
- * {@code @src/app/User}. The builtin {@code Error} class is the one
+ * ModuleRelativePath "/" ClassName}, parent D6): the relative module
+ * path runs from the configured root to the defining file, the file name
+ * included, so a class named {@code User} declared in
+ * {@code src/app/user.deal} has the text {@code @src/app/user.deal/User}.
+ * Two same-named sibling files therefore never share a class identity. The builtin {@code Error} class is the one
  * builtin nominal class (spec: user code must not declare a class named
  * {@code Error}); its module path is empty and its canonical v1.3 text is
  * exactly {@code Error} (see {@link #ERROR}) — the one class atom without

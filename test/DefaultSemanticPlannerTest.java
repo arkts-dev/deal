@@ -249,13 +249,13 @@ public class DefaultSemanticPlannerTest {
                     && "int".equals(
                         outer.orderedFields().get(0).runtimeTypeDescriptor()),
                 "field a: int descriptor 'int'");
-            check("@src/Rec".equals(
+            check("@src/lib.deal/Rec".equals(
                     outer.orderedFields().get(1).runtimeTypeDescriptor()),
-                "field b: imported class descriptor '@src/Rec', got "
+                "field b: imported class descriptor '@src/lib.deal/Rec', got "
                     + outer.orderedFields().get(1).runtimeTypeDescriptor());
-            check("[@src/Rec]".equals(
+            check("[@src/lib.deal/Rec]".equals(
                     outer.orderedFields().get(2).runtimeTypeDescriptor()),
-                "field c: imported class array descriptor '[@src/Rec]', got "
+                "field c: imported class array descriptor '[@src/lib.deal/Rec]', got "
                     + outer.orderedFields().get(2).runtimeTypeDescriptor());
             check(outer.orderedFields().stream()
                     .allMatch(e -> !e.optional()

@@ -97,15 +97,17 @@ public final class Types {
                 // over (moduleIdentity, className)) — never dotted-path
                 // text comparison (descriptor-identity-propagation D1).
                 //
-                // ISSUE-0809 exact_provider_carriage: the canonical
-                // public identity omits the defining file, so two
-                // declarations of one directory share it; the defining
-                // provider participates in nominal equality, so two
-                // declarations of distinct providers never compare equal
-                // even when their canonical identity is the same. The
-                // unbound carrier (null: public descriptor synthesis,
-                // the builtin Error, retained harnesses) names no
-                // defining file and equals only another unbound one.
+                // The canonical identity names the defining file, so two
+                // same-named sibling declarations of one directory never
+                // share it. ISSUE-0809 exact_provider_carriage additionally
+                // makes the defining provider participate in nominal
+                // equality, so two declarations that a harness gives one
+                // canonical identity (the same-module nested-shadowing
+                // declarations, synthetic carriers) never compare equal
+                // either. The unbound carrier (null: public descriptor
+                // synthesis, the builtin Error, retained harnesses) names
+                // no defining declaration and equals only another unbound
+                // one.
                 Type.Class cb = (Type.Class) b;
                 yield ca.identity().equals(cb.identity())
                     && providerCompatible(ca.providerModule(),
@@ -251,11 +253,13 @@ public final class Types {
     /**
      * Make a Class type carrying its canonical class identity and the
      * defining provider module (ISSUE-0809 exact_provider_carriage): the
-     * provider is the declaring module's own wiring key, so two
-     * same-spelled declarations sharing one canonical identity stay
-     * nominal-distinct. Only synthesis sites that know the declaring
-     * module supply it; the unbound form remains for public descriptor
-     * and harness carriers.
+     * provider is the declaring module's own wiring key. The public
+     * identity already names the defining file, so two sibling files'
+     * same-named declarations differ there; the provider keeps the
+     * distinct-declaration rule explicit for declarations whose identity a
+     * harness shares (the same-module nested-shadowing declarations). Only
+     * synthesis sites that know the declaring module supply it; the
+     * unbound form remains for public descriptor and harness carriers.
      */
     public static Type.Class classType(java.lang.String name,
                                        CanonicalClassIdentity identity,
@@ -278,8 +282,8 @@ public final class Types {
     /**
      * Provider compatibility for nominal class equality: the defining
      * provider participates (two declarations of distinct providers are
-     * never equal); an unbound (null) carrier names no defining file and
-     * equals only another unbound one.
+     * never equal); an unbound (null) carrier names no defining
+     * declaration and equals only another unbound one.
      */
     private static boolean providerCompatible(java.lang.String a,
                                               java.lang.String b) {
@@ -287,18 +291,22 @@ public final class Types {
     }
 
     /**
-     * The two class types name one canonical class identity through two
-     * bound, distinct defining providers — the sibling-declaration
-     * crossing a same-spelled class of another module produces. Unbound
-     * carriers never cross (they name no second declaration).
+     * The two class types name two distinct declarations of one same-named
+     * class through two bound, distinct defining providers — the sibling
+     * declaration crossing (two modules declaring the same class name, the
+     * same-module nested-shadowing declaration, or a harness whose two
+     * carriers share one canonical identity). The caller reports the named
+     * cross-declaration failure instead of a bare same-spelled type
+     * mismatch. Unbound carriers never cross (they name no second
+     * declaration).
      */
-    public static boolean crossesClassProviders(Type expected, Type actual) {
+    public static boolean crossesClassDeclarations(Type expected, Type actual) {
         Type.Class expectedClass = nonNullClassOrNull(expected);
         Type.Class actualClass = nonNullClassOrNull(actual);
         if (expectedClass == null || actualClass == null) {
             return false;
         }
-        return expectedClass.identity().equals(actualClass.identity())
+        return expectedClass.name().equals(actualClass.name())
             && expectedClass.providerModule() != null
             && actualClass.providerModule() != null
             && !expectedClass.providerModule().equals(actualClass.providerModule());

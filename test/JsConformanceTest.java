@@ -1771,13 +1771,14 @@ public class JsConformanceTest {
         sb.append(firstPin ? "};\n" : "\n};\n");
         // The class-atom module-path projection: the compiler projects a
         // class as @conformance/<module path>/<Class>, where the module
-        // path is the source's directory (the defining file name is not
-        // part of the identity). The sidecar pins the corpus file path
-        // form (@conformance/<corpus source>/<Class>), exactly the
-        // projection CanonicalProjectionParityTest applies, so the runner
-        // maps each materialized module path (and its directory) back to
-        // its corpus source path before the comparison. Class names and
-        // every other token are untouched.
+        // path is the source file's project-relative path — the defining
+        // file is the identity's final path component. The sidecar pins
+        // the corpus file path form (@conformance/<corpus source>/<Class>),
+        // exactly the projection CanonicalProjectionParityTest applies, so
+        // the runner maps each materialized module path back to its corpus
+        // source path before the comparison (the identity spelling and the
+        // corpus spelling are the same text for every corpus module). Class
+        // names and every other token are untouched.
         sb.append("const $corpusTokens = {");
         boolean firstToken = true;
         for (Map.Entry<String, String> token : corpusTokens.entrySet()) {
@@ -1805,13 +1806,7 @@ function $normalizeAtoms($s) {
     if ($slash > 0) {
       const $modulePath = $rest.slice(0, $slash);
       const $className = $rest.slice($slash + 1);
-      let $corpus = $corpusTokens[$modulePath];
-      if ($corpus === undefined) {
-        const $dirSlash = $modulePath.lastIndexOf("/");
-        if ($dirSlash > 0) {
-          $corpus = $corpusTokens[$modulePath.slice(0, $dirSlash)];
-        }
-      }
+      const $corpus = $corpusTokens[$modulePath];
       if ($corpus !== undefined) {
         $mapped = "@conformance/" + $corpus + "/" + $className;
       }
@@ -1903,10 +1898,11 @@ function $snapshot($err) {
 
     /**
      * The class-atom module-path projection of one materialized project:
-     * every materialized module's module path and module directory map to
-     * its corpus source path (the entry's `main.deal` maps to the
-     * fixture's corpus file path, which is also its sidecar sourceFile).
-     * `$normalizeAtoms` uses the map on observed class atoms only.
+     * every materialized module's module path — its project-relative
+     * source path, the defining file included — maps to its corpus source
+     * path (the entry's `main.deal` maps to the fixture's corpus file
+     * path, which is also its sidecar sourceFile). `$normalizeAtoms` uses
+     * the map on observed class atoms only.
      */
     private static Map<String, String> corpusTokens(Path projectRoot,
             Map<String, Path> written, Path entryTarget,
@@ -1915,7 +1911,8 @@ function $snapshot($err) {
         Path normalizedEntry = entryTarget.toAbsolutePath().normalize();
         Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
         // The configured root is the project root's own directory name
-        // (`conformance`); the compiler's module paths are project-relative.
+        // (`conformance`); the compiler's module paths are project-relative
+        // and carry the defining file name as their final component.
         for (Map.Entry<String, Path> entry : written.entrySet()) {
             Path original = Path.of(entry.getKey()).toAbsolutePath()
                 .normalize();
@@ -1925,17 +1922,9 @@ function $snapshot($err) {
             Path target = entry.getValue().toAbsolutePath().normalize();
             String corpusPath = target.equals(normalizedEntry)
                 ? entryCorpusPath : corpusRelOf(original);
-            String materialized = normalizedRoot.relativize(target).toString()
+            String modulePath = normalizedRoot.relativize(target).toString()
                 .replace('\\', '/');
-            String moduleKey = materialized.endsWith(".deal")
-                ? materialized.substring(0,
-                    materialized.length() - ".deal".length())
-                : materialized;
-            int slash = moduleKey.lastIndexOf('/');
-            if (slash > 0) {
-                tokens.putIfAbsent(moduleKey.substring(0, slash), corpusPath);
-            }
-            tokens.put(moduleKey, corpusPath);
+            tokens.put(modulePath, corpusPath);
         }
         return tokens;
     }

@@ -24,10 +24,11 @@ import java.util.Objects;
  *       {@code absoluteNormalizedPath}; symlink-resolved on the longest
  *       existing directory prefix).</li>
  *   <li>{@code relativeModuleComponents} — the path components from the
- *       root prefix to the defining file's directory, derived from the
- *       canonical symlink-resolved source URI relative to
- *       {@code normalizedRootPath}; an empty list means the defining
- *       file lies directly in the root directory.</li>
+ *       root prefix to the defining file, its own file name included,
+ *       derived from the canonical symlink-resolved source URI relative
+ *       to {@code normalizedRootPath}; the defining file is the final
+ *       component, so the identity names one declaration and two
+ *       same-named sibling files never share it.</li>
  * </ul>
  *
  * <p>Deterministic and immutable: the component list is defensively

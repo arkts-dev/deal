@@ -1,0 +1,13 @@
+// @spec: Runtime execution model — Nominal typing
+// @description: A dynamic table read into the second sibling declaration's nullable type reaches the inner class-identity check and fails (E8001) naming both exact declarations, never admitting the first declaration's instance as null or as the expected class.
+// @expected: runtime-error E8001
+// @features: classes, nullable, modules, runtime-errors, nominal-identity
+
+import * as a from "./same_name_sibling_a";
+import * as b from "./same_name_sibling_b";
+
+export function main(): null {
+  let t: table = { value: a.make() };
+  let wrong: b.Item | null = t.value;
+  return null;
+}

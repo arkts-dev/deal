@@ -77,9 +77,12 @@ public sealed interface Type
      * Nominal class type, identified by name, canonical class identity
      * and — when the carrier binds one — the defining provider module
      * (ISSUE-0809 {@code exact_provider_carriage}): the canonical
-     * identity's public projection omits the defining file, so two
-     * files in one directory declaring the same class name share one
-     * canonical identity yet stay two distinct declarations. The
+     * identity's public projection is the defining declaration (root
+     * text, the path to the defining file, and the class name), so the
+     * identity alone already separates two same-named sibling
+     * declarations; the provider keeps the distinct-declaration rule
+     * explicit for carriers whose identities a harness shares (the
+     * same-module nested-shadowing declarations). The
      * provider is the defining module's existing wiring key (the
      * {@code ClassSymbol.modulePath} the import/export routing uses),
      * never an import alias or public text; descriptor text still comes

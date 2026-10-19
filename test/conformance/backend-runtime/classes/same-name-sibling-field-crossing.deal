@@ -1,0 +1,18 @@
+// @spec: Runtime execution model — Nominal typing
+// @description: A class field declared with the second sibling declaration's class type rejects the first declaration's instance read from a dynamic table at the field-assignment boundary (E8001) naming both exact declarations.
+// @expected: runtime-error E8001
+// @features: classes, fields, modules, runtime-errors, nominal-identity
+
+import * as a from "./same_name_sibling_a";
+import * as b from "./same_name_sibling_b";
+
+class Holder {
+  item: b.Item = {};
+}
+
+export function main(): null {
+  let t: table = { value: a.make() };
+  let h: Holder = {};
+  h.item = t.value;
+  return null;
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected instance of @conformance/backend-runtime/classes/same_name_sibling_b.deal/Item, got @conformance/backend-runtime/classes/same_name_sibling_a.deal/Item\",\"sourceFile\":\"backend-runtime/classes/same-name-sibling-field-crossing.deal\",\"line\":16,\"column\":12,\"expected\":\"@conformance/backend-runtime/classes/same_name_sibling_b.deal/Item\",\"actual\":\"@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8001",
+      "message": "expected instance of @conformance/backend-runtime/classes/same_name_sibling_b.deal/Item, got @conformance/backend-runtime/classes/same_name_sibling_a.deal/Item",
+      "sourceFile": "backend-runtime/classes/same-name-sibling-field-crossing.deal",
+      "line": 16,
+      "column": 12,
+      "expected": "@conformance/backend-runtime/classes/same_name_sibling_b.deal/Item",
+      "actual": "@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item"
+    }
+  }
+}

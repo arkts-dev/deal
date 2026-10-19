@@ -4709,7 +4709,7 @@ public class ProductionDispatchTest {
                     + ":" + arrayAt[0] + ":" + arrayAt[1],
                 "nullCarrier|E8001|expected table|table|null|" + sourceFile
                     + ":" + nullAt[0] + ":" + nullAt[1],
-                "classCarrier|E8001|expected table|table|@src/Box|" + sourceFile
+                "classCarrier|E8001|expected table|table|@src/main.deal/Box|" + sourceFile
                     + ":" + classAt[0] + ":" + classAt[1],
                 "errorCarrier|E8001|expected table|table|Error|" + sourceFile
                     + ":" + errorAt[0] + ":" + errorAt[1],
@@ -5056,7 +5056,8 @@ public class ProductionDispatchTest {
                         + pin.message() + "|"
                         + project.resolve(entryRel).toAbsolutePath()
                         + ":" + (pin.line() - strippedHeaders) + ":"
-                        + pin.column() + "|" + pin.expected().orElse("")
+                        + pin.column() + "|"
+                        + corpusAtom(pin.expected().orElse(""), locator)
                         + "|" + pin.actual().orElse("") + "\n";
                 } else {
                     check(executed.error() == null, locator + " [" + backend
@@ -5105,6 +5106,24 @@ public class ProductionDispatchTest {
                 System.exit(1);
             }
         }
+    }
+
+    /**
+     * Projects one sidecar-pinned class atom onto the materialized entry
+     * module: the fixture's own declarations are materialized at
+     * {@code <locator>/main.deal}, and the class identity names the
+     * defining file, so the pinned corpus-coordinate atom
+     * ({@code @conformance/<locator>/<Class>}) is the entry file's own
+     * projected identity ({@code @conformance/<locator>/main.deal/<Class>}).
+     * Companion atoms already spell their corpus source path and are
+     * untouched.
+     */
+    private static String corpusAtom(String atom, String locator) {
+        String corpusPrefix = "@conformance/" + locator + "/";
+        return atom.startsWith(corpusPrefix)
+            ? "@conformance/" + locator + "/main.deal/"
+                + atom.substring(corpusPrefix.length())
+            : atom;
     }
 
     private static BoundedProcess.BoundedResult boundaryArtifactRun(

@@ -2249,7 +2249,7 @@ public class JsSemanticEmitterTest {
                 + " factory entry (defaults-only transfer)");
         check(libSource != null && libSource.contains(
                 "$rt.publishModule(\"lib\", \"Point\", { $kind: \"class\","
-                    + " $classname: \"@src/Point\" });"),
+                    + " $classname: \"@src/lib.deal/Point\" });"),
             "the exported class publishes its META value under its own name");
         check(libSource != null && libSource.contains(
                 "$rt.publishModule(\"lib\", \"Point$new\","),
@@ -2272,7 +2272,7 @@ public class JsSemanticEmitterTest {
             "a SHARED_FACTORY construction transfers the owner's defaults"
                 + " through the private linkage");
         check(appSource != null && appSource.contains(
-                "$rt.jsonFromJson(\"@src/Form\", $fForm, null,")
+                "$rt.jsonFromJson(\"@src/app.deal/Form\", $fForm, null,")
                 && appSource.contains(
                     "$rt.readModule(\"lib\", \"Point$fields\")"),
             "the generated JSON helper drives the canonical walker over the"
@@ -2281,14 +2281,14 @@ public class JsSemanticEmitterTest {
         // ISSUE-0811: the public roles keep their exact keys and signatures.
         check(appSource != null && appSource.contains(
                 "$rt.publishModule(\"app\", \"Form$new\", (provided, $file,"
-                    + " $line, $column) => $rt.classPlan(\"@src/Form\", $pForm,"
+                    + " $line, $column) => $rt.classPlan(\"@src/app.deal/Form\", $pForm,"
                     + " provided, $file, $line, $column));"),
             "the public constructor is the raw four-parameter"
                 + " C$new(provided,file,line,column) over the class plan");
         check(appSource != null && appSource.contains(
-                "$rt.function(\"(string)->?@src/Form\",")
+                "$rt.function(\"(string)->?@src/app.deal/Form\",")
                 && appSource.contains(
-                    "$rt.function(\"(@src/Form)->string\","),
+                    "$rt.function(\"(@src/app.deal/Form)->string\","),
             "the generated JSON helpers carry the pinned declared signatures");
         check(appSource != null && appSource.contains("\"Fault$new\",")
                 && !appSource.contains("\"Fault$fields\""),
@@ -2495,9 +2495,9 @@ public class JsSemanticEmitterTest {
             "the class META is the exact two-key pair and C$new is the raw"
                 + " four-parameter callable: " + run.output());
         check(run.output().contains("\"sigs\":{\"from\":"
-                + "\"(string)->?@src/Form\",\"to\":\"(@src/Form)->string\","
-                + "\"libFrom\":\"(string)->?@src/Point\",\"libTo\":"
-                + "\"(@src/Point)->string\",\"fromKind\":\"function\","
+                + "\"(string)->?@src/app.deal/Form\",\"to\":\"(@src/app.deal/Form)->string\","
+                + "\"libFrom\":\"(string)->?@src/lib.deal/Point\",\"libTo\":"
+                + "\"(@src/lib.deal/Point)->string\",\"fromKind\":\"function\","
                 + "\"toKind\":\"function\",\"faultFields\":true}"),
             "the generated JSON helpers are function wrappers carrying the"
                 + " exact declared signatures and only jsonable classes carry"
@@ -2515,16 +2515,16 @@ public class JsSemanticEmitterTest {
                 + run.output());
         check(run.output().contains("\"transfer\":{\"keys\":[\"name\","
                 + "\"score\",\"point\",\"many\"],\"nested\":"
-                + "\"@src/Point\",\"calls\":1}"),
+                + "\"@src/lib.deal/Point\",\"calls\":1}"),
             "the defaults-only transfer carries the omitted required defaults"
                 + " in declaration order, no optional and no public tag, and"
                 + " runs its nested provider default: " + run.output());
         check(run.output().contains("\"given\":{\"unchanged\":true,"
-                + "\"madeName\":\"Ada\",\"madePoint\":\"@src/Point\"}"),
+                + "\"madeName\":\"Ada\",\"madePoint\":\"@src/lib.deal/Point\"}"),
             "C$new copies the provided input without mutating it: "
                 + run.output());
         check(run.output().contains("\"badExtra\":\"E8007:extra field 'zz'"
-                + " in class '@src/Form':at=d.js:41:41\"")
+                + " in class '@src/app.deal/Form':at=d.js:41:41\"")
                 && run.output().contains("\"bad\":{\"unchanged\":true,"
                     + "\"calls\":0}"),
             "a failed extra-key construction rejects before any omitted"
@@ -2561,7 +2561,7 @@ public class JsSemanticEmitterTest {
                 + " each construction receives its own Error[] default: "
                 + run.output());
         check(run.output().contains("\"meta\":{\"$kind\":\"class\","
-                + "\"$classname\":\"@src/Form\"}"),
+                + "\"$classname\":\"@src/app.deal/Form\"}"),
             "the exported class value is exactly the META pair with its"
                 + " canonical public identity: " + run.output());
         check(run.output().contains("\"name\":\"Eve\",\"score\":0,"
@@ -2569,7 +2569,7 @@ public class JsSemanticEmitterTest {
             "C$new constructs with per-attempt defaults, nested class"
                 + " defaults included: " + run.output());
         check(run.output().contains("\"extra\":\"E8007:extra field 'zz' in"
-                + " class '@src/Form'\""),
+                + " class '@src/app.deal/Form'\""),
             "C$new rejects an extra provided key with the pinned E8007 at"
                 + " the call-site origin: " + run.output());
         check(run.output().contains("\"point\":{\"x\":5,\"y\":0}"),
@@ -2589,7 +2589,7 @@ public class JsSemanticEmitterTest {
             "every specified fromJson failure returns the DEAL null: "
                 + run.output());
         check(run.output().contains("\"walk\":\"E8001:value at"
-                + " point is not JSON serializable: @src/Form:at=d.js:77:88\""),
+                + " point is not JSON serializable: @src/app.deal/Form:at=d.js:77:88\""),
             "a non-JSON field raises the walk arm at the call-site origin: "
                 + run.output());
     }

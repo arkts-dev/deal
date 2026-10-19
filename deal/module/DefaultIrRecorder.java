@@ -1323,15 +1323,14 @@ final class DefaultIrRecorder {
      * the import whose checked surface carries the demanded class, or
      * null (an unknown or builtin module).
      *
-     * <p>The public module identity is directory-keyed (the relative
-     * module components exclude the file stem), so sibling modules in
-     * one directory share one classification identity: an
-     * identity-equality match alone is ambiguous, and a name-bearing
-     * sibling program is not proof of ownership (a sibling's
-     * non-exported class can carry the demanded name without being
-     * reachable under it). The provider is therefore resolved from the
-     * checked import provenance, over the consumer's import
-     * declarations:</p>
+     * <p>The public module identity names the defining file, so valid
+     * source gives each declaration its own identity; a harness-shared
+     * (synthetic) identity can still make an identity-equality match
+     * ambiguous, and a name-bearing sibling program is not proof of
+     * ownership (a sibling's non-exported class can carry the demanded
+     * name without being reachable under it). The provider is therefore
+     * resolved from the checked import provenance, over the consumer's
+     * import declarations:</p>
      * <ol>
      *   <li>the contextual provider the checked route names
      *       ({@code provenance}), when its program declares the demanded

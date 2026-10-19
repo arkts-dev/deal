@@ -347,7 +347,7 @@ public class JsBackendTest {
      * Compiles one project through the public pipeline: {@code sources}
      * are module-root-relative source files (the module root directory is
      * named {@code Main}, so a top-level class's canonical identity text is
-     * {@code @Main/<Class>} — the spelling the retained assertions pin);
+     * {@code @Main/Main.deal/<Class>} — the spelling the retained assertions pin);
      * {@code entry} is the entry's module-root-relative path.
      */
     private static CompiledProject compileProject(Map<String, String> sources,
@@ -1728,7 +1728,7 @@ public class JsBackendTest {
         check(js.contains("[\"static\"]")
                 || js.contains(", \"static\")"),
             "property position keeps the raw key");
-        check(js.contains("// Class default @Main/Holder.static")
+        check(js.contains("// Class default @Main/Main.deal/Holder.static")
                 && js.contains("= 0;"),
             "the synthesized plan keys the field by the raw name");
         check(js.contains("$rt.publishModule(\"Main\", \"test\","),
@@ -1765,13 +1765,13 @@ public class JsBackendTest {
         check(js.contains("$rt.function(\"([int])->int\""),
             "canonical array descriptor [int] in the wrapper sig "
                 + "(the legacy int[] spelling is gone)");
-        check(js.contains("$rt.function(\"(@Main/User)->@Main/User\""),
-            "canonical class atoms module-qualified (@Main/User)");
+        check(js.contains("$rt.function(\"(@Main/Main.deal/User)->@Main/Main.deal/User\""),
+            "canonical class atoms module-qualified (@Main/Main.deal/User)");
         check(js.contains("$rt.function(\"(?string)->?string\""),
             "canonical nullable descriptors (?string — the legacy "
                 + "T|null form is gone)");
-        check(js.contains("$rt.function(\"(?@Main/User)->?@Main/User\""),
-            "canonical nullable class atoms (?@Main/User-shaped ?D)");
+        check(js.contains("$rt.function(\"(?@Main/Main.deal/User)->?@Main/Main.deal/User\""),
+            "canonical nullable class atoms (?@Main/Main.deal/User-shaped ?D)");
         check(js.contains("$rt.function(\"((int)->int,int)->int\""),
             "function-typed parameters carry their descriptor");
         check(js.contains("$rt.function(\"async()->int\", "
@@ -1807,13 +1807,13 @@ public class JsBackendTest {
         check(js.contains("$rt.checkType(\"?int\",")
                 && js.contains("\"jstest-checksites.deal\", 6, 23)"),
             "nullable int table read checks with the canonical ?int inner");
-        check(js.contains("$rt.checkType(\"?@Main/User\",")
+        check(js.contains("$rt.checkType(\"?@Main/Main.deal/User\",")
                 && js.contains("\"jstest-checksites.deal\", 7, 24)"),
             "nullable class-typed table read checks with the canonical "
                 + "class atom inner");
-        check(js.contains("$rt.checkType(\"@Main/User\",")
+        check(js.contains("$rt.checkType(\"@Main/Main.deal/User\",")
                 && js.contains("\"jstest-checksites.deal\", 8, 17)"),
-            "class-typed table read checks with the canonical @Main/User atom");
+            "class-typed table read checks with the canonical @Main/Main.deal/User atom");
         check(js.contains("$rt.checkType(\"(int)->int\",")
                 && js.contains("\"jstest-checksites.deal\", 9, 10)"),
             "function-typed table read checks with the canonical (int)->int "
@@ -1866,17 +1866,17 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("// Class default @Main/Point.x"),
+        check(js.contains("// Class default @Main/Main.deal/Point.x"),
             "the class default plan keys the required field by its raw name");
-        check(!js.contains("// Class default @Main/Point.nick"),
+        check(!js.contains("// Class default @Main/Main.deal/Point.nick"),
             "the absent optional field has no default evaluator");
-        check(js.contains("// The defaults-only factory transfer of @Main/Public."),
+        check(js.contains("// The defaults-only factory transfer of @Main/Main.deal/Public."),
             "the exported class publishes its defaults-only factory transfer");
-        check(js.contains("$rt.classPlan(\"@Main/Public\", $pPublic, "
+        check(js.contains("$rt.classPlan(\"@Main/Main.deal/Public\", $pPublic, "
             + "provided, $file, $line, $column)"),
             "Public$new constructs through $rt.classPlan over the plan list");
         check(js.contains("$rt.publishModule(\"Main\", \"Public\", "
-            + "{ $kind: \"class\", $classname: \"@Main/Public\" });"),
+            + "{ $kind: \"class\", $classname: \"@Main/Main.deal/Public\" });"),
             "the inline META pair carries the module-qualified identity");
         check(js.contains("$rt.publishModule(\"Main\", \"Public$new\","),
             "the exported class publishes the hidden C$new closure");
@@ -1918,15 +1918,15 @@ public class JsBackendTest {
             "the generated C$toJson wrapper is published under its raw key");
         check(js.contains("$rt.publishModule(\"Main\", \"U$fields\", $fU);"),
             "the hidden C$fields descriptor export is emitted");
-        check(js.contains("$rt.function(\"(string)->?@Main/U\""),
-            "U$fromJson carries the canonical (string)->?@Main/U signature");
-        check(js.contains("$rt.jsonFromJson(\"@Main/U\", $fU, null,")
+        check(js.contains("$rt.function(\"(string)->?@Main/Main.deal/U\""),
+            "U$fromJson carries the canonical (string)->?@Main/Main.deal/U signature");
+        check(js.contains("$rt.jsonFromJson(\"@Main/Main.deal/U\", $fU, null,")
                 && js.contains("\"jstest-jsonable-pins.deal\", 2, 8)"),
             "the fromJson walker call carries the identity, C$fields, and the "
                 + "recorded call span");
-        check(js.contains("$rt.function(\"(@Main/U)->string\""),
-            "U$toJson carries the canonical (@Main/U)->string signature");
-        check(js.contains("$rt.jsonToJson(\"@Main/U\", "),
+        check(js.contains("$rt.function(\"(@Main/Main.deal/U)->string\""),
+            "U$toJson carries the canonical (@Main/Main.deal/U)->string signature");
+        check(js.contains("$rt.jsonToJson(\"@Main/Main.deal/U\", "),
             "the toJson walker call carries the identity backstop");
         check(js.contains("{ name: \"name\", jtype: \"string\", optional: false, "
                 + "nullable: false, hasDefault: true")
@@ -1936,8 +1936,8 @@ public class JsBackendTest {
                 + "nullable: false, hasDefault: true"),
             "U$fields is the declaration-order descriptor array with one "
                 + "role per key (name/jtype/optional/nullable/hasDefault)");
-        check(js.contains("// Class default @Main/U.name")
-                && js.contains("// Class default @Main/U.age"),
+        check(js.contains("// Class default @Main/Main.deal/U.name")
+                && js.contains("// Class default @Main/Main.deal/U.age"),
             "the field evaluators stay the per-construction defaults thunks");
     }
 
@@ -2074,7 +2074,7 @@ public class JsBackendTest {
                     && js.contains("$rt.readModule(\"lib_a\", \"Inner$fields\")"),
                 "the cross-module class-typed field references the imported "
                     + "module's published Inner$fields entry");
-            check(js.contains("element: { jtype: \"class\", className: \"@Main/Inner\"")
+            check(js.contains("element: { jtype: \"class\", className: \"@Main/Main.deal/Inner\"")
                     || js.contains("element: { jtype: \"class\", "
                         + "className: \"@"),
                 "the cross-module array-of-class element entry carries the "
@@ -2148,14 +2148,14 @@ public class JsBackendTest {
         if (nested == null || nested.hasErrors()) return;
 
         String js = nested.source();
-        int defaults = js.indexOf("// Class default @Main/Inner.v");
+        int defaults = js.indexOf("// Class default @Main/Main.deal/Inner.v");
         check(defaults >= 0,
             "the declaration-site default plan carries the canonical identity");
-        check(js.contains("$rt.setProp($s45, \"$classname\", \"@Main/Seed\");")
-                || js.contains("\"$classname\", \"@Main/Seed\""),
+        check(js.contains("$rt.setProp($s45, \"$classname\", \"@Main/Main.deal/Seed\");")
+                || js.contains("\"$classname\", \"@Main/Main.deal/Seed\""),
             "the default evaluator constructs the same-module Seed with its "
                 + "canonical identity");
-        check(js.contains("// Class default @Main/Seed.value"),
+        check(js.contains("// Class default @Main/Main.deal/Seed.value"),
             "the Seed default plan carries its own field identity");
 
         // A legal module default invokes an ordinary function wrapper.
@@ -2177,7 +2177,7 @@ public class JsBackendTest {
             "nested class with a scope-local default function generates: "
                 + (func == null ? "<null>" : func.diagnostics()));
         if (func != null && !func.hasErrors()) {
-            check(func.source().contains("// Class default @Main/Inner.v")
+            check(func.source().contains("// Class default @Main/Main.deal/Inner.v")
                     && func.source().contains(".$f(\"jstest-moduleclass-func.deal\", 2, 24)"),
                 "the plan evaluator calls the ordinary function wrapper");
         }
@@ -2192,7 +2192,7 @@ public class JsBackendTest {
             String xjs = exported.source();
             int metaExport = xjs.indexOf(
                 "$rt.publishModule(\"Main\", \"Outer\", "
-                    + "{ $kind: \"class\", $classname: \"@Main/Outer\" });");
+                    + "{ $kind: \"class\", $classname: \"@Main/Main.deal/Outer\" });");
             int newExport = xjs.indexOf(
                 "$rt.publishModule(\"Main\", \"Outer$new\",");
             int testExport = xjs.indexOf(
@@ -2202,7 +2202,7 @@ public class JsBackendTest {
                     + "C$new at the declaration site");
             check(metaExport > 0 && testExport > 0,
                 "the module class META and test function are both exported");
-            check(xjs.contains("$rt.classPlan(\"@Main/Outer\", $pOuter, "
+            check(xjs.contains("$rt.classPlan(\"@Main/Main.deal/Outer\", $pOuter, "
                     + "provided, $file, $line, $column)"),
                 "the exported module class constructs through the "
                     + "module-qualified class plan");
@@ -2232,11 +2232,11 @@ public class JsBackendTest {
                 + (shadowBase == null ? "<null>" : shadowBase.diagnostics()));
         if (shadowBase != null && !shadowBase.hasErrors()) {
             String sjs = shadowBase.source();
-            check(sjs.contains("// Class default @Main/Alternate.w"),
+            check(sjs.contains("// Class default @Main/Main.deal/Alternate.w"),
                 "the second module class has its own unambiguous artifacts");
-            int outerTags = countOf(sjs, "\"$classname\", \"@Main/Outer\"");
+            int outerTags = countOf(sjs, "\"$classname\", \"@Main/Main.deal/Outer\"");
             int alternateTags = countOf(sjs,
-                "\"$classname\", \"@Main/Alternate\"");
+                "\"$classname\", \"@Main/Main.deal/Alternate\"");
             check(outerTags == 2,
                 "both Outer constructions (initial and target-context "
                     + "assignment) carry the shadowed declaration's identity: "
@@ -2312,7 +2312,7 @@ public class JsBackendTest {
             + "m.test.$f(\"probe\", 1, 1);\n"
             + "if (m.Outer == null || m.Outer.$kind !== \"class\")"
             + " { throw new Error(\"exports.Outer missing\"); }\n"
-            + "if (m.Outer.$classname !== \"@Main/Outer\")"
+            + "if (m.Outer.$classname !== \"@Main/Main.deal/Outer\")"
             + " { throw new Error(\"identity: \" + m.Outer.$classname); }\n"
             + "if (typeof m[\"Outer$new\"] !== \"function\")"
             + " { throw new Error(\"exports.Outer$new missing\"); }\n"
@@ -2453,7 +2453,7 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(!js.contains("// Class default @Main/P.__proto__"),
+        check(!js.contains("// Class default @Main/Main.deal/P.__proto__"),
             "the optional __proto__ field carries no default evaluator");
         check(js.contains("\"__proto__\""),
             "provided object literal spells __proto__ as the raw key");
@@ -2467,7 +2467,7 @@ public class JsBackendTest {
             "the __proto__ export writes through the own-property-safe surface");
         check(!js.contains("setProp($exports, \"__proto__\""),
             "no raw exports-property assignment for the __proto__ key");
-        check(js.contains("\"$classname\", \"@Main/P\""),
+        check(js.contains("\"$classname\", \"@Main/Main.deal/P\""),
             "the class instance keeps the canonical identity tag");
 
         JsEmission imp = generate("""
@@ -4174,9 +4174,9 @@ public class JsBackendTest {
             check(!js.contains("$rt.function(\"(int)->bytes\""),
                 "no intrinsic bytes seed when a user class named "
                     + "bytes occupies the module binding");
-            check(js.contains("\"$classname\", \"@Main/bytes\""),
+            check(js.contains("\"$classname\", \"@Main/Main.deal/bytes\""),
                 "the user class named bytes keeps its own canonical identity");
-            check(js.contains("// Class default @Main/bytes.x"),
+            check(js.contains("// Class default @Main/Main.deal/bytes.x"),
                 "the user class named bytes emits its own field default "
                     + "plan");
         }
@@ -4972,7 +4972,7 @@ public class JsBackendTest {
         check(wrong.exitCode() == 1
                 && wrong.output().contains("DEAL_ERROR_CODE: E8001")
                 && wrong.output().contains(
-                    "expected instance of @Main/User, got @Main/Other"),
+                    "expected instance of @Main/Main.deal/User, got @Main/Main.deal/Other"),
             "a wrong-identity instance fails the boundary with E8001 naming "
                 + "both identities: " + wrong.output());
 

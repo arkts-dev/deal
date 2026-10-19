@@ -267,8 +267,10 @@ public enum DiagnosticCode {
 
     /**
      * Assignment crosses two distinct declarations of a same-named class
-     * (both share the canonical identity module + name, but each declaration
-     * owns its own runtime layout).
+     * (the canonical identity names the defining file, so a same-spelled
+     * sibling file is a distinct declaration; the same-module
+     * nested-shadowing declarations stay distinct through their defining
+     * provider — each declaration owns its own runtime layout).
      */
     E3019(Phase.FRONTEND, "Class assignment across distinct declarations"),
 

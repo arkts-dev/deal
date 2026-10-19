@@ -312,6 +312,7 @@ public class CheckerTest {
         testForOfAssignmentInvalidatesEnclosingNarrowing();
         testForHeadDeclarationOrder();
         testClassProvenanceAtInitializationAndNullableTarget();
+        testSameNameSiblingDeclarationsPublicCompile();
         testClassProvenanceThroughAssignmentExpressions();
         testClassProvenanceThroughConstructedLiterals();
         testClassProvenanceConstructedLiteralPublicCompile();
@@ -2235,6 +2236,112 @@ public class CheckerTest {
     }
 
     /**
+     * ISSUE-0847: two same-directory sibling files declaring the same
+     * class name are two distinct nominal declarations, because the
+     * canonical class identity names the defining file. A direct
+     * assignment across them is the cross-declaration rejection (E3019)
+     * on every backend, and the declaring declaration's own dynamic
+     * crossing compiles and executes (the correct-declaration control),
+     * including an equivalent import spelling of the same source file.
+     */
+    static void testSameNameSiblingDeclarationsPublicCompile() {
+        System.out.println("-- public deal compile: same-directory sibling "
+            + "declarations are distinct nominal types on js/jvm/luajit --");
+        Path root;
+        try {
+            root = Files.createTempDirectory("deal_sibling_identity_");
+        } catch (IOException e) {
+            fail("same-name sibling identity: cannot create temp directory: "
+                + e.getMessage());
+            return;
+        }
+        try {
+            Path crossing = root.resolve("crossing");
+            Files.createDirectories(crossing.resolve("src"));
+            Files.writeString(crossing.resolve("deal.json"),
+                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Files.writeString(crossing.resolve("src/a.deal"),
+                "export class Item { value: int = 1; }\n"
+                    + "export function make(): Item { return {}; }\n");
+            Files.writeString(crossing.resolve("src/b.deal"),
+                "export class Item { value: int = 2; }\n"
+                    + "export function make(): Item { return {}; }\n");
+            Path crossingEntry = crossing.resolve("src/main.deal");
+            Files.writeString(crossingEntry,
+                "import * as a from \"./a\";\n"
+                    + "import * as b from \"./b\";\n"
+                    + "export function main(): null {\n"
+                    + "  let wrong: b.Item = a.make();\n"
+                    + "  return null;\n"
+                    + "}\n");
+            for (String backend : List.of("js", "jvm", "luajit")) {
+                Path out = root.resolve("crossing_out_" + backend);
+                CliResult result = cliCompile(crossingEntry, backend, out);
+                check(result.exitCode() == 1
+                        && result.output().contains("E3019"),
+                    "the direct same-name sibling assignment is the"
+                        + " cross-declaration rejection on " + backend + ": "
+                        + result.output());
+                check(!Files.exists(out),
+                    "the rejected sibling assignment publishes no artifacts"
+                        + " on " + backend);
+            }
+
+            Path control = root.resolve("control");
+            Files.createDirectories(control.resolve("src"));
+            Files.writeString(control.resolve("deal.json"),
+                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Files.writeString(control.resolve("src/a.deal"),
+                "export class Item { value: int = 1; }\n"
+                    + "export function make(): Item { return {}; }\n"
+                    + "export function read(item: Item): int {\n"
+                    + "  return item.value;\n"
+                    + "}\n");
+            Files.writeString(control.resolve("src/b.deal"),
+                "export class Item { value: int = 2; }\n"
+                    + "export function make(): Item { return {}; }\n"
+                    + "export function read(item: Item): int {\n"
+                    + "  return item.value;\n"
+                    + "}\n");
+            Path controlEntry = control.resolve("src/main.deal");
+            Files.writeString(controlEntry,
+                "import * as console from \"std/console\";\n"
+                    + "import * as a from \"./a\";\n"
+                    + "import * as aAgain from \"././a\";\n"
+                    + "import * as b from \"./b\";\n"
+                    + "export function main(): null {\n"
+                    + "  let t: table = { item: a.make() };\n"
+                    + "  let own: a.Item = t.item;\n"
+                    + "  let again: aAgain.Item = own;\n"
+                    + "  let tb: table = { item: b.make() };\n"
+                    + "  let other: b.Item = tb.item;\n"
+                    + "  if (a.read(own) !== 1 || a.read(again) !== 1) {\n"
+                    + "    throw { code: \"WRONG_A\", message: \"a\" };\n"
+                    + "  }\n"
+                    + "  if (b.read(other) !== 2) {\n"
+                    + "    throw { code: \"WRONG_B\", message: \"b\" };\n"
+                    + "  }\n"
+                    + "  console.log(\"SIBLING_IDENTITY_OK\");\n"
+                    + "  return null;\n"
+                    + "}\n");
+            Path controlOutJs = root.resolve("control_out_js");
+            for (String backend : List.of("js", "jvm", "luajit")) {
+                Path out = backend.equals("js")
+                    ? controlOutJs : root.resolve("control_out_" + backend);
+                cliAccept(controlEntry, out, backend,
+                    "the correct-declaration control");
+            }
+            cliNode(controlOutJs, "SIBLING_IDENTITY_OK");
+        } catch (IOException | InterruptedException e) {
+            fail("same-name sibling identity: " + e.getMessage());
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
      * ISSUE-0717 review cycle 3: the E3019 cross-declaration gate covers
      * declaration initialization and nullable class targets as well as
      * plain assignment expressions (the two declarations share the
@@ -2591,8 +2698,10 @@ public class CheckerTest {
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = root.resolve("module_crossings_out_" + backend);
                 CliResult result = cliCompile(crossingEntry, backend, out);
-                check(result.exitCode() == 1 && result.output().split("E3001", -1).length - 1 == 3,
-                    "all three same-name module assignment forms reject on " + backend + ": " + result.output());
+                check(result.exitCode() == 1 && result.output().split("E3019", -1).length - 1 == 3,
+                    "all three same-name module assignment forms reject as"
+                        + " cross-declaration crossings on " + backend + ": "
+                        + result.output());
                 check(!Files.exists(out), "cross-module rejection publishes no artifacts");
             }
             String[] names = {"init", "nullable", "assignment"};
@@ -2743,11 +2852,11 @@ public class CheckerTest {
                 check(Files.isRegularFile(legalOut.resolve("main.js")), "legal target-context artifact exists");
                 if (Files.isRegularFile(legalOut.resolve("main.js"))) {
                     String js = Files.readString(legalOut.resolve("main.js"), StandardCharsets.UTF_8);
-                    check(js.contains("\"$classname\", \"@src/A\"")
-                            && js.contains("\"$classname\", \"@src/B\""),
+                    check(js.contains("\"$classname\", \"@src/main.deal/A\"")
+                            && js.contains("\"$classname\", \"@src/main.deal/B\""),
                         "the distinct module class retains independent factory artifacts");
-                    check(countOf(js, "\"$classname\", \"@src/A\"") == 2
-                            && countOf(js, "\"$classname\", \"@src/B\"") == 1,
+                    check(countOf(js, "\"$classname\", \"@src/main.deal/A\"") == 2
+                            && countOf(js, "\"$classname\", \"@src/main.deal/B\"") == 1,
                         "target-context construction selects the annotated module "
                             + "class factory and never the other class factory");
                     cliNode(legalOut, tokens[p]);

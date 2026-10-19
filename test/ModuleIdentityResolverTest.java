@@ -244,7 +244,7 @@ public final class ModuleIdentityResolverTest {
         check(identity.normalizedRootPath().equals("/p/src"),
             "normalizedRootPath is the converted root path");
         check(identity.relativeModuleComponents().equals(List.of("a", "b")),
-            "relativeModuleComponents carry the directory components");
+            "relativeModuleComponents carry the identity path components");
         mutable.add("c");
         check(identity.relativeModuleComponents().equals(List.of("a", "b")),
             "ProjectModuleIdentity defensively copies the component list");
@@ -308,23 +308,25 @@ public final class ModuleIdentityResolverTest {
             Map.of(), null);
 
         checkProject(classify(context, uriOf("/p/src/x.deal")),
-            "src", "/p/src", List.of(),
-            "src/x.deal selects src with empty relative components");
+            "src", "/p/src", List.of("x.deal"),
+            "src/x.deal selects src with the defining file component");
         checkProject(classify(context, uriOf("/p/src/lib/x.deal")),
-            "src", "/p/src", List.of("lib"),
+            "src", "/p/src", List.of("lib", "x.deal"),
             "src/lib/x.deal is contained by src only (lib is a sibling root)");
         checkProject(classify(context, uriOf("/p/src/a/b/x.deal")),
-            "src", "/p/src", List.of("a", "b"),
-            "relativeModuleComponents are the exact directory components");
+            "src", "/p/src", List.of("a", "b", "x.deal"),
+            "relativeModuleComponents are the exact path components to the"
+                + " defining file");
         checkProject(classify(context, uriOf("/p/lib/x.deal")),
-            "lib", "/p/lib", List.of(),
+            "lib", "/p/lib", List.of("x.deal"),
             "lib/x.deal selects lib");
         checkProject(classify(context, uriOf("/p/lib/utils/y.deal")),
-            "lib/utils", "/p/lib/utils", List.of(),
+            "lib/utils", "/p/lib/utils", List.of("y.deal"),
             "lib/utils/y.deal selects the most-specific root lib/utils");
         checkProject(classify(context, uriOf("/p/lib/utils/deep/y.deal")),
-            "lib/utils", "/p/lib/utils", List.of("deep"),
-            "lib/utils/deep/y.deal selects lib/utils with component deep");
+            "lib/utils", "/p/lib/utils", List.of("deep", "y.deal"),
+            "lib/utils/deep/y.deal selects lib/utils with the deep and y.deal"
+                + " components");
         checkNone(classify(context, uriOf("/p/other/x.deal")),
             "a file outside all roots selects none");
         checkNone(classify(context, uriOf("/p/srcx/x.deal")),
@@ -341,10 +343,10 @@ public final class ModuleIdentityResolverTest {
                 root("src/lib", "/p/src/lib")),
             Map.of(), null);
         checkProject(classify(nested, uriOf("/p/src/lib/x.deal")),
-            "src/lib", "/p/src/lib", List.of(),
+            "src/lib", "/p/src/lib", List.of("x.deal"),
             "src/lib/x.deal selects the most-specific nested root src/lib");
         checkProject(classify(nested, uriOf("/p/src/x.deal")),
-            "src", "/p/src", List.of(),
+            "src", "/p/src", List.of("x.deal"),
             "src/x.deal selects src when no more specific root contains it");
 
         // A directory path (no .deal suffix) is never a .deal source.
@@ -360,7 +362,7 @@ public final class ModuleIdentityResolverTest {
                 root("x.deal", "/p/x.deal")),
             Map.of(), null);
         checkProject(classify(equality, uriOf("/p/x.deal")),
-            "x.deal", "/p/x.deal", List.of(),
+            "x.deal", "/p/x.deal", List.of("x.deal"),
             "equality with the root path is containment (defensive)");
     }
 
@@ -483,7 +485,7 @@ public final class ModuleIdentityResolverTest {
             Map.of(), null);
 
         checkProject(classify(context, uriOf("/p/src/a/x.deal")),
-            "src", "/p/src", List.of("a"),
+            "src", "/p/src", List.of("a", "x.deal"),
             "a rooted .deal source is a ProjectModule");
         checkNone(classify(context, uriOf("/p/out/x.deal")),
             "a relative out-of-root .deal source selects none");
@@ -496,7 +498,7 @@ public final class ModuleIdentityResolverTest {
         checkNone(classify(context, uriOf("/p/src/noextension")),
             "a file without the .deal suffix selects none");
         checkProject(classify(context, uriOf("/p/src/.deal")),
-            "src", "/p/src", List.of(),
+            "src", "/p/src", List.of(".deal"),
             "the .deal suffix rule applies literally to a file named .deal");
 
         // A .d.deal does not match the .deal project form (suffix rule:
@@ -578,7 +580,8 @@ public final class ModuleIdentityResolverTest {
             uriOf("/no-such-deal-dir/proj/src/a/b.deal"));
         check(rooted.moduleIdentity() instanceof CanonicalModuleIdentity.ProjectModule
                 && ((CanonicalModuleIdentity.ProjectModule) rooted.moduleIdentity())
-                    .projectIdentity().relativeModuleComponents().equals(List.of("a")),
+                    .projectIdentity().relativeModuleComponents().equals(
+                        List.of("a", "b.deal")),
             "classification over non-existent paths derives the project form"
                 + " lexically");
         ModuleIdentityResolver.ModuleClassification external = classify(context,
@@ -997,20 +1000,23 @@ public final class ModuleIdentityResolverTest {
         // boundary (full symlink resolution), classified by rule.
         ModuleIdentityResolver.ModuleClassification rootedMain =
             classify(context, canonicalUriOf(dir.resolve("src/rooted.deal")));
-        checkProject(rootedMain, "src", rootReal(dir.resolve("src")), List.of(),
+        checkProject(rootedMain, "src", rootReal(dir.resolve("src")),
+            List.of("rooted.deal"),
             "real src/rooted.deal selects src");
         checkProject(classify(context, canonicalUriOf(dir.resolve("src/sub/thing.deal"))),
-            "src", rootReal(dir.resolve("src")), List.of("sub"),
-            "real src/sub/thing.deal selects src with component sub");
+            "src", rootReal(dir.resolve("src")), List.of("sub", "thing.deal"),
+            "real src/sub/thing.deal selects src with the sub and thing.deal"
+                + " components");
         checkProject(classify(context, canonicalUriOf(dir.resolve("src/lib/nested.deal"))),
-            "src", rootReal(dir.resolve("src")), List.of("lib"),
+            "src", rootReal(dir.resolve("src")), List.of("lib", "nested.deal"),
             "real src/lib/nested.deal is contained by src only");
         checkProject(classify(context, canonicalUriOf(dir.resolve("lib/other.deal"))),
-            "lib", rootReal(dir.resolve("lib")), List.of(),
+            "lib", rootReal(dir.resolve("lib")), List.of("other.deal"),
             "real lib/other.deal selects lib");
         checkProject(classify(context,
                 canonicalUriOf(dir.resolve("lib/utils/deep/util.deal"))),
-            "lib/utils", rootReal(dir.resolve("lib/utils")), List.of("deep"),
+            "lib/utils", rootReal(dir.resolve("lib/utils")),
+            List.of("deep", "util.deal"),
             "real lib/utils/deep/util.deal selects the most-specific root"
                 + " lib/utils");
 

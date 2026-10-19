@@ -318,18 +318,31 @@ public final class ModuleIdentityResolver {
     }
 
     /**
-     * The path components from the root prefix to the defining file's
-     * directory (D6): the file name is omitted. A file directly in the
-     * root yields an empty list; an empty relative module path projects
-     * as {@code @<rootText>/<ClassName>}.
+     * The path components from the root prefix to the defining file
+     * (D6): the directory components and then the defining file's own
+     * name, so one directory's same-named sibling declarations never
+     * share a public identity (the descriptor form is
+     * {@code @<rootText>/<components>/<ClassName>} and the file component
+     * is what makes that identity name a declaration). A file directly in
+     * the root yields exactly its own file-name component — never an
+     * empty list — so two sibling files cannot project the same atom.
+     * The degenerate containment where the selected root path is the
+     * source path itself keeps the same rule: the defining file's own
+     * name is the only component.
      */
     private static List<String> relativeModuleComponents(Path sourcePath,
                                                          Path rootPath) {
         Path relative = rootPath.relativize(sourcePath);
         List<String> components = new ArrayList<>();
         int count = relative.getNameCount();
-        for (int i = 0; i < count - 1; i++) {
-            components.add(relative.getName(i).toString());
+        for (int i = 0; i < count; i++) {
+            String component = relative.getName(i).toString();
+            if (!component.isEmpty()) {
+                components.add(component);
+            }
+        }
+        if (components.isEmpty() && sourcePath.getFileName() != null) {
+            components.add(sourcePath.getFileName().toString());
         }
         return components;
     }
@@ -729,24 +742,4 @@ public final class ModuleIdentityResolver {
         }
     }
 
-    /**
-     * Derives the relative-module directory components of a dotted
-     * module path whose final component is the source file stem (the
-     * orchestrator's module-path shape): all components except the
-     * final one are the defining file's directory components below its
-     * configured root ({@code strict-project-context-resolution-identity}
-     * D6 — the source suffix and file stem are omitted from identity
-     * components).
-     *
-     */
-    public static List<String> directoryComponents(String dottedModulePath) {
-        Objects.requireNonNull(dottedModulePath, "dottedModulePath must not be null");
-        String[] parts = dottedModulePath.split("\\.", -1);
-        List<String> directories = new java.util.ArrayList<>(
-            Math.max(0, parts.length - 1));
-        for (int i = 0; i < parts.length - 1; i++) {
-            directories.add(parts[i]);
-        }
-        return directories;
-    }
 }

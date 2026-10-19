@@ -563,11 +563,11 @@ public class ProjectLoweringTest {
         """;
 
     /**
-     * The same-directory sibling pair of one canonical class identity:
-     * {@code src/m/ir.deal} and {@code src/m/codec.deal} both export
-     * {@code Ir} with different defaults, so the recorded contextual
-     * provider — never an identity-first match — must select the exact
-     * declaring provider of every construction.
+     * Two same-named sibling declarations ({@code src/m/ir.deal} and
+     * {@code src/m/codec.deal} both export {@code Ir} with different
+     * defaults) carry distinct canonical identities, so the recorded
+     * contextual declaration — never a name-first match — must select the
+     * exact declaration of every construction.
      */
     private static final String SIBLING_IR_SOURCE = """
         export class Ir { a: int = 7; }
@@ -603,7 +603,7 @@ public class ProjectLoweringTest {
         """;
 
     /**
-     * The same-identity sibling pair's field operations: the {@code ir}
+     * The same-named sibling pair's field operations: the {@code ir}
      * sibling's optional field and the {@code codec} sibling's required
      * field of one canonical identity, plus a same-named local spelling in
      * the consumer's own directory ({@code src/other.deal} and the
@@ -645,11 +645,15 @@ public class ProjectLoweringTest {
         }
         """;
 
+    /**
+     * The same-named sibling field fixture with the provider imports
+     * reversed: the field links must not depend on the import order.
+     */
     private static final String FIELD_SIBLING_APP_REVERSED_SOURCE =
         reverseProviderImports(FIELD_SIBLING_APP_SOURCE);
 
     /**
-     * The ambiguous-JSON-link fixture: two same-identity sibling jsonable
+     * The same-named sibling JSON fixture: two same-named sibling jsonable
      * declarations and a consumer whose jsonable class carries a
      * class-valued field of the sibling identity. The generated JSON plan
      * table is keyed by the canonical class identity, so the nested link
@@ -684,10 +688,10 @@ public class ProjectLoweringTest {
         reverseProviderImports(JSON_SIBLING_APP_SOURCE);
 
     /**
-     * The single-plan same-identity JSON fixture: the imported sibling
+     * The single-plan same-named JSON fixture: the imported sibling
      * declares no {@code @jsonable} plan, so exactly one plan-bearing
      * declaration carries the canonical identity and the nested link is
-     * exact (a same-identity declaration without a generated plan
+     * exact (a same-named declaration without a generated plan
      * registers none and cannot collide with it).
      */
     private static final String SINGLE_PLAN_OTHER_SOURCE = """
@@ -714,7 +718,7 @@ public class ProjectLoweringTest {
         """;
 
     /**
-     * The plan-imported/non-plan-local same-identity fixture (review
+     * The plan-imported/non-plan-local same-named fixture (review
      * cycle 4, finding 1): the imported sibling carries the only
      * plan-bearing ({@code @jsonable}) declaration while the unit-local
      * sibling declares no generated plan, so the generated plan table
@@ -727,7 +731,7 @@ public class ProjectLoweringTest {
         """;
 
     /**
-     * An earlier same-identity non-plan sibling in the emission order (the
+     * An earlier same-named non-plan sibling in the emission order (the
      * nested decode's factory-resolution probe): the oracle's nested
      * default filling must resolve the plan owner's CLASS_FACTORY, never
      * this sibling's.
@@ -835,7 +839,7 @@ public class ProjectLoweringTest {
         export function useIr(x: Ir): int { return x.a; }
         """;
 
-    /** A second same-identity sibling provider (the differing default 93). */
+    /** A second same-named sibling provider (the differing default 93). */
     private static final String PARAM_RETURN_PROVIDER_CODEC_SOURCE = """
         export class Ir { a: int = 93; }
         """;
@@ -853,7 +857,7 @@ public class ProjectLoweringTest {
         export function useIr(x: Ir): int { return x.a; }
         """;
 
-    /** The same-identity sibling of the call-receiver provider (93). */
+    /** The same-named sibling of the call-receiver provider (93). */
     private static final String CALL_RECEIVER_CODEC_SOURCE = """
         export class Ir { a: int = 93; nick: int = 1; }
         """;
@@ -901,7 +905,7 @@ public class ProjectLoweringTest {
 
     /**
      * The standalone callee-parameter and declared-return fixture beside a
-     * same-identity local declaration: {@code ir.useIr({})} and
+     * same-named local declaration: {@code ir.useIr({})} and
      * {@code g({})} construct the imported {@code ir.Ir} (7), never the
      * local declaration, and {@code make(): ir.Ir { return {}; }} returns
      * the imported layout. {@code localFieldsOnly} switches the local
@@ -956,7 +960,8 @@ public class ProjectLoweringTest {
         }
         """;
 
-    private static final ClassId SEGMENT = new ClassId("src", "Segment");
+    private static final ClassId SEGMENT =
+        new ClassId("src/util.deal", "Segment");
 
     /**
      * The binding/class common-admission fixture: a module-level class with
@@ -1042,13 +1047,15 @@ public class ProjectLoweringTest {
         """;
 
     // The compiler's canonical module path of a root-contained module is
-    // the configured root text plus the source's relative directory
-    // components (the file name is omitted), so both classes of the
-    // fixture — declared in the flat `src` root — carry `@src/<Name>`:
+    // the configured root text plus the source's relative path with the
+    // defining file as its final component, so both classes of the
+    // fixture — declared in `src/util.deal` — carry `@src/util.deal/<Name>`:
     // the identity the checker, the declaration surface, the checked
     // project's interface index, and the legacy emission all produce.
-    private static final ClassId POINT = new ClassId("src", "Point");
-    private static final ClassId HIDDEN = new ClassId("src", "Hidden");
+    private static final ClassId POINT =
+        new ClassId("src/util.deal", "Point");
+    private static final ClassId HIDDEN =
+        new ClassId("src/util.deal", "Hidden");
 
     /**
      * The extern-C declaration module of the fail-closed acceptance (the
@@ -2555,8 +2562,8 @@ public class ProjectLoweringTest {
             ExecutableLoweredProject lowered = result.project();
             ModuleId alpha = new ModuleId("alpha.util");
             ModuleId beta = new ModuleId("beta.util");
-            ClassId alphaPoint = new ClassId("src/alpha", "Point");
-            ClassId betaPoint = new ClassId("src/beta", "Point");
+            ClassId alphaPoint = new ClassId("src/alpha/util.deal", "Point");
+            ClassId betaPoint = new ClassId("src/beta/util.deal", "Point");
             LoweredModuleUnit alphaUnit = lowered.modules().get(alpha);
             LoweredModuleUnit betaUnit = lowered.modules().get(beta);
             LoweredModuleUnit app = lowered.modules().get(APP);
@@ -2622,8 +2629,9 @@ public class ProjectLoweringTest {
                     (KindPayload.FieldWritePayload) write.payload();
                 checkEq(alphaPoint, payload.classId(),
                     "every FIELD_WRITE names the alpha provider's class");
-                checkEq("src/alpha", payload.classId().modulePath(),
-                    "the field write's class id carries the provider's module path");
+                checkEq("src/alpha/util.deal", payload.classId().modulePath(),
+                    "the field write's class id carries the provider's module"
+                        + " path (the defining file included)");
             }
             if (!deletes.isEmpty()
                     && deletes.get(0).payload()
@@ -2681,9 +2689,10 @@ public class ProjectLoweringTest {
             if (irUnit == null || codecUnit == null || app == null) {
                 return;
             }
-            ClassId irId = new ClassId("src/m", "Ir");
+            ClassId irId = new ClassId("src/m/ir.deal", "Ir");
+            ClassId codecId = new ClassId("src/m/codec.deal", "Ir");
             ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
-            ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
+            ClassFactoryId codecEntry = factoryEntryOf(codecUnit, codecId);
             check(irEntry != null && codecEntry != null
                     && !irEntry.equals(codecEntry),
                 "the sibling declarations carry distinct construction entries");
@@ -2732,16 +2741,16 @@ public class ProjectLoweringTest {
     }
 
     /**
-     * The same-identity provider crossing (ISSUE-0809 review cycle 2): two
-     * files in one directory declaring the same class name share one
-     * canonical public identity, so the imported declaration's value never
-     * retags to the consumer's same-spelled declaration. The production
-     * pipeline refuses the project at the frontend with E3019 and
-     * publishes nothing — never an artifact whose field layout belongs to
-     * the other declaration.
+     * The same-named declaration crossing: two files in one directory
+     * declare the same class name as two distinct declarations (the
+     * canonical identity names the defining file), so the imported
+     * declaration's value never retags to the consumer's same-named
+     * declaration. The production pipeline refuses the project at the
+     * frontend with E3019 and publishes nothing — never an artifact whose
+     * field layout belongs to the other declaration.
      */
     private static void testSameIdentityProviderCrossingRejected() throws Exception {
-        System.out.println("-- a same-identity provider crossing is a frontend "
+        System.out.println("-- a same-named declaration crossing is a frontend "
             + "E3019 and publishes no project --");
         Path proj = Files.createTempDirectory("project-lowering-crossing");
         try {
@@ -2766,11 +2775,11 @@ public class ProjectLoweringTest {
             deleteRecursively(proj);
         }
 
-        // The nested-call literal beside a same-identity local declaration
+        // The nested-call literal beside a same-named local declaration
         // (ISSUE-0809 review cycle 2 finding 1): the argument's own
         // expectation names the callee parameter's provider, so the literal
         // is laid out by the imported declaration and is never captured by
-        // the enclosing annotation's identity-equal local declaration. The
+        // the enclosing annotation's same-named local declaration. The
         // legal shape lowers and executes the imported provider's
         // construction (previously the literal was attributed to the local
         // declaration and the sibling-parameter call was refused).
@@ -2780,7 +2789,7 @@ public class ProjectLoweringTest {
             SemanticLowerer.ProjectLoweringResult result =
                 lower(nestedProject, invocation());
             check(!result.hasErrors() && result.project() != null,
-                "the nested-call literal beside a same-identity local "
+                "the nested-call literal beside a same-named local "
                     + "declaration lowers: " + result.diagnostics());
             if (result.project() == null) {
                 return;
@@ -2794,7 +2803,8 @@ public class ProjectLoweringTest {
             if (irUnit == null || app == null) {
                 return;
             }
-            ClassId irId = new ClassId("src", "Ir");
+            ClassId irId = new ClassId("src/ir.deal", "Ir");
+            ClassId localId = new ClassId("src/app.deal", "Ir");
             ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
             check(irEntry != null,
                 "the nested-call provider registers its construction entry");
@@ -2806,11 +2816,13 @@ public class ProjectLoweringTest {
             for (SemanticOp op : app.ops()) {
                 if (op.kind() != SemanticOpKind.CLASS_NEW
                         || !(op.payload()
-                            instanceof KindPayload.ClassNewPayload payload)
-                        || !payload.classId().equals(irId)) {
+                            instanceof KindPayload.ClassNewPayload payload)) {
                     continue;
                 }
-                if (payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                if (payload.classId().equals(irId)) {
+                    checkEq(DefaultOwner.SHARED_FACTORY, payload.defaultOwner(),
+                        "every imported declaration literal transfers to its"
+                            + " provider factory");
                     shared++;
                     checkEq(irEntry, payload.classFactoryRef(),
                         "the nested-call argument literal references the "
@@ -2818,16 +2830,19 @@ public class ProjectLoweringTest {
                     checkEq(irUnit.classLayouts().get(irId), payload.layout(),
                         "the nested-call argument literal carries the "
                             + "provider's layout");
-                } else {
+                } else if (payload.classId().equals(localId)) {
                     local++;
                     checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
                         "the declared-return literal stays LOCAL");
+                    checkEq(app.classLayouts().get(localId), payload.layout(),
+                        "the declared-return literal carries the unit's own"
+                            + " declaration layout");
                 }
             }
             checkEq(2, shared,
                 "both nested-call argument literals construct the imported "
-                    + "provider (never the enclosing same-identity local "
-                    + "declaration)");
+                    + "provider (never the consumer's same-named sibling"
+                    + " declaration)");
             checkEq(1, local,
                 "the local declared-return literal constructs the unit's own "
                     + "declaration");
@@ -2845,7 +2860,7 @@ public class ProjectLoweringTest {
     /**
      * The nested-call literal fixture (ISSUE-0809 review cycle 2 finding
      * 1): the enclosing annotation names the local declaration while the
-     * callee parameter names the identity-equal imported one; the
+     * callee parameter names the same-named imported one; the
      * argument literal must be laid out by the parameter's declaration.
      */
     private static final String NESTED_CALL_IR_SOURCE = """
@@ -2871,7 +2886,7 @@ public class ProjectLoweringTest {
 
     /**
      * Compiles the project at its {@code src/app.deal} entry through the
-     * production pipeline and asserts the same-identity provider crossing
+     * production pipeline and asserts the same-named declaration crossing
      * is refused with E3019 and no partial or published view.
      */
     private static void assertCrossingRejected(Path proj, String label)
@@ -2912,7 +2927,7 @@ public class ProjectLoweringTest {
 
     /**
      * The nested-field provider fixture (ISSUE-0809 review cycle 2
-     * finding 1): the enclosing class's field names the identity-equal
+     * finding 1): the enclosing class's field names the same-named
      * sibling provider, so the nested literal must be laid out by the
      * field's declaration, never by the enclosing literal's contextual
      * declaration.
@@ -2949,7 +2964,7 @@ public class ProjectLoweringTest {
     private static void testNestedFieldProviderBesideSameIdentityLocal()
             throws Exception {
         System.out.println("-- the class-typed field's declaring provider owns its "
-            + "nested literal beside a same-identity sibling --");
+            + "nested literal beside a same-named sibling --");
         RealProject project = compileProject(NESTED_FIELD_APP_SOURCE,
             Map.of("src/m/ir.deal", NESTED_FIELD_IR_SOURCE,
                 "src/m/codec.deal", NESTED_FIELD_CODEC_SOURCE),
@@ -2974,12 +2989,13 @@ public class ProjectLoweringTest {
             if (irUnit == null || codecUnit == null || app == null) {
                 return;
             }
-            ClassId irId = new ClassId("src/m", "Ir");
+            ClassId irId = new ClassId("src/m/ir.deal", "Ir");
+            ClassId codecId = new ClassId("src/m/codec.deal", "Ir");
             ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
-            ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
+            ClassFactoryId codecEntry = factoryEntryOf(codecUnit, codecId);
             check(irEntry != null && codecEntry != null
                     && !irEntry.equals(codecEntry),
-                "both same-identity declarations register distinct entries");
+                "both same-declaration entries stay distinct");
             if (irEntry == null || codecEntry == null) {
                 return;
             }
@@ -2988,17 +3004,20 @@ public class ProjectLoweringTest {
             for (SemanticOp op : app.ops()) {
                 if (op.kind() != SemanticOpKind.CLASS_NEW
                         || !(op.payload()
-                            instanceof KindPayload.ClassNewPayload payload)
-                        || !payload.classId().equals(irId)) {
+                            instanceof KindPayload.ClassNewPayload payload)) {
                     continue;
                 }
-                if (irEntry.equals(payload.classFactoryRef())) {
+                if (payload.classId().equals(irId)) {
                     irConstructions++;
+                    checkEq(irEntry, payload.classFactoryRef(),
+                        "the enclosing literal transfers to the ir provider");
                     checkEq(irUnit.classLayouts().get(irId), payload.layout(),
                         "the enclosing literal carries the ir provider's layout");
-                } else if (codecEntry.equals(payload.classFactoryRef())) {
+                } else if (payload.classId().equals(codecId)) {
                     codecConstructions++;
-                    checkEq(codecUnit.classLayouts().get(irId), payload.layout(),
+                    checkEq(codecEntry, payload.classFactoryRef(),
+                        "the nested literal transfers to the codec provider");
+                    checkEq(codecUnit.classLayouts().get(codecId), payload.layout(),
                         "the nested literal carries the codec provider's layout");
                 }
             }
@@ -3025,7 +3044,7 @@ public class ProjectLoweringTest {
     /**
      * The transitive-provider fixture (ISSUE-0809 review cycle 2 finding
      * 2): the consumer imports only the intermediate module, whose field
-     * declaration names the identity-equal sibling provider's class; both
+     * declaration names the same-named sibling provider's class; both
      * same-directory modules declare {@code Part}.
      */
     private static final String TRANSITIVE_IR_SOURCE = """
@@ -3052,15 +3071,15 @@ public class ProjectLoweringTest {
      * The transitive provider literal (ISSUE-0809 review cycle 2 finding
      * 2): the consumer's nested literal is attributed to the sibling
      * declaration the imported field annotation names, whose snapshot the
-     * whole-project provider index carries — never to the identity-equal
-     * import that happens to share the canonical module identity. The
-     * construction, the recorded plan occurrence and the runtime edge all
-     * name the exact declaration, and the artifact executes its default.
+     * whole-project provider index carries — never to a same-named import
+     * of another declaration. The construction, the recorded plan
+     * occurrence and the runtime edge all name the exact declaration, and
+     * the artifact executes its default.
      */
     private static void testTransitiveProviderLiteralBesideSameIdentitySibling()
             throws Exception {
         System.out.println("-- a transitive provider literal resolves the "
-            + "declaring module's exact declaration, never an identity-equal "
+            + "declaring module's exact declaration, never a same-named "
             + "sibling import --");
         RealProject project = compileProject(TRANSITIVE_APP_SOURCE,
             Map.of("src/m/ir.deal", TRANSITIVE_IR_SOURCE,
@@ -3085,7 +3104,7 @@ public class ProjectLoweringTest {
             if (codecUnit == null || app == null) {
                 return;
             }
-            ClassId partId = new ClassId("src/m", "Part");
+            ClassId partId = new ClassId("src/m/codec.deal", "Part");
             ClassFactoryId codecEntry = factoryEntryOf(codecUnit, partId);
             check(codecEntry != null,
                 "the transitive provider registers its construction entry");
@@ -3119,7 +3138,7 @@ public class ProjectLoweringTest {
                 }
                 partEdges.add(edge);
                 // Every Part edge names the codec declaration the field
-                // annotation resolved — never the identity-equal sibling
+                // annotation resolved — never the same-named sibling
                 // import of the same canonical module identity.
                 check(edge.toSemanticModuleIdentity()
                         .canonicalResolvedSourceUri().contains("/m/codec.deal"),
@@ -3155,7 +3174,7 @@ public class ProjectLoweringTest {
     }
 
     private static void testSameIdentityFieldOperationResolution() throws Exception {
-        System.out.println("-- same-identity sibling field operations: the exact "
+        System.out.println("-- same-named sibling field operations: the exact "
             + "declaring provider owns every field read/write/delete, independent "
             + "of the import order --");
         for (boolean reversed : new boolean[] { false, true }) {
@@ -3170,7 +3189,7 @@ public class ProjectLoweringTest {
             try {
                 SemanticLowerer.ProjectLoweringResult result = lower(project, invocation());
                 check(!result.hasErrors() && result.project() != null,
-                    "the " + label + " same-identity field project lowers through "
+                    "the " + label + " same-named field project lowers through "
                         + "the one project entry: " + result.diagnostics());
                 if (result.project() == null) {
                     continue;
@@ -3186,19 +3205,22 @@ public class ProjectLoweringTest {
                 check(irUnit != null && codecUnit != null && otherUnit != null
                         && app != null,
                     "the " + label + " closure carries both siblings, the "
-                        + "same-identity provider and the consumer");
+                        + "same-named declarations and the consumer");
                 if (irUnit == null || codecUnit == null || otherUnit == null
                         || app == null) {
                     continue;
                 }
-                ClassId irId = new ClassId("src/m", "Ir");
-                ClassId pointId = new ClassId("src", "Point");
+                ClassId irId = new ClassId("src/m/ir.deal", "Ir");
+                ClassId codecId = new ClassId("src/m/codec.deal", "Ir");
+                ClassId pointId = new ClassId("src/other.deal", "Point");
+                ClassId otherPointId = pointId;
+                ClassId localPointId = new ClassId("src/app.deal", "Point");
                 ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
-                ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
+                ClassFactoryId codecEntry = factoryEntryOf(codecUnit, codecId);
                 ClassFactoryId otherEntry = factoryEntryOf(otherUnit, pointId);
                 check(irEntry != null && codecEntry != null && !irEntry.equals(codecEntry)
                         && otherEntry != null,
-                    "the " + label + " sibling and same-identity declarations carry "
+                    "the " + label + " sibling and same-named declarations carry "
                         + "their own construction entries");
                 if (irEntry == null || otherEntry == null) {
                     continue;
@@ -3214,14 +3236,16 @@ public class ProjectLoweringTest {
                         case KindPayload.FieldReadPayload read -> {
                             if (read.classId().equals(irId)) {
                                 irReads.add(read);
-                            } else if (read.classId().equals(pointId)) {
+                            } else if (read.classId().equals(pointId)
+                                    || read.classId().equals(localPointId)) {
                                 pointReads.add(read);
                             }
                         }
                         case KindPayload.FieldWritePayload write -> {
                             if (write.classId().equals(irId)) {
                                 irWrites.add(write);
-                            } else if (write.classId().equals(pointId)) {
+                            } else if (write.classId().equals(pointId)
+                                    || write.classId().equals(localPointId)) {
                                 pointWrites.add(write);
                             }
                         }
@@ -3242,53 +3266,59 @@ public class ProjectLoweringTest {
                 checkEq(1, irDeletes.size(), "the " + label + " ir delete lowers one "
                     + "FIELD_DELETE");
                 for (KindPayload.FieldReadPayload read : irReads) {
-                    checkEq(irEntry, read.classFactoryRef(),
-                        "the " + label + " ir field read names the ir sibling's "
-                            + "construction entry");
+                    checkEq(null, read.classFactoryRef(),
+                        "the " + label + " ir field read resolves the imported"
+                            + " declaration by its exact identity (one"
+                            + " declaration of the identity: no provider"
+                            + " reference is needed)");
                 }
                 for (KindPayload.FieldWritePayload write : irWrites) {
-                    checkEq(irEntry, write.classFactoryRef(),
-                        "the " + label + " ir field write names the ir sibling's "
-                            + "construction entry, never the codec sibling's");
+                    checkEq(null, write.classFactoryRef(),
+                        "the " + label + " ir field write resolves the imported"
+                            + " declaration's exact identity, never the"
+                            + " same-named sibling's");
                 }
                 for (KindPayload.FieldDeletePayload delete : irDeletes) {
-                    checkEq(irEntry, delete.classFactoryRef(),
-                        "the " + label + " ir field delete names the ir sibling's "
-                            + "construction entry (the optional field's declaration)");
+                    checkEq(null, delete.classFactoryRef(),
+                        "the " + label + " ir field delete resolves the"
+                            + " imported declaration's exact identity");
                 }
-                checkEq(2, pointReads.size(), "the " + label + " same-identity "
+                checkEq(2, pointReads.size(), "the " + label + " same-named "
                     + "spelling lowers two FIELD_READs");
                 long importedPointReads = pointReads.stream()
-                    .filter(read -> otherEntry.equals(read.classFactoryRef()))
+                    .filter(read -> read.classId().equals(otherPointId))
                     .count();
                 long localPointReads = pointReads.stream()
-                    .filter(read -> read.classFactoryRef() == null)
+                    .filter(read -> read.classId().equals(localPointId))
                     .count();
                 checkEq(1L, importedPointReads, "the " + label + " imported "
-                    + "same-identity read names the imported provider's entry");
+                    + "read names the imported declaration's exact identity");
                 checkEq(1L, localPointReads, "the " + label + " unit-local "
-                    + "declaration's own read keeps the unit's layout (no provider "
-                    + "reference)");
+                    + "declaration's own read keeps the unit's layout");
                 checkEq(1, pointWrites.size(), "the " + label + " imported "
-                    + "same-identity write lowers one FIELD_WRITE");
+                    + "same-named write lowers one FIELD_WRITE");
                 for (KindPayload.FieldWritePayload write : pointWrites) {
-                    checkEq(otherEntry, write.classFactoryRef(),
-                        "the " + label + " imported same-identity write names the "
-                            + "imported provider's entry, never the unit-local mask");
+                    checkEq(otherPointId, write.classId(),
+                        "the " + label + " imported write names the imported"
+                            + " declaration's exact identity, never the"
+                            + " unit-local declaration's");
+                    checkEq(null, write.classFactoryRef(),
+                        "the " + label + " imported write needs no provider"
+                            + " reference for a unique identity");
                 }
 
                 SemanticIrValidator.ComparisonFacts facts =
                     comparisonFacts(project);
                 String text = assertProjectAdmission(lowered, facts,
-                    "the " + label + " same-identity field project passes the project surfaces");
+                    "the " + label + " same-named field project passes the project surfaces");
                 assertReassembly(text, SemanticIrDumper.dumpProject(lowered),
-                    "the " + label + " same-identity field project reassembles exactly");
+                    "the " + label + " same-named field project reassembles exactly");
 
                 SemanticRuntimeModel.ConsumerRun run =
                     SemanticOracle.executeProjectInits(lowered, result.tables(),
                         result.registries(), null);
                 check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                    "the " + label + " oracle completes the same-identity field "
+                    "the " + label + " oracle completes the same-named field "
                         + "probe (the demanded 5 and 2, the deleted optional field): "
                         + run.comparisonReport());
             } finally {
@@ -3297,10 +3327,17 @@ public class ProjectLoweringTest {
         }
     }
 
-    private static void testAmbiguousFieldOperationFailClosed() throws Exception {
-        System.out.println("-- the unrecorded same-identity field operation fails "
-            + "closed: no exact declaring provider means a named E6005, never a "
-            + "first alias --");
+    /**
+     * The exact-identity field operation needs no recorded declaration: the
+     * class identity names the defining file, so removing the checker's
+     * per-expression class declarations cannot make two declarations
+     * collide. The operations keep their exact class ids and resolve the
+     * declaring unit's layout, and the probe still executes.
+     */
+    private static void testExactIdentityFieldOperationNeedsNoDeclaration()
+            throws Exception {
+        System.out.println("-- a field operation resolves its exact class "
+            + "identity without a recorded receiver declaration --");
         RealProject project = compileProject(FIELD_SIBLING_APP_SOURCE,
             Map.of("src/m/ir.deal", FIELD_SIBLING_IR_SOURCE,
                 "src/m/codec.deal", FIELD_SIBLING_CODEC_SOURCE,
@@ -3308,12 +3345,10 @@ public class ProjectLoweringTest {
             Map.of());
         try {
             // The same real project with the checker's exact receiver
-            // declarations removed: the field operations of the
-            // same-identity spellings have no recorded declaring provider.
-            // (The literals' own recorded construction contexts stay:
-            // this negative isolates the field-operation path, whose
-            // fail-close must not be bypassed by an identity-equal unit
-            // layout.)
+            // declarations removed: the field operations keep their exact
+            // class identities. (The literals' own recorded construction
+            // contexts stay: this control isolates the field-operation
+            // path.)
             List<CheckedModuleInput> modules = new ArrayList<>();
             for (CheckedModuleInput module : project.checkedProject().modules()) {
                 CheckResult checks = module.checks();
@@ -3346,59 +3381,103 @@ public class ProjectLoweringTest {
                     List.of(IntrinsicKind.INT_CONVERT,
                         IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
                     Set.of());
-            check(result.hasErrors() && result.project() == null,
-                "the unrecorded same-identity field operation produces no project");
-            check(result.tables().isEmpty() && result.registries().isEmpty()
-                    && result.seeds() == null && result.namespaces() == null,
-                "the unrecorded same-identity field operation produces no tables, "
-                    + "no registries, no seeds, and no registrations");
-            if (!result.diagnostics().isEmpty()) {
-                CompilerDiagnostic diagnostic = result.diagnostics().get(0);
-                check("E6005".equals(diagnostic.code())
-                        && diagnostic.message().contains(
-                            SemanticLowerer.CONSTRUCT_UNLOWERED)
-                        && diagnostic.message().contains(
-                            "same-directory sibling declarations")
-                        && diagnostic.message().contains(
-                            "fails closed rather than selecting a first alias"),
-                    "the unrecorded same-identity field operation fails with a named "
-                        + "E6005 CONSTRUCT_UNLOWERED; got " + diagnostic.message());
+            check(!result.hasErrors() && result.project() != null,
+                "the exact-identity field operation needs no recorded receiver "
+                    + "declaration: " + result.diagnostics());
+            if (result.project() != null) {
+                LoweredModuleUnit app = result.project().modules().get(APP);
+                ClassId irId = new ClassId("src/m/ir.deal", "Ir");
+                ClassId localPointId = new ClassId("src/app.deal", "Point");
+                ClassId otherPointId = new ClassId("src/other.deal", "Point");
+                int irOps = 0;
+                int pointOps = 0;
+                if (app != null) {
+                    for (SemanticOp op : app.ops()) {
+                        ClassId opClass = switch (op.payload()) {
+                            case KindPayload.FieldReadPayload read -> read.classId();
+                            case KindPayload.FieldWritePayload write -> write.classId();
+                            case KindPayload.FieldDeletePayload delete ->
+                                delete.classId();
+                            default -> null;
+                        };
+                        if (irId.equals(opClass)) {
+                            irOps++;
+                        } else if (localPointId.equals(opClass)
+                                || otherPointId.equals(opClass)) {
+                            pointOps++;
+                        }
+                    }
+                }
+                checkEq(3, irOps, "the ir receiver's read, write and delete keep "
+                    + "the exact declaring identity");
+                checkEq(3, pointOps, "the two same-named Point declarations keep "
+                    + "their own exact identities on every field operation");
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.executeProjectInits(result.project(),
+                        result.tables(), result.registries(), null);
+                check(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the oracle completes the exact-identity field probe: "
+                        + run.comparisonReport());
             }
         } finally {
             deleteRecursively(project.root());
         }
     }
 
-    private static void testAmbiguousJsonNestedLinkFailClosed() throws Exception {
-        System.out.println("-- the ambiguous same-identity JSON nested link fails "
-            + "closed: the plan key cannot select the exact declaration, so a "
-            + "named E6005 refuses the project in both import orders --");
+    /**
+     * The same-named sibling JSON nested link resolves by exact identity:
+     * the plan-bearing declaration of the consumer's field type is the
+     * declaring file's own class identity, so the generated plan key names
+     * exactly one declaration in both import orders and the round trip
+     * executes its layout (no identity collision exists to fail closed).
+     */
+    private static void testJsonNestedLinkResolvesByExactIdentity() throws Exception {
+        System.out.println("-- the same-named sibling JSON nested link resolves "
+            + "the exact declaring identity in both import orders --");
         for (boolean reversed : new boolean[] { false, true }) {
             String label = reversed ? "reversed imports" : "ir imported first";
-            for (CompilerDiagnostic diagnostic : refusedCompile(reversed
-                        ? JSON_SIBLING_APP_REVERSED_SOURCE
-                        : JSON_SIBLING_APP_SOURCE,
-                    Map.of("src/m/ir.deal", JSON_SIBLING_IR_SOURCE,
-                        "src/m/codec.deal", JSON_SIBLING_CODEC_SOURCE))) {
-                check("E6005".equals(diagnostic.code())
-                        && diagnostic.message().contains("CONSTRUCT_UNLOWERED")
-                        && diagnostic.message().contains(
-                            "generated JSON plan key cannot select the exact "
-                                + "declaration"),
-                    "the " + label + " ambiguous JSON nested link fails with a "
-                        + "named E6005; got " + diagnostic.message());
+            RealProject project = compileProject(reversed
+                    ? JSON_SIBLING_APP_REVERSED_SOURCE
+                    : JSON_SIBLING_APP_SOURCE,
+                Map.of("src/m/ir.deal", JSON_SIBLING_IR_SOURCE,
+                    "src/m/codec.deal", JSON_SIBLING_CODEC_SOURCE), Map.of());
+            try {
+                SemanticLowerer.ProjectLoweringResult result =
+                    lower(project, invocation());
+                check(!result.hasErrors() && result.project() != null,
+                    "the " + label + " JSON nested link project lowers through "
+                        + "the one project entry: " + result.diagnostics());
+                if (result.project() == null) {
+                    continue;
+                }
+                ClassId irId = new ClassId("src/m/ir.deal", "Ir");
+                ClassId codecId = new ClassId("src/m/codec.deal", "Ir");
+                check(!irId.equals(codecId),
+                    "the " + label + " same-named declarations own distinct"
+                        + " exact identities");
+                SemanticRuntimeModel.ConsumerRun run =
+                    SemanticOracle.executeProjectInits(result.project(),
+                        result.tables(), result.registries(), null);
+                check(run.terminal()
+                        instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the " + label + " oracle completes the JSON round trip"
+                        + " through the declaring identity: "
+                        + run.comparisonReport());
+            } finally {
+                deleteRecursively(project.root());
             }
         }
     }
 
     /**
-     * The single-plan same-identity JSON link (review cycle 2, finding 2):
-     * a same-identity declaration without a generated plan registers none,
+     * The single-plan same-named JSON link (review cycle 2, finding 2):
+     * a same-named declaration without a generated plan registers none,
      * so the nested link resolves the one plan-bearing declaration exactly
      * and the project compiles and runs the round trip.
      */
     private static void testSinglePlanJsonNestedLinkResolves() throws Exception {
-        System.out.println("-- the single-plan same-identity JSON nested link "
+        System.out.println("-- the single-plan same-named JSON nested link "
             + "resolves: an identity with one plan-bearing declaration keeps "
             + "its exact nested link --");
         RealProject project = compileProject(SINGLE_PLAN_APP_SOURCE,
@@ -3429,7 +3508,7 @@ public class ProjectLoweringTest {
     }
 
     /**
-     * The plan-imported/non-plan-local same-identity JSON link (review
+     * The plan-imported/non-plan-local same-named JSON link (review
      * cycle 4, finding 1): the imported sibling carries the only
      * plan-bearing declaration, so the generated plan table carries the
      * imported declaration's layout (the unique plan-bearing declaration
@@ -3439,7 +3518,7 @@ public class ProjectLoweringTest {
      * the non-exported local sibling shapes admit.
      */
     private static void testPlanImportedBesideNonPlanLocal() throws Exception {
-        System.out.println("-- the plan-imported/non-plan-local same-identity JSON "
+        System.out.println("-- the plan-imported/non-plan-local same-named JSON "
             + "link resolves the imported plan-bearing declaration and "
             + "executes --");
         for (boolean exported : new boolean[] { true, false }) {
@@ -3460,9 +3539,9 @@ public class ProjectLoweringTest {
                 }
                 ExecutableLoweredProject lowered = result.project();
                 LoweredModuleUnit appUnit = lowered.modules().get(APP);
-                ClassId point = new ClassId("src", "Point");
+                ClassId point = new ClassId("src/app.deal", "Point");
                 check(appUnit != null && appUnit.classLayouts().containsKey(point),
-                    "the consumer unit declares the same-identity local sibling "
+                    "the consumer unit declares the same-named local sibling "
                         + "(" + label + ")");
                 if (appUnit != null) {
                     checkEq("nick",
@@ -3474,7 +3553,8 @@ public class ProjectLoweringTest {
                         if (op.kind() == SemanticOpKind.CLASS_NEW
                                 && op.payload()
                                     instanceof KindPayload.ClassNewPayload payload
-                                && payload.classId().equals(point)) {
+                                && payload.classId()
+                                    .equals(new ClassId("src/other.deal", "Point"))) {
                             literal = payload;
                         }
                     }
@@ -3520,7 +3600,7 @@ public class ProjectLoweringTest {
         System.out.println("-- the annotated-local construction shape: the "
             + "checker's recorded construction declaration owns the "
             + "literal's plan and per-construction default beside imported "
-            + "same-identity siblings --");
+            + "same-named siblings --");
         for (boolean reversed : new boolean[] { false, true }) {
             String label = reversed ? "reversed imports" : "ir imported first";
             RealProject project = compileProject("src/m/app.deal",
@@ -3556,7 +3636,7 @@ public class ProjectLoweringTest {
                 if (app == null) {
                     return;
                 }
-                ClassId localIr = new ClassId("src/m", "Ir");
+                ClassId localIr = new ClassId("src/m/app.deal", "Ir");
                 int constructions = 0;
                 for (SemanticOp op : app.ops()) {
                     if (op.kind() != SemanticOpKind.CLASS_NEW
@@ -3651,7 +3731,7 @@ public class ProjectLoweringTest {
                 if (probeUnit == null || codecUnit == null) {
                     return;
                 }
-                ClassId irId = new ClassId("src/m", "Ir");
+                ClassId irId = new ClassId("src/m/codec.deal", "Ir");
                 ClassFactoryId codecEntry = factoryEntryOf(codecUnit, irId);
                 boolean constructionSeen = false;
                 for (SemanticOp op : probeUnit.ops()) {
@@ -3690,13 +3770,13 @@ public class ProjectLoweringTest {
      * contexts (review cycle 5 finding 1): a literal in an imported
      * function's parameter or declared-return position is attributed to
      * that annotation's own declared provider — never the consumer's
-     * same-identity local declaration — in either import order, for both
+     * same-named local declaration — in either import order, for both
      * a differing field set and a differing per-construction default.
      */
     private static void testCalleeParameterAndReturnProviderBesideSameIdentityLocal()
             throws Exception {
         System.out.println("-- the imported callee-parameter and declared-return "
-            + "contexts own their literals' construction beside a same-identity "
+            + "contexts own their literals' construction beside a same-named "
             + "local declaration --");
         for (boolean reversed : new boolean[] { false, true }) {
             for (boolean localFieldsOnly : new boolean[] { false, true }) {
@@ -3750,38 +3830,42 @@ public class ProjectLoweringTest {
                     if (irUnit == null || app == null) {
                         return;
                     }
-                    ClassId irId = new ClassId("src/m", "Ir");
+                    ClassId irId = new ClassId("src/m/ir.deal", "Ir");
                     ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
                     check(irEntry != null,
                         "the ir provider registers its construction entry (" + label + ")");
                     if (irEntry == null) {
                         return;
                     }
+                    ClassId localIr = new ClassId("src/m/app.deal", "Ir");
                     int shared = 0;
                     int local = 0;
                     for (SemanticOp op : app.ops()) {
                         if (op.kind() != SemanticOpKind.CLASS_NEW
                                 || !(op.payload()
-                                    instanceof KindPayload.ClassNewPayload payload)
-                                || !payload.classId().equals(irId)) {
+                                    instanceof KindPayload.ClassNewPayload payload)) {
                             continue;
                         }
-                        if (payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                        if (payload.classId().equals(irId)) {
                             shared++;
+                            checkEq(DefaultOwner.SHARED_FACTORY,
+                                payload.defaultOwner(),
+                                "the imported construction transfers to the ir"
+                                    + " provider (" + label + ")");
                             checkEq(irEntry, payload.classFactoryRef(),
                                 "the imported construction references the ir "
                                     + "provider's entry (" + label + ")");
                             checkEq(irUnit.classLayouts().get(irId), payload.layout(),
                                 "the imported construction carries the ir "
                                     + "provider's layout (" + label + ")");
-                        } else {
+                        } else if (payload.classId().equals(localIr)) {
                             local++;
                             checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
                                 "the local construction stays LOCAL (" + label + ")");
                             checkEq(null, payload.classFactoryRef(),
                                 "the local construction references no provider ("
                                     + label + ")");
-                            checkEq(app.classLayouts().get(irId), payload.layout(),
+                            checkEq(app.classLayouts().get(localIr), payload.layout(),
                                 "the local construction carries the unit's own "
                                     + "layout (" + label + ")");
                         }
@@ -3814,14 +3898,14 @@ public class ProjectLoweringTest {
      * finding 2): a function-typed value carries no declared parameter
      * annotation, but its bound parameter carrier names the defining
      * provider, so an argument literal is laid out by that declaration —
-     * never the consumer's same-identity local declaration, whose
+     * never the consumer's same-named local declaration, whose
      * per-construction default would otherwise capture it. The same shape
      * without the collision keeps the identity-keyed provider route.
      */
     private static void testFunctionTypedCalleeParameterProviderBesideSameIdentityLocal()
             throws Exception {
         System.out.println("-- the function-typed callee parameter carrier owns "
-            + "its argument literal's construction beside a same-identity "
+            + "its argument literal's construction beside a same-named "
             + "local declaration --");
         String app = "import * as ir from \"./ir\";\n\n"
             + "class Ir { a: int = 5; }\n\n"
@@ -3850,7 +3934,7 @@ public class ProjectLoweringTest {
             if (appUnit == null || irUnit == null) {
                 return;
             }
-            ClassId irId = new ClassId("src", "Ir");
+            ClassId irId = new ClassId("src/ir.deal", "Ir");
             ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
             int shared = 0;
             int local = 0;
@@ -3877,7 +3961,7 @@ public class ProjectLoweringTest {
                 "the argument literal constructs the parameter carrier's "
                     + "declaration");
             checkEq(0, local,
-                "the unit-local same-identity declaration never constructs the "
+                "the unit-local same-named declaration never constructs the "
                     + "argument literal");
             SemanticRuntimeModel.ConsumerRun run =
                 SemanticOracle.executeProjectInits(result.project(),
@@ -3888,7 +3972,7 @@ public class ProjectLoweringTest {
         } finally {
             deleteRecursively(project.root());
         }
-        // The control: the same shape without the same-identity local
+        // The control: the same shape without the same-named local
         // declaration resolves the sole declaration (the parameter
         // carrier's provider) and executes its default.
         RealProject control = compileProject(
@@ -3910,7 +3994,7 @@ public class ProjectLoweringTest {
             if (appUnit == null || irUnit == null) {
                 return;
             }
-            ClassId irId = new ClassId("src", "Ir");
+            ClassId irId = new ClassId("src/ir.deal", "Ir");
             ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
             int shared = 0;
             for (SemanticOp op : appUnit.ops()) {
@@ -3942,7 +4026,7 @@ public class ProjectLoweringTest {
      * The call-result receiver (review cycle 1 findings 1 and 2): a
      * receiver whose type is the callee's declared return carries the
      * declaring provider, so the field read/write/delete and the has
-     * check resolve that declaration's layout — never the same-identity
+     * check resolve that declaration's layout — never the same-named
      * sibling's — and the identity-keyed lowering fail-close is not
      * reached for a legal program.
      */
@@ -3950,7 +4034,7 @@ public class ProjectLoweringTest {
             throws Exception {
         System.out.println("-- the call-result receiver's declared return "
             + "provider owns its field read/write/delete and has check beside a "
-            + "same-identity sibling, independent of the import order --");
+            + "same-named sibling, independent of the import order --");
         for (boolean reversed : new boolean[] { false, true }) {
             String label = reversed ? "reversed imports" : "ir imported first";
             RealProject project = compileProject("src/app.deal",
@@ -3978,7 +4062,7 @@ public class ProjectLoweringTest {
                 if (irUnit == null || app == null) {
                     continue;
                 }
-                ClassId irId = new ClassId("src/m", "Ir");
+                ClassId irId = new ClassId("src/m/ir.deal", "Ir");
                 ClassFactoryId irEntry = factoryEntryOf(irUnit, irId);
                 check(irEntry != null,
                     "the " + label + " provider registers its construction "
@@ -3995,25 +4079,28 @@ public class ProjectLoweringTest {
                         case KindPayload.FieldReadPayload read -> {
                             if (read.classId().equals(irId)) {
                                 reads++;
-                                checkEq(irEntry, read.classFactoryRef(),
+                                checkEq(null, read.classFactoryRef(),
                                     "the " + label + " call-result read names "
-                                        + "the declared return provider's entry");
+                                        + "the declared return declaration's"
+                                        + " exact identity");
                             }
                         }
                         case KindPayload.FieldWritePayload write -> {
                             if (write.classId().equals(irId)) {
                                 writes++;
-                                checkEq(irEntry, write.classFactoryRef(),
+                                checkEq(null, write.classFactoryRef(),
                                     "the " + label + " call-result write names "
-                                        + "the declared return provider's entry");
+                                        + "the declared return declaration's"
+                                        + " exact identity");
                             }
                         }
                         case KindPayload.FieldDeletePayload delete -> {
                             if (delete.classId().equals(irId)) {
                                 deletes++;
-                                checkEq(irEntry, delete.classFactoryRef(),
+                                checkEq(null, delete.classFactoryRef(),
                                     "the " + label + " call-result delete names "
-                                        + "the declared return provider's entry");
+                                        + "the declared return declaration's"
+                                        + " exact identity");
                             }
                         }
                         case KindPayload.ClassNewPayload ctor -> {
@@ -4055,34 +4142,6 @@ public class ProjectLoweringTest {
             } finally {
                 deleteRecursively(project.root());
             }
-        }
-    }
-
-    /**
-     * The production pipeline over a fixture whose lowering must be
-     * refused: the compile returns false and its diagnostics are the
-     * refused project's named failure.
-     */
-    private static List<CompilerDiagnostic> refusedCompile(String appSource,
-            Map<String, String> extraSources) throws Exception {
-        Path proj = Files.createTempDirectory("project-lowering-refused");
-        try {
-            writeFileIn(proj, "src/app.deal", appSource);
-            for (Map.Entry<String, String> extra : extraSources.entrySet()) {
-                writeFileIn(proj, extra.getKey(), extra.getValue());
-            }
-            Path entry = proj.resolve("src/app.deal").toAbsolutePath();
-            Path output = proj.resolve("out").toAbsolutePath();
-            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                entry, output, false, false, false, false, Backend.LUAJIT, Map.of(),
-                List.of(proj.resolve("src").toAbsolutePath()),
-                Path.of(".").toAbsolutePath().normalize(), null,
-                ConformanceHarnessMetadata.invocation());
-            check(!orchestrator.compile(),
-                "the fixture project is refused by the production pipeline");
-            return List.copyOf(orchestrator.diagnostics());
-        } finally {
-            deleteRecursively(proj);
         }
     }
 
@@ -6476,7 +6535,7 @@ public class ProjectLoweringTest {
                     rebuilt.contract().canonicalDigest(),
                     "the retargeted factory op carries its recomputed snapshot digest");
                 expectClassGraphMutationRejects("a reordered factory default child",
-                    lowered, facts, mutated, "FACTORY_COHERENCE", "not @src/Point.x");
+                    lowered, facts, mutated, "FACTORY_COHERENCE", "not @src/util.deal/Point.x");
             }
             // Mutation (12): reorder a JSON-default row's class-default
             // children (the class facts).
@@ -6494,7 +6553,7 @@ public class ProjectLoweringTest {
                     copy -> copy.defaults = new JsonDefaultChildTable(rows));
                 expectClassGraphMutationRejects("a reordered JSON-default child row",
                     lowered, facts, mutated, "JSON_LAYOUT_COHERENCE",
-                    "not @src/Point.x");
+                    "not @src/util.deal/Point.x");
             }
             // Mutation (13): make the carried constructionEntry disagree with
             // the registry (the class facts).
@@ -6873,8 +6932,8 @@ public class ProjectLoweringTest {
             testNestedFieldProviderBesideSameIdentityLocal();
             testTransitiveProviderLiteralBesideSameIdentitySibling();
             testSameIdentityFieldOperationResolution();
-            testAmbiguousFieldOperationFailClosed();
-            testAmbiguousJsonNestedLinkFailClosed();
+            testExactIdentityFieldOperationNeedsNoDeclaration();
+            testJsonNestedLinkResolvesByExactIdentity();
             testSinglePlanJsonNestedLinkResolves();
             testPlanImportedBesideNonPlanLocal();
             testLocalDeclarationOwnsLiteralBesideImportedSiblings();

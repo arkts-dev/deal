@@ -1,0 +1,65 @@
+// @expected: companion
+// @description: Classified support module — compiled by the companion
+// catalog when a parent conformance fixture imports it. Exports the first
+// of two same-directory sibling declarations of the class name Item: its
+// canonical class identity names this defining file, so an instance of it
+// never passes the other sibling's typed boundary.
+// @jsonable
+export class Item {
+  value: int = 1;
+}
+
+// @jsonable
+export class Payload {
+  label: string = "a";
+  item: Item = {};
+}
+
+export function make(): Item {
+  return { value: 1 };
+}
+
+export function makePayload(): Payload {
+  return { label: "a", item: { value: 1 } };
+}
+
+export function read(item: Item): int {
+  return item.value;
+}
+
+export function identity(item: Item): Item {
+  return item;
+}
+
+export function wrapAll(items: Item[]): Item[] {
+  return items;
+}
+
+export function maybeIdentity(item: Item | null): Item | null {
+  return item;
+}
+
+export function payloadJson(): string {
+  let p: Payload = { label: "a", item: { value: 1 } };
+  return Payload$toJson(p);
+}
+
+export function payloadRoundTrip(): int {
+  let p: Payload | null = Payload$fromJson(payloadJson());
+  if (p !== null) {
+    return read(p.item);
+  }
+  return -1;
+}
+
+export function itemJson(item: Item): string {
+  return Item$toJson(item);
+}
+
+export function itemRoundTrip(value: int): int {
+  let restored: Item | null = Item$fromJson(itemJson({ value: value }));
+  if (restored !== null) {
+    return read(restored);
+  }
+  return -1;
+}

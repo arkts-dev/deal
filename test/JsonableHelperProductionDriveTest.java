@@ -2249,7 +2249,8 @@ public class JsonableHelperProductionDriveTest {
             }
             """;
         driveHelperFailure("table-class-instance", source, "Wrapper$toJson(w)",
-            "value at data.children[0] is not JSON serializable: @src/Child", "@src/Child");
+            "value at data.children[0] is not JSON serializable: @src/app.deal/Child",
+            "@src/app.deal/Child");
     }
 
     // =========================================================================

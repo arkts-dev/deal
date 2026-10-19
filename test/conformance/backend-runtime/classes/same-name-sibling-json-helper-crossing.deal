@@ -1,0 +1,13 @@
+// @spec: Classes — JSON serialization (@jsonable) and nominal identity
+// @description: A @jsonable class of the first same-named sibling declaration crossed through a dynamic table into the second declaration's @jsonable class type fails the class-identity check (E8001) naming both exact declarations, so a serialized declaration's instance never enters the other declaration's plan-bearing type.
+// @expected: runtime-error E8001
+// @features: jsonable, classes, modules, runtime-errors, nominal-identity
+
+import * as a from "./same_name_sibling_a";
+import * as b from "./same_name_sibling_b";
+
+export function main(): null {
+  let t: table = { value: a.makePayload() };
+  let wrong: b.Payload = t.value;
+  return null;
+}

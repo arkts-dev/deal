@@ -1009,7 +1009,7 @@ public class DefaultSemanticSerializerTest {
             check(planContent.contains("\"serializerVersion\":\"1\""),
                 "canonicalPlanContent carries the serializer version");
             check(planContent.contains(
-                    "\"classIdentity\":\"@src/Pair\""),
+                    "\"classIdentity\":\"@src/main.deal/Pair\""),
                 "canonicalPlanContent carries the canonical class"
                     + " identity text");
             check(planContent.contains(
@@ -1215,20 +1215,20 @@ public class DefaultSemanticSerializerTest {
             String content = box.completedPlan().orderedFields().get(0)
                 .defaultExpression().canonicalSemanticContent();
             check(content.contains(
-                    "\"typeDescriptor\":\"@src/LocalClass\""),
+                    "\"typeDescriptor\":\"@src/main.deal/LocalClass\""),
                 "the annotated body-local let serializes the E4"
                     + " descriptor of the locally declared class");
             check(content.contains("\"bindingMarker\":\"x\""),
                 "the body-local let binding marker serializes");
             check(content.contains(
-                    "\"returnDescriptor\":\"@src/LocalClass\"")
+                    "\"returnDescriptor\":\"@src/main.deal/LocalClass\"")
                     && content.contains(
                         "\"bindingMarker\":\"innerCopy\""),
                 "the nested function declaration's signature resolves"
                     + " against the function-expression body scope and"
                     + " inlines its semantics");
             check(content.contains("\"resultDescriptor\":"
-                    + "\"(@src/LocalClass)->@src/LocalClass\""),
+                    + "\"(@src/main.deal/LocalClass)->@src/main.deal/LocalClass\""),
                 "the function-expression result descriptor carries the"
                     + " local class descriptor");
             check(compile.serializedOf("main.deal", "FeLocal") != null,
@@ -1325,12 +1325,12 @@ public class DefaultSemanticSerializerTest {
             String gContent = sameG.completedPlan().orderedFields().get(0)
                 .defaultExpression().canonicalSemanticContent();
             check(fContent.contains(
-                    "\"(@src/LocalA)->int\""),
+                    "\"(@src/main.deal/LocalA)->int\""),
                 "the f-bearing Same default's function-expression"
                     + " parameter annotation resolves in its own"
                     + " declaration scope (LocalA)");
             check(gContent.contains(
-                    "\"(@src/LocalB)->int\""),
+                    "\"(@src/other.deal/LocalB)->int\""),
                 "the g-bearing Same default's function-expression"
                     + " parameter annotation resolves in its own"
                     + " declaration scope (LocalB)");
@@ -1493,7 +1493,7 @@ public class DefaultSemanticSerializerTest {
             }
             String fContent = box.completedPlan().orderedFields().get(0)
                 .defaultExpression().canonicalSemanticContent();
-            check(fContent.contains("@src/OtherSame"),
+            check(fContent.contains("@src/main.deal/OtherSame"),
                 "the nested ordinary function retains its module class annotation");
             check(!fContent.contains("\"kind\":\"CLASS_DECLARATION\""),
                 "the nested ordinary function does not carry a local declaration");

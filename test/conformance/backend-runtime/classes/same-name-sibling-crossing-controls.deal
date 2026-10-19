@@ -1,0 +1,110 @@
+// @spec: Runtime execution model — Nominal typing
+// @description: Controls beside the same-named sibling declarations: the correct declaration passes a dynamic table read, an equivalent import spelling of the same declaration is the same identity, arrays, nullables, function descriptors, class fields and the @jsonable round trip all accept the declaring declaration's values, and the other declaration's values stay accepted only at its own boundaries.
+// @expected: runtime-ok
+// @features: classes, modules, arrays, nullable, functions, jsonable, nominal-identity
+
+import * as a from "./same_name_sibling_a";
+import * as aAgain from "././same_name_sibling_a";
+import * as b from "./same_name_sibling_b";
+import * as cfg from "host/cfg";
+
+class Holder {
+  item: a.Item = {};
+}
+
+function fail(what: string): null {
+  throw { code: "CONTROL_FAIL", message: what };
+}
+
+export function main(): null {
+  // The declaring declaration's own value passes a dynamic table read.
+  let t: table = { item: a.make() };
+  let ok: a.Item = t.item;
+  if (a.read(ok) !== 1) {
+    return fail("own declaration table read");
+  }
+
+  // An equivalent import spelling of the same source file is the same
+  // declaration: the identity does not depend on the import spelling.
+  let t2: table = { item: aAgain.make() };
+  let ok2: aAgain.Item = t2.item;
+  let ok3: a.Item = ok2;
+  if (a.read(ok3) !== 1) {
+    return fail("equivalent import spelling");
+  }
+
+  // Recursive identity positions: arrays, nullable and function
+  // descriptors carry the declaring declaration's exact atoms.
+  let t3: table = { items: [a.make()], maybe: a.make(), f: a.identity };
+  let items: a.Item[] = t3.items;
+  let maybe: a.Item | null = t3.maybe;
+  let f: (x: a.Item) => a.Item = t3.f;
+  let first: a.Item = items[0];
+  if (a.read(first) !== 1) {
+    return fail("array identity position");
+  }
+  if (f(first).value !== 1) {
+    return fail("function descriptor position");
+  }
+  if (maybe !== null) {
+    if (a.read(maybe) !== 1) {
+      return fail("nullable identity position");
+    }
+  } else {
+    return fail("nullable position lost its value");
+  }
+
+  // A class field declared with the declaring declaration's type accepts
+  // its values.
+  let h: Holder = {};
+  h.item = t.item;
+  if (a.read(h.item) !== 1) {
+    return fail("class field position");
+  }
+
+  // The @jsonable helper round trips keep the declaring identity: the
+  // generated plan and helpers of each declaration stay its own.
+  if (a.payloadRoundTrip() !== 1) {
+    return fail("jsonable payload round trip");
+  }
+  if (a.itemRoundTrip(1) !== 1) {
+    return fail("jsonable class round trip");
+  }
+  let payloadJson: string = a.payloadJson();
+  if (payloadJson === "") {
+    return fail("jsonable payload text");
+  }
+
+  // The other same-named declaration keeps its own boundaries: its
+  // values pass at its own declaration and are never interchangeable
+  // with the first declaration's.
+  let tb: table = { item: b.make() };
+  let bok: b.Item = tb.item;
+  if (b.read(bok) !== 2) {
+    return fail("other declaration table read");
+  }
+  if (b.payloadRoundTrip() !== 2) {
+    return fail("other declaration jsonable round trip");
+  }
+  if (b.itemRoundTrip(2) !== 2) {
+    return fail("other declaration jsonable class round trip");
+  }
+  let bPayloadJson: string = b.payloadJson();
+  if (bPayloadJson === "") {
+    return fail("other declaration jsonable payload text");
+  }
+
+  // A declared host class instance keeps its externals identity through
+  // the same dynamic crossing: the host ABI class atom is exact and is
+  // never confused with a project declaration's atom.
+  let hostConfig: cfg.ServerConfig = { port: 9090, endpoint: { path: "/api" } };
+  let hostTable: table = { config: hostConfig };
+  let hostRead: cfg.ServerConfig = hostTable.config;
+  if (hostRead.port !== 9090) {
+    return fail("host class crossing");
+  }
+  if (cfg.describe(hostRead) !== "/api:9090") {
+    return fail("host class describe boundary");
+  }
+  return null;
+}

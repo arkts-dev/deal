@@ -909,8 +909,10 @@ public final class SourceModuleResolverTest {
                 "lib/utils/deep.deal selects the most-specific root lib/utils ("
                     + (identity == null ? "none" : identity.configuredRootText()) + ")");
             if (identity != null) {
-                check(identity.relativeModuleComponents().isEmpty(),
-                    "a file directly inside lib/utils has empty relative components");
+                check(identity.relativeModuleComponents().equals(
+                        List.of("deep.deal")),
+                    "a file directly inside lib/utils carries its own file"
+                        + " component: " + identity.relativeModuleComponents());
             }
         }
         SourceModuleResolver.ResolveResult nested =
@@ -920,8 +922,10 @@ public final class SourceModuleResolverTest {
         if (nested instanceof SourceModuleResolver.ResolveResult.Resolved resolved) {
             ProjectModuleIdentity identity = resolved.location().projectIdentity();
             check(identity != null && identity.configuredRootText().equals("src")
-                    && identity.relativeModuleComponents().equals(List.of("nested")),
-                "src/nested/deep.deal selects src with relative components [nested] ("
+                    && identity.relativeModuleComponents().equals(
+                        List.of("nested", "deep.deal")),
+                "src/nested/deep.deal selects src with the nested and deep.deal"
+                    + " components ("
                     + identity + ")");
         }
         SourceModuleResolver.ResolveResult helpers =
@@ -931,8 +935,9 @@ public final class SourceModuleResolverTest {
         if (helpers instanceof SourceModuleResolver.ResolveResult.Resolved resolved) {
             ProjectModuleIdentity identity = resolved.location().projectIdentity();
             check(identity != null && identity.configuredRootText().equals("lib")
-                    && identity.relativeModuleComponents().isEmpty(),
-                "lib/helpers.deal selects lib with empty relative components");
+                    && identity.relativeModuleComponents().equals(
+                        List.of("helpers.deal")),
+                "lib/helpers.deal selects lib with its own file component");
         }
     }
 
@@ -1252,8 +1257,8 @@ public final class SourceModuleResolverTest {
                     instanceof CanonicalModuleIdentity.ProjectModule module
                         && module.projectIdentity().configuredRootText().equals("src")
                         && module.projectIdentity().relativeModuleComponents()
-                            .equals(List.of("nested")),
-            "rooted .deal → ProjectModule(src, [nested])");
+                            .equals(List.of("nested", "deep.deal")),
+            "rooted .deal → ProjectModule(src, [nested, deep.deal])");
         check(rooted.projectIdentity() != null
                 && rooted.projectIdentity().equals(
                     ((CanonicalModuleIdentity.ProjectModule)
@@ -1421,7 +1426,7 @@ public final class SourceModuleResolverTest {
                     instanceof CanonicalModuleIdentity.ProjectModule module
                         && module.projectIdentity().configuredRootText().equals("src")
                         && module.projectIdentity().relativeModuleComponents()
-                            .equals(List.of("alpha")),
+                            .equals(List.of("alpha", "beta.deal")),
             "fabricated URIs classify without any filesystem existence");
     }
 
