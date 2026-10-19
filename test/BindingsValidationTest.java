@@ -1141,13 +1141,15 @@ public class BindingsValidationTest {
             Map.of(new FunctionAllocationIdentity(identity.id()),
                 new FunctionExecutionBinding.LoweredBody(closureFn, closureBody)),
             List.of(branch, closure, alloc1, alloc2));
-        StructuredBodyTable tableM = tableOf(Map.ofEntries(
-            Map.entry(INIT_BLOCK, List.of(branch, closure)),
-            Map.entry(arm1, List.of(alloc1)),
-            Map.entry(arm2, List.of(alloc2)),
-            Map.entry(closureBody, List.of())));
+        Map<BlockId, List<SemanticOp>> blocks = new LinkedHashMap<>();
+        blocks.put(arm1, List.of(alloc1));
+        blocks.put(INIT_BLOCK, List.of(branch, closure));
+        blocks.put(arm2, List.of(alloc2));
+        blocks.put(closureBody, List.of());
+        StructuredBodyTable tableM = tableOf(blocks);
         assertE6005(BindingsProductionValidator.validate(unitM, tableM), "CAPTURE_RESOLUTION",
-            "a capture chain closing with multiple producing allocations");
+            "a capture chain closing with multiple producing allocations",
+            "zero or multiple producing allocations");
 
         // A detached-body free reference outside the captures list.
         BindingId free = nextBindingId();

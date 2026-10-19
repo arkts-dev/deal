@@ -562,10 +562,6 @@ end)
 
 test("json.stringify encodes __NULL as null", function()
   local __rt = require("deal.runtime")
-
--- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
--- the stdlib share one process-wide key set.
-local __K = __rt.__keys
   local result = json.stringify.f({ a = __rt.__NULL, b = 1 })
   -- Should contain "null", not "{}"
   assert(string.find(result, "null") ~= nil, "should contain 'null' for __NULL value")

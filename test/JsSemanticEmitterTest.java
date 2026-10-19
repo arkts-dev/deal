@@ -328,37 +328,42 @@ public class JsSemanticEmitterTest {
             identities.put(declarationModule,
                 declarationIdentityOf(declarationModule, externals));
         }
-        BuiltinErrorDeclaration builtinError =
-            BuiltinErrorDeclaration.synthesized(
-                built.input().modules().get(0).ast().span());
-        SemanticLowerer.ProjectLoweringResult lowering =
-            SemanticLowerer.lowerProject(invocation(), built.input(),
+        SemanticLowerer.ProjectLoweringResult lowering;
+        if (identities.isEmpty() && callbackExports.isEmpty()
+                && built.input().modules().get(0).moduleId()
+                    .equals(built.input().entryModule())) {
+            ExecutableLoweredProject project = orchestrator.producedProject();
+            Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
+            Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>();
+            for (LoweredModuleUnit unit : project.modules().values()) {
+                tables.put(unit.moduleId(), unit.bodyTable());
+                registries.put(unit.moduleId(), unit.classFactories());
+            }
+            NamespaceRegistrations.Assembly assembly = NamespaceRegistrations
+                .assemble(List.copyOf(project.modules().values()));
+            if (assembly.hasErrors()) {
+                throw new IllegalStateException("the fixture project produced no"
+                    + " namespace registrations: " + assembly.diagnostics());
+            }
+            lowering = new SemanticLowerer.ProjectLoweringResult(project,
+                tables, registries, project.classSeeds(),
+                assembly.registrations(), List.of());
+        } else {
+            lowering = SemanticLowerer.lowerProject(invocation(), built.input(),
                 built.index(), manifests.manifests(),
                 orchestrator.hostDeclarationSurface(), identities, externC,
-                builtinError,
+                BuiltinErrorDeclaration.synthesized(
+                    built.input().modules().get(0).ast().span()),
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                    IntrinsicKind.BYTES_NEW),
-                callbackExports);
+                    IntrinsicKind.BYTES_NEW), callbackExports);
+        }
         if (lowering.hasErrors() || lowering.project() == null) {
             throw new IllegalStateException("the fixture project did not"
                 + " lower: " + lowering.diagnostics());
         }
-        ClassRegistrationSeeds.Production seedProduction =
-            ClassRegistrationSeeds.produce(orchestrator.hostDeclarationSurface(),
-                identities, externC, builtinError);
-        if (seedProduction.hasErrors()) {
-            throw new IllegalStateException("the fixture project produced no"
-                + " class registration seeds: " + seedProduction.diagnostics());
-        }
-        NamespaceRegistrations.Assembly assembly = NamespaceRegistrations
-            .assemble(List.copyOf(lowering.project().modules().values()));
-        if (assembly.hasErrors()) {
-            throw new IllegalStateException("the fixture project produced no"
-                + " namespace registrations: " + assembly.diagnostics());
-        }
         return new Fixture(root, built.input(), lowering.project(),
-            lowering.tables(), lowering.registries(), seedProduction.seeds(),
-            assembly.registrations(), orchestrator.hostDeclarationSurface(),
+            lowering.tables(), lowering.registries(), lowering.seeds(),
+            lowering.namespaces(), orchestrator.hostDeclarationSurface(),
             identities);
     }
 
@@ -403,8 +408,12 @@ public class JsSemanticEmitterTest {
      */
     private static Path stage(Fixture fixture, String name, boolean sourceMap)
             throws IOException {
-        JsProjectEmission emission =
-            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(sourceMap));
+        return stage(fixture, name, JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(sourceMap)));
+    }
+
+    private static Path stage(Fixture fixture, String name,
+            JsProjectEmission emission) throws IOException {
         Path out = fixture.root().resolve("emit-" + name);
         for (JsModuleArtifact artifact : emission.modules()) {
             Path target = out.resolve(artifact.artifactRelativePath());
@@ -665,7 +674,7 @@ public class JsSemanticEmitterTest {
         String supplementary = "\uD83D\uDE00";
         Path root = Files.createTempDirectory(tmpRoot, "sidecars-" + supplementary);
         Path sourceDir = root.resolve(supplementary + "src");
-        Fixture fixture = compileFixtureAt(root, sourceDir, """
+        String appSource = """
             import * as util from "./util";
             import * as empty from "./empty";
 
@@ -677,15 +686,18 @@ public class JsSemanticEmitterTest {
               while (total > 0) { total = total - 1; }
               return null;
             }
-            """, Map.of(
-                supplementary + "src/util.deal", """
-                    export function addOne(x: int): int {
-                      return x + 1;
-                    }
-                    """,
-                supplementary + "src/empty.deal", """
-                    // an implementation unit with no statements
-                    """));
+            """;
+        Map<String, String> extraSources = Map.of(
+            supplementary + "src/util.deal", """
+                export function addOne(x: int): int {
+                  return x + 1;
+                }
+                """,
+            supplementary + "src/empty.deal", """
+                // an implementation unit with no statements
+                """);
+        Fixture fixture = compileFixtureAt(root, sourceDir, appSource,
+            extraSources);
         Path liveRoot = root.resolve("build" + supplementary + "/js");
         JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
             fixture.emissionInput(true, liveRoot));
@@ -825,27 +837,8 @@ public class JsSemanticEmitterTest {
         Path secondRoot = Files.createTempDirectory(tmpRoot,
             "sidecars-rebuild-" + supplementary);
         Path secondSourceDir = secondRoot.resolve(supplementary + "src");
-        Fixture second = compileFixtureAt(secondRoot, secondSourceDir, """
-            import * as util from "./util";
-            import * as empty from "./empty";
-
-            export function main(): null {
-              let total: int = 0;
-              for (let i: int = 0; i < 3; i = i + 1) { total = total + i; }
-              let y: int = util.addOne(total);
-              if (y !== 4) { throw { code: "TEST_FAIL", message: "cross" }; }
-              while (total > 0) { total = total - 1; }
-              return null;
-            }
-            """, Map.of(
-                supplementary + "src/util.deal", """
-                    export function addOne(x: int): int {
-                      return x + 1;
-                    }
-                    """,
-                supplementary + "src/empty.deal", """
-                    // an implementation unit with no statements
-                    """));
+        Fixture second = compileFixtureAt(secondRoot, secondSourceDir,
+            appSource, extraSources);
         Path secondLiveRoot = secondRoot.resolve("build" + supplementary
             + "/js");
         JsProjectEmission rebuilt = JsSemanticEmitter.emitProductionProject(
@@ -1778,7 +1771,7 @@ public class JsSemanticEmitterTest {
                 .find(),
             "the adapter's VALUE operand reads the seed's binding cell"
                 + " instead of emitting a fresh wrapper");
-        Path out = stage(fixture, "intrinsic", false);
+        Path out = stage(fixture, "intrinsic", emission);
         if (!node) {
             skip("the intrinsic value drive needs node");
             return;
@@ -1833,7 +1826,7 @@ public class JsSemanticEmitterTest {
                 + " boundary with no strict element descriptor check in"
                 + " between: " + (read >= 0 && read + 1 < lines.length
                     ? lines[read + 1].trim() : "no read line"));
-        Path out = stage(nullable, "hole", false);
+        Path out = stage(nullable, "hole", emission);
         if (node) {
             NodeRun run = runNode(out, entryPath(out));
             checkEq(0, run.status(), "the nullable hole read returns null: "
@@ -1928,8 +1921,9 @@ public class JsSemanticEmitterTest {
         }
         deal.semantic.SemanticRuntimeModel.ErrorSnapshot snapshot =
             failure.error();
-        String artifact = JsSemanticEmitter.emitProductionProject(
-            fixture.emissionInput(false)).modules().get(0).source();
+        JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(false));
+        String artifact = emission.modules().get(0).source();
         check(artifact.contains(
                 "$rt.checkFunctionSig(\"(number)->int\", $src.$sig, $src,"
                     + " $file, $line, $column)"),
@@ -1939,7 +1933,7 @@ public class JsSemanticEmitterTest {
                 "return $src.$f($p0, $file, $line, $column);"),
             "the adapter forwards the received span triple to the source"
                 + " wrapper");
-        Path out = stage(fixture, "adapter-origin", false);
+        Path out = stage(fixture, "adapter-origin", emission);
         if (!node) {
             skip("the adapter origin drive needs node");
             return;
@@ -1991,9 +1985,7 @@ public class JsSemanticEmitterTest {
                 + " " + oracle.terminal());
         JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
-        String artifact = emission.modules().stream()
-            .filter(a -> a.artifactRelativePath().equals("app.js"))
-            .findFirst().orElseThrow().source();
+        String artifact = sourceOf(emission, "app");
         check(artifact.contains("$rt.tableSet(")
                 && artifact.contains("$rt.tableGet("),
             "the namespace index arms use the carrier-neutral table members");
@@ -2003,7 +1995,7 @@ public class JsSemanticEmitterTest {
                 + " surface: " + artifact.lines()
                     .filter(l -> l.contains(".set(") || l.contains(".get("))
                     .findFirst().orElse(""));
-        Path out = stage(fixture, "namespace", false);
+        Path out = stage(fixture, "namespace", emission);
         if (!node) {
             skip("the namespace index drive needs node");
             return;
@@ -2218,18 +2210,10 @@ public class JsSemanticEmitterTest {
                 }
                 """));
 
-        String libSource = null;
-        String appSource = null;
         JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
-        for (JsModuleArtifact artifact : emission.modules()) {
-            if (artifact.artifactRelativePath().equals("lib.js")) {
-                libSource = artifact.source();
-            }
-            if (artifact.artifactRelativePath().equals("app.js")) {
-                appSource = artifact.source();
-            }
-        }
+        String libSource = sourceOf(emission, "lib");
+        String appSource = sourceOf(emission, "app");
         // The effective map selection keeps the class groups' coordinate-only
         // mappings ordered and inside their own artifacts.
         for (JsModuleArtifact artifact : JsSemanticEmitter
@@ -2339,7 +2323,7 @@ public class JsSemanticEmitterTest {
             skip("the class drive needs the real Node binary");
             return;
         }
-        Path out = stage(fixture, "classes", false);
+        Path out = stage(fixture, "classes", emission);
         Files.writeString(out.resolve("driver.js"), """
             const rt = require("./deal/runtime.js");
             // The private linkage observes registration and transfer
@@ -3781,9 +3765,7 @@ public class JsSemanticEmitterTest {
                 + oracle.terminal());
         JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
-        String artifact = emission.modules().stream()
-            .filter(a -> a.artifactRelativePath().equals("app.js"))
-            .findFirst().orElseThrow().source();
+        String artifact = sourceOf(emission, "app");
         check(artifact.contains("$rt.dynClass("),
             "the dynamic call sites resolve the carrier's private class"
                 + " tag instead of a descriptor");
@@ -3799,7 +3781,7 @@ public class JsSemanticEmitterTest {
         check(artifact.contains("$rt.dynFail("),
             "a carrier without a resolvable class fails closed at the call"
                 + " origin");
-        Path out = stage(fixture, "dynamic", false);
+        Path out = stage(fixture, "dynamic", emission);
         if (!node) {
             skip("the dynamic callee drive needs node");
             return;
@@ -3840,7 +3822,7 @@ public class JsSemanticEmitterTest {
             .emitProductionProject(corpus.emissionInput(false));
         check(corpusEmission.modules().size() == 1,
             "the corpus program renders one artifact");
-        Path corpusOut = stage(corpus, "corpus-callback", false);
+        Path corpusOut = stage(corpus, "corpus-callback", corpusEmission);
         if (node) {
             Files.writeString(corpusOut.resolve("driver.js"), """
                 const app = require("./app.js");
@@ -3919,10 +3901,9 @@ public class JsSemanticEmitterTest {
                 instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
             "the shared authority runs the retained adapters: "
                 + oracle.terminal());
-        String artifact = JsSemanticEmitter.emitProductionProject(
-            fixture.emissionInput(false)).modules().stream()
-            .filter(a -> a.artifactRelativePath().equals("app.js"))
-            .findFirst().orElseThrow().source();
+        JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(false));
+        String artifact = sourceOf(emission, "app");
         check(artifact.contains("const $aw"),
             "the adapter wrapper is created through a fresh per-execution"
                 + " binding the invocation records its source on");
@@ -3934,7 +3915,7 @@ public class JsSemanticEmitterTest {
                 .matcher(artifact).find(),
             "no adapter invocation writes the source through the adapt op's"
                 + " result slot");
-        Path out = stage(fixture, "adapter-fresh", false);
+        Path out = stage(fixture, "adapter-fresh", emission);
         if (!node) {
             skip("the retained-adapter drive needs node");
             return;
@@ -4010,7 +3991,7 @@ public class JsSemanticEmitterTest {
                 + " E8010 composition, not a generic E8001 check");
         check(!artifact.contains("checkType(\"number\""),
             "no generic descriptor check masks the recorded host family");
-        Path out = stage(fixture, "host-cell", false);
+        Path out = stage(fixture, "host-cell", emission);
         if (!node) {
             skip("the host-cell drive needs node");
             return;
@@ -4374,17 +4355,17 @@ public class JsSemanticEmitterTest {
             JsSemanticEmitter.emitProductionProject(
                 fixture.emissionInput(true, hostLiveRoot)),
             hostLiveRoot, root);
-        checkEq(2, countOf(app, "$rt.loadHost("),
+        checkEq(2, countOccurrences(app, "$rt.loadHost("),
             "one typed host surface per source HOST import declaration (two"
                 + " source aliases of one resolved file emit two loads)");
-        checkEq(1, countOf(util, "$rt.loadHost("),
+        checkEq(1, countOccurrences(util, "$rt.loadHost("),
             "the cross-unit import emits its own source occurrence's load");
         check(app.contains("$require(\"./host/cfg\")")
                 && !app.contains("$require(\"host/cfg\")"),
             "the emitted host specifier is the resolved file's relative"
                 + " require (never an ambient NODE_PATH/node_modules"
                 + " resolution): " + app);
-        checkEq(2, countOf(app, "\"host/cfg\", \""),
+        checkEq(2, countOccurrences(app, "\"host/cfg\", \""),
             "each load carries the source import's own module clause for the"
                 + " load-time tuple texts: " + app);
         check(app.contains("{\"Endpoint\":"),
@@ -4443,7 +4424,7 @@ public class JsSemanticEmitterTest {
                     + failure.getMessage());
         }
 
-        Path out = stage(fixture, "host-occ", false);
+        Path out = stage(fixture, "host-occ", emission);
         writeFileIn(out, "host/cfg.js", """
             "use strict";
             const $rt = require("../deal/runtime");
@@ -4540,28 +4521,24 @@ public class JsSemanticEmitterTest {
 
     /** The rendered source of one implementation module of an emission. */
     private static String sourceOf(JsProjectEmission emission, String module) {
-        for (JsModuleArtifact artifact : emission.modules()) {
-            if (artifact.moduleId().path().equals(module)) {
-                return artifact.source();
-            }
-        }
-        throw new IllegalStateException("the emission carries no artifact for"
-            + " module '" + module + "': " + emission.modules().stream()
-                .map(a -> a.moduleId().path()).toList());
+        return artifactOf(emission, module).source();
     }
 
-    /** The occurrence count of one needle in an emitted source. */
-    private static int countOf(String source, String needle) {
-        int count = 0;
-        int from = 0;
-        while (true) {
-            int at = source.indexOf(needle, from);
-            if (at < 0) {
-                return count;
-            }
-            count++;
-            from = at + needle.length();
+    private static void writeOrderedHost(Path out, boolean hasZeta,
+            String alpha, String zeta) throws IOException {
+        StringBuilder source = new StringBuilder("""
+            "use strict";
+            const order = [];
+            globalThis.__readOrder = order;
+            module.exports = {};
+            """);
+        for (String name : hasZeta ? List.of("zeta", "alpha") : List.of("alpha")) {
+            source.append("Object.defineProperty(module.exports, \"").append(name)
+                .append("\", { enumerable: true, get: function () { order.push(\"")
+                .append(name).append("\"); return ")
+                .append(name.equals("alpha") ? alpha : zeta).append("; } });\n");
         }
+        writeFileIn(out, "host/cfg.js", source.toString());
     }
 
     /**
@@ -4596,17 +4573,17 @@ public class JsSemanticEmitterTest {
 
             export function main(): null { return null; }
             """, Map.of(), Map.of("host/cfg", declaration.toString()));
-        String app = sourceOf(
-            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false)),
-            "app");
+        JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
+            fixture.emissionInput(false));
+        String app = sourceOf(emission, "app");
         check(app.indexOf("\"alpha\":") < app.indexOf("\"zeta\":"),
             "the zeta-first declaration still emits the ascending declared"
                 + " map alpha, zeta: " + app);
-        checkEq(1, countOf(app, "$rt.loadHost("),
+        checkEq(1, countOccurrences(app, "$rt.loadHost("),
             "the single source HOST import emits exactly one validating"
                 + " load: " + app);
 
-        Path out = stage(fixture, "host-order", false);
+        Path out = stage(fixture, "host-order", emission);
         if (!node) {
             skip("the declared-read order drive needs node");
             return;
@@ -4650,17 +4627,7 @@ public class JsSemanticEmitterTest {
 
         // (a) alpha (ascending first) invalid: the exact first-invalid tuple
         // at the import origin, and zeta is never read.
-        writeFileIn(out, "host/cfg.js", """
-            "use strict";
-            const order = [];
-            globalThis.__readOrder = order;
-            module.exports = {};
-            Object.defineProperty(module.exports, "zeta", { enumerable: true,
-              get: function () { order.push("zeta");
-                return function () { return 9; }; } });
-            Object.defineProperty(module.exports, "alpha", { enumerable: true,
-              get: function () { order.push("alpha"); return 17; } });
-            """);
+        writeOrderedHost(out, true, "17", "function () { return 9; }");
         NodeRun alphaFailure = runNode(out, "driver.js");
         checkEq(0, alphaFailure.status(), "the alpha-failure driver exits 0: "
             + alphaFailure.output());
@@ -4684,17 +4651,7 @@ public class JsSemanticEmitterTest {
 
         // (b) alpha valid, zeta invalid: the ascending read visits both and
         // stops at the invalid one.
-        writeFileIn(out, "host/cfg.js", """
-            "use strict";
-            const order = [];
-            globalThis.__readOrder = order;
-            module.exports = {};
-            Object.defineProperty(module.exports, "zeta", { enumerable: true,
-              get: function () { order.push("zeta"); return 17; } });
-            Object.defineProperty(module.exports, "alpha", { enumerable: true,
-              get: function () { order.push("alpha");
-                return function () { return 7; }; } });
-            """);
+        writeOrderedHost(out, true, "function () { return 7; }", "17");
         NodeRun zetaFailure = runNode(out, "driver.js");
         checkEq(0, zetaFailure.status(), "the zeta-failure driver exits 0: "
             + zetaFailure.output());
@@ -4708,15 +4665,7 @@ public class JsSemanticEmitterTest {
 
         // (c) zeta missing: the exact missing-export tuple with absent
         // expected/actual (the arm defines neither) and no later reads.
-        writeFileIn(out, "host/cfg.js", """
-            "use strict";
-            const order = [];
-            globalThis.__readOrder = order;
-            module.exports = {};
-            Object.defineProperty(module.exports, "alpha", { enumerable: true,
-              get: function () { order.push("alpha");
-                return function () { return 7; }; } });
-            """);
+        writeOrderedHost(out, false, "function () { return 7; }", "");
         NodeRun zetaMissing = runNode(out, "driver.js");
         checkEq(0, zetaMissing.status(), "the missing-export driver exits 0: "
             + zetaMissing.output());
@@ -4735,18 +4684,8 @@ public class JsSemanticEmitterTest {
 
         // (d) the valid control: the same z-a declaration reads both in
         // ascending order and the program runs.
-        writeFileIn(out, "host/cfg.js", """
-            "use strict";
-            const order = [];
-            globalThis.__readOrder = order;
-            module.exports = {};
-            Object.defineProperty(module.exports, "zeta", { enumerable: true,
-              get: function () { order.push("zeta");
-                return function () { return 9; }; } });
-            Object.defineProperty(module.exports, "alpha", { enumerable: true,
-              get: function () { order.push("alpha");
-                return function () { return 7; }; } });
-            """);
+        writeOrderedHost(out, true, "function () { return 7; }",
+            "function () { return 9; }");
         NodeRun valid = runNode(out, "driver.js");
         checkEq(0, valid.status(), "the valid control exits 0: "
             + valid.output());
@@ -4872,14 +4811,14 @@ public class JsSemanticEmitterTest {
             "every stdlib import requires the deployed module by its"
                 + " relative specifier (never an ambient module lookup): "
                 + app);
-        checkEq(1, countOf(app, "$require(\"./std/json\")"),
+        checkEq(1, countOccurrences(app, "$require(\"./std/json\")"),
             "one recorded stdlib import is one execution registration: "
                 + app);
         check(app.contains("$d") && app.contains("[\"parse\"].$f("),
             "the cataloged direct call invokes the deployed module's typed"
                 + " entry: " + app);
 
-        Path out = stage(fixture, "stdlib", false);
+        Path out = stage(fixture, "stdlib", emission);
         if (!node) {
             skip("the STDLIB drive needs node");
             return;
@@ -5037,7 +4976,7 @@ public class JsSemanticEmitterTest {
                 && app.indexOf("\"Endpoint\":") < app.indexOf("\"alpha\":"),
             "the emitted declared map is the projected ascending-name"
                 + " surface: " + app);
-        checkEq(1, countOf(app, "$rt.loadHost("),
+        checkEq(1, countOccurrences(app, "$rt.loadHost("),
             "the declaration module's one source import emits one validating"
                 + " load: " + app);
     }

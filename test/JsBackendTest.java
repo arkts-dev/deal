@@ -180,7 +180,6 @@ public class JsBackendTest {
             testAwaitCapableArrayWriteOrderNode();
             testAsyncErrorDetailTransportNode();
             testCornerCasePublicErrorsNode();
-            testProductionCompanionDirectNode();
             testProductionNodeCaptureBoundary();
             testOrchestratorJsBackend();
             testOrchestratorJsNestedModule();
@@ -276,11 +275,7 @@ public class JsBackendTest {
         List<CompilerDiagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
-        for (CompilerDiagnostic d : lex.diagnostics()) {
-            if ("error".equals(d.severity())) {
-                errors.add(d);
-            }
-        }
+        addErrors(errors, lex.diagnostics());
         if (lex.hasErrors()) {
             return new Frontend(null, null, errors);
         }
@@ -288,23 +283,15 @@ public class JsBackendTest {
         Parser parser = new Parser(lex.tokens(), filename,
             lex.directiveEvents());
         ParseResult parseResult = parser.parse();
-        for (CompilerDiagnostic d : parseResult.diagnostics()) {
-            if ("error".equals(d.severity())) {
-                errors.add(d);
-            }
-        }
+        addErrors(errors, parseResult.diagnostics());
         if (parseResult.hasErrors()) {
             return new Frontend(null, null, errors);
         }
 
         // Post-parse module shape validation (module top level), mirroring
         // the orchestrator pipeline.
-        for (CompilerDiagnostic d : ModuleShapeValidator.validate(parseResult.program(),
-                filename, filename.endsWith(".d.deal"))) {
-            if ("error".equals(d.severity())) {
-                errors.add(d);
-            }
-        }
+        addErrors(errors, ModuleShapeValidator.validate(parseResult.program(),
+            filename, filename.endsWith(".d.deal")));
         if (!errors.isEmpty()) {
             return new Frontend(null, null, errors);
         }
@@ -319,21 +306,18 @@ public class JsBackendTest {
                 "missing anchor: fixture source '" + filename + "'"));
             return new Frontend(null, null, errors);
         }
-        for (CompilerDiagnostic d : nr.diagnostics()) {
-            if ("error".equals(d.severity())) {
-                errors.add(d);
-            }
-        }
+        addErrors(errors, nr.diagnostics());
 
         CheckResult result = TypeChecker.check("Main", symTable, nr,
             parseResult.program());
-        for (CompilerDiagnostic d : result.diagnostics()) {
-            if ("error".equals(d.severity())) {
-                errors.add(d);
-            }
-        }
-
+        addErrors(errors, result.diagnostics());
         return new Frontend(parseResult.program(), result, errors);
+    }
+
+    private static void addErrors(List<CompilerDiagnostic> errors,
+            List<CompilerDiagnostic> diagnostics) {
+        diagnostics.stream().filter(d -> "error".equals(d.severity()))
+            .forEach(errors::add);
     }
 
     // =========================================================================
@@ -625,6 +609,15 @@ public class JsBackendTest {
         return runDealArtifact(prepareJs(source, name));
     }
 
+    private static void checkDealFailure(String source, String name,
+            String code, String detail, String description) throws Exception {
+        NodeResult run = runDealNode(source, name);
+        check(run.exitCode() == 1
+                && run.output().contains("DEAL_ERROR_CODE: " + code)
+                && (detail == null || run.output().contains(detail)),
+            description + run.output());
+    }
+
     private static JsEmission checkedEmission(PreparedJs prepared) {
         if (!prepared.frontend().errors().isEmpty()) {
             throw new RuntimeException("frontend errors: "
@@ -901,14 +894,18 @@ public class JsBackendTest {
     private static void testCornerCasePublicErrorsNode() throws Exception {
         System.out.println("-- Node: the retained corner-case public errors"
             + " (sync/async, direct/rethrow) --");
-        if (!nodeAvailable) { skipNode("corner-case public errors"); return; }
+        if (!nodeAvailable) {
+            skipNode("corner-case public errors");
+            skipNode("production public-companion-direct");
+            return;
+        }
         for (boolean rethrow : List.of(false, true)) {
             for (boolean async : List.of(false, true)) {
                 String mode = async ? "async" : "sync";
                 String name = mode + "-" + (rethrow ? "rethrow" : "direct");
                 String prefix = async ? "async " : "";
                 String call = "return " + (async ? "await " : "") + "helper.fail();";
-                Path root = publishCornerCaseProject(name,
+                PublishedProject published = publishCornerCaseProject(name,
                     COMPANION_DIRECT_HELPER_SOURCE.replace("export function",
                         "export " + prefix + "function"),
                     COMPANION_DIRECT_MAIN_SOURCE
@@ -916,9 +913,15 @@ public class JsBackendTest {
                         .replace("return helper.fail();", rethrow
                             ? "try {" + call + "} catch(e) {throw e;}" : call));
                 try {
-                    assertCornerCasePublished(name, root, mode);
+                    assertCornerCasePublished(name, published.root(), mode);
+                    if (!async && !rethrow) {
+                        check(published.exitCode() == 0,
+                            "public-companion-direct: the public deal compile of the"
+                                + " corner-case project succeeds: exit=" + published.exitCode());
+                        testProductionCompanionDirectNode(published.root());
+                    }
                 } finally {
-                    deleteDir(root);
+                    deleteDir(published.root());
                 }
             }
         }
@@ -972,9 +975,11 @@ public class JsBackendTest {
         }
         """;
 
+    private record PublishedProject(Path root, int exitCode) {}
+
     /** Publishes one two-module corner-case project through the public
      * {@code deal compile} entry and returns the project root. */
-    private static Path publishCornerCaseProject(String name,
+    private static PublishedProject publishCornerCaseProject(String name,
             String helperSource, String mainSource) throws Exception {
         Path root = Files.createTempDirectory("jstest_corner_case_" + name + "_");
         Files.createDirectories(root.resolve("src"));
@@ -994,7 +999,7 @@ public class JsBackendTest {
             throw new IllegalStateException(name + ": the corner-case"
                 + " project did not compile through the public entry");
         }
-        return root;
+        return new PublishedProject(root, exit);
     }
 
     /**
@@ -1026,12 +1031,7 @@ public class JsBackendTest {
         Optional<String> verdict = companionDirectMismatch(observed);
         check(verdict.isEmpty(), name + ": the public error record is the"
             + " complete ErrorDetail: " + verdict.orElse("match"));
-        check(companionDirectMismatch(observed.withColumn("10")).isPresent(),
-            name + ": the verdict rejects the later annotation column 10");
-        check(companionDirectMismatch(
-                observed.withFrames("Object.someOther$f")).isPresent(),
-            name + ": the verdict rejects frames without the fail/run"
-                + " functions");
+        checkCompanionRejections(observed, name + ": ", false);
     }
 
     /**
@@ -1097,72 +1097,37 @@ public class JsBackendTest {
      * own streams; the same verdict rejects the wrong-field and
      * wrong-origin controls.
      */
-    private static void testProductionCompanionDirectNode() throws Exception {
+    private static void testProductionCompanionDirectNode(Path root)
+            throws Exception {
         System.out.println("-- Node: the v1.2 published public-companion-direct"
             + " project through the exported-wrapper host --");
-        if (!nodeAvailable) {
-            skipNode("production public-companion-direct");
+        Path out = root.resolve("out");
+        Path artifact = out.resolve("main.js");
+        check(Files.isRegularFile(artifact), "the public compile"
+            + " publishes the entry artifact: " + artifact);
+        if (!Files.isRegularFile(artifact)) {
             return;
         }
-        Path root = publishCornerCaseProject("public-companion-direct",
-            COMPANION_DIRECT_HELPER_SOURCE, COMPANION_DIRECT_MAIN_SOURCE);
-        try {
-            Path out = root.resolve("out");
-            Path artifact = out.resolve("main.js");
-            check(Files.isRegularFile(artifact), "the public compile"
-                + " publishes the entry artifact: " + artifact);
-            if (!Files.isRegularFile(artifact)) {
-                return;
-            }
-            boolean v12Profile = !Files.readString(artifact,
-                StandardCharsets.UTF_8).contains("setInt32Mode");
-            check(v12Profile, "the published artifact carries no profile"
-                + " selector (the signed-32 gate is active from load)");
-            Files.writeString(out.resolve("companion_host.js"),
-                CORNER_CASE_HOST_SOURCE, StandardCharsets.UTF_8);
-            ProductionNodeRun run = runNodeSplit(out, "companion_host.js",
-                "companion_error.txt", v12Profile, "sync", "companion_error.txt");
-            check(run.exitCode() == 0, "the exported-wrapper host process"
-                + " exits 0: exit=" + run.exitCode() + " stderr=<"
-                + run.stderr() + ">");
-            check(run.stdout().isEmpty(), "the independent stdout of the"
-                + " public program is empty: <" + run.stdout() + ">");
-            check(run.stderr().isEmpty(), "the independent stderr of the"
-                + " public program is empty: <" + run.stderr() + ">");
-            CompanionErrorRecord observed =
-                CompanionErrorRecord.parse(run.signal());
-            Optional<String> verdict = companionDirectMismatch(observed);
-            check(verdict.isEmpty(), "the escaped companion error matches"
-                + " the independent fields: " + verdict.orElse("match"));
-            check(companionDirectMismatch(observed.withCode("E8005"))
-                    .isPresent(),
-                "the verdict rejects a wrong error code");
-            check(companionDirectMismatch(observed.withMessage(
-                    "typed value rejected")).isPresent(),
-                "the verdict rejects a message that does not report the"
-                    + " int type failure");
-            check(companionDirectMismatch(observed.withExpected("string"))
-                    .isPresent(),
-                "the verdict rejects a wrong expected type");
-            check(companionDirectMismatch(observed.withActual("int"))
-                    .isPresent(),
-                "the verdict rejects a wrong actual type");
-            check(companionDirectMismatch(observed.withFile(
-                    "/tmp/other/src/main.deal")).isPresent(),
-                "the verdict rejects a wrong origin file");
-            check(companionDirectMismatch(observed.withLine("4"))
-                    .isPresent(),
-                "the verdict rejects a wrong origin line");
-            check(companionDirectMismatch(observed.withColumn("10"))
-                    .isPresent(),
-                "the verdict rejects the later annotation column 10");
-            check(companionDirectMismatch(
-                    observed.withFrames("Object.someOther$f"))
-                    .isPresent(),
-                "the verdict rejects frames without the fail/run functions");
-        } finally {
-            deleteDir(root);
-        }
+        boolean v12Profile = !Files.readString(artifact,
+            StandardCharsets.UTF_8).contains("setInt32Mode");
+        check(v12Profile, "the published artifact carries no profile"
+            + " selector (the signed-32 gate is active from load)");
+        Files.writeString(out.resolve("companion_host.js"),
+            CORNER_CASE_HOST_SOURCE, StandardCharsets.UTF_8);
+        ProductionNodeRun run = runNodeSplit(out, "companion_host.js",
+            "companion_error.txt", v12Profile, "sync", "companion_error.txt");
+        check(run.exitCode() == 0, "the exported-wrapper host process"
+            + " exits 0: exit=" + run.exitCode() + " stderr=<"
+            + run.stderr() + ">");
+        check(run.stdout().isEmpty(), "the independent stdout of the"
+            + " public program is empty: <" + run.stdout() + ">");
+        check(run.stderr().isEmpty(), "the independent stderr of the"
+            + " public program is empty: <" + run.stderr() + ">");
+        CompanionErrorRecord observed = CompanionErrorRecord.parse(run.signal());
+        Optional<String> verdict = companionDirectMismatch(observed);
+        check(verdict.isEmpty(), "the escaped companion error matches"
+            + " the independent fields: " + verdict.orElse("match"));
+        checkCompanionRejections(observed, "", true);
     }
 
     /**
@@ -1317,75 +1282,47 @@ public class JsBackendTest {
             String actual, String frames) {
 
         static CompanionErrorRecord parse(String transcript) {
-            String code = null;
-            String message = null;
-            String file = null;
-            String line = null;
-            String column = null;
-            String expected = null;
-            String actual = null;
-            String frames = null;
+            Map<String, String> fields = new LinkedHashMap<>();
             for (String field : transcript.split("\n")) {
                 int split = field.indexOf('=');
-                if (split < 0) {
-                    continue;
-                }
-                String key = field.substring(0, split);
-                String value = field.substring(split + 1);
-                switch (key) {
-                    case "code" -> code = value;
-                    case "message" -> message = value;
-                    case "file" -> file = value;
-                    case "line" -> line = value;
-                    case "column" -> column = value;
-                    case "expected" -> expected = value;
-                    case "actual" -> actual = value;
-                    case "frames" -> frames = value;
-                    default -> { }
+                if (split >= 0) {
+                    fields.put(field.substring(0, split), field.substring(split + 1));
                 }
             }
-            return new CompanionErrorRecord(code, message, file, line,
-                column, expected, actual, frames);
+            return new CompanionErrorRecord(fields.get("code"), fields.get("message"),
+                fields.get("file"), fields.get("line"), fields.get("column"),
+                fields.get("expected"), fields.get("actual"), fields.get("frames"));
         }
 
-        CompanionErrorRecord withCode(String value) {
-            return new CompanionErrorRecord(value, message, file, line,
-                column, expected, actual, frames);
+        CompanionErrorRecord with(String field, String value) {
+            return new CompanionErrorRecord(
+                field.equals("code") ? value : code,
+                field.equals("message") ? value : message,
+                field.equals("file") ? value : file,
+                field.equals("line") ? value : line,
+                field.equals("column") ? value : column,
+                field.equals("expected") ? value : expected,
+                field.equals("actual") ? value : actual,
+                field.equals("frames") ? value : frames);
         }
+    }
 
-        CompanionErrorRecord withMessage(String value) {
-            return new CompanionErrorRecord(code, value, file, line,
-                column, expected, actual, frames);
-        }
-
-        CompanionErrorRecord withFile(String value) {
-            return new CompanionErrorRecord(code, message, value, line,
-                column, expected, actual, frames);
-        }
-
-        CompanionErrorRecord withLine(String value) {
-            return new CompanionErrorRecord(code, message, file, value,
-                column, expected, actual, frames);
-        }
-
-        CompanionErrorRecord withColumn(String value) {
-            return new CompanionErrorRecord(code, message, file, line,
-                value, expected, actual, frames);
-        }
-
-        CompanionErrorRecord withExpected(String value) {
-            return new CompanionErrorRecord(code, message, file, line,
-                column, value, actual, frames);
-        }
-
-        CompanionErrorRecord withActual(String value) {
-            return new CompanionErrorRecord(code, message, file, line,
-                column, expected, value, frames);
-        }
-
-        CompanionErrorRecord withFrames(String value) {
-            return new CompanionErrorRecord(code, message, file, line,
-                column, expected, actual, value);
+    private static void checkCompanionRejections(CompanionErrorRecord observed,
+            String prefix, boolean allFields) {
+        for (String[] row : new String[][] {
+                {"code", "E8005", "a wrong error code"},
+                {"message", "typed value rejected",
+                    "a message that does not report the int type failure"},
+                {"expected", "string", "a wrong expected type"},
+                {"actual", "int", "a wrong actual type"},
+                {"file", "/tmp/other/src/main.deal", "a wrong origin file"},
+                {"line", "4", "a wrong origin line"},
+                {"column", "10", "the later annotation column 10"},
+                {"frames", "Object.someOther$f", "frames without the fail/run functions"}}) {
+            if (allFields || row[0].equals("column") || row[0].equals("frames")) {
+                check(companionDirectMismatch(observed.with(row[0], row[1])).isPresent(),
+                    prefix + "the verdict rejects " + row[2]);
+            }
         }
     }
 
@@ -3690,28 +3627,17 @@ public class JsBackendTest {
             "export function test(): int { return 2 ** 10000; }", "int-pow-overflow.deal");
         check(removedPower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
             "removed power syntax rejects before emission");
-        NodeResult pow = runDealNode(
-            "export function test(): int { return int(1.0 / 0.0); }",
-            "int-infinity");
-        check(pow.exitCode() == 1 && pow.output().contains("DEAL_ERROR_CODE: E8001")
-                && pow.output().contains("expected int, got infinity"),
-            "int(infinity) → E8001 'expected int, got infinity' (checkInt order "
-                + "before the finite-range arm), exit 1: " + pow.output());
-
-        NodeResult range = runDealNode(
-            "export function test(): int { return int(1.0e300); }",
-            "int-finite-range");
-        check(range.exitCode() == 1 && range.output().contains("DEAL_ERROR_CODE: E8004")
-                && range.output().contains("int out of safe range"),
-            "finite out-of-range → E8004 'int out of safe range' (the "
-                + "pinned template), exit 1: " + range.output());
-
-        NodeResult divz = runDealNode(
-            "export function test(): int { return 5 / 0; }",
-            "int-div-zero");
-        check(divz.exitCode() == 1 && divz.output().contains("DEAL_ERROR_CODE: E8005")
-                && divz.output().contains("integer division by zero"),
-            "int division by zero → E8005, exit 1: " + divz.output());
+        for (String[] row : new String[][] {
+                {"int-infinity", "int(1.0 / 0.0)", "E8001", "expected int, got infinity",
+                    "int(infinity) → E8001 'expected int, got infinity' (checkInt order "
+                        + "before the finite-range arm), exit 1: "},
+                {"int-finite-range", "int(1.0e300)", "E8004", "int out of safe range",
+                    "finite out-of-range → E8004 'int out of safe range' (the pinned template), exit 1: "},
+                {"int-div-zero", "5 / 0", "E8005", "integer division by zero",
+                    "int division by zero → E8005, exit 1: "}}) {
+            checkDealFailure("export function test(): int { return " + row[1] + "; }",
+                row[0], row[2], row[3], row[4]);
+        }
 
         Frontend negativePower = compileFrontend(
             "export function test(): int { return 2 ** -1; }", "int-neg-exp.deal");
@@ -4049,65 +3975,28 @@ public class JsBackendTest {
                 + "exit 0: " + ops.output());
 
         // Empty buffer: bytes(0) has length 0 and its first read is E8012.
-        NodeResult empty = runDealNode(
-            "export function test(): int { let b: bytes = bytes(0); "
-                + "if (b.length !== 0) { return 0; } "
-                + "let v: int = b[0]; return v; }",
-            "bytes-empty-oob");
-        check(empty.exitCode() == 1
-                && empty.output().contains("DEAL_ERROR_CODE: E8012")
-                && empty.output().contains("bytes index out of bounds"),
-            "bytes(0) has length 0 and b[0] reads raise E8012 "
-                + "'bytes index out of bounds': " + empty.output());
+        checkDealFailure("export function test(): int { let b: bytes = bytes(0); "
+                + "if (b.length !== 0) { return 0; } let v: int = b[0]; return v; }",
+            "bytes-empty-oob", "E8012", "bytes index out of bounds",
+            "bytes(0) has length 0 and b[0] reads raise E8012 'bytes index out of bounds': ");
 
-        // Bounds: negative index and index === length on reads and
-        // writes (bytes never append).
-        NodeResult negRead = runDealNode(
-            "export function test(): int { let b: bytes = bytes(2); "
-                + "return b[-1]; }",
-            "bytes-neg-read");
-        check(negRead.exitCode() == 1
-                && negRead.output().contains("DEAL_ERROR_CODE: E8012"),
-            "negative byte read raises E8012: " + negRead.output());
-
-        NodeResult endRead = runDealNode(
-            "export function test(): int { let b: bytes = bytes(2); "
-                + "return b[2]; }",
-            "bytes-end-read");
-        check(endRead.exitCode() == 1
-                && endRead.output().contains("DEAL_ERROR_CODE: E8012"),
-            "read at index === length raises E8012 (bytes never "
-                + "append): " + endRead.output());
-
-        NodeResult negWrite = runDealNode(
-            "export function test(): int { let b: bytes = bytes(2); "
-                + "b[-1] = 1; return 0; }",
-            "bytes-neg-write");
-        check(negWrite.exitCode() == 1
-                && negWrite.output().contains("DEAL_ERROR_CODE: E8012"),
-            "negative byte write raises E8012: " + negWrite.output());
-
-        NodeResult endWrite = runDealNode(
-            "export function test(): int { let b: bytes = bytes(2); "
-                + "b[2] = 7; return 0; }",
-            "bytes-end-write");
-        check(endWrite.exitCode() == 1
-                && endWrite.output().contains("DEAL_ERROR_CODE: E8012"),
-            "write at index === length raises E8012 (bytes never "
-                + "append): " + endWrite.output());
+        for (String[] row : new String[][] {
+                {"neg-read", "return b[-1];", "negative byte read raises E8012"},
+                {"end-read", "return b[2];",
+                    "read at index === length raises E8012 (bytes never append)"},
+                {"neg-write", "b[-1] = 1; return 0;", "negative byte write raises E8012"},
+                {"end-write", "b[2] = 7; return 0;",
+                    "write at index === length raises E8012 (bytes never append)"}}) {
+            checkDealFailure("export function test(): int { let b: bytes = bytes(2); "
+                    + row[1] + " }", "bytes-" + row[0], "E8012", null, row[2] + ": ");
+        }
 
         // Value range: writes outside 0..255 raise E8013 and change no
         // storage — the RHS (with its side effect) completes before the
         // write validation, pinned through the try/catch log.
-        NodeResult val256 = runDealNode(
-            "export function test(): int { let b: bytes = bytes(2); "
-                + "b[1] = 256; return 0; }",
-            "bytes-e8013");
-        check(val256.exitCode() == 1
-                && val256.output().contains("DEAL_ERROR_CODE: E8013")
-                && val256.output().contains("bytes value out of range"),
-            "writing 256 raises E8013 'bytes value out of range': "
-                + val256.output());
+        checkDealFailure("export function test(): int { let b: bytes = bytes(2); "
+                + "b[1] = 256; return 0; }", "bytes-e8013", "E8013", "bytes value out of range",
+            "writing 256 raises E8013 'bytes value out of range': ");
 
         // The pinned write-side order, observed through a caught E8013:
         // the RHS (with its side effect) completes before write
@@ -4144,13 +4033,9 @@ public class JsBackendTest {
                 + "write validation and the failed write changed no "
                 + "storage (returns 1): " + val256Caught.output());
 
-        NodeResult valNeg = runDealNode(
-            "export function test(): int { let b: bytes = bytes(2); "
-                + "b[0] = -1; return 0; }",
-            "bytes-neg-value");
-        check(valNeg.exitCode() == 1
-                && valNeg.output().contains("DEAL_ERROR_CODE: E8013"),
-            "writing -1 raises E8013: " + valNeg.output());
+        checkDealFailure("export function test(): int { let b: bytes = bytes(2); "
+                + "b[0] = -1; return 0; }", "bytes-neg-value", "E8013", null,
+            "writing -1 raises E8013: ");
 
         // Evaluation order: the receiver, the index, and the RHS side
         // effects complete in order before validation — a valid write
@@ -4192,15 +4077,9 @@ public class JsBackendTest {
         check(tooLong.errors().stream().anyMatch(d -> d.code().equals("E1036")),
             "bytes(2147483648) rejects before emission: " + tooLong.errors());
 
-        NodeResult negLen = runDealNode(
-            "export function test(): int { let b: bytes = bytes(-1); "
-                + "return 0; }",
-            "bytes-neg-length");
-        check(negLen.exitCode() == 1
-                && negLen.output().contains("DEAL_ERROR_CODE: E8012")
-                && negLen.output().contains("bytes length must be non-negative"),
-            "bytes(-1) raises E8012 'bytes length must be non-negative': "
-                + negLen.output());
+        checkDealFailure("export function test(): int { let b: bytes = bytes(-1); return 0; }",
+            "bytes-neg-length", "E8012", "bytes length must be non-negative",
+            "bytes(-1) raises E8012 'bytes length must be non-negative': ");
 
         // checkType("bytes") acceptance and rejection through the table
         // boundary (the matcher table's bytes row).
@@ -4770,9 +4649,8 @@ public class JsBackendTest {
     private static void testBytesClosureNoE6000Pins() throws Exception {
         System.out.println("-- Bytes closure: no-E6000 generation pins and canonical descriptor texts --");
 
-        String[] closurePrograms = {
-            // The ((bytes)->bytes)[] + arity adapter shape.
-            """
+        String[][] closurePrograms = {
+            {"closure-pin-fn-array", """
             function step(b: bytes): bytes { b[0] = b[0] + 1; return b; }
             export function test(): int {
               let fs: ((b: bytes) => bytes)[] = [step];
@@ -4782,9 +4660,8 @@ public class JsBackendTest {
               wide(b, 1);
               return b[0];
             }
-            """,
-            // The containerized async bytes function value shape.
-            """
+            """},
+            {"closure-pin-async-container", """
             async function bump(b: bytes): bytes { b[0] = b[0] + 1; return b; }
             class Box { f: async (b: bytes) => bytes = bump; }
             export async function test(): int {
@@ -4795,9 +4672,8 @@ public class JsBackendTest {
               let y: bytes = await box.f(b);
               return x[0] + y[0];
             }
-            """,
-            // The arbitrary-depth Array/Nullable composition shape.
-            """
+            """},
+            {"closure-pin-deep-composition", """
             function passDeep(x: (bytes[] | null)[]): (bytes[] | null)[] {
               return x;
             }
@@ -4812,20 +4688,14 @@ public class JsBackendTest {
               let backTop: (bytes[])[] | null = t.deep;
               return again.length;
             }
-            """,
-        };
-        String[] names = {
-            "closure-pin-fn-array",
-            "closure-pin-async-container",
-            "closure-pin-deep-composition",
+            """}
         };
         Map<String, JsEmission> emissions = new LinkedHashMap<>();
-        for (int i = 0; i < closurePrograms.length; i++) {
-            JsEmission res = generate(closurePrograms[i],
-                names[i]);
-            emissions.put(names[i], res);
+        for (String[] row : closurePrograms) {
+            JsEmission res = generate(row[1], row[0]);
+            emissions.put(row[0], res);
             check(res != null && !res.hasErrors(),
-                "closure program '" + names[i] + "' generates with zero "
+                "closure program '" + row[0] + "' generates with zero "
                     + "diagnostics: " + (res == null ? "<null>"
                         : res.diagnostics()));
             if (res == null || res.hasErrors()) {
@@ -4833,14 +4703,14 @@ public class JsBackendTest {
             }
             check(!res.diagnostics().contains("E6000")
                     && !res.source().contains("is not supported"),
-                "closure program '" + names[i] + "' emits no E6000 text "
+                "closure program '" + row[0] + "' emits no E6000 text "
                     + "for bytes nesting or function shape alone");
         }
 
         // Canonical descriptor texts byte-exact at the emitted boundary
         // sites (T1's descriptor service realized through the runtime
         // matcher).
-        JsEmission fnArray = emissions.get(names[0]);
+        JsEmission fnArray = emissions.get(closurePrograms[0][0]);
         if (fnArray != null && !fnArray.hasErrors()) {
             String js = fnArray.source();
             check(js.contains("$rt.checkType(\"[(bytes)->bytes]\","),
@@ -4850,7 +4720,7 @@ public class JsBackendTest {
                 "the arity adapter carries the canonical "
                     + "(bytes,int)->bytes target descriptor byte-exact");
         }
-        JsEmission asyncContainer = emissions.get(names[1]);
+        JsEmission asyncContainer = emissions.get(closurePrograms[1][0]);
         if (asyncContainer != null && !asyncContainer.hasErrors()) {
             String js = asyncContainer.source();
             check(js.contains("$rt.checkType(\"[async(bytes)->bytes]\","),
@@ -4861,7 +4731,7 @@ public class JsBackendTest {
                 "the async wrapper carries the canonical "
                     + "async(bytes)->bytes signature byte-for-byte");
         }
-        JsEmission deep = emissions.get(names[2]);
+        JsEmission deep = emissions.get(closurePrograms[2][0]);
         if (deep != null && !deep.hasErrors()) {
             String js = deep.source();
             check(js.contains("$rt.checkType(\"[?[bytes]]\","),
@@ -5530,22 +5400,13 @@ public class JsBackendTest {
             "a deleted element at a non-nullable target rejects with E8001: "
                 + nonNull.output());
 
-        NodeResult negative = runDealNode(
-            "export function test(): int { let xs: int[] = [1, 2, 3]; delete xs[-1]; return 0; }",
-            "del-negative");
-        check(negative.exitCode() == 1
-                && negative.output().contains("DEAL_ERROR_CODE: E8002")
-                && negative.output().contains("array index out of bounds"),
-            "a negative delete index raises E8002 'array index out of bounds': "
-                + negative.output());
-
-        NodeResult beyond = runDealNode(
-            "export function test(): int { let xs: int[] = [1, 2, 3]; delete xs[9]; return 0; }",
-            "del-beyond");
-        check(beyond.exitCode() == 1
-                && beyond.output().contains("DEAL_ERROR_CODE: E8002")
-                && beyond.output().contains("array index out of bounds"),
-            "a beyond-length delete index raises E8002: " + beyond.output());
+        for (String[] row : new String[][] {
+                {"negative", "-1", "a negative delete index raises E8002 'array index out of bounds': "},
+                {"beyond", "9", "a beyond-length delete index raises E8002: "}}) {
+            checkDealFailure("export function test(): int { let xs: int[] = [1, 2, 3]; "
+                    + "delete xs[" + row[1] + "]; return 0; }",
+                "del-" + row[0], "E8002", "array index out of bounds", row[2]);
+        }
 
         NodeResult atLength = runDealNode("""
             export function test(): int {

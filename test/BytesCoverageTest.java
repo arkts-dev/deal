@@ -1480,36 +1480,33 @@ public class BytesCoverageTest {
         System.out.println("-- the decoded-array mark: real decode producers, exact "
             + "tuples, and projection-only inertness (ISSUE-0710) --");
 
-        driveFocusedFailure("bytes decoded nested element (marked)",
-            DECODED_NESTED_SOURCE, null, null, 5, 11,
-            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "table"));
+        driveFocusedFailures(
+            new FocusedFailure("bytes decoded nested element (marked)",
+                DECODED_NESTED_SOURCE, 5, 11,
+                new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "table")),
+            new FocusedFailure("bytes unmarked nested element", UNMARKED_NESTED_SOURCE,
+                4, 11,
+                new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array")),
 
-        driveFocusedFailure("bytes unmarked nested element", UNMARKED_NESTED_SOURCE,
-            null, null, 4, 11,
-            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
+            // The remaining non-decode array producers (B3 names both): the
+            // STRING_SPLIT and TABLE_KEYS results stay unmarked, so the same
+            // element projection keeps the landed refined token.
+            new FocusedFailure("bytes split-result nested element",
+                SPLIT_NESTED_SOURCE, 6, 11,
+                new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array")),
+            new FocusedFailure("bytes keys-result nested element",
+                KEYS_NESTED_SOURCE, 7, 11,
+                new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array")),
+            new FocusedFailure("bytes decoded element two levels down (marked)",
+                DECODED_DEEP_NESTED_SOURCE, 5, 11,
+                new Tuple("E8003", "array element 1 type mismatch", "[[bytes]]", "table")),
+            new FocusedFailure("decoded array at a table descriptor",
+                DECODED_ADMISSION_SOURCE, 6, 34,
+                new Tuple("E8001", "expected table", "table", "array")));
 
         driveFocusedFailure("bytes host-returned nested element",
             HOST_RETURNED_NESTED_SOURCE, "array_return", "host/array_return", 6, 11,
             new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
-
-        // The remaining non-decode array producers (B3 names both): the
-        // STRING_SPLIT and TABLE_KEYS results stay unmarked, so the same
-        // element projection keeps the landed refined token.
-        driveFocusedFailure("bytes split-result nested element",
-            SPLIT_NESTED_SOURCE, null, null, 6, 11,
-            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
-
-        driveFocusedFailure("bytes keys-result nested element",
-            KEYS_NESTED_SOURCE, null, null, 7, 11,
-            new Tuple("E8003", "array element 1 type mismatch", "[bytes]", "array"));
-
-        driveFocusedFailure("bytes decoded element two levels down (marked)",
-            DECODED_DEEP_NESTED_SOURCE, null, null, 5, 11,
-            new Tuple("E8003", "array element 1 type mismatch", "[[bytes]]", "table"));
-
-        driveFocusedFailure("decoded array at a table descriptor",
-            DECODED_ADMISSION_SOURCE, null, null, 6, 34,
-            new Tuple("E8001", "expected table", "table", "array"));
 
         // Comparison honesty: a pin-exact tuple reports no divergence and a
         // divergent field fails by name with the captured and pinned values.
@@ -1648,17 +1645,16 @@ public class BytesCoverageTest {
         System.out.println("-- the integral number-form JSON element at array "
             + "boundaries keeps its number variant on all three consumers --");
 
-        driveFocusedFailure("integral number-form element",
-            INTEGRAL_NUMBER_ELEMENT_SOURCE, null, null, 10, 13,
-            new Tuple("E8003", "array element 1 type mismatch", "string", "number"));
-
-        driveFocusedFailure("integral number-form element after a nested array",
-            NESTED_NUMBER_ELEMENT_SOURCE, null, null, 9, 13,
-            new Tuple("E8003", "array element 2 type mismatch", "[string]", "number"));
-
-        driveFocusedFailure("integral number-form element inside a nested array",
-            NESTED_INNER_NUMBER_ELEMENT_SOURCE, null, null, 10, 13,
-            new Tuple("E8003", "array element 1 type mismatch", "string", "number"));
+        driveFocusedFailures(
+            new FocusedFailure("integral number-form element",
+                INTEGRAL_NUMBER_ELEMENT_SOURCE, 10, 13,
+                new Tuple("E8003", "array element 1 type mismatch", "string", "number")),
+            new FocusedFailure("integral number-form element after a nested array",
+                NESTED_NUMBER_ELEMENT_SOURCE, 9, 13,
+                new Tuple("E8003", "array element 2 type mismatch", "[string]", "number")),
+            new FocusedFailure("integral number-form element inside a nested array",
+                NESTED_INNER_NUMBER_ELEMENT_SOURCE, 10, 13,
+                new Tuple("E8003", "array element 1 type mismatch", "string", "number")));
 
         Path root = Files.createTempDirectory("number-form-admission-");
         try {
@@ -1749,17 +1745,17 @@ public class BytesCoverageTest {
         System.out.println("-- the canonical function-signature projection at "
             + "field/class boundaries on all three consumers --");
 
-        driveFocusedFailure("class literal function field mismatch",
-            CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, null, null, 15, 16,
-            new Tuple("E8010",
-                "function signature mismatch: expected (int)->int, got (int)->string",
-                "(int)->int", "(int)->string"));
-
-        driveFocusedFailure("class field assignment function mismatch",
-            CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, null, null, 16, 3,
-            new Tuple("E8010",
-                "function signature mismatch: expected (int)->int, got (int)->string",
-                "(int)->int", "(int)->string"));
+        driveFocusedFailures(
+            new FocusedFailure("class literal function field mismatch",
+                CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, 15, 16,
+                new Tuple("E8010",
+                    "function signature mismatch: expected (int)->int, got (int)->string",
+                    "(int)->int", "(int)->string")),
+            new FocusedFailure("class field assignment function mismatch",
+                CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, 16, 3,
+                new Tuple("E8010",
+                    "function signature mismatch: expected (int)->int, got (int)->string",
+                    "(int)->int", "(int)->string")));
     }
 
     /**
@@ -1849,22 +1845,56 @@ public class BytesCoverageTest {
             + "array-element and recursive array positions on all three "
             + "consumers --");
 
-        driveFocusedFailure("array element function mismatch",
-            ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE, null, null, 12, 3,
-            new Tuple("E8010",
-                "function signature mismatch: expected (int)->int, got (int)->string",
-                "(int)->int", "(int)->string"));
+        driveFocusedFailures(
+            new FocusedFailure("array element function mismatch",
+                ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE, 12, 3,
+                new Tuple("E8010",
+                    "function signature mismatch: expected (int)->int, got (int)->string",
+                    "(int)->int", "(int)->string")),
+            new FocusedFailure("array element nullable function mismatch",
+                ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE, 12, 3,
+                new Tuple("E8010",
+                    "function signature mismatch: expected (int)->int, got (int)->string",
+                    "(int)->int", "(int)->string")),
+            new FocusedFailure("class field function array element mismatch",
+                CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 11, 16,
+                new Tuple("E8003", "array element 1 type mismatch",
+                    "(int)->int", "int")));
+    }
 
-        driveFocusedFailure("array element nullable function mismatch",
-            ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE, null, null, 12, 3,
-            new Tuple("E8010",
-                "function signature mismatch: expected (int)->int, got (int)->string",
-                "(int)->int", "(int)->string"));
+    private record FocusedFailure(String label, String source, int line, int column,
+                                  Tuple pinned) {
+    }
 
-        driveFocusedFailure("class field function array element mismatch",
-            CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, null, null, 11, 16,
-            new Tuple("E8003", "array element 1 type mismatch",
-                "(int)->int", "int"));
+    private static void driveFocusedFailures(FocusedFailure... cases) throws Exception {
+        Path workspace = Files.createTempDirectory("bytes-focused-batch-");
+        List<Drive> drives = new ArrayList<>();
+        try {
+            for (int i = 0; i < cases.length; i++) {
+                FocusedFailure focused = cases[i];
+                BytesFixture spec = new BytesFixture(BYTES_DIR, focused.label(), "main",
+                    "null", List.of(), focused.pinned().code(), focused.pinned().message(),
+                    focused.line(), focused.column(), focused.pinned().expected(),
+                    focused.pinned().actual());
+                Drive drive = compileInlineDrive(workspace.resolve("case" + i),
+                    focused.source(), spec);
+                if (drive != null) {
+                    drives.add(drive);
+                }
+            }
+            prepareJvmBatch(drives, workspace);
+            for (Drive drive : drives) {
+                BytesFixture spec = drive.spec();
+                driveFocusedFailure(spec.what(), drive, null, null, spec.line(),
+                    spec.column(), new Tuple(spec.code(), spec.message(), spec.expected(),
+                        spec.actual()));
+            }
+        } finally {
+            for (Drive drive : drives) {
+                preparedJvm.remove(drive.compiled());
+            }
+            deleteRecursively(workspace);
+        }
     }
 
     /**
@@ -1936,7 +1966,8 @@ public class BytesCoverageTest {
             terminalTranscript);
         checkEq(pinnedOutcome, lua.outcome(), label
             + ": the LuaJIT production artifact reproduces the exact tuple");
-        ArtifactRun jvm = jvmProduction(drive, hostSpecifier, hostJava);
+        ArtifactRun jvm = hostStem == null ? jvmProduction(drive)
+            : jvmProduction(drive, hostSpecifier, hostJava);
         assertTranscript(label, "jvm probe", jvm.probe(), 0, probeTranscript);
         assertTranscript(label, "jvm terminal", jvm.terminal(), 1,
             terminalTranscript);

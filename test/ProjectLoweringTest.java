@@ -105,6 +105,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
 public class ProjectLoweringTest {
@@ -247,46 +248,11 @@ public class ProjectLoweringTest {
         }
         """;
 
-    /**
-     * The ISSUE-0810 failed-nested-attempt subject: the nested construction's
-     * default raises after its own first operand ran, the helper catches the
-     * failure and returns 5, and the enclosing attempt composes
-     * {@code 0 * 1000 + 5}. The restore must run on the failure path too: a
-     * clobbered enclosing operand composes {@code 1 * 1000 + 5} and throws.
-     */
-    private static final String DEFAULT_REENTRANCY_FAILURE_APP_SOURCE = """
-        import * as console from "std/console";
-        import * as state from "host/retained_default";
-
-        class A {
-          x: int = combine(state.calls(), build());
-        }
-
-        function combine(a: int, b: int): int {
-          return a * 1000 + b;
-        }
-
-        function build(): int {
-          if (state.calls() >= 1) {
-            throw { code: "INNER_FAIL", message: "inner attempt fails" };
-          }
-          state.provideFirst();
-          try {
-            let inner: A = {};
-          } catch (e) {
-          }
-          return 5;
-        }
-
-        export function main(): null {
-          let a: A = {};
-          if (a.x !== 5) {
-            throw { code: "OPERAND_OVERWRITE", message: "a failed nested attempt overwrote the enclosing operands" };
-          }
-          console.log("ok");
-          return null;
-        }
-        """;
+    private static final String DEFAULT_REENTRANCY_FAILURE_APP_SOURCE =
+        failedNestedDefault(DEFAULT_REENTRANCY_APP_SOURCE, "inner attempt fails")
+            .replace("return inner.x;", "return 5;")
+            .replace("a.x !== 1100", "a.x !== 5")
+            .replace("a nested attempt overwrote", "a failed nested attempt overwrote");
 
     /**
      * The ISSUE-0810 two-required-default subject: the class declares two
@@ -329,46 +295,9 @@ public class ProjectLoweringTest {
         }
         """;
 
-    /**
-     * The ISSUE-0810 two-required-default failed-nested-attempt subject: the
-     * nested construction's first default produces its own value and the
-     * nested second default then raises; the helper catches the failure. The
-     * enclosing attempt keeps its own first default value ({@code 0}) and
-     * publishes {@code y = 7}.
-     */
-    private static final String DEFAULT_TWO_DEFAULTS_FAILURE_APP_SOURCE = """
-        import * as console from "std/console";
-        import * as state from "host/retained_default";
-
-        class A {
-          x: int = state.calls();
-          y: int = build();
-        }
-
-        function build(): int {
-          if (state.calls() >= 1) {
-            throw { code: "INNER_FAIL", message: "the nested attempt fails" };
-          }
-          state.provideFirst();
-          try {
-            let inner: A = {};
-          } catch (e) {
-          }
-          return 7;
-        }
-
-        export function main(): null {
-          let a: A = {};
-          if (a.x !== 0) {
-            throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the enclosing attempt's first default value" };
-          }
-          if (a.y !== 7) {
-            throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
-          }
-          console.log("ok");
-          return null;
-        }
-        """;
+    private static final String DEFAULT_TWO_DEFAULTS_FAILURE_APP_SOURCE =
+        failedNestedDefault(DEFAULT_TWO_DEFAULTS_APP_SOURCE, "the nested attempt fails")
+            .replace("a nested attempt overwrote", "a failed nested attempt overwrote");
 
     /**
      * The provider module of the ISSUE-0810 imported-class subject: the
@@ -396,27 +325,16 @@ public class ProjectLoweringTest {
         }
         """;
 
-    /** The failed-nested-attempt form of the imported-class provider module. */
-    private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_FAILURE_LIB_SOURCE = """
-        import * as state from "host/retained_default";
+    private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_FAILURE_LIB_SOURCE =
+        failedNestedDefault(IMPORTED_DEFAULT_TWO_DEFAULTS_LIB_SOURCE,
+            "the nested attempt fails");
 
-        export class A {
-          x: int = state.calls();
-          y: int = build();
-        }
-
-        function build(): int {
-          if (state.calls() >= 1) {
-            throw { code: "INNER_FAIL", message: "the nested attempt fails" };
-          }
-          state.provideFirst();
-          try {
-            let inner: A = {};
-          } catch (e) {
-          }
-          return 7;
-        }
-        """;
+    private static String failedNestedDefault(String source, String message) {
+        return source.replace("return 100;",
+                "throw { code: \"INNER_FAIL\", message: \"" + message + "\" };")
+            .replace("  let inner: A = {};",
+                "  try {\n    let inner: A = {};\n  } catch (e) {\n  }");
+    }
 
     /** The consumer of the imported two-required-default class. */
     private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_APP_SOURCE = """
@@ -727,32 +645,8 @@ public class ProjectLoweringTest {
         }
         """;
 
-    /**
-     * The same-identity sibling field fixture with the provider imports
-     * reversed: the field links must not depend on the import order.
-     */
-    private static final String FIELD_SIBLING_APP_REVERSED_SOURCE = """
-        import * as codec from "./m/codec";
-        import * as ir from "./m/ir";
-        import * as other from "./other";
-
-        class Point { nick: string = ""; }
-
-        export function main(): null {
-          let x: ir.Ir = {};
-          x.a = 5;
-          if (x.a !== 5) { throw { code: "WRONG_IR_READ", message: "a" }; }
-          let had: boolean = has(x.nick);
-          delete x.nick;
-          if (had || has(x.nick)) { throw { code: "WRONG_IR_DELETE", message: "nick" }; }
-          let y: other.Point = {};
-          y.nick = 2;
-          if (y.nick !== 2) { throw { code: "WRONG_OTHER", message: "nick" }; }
-          let p: Point = {};
-          if (p.nick !== "") { throw { code: "WRONG_LOCAL", message: "nick" }; }
-          return null;
-        }
-        """;
+    private static final String FIELD_SIBLING_APP_REVERSED_SOURCE =
+        reverseProviderImports(FIELD_SIBLING_APP_SOURCE);
 
     /**
      * The ambiguous-JSON-link fixture: two same-identity sibling jsonable
@@ -786,20 +680,8 @@ public class ProjectLoweringTest {
         }
         """;
 
-    private static final String JSON_SIBLING_APP_REVERSED_SOURCE = """
-        import * as codec from "./m/codec";
-        import * as ir from "./m/ir";
-
-        // @jsonable
-        export class Wrap { item: ir.Ir = {}; }
-
-        export function main(): null {
-          let w: Wrap = {};
-          let s: string = Wrap$toJson(w);
-          if (s === "") { throw { code: "WRONG", message: "s" }; }
-          return null;
-        }
-        """;
+    private static final String JSON_SIBLING_APP_REVERSED_SOURCE =
+        reverseProviderImports(JSON_SIBLING_APP_SOURCE);
 
     /**
      * The single-plan same-identity JSON fixture: the imported sibling
@@ -879,31 +761,8 @@ public class ProjectLoweringTest {
         }
         """;
 
-    /** The same plan-imported fixture with the local sibling non-exported. */
-    private static final String PLAN_IMPORTED_APP_NONEXPORTED_SOURCE = """
-        import * as codec from "./codec";
-        import * as other from "./other";
-
-        class Point { nick: string = "local"; }
-
-        // @jsonable
-        export class Wrap { p: other.Point = {}; }
-
-        export function main(): null {
-          let w: Wrap = {};
-          let s: string = Wrap$toJson(w);
-          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
-            throw { code: "WRONG", message: s };
-          }
-          let w2: Wrap | null = Wrap$fromJson("{\\\"p\\\":{}}");
-          if (w2 !== null) {
-            if (w2.p.a !== 7) { throw { code: "WRONG_A", message: "a" }; }
-          } else {
-            throw { code: "WRONG_NULL", message: "null" };
-          }
-          return null;
-        }
-        """;
+    private static final String PLAN_IMPORTED_APP_NONEXPORTED_SOURCE =
+        PLAN_IMPORTED_APP_SOURCE.replace("export class Point", "class Point");
 
     /**
      * The annotated-local + imported-callee-argument fixture (review
@@ -943,24 +802,8 @@ public class ProjectLoweringTest {
         }
         """;
 
-    private static final String LOCAL_ATTRIBUTION_APP_REVERSED_SOURCE = """
-        import * as codec from "./codec";
-        import * as ir from "./ir";
-
-        class Ir { a: int = 5; }
-
-        function id(x: Ir): Ir { return x; }
-
-        class Holder { f: Ir = id({}); }
-
-        export function main(): null {
-          let p: Ir = id({});
-          let q: Holder = {};
-          if (p.a !== 5) { throw { code: "WRONG_P", message: "p.a" }; }
-          if (q.f.a !== 5) { throw { code: "WRONG_F", message: "q.f.a" }; }
-          return null;
-        }
-        """;
+    private static final String LOCAL_ATTRIBUTION_APP_REVERSED_SOURCE =
+        reverseProviderImports(LOCAL_ATTRIBUTION_APP_SOURCE);
 
     /**
      * The annotated-import construction fixture: the annotation's
@@ -1046,30 +889,15 @@ public class ProjectLoweringTest {
         }
         """;
 
-    /** The call-result receiver consumer with the sibling imported first. */
-    private static final String CALL_RECEIVER_APP_REVERSED_SOURCE = """
-        import * as codec from "./m/codec";
-        import * as ir from "./m/ir";
+    private static final String CALL_RECEIVER_APP_REVERSED_SOURCE =
+        reverseProviderImports(CALL_RECEIVER_APP_SOURCE);
 
-        function wrap(): ir.Ir { return { a: 7 }; }
-
-        export function main(): null {
-          let v: int = ir.make().a;
-          let f: (x: ir.Ir) => int = ir.useIr;
-          let n: int = f({});
-          let y = ir.make();
-          y.a = 11;
-          let w: int = y.a;
-          let q: int = wrap().a;
-          let z = ir.make();
-          let had: boolean = has(z.nick);
-          delete z.nick;
-          if (v !== 7 || n !== 7 || w !== 11 || q !== 7 || had) {
-            throw { code: "WRONG", message: "call receiver" };
-          }
-          return null;
-        }
-        """;
+    private static String reverseProviderImports(String source) {
+        int first = source.indexOf('\n') + 1;
+        int second = source.indexOf('\n', first) + 1;
+        return source.substring(first, second) + source.substring(0, first)
+            + source.substring(second);
+    }
 
     /**
      * The standalone callee-parameter and declared-return fixture beside a
@@ -2807,20 +2635,10 @@ public class ProjectLoweringTest {
             // The lowered project admits on both project surfaces and its
             // own records reassemble from the dump.
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the same-spelled provider project passes the typed project surface");
-            String text = SemanticIrValidator.toProjectText(lowered);
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                "the same-spelled provider project passes the text project surface");
-            SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
-            checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
-                    text.getBytes(StandardCharsets.UTF_8))),
-                SemanticIrDumper.reassembleProject(dump.manifest(),
-                    documentsOf(dump)),
+                comparisonFacts(project);
+            String text = assertProjectAdmission(lowered, facts,
+                "the same-spelled provider project passes the project surfaces");
+            assertReassembly(text, SemanticIrDumper.dumpProject(lowered),
                 "the same-spelled provider project reassembles exactly");
 
             // The Oracle executes the probe: the per-construction defaults,
@@ -2896,20 +2714,10 @@ public class ProjectLoweringTest {
                     + "default, literal array)");
 
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the same-named sibling project passes the typed project surface");
-            String text = SemanticIrValidator.toProjectText(lowered);
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                "the same-named sibling project passes the text project surface");
-            SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
-            checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
-                    text.getBytes(StandardCharsets.UTF_8))),
-                SemanticIrDumper.reassembleProject(dump.manifest(),
-                    documentsOf(dump)),
+                comparisonFacts(project);
+            String text = assertProjectAdmission(lowered, facts,
+                "the same-named sibling project passes the project surfaces");
+            assertReassembly(text, SemanticIrDumper.dumpProject(lowered),
                 "the same-named sibling project reassembles exactly");
 
             SemanticRuntimeModel.ConsumerRun run =
@@ -3200,17 +3008,9 @@ public class ProjectLoweringTest {
                 "the nested field literal references the codec provider (never "
                     + "the enclosing contextual declaration)");
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the nested-field provider project passes the typed project "
-                    + "surface");
-            String text = SemanticIrValidator.toProjectText(lowered);
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                "the nested-field provider project passes the text project "
-                    + "surface");
+                comparisonFacts(project);
+            assertProjectAdmission(lowered, facts,
+                "the nested-field provider project passes the project surfaces");
             SemanticRuntimeModel.ConsumerRun run =
                 SemanticOracle.executeProjectInits(lowered, result.tables(),
                     result.registries(), null);
@@ -3340,17 +3140,9 @@ public class ProjectLoweringTest {
                     "the consumer's Part edge is the ordinary runtime use");
             }
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the transitive provider project passes the typed project "
-                    + "surface");
-            String text = SemanticIrValidator.toProjectText(lowered);
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                "the transitive provider project passes the text project "
-                    + "surface");
+                comparisonFacts(project);
+            assertProjectAdmission(lowered, facts,
+                "the transitive provider project passes the project surfaces");
             SemanticRuntimeModel.ConsumerRun run =
                 SemanticOracle.executeProjectInits(lowered, result.tables(),
                     result.registries(), null);
@@ -3486,24 +3278,11 @@ public class ProjectLoweringTest {
                 }
 
                 SemanticIrValidator.ComparisonFacts facts =
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash());
-                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                    "the " + label + " same-identity field project passes the typed "
-                        + "project surface");
-                String text = SemanticIrValidator.toProjectText(lowered);
-                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                    "the " + label + " same-identity field project passes the text "
-                        + "project surface");
-                SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
-                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
-                        text.getBytes(StandardCharsets.UTF_8))),
-                    SemanticIrDumper.reassembleProject(dump.manifest(),
-                        documentsOf(dump)),
-                    "the " + label + " same-identity field project reassembles "
-                        + "exactly");
+                    comparisonFacts(project);
+                String text = assertProjectAdmission(lowered, facts,
+                    "the " + label + " same-identity field project passes the project surfaces");
+                assertReassembly(text, SemanticIrDumper.dumpProject(lowered),
+                    "the " + label + " same-identity field project reassembles exactly");
 
                 SemanticRuntimeModel.ConsumerRun run =
                     SemanticOracle.executeProjectInits(lowered, result.tables(),
@@ -3634,15 +3413,9 @@ public class ProjectLoweringTest {
             }
             ExecutableLoweredProject lowered = result.project();
             SemanticIrValidator.ComparisonFacts facts =
-                new SemanticIrValidator.ComparisonFacts(
-                    project.index().interfaceIndexDigest(),
-                    SemanticProfile.DEAL_V1_3_INT32,
-                    invocation().capabilityRegistryHash());
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the single-plan project passes the typed project surface");
-            String text = SemanticIrValidator.toProjectText(lowered);
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                "the single-plan project passes the text project surface");
+                comparisonFacts(project);
+            assertProjectAdmission(lowered, facts,
+                "the single-plan project passes the project surfaces");
             SemanticRuntimeModel.ConsumerRun run =
                 SemanticOracle.executeProjectInits(lowered, result.tables(),
                     result.registries(), null);
@@ -3717,17 +3490,9 @@ public class ProjectLoweringTest {
                     }
                 }
                 SemanticIrValidator.ComparisonFacts facts =
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash());
-                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                    "the " + label + " plan-imported project passes the typed "
-                        + "project surface");
-                String text = SemanticIrValidator.toProjectText(lowered);
-                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                    "the " + label + " plan-imported project passes the text "
-                        + "project surface");
+                    comparisonFacts(project);
+                assertProjectAdmission(lowered, facts,
+                    "the " + label + " plan-imported project passes the project surfaces");
                 SemanticRuntimeModel.ConsumerRun run =
                     SemanticOracle.executeProjectInits(lowered, result.tables(),
                         result.registries(), null);
@@ -3815,23 +3580,10 @@ public class ProjectLoweringTest {
                     "both recorded literals construct the local Ir (the variable "
                         + "initializer and the field default) (" + label + ")");
                 SemanticIrValidator.ComparisonFacts facts =
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash());
-                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                    "the annotated-local project passes the typed project surface ("
-                        + label + ")");
-                String text = SemanticIrValidator.toProjectText(lowered);
-                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                    "the annotated-local project passes the text project surface ("
-                        + label + ")");
-                SemanticIrDumper.ProjectDump dump =
-                    SemanticIrDumper.dumpProject(lowered);
-                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
-                        text.getBytes(StandardCharsets.UTF_8))),
-                    SemanticIrDumper.reassembleProject(dump.manifest(),
-                        documentsOf(dump)),
+                    comparisonFacts(project);
+                String text = assertProjectAdmission(lowered, facts,
+                    "the annotated-local project passes the project surfaces (" + label + ")");
+                assertReassembly(text, SemanticIrDumper.dumpProject(lowered),
                     "the annotated-local project reassembles exactly (" + label + ")");
                 SemanticRuntimeModel.ConsumerRun run =
                     SemanticOracle.executeProjectInits(lowered, result.tables(),
@@ -4041,15 +3793,9 @@ public class ProjectLoweringTest {
                         "the explicitly annotated local literal constructs the unit's "
                             + "own declaration (" + label + ")");
                     SemanticIrValidator.ComparisonFacts facts =
-                        new SemanticIrValidator.ComparisonFacts(
-                            project.index().interfaceIndexDigest(),
-                            SemanticProfile.DEAL_V1_3_INT32,
-                            invocation().capabilityRegistryHash());
-                    check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                        "the project passes the typed project surface (" + label + ")");
-                    String text = SemanticIrValidator.toProjectText(lowered);
-                    check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                        "the project passes the text project surface (" + label + ")");
+                        comparisonFacts(project);
+                    assertProjectAdmission(lowered, facts,
+                        "the project passes the project surfaces (" + label + ")");
                     SemanticRuntimeModel.ConsumerRun run =
                         SemanticOracle.executeProjectInits(lowered, result.tables(),
                             result.registries(), null);
@@ -4297,17 +4043,9 @@ public class ProjectLoweringTest {
                         + "declared-return literal both construct the provider's "
                         + "declaration");
                 SemanticIrValidator.ComparisonFacts facts =
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash());
-                check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                    "the " + label + " call-result receiver project passes "
-                        + "the typed project surface");
-                String text = SemanticIrValidator.toProjectText(lowered);
-                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                    "the " + label + " call-result receiver project passes "
-                        + "the text project surface");
+                    comparisonFacts(project);
+                assertProjectAdmission(lowered, facts,
+                    "the " + label + " call-result receiver project passes the project surfaces");
                 SemanticRuntimeModel.ConsumerRun run =
                     SemanticOracle.executeProjectInits(lowered, result.tables(),
                         result.registries(), null);
@@ -4573,10 +4311,7 @@ public class ProjectLoweringTest {
             // unit passes every validator (the class arm included).
             Optional<CompilerDiagnostic> failure =
                 SemanticLowerer.validateProjectUnit(app, result.tableOf(APP),
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash()),
+                    comparisonFacts(project),
                     app.classBindingFacts(),
                     result.registryOf(APP),
                     new JsonDefaultChildTable(Map.of()),
@@ -4694,10 +4429,7 @@ public class ProjectLoweringTest {
             // in-project facts (the class arm included).
             Optional<CompilerDiagnostic> failure =
                 SemanticLowerer.validateProjectUnit(app, result.tableOf(APP),
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash()),
+                    comparisonFacts(project),
                     app.classBindingFacts(),
                     result.registryOf(APP),
                     new JsonDefaultChildTable(Map.of()),
@@ -4710,10 +4442,7 @@ public class ProjectLoweringTest {
             // standalone surface admits the unit without any provider context
             // (the boundary of the required-link rejection).
             check(SemanticIrValidator.validate(app,
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash())).isEmpty(),
+                    comparisonFacts(project)).isEmpty(),
                 "the builtin Error construction needs no provider context and "
                     + "admits standalone");
         } finally {
@@ -4808,10 +4537,7 @@ public class ProjectLoweringTest {
             // unit passes every validator (the class arm included).
             Optional<CompilerDiagnostic> failure =
                 SemanticLowerer.validateProjectUnit(app, result.tableOf(APP),
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash()),
+                    comparisonFacts(project),
                     app.classBindingFacts(),
                     result.registryOf(APP),
                     new JsonDefaultChildTable(Map.of()),
@@ -4909,10 +4635,7 @@ public class ProjectLoweringTest {
             Optional<CompilerDiagnostic> failure =
                 SemanticLowerer.validateProjectUnit(corrupted,
                     result.tableOf(APP),
-                    new SemanticIrValidator.ComparisonFacts(
-                        project.index().interfaceIndexDigest(),
-                        SemanticProfile.DEAL_V1_3_INT32,
-                        invocation().capabilityRegistryHash()),
+                    comparisonFacts(project),
                     corrupted.classBindingFacts(),
                     new ClassFactoryRegistry(Map.of()),
                     new JsonDefaultChildTable(Map.of()),
@@ -4964,12 +4687,7 @@ public class ProjectLoweringTest {
     /** One lowered unit with the given op list (the corruption surface). */
     private static LoweredModuleUnit withOps(LoweredModuleUnit unit,
                                              List<SemanticOp> ops) {
-        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
-            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
-            unit.requiredCapabilities(), unit.constructCoverage(),
-            unit.classLayouts(), unit.functions(), unit.moduleInit(),
-            unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(),
-            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
+        return mutateUnit(unit, copy -> copy.ops = new ArrayList<>(ops));
     }
 
     private static void testMissingModuleSeed(LoweredProject baseline)
@@ -5128,6 +4846,21 @@ public class ProjectLoweringTest {
             unit.moduleId() + ": standalone typed admission requires exactly the provider context");
         checkEq(needsProvider, SemanticIrValidator.validateText(text, facts).isPresent(),
             unit.moduleId() + ": standalone text admission requires exactly the provider context");
+    }
+
+    private static String assertProjectAdmission(ExecutableLoweredProject lowered,
+            SemanticIrValidator.ComparisonFacts facts, String what) {
+        check(SemanticIrValidator.validate(lowered, facts).isEmpty(), what + " (typed)");
+        String text = SemanticIrValidator.toProjectText(lowered);
+        check(SemanticIrValidator.validateText(text, facts).isEmpty(), what + " (text)");
+        return text;
+    }
+
+    private static void assertReassembly(String text, SemanticIrDumper.ProjectDump dump,
+            String what) {
+        checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
+                text.getBytes(StandardCharsets.UTF_8))),
+            SemanticIrDumper.reassembleProject(dump.manifest(), documentsOf(dump)), what);
     }
 
     private static ContractSnapshotCanonicalizer.ParsedProject assertProjectTransport(
@@ -5731,11 +5464,8 @@ public class ProjectLoweringTest {
                 comparisonFacts(project);
 
             // The unmutated project admits on both surfaces.
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the host-class project passes the typed project surface");
-            String text = SemanticIrValidator.toProjectText(lowered);
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                "the host-class project passes the text project surface");
+            String text = assertProjectAdmission(lowered, facts,
+                "the host-class project passes the project surfaces");
 
             // (1) Checked reassembly: the internally consistent seed-owner
             // mutation (the registration owner and every field owner) passes
@@ -5839,11 +5569,8 @@ public class ProjectLoweringTest {
             ExecutableLoweredProject lowered = result.project();
             SemanticIrValidator.ComparisonFacts facts =
                 comparisonFacts(project);
-            check(SemanticIrValidator.validate(lowered, facts).isEmpty(),
-                "the class-reference project passes the typed project surface");
-            String text = SemanticIrValidator.toProjectText(lowered);
-            check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                "the class-reference project passes the text project surface");
+            String text = assertProjectAdmission(lowered, facts,
+                "the class-reference project passes the project surfaces");
             check(lowered.classSeeds().registrationFor(HOST_HIDDEN) != null,
                 "the declaration class Hidden carries its registration seed");
             ClassRegistrationSeeds.ClassRegistration endpoint =
@@ -5934,14 +5661,9 @@ public class ProjectLoweringTest {
                 SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
                     imported.index().interfaceIndexDigest(), project.semanticProfile(),
                     invocation().capabilityRegistryHash());
-                check(SemanticIrValidator.validate(project, facts).isEmpty(),
-                    "imported implementation-class field admits as typed project");
-                check(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(project),
-                    facts).isEmpty(), "imported implementation-class field admits as text");
-                SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(project);
-                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
-                        SemanticIrValidator.toProjectText(project).getBytes(StandardCharsets.UTF_8))),
-                    SemanticIrDumper.reassembleProject(dump.manifest(), documentsOf(dump)),
+                String text = assertProjectAdmission(project, facts,
+                    "imported implementation-class field admits");
+                assertReassembly(text, SemanticIrDumper.dumpProject(project),
                     "imported implementation-class declaration field reassembles exactly");
             }
         } finally { deleteRecursively(imported.root()); }
@@ -5964,16 +5686,10 @@ public class ProjectLoweringTest {
                 SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
                     hidden.index().interfaceIndexDigest(), project.semanticProfile(),
                     invocation().capabilityRegistryHash());
-                check(SemanticIrValidator.validate(project, facts).isEmpty(),
+                String text = assertProjectAdmission(project, facts,
                     "unchanged private declaration read admits, optional=" + optional);
-                String text = SemanticIrValidator.toProjectText(project);
-                check(SemanticIrValidator.validateText(text, facts).isEmpty(),
-                    "unchanged private declaration read text admits, optional=" + optional);
                 SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(project);
-                checkEq(ContractSnapshotCanonicalizer.parseProject(objOf(
-                        text.getBytes(StandardCharsets.UTF_8))),
-                    SemanticIrDumper.reassembleProject(dump.manifest(), documentsOf(dump)),
-                    "unchanged private declaration read reassembles");
+                assertReassembly(text, dump, "unchanged private declaration read reassembles");
                 expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
                     "Hidden", "secret", "int"), documentsOf(dump),
                     "private seed/read disagreement rejects without CLASS_NEW");
@@ -6223,73 +5939,63 @@ public class ProjectLoweringTest {
 
     /** The manifest with the first index module entry repeated (a duplicate identity). */
     private static byte[] manifestWithDuplicatedIndexModule(byte[] manifest) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Obj index = (CanonicalJson.Obj) at(root, "interfaceIndex");
-        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(index, "modules");
-        List<CanonicalJson.Value> entries = new ArrayList<>(modules.items());
-        entries.add(entries.get(0));
-        return CanonicalJson.serializeBytes(withEntry(root, "interfaceIndex",
-            withEntry(index, "modules", CanonicalJson.arr(entries))));
+        return mutateJsonArray(manifest, entries -> entries.add(entries.get(0)),
+            "interfaceIndex", "modules");
     }
 
     /** The manifest with its first class-seed row repeated (a duplicate registration key). */
     private static byte[] manifestWithDuplicatedSeed(byte[] manifest) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
-        List<CanonicalJson.Value> rows = new ArrayList<>(seeds.items());
-        rows.add(rows.get(0));
-        return CanonicalJson.serializeBytes(
-            withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+        return mutateJsonArray(manifest, rows -> rows.add(rows.get(0)), "classSeeds");
     }
 
     /** The manifest with one module path removed from its ordered list. */
     private static byte[] manifestWithoutModule(byte[] manifest, String modulePath) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(root, "modules");
-        List<CanonicalJson.Value> items = new ArrayList<>();
-        for (CanonicalJson.Value item : modules.items()) {
-            if (!((CanonicalJson.Str) item).value().equals(modulePath)) {
-                items.add(item);
-            }
+        return mutateJsonArray(manifest,
+            items -> items.removeIf(item -> ((CanonicalJson.Str) item).value().equals(modulePath)),
+            "modules");
+    }
+
+    private static byte[] mutateJsonArray(byte[] document,
+            Consumer<List<CanonicalJson.Value>> mutation, String... path) {
+        return CanonicalJson.serializeBytes(mutateJsonPath(objOf(document), 0, path, value -> {
+            List<CanonicalJson.Value> items = new ArrayList<>(((CanonicalJson.Arr) value).items());
+            mutation.accept(items);
+            return CanonicalJson.arr(items);
+        }));
+    }
+
+    private static CanonicalJson.Value mutateJsonPath(CanonicalJson.Value value, int depth,
+            String[] path, UnaryOperator<CanonicalJson.Value> mutation) {
+        if (depth == path.length) {
+            return mutation.apply(value);
         }
-        return CanonicalJson.serializeBytes(
-            withEntry(root, "modules", CanonicalJson.arr(items)));
+        CanonicalJson.Obj obj = (CanonicalJson.Obj) value;
+        return withEntry(obj, path[depth], mutateJsonPath(at(obj, path[depth]),
+            depth + 1, path, mutation));
     }
 
     /** The manifest with one module entry's first export declared type replaced. */
     private static byte[] manifestWithIndexExportType(byte[] manifest) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Obj index = (CanonicalJson.Obj) at(root, "interfaceIndex");
-        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(index, "modules");
-        List<CanonicalJson.Value> entries = new ArrayList<>();
-        for (int i = 0; i < modules.items().size(); i++) {
-            CanonicalJson.Obj entry = (CanonicalJson.Obj) modules.items().get(i);
-            CanonicalJson.Arr exports = (CanonicalJson.Arr) at(entry, "exports");
-            if (i == 0 && !exports.items().isEmpty()) {
-                List<CanonicalJson.Value> updated = new ArrayList<>(exports.items());
-                CanonicalJson.Obj first = (CanonicalJson.Obj) updated.get(0);
-                updated.set(0, withEntry(first, "declaredType",
-                    CanonicalJson.str("(i32) => i32")));
-                entry = withEntry(entry, "exports", CanonicalJson.arr(updated));
+        return mutateJsonArray(manifest, entries -> {
+            CanonicalJson.Obj entry = (CanonicalJson.Obj) entries.get(0);
+            List<CanonicalJson.Value> exports = new ArrayList<>(
+                ((CanonicalJson.Arr) at(entry, "exports")).items());
+            if (!exports.isEmpty()) {
+                exports.set(0, withEntry((CanonicalJson.Obj) exports.get(0),
+                    "declaredType", CanonicalJson.str("(i32) => i32")));
+                entries.set(0, withEntry(entry, "exports", CanonicalJson.arr(exports)));
             }
-            entries.add(entry);
-        }
-        return CanonicalJson.serializeBytes(withEntry(root, "interfaceIndex",
-            withEntry(index, "modules", CanonicalJson.arr(entries))));
+        }, "interfaceIndex", "modules");
     }
 
     /** The manifest with the first index entry's module identity renamed. */
     private static byte[] manifestWithMutatedIndexModule(byte[] manifest) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Obj index = (CanonicalJson.Obj) at(root, "interfaceIndex");
-        CanonicalJson.Arr modules = (CanonicalJson.Arr) at(index, "modules");
-        List<CanonicalJson.Value> entries = new ArrayList<>(modules.items());
-        CanonicalJson.Obj first = (CanonicalJson.Obj) entries.get(0);
-        CanonicalJson.Obj moduleId = (CanonicalJson.Obj) at(first, "moduleId");
-        entries.set(0, withEntry(first, "moduleId", withEntry(moduleId, "path",
-            CanonicalJson.str(((CanonicalJson.Str) at(moduleId, "path")).value() + "x"))));
-        return CanonicalJson.serializeBytes(withEntry(root, "interfaceIndex",
-            withEntry(index, "modules", CanonicalJson.arr(entries))));
+        return mutateJsonArray(manifest, entries -> {
+            CanonicalJson.Obj first = (CanonicalJson.Obj) entries.get(0);
+            CanonicalJson.Obj moduleId = (CanonicalJson.Obj) at(first, "moduleId");
+            entries.set(0, withEntry(first, "moduleId", withEntry(moduleId, "path",
+                CanonicalJson.str(((CanonicalJson.Str) at(moduleId, "path")).value() + "x"))));
+        }, "interfaceIndex", "modules");
     }
 
     /** The manifest with the named class seed's owner member replaced. */
@@ -6301,19 +6007,15 @@ public class ProjectLoweringTest {
 
     private static byte[] mutateSeed(byte[] manifest, String className,
             UnaryOperator<CanonicalJson.Obj> mutation) {
-        CanonicalJson.Obj root = objOf(manifest);
-        CanonicalJson.Arr seeds = (CanonicalJson.Arr) at(root, "classSeeds");
-        List<CanonicalJson.Value> rows = new ArrayList<>();
-        for (CanonicalJson.Value item : seeds.items()) {
-            CanonicalJson.Obj row = (CanonicalJson.Obj) item;
-            CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
-            CanonicalJson.Obj updated = className.equals(((CanonicalJson.Str) at(key, "name")).value())
-                ? mutation.apply(row) : row;
-            if (updated != null) {
-                rows.add(updated);
-            }
-        }
-        return CanonicalJson.serializeBytes(withEntry(root, "classSeeds", CanonicalJson.arr(rows)));
+        return mutateJsonArray(manifest, rows -> {
+            rows.replaceAll(item -> {
+                CanonicalJson.Obj row = (CanonicalJson.Obj) item;
+                CanonicalJson.Obj key = (CanonicalJson.Obj) at(row, "key");
+                return className.equals(((CanonicalJson.Str) at(key, "name")).value())
+                    ? mutation.apply(row) : row;
+            });
+            rows.removeIf(java.util.Objects::isNull);
+        }, "classSeeds");
     }
 
     private static CanonicalJson.Obj mutateSeedFields(CanonicalJson.Obj row,
@@ -6448,13 +6150,7 @@ public class ProjectLoweringTest {
         inverse.remove(removed);
         StructuredBodyTable mutatedTable = new StructuredBodyTable(
             targetUnit.bodyTable().blockOps(), inverse);
-        LoweredModuleUnit mutated = new LoweredModuleUnit(targetUnit.formatVersion(),
-            targetUnit.semanticProfile(), targetUnit.moduleId(), targetUnit.interfaceHash(),
-            targetUnit.loweringContextHash(), targetUnit.requiredCapabilities(),
-            targetUnit.constructCoverage(), targetUnit.classLayouts(), targetUnit.functions(),
-            targetUnit.moduleInit(), targetUnit.exportPlan(), targetUnit.functionBindings(),
-            targetUnit.ops(), mutatedTable, targetUnit.classFactories(),
-            targetUnit.jsonDefaults(), targetUnit.classBindingFacts());
+        LoweredModuleUnit mutated = mutateUnit(targetUnit, copy -> copy.body = mutatedTable);
 
         String mutatedText = SemanticIrValidator.toUnitText(mutated);
         RawUnit mutatedReparsed = ContractSnapshotCanonicalizer.parseUnit(
@@ -6652,12 +6348,10 @@ public class ProjectLoweringTest {
             // block differs from the closure's registered body).
             {
                 BlockId otherBody = otherBlockOf(util, twoCapture.body());
-                Map<FunctionId, LoweredFunction> functions =
-                    new LinkedHashMap<>(util.functions());
-                functions.put(twoCapture.functionId(), new LoweredFunction(
-                    twoCapture.functionId(), twoCapture.descriptor(), twoCapture.captures(),
-                    otherBody, twoCapture.sourceName()));
-                LoweredModuleUnit mutated = withFunctions(util, functions);
+                LoweredFunction function = twoCapture;
+                LoweredModuleUnit mutated = mutateUnit(util, copy -> copy.functions.put(
+                    function.functionId(), new LoweredFunction(function.functionId(),
+                        function.descriptor(), function.captures(), otherBody, function.sourceName())));
                 // The control owner runs before the bindings owner and owns the
                 // detached RETURN whose recorded function no longer has that
                 // body block.
@@ -6671,11 +6365,9 @@ public class ProjectLoweringTest {
                     util, twoCapture.functionId());
                 FunctionExecutionBinding.LoweredBody body =
                     (FunctionExecutionBinding.LoweredBody) util.functionBindings().get(key);
-                Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
-                    new LinkedHashMap<>(util.functionBindings());
-                bindings.put(key, new FunctionExecutionBinding.LoweredBody(
-                    body.functionId(), otherBlockOf(util, body.blockId())));
-                LoweredModuleUnit mutated = withBindings(util, bindings);
+                LoweredModuleUnit mutated = mutateUnit(util, copy -> copy.bindings.put(key,
+                    new FunctionExecutionBinding.LoweredBody(body.functionId(),
+                        otherBlockOf(util, body.blockId()))));
                 expectBindingGraphMutationRejects("a retargeted loweredBody block",
                     lowered, facts, mutated, "REGISTRY_ONE_TO_ONE",
                     "does not match its LoweredBody payload");
@@ -6693,13 +6385,11 @@ public class ProjectLoweringTest {
                     new AdapterCase("sourceRef",
                         new AdaptSourceRef.SharedCell(shared.binding(), shared.generation() + 1),
                         adapter.targetSignature(), "registration carries mode"))) {
-                Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
-                    new LinkedHashMap<>(app.functionBindings());
-                bindings.put(adapterId, new FunctionExecutionBinding.AdapterBinding(
-                    adapter.adaptOpId(), adapter.captureMode(), row.source(),
-                    adapter.sourceSignature(), row.target()));
+                LoweredModuleUnit mutated = mutateUnit(app, copy -> copy.bindings.put(adapterId,
+                    new FunctionExecutionBinding.AdapterBinding(adapter.adaptOpId(),
+                        adapter.captureMode(), row.source(), adapter.sourceSignature(), row.target())));
                 expectBindingGraphMutationRejects("a retargeted adapter " + row.name(),
-                    lowered, facts, withBindings(app, bindings), "REGISTRY_ONE_TO_ONE", row.detail());
+                    lowered, facts, mutated, "REGISTRY_ONE_TO_ONE", row.detail());
             }
             // Mutation (9): mis-resolve the host-function-value materializing
             // boundary op (the registry alone).
@@ -6711,11 +6401,9 @@ public class ProjectLoweringTest {
                 OpId notACrossing = firstConstOp(app);
                 check(notACrossing != null, "the fixture carries a non-crossing op");
                 if (notACrossing != null) {
-                    Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
-                        new LinkedHashMap<>(app.functionBindings());
-                    bindings.put(key, new FunctionExecutionBinding.HostFunctionValue(
-                        value.hostModuleId(), notACrossing, value.descriptor()));
-                    LoweredModuleUnit mutated = withBindings(app, bindings);
+                    LoweredModuleUnit mutated = mutateUnit(app, copy -> copy.bindings.put(key,
+                        new FunctionExecutionBinding.HostFunctionValue(
+                            value.hostModuleId(), notACrossing, value.descriptor())));
                     expectBindingGraphMutationRejects(
                         "a mis-resolved materializing boundary op", lowered, facts,
                         mutated, "R-FUNCTION-BINDING", "does not resolve");
@@ -6737,7 +6425,7 @@ public class ProjectLoweringTest {
                 if (row.binding() != null) {
                     Set<BindingId> parameters = new LinkedHashSet<>(util.classBindingFacts().parameters());
                     parameters.add(row.binding());
-                    LoweredModuleUnit mutated = withClassBindingFacts(util,
+                    LoweredModuleUnit mutated = mutateUnit(util, copy -> copy.bindingFacts =
                         new ClassBindingFacts(parameters, util.classBindingFacts().importAliases()));
                     expectBindingGraphMutationRejects(row.name(), lowered, facts, mutated,
                         "BINDING_INIT_ONCE", row.detail());
@@ -6760,8 +6448,8 @@ public class ProjectLoweringTest {
                     Map<ClassFactoryId, OpId> factories = new LinkedHashMap<>(
                         util.classFactories().factories());
                     factories.put(entry, classDefault);
-                    LoweredModuleUnit mutated = withFactories(util,
-                        new ClassFactoryRegistry(factories));
+                    LoweredModuleUnit mutated = mutateUnit(util,
+                        copy -> copy.factories = new ClassFactoryRegistry(factories));
                     expectClassGraphMutationRejects("a retargeted factory registration",
                         lowered, facts, mutated, "FACTORY_COHERENCE", "not CLASS_FACTORY");
                 }
@@ -6802,8 +6490,8 @@ public class ProjectLoweringTest {
                 List<OpId> reordered = new ArrayList<>(children);
                 java.util.Collections.swap(reordered, 0, reordered.size() - 1);
                 rows.put(jsonFromClass, reordered);
-                LoweredModuleUnit mutated = withJsonDefaults(util,
-                    new JsonDefaultChildTable(rows));
+                LoweredModuleUnit mutated = mutateUnit(util,
+                    copy -> copy.defaults = new JsonDefaultChildTable(rows));
                 expectClassGraphMutationRejects("a reordered JSON-default child row",
                     lowered, facts, mutated, "JSON_LAYOUT_COHERENCE",
                     "not @src/Point.x");
@@ -6817,8 +6505,8 @@ public class ProjectLoweringTest {
                     util.classFactories().factories());
                 OpId factoryOp = factories.remove(entry);
                 factories.put(new ClassFactoryId(entry.id() + 100), factoryOp);
-                LoweredModuleUnit mutated = withFactories(util,
-                    new ClassFactoryRegistry(factories));
+                LoweredModuleUnit mutated = mutateUnit(util,
+                    copy -> copy.factories = new ClassFactoryRegistry(factories));
                 expectClassGraphMutationRejects(
                     "a constructionEntry that disagrees with the registry", lowered, facts,
                     mutated, "FACTORY_COHERENCE",
@@ -6861,13 +6549,9 @@ public class ProjectLoweringTest {
 
     /** The unit text with its first operation's origin replaced. */
     private static String withFirstOpOrigin(String unitText, CanonicalJson.Obj origin) {
-        CanonicalJson.Obj root = objOf(unitText.getBytes(
-            java.nio.charset.StandardCharsets.UTF_8));
-        CanonicalJson.Arr ops = (CanonicalJson.Arr) at(root, "ops");
-        List<CanonicalJson.Value> items = new ArrayList<>(ops.items());
-        CanonicalJson.Obj first = (CanonicalJson.Obj) items.get(0);
-        items.set(0, withEntry(first, "origin", origin));
-        return CanonicalJson.serializeText(withEntry(root, "ops", CanonicalJson.arr(items)));
+        return asText(mutateJsonArray(unitText.getBytes(StandardCharsets.UTF_8),
+            items -> items.set(0, withEntry((CanonicalJson.Obj) items.get(0), "origin", origin)),
+            "ops"));
     }
 
     /** The unit rebuilt with one operation record replaced. */
@@ -6877,31 +6561,23 @@ public class ProjectLoweringTest {
         for (SemanticOp op : unit.ops()) {
             ops.add(op == target ? replacement : op);
         }
-        return withOperationList(unit, ops);
+        return withOps(unit, ops);
     }
 
     /** The unit text with one payload member removed from its BINDING_ALLOC op. */
     private static String withoutPayloadKey(String unitText, String key) {
-        CanonicalJson.Obj root = objOf(unitText.getBytes(
-            java.nio.charset.StandardCharsets.UTF_8));
-        CanonicalJson.Arr ops = (CanonicalJson.Arr) at(root, "ops");
-        List<CanonicalJson.Value> items = new ArrayList<>(ops.items());
-        for (int i = 0; i < items.size(); i++) {
-            CanonicalJson.Obj op = (CanonicalJson.Obj) items.get(i);
-            if (!"BINDING_ALLOC".equals(((CanonicalJson.Str) at(op, "kind")).value())) {
-                continue;
-            }
-            CanonicalJson.Obj payload = (CanonicalJson.Obj) at(op, "payload");
-            List<CanonicalJson.Entry> entries = new ArrayList<>();
-            for (CanonicalJson.Entry entry : payload.entries()) {
-                if (!entry.key().equals(key)) {
-                    entries.add(entry);
+        return asText(mutateJsonArray(unitText.getBytes(StandardCharsets.UTF_8), items -> {
+            for (int i = 0; i < items.size(); i++) {
+                CanonicalJson.Obj op = (CanonicalJson.Obj) items.get(i);
+                if ("BINDING_ALLOC".equals(((CanonicalJson.Str) at(op, "kind")).value())) {
+                    CanonicalJson.Obj payload = (CanonicalJson.Obj) at(op, "payload");
+                    List<CanonicalJson.Entry> entries = new ArrayList<>(payload.entries());
+                    entries.removeIf(entry -> entry.key().equals(key));
+                    items.set(i, withEntry(op, "payload", CanonicalJson.obj(entries)));
+                    break;
                 }
             }
-            items.set(i, withEntry(op, "payload", CanonicalJson.obj(entries)));
-            break;
-        }
-        return CanonicalJson.serializeText(withEntry(root, "ops", CanonicalJson.arr(items)));
+        }, "ops"));
     }
 
     /** The binding variant name of one complete registration. */
@@ -6932,11 +6608,9 @@ public class ProjectLoweringTest {
     /** The unit rebuilt with one function record replaced. */
     private static LoweredModuleUnit withFunction(LoweredModuleUnit unit,
             LoweredFunction function, List<BindingGeneration> captures) {
-        Map<FunctionId, LoweredFunction> functions =
-            new LinkedHashMap<>(unit.functions());
-        functions.put(function.functionId(), new LoweredFunction(function.functionId(),
-            function.descriptor(), captures, function.body(), function.sourceName()));
-        return withFunctions(unit, functions);
+        return mutateUnit(unit, copy -> copy.functions.put(function.functionId(),
+            new LoweredFunction(function.functionId(), function.descriptor(), captures,
+                function.body(), function.sourceName())));
     }
 
     /** The unit rebuilt with one closure payload's captures replaced. */
@@ -6952,7 +6626,7 @@ public class ProjectLoweringTest {
                 ops.add(op);
             }
         }
-        return withOperationList(unit, ops);
+        return withOps(unit, ops);
     }
 
     /** The same op with another payload and its recomputed contract. */
@@ -6972,64 +6646,35 @@ public class ProjectLoweringTest {
             contract);
     }
 
-    /** The unit rebuilt with another operation list. */
-    private static LoweredModuleUnit withOperationList(LoweredModuleUnit unit,
-            List<SemanticOp> ops) {
-        return withOps(unit, ops);
+    private static final class UnitMutation {
+        final Map<FunctionId, LoweredFunction> functions;
+        final Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings;
+        List<SemanticOp> ops;
+        StructuredBodyTable body;
+        ClassFactoryRegistry factories;
+        JsonDefaultChildTable defaults;
+        ClassBindingFacts bindingFacts;
+
+        UnitMutation(LoweredModuleUnit unit) {
+            functions = new LinkedHashMap<>(unit.functions());
+            bindings = new LinkedHashMap<>(unit.functionBindings());
+            ops = new ArrayList<>(unit.ops());
+            body = unit.bodyTable();
+            factories = unit.classFactories();
+            defaults = unit.jsonDefaults();
+            bindingFacts = unit.classBindingFacts();
+        }
     }
 
-    /** The unit rebuilt with another function registry. */
-    private static LoweredModuleUnit withFunctions(LoweredModuleUnit unit,
-            Map<FunctionId, LoweredFunction> functions) {
+    private static LoweredModuleUnit mutateUnit(LoweredModuleUnit unit,
+            Consumer<UnitMutation> mutation) {
+        UnitMutation copy = new UnitMutation(unit);
+        mutation.accept(copy);
         return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            functions, unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
-    }
-
-    /** The unit rebuilt with another binding registry. */
-    private static LoweredModuleUnit withBindings(LoweredModuleUnit unit,
-            Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
-        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
-            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
-            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops(),
-            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
-    }
-
-    /** The unit rebuilt with another class-factory registry. */
-    private static LoweredModuleUnit withFactories(LoweredModuleUnit unit,
-            ClassFactoryRegistry factories) {
-        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
-            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
-            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops(), unit.bodyTable(), factories, unit.jsonDefaults(),
-            unit.classBindingFacts());
-    }
-
-    /** The unit rebuilt with another JSON-default child table. */
-    private static LoweredModuleUnit withJsonDefaults(LoweredModuleUnit unit,
-            JsonDefaultChildTable jsonDefaults) {
-        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
-            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
-            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops(), unit.bodyTable(), unit.classFactories(), jsonDefaults,
-            unit.classBindingFacts());
-    }
-
-    /** The unit rebuilt with another parameter/import initialization fact set. */
-    private static LoweredModuleUnit withClassBindingFacts(LoweredModuleUnit unit,
-            ClassBindingFacts facts) {
-        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
-            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
-            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(), facts);
+            copy.functions, unit.moduleInit(), unit.exportPlan(), copy.bindings,
+            copy.ops, copy.body, copy.factories, copy.defaults, copy.bindingFacts);
     }
 
     /** Another block of the unit's membership table. */

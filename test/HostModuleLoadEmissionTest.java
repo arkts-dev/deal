@@ -42,6 +42,7 @@ import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.UnicodeScalars;
+import deal.test.conformance.JvmCompilation;
 import deal.types.Type;
 
 import java.nio.charset.StandardCharsets;
@@ -443,7 +444,8 @@ public class HostModuleLoadEmissionTest {
         SemanticLowerer.ProjectLoweringResult result,
         HostDeclarationSurface surface,
         String lua,
-        JvmSemanticEmitter.EmissionResult jvm) {
+        JvmSemanticEmitter.EmissionResult jvm,
+        Path jvmClasses) {
     }
 
     private static Baseline prepare(Fixture fixture, boolean emitJvm,
@@ -451,7 +453,7 @@ public class HostModuleLoadEmissionTest {
         roots.add(fixture.root());
         SemanticLowerer.ProjectLoweringResult result = lower(fixture);
         if (result.project() == null) {
-            return new Baseline(result, fixture.surface(), null, null);
+            return new Baseline(result, fixture.surface(), null, null, null);
         }
         ExecutableLoweredProject project = result.project();
         String lua = LuaSemanticEmitter.emitProductionProject(project,
@@ -461,7 +463,8 @@ public class HostModuleLoadEmissionTest {
                 result.registries(), JvmBackend.classNameFor(project.entryModule().path()),
                 fixture.surface())
             : null;
-        return new Baseline(result, fixture.surface(), lua, jvm);
+        return new Baseline(result, fixture.surface(), lua, jvm,
+            fixture.root().resolve("jvm-classes"));
     }
 
     private static CompilerInvocation harnessInvocation() {
@@ -1086,7 +1089,22 @@ public class HostModuleLoadEmissionTest {
         }
         """;
 
-    /** The transcript the raw host must observe (ISSUE-0836). */
+    private static final String LUA_RUN_PROBE = """
+        local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+        dofile("app.lua")
+        local ok, err = __dealMain()
+        if not ok then fail("init: " .. tostring(err)) end
+        local surface = __exportSurfaces["app"]
+        local entry = surface["run"]
+        if entry == nil then fail("missing run export") end
+        local ok2, res = pcall(entry.f)
+        if not ok2 then
+          local e = res
+          fail("run: " .. tostring(e.code) .. "|" .. tostring(e.m)
+            .. "|" .. tostring(e.e) .. "|" .. tostring(e.a))
+        end
+        """;
+
     private static final String NUMERIC_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
         "{\"xs\":[1.0E17,1.5]}",
@@ -1222,42 +1240,12 @@ public class HostModuleLoadEmissionTest {
             + " published LuaJIT artifact under real luajit --");
         Path root = Files.createTempDirectory("host-numeric-carrier-lua");
         try {
-            writeFileIn(root, "deal.json", """
-                {"languageVersion": "1.3", "backend": "luajit",
-                 "moduleRoots": ["src"], "output": "out",
-                 "externals": {"host/num_probe":
-                   {"declaration": "bindings/num_probe.d.deal"}}}
-                """);
-            writeFileIn(root, "bindings/num_probe.d.deal",
-                NUMERIC_DECLARATION_SOURCE);
-            writeFileIn(root, "src/app.deal", NUMERIC_APP_SOURCE);
-            Path entry = root.resolve("src/app.deal").toAbsolutePath();
-            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
-            check(exit == 0, "the decoded-numeric-carrier project compiles"
-                + " through the public deal compile: exit=" + exit);
-            if (exit != 0) {
+            Path out = publishLuaHost(root, "num_probe", NUMERIC_DECLARATION_SOURCE,
+                NUMERIC_APP_SOURCE, NUMERIC_HOST_LUA, "decoded-numeric-carrier");
+            if (out == null) {
                 return;
             }
-            Path out = root.resolve("out");
-            Path artifact = out.resolve("app.lua");
-            check(Files.isRegularFile(artifact),
-                "the published artifact set carries the entry artifact: "
-                    + artifact);
-            writeFileIn(out, "host/num_probe.lua", NUMERIC_HOST_LUA);
-            writeFileIn(out, "probe.lua", """
-                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
-                dofile("app.lua")
-                local ok, err = __dealMain()
-                if not ok then fail("init: " .. tostring(err)) end
-                local surface = __exportSurfaces["app"]
-                local entry = surface["run"]
-                if entry == nil then fail("missing run export") end
-                local ok2, res = pcall(entry.f)
-                if not ok2 then
-                  local e = res
-                  fail("run: " .. tostring(e.code) .. "|" .. tostring(e.m)
-                    .. "|" .. tostring(e.e) .. "|" .. tostring(e.a))
-                end
+            writeFileIn(out, "probe.lua", LUA_RUN_PROBE + """
                 local asyncEntry = surface["runAsync"]
                 if asyncEntry == nil then fail("missing runAsync export") end
                 local okA, handle = pcall(asyncEntry.f)
@@ -1306,40 +1294,12 @@ public class HostModuleLoadEmissionTest {
             + " LuaJIT artifact under real luajit --");
         Path root = Files.createTempDirectory("host-table-lua");
         try {
-            writeFileIn(root, "deal.json", """
-                {"languageVersion": "1.3", "backend": "luajit",
-                 "moduleRoots": ["src"], "output": "out",
-                 "externals": {"host/tab_probe":
-                   {"declaration": "bindings/tab_probe.d.deal"}}}
-                """);
-            writeFileIn(root, "bindings/tab_probe.d.deal",
-                TABLE_PROBE_DECLARATION_SOURCE);
-            writeFileIn(root, "src/app.deal", TABLE_PROBE_APP_SOURCE);
-            Path entry = root.resolve("src/app.deal").toAbsolutePath();
-            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
-            check(exit == 0, "the dynamic-table project compiles through the"
-                + " public deal compile: exit=" + exit);
-            if (exit != 0) {
+            Path out = publishLuaHost(root, "tab_probe", TABLE_PROBE_DECLARATION_SOURCE,
+                TABLE_PROBE_APP_SOURCE, TABLE_PROBE_HOST_LUA, "dynamic-table");
+            if (out == null) {
                 return;
             }
-            Path out = root.resolve("out");
-            check(Files.isRegularFile(out.resolve("app.lua")),
-                "the published artifact set carries the entry artifact");
-            writeFileIn(out, "host/tab_probe.lua", TABLE_PROBE_HOST_LUA);
-            writeFileIn(out, "probe.lua", """
-                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
-                dofile("app.lua")
-                local ok, err = __dealMain()
-                if not ok then fail("init: " .. tostring(err)) end
-                local surface = __exportSurfaces["app"]
-                local entry = surface["run"]
-                if entry == nil then fail("missing run export") end
-                local ok2, res = pcall(entry.f)
-                if not ok2 then
-                  local e = res
-                  fail("run: " .. tostring(e.code) .. "|" .. tostring(e.m)
-                    .. "|" .. tostring(e.e) .. "|" .. tostring(e.a))
-                end
+            writeFileIn(out, "probe.lua", LUA_RUN_PROBE + """
                 local asyncEntry = surface["runAsync"]
                 if asyncEntry == nil then fail("missing runAsync export") end
                 local okA, handle = pcall(asyncEntry.f)
@@ -1503,42 +1463,12 @@ public class HostModuleLoadEmissionTest {
             + "LuaJIT artifact under real luajit --");
         Path root = Files.createTempDirectory("host-table-lua");
         try {
-            writeFileIn(root, "deal.json", """
-                {"languageVersion": "1.3", "backend": "luajit",
-                 "moduleRoots": ["src"], "output": "out",
-                 "externals": {"host/table_probe":
-                   {"declaration": "bindings/table_probe.d.deal"}}}
-                """);
-            writeFileIn(root, "bindings/table_probe.d.deal",
-                HOST_TABLE_DECLARATION_SOURCE);
-            writeFileIn(root, "src/app.deal", HOST_TABLE_APP_SOURCE);
-            Path entry = root.resolve("src/app.deal").toAbsolutePath();
-            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
-            check(exit == 0, "the host-table project compiles through the"
-                + " public deal compile: exit=" + exit);
-            if (exit != 0) {
+            Path out = publishLuaHost(root, "table_probe", HOST_TABLE_DECLARATION_SOURCE,
+                HOST_TABLE_APP_SOURCE, HOST_TABLE_LUA, "host-table");
+            if (out == null) {
                 return;
             }
-            Path out = root.resolve("out");
-            Path artifact = out.resolve("app.lua");
-            check(Files.isRegularFile(artifact),
-                "the published artifact set carries the entry artifact: "
-                    + artifact);
-            writeFileIn(out, "host/table_probe.lua", HOST_TABLE_LUA);
-            writeFileIn(out, "probe.lua", """
-                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
-                dofile("app.lua")
-                local ok, err = __dealMain()
-                if not ok then fail("init: " .. tostring(err)) end
-                local surface = __exportSurfaces["app"]
-                local entry = surface["run"]
-                if entry == nil then fail("missing run export") end
-                local ok2, res = pcall(entry.f)
-                if not ok2 then
-                  local e = res
-                  fail("run: " .. tostring(e.code) .. "|" .. tostring(e.m)
-                    .. "|" .. tostring(e.e) .. "|" .. tostring(e.a))
-                end
+            writeFileIn(out, "probe.lua", LUA_RUN_PROBE + """
                 print("TRANSCRIPT-BEGIN")
                 print(res)
                 print("TRANSCRIPT-END")
@@ -1688,26 +1618,11 @@ public class HostModuleLoadEmissionTest {
             + " artifact under real luajit --");
         Path root = Files.createTempDirectory("host-array-lua");
         try {
-            writeFileIn(root, "deal.json", """
-                {"languageVersion": "1.3", "backend": "luajit",
-                 "moduleRoots": ["src"], "output": "out",
-                 "externals": {"host/arr_probe":
-                   {"declaration": "bindings/arr_probe.d.deal"}}}
-                """);
-            writeFileIn(root, "bindings/arr_probe.d.deal",
-                ARRAY_CROSSING_DECLARATION_SOURCE);
-            writeFileIn(root, "src/app.deal", ARRAY_CROSSING_APP_SOURCE);
-            Path entry = root.resolve("src/app.deal").toAbsolutePath();
-            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
-            check(exit == 0, "the host-array-crossing project compiles through"
-                + " the public deal compile: exit=" + exit);
-            if (exit != 0) {
+            Path out = publishLuaHost(root, "arr_probe", ARRAY_CROSSING_DECLARATION_SOURCE,
+                ARRAY_CROSSING_APP_SOURCE, ARRAY_CROSSING_LUA, "host-array-crossing");
+            if (out == null) {
                 return;
             }
-            Path out = root.resolve("out");
-            check(Files.isRegularFile(out.resolve("app.lua")),
-                "the published artifact set carries the entry artifact");
-            writeFileIn(out, "host/arr_probe.lua", ARRAY_CROSSING_LUA);
             writeFileIn(out, "probe.lua", """
                 local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
                 dofile("app.lua")
@@ -1923,26 +1838,11 @@ public class HostModuleLoadEmissionTest {
             + " LuaJIT artifact under real luajit --");
         Path root = Files.createTempDirectory("host-array-failure-lua");
         try {
-            writeFileIn(root, "deal.json", """
-                {"languageVersion": "1.3", "backend": "luajit",
-                 "moduleRoots": ["src"], "output": "out",
-                 "externals": {"host/arr_probe":
-                   {"declaration": "bindings/arr_probe.d.deal"}}}
-                """);
-            writeFileIn(root, "bindings/arr_probe.d.deal",
-                ARRAY_FAILURE_DECLARATION_SOURCE);
-            writeFileIn(root, "src/app.deal", ARRAY_FAILURE_APP_SOURCE);
-            Path entry = root.resolve("src/app.deal").toAbsolutePath();
-            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
-            check(exit == 0, "the host-array-crossing-failure project compiles"
-                + " through the public deal compile: exit=" + exit);
-            if (exit != 0) {
+            Path out = publishLuaHost(root, "arr_probe", ARRAY_FAILURE_DECLARATION_SOURCE,
+                ARRAY_FAILURE_APP_SOURCE, ARRAY_FAILURE_LUA, "host-array-crossing-failure");
+            if (out == null) {
                 return;
             }
-            Path out = root.resolve("out");
-            check(Files.isRegularFile(out.resolve("app.lua")),
-                "the published artifact set carries the entry artifact");
-            writeFileIn(out, "host/arr_probe.lua", ARRAY_FAILURE_LUA);
             writeFileIn(out, "probe.lua", """
                 local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
                 local function result(name, entry)
@@ -2490,11 +2390,6 @@ public class HostModuleLoadEmissionTest {
                 return;
             }
             ExecutableLoweredProject project = result.project();
-            String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
-            Path source = workspace.resolve(className + ".java");
-            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
-
             ModuleId probeModule = hostImportModule(project, PROBE_SPECIFIER);
             ModuleId cfgModule = hostImportModule(project, CFG_SPECIFIER);
             String probeKey = JvmBackend.escapedIdentifier(probeModule.path());
@@ -2535,9 +2430,9 @@ public class HostModuleLoadEmissionTest {
                 jvmProbe(probeKey, cfgKey, serverDescriptor, endpointDescriptor),
                 StandardCharsets.UTF_8);
 
-            List<String> sources = new ArrayList<>(List.of(source.toString(), "HostAbi_probe.java"));
+            List<String> sources = new ArrayList<>(List.of("HostAbi_probe.java"));
             sources.addAll(corpusHostSources);
-            runJvmProbe(workspace, sources, "HostModuleLoadProbe", "deployed host ABI");
+            runJvmProbe(fixture, workspace, sources, "HostModuleLoadProbe", "deployed host ABI");
         } finally {
             deleteRecursively(workspace);
         }
@@ -2580,17 +2475,13 @@ public class HostModuleLoadEmissionTest {
                 return;
             }
             ExecutableLoweredProject project = result.project();
-            String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
-            Files.writeString(workspace.resolve(className + ".java"),
-                emission.source(), StandardCharsets.UTF_8);
             Files.writeString(workspace.resolve("HostArray_probe.java"),
                 ARRAY_JAVA_HOST, StandardCharsets.UTF_8);
             ModuleId arrayModule = hostImportModule(project, ARRAY_SPECIFIER);
             String key = JvmBackend.escapedIdentifier(arrayModule.path());
             Files.writeString(workspace.resolve("HostArrayProbeMain.java"),
                 arrayProbeSource(key), StandardCharsets.UTF_8);
-            runJvmProbe(workspace, new ArrayList<>(List.of(className + ".java",
+            runJvmProbe(fixture, workspace, new ArrayList<>(List.of(
                 "HostArray_probe.java")), "HostArrayProbeMain", "declared array cells");
         } finally {
             deleteRecursively(workspace);
@@ -2872,13 +2763,7 @@ public class HostModuleLoadEmissionTest {
                 fail("the seed fixture '" + label + "' lowers: " + result.diagnostics());
                 return;
             }
-            ExecutableLoweredProject project = result.project();
-            String className = JvmBackend.classNameFor(project.entryModule().path());
-            JvmSemanticEmitter.EmissionResult emission = fixture.jvm();
-            Path source = workspace.resolve(className + ".java");
-            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
             List<String> compiled = new ArrayList<>();
-            compiled.add(source.toAbsolutePath().toString());
             if (hostFileName != null) {
                 Files.writeString(workspace.resolve(hostFileName), hostSource,
                     StandardCharsets.UTF_8);
@@ -2887,7 +2772,7 @@ public class HostModuleLoadEmissionTest {
             Files.writeString(workspace.resolve("HostLoadFailureProbe.java"),
                 jvmFailureProbe(expectedCode, expectedMessage, expectedOrigin),
                 StandardCharsets.UTF_8);
-            runJvmProbe(workspace, compiled, "HostLoadFailureProbe", label);
+            runJvmProbe(fixture, workspace, compiled, "HostLoadFailureProbe", label);
         } finally {
             deleteRecursively(workspace);
         }
@@ -2949,6 +2834,29 @@ public class HostModuleLoadEmissionTest {
     // Helpers
     // =========================================================================
 
+    private static Path publishLuaHost(Path root, String module, String declaration,
+            String app, String host, String label) throws Exception {
+        writeFileIn(root, "deal.json", """
+            {"languageVersion": "1.3", "backend": "luajit",
+             "moduleRoots": ["src"], "output": "out",
+             "externals": {"host/%s":
+               {"declaration": "bindings/%s.d.deal"}}}
+            """.formatted(module, module));
+        writeFileIn(root, "bindings/" + module + ".d.deal", declaration);
+        writeFileIn(root, "src/app.deal", app);
+        int exit = deal.Main.run(new String[] {"compile",
+            root.resolve("src/app.deal").toAbsolutePath().toString()});
+        checkEq(0, exit, "the " + label + " project compiles through the public deal compile");
+        if (exit != 0) {
+            return null;
+        }
+        Path out = root.resolve("out");
+        check(Files.isRegularFile(out.resolve("app.lua")),
+            "the published artifact set carries the entry artifact: " + out);
+        writeFileIn(out, "host/" + module + ".lua", host);
+        return out;
+    }
+
     private static void deployRuntime(Path workspace) throws Exception {
         Path runtime = Path.of("deal", "runtime.lua");
         Path runtimeTarget = workspace.resolve("deal").resolve("runtime.lua");
@@ -2993,22 +2901,36 @@ public class HostModuleLoadEmissionTest {
         }
     }
 
-    private static void runJvmProbe(Path workspace, List<String> sources,
+    private static void runJvmProbe(Baseline fixture, Path workspace, List<String> sources,
             String template, String label) throws Exception {
+        Path prepared = fixture.jvmClasses();
+        if (!Files.isRegularFile(prepared.resolve(fixture.jvm().className() + ".class"))) {
+            Path source = prepared.getParent().resolve(fixture.jvm().className() + ".java");
+            Files.writeString(source, fixture.jvm().source(), StandardCharsets.UTF_8);
+            Files.createDirectories(prepared);
+            JvmCompilation.Result compiled = JvmCompilation.compile(List.of("javac",
+                "--release", "25", "-proc:none", "-cp", absoluteClasspath(),
+                "-d", prepared.toString(), source.toString()), workspace);
+            checkEq(0, compiled.exitCode(), label + ": prepared artifact: " + compiled.stderr());
+            if (compiled.exitCode() != 0) {
+                throw new AssertionError(compiled.stderr());
+            }
+        }
         String driver = template + "_" + java.util.UUID.randomUUID().toString().replace("-", "");
         Path source = workspace.resolve(template + ".java");
         Files.writeString(workspace.resolve(driver + ".java"),
             Files.readString(source).replace(template, driver), StandardCharsets.UTF_8);
         sources.add(driver + ".java");
         Path classes = Files.createDirectories(workspace.resolve("classes"));
+        String classpath = prepared + java.io.File.pathSeparator + absoluteClasspath();
         List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
-            "-proc:none", "-cp", absoluteClasspath(), "-d", classes.toString()));
+            "-proc:none", "-cp", classpath, "-d", classes.toString()));
         command.addAll(sources);
-        ProcessOutcome compiled = runProcess(command, workspace, false);
-        check(compiled.exitCode() == 0, label + ": real javac: " + compiled.output());
+        JvmCompilation.Result compiled = JvmCompilation.compile(command, workspace);
+        checkEq(0, compiled.exitCode(), label + ": real javac: " + compiled.stderr());
         if (compiled.exitCode() == 0) {
             ProcessOutcome run = runProcess(List.of("java", "-cp",
-                classes + java.io.File.pathSeparator + absoluteClasspath(), driver), workspace, false);
+                classes + java.io.File.pathSeparator + classpath, driver), workspace, false);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK")
                     && run.stderr().isEmpty(), label + ": real java: " + run.output());
         }

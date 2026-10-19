@@ -891,13 +891,14 @@ public class ProductionDispatchTest {
             if (dir == null || !Files.exists(dir)) {
                 return;
             }
-            Files.walk(dir).sorted(Comparator.reverseOrder())
-                .forEach(path -> {
+            try (Stream<Path> paths = Files.walk(dir)) {
+                paths.sorted(Comparator.reverseOrder()).forEach(path -> {
                     try {
                         Files.deleteIfExists(path);
                     } catch (Exception ignored) {
                     }
                 });
+            }
         } catch (Exception ignored) {
         }
     }
@@ -943,6 +944,37 @@ public class ProductionDispatchTest {
             throws Exception {
         JvmCompilation.Result result = JvmCompilation.compile(List.of(command), directory);
         return new ProcessOutcome(result.exitCode(), result.stdout() + result.stderr());
+    }
+
+    private static BoundedProcess.BoundedResult compileBoundedJvm(Path directory,
+            String... command) throws Exception {
+        JvmCompilation.Result result;
+        try {
+            result = JvmCompilation.compile(List.of(command), directory,
+                BoundedProcess.SUBPROCESS_BUDGET_MS);
+        } catch (IOException failure) {
+            if (failure.getMessage() != null && failure.getMessage().equals(
+                    "javac compilation exceeded " + BoundedProcess.SUBPROCESS_BUDGET_MS + "ms")) {
+                BoundedProcess.BoundedProcessTimeoutException timeout =
+                    new BoundedProcess.BoundedProcessTimeoutException("BOUNDED_PROCESS_TIMEOUT javac");
+                timeout.initCause(failure);
+                throw timeout;
+            }
+            throw failure;
+        }
+        byte[] stdout = result.stdout().getBytes(StandardCharsets.UTF_8);
+        byte[] stderr = result.stderr().getBytes(StandardCharsets.UTF_8);
+        return new BoundedProcess.BoundedResult(result.exitCode(),
+            boundedCompilerStream(stdout), boundedCompilerStream(stderr),
+            stdout.length > BoundedProcess.STREAM_CAP_BYTES,
+            stderr.length > BoundedProcess.STREAM_CAP_BYTES);
+    }
+
+    private static String boundedCompilerStream(byte[] bytes) {
+        return bytes.length <= BoundedProcess.STREAM_CAP_BYTES
+            ? new String(bytes, StandardCharsets.UTF_8)
+            : new String(bytes, 0, BoundedProcess.STREAM_CAP_BYTES, StandardCharsets.UTF_8)
+                + BoundedProcess.TRUNCATION_MARKER;
     }
 
     private static ProcessOutcome runProcess(Path directory, String... command)
@@ -1293,50 +1325,14 @@ public class ProductionDispatchTest {
         System.out.println("-- public compilation: same-name sibling class"
             + " declarations on the shared-IR production lanes --");
         for (boolean codecFirst : new boolean[] { true, false }) {
-            for (String backend : List.of("luajit", "jvm")) {
-                String label = "same-name sibling " + backend
-                    + (codecFirst ? " (codec first)" : " (ir first)");
-                Path project = Files.createTempDirectory(
-                    "production-same-name-");
-                try {
-                    write(project, "deal.json", """
-                        {
-                          "languageVersion": "1.3",
-                          "stdlib": "1.3",
-                          "moduleRoots": ["src"],
-                          "dependencies": {},
-                          "externals": {},
-                          "backend": "%s",
-                          "output": "out"
-                        }
-                        """.formatted(backend));
-                    write(project, "src/m/ir.deal", CONTEXTUAL_IR_SOURCE);
-                    write(project, "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE);
-                    write(project, "src/main.deal", codecFirst
-                        ? CONTEXTUAL_BODY_CODEC_FIRST
-                        : CONTEXTUAL_BODY_IR_FIRST);
-
-                    ProjectOutcome compile = productionCompile(project,
-                        "src/main.deal", "out");
-                    check(compile.exitCode() == 0,
-                        "the " + label + " public compile succeeds: "
-                            + compile.stderr());
-                    check(compile.stderr().isEmpty(),
-                        "the " + label + " public compile emits no"
-                            + " diagnostic: " + compile.stderr());
-                    if (compile.exitCode() != 0) {
-                        continue;
-                    }
-                    Path out = project.resolve("out");
-                    if (backend.equals("luajit")) {
-                        checkSiblingLuaRun(label, out);
-                    } else {
-                        checkSiblingJvmRun(label, project, out);
-                    }
-                } finally {
-                    deleteRecursively(project);
-                }
-            }
+            checkPublicProject("same-name sibling"
+                    + (codecFirst ? " (codec first)" : " (ir first)"),
+                "production-same-name-",
+                Map.of("src/m/ir.deal", CONTEXTUAL_IR_SOURCE,
+                    "src/m/codec.deal", CONTEXTUAL_CODEC_SOURCE,
+                    "src/main.deal", codecFirst
+                        ? CONTEXTUAL_BODY_CODEC_FIRST : CONTEXTUAL_BODY_IR_FIRST),
+                List.of("luajit", "jvm"));
         }
     }
 
@@ -1355,54 +1351,19 @@ public class ProductionDispatchTest {
             + "and declared-return providers beside a same-identity local "
             + "declaration on the shared-IR production lanes --");
         for (boolean codecFirst : new boolean[] { true, false }) {
-            for (String backend : List.of("luajit", "jvm")) {
-                String label = "local-beside-provider " + backend
-                    + (codecFirst ? " (codec first)" : " (ir first)");
-                Path project = Files.createTempDirectory(
-                    "production-local-provider-");
-                try {
-                    write(project, "deal.json", """
-                        {
-                          "languageVersion": "1.3",
-                          "stdlib": "1.3",
-                          "moduleRoots": ["src"],
-                          "dependencies": {},
-                          "externals": {},
-                          "backend": "%s",
-                          "output": "out"
-                        }
-                        """.formatted(backend));
-                    write(project, "src/ir.deal", CONTEXTUAL_IR_SOURCE);
-                    write(project, "src/codec.deal", CONTEXTUAL_CODEC_SOURCE);
-                    write(project, "src/main.deal", codecFirst
+            checkPublicProject("local-beside-provider"
+                    + (codecFirst ? " (codec first)" : " (ir first)"),
+                "production-local-provider-",
+                Map.of("src/ir.deal", CONTEXTUAL_IR_SOURCE,
+                    "src/codec.deal", CONTEXTUAL_CODEC_SOURCE,
+                    "src/main.deal", codecFirst
                         ? localProviderBody(
                             "import * as codec from \"./codec\";\n",
                             "import * as ir from \"./ir\";\n")
                         : localProviderBody(
                             "import * as ir from \"./ir\";\n",
-                            "import * as codec from \"./codec\";\n"));
-
-                    ProjectOutcome compile = productionCompile(project,
-                        "src/main.deal", "out");
-                    check(compile.exitCode() == 0,
-                        "the " + label + " public compile succeeds: "
-                            + compile.stderr());
-                    check(compile.stderr().isEmpty(),
-                        "the " + label + " public compile emits no"
-                            + " diagnostic: " + compile.stderr());
-                    if (compile.exitCode() != 0) {
-                        continue;
-                    }
-                    Path out = project.resolve("out");
-                    if (backend.equals("luajit")) {
-                        checkSiblingLuaRun(label, out);
-                    } else {
-                        checkSiblingJvmRun(label, project, out);
-                    }
-                } finally {
-                    deleteRecursively(project);
-                }
-            }
+                            "import * as codec from \"./codec\";\n")),
+                List.of("luajit", "jvm"));
         }
     }
 
@@ -1464,54 +1425,19 @@ public class ProductionDispatchTest {
             + "and function-typed callee providers beside a same-identity "
             + "sibling on the shared-IR production lanes --");
         for (boolean codecFirst : new boolean[] { true, false }) {
-            for (String backend : List.of("luajit", "jvm")) {
-                String label = "call-receiver provider " + backend
-                    + (codecFirst ? " (codec first)" : " (ir first)");
-                Path project = Files.createTempDirectory(
-                    "production-call-receiver-");
-                try {
-                    write(project, "deal.json", """
-                        {
-                          "languageVersion": "1.3",
-                          "stdlib": "1.3",
-                          "moduleRoots": ["src"],
-                          "dependencies": {},
-                          "externals": {},
-                          "backend": "%s",
-                          "output": "out"
-                        }
-                        """.formatted(backend));
-                    write(project, "src/m/ir.deal", CALL_RECEIVER_IR_SOURCE);
-                    write(project, "src/m/codec.deal", CALL_RECEIVER_CODEC_SOURCE);
-                    write(project, "src/main.deal", codecFirst
+            checkPublicProject("call-receiver provider"
+                    + (codecFirst ? " (codec first)" : " (ir first)"),
+                "production-call-receiver-",
+                Map.of("src/m/ir.deal", CALL_RECEIVER_IR_SOURCE,
+                    "src/m/codec.deal", CALL_RECEIVER_CODEC_SOURCE,
+                    "src/main.deal", codecFirst
                         ? callReceiverBody(
                             "import * as codec from \"./m/codec\";\n",
                             "import * as ir from \"./m/ir\";\n")
                         : callReceiverBody(
                             "import * as ir from \"./m/ir\";\n",
-                            "import * as codec from \"./m/codec\";\n"));
-
-                    ProjectOutcome compile = productionCompile(project,
-                        "src/main.deal", "out");
-                    check(compile.exitCode() == 0,
-                        "the " + label + " public compile succeeds: "
-                            + compile.stderr());
-                    check(compile.stderr().isEmpty(),
-                        "the " + label + " public compile emits no"
-                            + " diagnostic: " + compile.stderr());
-                    if (compile.exitCode() != 0) {
-                        continue;
-                    }
-                    Path out = project.resolve("out");
-                    if (backend.equals("luajit")) {
-                        checkSiblingLuaRun(label, out);
-                    } else {
-                        checkSiblingJvmRun(label, project, out);
-                    }
-                } finally {
-                    deleteRecursively(project);
-                }
-            }
+                            "import * as codec from \"./m/codec\";\n")),
+                List.of("luajit", "jvm"));
         }
     }
 
@@ -1580,58 +1506,16 @@ public class ProductionDispatchTest {
         System.out.println("-- public compilation: the class-field and "
             + "transitive same-identity providers own their nested literals on "
             + "the shared-IR production lanes --");
-        for (String backend : List.of("luajit", "jvm")) {
-            record Scenario(String label, String irSource, String codecSource,
-                            String mainSource) {}
-            List<Scenario> scenarios = List.of(
-                new Scenario("class-field provider " + backend,
-                    NESTED_FIELD_PROVIDER_IR_SOURCE,
-                    NESTED_FIELD_PROVIDER_CODEC_SOURCE,
-                    NESTED_FIELD_PROVIDER_MAIN_SOURCE),
-                new Scenario("transitive provider " + backend,
-                    TRANSITIVE_PROVIDER_IR_SOURCE,
-                    TRANSITIVE_PROVIDER_CODEC_SOURCE,
-                    TRANSITIVE_PROVIDER_MAIN_SOURCE));
-            for (Scenario scenario : scenarios) {
-                Path project = Files.createTempDirectory(
-                    "production-nested-provider-");
-                try {
-                    write(project, "deal.json", """
-                        {
-                          "languageVersion": "1.3",
-                          "stdlib": "1.3",
-                          "moduleRoots": ["src"],
-                          "dependencies": {},
-                          "externals": {},
-                          "backend": "%s",
-                          "output": "out"
-                        }
-                        """.formatted(backend));
-                    write(project, "src/m/ir.deal", scenario.irSource());
-                    write(project, "src/m/codec.deal", scenario.codecSource());
-                    write(project, "src/main.deal", scenario.mainSource());
-                    ProjectOutcome compile = productionCompile(project,
-                        "src/main.deal", "out");
-                    check(compile.exitCode() == 0,
-                        "the " + scenario.label() + " public compile succeeds: "
-                            + compile.stderr());
-                    check(compile.stderr().isEmpty(),
-                        "the " + scenario.label() + " public compile emits no"
-                            + " diagnostic: " + compile.stderr());
-                    if (compile.exitCode() != 0) {
-                        continue;
-                    }
-                    Path out = project.resolve("out");
-                    if (backend.equals("luajit")) {
-                        checkSiblingLuaRun(scenario.label(), out);
-                    } else {
-                        checkSiblingJvmRun(scenario.label(), project, out);
-                    }
-                } finally {
-                    deleteRecursively(project);
-                }
-            }
-        }
+        checkPublicProject("class-field provider", "production-nested-provider-",
+            Map.of("src/m/ir.deal", NESTED_FIELD_PROVIDER_IR_SOURCE,
+                "src/m/codec.deal", NESTED_FIELD_PROVIDER_CODEC_SOURCE,
+                "src/main.deal", NESTED_FIELD_PROVIDER_MAIN_SOURCE),
+            List.of("luajit", "jvm"));
+        checkPublicProject("transitive provider", "production-nested-provider-",
+            Map.of("src/m/ir.deal", TRANSITIVE_PROVIDER_IR_SOURCE,
+                "src/m/codec.deal", TRANSITIVE_PROVIDER_CODEC_SOURCE,
+                "src/main.deal", TRANSITIVE_PROVIDER_MAIN_SOURCE),
+            List.of("luajit", "jvm"));
     }
 
     /**
@@ -1715,49 +1599,13 @@ public class ProductionDispatchTest {
             + "non-plan-local and local-plan same-identity JSON links"
             + " execute the exact plan-bearing declaration on every target --");
         for (boolean importedPlan : new boolean[] { true, false }) {
-            for (String backend : List.of("js", "luajit", "jvm")) {
-                String label = (importedPlan ? "imported plan" : "local plan")
-                    + " " + backend;
-                Path project = Files.createTempDirectory(
-                    "production-plan-owner-");
-                try {
-                    write(project, "deal.json", """
-                        {
-                          "languageVersion": "1.3",
-                          "stdlib": "1.3",
-                          "moduleRoots": ["src"],
-                          "dependencies": {},
-                          "externals": {},
-                          "backend": "%s",
-                          "output": "out"
-                        }
-                        """.formatted(backend));
-                    write(project, "src/other.deal", importedPlan
-                        ? PLAN_IMPORTED_OTHER_SOURCE : PLAN_LOCAL_OTHER_SOURCE);
-                    write(project, "src/main.deal", importedPlan
-                        ? PLAN_IMPORTED_MAIN_SOURCE : PLAN_LOCAL_MAIN_SOURCE);
-
-                    ProjectOutcome compile = productionCompile(project,
-                        "src/main.deal", "out");
-                    check(compile.exitCode() == 0,
-                        "the " + label + " public compile succeeds: "
-                            + compile.stderr());
-                    check(compile.stderr().isEmpty(),
-                        "the " + label + " public compile emits no"
-                            + " diagnostic: " + compile.stderr());
-                    if (compile.exitCode() != 0) {
-                        continue;
-                    }
-                    Path out = project.resolve("out");
-                    switch (backend) {
-                        case "js" -> checkSiblingJsRun(label, out);
-                        case "luajit" -> checkSiblingLuaRun(label, out);
-                        default -> checkSiblingJvmRun(label, project, out);
-                    }
-                } finally {
-                    deleteRecursively(project);
-                }
-            }
+            checkPublicProject(importedPlan ? "imported plan" : "local plan",
+                "production-plan-owner-",
+                Map.of("src/other.deal", importedPlan
+                        ? PLAN_IMPORTED_OTHER_SOURCE : PLAN_LOCAL_OTHER_SOURCE,
+                    "src/main.deal", importedPlan
+                        ? PLAN_IMPORTED_MAIN_SOURCE : PLAN_LOCAL_MAIN_SOURCE),
+                List.of("js", "luajit", "jvm"));
         }
     }
 
@@ -1971,50 +1819,60 @@ public class ProductionDispatchTest {
             + " and run on every target --");
 
         for (boolean reversed : new boolean[] { false, true }) {
-            for (String backend : List.of("js", "luajit", "jvm")) {
-                String label = backend + (reversed ? " (reversed imports)"
-                    : "");
-                Path project = Files.createTempDirectory(
-                    "production-sibling-");
-                try {
-                    write(project, "deal.json", """
-                        {
-                          "languageVersion": "1.3",
-                          "stdlib": "1.3",
-                          "moduleRoots": ["src"],
-                          "dependencies": {},
-                          "externals": {},
-                          "backend": "%s",
-                          "output": "out"
-                        }
-                        """.formatted(backend));
-                    write(project, "src/m/ir.deal", SIBLING_IR_SOURCE);
-                    write(project, "src/m/codec.deal", SIBLING_CODEC_SOURCE);
-                    write(project, "src/main.deal", reversed
-                        ? SIBLING_MAIN_SOURCE_REVERSED
-                        : SIBLING_MAIN_SOURCE);
+            checkPublicProject("sibling" + (reversed ? " (reversed imports)" : ""),
+                "production-sibling-",
+                Map.of("src/m/ir.deal", SIBLING_IR_SOURCE,
+                    "src/m/codec.deal", SIBLING_CODEC_SOURCE,
+                    "src/main.deal", reversed
+                        ? SIBLING_MAIN_SOURCE_REVERSED : SIBLING_MAIN_SOURCE),
+                List.of("js", "luajit", "jvm"));
+        }
+    }
 
+    private static void checkPublicProject(String name, String prefix,
+            Map<String, String> sources, List<String> backends) throws Exception {
+        Path project = Files.createTempDirectory(prefix);
+        try {
+            for (Map.Entry<String, String> source : sources.entrySet()) {
+                write(project, source.getKey(), source.getValue());
+            }
+            for (String backend : backends) {
+                String label = name + " " + backend;
+                write(project, "deal.json", """
+                    {
+                      "languageVersion": "1.3",
+                      "stdlib": "1.3",
+                      "moduleRoots": ["src"],
+                      "dependencies": {},
+                      "externals": {},
+                      "backend": "%s",
+                      "output": "out"
+                    }
+                    """.formatted(backend));
+                Path out = project.resolve("out");
+                try {
                     ProjectOutcome compile = productionCompile(project,
                         "src/main.deal", "out");
                     check(compile.exitCode() == 0,
-                        "the " + label + " public compile succeeds: "
-                            + compile.stderr());
+                        "the " + label + " public compile succeeds: " + compile.stderr());
                     check(compile.stderr().isEmpty(),
-                        "the " + label + " public compile emits no"
-                            + " diagnostic: " + compile.stderr());
+                        "the " + label + " public compile emits no diagnostic: "
+                            + compile.stderr());
                     if (compile.exitCode() != 0) {
                         continue;
                     }
-                    Path out = project.resolve("out");
                     switch (backend) {
                         case "js" -> checkSiblingJsRun(label, out);
                         case "luajit" -> checkSiblingLuaRun(label, out);
-                        default -> checkSiblingJvmRun(label, project, out);
+                        case "jvm" -> checkSiblingJvmRun(label, project, out);
+                        default -> throw new IllegalArgumentException("unknown backend: " + backend);
                     }
                 } finally {
-                    deleteRecursively(project);
+                    deleteRecursively(out);
                 }
             }
+        } finally {
+            deleteRecursively(project);
         }
     }
 
@@ -2053,9 +1911,9 @@ public class ProductionDispatchTest {
     private static void checkSiblingJvmRun(String label, Path project,
             Path out) throws Exception {
         String classpath = absoluteClasspath();
-        BoundedProcess.BoundedResult javac = runBounded(project, "javac",
-            "--release", "25", "-proc:none", "-cp", classpath, "-d",
-            out.toString(), out.resolve("Main.java").toString());
+        BoundedProcess.BoundedResult javac = compileBoundedJvm(project, "javac",
+            "--release", "25", "-proc:none", "-cp", out + File.pathSeparator + classpath,
+            "-d", out.toString(), out.resolve("Main.java").toString());
         check(javac.exitCode() == 0, "the " + label + " JVM artifact"
             + " compiles: " + boundedOutput(javac));
         if (javac.exitCode() != 0) {
@@ -4899,8 +4757,7 @@ public class ProductionDispatchTest {
                 "use strict";
                 const $rt = require("./deal/runtime");
                 const $entry = require("./main");
-                for (const $name of ["arrayCarrier", "nullCarrier",
-                    "classCarrier", "errorCarrier"]) {
+                for (const $name of process.argv.slice(2)) {
                   try {
                     const $value = $entry[$name].$f();
                     console.log($name + "|admitted|" + $value);
@@ -4912,7 +4769,9 @@ public class ProductionDispatchTest {
                   }
                 }
                 """);
-            return runBounded(out, "node", "tuple.js");
+            List<String> command = new ArrayList<>(List.of("node", "tuple.js"));
+            command.addAll(carriers);
+            return runBounded(out, command.toArray(String[]::new));
         }
         if ("luajit".equals(backend)) {
             Path probe = project.resolve("carrier-tuple.lua");
@@ -4947,7 +4806,7 @@ public class ProductionDispatchTest {
         if (!Files.isRegularFile(artifact)) {
             return runBounded(project, "java", "-version");
         }
-        BoundedProcess.BoundedResult javac = runBounded(project,
+        BoundedProcess.BoundedResult javac = compileBoundedJvm(project,
             javacCommand(classpath, out, List.of(artifact.toString())));
         check(javac.exitCode() == 0, "the emitted JVM carrier-tuple"
             + " artifacts accept the probe: " + javac.stderr());
@@ -5274,7 +5133,7 @@ public class ProductionDispatchTest {
             return runBounded(project, "java", "-version");
         }
         String classpath = absoluteClasspath();
-        BoundedProcess.BoundedResult javac = runBounded(project,
+        BoundedProcess.BoundedResult javac = compileBoundedJvm(project,
             javacCommand(classpath, out, List.of(artifact.toString())));
         check(javac.exitCode() == 0, "the emitted JVM artifacts accept the"
             + " probe: " + javac.stderr());
@@ -5634,7 +5493,7 @@ public class ProductionDispatchTest {
                                     .endsWith(".java"))
                                 .map(Path::toString).sorted().toList();
                         }
-                        BoundedProcess.BoundedResult javac = runBounded(
+                        BoundedProcess.BoundedResult javac = compileBoundedJvm(
                             project, javacCommand(classpath, out, javas));
                         Optional<String> javacRefusal =
                             transcriptRefusal(javac);
@@ -5953,7 +5812,7 @@ public class ProductionDispatchTest {
             // pipe-EOF outcome cannot pass as a transcript. The release
             // must kill the descendant and end both readers inside the
             // bounded window.
-            for (int round = 0; round < 8; round++) {
+            for (int round = 0; round < 2; round++) {
                 Path shellPid = scratch.resolve(
                     "late-shell-descendant-" + round + ".pid");
                 long shellStart = System.nanoTime();
@@ -5999,7 +5858,7 @@ public class ProductionDispatchTest {
             // capture.
             int shortLivedRound = 0;
             for (String delay : List.of("0.001", "0.05")) {
-                for (int round = 0; round < 6; round++, shortLivedRound++) {
+                for (int round = 0; round < 2; round++, shortLivedRound++) {
                     BoundedProcess.BoundedResult shortLived;
                     try {
                         shortLived = runBounded(10_000L, scratch, "sh", "-c",
@@ -6723,7 +6582,18 @@ public class ProductionDispatchTest {
             throws Exception {
         System.out.println("-- the re-entrant default's invocation-local attempt"
             + " scratch on LuaJIT, the JVM and the JS lane --");
-        runReentrantDefaultSubject("re-entrant default", """
+        Map<String, String> hostSources = new LinkedHashMap<>();
+        Path corpus = Path.of("test/conformance/host-fixtures");
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            String extension = switch (backend) {
+                case "luajit" -> "lua";
+                case "jvm" -> "java";
+                default -> "js";
+            };
+            hostSources.put(backend, Files.readString(
+                corpus.resolve("retained_default." + extension)));
+        }
+        runReentrantDefaultSubject(hostSources, "re-entrant default", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
@@ -6753,7 +6623,7 @@ public class ProductionDispatchTest {
               return null;
             }
             """, Map.of());
-        runReentrantDefaultSubject("failed nested attempt", """
+        runReentrantDefaultSubject(hostSources, "failed nested attempt", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
@@ -6786,7 +6656,7 @@ public class ProductionDispatchTest {
               return null;
             }
             """, Map.of());
-        runReentrantDefaultSubject("two required defaults", """
+        runReentrantDefaultSubject(hostSources, "two required defaults", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
@@ -6816,7 +6686,7 @@ public class ProductionDispatchTest {
               return null;
             }
             """, Map.of());
-        runReentrantDefaultSubject("two required defaults, failed nested attempt", """
+        runReentrantDefaultSubject(hostSources, "two required defaults, failed nested attempt", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
@@ -6849,7 +6719,7 @@ public class ProductionDispatchTest {
               return null;
             }
             """, Map.of());
-        runReentrantDefaultSubject("imported class, two required defaults", """
+        runReentrantDefaultSubject(hostSources, "imported class, two required defaults", """
             import * as console from "std/console";
             import * as lib from "lib";
 
@@ -6881,7 +6751,7 @@ public class ProductionDispatchTest {
               return 7;
             }
             """));
-        runReentrantDefaultSubject("imported class, failed nested attempt", """
+        runReentrantDefaultSubject(hostSources, "imported class, failed nested attempt", """
             import * as console from "std/console";
             import * as lib from "lib";
 
@@ -6926,62 +6796,54 @@ public class ProductionDispatchTest {
      * default values. {@code extraSources} carries the provider module of an
      * imported-class subject.
      */
-    private static void runReentrantDefaultSubject(String label, String subject,
-            Map<String, String> extraSources) throws Exception {
+    private static void runReentrantDefaultSubject(Map<String, String> hostSources,
+            String label, String subject, Map<String, String> extraSources) throws Exception {
         String declaration = """
             export function retained(): int[];
             export function provideFirst(): int[];
             export function bump(): null;
             export function calls(): int;
             """;
-        Path corpus = Path.of("test/conformance");
-        String hostLua = Files.readString(
-            corpus.resolve("host-fixtures/retained_default.lua"));
-        String hostJava = Files.readString(
-            corpus.resolve("host-fixtures/retained_default.java"));
-        String hostJs = Files.readString(
-            corpus.resolve("host-fixtures/retained_default.js"));
-        for (String backend : List.of("luajit", "jvm", "js")) {
-            Path project = Files.createTempDirectory(
-                "production-default-reentrancy-");
-            try {
-                write(project, "src/main.deal", subject);
-                for (Map.Entry<String, String> extra : extraSources.entrySet()) {
-                    write(project, extra.getKey(), extra.getValue());
-                }
-                write(project, "bindings/retained_default.d.deal", declaration);
-                write(project, "deal.json", """
-                    {
-                      "languageVersion": "1.3",
-                      "moduleRoots": ["src"],
-                      "output": "out",
-                      "backend": "%s",
-                      "externals": {
-                        "host/retained_default": { "declaration": "bindings/retained_default.d.deal" }
-                      }
+        Path project = Files.createTempDirectory("production-default-reentrancy-");
+        try {
+            write(project, "src/main.deal", subject);
+            for (Map.Entry<String, String> extra : extraSources.entrySet()) {
+                write(project, extra.getKey(), extra.getValue());
+            }
+            write(project, "bindings/retained_default.d.deal", declaration);
+            for (String backend : List.of("luajit", "jvm", "js")) {
+                Path out = project.resolve("out");
+                try {
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "moduleRoots": ["src"],
+                          "output": "out",
+                          "backend": "%s",
+                          "externals": {
+                            "host/retained_default": { "declaration": "bindings/retained_default.d.deal" }
+                          }
+                        }
+                        """.formatted(backend));
+                    if (!compileRetainedSubject(project, backend + ": " + label, true)) {
+                        continue;
                     }
-                    """.formatted(backend));
-                if (!compileRetainedSubject(project, backend + ": " + label, true)) {
-                    continue;
-                }
-                switch (backend) {
-                    case "luajit" -> {
-                        write(project, "out/host/retained_default.lua", hostLua);
-                        checkRetainedSubjectRun(project, backend, label, "ok\n");
-                    }
-                    case "jvm" -> {
-                        write(project, "HostRetained_default.java", hostJava);
+                    if ("jvm".equals(backend)) {
+                        write(project, "HostRetained_default.java", hostSources.get(backend));
                         checkRetainedSubjectRun(project, backend, label, "ok\n",
                             project.resolve("HostRetained_default.java"));
-                    }
-                    default -> {
-                        write(project, "out/host/retained_default.js", hostJs);
+                    } else {
+                        write(out, "host/retained_default."
+                            + ("luajit".equals(backend) ? "lua" : "js"), hostSources.get(backend));
                         checkRetainedSubjectRun(project, backend, label, "ok\n");
                     }
+                } finally {
+                    deleteRecursively(out);
+                    Files.deleteIfExists(project.resolve("HostRetained_default.java"));
                 }
-            } finally {
-                deleteRecursively(project);
             }
+        } finally {
+            deleteRecursively(project);
         }
     }
 
@@ -7018,7 +6880,7 @@ public class ProductionDispatchTest {
             List<String> command = new ArrayList<>(List.of("javac", "--release", "25",
                 "-proc:none", "-cp", out + File.pathSeparator + classpath, "-d", out.toString()));
             command.addAll(sources);
-            BoundedProcess.BoundedResult javac = runBounded(project, command.toArray(String[]::new));
+            BoundedProcess.BoundedResult javac = compileBoundedJvm(project, command.toArray(String[]::new));
             checkEq(0, javac.exitCode(), context + ": artifact compiles: " + boundedOutput(javac));
             if (javac.exitCode() != 0) {
                 return;

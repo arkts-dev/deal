@@ -43,6 +43,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticTable;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.UnicodeScalars;
+import deal.test.conformance.JvmCompilation;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -1404,40 +1405,30 @@ public class FailureArmAuthorityTest {
         Path host = out.resolve(hostClass + ".java");
         Files.writeString(host, jvmHost.formatted(hostClass),
             StandardCharsets.UTF_8);
-        Path driver = out.resolve("FailureArmCompletionSignatureDriver.java");
-        Files.writeString(driver, completionDriverSource(drive, cells),
+        String driverName = "FailureArmCompletionSignatureDriver_"
+            + java.util.UUID.randomUUID().toString().replace("-", "");
+        Path driver = out.resolve(driverName + ".java");
+        Files.writeString(driver, completionDriverSource(drive, cells, driverName),
             StandardCharsets.UTF_8);
         Path classes = drive.root().resolve("jvm-classes");
         Files.createDirectories(classes);
-        String classpath = absoluteClasspath();
-        List<String> javacArgs = new ArrayList<>(List.of("javac", "--release", "25",
-            "-proc:none", "-cp", classpath, "-d", classes.toString()));
-        javacArgs.add(drive.jvmArtifact().toString());
-        javacArgs.add(host.toString());
-        javacArgs.add(driver.toString());
-        ProcessBuilder javac = new ProcessBuilder(javacArgs).redirectErrorStream(true);
-        javac.directory(out.toFile());
-        Process compile = javac.start();
-        String compileOutput = new String(compile.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int compileExit = compile.waitFor();
-        check(compileExit == 0, "the staged JVM artifact compiles with the drive's host "
-            + "implementation and driver: " + compileOutput);
-        if (compileExit != 0) {
+        String classpath = classes + java.io.File.pathSeparator + absoluteClasspath();
+        JvmCompilation.Result compile = JvmCompilation.compile(List.of("javac",
+            "--release", "25", "-proc:none", "-cp", classpath, "-d", classes.toString(),
+            drive.jvmArtifact().toString(), host.toString(), driver.toString()), out,
+            120_000L);
+        check(compile.exitCode() == 0, "the staged JVM artifact compiles with the drive's host "
+            + "implementation and driver: " + compile.stdout() + compile.stderr());
+        if (compile.exitCode() != 0) {
             return Map.of();
         }
-        ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
-            classes + java.io.File.pathSeparator + classpath,
-            "FailureArmCompletionSignatureDriver");
-        javaRun.directory(out.toFile());
-        javaRun.redirectErrorStream(true);
-        Process run = javaRun.start();
-        String output = new String(run.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8);
-        int exit = run.waitFor();
-        check(exit == 0, "the staged JVM artifact runs the completion drive: "
-            + "exit=" + exit + " output=" + output);
-        return completionRows(output);
+        BoundedProcess.BoundedResult run = BoundedProcess.runCaptured(
+            List.of("java", "-cp", classpath, driverName), out);
+        check(!run.stdoutTruncated() && !run.stderrTruncated(),
+            "the staged JVM artifact's completion drive output is complete");
+        check(run.exitCode() == 0, "the staged JVM artifact runs the completion drive: "
+            + "exit=" + run.exitCode() + " output=" + run.stdout() + run.stderr());
+        return completionRows(run.stdout());
     }
 
     /**
@@ -1446,9 +1437,9 @@ public class FailureArmAuthorityTest {
      * entry; one {@code label|...} row per cell.
      */
     private static String completionDriverSource(CompletionDrive drive,
-            List<CompletionCell> cells) {
+            List<CompletionCell> cells, String driverName) {
         StringBuilder source = new StringBuilder();
-        source.append("public class FailureArmCompletionSignatureDriver {\n");
+        source.append("public class ").append(driverName).append(" {\n");
         source.append("  public static void main(String[] args) {\n");
         source.append("    try {\n");
         source.append("      ").append(drive.className()).append(".dealMain();\n");

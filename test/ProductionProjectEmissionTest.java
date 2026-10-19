@@ -425,7 +425,8 @@ public class ProductionProjectEmissionTest {
         HostDeclarationSurface surface,
         Map<ModuleId, FfiGeneratedModule> externCModules,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
-        DistributionHome distributionHome) {
+        DistributionHome distributionHome) implements AutoCloseable {
+        public void close() { deleteRecursively(root); }
     }
 
     /**
@@ -1625,13 +1626,8 @@ public class ProductionProjectEmissionTest {
             return;
         }
         ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
-        checkEq(0, entry.exitCode(),
-            "the published adapter artifact runs: " + entry.output());
-        checkEq("ARITY_ADAPTER|OK\n", entry.stdout(),
-            "the direct-run main called the adapted function with the leading"
-                + " arguments and the extra target argument was ignored");
-        checkEq("", entry.stderr(),
-            "the published adapter artifact prints no trace protocol on stderr");
+        assertEmitterRun("the published adapter main ignores the extra argument",
+            entry, 0, "ARITY_ADAPTER|OK\n");
 
         // The public Node drive: require initializes without running main,
         // then the published main export is called explicitly — one more
@@ -1642,13 +1638,8 @@ public class ProductionProjectEmissionTest {
             console.log("ADAPTER_DRIVE|OK");
             """);
         ProcessOutcome drive = runProcess(List.of("node", "adapter-drive.js"), out);
-        checkEq(0, drive.exitCode(),
-            "the Node drive calls the adapted function: " + drive.output());
-        checkEq("ARITY_ADAPTER|OK\nADAPTER_DRIVE|OK\n", drive.stdout(),
-            "the Node drive's explicit main invocation ran the adapted call"
-                + " once and the require alone ran no main");
-        checkEq("", drive.stderr(),
-            "the Node drive prints no trace protocol on stderr");
+        assertEmitterRun("the explicit adapter main runs once; require runs none",
+            drive, 0, "ARITY_ADAPTER|OK\nADAPTER_DRIVE|OK\n");
 
         // The async twin: the awaited adapted async function (its source is
         // the re-evaluated call result too) starts once, awaits once and
@@ -1664,14 +1655,8 @@ public class ProductionProjectEmissionTest {
             """);
         ProcessOutcome asyncDrive = runProcess(
             List.of("node", "adapter-async-drive.js"), out);
-        checkEq(0, asyncDrive.exitCode(),
-            "the async adapted call runs under Node: " + asyncDrive.output());
-        checkEq("ARITY_ASYNC_ADAPTER|OK\nARITY_ASYNC_DRIVE|OK\n",
-            asyncDrive.stdout(),
-            "the awaited adapted async function ran its source once and"
-                + " completed with the source's value");
-        checkEq("", asyncDrive.stderr(),
-            "the async adapted call prints no trace protocol on stderr");
+        assertEmitterRun("the async adapter runs its source once and completes",
+            asyncDrive, 0, "ARITY_ASYNC_ADAPTER|OK\nARITY_ASYNC_DRIVE|OK\n");
     }
 
     // =========================================================================
@@ -1740,36 +1725,8 @@ public class ProductionProjectEmissionTest {
             return;
         }
         ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
-        checkEq(0, entry.exitCode(),
-            "the published forward-class artifact runs: " + entry.output());
-        checkEq("FORWARD_CLASS|OK\n", entry.stdout(),
-            "the artifact constructed the later-declared class literal in the"
-                + " earlier body and applied its per-construction default");
-        checkEq("", entry.stderr(),
-            "the published forward-class artifact prints no trace protocol");
-    }
-
-    /**
-     * The runtime-resolved adapter sources and the deferred class-default
-     * references of the acceptance remediation: an {@code await} source is the
-     * declaration-site value (no re-executor may await inside a synchronous
-     * thunk) and keeps the runtime-resolved nested source start of an async
-     * target, the async arity-extension adapter over a re-evaluated call result
-     * takes the closed dynamic async arm, and mutual function-valued class
-     * defaults construct nothing during the enclosing construction. Every shape
-     * compiles through the public {@code Backend.JS} arm and executes under
-     * Node; the direct construction cycle stays fail-closed.
-     */
-    private static void testAdapterRuntimeResolutionAndDeferredDefaults(boolean node)
-            throws Exception {
-        System.out.println("-- an awaited adapter source is the declaration-site"
-            + " value, the async call-result adapter starts the closed dynamic"
-            + " async arm, and deferred class defaults add no construction"
-            + " cycle --");
-        testAwaitAdapterSource(node);
-        testAsyncCallResultAdapterShape(node);
-        testDeferredClassDefaults(node);
-        testDirectDefaultConstructionCycleFailsClosed();
+        assertEmitterRun("the earlier body constructs the later class with its default",
+            entry, 0, "FORWARD_CLASS|OK\n");
     }
 
     /** The awaited call-result adapter: a declaration-site VALUE source. */
@@ -1835,10 +1792,10 @@ public class ProductionProjectEmissionTest {
                     + " runtime-resolved nested adapter start");
             String artifact = Files.readString(out.resolve("app.js"),
                 StandardCharsets.UTF_8);
-            checkEq(0, countOfText(artifact, "const $at"),
+            checkEq(0, countOccurrences(artifact, "const $at"),
                 "the awaited adapter source emits no thunk re-executor (a"
                     + " synchronous re-executor cannot await)");
-            checkEq(2, countOfText(artifact, "const $av"),
+            checkEq(2, countOccurrences(artifact, "const $av"),
                 "each awaited adapter retains the materialized source value");
             if (!node) {
                 System.out.println("  SKIP: the awaited adapter Node drive needs node");
@@ -1847,23 +1804,12 @@ public class ProductionProjectEmissionTest {
             writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
             ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
                 out);
-            checkEq(0, run.exitCode(),
-                "the awaited adapter artifact runs: " + run.output());
-            checkEq("PROBE|JS|AWAIT-ADAPTER\nINVOKE_OK: 41\n", run.stdout(),
-                "both awaited adapter invocations executed with the"
-                    + " declaration-site source value");
-            checkEq("", run.stderr(), "the awaited adapter run reports no failure");
+            assertEmitterRun("both awaited adapters retain the declaration-site source",
+                run, 0, "PROBE|JS|AWAIT-ADAPTER\nINVOKE_OK: 41\n");
             ProcessOutcome asyncRun = runProcess(
                 List.of("node", "invoke.js", "entryAsync", "int"), out);
-            checkEq(0, asyncRun.exitCode(),
-                "the awaited async-target adapter artifact runs: "
-                    + asyncRun.output());
-            checkEq("PROBE|JS|AWAIT-ASYNC-ADAPTER\nINVOKE_OK: 41\n",
-                asyncRun.stdout(),
-                "both awaited invocations of the async target completed"
-                    + " through the retained source value");
-            checkEq("", asyncRun.stderr(),
-                "the awaited async-target adapter run reports no failure");
+            assertEmitterRun("both async-target awaits complete through the retained source",
+                asyncRun, 0, "PROBE|JS|AWAIT-ASYNC-ADAPTER\nINVOKE_OK: 41\n");
         } finally {
             deleteRecursively(root);
         }
@@ -1943,12 +1889,8 @@ public class ProductionProjectEmissionTest {
             writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
             ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
                 out);
-            checkEq(0, run.exitCode(),
-                "the async call-result adapter artifact runs: " + run.output());
-            checkEq("PROBE|JS|ASYNC-ADAPTER\nINVOKE_OK: 41\n", run.stdout(),
-                "both awaited arity-extension invocations completed with the"
-                    + " re-evaluated async source");
-            checkEq("", run.stderr(), "the async adapter run reports no failure");
+            assertEmitterRun("both arity-extension awaits re-evaluate the async source",
+                run, 0, "PROBE|JS|ASYNC-ADAPTER\nINVOKE_OK: 41\n");
         } finally {
             deleteRecursively(root);
         }
@@ -2108,12 +2050,8 @@ public class ProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
-            checkEq(0, run.exitCode(),
-                "the deferred-default artifact runs: " + run.output());
-            checkEq("PROBE|JS|DEFERRED-DEFAULTS\n", run.stdout(),
-                "the mutual and self-referential defaults construct only at"
-                    + " the deferred call and terminate");
-            checkEq("", run.stderr(), "the deferred-default run reports no failure");
+            assertEmitterRun("mutual and self defaults construct only at the deferred call",
+                run, 0, "PROBE|JS|DEFERRED-DEFAULTS\n");
         } finally {
             deleteRecursively(root);
         }
@@ -2142,13 +2080,8 @@ public class ProductionProjectEmissionTest {
                 return;
             }
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
-            checkEq(0, run.exitCode(),
-                "the provided-field default artifact runs: " + run.output());
-            checkEq("PROBE|JS|PROVIDED-DEFAULTS\n", run.stdout(),
-                "the self-referential and mutual provided-field defaults"
-                    + " construct only their supplied shapes and terminate");
-            checkEq("", run.stderr(),
-                "the provided-field default run reports no failure");
+            assertEmitterRun("self and mutual provided-field defaults terminate",
+                run, 0, "PROBE|JS|PROVIDED-DEFAULTS\n");
         } finally {
             deleteRecursively(root);
         }
@@ -2233,17 +2166,6 @@ public class ProductionProjectEmissionTest {
             }
         }
         return null;
-    }
-
-    /** The occurrences of one needle in a text. */
-    private static int countOfText(String text, String needle) {
-        int count = 0;
-        int at = text.indexOf(needle);
-        while (at >= 0) {
-            count++;
-            at = text.indexOf(needle, at + 1);
-        }
-        return count;
     }
 
     /** The staged tree of one stager as the published-bytes snapshot. */
@@ -2834,7 +2756,7 @@ public class ProductionProjectEmissionTest {
                 "the published JVM artifact exists at the pinned path");
             Files.createDirectories(classes);
             String classpath = absoluteClasspath();
-            ProcessOutcome javacRun = runProcess(List.of("javac", "--release", "25",
+            ProcessOutcome javacRun = compileJvm(List.of("javac", "--release", "25",
                 "-proc:none", "-cp", classpath, "-d", classes.toString(),
                 source.toAbsolutePath().toString()), fixture.root());
             checkEq(0, javacRun.exitCode(),
@@ -4599,7 +4521,7 @@ public class ProductionProjectEmissionTest {
         """;
 
     private record PublishedEmitter(Fixture fixture, SemanticLowerer.ProjectLoweringResult lowering,
-            Backend backend, Path out, String source) implements AutoCloseable {
+            Backend backend, Path out, String source, JavaArtifact javaArtifact) implements AutoCloseable {
         public void close() { deleteRecursively(fixture.root()); }
     }
 
@@ -4632,7 +4554,8 @@ public class ProductionProjectEmissionTest {
             }
             Path out = fixture.root().resolve("out");
             String source = Files.readString(out.resolve(backend == Backend.JVM ? "App.java" : "app.lua"));
-            return new PublishedEmitter(fixture, lowering, backend, out, source);
+            return new PublishedEmitter(fixture, lowering, backend, out, source,
+                backend == Backend.JVM ? new JavaArtifact(out, "App", source) : null);
         } catch (Throwable failure) {
             deleteRecursively(fixture.root());
             throw failure;
@@ -4647,29 +4570,48 @@ public class ProductionProjectEmissionTest {
             writeFileIn(fixture.out(), "probe.lua", probe);
             return runProcess(List.of("luajit", "probe.lua"), fixture.out());
         }
-        return runJavaEmission(fixture.out(), "App", fixture.source(), probe);
+        return fixture.javaArtifact().run(probe);
     }
 
-    private static ProcessOutcome runJavaEmission(Path out, String className, String source,
-            String probe) throws Exception {
-        Path classes = Files.createTempDirectory(out, "classes-");
-        writeFileIn(out, className + ".java", source);
-        List<String> command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none",
-            "-sourcepath", "", "-cp", absoluteClasspath(), "-d", classes.toString(),
-            out.resolve(className + ".java").toString()));
-        String driver = "ProductionEmitterProbe_" + java.util.UUID.randomUUID().toString().replace("-", "");
-        if (probe != null) {
-            writeFileIn(out, driver + ".java", "import deal.codegen.jvm.JvmRuntime;\npublic class "
-                + driver + " {\n" + probe + "\n}\n");
-            command.add(out.resolve(driver + ".java").toString());
+    private static final class JavaArtifact {
+        private final Path out;
+        private final String className;
+        private final String source;
+        private Path classes;
+
+        private JavaArtifact(Path out, String className, String source) {
+            this.out = out;
+            this.className = className;
+            this.source = source;
         }
-        ProcessOutcome compiled = compileJvm(command, out);
-        checkEq(0, compiled.exitCode(), "production emitter javac: " + compiled.output());
-        if (compiled.exitCode() != 0) {
-            throw new AssertionError(compiled.output());
+
+        private ProcessOutcome run(String probe) throws Exception {
+            List<String> sources = new ArrayList<>();
+            if (classes == null) {
+                classes = Files.createTempDirectory(out, "classes-");
+                writeFileIn(out, className + ".java", source);
+                sources.add(out.resolve(className + ".java").toString());
+            }
+            String driver = className;
+            if (probe != null) {
+                driver = "ProductionEmitterProbe_" + java.util.UUID.randomUUID().toString().replace("-", "");
+                writeFileIn(out, driver + ".java", "import deal.codegen.jvm.JvmRuntime;\npublic class "
+                    + driver + " {\n" + probe + "\n}\n");
+                sources.add(out.resolve(driver + ".java").toString());
+            }
+            String classpath = classes + java.io.File.pathSeparator + absoluteClasspath();
+            if (!sources.isEmpty()) {
+                List<String> command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none",
+                    "-sourcepath", "", "-cp", classpath, "-d", classes.toString()));
+                command.addAll(sources);
+                ProcessOutcome compiled = compileJvm(command, out);
+                checkEq(0, compiled.exitCode(), "production emitter javac: " + compiled.output());
+                if (compiled.exitCode() != 0) {
+                    throw new AssertionError(compiled.output());
+                }
+            }
+            return runProcess(List.of("java", "-ea", "-cp", classpath, driver), out);
         }
-        return runProcess(List.of("java", "-ea", "-cp",
-            classes + java.io.File.pathSeparator + absoluteClasspath(), probe == null ? className : driver), out);
     }
 
     private static void assertEmitterRun(String label, ProcessOutcome run, int exit, String stdout) {
@@ -4691,8 +4633,8 @@ public class ProductionProjectEmissionTest {
                     check(!module.source().contains("$asyncExportHost"), "non-entry module has no async host reference");
                     check(module.source().contains("System.out.println(\"DEAL_ERROR_CODE: \" + e.code);"),
                         "non-entry module retains error terminal");
-                    assertEmitterRun("non-entry direct module API", runJavaEmission(quiet.out(),
-                        module.className(), module.source(), null), 0, "");
+                    assertEmitterRun("non-entry direct module API", new JavaArtifact(quiet.out(),
+                        module.className(), module.source()).run(null), 0, "");
                 }
             }
             for (String source : List.of(SHADOWING_SOURCE, DYNAMIC_TABLE_SOURCE)) {
@@ -5077,40 +5019,34 @@ public class ProductionProjectEmissionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Production Project Emission Tests (ISSUE-0642) ===\n");
-        Fixture fixture = null;
-        Fixture cross = null;
-        Fixture same = null;
-        Fixture failing = null;
-        Fixture host = null;
-        Fixture externC = null;
-        Fixture js = null;
-        Fixture adapter = null;
-        Fixture forward = null;
-        try {
+        try (Fixture fixture = twoModuleFixture(APP_SOURCE);
+                Fixture js = jsFixture();
+                Fixture failing = corruptedSignatureFixture();
+                Fixture adapter = adapterSourceFixture();
+                Fixture forward = forwardClassFixture();
+                Fixture host = hostFixture();
+                Fixture externC = externCFixture();
+                Fixture cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
+                Fixture same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE)) {
             boolean node = nodeAvailable();
             System.out.println(node
                 ? "-- node available: the real JS artifact drives run --"
                 : "-- node NOT available: the real JS artifact drives are"
                     + " skipped --");
-            fixture = twoModuleFixture(APP_SOURCE);
-            js = jsFixture();
             testJsProjectEmission(js, node);
             testJsEntryFailureStatus(node);
             testDeclarationOrderAndCallResultAdapter(node);
-            testAdapterRuntimeResolutionAndDeferredDefaults(node);
+            testAwaitAdapterSource(node);
+            testAsyncCallResultAdapterShape(node);
+            testDeferredClassDefaults(node);
+            testDirectDefaultConstructionCycleFailsClosed();
             testProvidedFieldDefaultTermination(node);
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
-            failing = corruptedSignatureFixture();
             testAtomicFailures(failing);
-            adapter = adapterSourceFixture();
             testJsCallResultAdapter(adapter, node);
-            forward = forwardClassFixture();
             testJsForwardClassLiteral(forward, node);
-            host = hostFixture();
-            externC = externCFixture();
-            cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
             SemanticLowerer.ProjectLoweringResult hostLowering = lower(host);
             SemanticLowerer.ProjectLoweringResult externLowering = lower(externC);
             SemanticLowerer.ProjectLoweringResult asyncLowering = lower(cross);
@@ -5123,7 +5059,6 @@ public class ProductionProjectEmissionTest {
             testDeclarationSignatureOrigin();
             testGeneratedHelperDescriptorOrigins();
             testForLetCounterDescriptorOrigin();
-            same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE);
             testCrossModuleAsyncEmission(cross, same);
             testSourceMapEmission(fixture, failing, defaultRun);
             testProductionEmitterLanes();
@@ -5132,16 +5067,6 @@ public class ProductionProjectEmissionTest {
             testJsDumpDeferral();
             testJsRuntimeMissing();
             testJsStdlibOverride();
-        } finally {
-            deleteRecursively(js == null ? null : js.root());
-            deleteRecursively(externC == null ? null : externC.root());
-            deleteRecursively(host == null ? null : host.root());
-            deleteRecursively(failing == null ? null : failing.root());
-            deleteRecursively(adapter == null ? null : adapter.root());
-            deleteRecursively(forward == null ? null : forward.root());
-            deleteRecursively(same == null ? null : same.root());
-            deleteRecursively(cross == null ? null : cross.root());
-            deleteRecursively(fixture == null ? null : fixture.root());
         }
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);

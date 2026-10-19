@@ -2625,6 +2625,13 @@ public class CanonicalProjectionParityTest {
     private static void assertAsyncArrayCompletionSuccess(Compiled compiled,
             String export, String resultAtom, SemanticOracle.HostResponder responder,
             String luaHost, String jvmHost, String what) throws Exception {
+        assertAsyncArrayCompletionSuccess(compiled, export, resultAtom, responder,
+            luaHost, new JvmHost(jvmHost, Map.of()), what);
+    }
+
+    private static void assertAsyncArrayCompletionSuccess(Compiled compiled,
+            String export, String resultAtom, SemanticOracle.HostResponder responder,
+            String luaHost, JvmHost jvmHost, String what) throws Exception {
         SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeAsyncEntry(
             compiled.project(), compiled.tables(), responder,
             compiled.checkedProject().entryModule(), export, List.of());
@@ -2636,8 +2643,7 @@ public class CanonicalProjectionParityTest {
             luaExportProbe(compiled, export));
         check(lua.contains("OK") && !lua.contains("ERR|"), what + " (luajit): the "
             + "production artifact completes without a failure event: " + lua);
-        String jvm = jvmExportOutput(compiled, export,
-            Map.of("async_arrays", jvmHost));
+        String jvm = jvmExportOutput(compiled, export, "async_arrays", jvmHost);
         check(jvm != null && jvm.contains("OK") && !jvm.contains("ERR|"), what
             + " (jvm): the production artifact completes without a failure event: "
             + jvm);
@@ -2735,11 +2741,12 @@ public class CanonicalProjectionParityTest {
     }
 
     /** The JVM array-completion host: one completed-future carrier per export. */
-    private static String jvmAsyncArrayHost(String carrier) {
-        return jvmAsyncArrayHost(carrier, "");
+    private static JvmHost jvmAsyncArrayHost(String carrier) {
+        return new JvmHost(jvmAsyncArrayHostSource(),
+            Map.of("deal.parity.array", carrier));
     }
 
-    private static String jvmAsyncArrayHost(String carrier, String setup) {
+    private static String jvmAsyncArrayHostSource() {
         return """
             import java.util.concurrent.CompletableFuture;
 
@@ -2754,31 +2761,68 @@ public class CanonicalProjectionParityTest {
                 return array;
               }
 
+              private static Object carrier() {
+                return switch (System.getProperty("deal.parity.array")) {
+                  case "integer" -> array(java.lang.Integer.valueOf(7));
+                  case "null" -> null;
+                  case "nullable-integer" -> array(java.lang.Integer.valueOf(7), null);
+                  case "nested-integer" -> array(array(java.lang.Integer.valueOf(7)));
+                  case "range-long" -> array(java.lang.Long.valueOf(2147483648L));
+                  case "negative-range-long" -> array(java.lang.Long.valueOf(-2147483649L));
+                  case "nested-range-long" -> array(array(java.lang.Long.valueOf(2147483648L)));
+                  case "later-range-long" -> array(java.lang.Integer.valueOf(7),
+                      java.lang.Long.valueOf(2147483648L));
+                  case "deep" -> array(java.lang.Integer.valueOf(7), deep(%d));
+                  case "cyclic" -> cyclic();
+                  case "cyclic-wrong-kind" -> array(cyclicWrongKind());
+                  default -> throw new IllegalArgumentException("unknown array carrier");
+                };
+              }
+
+              private static deal.codegen.jvm.JvmRuntime.Array deep(int levels) {
+                deal.codegen.jvm.JvmRuntime.Array node = new deal.codegen.jvm.JvmRuntime.Array(0);
+                for (int i = 0; i < levels; i++) {
+                  node = array(node);
+                }
+                return node;
+              }
+
+              private static deal.codegen.jvm.JvmRuntime.Array cyclic() {
+                deal.codegen.jvm.JvmRuntime.Array value = new deal.codegen.jvm.JvmRuntime.Array(2);
+                value.elements.add(java.lang.Integer.valueOf(7));
+                value.elements.add(value);
+                return value;
+              }
+
+              private static deal.codegen.jvm.JvmRuntime.Array cyclicWrongKind() {
+                deal.codegen.jvm.JvmRuntime.Array inner = new deal.codegen.jvm.JvmRuntime.Array(1);
+                inner.elements.add(inner);
+                return inner;
+              }
+
               public static Object fetchInts() {
-                return CompletableFuture.completedFuture(%s);
+                return CompletableFuture.completedFuture(carrier());
               }
               public static Object fetchNullableInts() {
-                return CompletableFuture.completedFuture(%s);
+                return CompletableFuture.completedFuture(carrier());
               }
               public static Object fetchNullableElements() {
-                return CompletableFuture.completedFuture(%s);
+                return CompletableFuture.completedFuture(carrier());
               }
               public static Object fetchNestedInts() {
-                return CompletableFuture.completedFuture(%s);
+                return CompletableFuture.completedFuture(carrier());
               }
               public static Object fetchNestedStrings() {
-                return CompletableFuture.completedFuture(%s);
+                return CompletableFuture.completedFuture(carrier());
               }
               public static Object fetchStrings() {
-                return CompletableFuture.completedFuture(%s);
+                return CompletableFuture.completedFuture(carrier());
               }
               public static Object fetchNumbers() {
-                return CompletableFuture.completedFuture(%s);
+                return CompletableFuture.completedFuture(carrier());
               }
-              %s
             }
-            """.formatted(carrier, carrier, carrier, carrier, carrier, carrier,
-                carrier, setup);
+            """.formatted(DEEP_HOST_SUBTREE_LEVELS);
     }
 
     /** The admitted int[] completion: the boxed element settles and is consumed. */
@@ -2786,7 +2830,7 @@ public class CanonicalProjectionParityTest {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_int_array", "int:8",
                 arrayCompletionResponder(oracleIntArrayElement(7L)),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
-                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                jvmAsyncArrayHost("integer"),
                 "the boxed int int[] completion");
     }
 
@@ -2798,7 +2842,7 @@ public class CanonicalProjectionParityTest {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
                 "int:8", arrayCompletionResponder(oracleIntArrayElement(7L)),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
-                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                jvmAsyncArrayHost("integer"),
                 "the boxed int nullable int[] completion");
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
                 "int:0", arrayCompletionResponder(
@@ -2815,7 +2859,7 @@ public class CanonicalProjectionParityTest {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_elements",
                 "int:8", arrayCompletionResponder(oracleNullableElementArray()),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7}"),
-                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), null)"),
+                jvmAsyncArrayHost("nullable-integer"),
                 "the boxed int and null (int | null)[] completion");
         } finally {
             deleteRecursively(compiled.root());
@@ -2831,7 +2875,7 @@ public class CanonicalProjectionParityTest {
                 "int:8", arrayCompletionResponder(oracleNestedIntArrayElement(7L)),
                 luaAsyncArrayHost(
                     "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}}"),
-                jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
+                jvmAsyncArrayHost("nested-integer"),
                 "the nested boxed int int[][] completion");
         } finally {
             deleteRecursively(compiled.root());
@@ -2847,7 +2891,7 @@ public class CanonicalProjectionParityTest {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_number_array",
                 "int:8", arrayCompletionResponder(oracleNumberArrayElement(7L)),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
-                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                jvmAsyncArrayHost("integer"),
                 "the boxed int number[] completion");
     }
 
@@ -2860,7 +2904,7 @@ public class CanonicalProjectionParityTest {
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
                     "int"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
-                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7))"),
+                jvmAsyncArrayHost("integer"),
                 "the boxed int string[] completion");
     }
 
@@ -2877,7 +2921,7 @@ public class CanonicalProjectionParityTest {
                     "[string]", "array"),
                 luaAsyncArrayHost(
                     "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}}"),
-                jvmAsyncArrayHost("array(array(java.lang.Integer.valueOf(7)))"),
+                jvmAsyncArrayHost("nested-integer"),
                 "the nested boxed int string[][] completion");
     }
 
@@ -2907,7 +2951,7 @@ public class CanonicalProjectionParityTest {
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
                     "int"),
                 luaDeepStringArrayHost(DEEP_HOST_SUBTREE_LEVELS),
-                jvmDeepStringArrayHost(DEEP_HOST_SUBTREE_LEVELS),
+                jvmAsyncArrayHost("deep"),
                 "the deep later-subtree string[] completion");
     }
 
@@ -2952,25 +2996,6 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
-     * The deep later-subtree JVM host: the completed future's first element
-     * is the wrong-kind boxed int and its second element is a chain of
-     * production array carriers {@code levels} deep, built iteratively so the
-     * host fixture itself never depends on the stack.
-     */
-    private static String jvmDeepStringArrayHost(int levels) {
-        return jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), deep(" + levels + "))",
-            """
-            private static deal.codegen.jvm.JvmRuntime.Array deep(int levels) {
-              deal.codegen.jvm.JvmRuntime.Array node = new deal.codegen.jvm.JvmRuntime.Array(0);
-              for (int i = 0; i < levels; i++) {
-                node = array(node);
-              }
-              return node;
-            }
-            """);
-    }
-
-    /**
      * The cyclic later-element string[] completion: the completed array's
      * first element is the wrong-kind boxed int and its second element is the
      * array itself. The canonical first-failing-element rule must decide the
@@ -2985,7 +3010,7 @@ public class CanonicalProjectionParityTest {
                 "test_drop_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
                     "int"),
-                luaCyclicStringArrayHost(), jvmCyclicStringArrayHost(),
+                luaCyclicStringArrayHost(), jvmAsyncArrayHost("cyclic"),
                 "the cyclic later-element string[] completion");
     }
 
@@ -3018,22 +3043,6 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
-     * The cyclic later-element JVM host: the completed future carries the
-     * two-element production array whose second element is the array itself.
-     */
-    private static String jvmCyclicStringArrayHost() {
-        return jvmAsyncArrayHost("CYCLIC", """
-            private static final deal.codegen.jvm.JvmRuntime.Array CYCLIC = cyclic();
-            private static deal.codegen.jvm.JvmRuntime.Array cyclic() {
-              deal.codegen.jvm.JvmRuntime.Array value = new deal.codegen.jvm.JvmRuntime.Array(2);
-              value.elements.add(java.lang.Integer.valueOf(7));
-              value.elements.add(value);
-              return value;
-            }
-            """);
-    }
-
-    /**
      * The cyclic wrong-kind-element string[] completion: the completed array's
      * only element is itself a reference-cyclic array. The element's own
      * carrier kind (array) decides the element arm before its contents are
@@ -3049,7 +3058,7 @@ public class CanonicalProjectionParityTest {
                 "test_drop_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
                     "array"),
-                luaCyclicWrongKindArrayHost(), jvmCyclicWrongKindArrayHost(),
+                luaCyclicWrongKindArrayHost(), jvmAsyncArrayHost("cyclic-wrong-kind"),
                 "the cyclic wrong-kind-element string[] completion");
     }
 
@@ -3083,21 +3092,6 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
-     * The cyclic wrong-kind-element JVM host: the completed future's only
-     * element is a self-referential production array.
-     */
-    private static String jvmCyclicWrongKindArrayHost() {
-        return jvmAsyncArrayHost("COMPLETION", """
-            private static final deal.codegen.jvm.JvmRuntime.Array COMPLETION = completion();
-            private static deal.codegen.jvm.JvmRuntime.Array completion() {
-              deal.codegen.jvm.JvmRuntime.Array inner = new deal.codegen.jvm.JvmRuntime.Array(1);
-              inner.elements.add(inner);
-              return array(inner);
-            }
-            """);
-    }
-
-    /**
      * The out-of-range long int[] completion: the completed array's element is
      * a raw host long outside signed32. The crossing's pinned int ladder
      * rejects it through the shared signed32-range arm, wrapped by the element
@@ -3118,8 +3112,7 @@ public class CanonicalProjectionParityTest {
                 asyncElementTuple(ARRAY_COMPLETION_INT_DRIVER, 4, 1, "int",
                     "number"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 2147483648}"),
-                jvmAsyncArrayHost(
-                    "array(java.lang.Long.valueOf(2147483648L))"),
+                jvmAsyncArrayHost("range-long"),
                 "the out-of-range long int[] completion");
     }
 
@@ -3496,7 +3489,7 @@ public class CanonicalProjectionParityTest {
                 asyncElementTuple(ARRAY_COMPLETION_DROP_INT_DRIVER, 4, 1, "int",
                     "number"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 2147483648}"),
-                jvmAsyncArrayHost("array(java.lang.Long.valueOf(2147483648L))"),
+                jvmAsyncArrayHost("range-long"),
                 "the out-of-range Long int[] completion");
         } finally {
             deleteRecursively(compiled.root());
@@ -3520,7 +3513,7 @@ public class CanonicalProjectionParityTest {
                 asyncElementTuple(ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER, 4, 1,
                     "?int", "number"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = -2147483649}"),
-                jvmAsyncArrayHost("array(java.lang.Long.valueOf(-2147483649L))"),
+                jvmAsyncArrayHost("negative-range-long"),
                 "the out-of-range Long (int | null)[] completion");
         } finally {
             deleteRecursively(compiled.root());
@@ -3545,7 +3538,7 @@ public class CanonicalProjectionParityTest {
                     "[int]", "array"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, "
                     + "[__dealCarrierKeys.n] = 1, [1] = 2147483648}}"),
-                jvmAsyncArrayHost("array(array(java.lang.Long.valueOf(2147483648L)))"),
+                jvmAsyncArrayHost("nested-range-long"),
                 "the out-of-range Long int[][] completion");
         } finally {
             deleteRecursively(compiled.root());
@@ -3571,8 +3564,7 @@ public class CanonicalProjectionParityTest {
                     "int"),
                 luaAsyncArrayHost(
                     "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7, [2] = 2147483648}"),
-                jvmAsyncArrayHost("array(java.lang.Integer.valueOf(7), "
-                    + "java.lang.Long.valueOf(2147483648L))"),
+                jvmAsyncArrayHost("later-range-long"),
                 "the early wrong-kind element before the out-of-range Long "
                     + "string[] completion");
         } finally {

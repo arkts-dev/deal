@@ -26,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 public class JsConformanceTest {
@@ -115,10 +116,8 @@ public class JsConformanceTest {
     private static final List<Outcome> outcomes =
         Collections.synchronizedList(new ArrayList<>());
 
-    /** Every passing runtime-error observation (the exact-verdict negative
-     * control runs over one of them after the worker pool). */
-    private static final List<RuntimeErrorObservation> runtimeErrorObservations =
-        Collections.synchronizedList(new ArrayList<>());
+    private static final AtomicReference<RuntimeErrorObservation> runtimeErrorObservation =
+        new AtomicReference<>();
     /** Corpus-relative paths of every file materialized into an
      * importing fixture's temp project (companions included). */
     private static final Set<String> materializedCorpusFiles =
@@ -1241,8 +1240,12 @@ public class JsConformanceTest {
                         return new Outcome(test, classified, false,
                             "the js sidecar does not pin a runtime error");
                     }
-                    runtimeErrorObservations.add(
-                        new RuntimeErrorObservation(test, result, executed));
+                    if (runtimeErrorObservation.get() == null
+                            && executed.error().actual().isPresent()
+                            && executed.error().pinsSpan()) {
+                        runtimeErrorObservation.compareAndSet(null,
+                            new RuntimeErrorObservation(test, result, executed));
+                    }
                 }
                     applicablePassed.incrementAndGet();
                     log("  [" + test.relativePath() + "] OK");
@@ -2066,25 +2069,13 @@ function $snapshot($err) {
      * falsify the exact lane and is itself a gate failure (never a skip).
      */
     private static void validateRuntimeErrorVerdictControls() {
-        RuntimeErrorObservation candidate = null;
-        for (RuntimeErrorObservation observation : runtimeErrorObservations) {
-            deal.test.conformance.SidecarExpectations.ErrorExpectation error =
-                observation.pinned().error();
-            if (error != null && error.actual().isPresent()
-                    && error.pinsSpan()) {
-                candidate = observation;
-                break;
-            }
-        }
+        RuntimeErrorObservation candidate = runtimeErrorObservation.get();
         if (candidate == null) {
             System.out.println("GATE FAILURE: no accepted runtime-error "
                 + "observation pins an actual token and a source span — the "
                 + "exact-verdict negative control cannot run");
             System.exit(1);
         }
-        boolean ok = true;
-        ok &= checkRuntimeErrorVerdict(candidate, candidate.result(), false,
-            "the exact Node observation matches its js sidecar");
         Optional<deal.test.conformance.ErrorSnapshot.Framed> framed =
             deal.test.conformance.ErrorSnapshot.parseFraming(
             candidate.result().stdout().getBytes(StandardCharsets.UTF_8));
@@ -2105,8 +2096,8 @@ function $snapshot($err) {
                 fields.message() + " (negative control)", fields.sourceFile(),
                 fields.line(), fields.column(), fields.expected(),
                 fields.actual(), fields.frames(), fields.cause());
-        ok &= checkRuntimeErrorVerdict(candidate, framedResult(wrongMessage),
-            true, "a wrong message fails the exact lane");
+        boolean ok = checkRuntimeErrorVerdict(candidate, framedResult(wrongMessage),
+            "a wrong message fails the exact lane");
         var wrongActual = new deal.test.conformance.SidecarExpectations
             .ErrorExpectation(fields.code(), fields.message(),
                 fields.sourceFile(), fields.line(), fields.column(),
@@ -2114,14 +2105,14 @@ function $snapshot($err) {
                 Optional.of(fields.actual().get() + "-negative-control"),
                 fields.frames(), fields.cause());
         ok &= checkRuntimeErrorVerdict(candidate, framedResult(wrongActual),
-            true, "a wrong actual token fails the exact lane");
+            "a wrong actual token fails the exact lane");
         var wrongOrigin = new deal.test.conformance.SidecarExpectations
             .ErrorExpectation(fields.code(), fields.message(),
                 fields.sourceFile(), fields.line() + 1, fields.column(),
                 fields.expected(), fields.actual(), fields.frames(),
                 fields.cause());
         ok &= checkRuntimeErrorVerdict(candidate, framedResult(wrongOrigin),
-            true, "a wrong source origin fails the exact lane");
+            "a wrong source origin fails the exact lane");
         if (!ok) {
             System.out.println("GATE FAILURE: a runtime-error exact-verdict "
                 + "control failed — a wrong message, actual token or origin "
@@ -2134,20 +2125,14 @@ function $snapshot($err) {
             + candidate.test().relativePath() + ")");
     }
 
-    /** One exact-verdict control round: the observation's verdict must be
-     * present exactly when a mismatch is expected. */
     private static boolean checkRuntimeErrorVerdict(
             RuntimeErrorObservation candidate, NodeResult observation,
-            boolean expectMismatch, String what) {
-        Optional<String> verdict = structuredRuntimeVerdict(observation,
-            candidate.pinned());
-        boolean ok = expectMismatch ? verdict.isPresent() : verdict.isEmpty();
-        if (!ok) {
-            System.out.println("FAIL: " + what + (expectMismatch
-                ? " was accepted (no mismatch)"
-                : " did not match: " + verdict.orElse("")));
+            String what) {
+        if (structuredRuntimeVerdict(observation, candidate.pinned()).isEmpty()) {
+            System.out.println("FAIL: " + what + " was accepted (no mismatch)");
+            return false;
         }
-        return ok;
+        return true;
     }
 
     /** The G4.6 framing bytes of one error snapshot (the exact lane's

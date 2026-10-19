@@ -73,117 +73,19 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Default Semantic Serializer Tests (ISSUE-0542) ===|java -ea -cp build deal.test.DefaultSemanticSerializerTest'
   'fg|=== Running Project Lowering Entry Tests (ISSUE-0634) ===|java -ea -cp build deal.test.ProjectLoweringTest'
   'fg|=== Running Body-Invocation Identity Tests (ISSUE-0635) ===|java -ea -cp build deal.test.BodyInvocationIdentityTest'
-  # ISSUE-0751 (the host-visible runtime error transport through
-  # catch/rethrow): an earlier error rethrown through a handler for a
-  # different error keeps its own cause and never gains an invented one —
-  # the three-consumer regression over the one lowering's terminal
-  # snapshot.
   'fg|=== Running Error Rethrow Transport Production Tests (ISSUE-0751) ===|java -ea -cp build deal.test.ErrorRethrowTransportProductionTest'
   'fg|=== Running Production Project Emission Tests (ISSUE-0642) ===|java -ea -cp build deal.test.ProductionProjectEmissionTest'
   'fg|=== Running Production Dispatch and Cutover Acceptance Tests (ISSUE-0643) ===|java -ea -cp build deal.test.ProductionDispatchTest'
-  # ISSUE-0749 (the public LuaJIT/JVM async-export invokers on shared
-  # production artifacts): the one-visible-entry compile plus the
-  # production invoker drives — the pinned value 7, a delayed host async
-  # completion, a typed completion rejection, DEAL errors raised by the
-  # operation and main() with unchanged fields, and initialization/main
-  # exactly once per invocation on both targets.
   'fg|=== Running Async-Export Invoker Production Tests (ISSUE-0749) ===|java -ea -cp build deal.test.AsyncExportInvokerProductionTest'
   'fg|=== Running Host Module Load / JVM Host ABI Surface Tests (ISSUE-0650) ===|java -ea -cp build deal.test.HostModuleLoadEmissionTest'
   'fg|=== Running Cross-Module Call Realization Tests (ISSUE-0654) ===|java -ea -cp build deal.test.CrossModuleCallRealizationTest'
   'fg|=== Running FFI Plan Projection Oracle Tests (ISSUE-0667) ===|java -ea -cp build deal.test.FfiPlanProjectionOracleTest'
   'fg|=== Running Bytes Coverage and Element Contract Tests (ISSUE-0626) ===|java -ea -cp build deal.test.BytesCoverageTest'
-  # ISSUE-0698 (the @jsonable helper operations on the one-lowering
-  # production path; design source dispatched-corpus-production-realization
-  # R3 and the helper contract, luajit-jvm-single-lowering-production-
-  # cutover C1/C2/C4): the family production drive — every fixture of the
-  # family (the sidecar-bearing fixtures discovered from
-  # backend-runtime/jsonable/**, the near-collision and helper-export-keys
-  # structural fixtures, and the pinned compile-error fixture) compiles
-  # through the release-owned
-  # production invocation on LuaJIT and JVM with zero E6005, publishes its
-  # artifact, and executes under the real toolchain with the sidecar
-  # byte-exact (the runtime-ok transcripts and exit codes; the cyclic-table
-  # failure's code/message/span/expected/actual at the raw corpus
-  # coordinates). The helper surface is pinned in the produced unit: exactly
-  # one generated closure and one LoweredBody binding per class helper, one
-  # EXPORT_PUBLISH and one recorded EXTERNAL_ENTRY per helper export, the
-  # same-module call resolving the declaration's generated closure identity
-  # through the landed LoweredBody call shape, the cross-module call bound
-  # through EXPORT_READ plus the closed ExternalFunction SHARED_BODY binding
-  # over the callee's recorded entry, the near-collision identifier changing
-  # no outcome, and a non-@jsonable class gaining no helper. The combined
-  # dependency step runs the oracle over every fixture of the family through
-  # the same one-lowering closure (the runtime-ok success or the pinned
-  # error tuple at the raw
-  # corpus coordinates): each fixture's main runs through its own entry
-  # delegation (the fixture lowered as the entry) exactly once before the
-  # ordered non-main export loop's driver leg, the cross-module helper call
-  # succeeds and the pinned helper JSON failure renders the cycle tuple at
-  # the invoking call expression, so the drive fails if the canonical
-  # failure projection authority is broken. The three-consumer regressions close the walk's
-  # remaining arms: a helper invoked through a function-typed parameter
-  # (f(w) inside the callee body) renders its pinned JSON failure at the
-  # f(w) call expression in the oracle, the LuaJIT artifact, and the JVM
-  # artifact alike; a class instance inside an array nested in a table
-  # field is rejected by all three consumers (the table-content walk stays
-  # JSON-shaped); a nested class's table field spells its keys in
-  # first-insertion order and its int/number leaves by their own variant
-  # (exact text on all three consumers); the nested-class walk has no
-  # fixed JSON depth bound (511- and 1200-link chains both complete with
-  # the exact text through the stack-safe iterative traversal); the
-  # oracle's array executor view stays
-  # live behind a class field's in-place element replacement, append, and
-  # deletion (exact text for replacement and append, outcome parity for
-  # the deleted missing slot); a committed field write on a class instance
-  # held as another class's declared field or as an array element
-  # serializes through the parent's helper call as the committed state
-  # (exact text on all three consumers, including a second parent alias of
-  # the same child identity); a null element in (int | null)[] roundtrips
-  # on all three consumers while the same document stays rejected by
-  # int[]; a read-derived numeric variant carrier serializes at a
-  # declared number field and array element with its own variant's
-  # spelling, the carrier produced by an omitted nested-class default
-  # conforms at its declared number, number | null, and number[] positions
-  # (with its explicit-value control), and an array admitted through a
-  # dynamic table read spells each declared number[] slot by its own
-  # recorded variant - the integer text for an int slot (the reported
-  # LuaJIT defect), the closed decimal spelling for a number slot and for
-  # the mixed array - at the nullable and nested array positions included
-  # (exact text on all three consumers). The exact-text artifact leg is only
-  # credited when the process completes its tested body (exit 0, empty
-  # transcripts, no probe defect, no failure transport), and the
-  # pinned-failure sidecar comparison is covered by negative controls for
-  # unexpected process stdout, an incorrect process exit status, or wrong
-  # stderr; a main-only
-  # control proves the oracle's main leg captures a deliberate main
-  # failure exactly once; and the inconsistent-fact negatives prove that a
-  # missing generated helper export fails the production arm closed with
-  # one E6005 through the producer guard staging nothing (both targets), a
-  # missing recorded callee entry fails the arm closed the same way through
-  # a checker-valid cross-module call to an entry-delegation-owned export,
-  # and a removed EXPORT_PUBLISH publication and a removed recorded
-  # EXTERNAL_ENTRY are each rejected by both production emitters with the
-  # named producer defect.
   'fg|=== Running the @jsonable Helper Production Drive (ISSUE-0698) ===|java -ea -cp build deal.test.JsonableHelperProductionDriveTest'
   'fg|=== Running Closed Composite Terminator Analysis Tests (ISSUE-0712) ===|java -ea -cp build deal.test.CompositeTerminatorAnalysisTest'
   'fg|=== Running the Truncating Int32 Remainder Prelude Tests (ISSUE-0714) ===|java -ea -cp build deal.test.Int32ModTruncPreludeTest'
   'fg|=== Running LuaJIT Chunk Local Bound Tests (ISSUE-0716) ===|java -ea -cp build deal.test.LuaJitChunkLocalBoundTest'
   'fg|=== Running Unreachable Tail Production Tests (ISSUE-0713) ===|java -ea -cp build deal.test.UnreachableTailProductionTest'
   'fg|=== Running Declared-Body Carrier Production Tests (ISSUE-0757, ISSUE-0758) ===|java -ea -cp build deal.test.DeclaredBodyCarrierProductionTest'
-  # ISSUE-0702 (the fail-closed guard retargeting and the live negative-seed
-  # coverage; design source dispatched-corpus-production-realization R8 and
-  # the producer guard contract): the three rule identifiers and the
-  # HOST_MODULE_IMPORT/FFI_PROVIDER_GAP detail tokens stay landed with the
-  # closed BoundaryKind set (27 members, the two C-FFI reserved names); one
-  # live inconsistent/uncovered seed per guard (the stripped cross-module
-  # callee and the stripped imported-class owner on both production targets,
-  # and the corrupted extern-C provider fact on the LuaJIT extern-C emission)
-  # fails with exactly one named E6005, stages nothing, and leaves the
-  # previous artifact set byte-identical; and the realized bytes, @jsonable
-  # helper (same- and cross-module), residual local-body, capture, and
-  # transfer probes compile through the release-owned production invocation,
-  # execute under the real luajit and JVM toolchains, and agree with the
-  # semantic oracle's terminal and console-effect transcripts (status, stdout,
-  # and empty stderr asserted against the oracle).
   'fg|=== Running Fail-Closed Guard Retargeting Tests (ISSUE-0702) ===|java -ea -cp build deal.test.FailClosedGuardRetargetingTest'
 )
