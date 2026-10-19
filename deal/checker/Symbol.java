@@ -25,18 +25,18 @@ public sealed interface Symbol
     /**
      * A local variable or parameter, carrying its declared type and —
      * for a class-typed binding — the exact {@link ClassSymbol} its
-     * annotation resolved to. Two same-named class declarations in one
-     * module share the canonical identity (module + name) but stay
-     * distinct declarations; the assignment gate uses the recorded
-     * declaration to reject a value that crosses them (ISSUE-0717
-     * defect snippet 47).
+     * annotation resolved to. Two same-named class declarations of one
+     * canonical identity (a same-module nested-shadowing pair, or a
+     * harness-synthesized carrier) stay distinct declarations; the
+     * assignment gate uses the recorded declaration to reject a value
+     * that crosses them (ISSUE-0717 defect snippet 47).
      *
      * <p>{@code declaredType} is the declaration's own annotation node
      * (never a reconstructed spelling): a qualified class annotation is
      * the exact defining provider's spelling, so an assignment value
      * constructed for this binding keeps that provider's declaration
-     * even when an identity-equal sibling module declares the same
-     * class name (GitHub #6).</p>
+     * even when a same-named sibling module declares the same class name
+     * (GitHub #6).</p>
      */
     record VariableSymbol(String name, Type type, boolean isParameter,
                           ClassSymbol declaredClass, TypeNode declaredType)
@@ -50,14 +50,13 @@ public sealed interface Symbol
     /**
      * A function declaration, carrying its function type and — for a
      * function the frontend walked — its declared parameter type
-     * annotations and the module path declaring it. Two same-named
-     * classes of sibling modules in one directory share one canonical
-     * class identity, so a call argument's construction context resolves
-     * the exact declaring provider of a class-typed parameter through
-     * the parameter's own declared annotation and the callee's declaring
-     * module: never an identity-first match or a first alias. Synthetic
-     * symbols (intrinsics, generated helpers, retained harnesses) carry
-     * no declaration surface and keep the identity-keyed route.
+     * annotations and the module path declaring it. A call argument's
+     * construction context resolves the exact declaring provider of a
+     * class-typed parameter through the parameter's own declared
+     * annotation and the callee's declaring module: never an identity-first
+     * match or a first alias. Synthetic symbols (intrinsics, generated
+     * helpers, retained harnesses) carry no declaration surface and keep
+     * the identity-keyed route.
      */
     record FunctionSymbol(String name, Type.Func funcType,
                           List<TypeNode> paramTypeNodes,
@@ -92,12 +91,11 @@ public sealed interface Symbol
      * (E2006 vs E2007).
      *
      * <p>{@code classSymbols} carries the imported module's own declared
-     * class symbols by declared name: two same-named classes of sibling
-     * modules in one directory share one canonical class identity, so a
-     * qualified annotation's exact declaration — never an identity-first
-     * match or a first alias — resolves through the import's own symbol
-     * surface. An empty map (declaration modules, unsupported resolvers)
-     * keeps the identity-keyed route.</p>
+     * class symbols by declared name: a qualified annotation's exact
+     * declaration — never an identity-first match or a first alias —
+     * resolves through the import's own symbol surface. An empty map
+     * (declaration modules, unsupported resolvers) keeps the
+     * identity-keyed route.</p>
      *
      * <p>{@code functionSymbols} carries the imported module's own
      * declared function symbols the same way: a call argument's

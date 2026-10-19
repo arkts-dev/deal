@@ -72,7 +72,7 @@ public final class DeclarationSemanticAnalyzer {
      * module path (ISSUE-0809 exact provider carriage): an extern-C
      * declaration default whose class-valued annotation resolves in a
      * module this declaration reaches through its own imports resolves
-     * that module's snapshot, never an identity-equal sibling.
+     * that module's snapshot, never a same-named sibling.
      */
     public static Result analyze(DefaultDeclarationModuleInput input,
                                  ModuleIdentityAssembly identityAssembly,

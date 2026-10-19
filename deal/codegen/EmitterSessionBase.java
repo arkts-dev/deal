@@ -81,11 +81,12 @@ public abstract class EmitterSessionBase {
     protected final Map<ClassId, ModuleId> jsonPlanOwners = new LinkedHashMap<>();
     /**
      * The generated carrier classes' layouts keyed by the canonical class
-     * identity: two same-named declarations of sibling modules in one
-     * directory share one identity but may declare different fields, so
-     * the one carrier of the identity carries the union of every
-     * declaration's field names (first-seen order) — a construction site
-     * of either declaration always finds its own fields' slots.
+     * identity: two declarations of one identity (a harness-synthesized
+     * pair; a resolved source file is its own identity) may declare
+     * different fields, so the one carrier of the identity carries the
+     * union of every declaration's field names (first-seen order) — a
+     * construction site of either declaration always finds its own
+     * fields' slots.
      */
     protected final Map<ClassId, ClassLayout> carrierLayouts = new LinkedHashMap<>();
     /** Each block id to its owning unit's membership table. */
@@ -681,10 +682,10 @@ public abstract class EmitterSessionBase {
     /**
      * Whether one unit's own declaration of a canonical class identity is
      * plan-bearing (the unit generates the {@code JSON_FROM_CLASS} /
-     * {@code JSON_TO_CLASS} helper ops of the identity): two same-named
-     * declarations of sibling modules in one directory share one canonical
-     * identity, and the generated plan table carries exactly one plan
-     * under the key — the unique plan-bearing declaration when one exists.
+     * {@code JSON_TO_CLASS} helper ops of the identity): a canonical
+     * identity can carry a second declaration only in a harness-synthesized
+     * carrier, and the generated plan table carries exactly one plan under
+     * the key — the unique plan-bearing declaration when one exists.
      */
     protected static boolean jsonPlanBearing(LoweredModuleUnit unit,
                                              ClassId classId) {

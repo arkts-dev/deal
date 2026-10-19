@@ -1731,7 +1731,7 @@ public final class CompilationOrchestrator {
         // The planned class-field defaults record their own contextual
         // class-literal provider aliases (the field's declared annotation
         // names the exact declaring provider): the one lowering consumes
-        // them too, so a same-directory sibling pair's default
+        // them too, so a same-spelled sibling declaration's default
         // construction names its exact provider.
         for (Map.Entry<String, List<PlannedDefaultClass>> entry
                 : plannedDefaultClasses.entrySet()) {
@@ -2594,9 +2594,10 @@ public final class CompilationOrchestrator {
         /**
          * The imported module's own declared class symbols by name (the
          * exact declaring occurrence route): a qualified annotation's
-         * provider resolves through the alias's own symbol surface, so
-         * two same-named classes of sibling modules in one directory —
-         * one canonical class identity — stay two declarations. A
+         * provider resolves through the alias's own symbol surface, which
+         * names the declaration without consulting an identity key (the
+         * canonical identity already separates two sibling files, and a
+         * harness-shared identity has no identity-keyed answer). A
          * declaration module carries no checked symbol table: its classes
          * resolve through the identity-keyed declaration route.
          */
@@ -2624,9 +2625,9 @@ public final class CompilationOrchestrator {
          * The imported module's own declared function symbols by name (the
          * exact callee-declaration route): a call argument's construction
          * context resolves the callee parameter's own declared class
-         * annotation in the callee's declaring module, so two same-named
-         * classes of sibling modules in one directory stay two
-         * declarations. A declaration module carries no checked symbol
+         * annotation in the callee's declaring module, which names the
+         * declaration a same-spelled carrier of a shared identity cannot
+         * disambiguate. A declaration module carries no checked symbol
          * table: its functions resolve through the identity-keyed route.
          */
         @Override
@@ -2830,9 +2831,10 @@ public final class CompilationOrchestrator {
                 if (info.symbolTable != null) {
                     Symbol sym = info.symbolTable.resolve(className);
                     if (sym instanceof Symbol.ClassSymbol cs) return cs;
-                    // Two files in one directory share the module
-                    // identity; the declaring file's table may live in a
-                    // later module — keep scanning.
+                    // The identity names the declaring file, so a valid
+                    // project carries one declaration per identity; a
+                    // harness-shared identity can still reach a later
+                    // module's table — keep scanning.
                     continue;
                 }
                 // Host declaration synthesis (the modulePath-keyed path's
@@ -2854,8 +2856,9 @@ public final class CompilationOrchestrator {
                                 cd.name()));
                     }
                 }
-                // Two files in one directory share the module identity;
-                // keep scanning for the declaring module.
+                // The identity names the declaring file; a harness-shared
+                // identity can still be declared in a later module — keep
+                // scanning.
                 continue;
             }
             return null;
@@ -2924,10 +2927,12 @@ public final class CompilationOrchestrator {
          * supplied declaring module's own scope: an implementation
          * module's checked symbol table resolves the local classes and
          * its import aliases' class surfaces, a declaration module's
-         * synthesized resolver the same. Two same-named classes of
-         * sibling modules in one directory share one canonical identity,
-         * so the annotation's own declared symbol — never an
-         * identity-keyed or textual lookup — selects the declaration.
+         * synthesized resolver the same. The canonical identity names the
+         * defining file, so a valid project has one declaration per
+         * identity; a same-module shadowing pair or a harness-shared
+         * identity has no single identity-keyed answer, so the
+         * annotation's own declared symbol — never an identity-keyed or
+         * textual lookup — selects the declaration.
          */
         @Override
         public Symbol.ClassSymbol resolveTypeNodeClassSymbolInModule(

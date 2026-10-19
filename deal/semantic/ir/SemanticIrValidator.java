@@ -965,8 +965,9 @@ public final class SemanticIrValidator {
                 classEntry.classId(), classEntry, layout, factoryOpId, result);
             accumulated.put(classEntry.classId(), facts);
             // The exact declared occurrence's facts: the construction entry
-            // is unique per declaration, so two same-named siblings sharing
-            // one canonical identity never overwrite each other here.
+            // is unique per declaration, so two declarations of one
+            // canonical identity (a harness-synthesized pair) never
+            // overwrite each other here.
             providerAccumulated.put(classEntry.constructionEntry(), facts);
         }
     }

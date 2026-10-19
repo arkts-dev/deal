@@ -112,7 +112,7 @@ final class DefaultIrRecorder {
      * module path (empty for the retained project-less constructors):
      * the exact checked declaration that lives in a module this walk
      * reaches only through an imported declaration resolves its
-     * provider here — never through an identity-equal sibling import.
+     * provider here — never through a same-named sibling import.
      */
     private final Map<String, DefaultPlanImport> projectProviders;
 
@@ -176,7 +176,7 @@ final class DefaultIrRecorder {
      * literal), pushed around every walked function body and function
      * expression of this module and restored on exit: a class context
      * arriving through a declared signature is exact even when the
-     * demanded name is exported by identity-equal siblings. Null
+     * demanded name is exported by same-named siblings. Null
      * outside a function body or when the annotation names no import.
      */
     private DefaultPlanImport enclosingReturnProvider = null;
@@ -231,8 +231,8 @@ final class DefaultIrRecorder {
      * module path. A construction whose exact checked declaration lives
      * in a module this walk does not import directly — the declared
      * field/parameter/return type of an imported declaration — resolves
-     * that provider through this index, so the same-directory sibling
-     * that shares the canonical identity is never selected (ISSUE-0809
+     * that provider through this index, so a same-spelled declaration of
+     * the identity (a harness-shared pair) is never selected (ISSUE-0809
      * exact provider carriage). The project-less constructors above
      * keep the direct-import/routing behavior for retained harnesses.
      */
@@ -381,7 +381,7 @@ final class DefaultIrRecorder {
                 for (ExpressionNode element : arr.elements()) {
                     // The elements share the array's expected type: a
                     // class-typed element keeps the array's provider
-                    // provenance (an identity-equal sibling must never
+                    // provenance (a same-named sibling must never
                     // capture the construction).
                     elements.add(recordExpression(element, scope,
                         List.of(), contextProvider, evaluatorScope));
@@ -746,7 +746,7 @@ final class DefaultIrRecorder {
      * checked symbol surface names the provider module, whose planning
      * snapshot the project-wide provider index carries. Null when the
      * declaring module's surface is absent or the alias names no class
-     * declaration (never an identity-equal sibling selection).
+     * declaration (never a same-named sibling selection).
      */
     private DefaultPlanImport qualifiedProvider(QualifiedType qualified,
             DefaultPlanImport owner) {
@@ -1058,7 +1058,7 @@ final class DefaultIrRecorder {
                     // inferred declaration inherits the resolved route
                     // of its initializer expression, so the binding
                     // keeps that provider for its later assignments
-                    // (never the first identity-equal export).
+                    // (never the first same-named export).
                     DefaultPlanImport declaredProvider = vd.typeAnnotation()
                         .map(typeNode -> providerForTypeNode(typeNode, null))
                         .orElse(null);
@@ -1095,7 +1095,7 @@ final class DefaultIrRecorder {
                 List<DefaultIrNode> children = new ArrayList<>();
                 // The enclosing function's declared return type is the
                 // returned expression's checked context: its provider
-                // provenance disambiguates identity-equal siblings.
+                // provenance disambiguates same-named siblings.
                 rs.expr().ifPresent(expr -> children.add(
                     recordExpression(expr, effectiveScope, List.of(),
                         enclosingReturnProvider, evaluatorScope)));
@@ -1325,7 +1325,7 @@ final class DefaultIrRecorder {
      *
      * <p>The public module identity names the defining file, so valid
      * source gives each declaration its own identity; a harness-shared
-     * (synthetic) identity can still make an identity-equality match
+     * (synthetic) identity can still make an identity match
      * ambiguous, and a name-bearing sibling program is not proof of
      * ownership (a sibling's non-exported class can carry the demanded
      * name without being reachable under it). The provider is therefore
@@ -1346,7 +1346,7 @@ final class DefaultIrRecorder {
      *       whose export surface carries the class identity — the only
      *       route by which the checker resolves a foreign class for an
      *       importer;</li>
-     *   <li>otherwise the first identity-equal import (the prior
+     *   <li>otherwise the first identity-matching import (the prior
      *       selection), which the serializer's exact-declaration check
      *       still fails closed at when the selected module declares no
      *       such class (never a silent fallback, never another class's
@@ -1378,12 +1378,13 @@ final class DefaultIrRecorder {
             if (!target.equals(providerIdentity)) {
                 continue;
             }
-            // An identity-equal import that carries no declaration of
-            // the demanded class is never selected: two sibling modules
-            // in one directory share the canonical identity, so the
-            // module-identity match alone proves no ownership (the
-            // checker's recorded exact declaration and the qualified
-            // alias/export surface resolve the provider instead).
+            // An identity-matching import that carries no declaration of
+            // the demanded class is never selected: the module-identity
+            // match alone proves no ownership (a harness-shared identity
+            // can be spelled by an import that declares nothing under the
+            // name; the checker's recorded exact declaration and the
+            // qualified alias/export surface resolve the provider
+            // instead).
             if (identityMatch == null
                     && AstDeclarations.findClassDeclaration(
                         provider.program(), cls.name()) != null) {
@@ -1441,9 +1442,9 @@ final class DefaultIrRecorder {
         // A declaration module this walk reaches only through an
         // imported declaration (the declared field/parameter/return
         // type of an imported class or function): the whole-project
-        // provider index carries that module's own snapshot, so the
-        // same-directory sibling that shares the canonical identity is
-        // never selected in its place. An unmapped module keeps the
+        // provider index carries that module's own snapshot, so a
+        // same-spelled declaration of the identity (a harness-shared pair)
+        // is never selected in its place. An unmapped module keeps the
         // no-provider result (the one lowering resolves the recorded
         // declaration through the project interface index).
         DefaultPlanImport project = projectProvider(decl.modulePath());
@@ -1487,8 +1488,8 @@ final class DefaultIrRecorder {
     /**
      * True when one import is the declared owner of the demanded class:
      * its program declares the class name and its module classification
-     * carries the class's module identity (the directory-keyed identity
-     * alone is ambiguous across sibling modules).
+     * carries the class's module identity (the identity names the
+     * defining file; a harness-shared identity alone is ambiguous).
      */
     private boolean ownsClass(DefaultPlanImport provider, Type.Class cls,
             CanonicalModuleIdentity classIdentity) {
@@ -1525,7 +1526,7 @@ final class DefaultIrRecorder {
      * The provider a resolved variable binding names for a constructed
      * value: the declaration's own annotation when it carries one (a
      * qualified class spelling names the defining provider directly, so
-     * an identity-equal sibling module and the import order never
+     * a same-named sibling module and the import order never
      * capture the literal), else the route recorded for the binding when
      * its declaration was walked (an inferred binding inherits the
      * resolved provenance of its initializer expression).
@@ -1568,7 +1569,7 @@ final class DefaultIrRecorder {
         // declaring provider (a binding declared as ir.Wrap, an inferred
         // binding initialized from an ir route, or a member/index read of
         // one): that provider's program carries the member's field
-        // declaration, so an identity-equal sibling module and the import
+        // declaration, so a same-named sibling module and the import
         // order never capture the assigned literal.
         DefaultPlanImport ownerProvider = expressionContextProvider(
             mae.object(), scope);

@@ -156,10 +156,10 @@ public final class CheckedProjectBuilder {
         // in dependency order, then exported classes in declaration
         // (source) order, role CLASS_FACTORY, synthetic ordinal 0. The
         // allocation is per declared class occurrence, keyed by the
-        // declaring module: two same-named classes of distinct sibling
-        // modules in one directory share one canonical ClassId but stay
-        // two declarations with their own construction entry (the one
-        // owner binding of each module's factory registry).
+        // declaring module: two declarations of one canonical ClassId (a
+        // harness-synthesized pair) stay two declarations with their own
+        // construction entry (the one owner binding of each module's
+        // factory registry).
         List<ModuleId> moduleIds = facts.stream().map(ModuleFact::moduleId).toList();
         SemanticIdAllocator allocator = SemanticIdAllocator.over(moduleIds);
         Map<ModuleId, Map<ClassId, ClassFactoryId>> constructionEntries =

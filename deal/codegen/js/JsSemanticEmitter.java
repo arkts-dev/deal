@@ -200,12 +200,12 @@ public final class JsSemanticEmitter {
         // ----- Project class facts (validated layouts/owners/export surfaces) -----
         /**
          * Every declaration's layout of one canonical class identity, in
-         * project order. Two same-named declarations of sibling modules in
-         * one directory share one canonical identity but may declare
-         * different fields, so no identity-keyed single layout is a
-         * declaration: a construction, factory or JSON helper resolves the
-         * layout of its own declaring unit (or of the factory/registration
-         * owner it records).
+         * project order. Two declarations of one identity (a
+         * harness-synthesized pair; a resolved source file is its own
+         * identity) may declare different fields, so no identity-keyed
+         * single layout is a declaration: a construction, factory or JSON
+         * helper resolves the layout of its own declaring unit (or of the
+         * factory/registration owner it records).
          */
         private final Map<ClassId, List<ClassLayout>> declaredLayouts =
             new LinkedHashMap<>();
@@ -520,8 +520,8 @@ public final class JsSemanticEmitter {
          * interface index's exported-class entries with their recorded
          * construction entries, the generated JSON-helper declarations per
          * unit, and each class field's {@code CLASS_DEFAULT} child. A
-         * canonical identity may cover same-named declarations of sibling
-         * modules in one directory with different fields, so the declared
+         * canonical identity may cover two declarations (a
+         * harness-synthesized pair) with different fields, so the declared
          * layouts stay per declaration and the cross-module JSON surface
          * resolves the plan-bearing declaration. These are the structural
          * facts the class arms render from; no class fact is rediscovered

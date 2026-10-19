@@ -1274,11 +1274,11 @@ public final class SemanticLowerer {
         Map<ClassId, SharedFactoryFacts> inProjectFactoryFacts =
             new LinkedHashMap<>();
         // The provider-keyed view of the same accumulated facts (the
-        // declared class occurrence's construction entry to its facts):
-        // two same-named classes of distinct sibling modules in one
-        // directory share one canonical ClassId, so the recorded
-        // construction entry — never the identity-keyed first match —
-        // selects the exact declaring provider of a construction.
+        // declared class occurrence's construction entry to its facts): a
+        // canonical ClassId can carry two declarations only in a
+        // harness-synthesized carrier, so the recorded construction entry
+        // — never the identity-keyed first match — selects the exact
+        // declaring provider of a construction.
         Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
             inProjectProviderFacts = new LinkedHashMap<>();
         Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
@@ -1372,11 +1372,12 @@ public final class SemanticLowerer {
 
     /**
      * The canonical class identities declared by more than one module of
-     * the checked project (the same-directory sibling pair): a field
-     * operation or generated JSON link of such an identity must select the
-     * exact declaring declaration through its recorded provider, never a
-     * first alias, a unit-local mask or an identity-keyed first match — an
-     * unrecorded such link fails closed.
+     * the checked project (a harness-synthesized pair; a resolved source
+     * file is its own identity): a field operation or generated JSON link
+     * of such an identity must select the exact declaring declaration
+     * through its recorded provider, never a first alias, a unit-local mask
+     * or an identity-keyed first match — an unrecorded such link fails
+     * closed.
      */
     private static java.util.Set<ClassId> ambiguousProjectClassIds(
             CheckedProjectInput checkedProject) {
@@ -1691,7 +1692,7 @@ public final class SemanticLowerer {
             accumulated.put(classEntry.classId(), facts);
             // The exact declaring occurrence's facts: the construction
             // entry is unique per declared class occurrence, so two
-            // same-named siblings never overwrite each other here.
+            // declarations of one identity never overwrite each other here.
             providerAccumulated.put(classEntry.constructionEntry(), facts);
         }
     }
@@ -1699,9 +1700,9 @@ public final class SemanticLowerer {
     /**
      * The declared-class construction entries of the project interface
      * index, keyed by declaring module then canonical class identity: the
-     * exact occurrence a recorded provider alias selects. Two same-named
-     * classes of distinct sibling modules in one directory share one
-     * canonical class identity but hold distinct entries.
+     * exact occurrence a recorded provider alias selects. Two declarations
+     * of one canonical class identity (a harness-synthesized pair) hold
+     * distinct entries.
      */
     private static Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>>
             constructionEntriesOf(deal.semantic.ir.ProjectInterfaceIndex index) {
@@ -1778,8 +1779,8 @@ public final class SemanticLowerer {
      * The composed per-module production admission over the supplied
      * provider-keyed shared-factory facts: the recorded construction
      * entry of a {@code CLASS_NEW(SHARED_FACTORY)} selects the exact
-     * declaring provider when two same-named classes of sibling modules
-     * share one canonical class identity.
+     * declaring provider when one canonical class identity carries more
+     * than one declaration (the harness-synthesized pair).
      */
     public static Optional<CompilerDiagnostic> validateProjectUnit(
             LoweredModuleUnit unit,
@@ -2810,10 +2811,10 @@ public final class SemanticLowerer {
          * project closure (declared class occurrence's construction entry
          * to its facts) and the index's declared-class construction
          * entries keyed by declaring module then canonical class identity:
-         * two same-named classes of distinct sibling modules in one
-         * directory share one canonical class identity, so the recorded
-         * provider alias — never the identity-keyed first match — selects
-         * the exact declaring provider of a construction.
+         * a canonical class identity can carry two declarations only in a
+         * harness-synthesized carrier, so the recorded provider alias —
+         * never the identity-keyed first match — selects the exact
+         * declaring provider of a construction.
          */
         private Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
             providerFactoryFacts = Map.of();
@@ -2822,10 +2823,11 @@ public final class SemanticLowerer {
         private Map<DiagnosticRange, String> recordedClassLiteralProviders = Map.of();
         /**
          * The canonical class identities declared by more than one module
-         * of the whole project (the same-directory sibling pair): a field
-         * operation or generated JSON link of such an identity without a
-         * recorded exact declaring provider fails closed — never a first
-         * alias, a unit-local mask or an identity-keyed first match.
+         * of the whole project (a harness-synthesized pair; a resolved
+         * source file is its own identity): a field operation or generated
+         * JSON link of such an identity without a recorded exact declaring
+         * provider fails closed — never a first alias, a unit-local mask or
+         * an identity-keyed first match.
          */
         private java.util.Set<ClassId> projectAmbiguousClassIds =
             java.util.Set.of();
@@ -5355,8 +5357,8 @@ public final class SemanticLowerer {
         /**
          * The fail-closed rejection of a generated JSON link whose nested
          * class identity carries more than one plan-bearing
-         * ({@code @jsonable}) declaration in the project (the
-         * same-directory sibling pair): the emitted plan table is keyed by
+         * ({@code @jsonable}) declaration in the project (a
+         * harness-synthesized pair): the emitted plan table is keyed by
          * the canonical class identity, so two generated plans cannot
          * select one — a named E6005 with no partial project, never a first
          * alias or a sibling's plan. An identity whose only plan-bearing
@@ -5669,11 +5671,11 @@ public final class SemanticLowerer {
             // literal's own construction context (the enclosing
             // annotation's declaration, the callee parameter's declared
             // provider, or the declared return annotation's provider)
-            // names the declaration the literal was laid out by, so two
-            // same-named classes of sibling modules in one directory —
-            // one canonical class identity — never collapse into the
-            // unit-local layout or a first alias. The compiler-owned
-            // builtin Error class carries the builtin synthesis as its
+            // names the declaration the literal was laid out by, so a
+            // same-named carrier of the same identity (a harness-synthesized
+            // pair) never collapses into the unit-local layout or a first
+            // alias. The compiler-owned builtin Error class carries the
+            // builtin synthesis as its
             // symbol and constructs through its registration seed
             // (BUILTIN_DEFAULTS), never through a module declaration.
             Symbol.ClassSymbol exact = ClassId.ERROR.equals(classId) ? null
@@ -5698,7 +5700,7 @@ public final class SemanticLowerer {
                     // The context names another module's declaration: only
                     // that declaring occurrence's registered construction
                     // entry and shared facts construct it, never the
-                    // unit-local mask of an identity-equal sibling.
+                    // unit-local mask of a same-named sibling.
                     deal.semantic.ir.ClassFactoryId entry =
                         providerEntryOf(declaring, classId);
                     sharedFacts = entry == null ? null
@@ -8857,10 +8859,10 @@ public final class SemanticLowerer {
             deal.semantic.ir.ClassFactoryId providerRef = null;
             if (classCore) {
                 // The exact declaring provider of the receiver's checked
-                // declaration (a same-directory sibling pair shares one
-                // canonical class identity): the recorded declaration's
-                // module selects the provider's registered facts, never the
-                // identity-keyed first match and never a unit-local mask.
+                // declaration (a harness-synthesized identity can carry two
+                // declarations): the recorded declaration's module selects
+                // the provider's registered facts, never the identity-keyed
+                // first match and never a unit-local mask.
                 FieldReceiverResolution resolution = resolveFieldReceiver(
                     access.object(), classId, "class field write '" + access.field() + "'",
                     access.span());
@@ -9090,9 +9092,9 @@ public final class SemanticLowerer {
             deal.semantic.ir.ClassFactoryId providerRef = null;
             if (classCore) {
                 // The exact declaring provider of the receiver's checked
-                // declaration (the same-directory sibling pair shares one
-                // canonical class identity): the required/optional decision
-                // belongs to the declaring declaration only.
+                // declaration (a harness-synthesized identity can carry two
+                // declarations): the required/optional decision belongs to
+                // the declaring declaration only.
                 providerRef = resolveFieldReceiver(access.object(), classId,
                     "class field delete '" + access.field() + "'",
                     access.span()).providerRef();
@@ -9468,9 +9470,9 @@ public final class SemanticLowerer {
         /**
          * Whether one canonical class identity carries more than one
          * declaration in the project or among the declarations visible to
-         * this unit. Two same-named classes of sibling modules in one
-         * directory share one canonical identity, so such an identity has
-         * no single layout and no single provider fact.
+         * this unit. A harness-synthesized identity can still name two
+         * declarations, so such an identity has no single layout and no
+         * single provider fact.
          */
         private boolean ambiguousFieldIdentity(ClassId classId) {
             if (projectAmbiguousClassIds.contains(classId)) {
@@ -13740,8 +13742,8 @@ public final class SemanticLowerer {
                 // declaration: the read's declared result descriptor comes
                 // from the checker's exact declaration, and the recorded
                 // provider reference keeps the field link coherent with the
-                // declaring declaration's layout (a same-directory sibling
-                // pair shares one canonical class identity).
+                // declaring declaration's layout (a harness-synthesized
+                // identity can still name two declarations).
                 providerRef = resolveFieldReceiver(access.object(), classId,
                     "class field read '" + access.field() + "'",
                     access.span()).providerRef();

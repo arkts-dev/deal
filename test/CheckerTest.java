@@ -4338,9 +4338,10 @@ public class CheckerTest {
     /**
      * A value whose checked class declaration binds one defining provider
      * never retags to an expected declaration of another provider
-     * (ISSUE-0809 review cycle 2): the canonical public identity omits
-     * the defining file, so an imported {@code Other.Point} and a local
-     * {@code Point} are one canonical identity and two declarations. Every
+     * (ISSUE-0809 review cycle 2): the harness synthesizes one canonical
+     * identity for an imported {@code Other.Point} and a local
+     * {@code Point} (valid source gives each defining file its own
+     * identity), so the pair is one identity and two declarations. Every
      * assignment boundary — declaration initialization, assignment, call
      * argument, return, array element, class-literal field and nullable
      * target — names the crossing deterministically (E3019) instead of

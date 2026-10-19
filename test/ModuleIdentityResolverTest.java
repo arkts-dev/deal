@@ -730,8 +730,9 @@ public final class ModuleIdentityResolverTest {
 
         check(ModuleIdentityResolver.isRepresentableRelativeModuleComponents(
                 List.of()),
-            "an empty relative module path (file directly in its root) is"
-                + " representable");
+            "an empty relative component list is representable (the"
+                + " synthetic/harness form only: a resolved source file always"
+                + " contributes its own name)");
         check(ModuleIdentityResolver.isRepresentableRelativeModuleComponents(
                 List.of("a", "b")),
             "ordinary relative components are representable");

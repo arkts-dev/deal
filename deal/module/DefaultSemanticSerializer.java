@@ -153,7 +153,7 @@ public final class DefaultSemanticSerializer {
      * construction whose exact checked declaration lives in a module the
      * consuming unit reaches only through an imported declaration
      * resolves that module's snapshot for its provider digest, never an
-     * identity-equal sibling import.
+     * same-named sibling import.
      */
     public static Result serialize(
             Map<String, DefaultSerializerModuleInput> modules,
@@ -270,7 +270,7 @@ public final class DefaultSemanticSerializer {
          * Every resolved module's own planning snapshot, keyed by its
          * dotted module path: the exact declaration a function body
          * constructs through an imported declaration resolves its
-         * provider here (never an identity-equal sibling import).
+         * provider here (never a same-named sibling import).
          */
         private final Map<String, DefaultPlanImport> projectProviders;
 

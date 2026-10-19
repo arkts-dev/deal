@@ -437,6 +437,17 @@ public class CanonicalProjectionParityTest {
         mainEntry("classes/same-name-sibling-json-helper-crossing"),
         mainEntry("classes/same-name-sibling-different-name-crossing"));
 
+    /**
+     * The runtime-ok class-identity controls with a corpus pin: the
+     * fixtures whose sidecar pins a successful execution rather than an
+     * error arm. Every claimed production backend executes the fixture's
+     * own terminal, so a correct-provider value a backend rejected,
+     * mis-tagged or dropped fails here instead of passing the error-only
+     * fixtures (ISSUE-0847 review cycle 1, finding 2).
+     */
+    private static final List<Case> RUNTIME_OK = List.of(
+        mainEntry("classes/same-name-sibling-crossing-controls"));
+
     /** The host-boundary families with a corpus pin. */
     private static final List<Case> HOST_FAMILIES = List.of(
         host("host-abi/host-bytes-param-mismatch-e8010",
@@ -6975,17 +6986,7 @@ public class CanonicalProjectionParityTest {
     private static String luaArtifactOutput(Compiled compiled,
             Map<String, String> hostOverrides, String probeSource) throws Exception {
         Path out = compiled.root().resolve("out");
-        for (String stem : compiled.hostStems()) {
-            Path host = out.resolve("host/" + stem + ".lua");
-            Files.createDirectories(host.getParent());
-            String override = hostOverrides.get(stem);
-            if (override != null) {
-                Files.writeString(host, override, StandardCharsets.UTF_8);
-            } else {
-                Files.copy(Path.of("test", "conformance", "host-fixtures",
-                    stem + ".lua"), host, StandardCopyOption.REPLACE_EXISTING);
-            }
-        }
+        stageLuaHosts(compiled, hostOverrides, out);
         Files.writeString(out.resolve("probe.lua"), probeSource,
             StandardCharsets.UTF_8);
         BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
@@ -6999,6 +7000,27 @@ public class CanonicalProjectionParityTest {
         check(exit == 0, compiled.spec().what() + " (luajit): the probe runs: exit="
             + exit + " output=" + diagnostics);
         return output;
+    }
+
+    /**
+     * Stages the fixture's host implementations beside the LuaJIT
+     * production artifact ({@code out/host/<stem>.lua}): the artifact's
+     * {@code load_host} reads them from the deployed tree, so every LuaJIT
+     * drive stages the same corpus fixtures before running.
+     */
+    private static void stageLuaHosts(Compiled compiled,
+            Map<String, String> hostOverrides, Path out) throws Exception {
+        for (String stem : compiled.hostStems()) {
+            Path host = out.resolve("host/" + stem + ".lua");
+            Files.createDirectories(host.getParent());
+            String override = hostOverrides.get(stem);
+            if (override != null) {
+                Files.writeString(host, override, StandardCharsets.UTF_8);
+            } else {
+                Files.copy(Path.of("test", "conformance", "host-fixtures",
+                    stem + ".lua"), host, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
     }
 
     /** Runs the LuaJIT production artifact and captures its failure tuple. */
@@ -7697,6 +7719,167 @@ public class CanonicalProjectionParityTest {
             new byte[] { 0x6F, 0x6B }),
             "the JVM host carrier selector admits the valid byte carrier");
 
+    }
+
+    // =========================================================================
+    // 3. The same-name sibling identity controls at the runtime-ok terminals
+    // =========================================================================
+
+    /** One executed production artifact's own terminal result. */
+    private record ArtifactTerminal(int exitCode, String stdout, String stderr) {
+    }
+
+    /**
+     * The runtime-ok class-identity controls (ISSUE-0847 acceptance
+     * criterion 3): the fixture's own three-backend claim is exercised on
+     * the LuaJIT and JVM production artifacts — Node is executed by the JS
+     * lane ({@code JsConformanceTest}) — by running each artifact's
+     * production terminal and comparing its exit code and both streams to
+     * the sidecar byte-exact. The control's values are only reachable when
+     * each declaration keeps its own atom: a rejected correct-provider
+     * read, an equivalent import spelling that disagreed, a mis-tagged
+     * array/nullable/function/class-field carrier or a JSON helper that
+     * resolved the other declaration's plan fails the run.
+     */
+    private static void testRuntimeOkIdentityControls() throws Exception {
+        System.out.println("-- the same-name sibling identity controls: the "
+            + "runtime-ok fixture executes at the LuaJIT and JVM production "
+            + "terminals --");
+        for (Case spec : RUNTIME_OK) {
+            safely(spec.what(), () -> driveRuntimeOkCase(spec));
+        }
+    }
+
+    private static void driveRuntimeOkCase(Case spec) throws Exception {
+        Compiled compiled = compile(spec);
+        try {
+            SidecarExpectations.RuntimeExpectation.Executed lua =
+                runtimeOkPin(spec, "luajit");
+            SidecarExpectations.RuntimeExpectation.Executed jvm =
+                runtimeOkPin(spec, "jvm");
+            if (lua != null) {
+                assertTerminal(luaArtifactTerminal(compiled), lua, spec, "luajit");
+            }
+            if (jvm != null) {
+                assertTerminal(jvmArtifactTerminal(compiled), jvm, spec, "jvm");
+            }
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The sidecar's executed expectation of one backend: the pinned
+     * runtime-ok mode, exit code and transcript. A sidecar that pins an
+     * error or a compile rejection for this fixture is a harness-pin
+     * defect, never a runtime-ok control.
+     */
+    private static SidecarExpectations.RuntimeExpectation.Executed runtimeOkPin(
+            Case spec, String backend) throws Exception {
+        SidecarExpectations.StructuredExpectationSidecar sidecar =
+            SidecarExpectations.StructuredExpectationSidecar.parse(
+                Files.readString(CONFORMANCE.resolve(spec.sidecarFile()),
+                    StandardCharsets.UTF_8));
+        SidecarExpectations.RuntimeExpectation expectation =
+            sidecar.expectationFor(backend);
+        check(expectation instanceof SidecarExpectations.RuntimeExpectation
+                .Executed executed
+                && "runtime-ok".equals(executed.mode())
+                && executed.error() == null,
+            spec.what() + " (" + backend + "): the sidecar pins a runtime-ok "
+                + "execution: " + expectation.mode());
+        return expectation instanceof SidecarExpectations.RuntimeExpectation
+                .Executed executed && "runtime-ok".equals(executed.mode())
+                ? executed : null;
+    }
+
+    /** Asserts one artifact's terminal against the sidecar's pinned execution. */
+    private static void assertTerminal(ArtifactTerminal terminal,
+            SidecarExpectations.RuntimeExpectation.Executed pin, Case spec,
+            String backend) {
+        if (terminal == null) {
+            return;
+        }
+        String stdout = new String(pin.stdout(), StandardCharsets.UTF_8);
+        String stderr = new String(pin.stderr(), StandardCharsets.UTF_8);
+        checkEq(pin.exitCode(), terminal.exitCode(), spec.what() + " ("
+            + backend + "): the pinned exit code (stderr: " + terminal.stderr()
+            + ")");
+        checkEq(stdout, terminal.stdout(), spec.what() + " (" + backend
+            + "): the pinned stdout");
+        checkEq(stderr, terminal.stderr(), spec.what() + " (" + backend
+            + "): the pinned stderr");
+    }
+
+    /**
+     * Runs the LuaJIT production artifact's own terminal (no deferred-entry
+     * probe: {@code __dealMain} and the entry walk run as the shipped
+     * artifact does) and captures its exit code and both streams.
+     */
+    private static ArtifactTerminal luaArtifactTerminal(Compiled compiled)
+            throws Exception {
+        Path out = compiled.root().resolve("out");
+        stageLuaHosts(compiled, Map.of(), out);
+        String entry = compiled.checkedProject().entryModule().path()
+            .replace('.', '/') + ".lua";
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            List.of("luajit", entry), out, Map.of());
+        String diagnostics = captured.stdout() + captured.stderr();
+        check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+            compiled.spec().what() + " (luajit): the artifact output is not"
+                + " truncated: " + diagnostics);
+        return new ArtifactTerminal(captured.exitCode(), captured.stdout(),
+            captured.stderr());
+    }
+
+    /**
+     * Runs the JVM production artifact's own terminal: the emitted entry
+     * class and the host implementations compile under {@code javac
+     * --release 25 -proc:none}, then {@code java} runs the entry class's
+     * {@code main} with the artifact's own classpath.
+     */
+    private static ArtifactTerminal jvmArtifactTerminal(Compiled compiled)
+            throws Exception {
+        Path out = compiled.root().resolve("out-jvm");
+        JvmPreparation preparation = compiled.jvmPreparation();
+        if (!preparation.emitted) {
+            emit(compiled, Backend.JVM, out);
+            preparation.emitted = true;
+        }
+        Path workspace = Files.createTempDirectory(compiled.root(), "jvm-terminal-");
+        Path classes = workspace.resolve("classes");
+        Files.createDirectories(classes);
+        String className = JvmNames.classNameFor(
+            compiled.checkedProject().entryModule().path());
+        List<String> javacArgs = new ArrayList<>(List.of("javac", "--release",
+            "25", "-proc:none", "-cp", absoluteClasspath(), "-d",
+            classes.toString()));
+        javacArgs.add(out.resolve(className + ".java").toAbsolutePath().toString());
+        for (String stem : compiled.hostStems()) {
+            Path source = workspace.resolve(
+                JvmNames.classNameFor("host/" + stem) + ".java");
+            Files.writeString(source, Files.readString(Path.of("test",
+                "conformance", "host-fixtures", stem + ".java")),
+                StandardCharsets.UTF_8);
+            javacArgs.add(source.toString());
+        }
+        JvmCompilation.Result javac = JvmCompilation.compile(javacArgs, workspace);
+        String javacOutput = javac.stdout() + javac.stderr();
+        check(javac.exitCode() == 0, compiled.spec().what() + " (jvm): the"
+            + " production artifact and host implementations compile: "
+            + javacOutput);
+        if (javac.exitCode() != 0) {
+            return null;
+        }
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            List.of("java", "-cp", classes + File.pathSeparator
+                + absoluteClasspath(), className), out, Map.of());
+        String diagnostics = captured.stdout() + captured.stderr();
+        check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+            compiled.spec().what() + " (jvm): the artifact output is not"
+                + " truncated: " + diagnostics);
+        return new ArtifactTerminal(captured.exitCode(), captured.stdout(),
+            captured.stderr());
     }
 
     // =========================================================================
@@ -9171,6 +9354,7 @@ public class CanonicalProjectionParityTest {
         System.out.println("=== Canonical Projection Parity Tests (ISSUE-0705) ===");
         testNamedDivergences();
         testArmFamilies();
+        testRuntimeOkIdentityControls();
         testHostSyncReturnPresence();
         testHostNumericReturnCarriers();
         testHostNumericCompletions();

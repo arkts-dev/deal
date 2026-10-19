@@ -605,10 +605,10 @@ public class ProjectLoweringTest {
     /**
      * The same-named sibling pair's field operations: the {@code ir}
      * sibling's optional field and the {@code codec} sibling's required
-     * field of one canonical identity, plus a same-named local spelling in
-     * the consumer's own directory ({@code src/other.deal} and the
-     * consumer's {@code Point} share the identity): every field read,
-     * write and delete selects the exact declaring provider.
+     * field, plus a same-named local spelling in the consumer's own
+     * directory ({@code src/other.deal} and the consumer's {@code Point}
+     * are two identities): every field read, write and delete selects the
+     * exact declaring provider.
      */
     private static final String FIELD_SIBLING_IR_SOURCE = """
         export class Ir { a: int = 7; nick?: string; }
@@ -1123,10 +1123,10 @@ public class ProjectLoweringTest {
 
     /**
      * The harness with an explicit entry path: a fixture whose consumer
-     * must live in the same directory as its sibling providers (the module
-     * identity excludes the file stem, so only the directory decides the
-     * canonical class identity) writes the entry at that path and keeps
-     * its module roots at {@code src}.
+     * must live beside its sibling providers (the identity names the
+     * defining file, so the directory holds the sibling declarations the
+     * probe crosses) writes the entry at that path and keeps its module
+     * roots at {@code src}.
      */
     private static RealProject compileProject(String entryRelativePath,
             String appSource,
@@ -2858,6 +2858,42 @@ public class ProjectLoweringTest {
     }
 
     /**
+     * The unrepresentable defining-file name (ISSUE-0847 review cycle 1):
+     * the canonical identity names the defining file, so a file whose name
+     * is not representable in the descriptor form ({@code a@b.deal}: the
+     * {@code @} is a descriptor metacharacter) can carry no public class
+     * identity. The required-identity gate refuses it with E2010 at the
+     * class name span on every backend — never a backend-dependent raw
+     * exception at descriptor emission, and never a published artifact.
+     */
+    private static void testUnrepresentableDefiningFileNameRejected()
+            throws Exception {
+        System.out.println("-- an unrepresentable defining-file name is E2010 "
+            + "on every backend and publishes no project --");
+        Path proj = Files.createTempDirectory("project-lowering-unrep");
+        try {
+            writeFileIn(proj, "src/a@b.deal", """
+                export class Item { value: int = 1; }
+                export function make(): Item { return {}; }
+                """);
+            writeFileIn(proj, "src/app.deal", """
+                import * as a from "./a@b";
+
+                export function main(): null {
+                  let x: a.Item = a.make();
+                  return null;
+                }
+                """);
+            for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM,
+                    Backend.JS)) {
+                assertUnrepresentableDefiningFileRejected(proj, backend);
+            }
+        } finally {
+            deleteRecursively(proj);
+        }
+    }
+
+    /**
      * The nested-call literal fixture (ISSUE-0809 review cycle 2 finding
      * 1): the enclosing annotation names the local declaration while the
      * callee parameter names the same-named imported one; the
@@ -2911,6 +2947,38 @@ public class ProjectLoweringTest {
         check(!Files.exists(output) || isEmptyTree(output),
             "the refused project publishes no output artifact (" + label
                 + "): " + output);
+    }
+
+    /**
+     * Asserts one backend refuses the fixture's unrepresentable defining
+     * file name: E2010 during the required-identity gate, the offending
+     * file-name component named in the diagnostic, no partially checked
+     * project and no published artifact.
+     */
+    private static void assertUnrepresentableDefiningFileRejected(Path proj,
+            Backend backend) throws Exception {
+        Path entry = proj.resolve("src/app.deal").toAbsolutePath();
+        Path output = proj.resolve("out-" + backend.name().toLowerCase())
+            .toAbsolutePath();
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entry, output, false, false, false, false, backend,
+            Map.of(), List.of(proj.resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize(), null,
+            ConformanceHarnessMetadata.invocation());
+        check(!orchestrator.compile(),
+            "the unrepresentable defining-file name is refused on " + backend
+                + ": " + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E2010".equals(d.code())
+                    && d.message().contains("'a@b.deal'")),
+            "the refusal names the defining-file component on " + backend
+                + ": " + orchestrator.diagnostics());
+        check(orchestrator.checkedProject() == null,
+            "the refused project publishes no partial checked project on "
+                + backend);
+        check(!Files.exists(output) || isEmptyTree(output),
+            "the refused project publishes no output artifact on " + backend
+                + ": " + output);
     }
 
     /** True when the tree contains no regular file and no directory entry. */
@@ -6929,6 +6997,7 @@ public class ProjectLoweringTest {
             testSameSpelledProviderResolution();
             testSameNameSiblingProviderResolution();
             testSameIdentityProviderCrossingRejected();
+            testUnrepresentableDefiningFileNameRejected();
             testNestedFieldProviderBesideSameIdentityLocal();
             testTransitiveProviderLiteralBesideSameIdentitySibling();
             testSameIdentityFieldOperationResolution();

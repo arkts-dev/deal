@@ -1427,10 +1427,9 @@ public final class SemanticOracle {
          * operation's recorded construction entry's owner module's own
          * declared layout (an imported provider), the executing unit's own
          * declared layout (a same-module declaration or a record-less
-         * local), otherwise the merged identity-keyed map. Two same-named
-         * declarations of sibling modules in one directory share the
-         * canonical class id, so the merged map alone cannot select the
-         * declared layout.
+         * local), otherwise the merged identity-keyed map. Two declarations
+         * of one canonical class id (a harness-synthesized pair) make the
+         * merged map alone unable to select the declared layout.
          */
         private Map<ClassId, ClassLayout> layoutView(SemanticOp op, ClassId classId,
                                                      ClassFactoryId classFactoryRef) {

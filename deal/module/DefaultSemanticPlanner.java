@@ -67,7 +67,7 @@ public final class DefaultSemanticPlanner {
      * module path (ISSUE-0809 exact provider carriage). A class-valued
      * default whose declared type lives in a module this one imports
      * only through an imported declaration resolves that module's own
-     * snapshot, never an identity-equal sibling import.
+     * snapshot, never a same-named sibling import.
      */
     public static Result plan(DefaultPlanModuleInput input,
                               ModuleIdentityAssembly identityAssembly,
@@ -122,7 +122,7 @@ public final class DefaultSemanticPlanner {
         List<DefaultResourceOccurrence> occurrences = new ArrayList<>();
         // The recorded contextual class-literal provider aliases of every
         // default expression (literal range to import alias): the one
-        // lowering consumes them so a same-directory sibling pair's
+        // lowering consumes them so a same-spelled sibling declaration's
         // construction names its exact declaring provider.
         Map<DiagnosticRange, String> classLiteralProviders = new LinkedHashMap<>();
         Set<SemanticResourceIdentity> seen = new LinkedHashSet<>();

@@ -218,9 +218,10 @@ public enum DiagnosticCode {
     /**
      * A nested class declaration shadows an enclosing class of the same
      * name (ISSUE-0717, defect snippet 47): the canonical class identity
-     * is (module identity, class name), so two distinct declared class
-     * symbols under one module would share one identity and one runtime
-     * descriptor. The shadowing declaration is rejected instead.
+     * is (module identity, class name) — one identity for the whole
+     * defining file — so two distinct declared class symbols under one
+     * module would share one descriptor. The shadowing declaration is
+     * rejected instead.
      */
     E2013(Phase.FRONTEND, "Class declaration shadows an enclosing class of the same name"),
 

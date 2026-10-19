@@ -219,7 +219,7 @@ public final class ModuleDependencyGraph {
      * consuming unit reaches only through an imported declaration
      * resolves that module's snapshot, so the occurrence and its
      * runtime edge name the exact declaration's provider, never an
-     * identity-equal sibling import.
+     * same-named sibling import.
      */
     public static DigestFreeResult digestFreePass(
             Map<String, ModuleInput> modules,

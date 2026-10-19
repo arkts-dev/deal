@@ -474,8 +474,12 @@ public final class ModuleIdentityResolver {
      * {@code $external}/{@code $builtin} reservation does not apply here
      * — it is pinned to exact first components of a root only, and the
      * relative path never contributes the descriptor's first component.
-     * A null list is not representable; an empty list (a file directly in
-     * its root) is representable.
+     * A null list is not representable. An empty list is representable —
+     * the predicate stays total over the shape — but it is the
+     * synthetic/harness identity form only: a resolved source file always
+     * contributes its own name as the list's final component (a file
+     * directly in its root yields exactly that one component), so no two
+     * sibling files can project the same atom.
      *
      */
     public static boolean isRepresentableRelativeModuleComponents(

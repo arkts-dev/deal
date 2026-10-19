@@ -951,11 +951,10 @@ public sealed interface KindPayload
      * {@code FIELD_READ} — class value, class, and field; presence-aware
      * read. {@code classFactoryRef} is the exact declaring declaration's
      * construction entry when the receiver's checked declaration names one
-     * (two same-named classes of sibling modules in one directory share
-     * one canonical identity, so the recorded entry — never an
-     * identity-keyed first match — selects the declaring provider's
-     * layout); {@code null} for a unit-local, declaration-seeded, or
-     * unambiguous identity.
+     * (a shared identity can only be a harness-synthesized pair, so the
+     * recorded entry — never an identity-keyed first match — selects the
+     * declaring provider's layout); {@code null} for a unit-local,
+     * declaration-seeded, or unambiguous identity.
      */
     record FieldReadPayload(ValueId classValue, ClassId classId, String field,
                             ClassFactoryId classFactoryRef)

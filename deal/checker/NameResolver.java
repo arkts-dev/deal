@@ -1146,10 +1146,10 @@ public final class NameResolver {
      * primitive/function/foreign-surfaceless annotation: a qualified
      * spelling resolves the alias's own declared class symbol (the
      * imported module's class surface), a bare name its local symbol.
-     * Two same-named classes of sibling modules in one directory share
-     * one canonical identity, so the declared symbol — never an
-     * identity-first or textual lookup — names the declaration the
-     * annotation selected.
+     * The canonical identity names the defining file; a harness-shared
+     * identity still has no identity-keyed answer, so the declared
+     * symbol — never an identity-first or textual lookup — names the
+     * declaration the annotation selected.
      */
     public Symbol.ClassSymbol resolveTypeNodeClassSymbol(TypeNode typeNode) {
         return classSymbolInScope(root, typeNode);
@@ -1252,8 +1252,9 @@ public final class NameResolver {
                 && root.resolve(functionName) != null) {
             return true;
         }
-        // Two files in one directory share the module identity: keep
-        // routing to the module resolver (the declaring file's exports).
+        // The identity names the declaring file, so only a harness-shared
+        // identity reaches here: keep routing to the module resolver (the
+        // declaring file's exports).
         try {
             return moduleResolver.isFunctionExportedFromModule(
                 declaringModule, functionName, this.modulePath);

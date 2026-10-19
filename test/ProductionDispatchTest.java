@@ -169,7 +169,7 @@ public class ProductionDispatchTest {
     /**
      * The contextual-call collision (review cycle 2): the class context
      * arrives only through {@code ir.useIr}'s parameter, and both
-     * identity-equal siblings export the demanded {@code Ir} name, so
+     * same-named siblings export the demanded {@code Ir} name, so
      * the resolved imported callee's declaring module must own the
      * recorded plan and the emitted construction (the codec sibling's
      * own default never serializes as the demanded class).
@@ -226,7 +226,7 @@ public class ProductionDispatchTest {
      * entry declares its own {@code Ir} (default 5) in the provider's
      * directory, so the import's {@code useIr} parameter and {@code g}'s
      * parameter and {@code make}'s declared return all name an
-     * identity-equal sibling: those literals construct the imported
+     * same-named sibling: those literals construct the imported
      * declaration's 7 while the explicitly annotated local literal stays
      * the entry's own 5.
      */
@@ -351,7 +351,7 @@ public class ProductionDispatchTest {
      * an inferred binding), so every assignment literal — a local, an
      * indexed element, an inferred binding, and a class-typed parameter —
      * must construct the exact provider the binding names, never the
-     * first identity-equal export of the import order.
+     * first same-named export of the import order.
      */
     private static final String ASSIGN_IR_SOURCE = """
         export class Ir { a: int = 7; }
@@ -392,7 +392,7 @@ public class ProductionDispatchTest {
      * inferred binding, a same-module class field, an array element,
      * and a parameter), so the owner expression's own checked route
      * names the field declaration's provider — never the first
-     * identity-equal export of the import order.
+     * same-named export of the import order.
      */
     private static final String ASSIGN_MEMBER_IR_SOURCE = """
         export class Ir { a: int = 7; }
@@ -439,7 +439,7 @@ public class ProductionDispatchTest {
      * (docs/spec-v1.3.md §Name resolution — Declaration order) — so the constructed
      * literal keeps the enclosing binding's declared provider. The
      * pre-fix recorder resolved the not-yet-visible inner declaration,
-     * so the identity-equal sibling's class was constructed and the
+     * so the same-named sibling's class was constructed and the
      * import order decided the demanded default (7 versus 93) with no
      * diagnostic.
      */
@@ -1443,7 +1443,7 @@ public class ProductionDispatchTest {
 
     /**
      * The class-field nested literal (finding 1): the enclosing class's
-     * field declares the identity-equal sibling provider, and the entry
+     * field declares the same-named sibling provider, and the entry
      * provides a nested literal whose expectation names that field's
      * declaration.
      */
@@ -1469,7 +1469,7 @@ public class ProductionDispatchTest {
     /**
      * The transitive provider literal (finding 2): the entry imports
      * only the intermediate module, whose field declaration names the
-     * identity-equal sibling provider's class in the same directory.
+     * same-named sibling provider's class in the same directory.
      */
     private static final String TRANSITIVE_PROVIDER_IR_SOURCE = """
         import * as codec from "./codec";
@@ -1496,8 +1496,8 @@ public class ProductionDispatchTest {
      * findings 1 and 2): the field's declared provider owns the nested
      * literal, and a declaration reached only through an imported
      * declaration resolves through the whole-project provider index —
-     * never the identity-equal sibling that shares the canonical module
-     * identity. Both run through the release-owned production invocation
+     * never a same-spelled declaration of one identity. Both run through
+     * the release-owned production invocation
      * on the real LuaJIT and JVM lanes, printing {@code ok} with an empty
      * stderr and exit 0.
      */
@@ -1940,7 +1940,7 @@ public class ProductionDispatchTest {
 
     /**
      * The GitHub #6 same-name sibling collision (review cycle 1): an
-     * identity-equal sibling that declares a non-exported class of the
+     * same-named sibling that declares a non-exported class of the
      * demanded name must never become the provider. Both import orders
      * compile through the release-owned production invocation in one
      * project (one deployment identity, so the provider digests are
@@ -2067,7 +2067,7 @@ public class ProductionDispatchTest {
     /**
      * The contextual-call collision (review cycle 2): the class context
      * arrives only through the resolved imported callee's parameter, and
-     * both identity-equal siblings export the demanded class name. The
+     * both same-named siblings export the demanded class name. The
      * recorded occurrence and deferred edge must name the callee's
      * declaring module, its exact declaration range, and the class's own
      * plan digest — in both import orders, and the published artifact
@@ -2160,7 +2160,7 @@ public class ProductionDispatchTest {
      * visible there, docs/spec-v1.3.md §Name resolution — Declaration
      * order), so the constructed literal carries that binding's declared
      * provider — the enclosing annotation names {@code ir} even when the
-     * not-yet-visible inner declaration names the identity-equal sibling
+     * not-yet-visible inner declaration names the same-named sibling
      * and the import that happens to come first. The inner declaration of
      * another provider never retags that value: both import orders are
      * refused with E3019 at the shadowing initializers and nothing is

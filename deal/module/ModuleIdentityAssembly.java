@@ -207,8 +207,13 @@ public final class ModuleIdentityAssembly {
      *       or empty components, contiguous {@code ->}) or when the
      *       containment is ambiguous (the defensive equal-root tie).
      *       Success returns
-     *       {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>}
-     *       (empty relative path → {@code @<rootText>/<ClassName>}).</li>
+     *       {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>},
+     *       the components running from the configured root to the
+     *       declaring file and ending with the file's own name, so two
+     *       same-named sibling files are two identities. An empty
+     *       relative component list is admitted only for a
+     *       synthetic/harness identity, never for a resolved source
+     *       file.</li>
      *   <li><b>Externals form (b):</b> E2010 at the class-name span when
      *       the raw import specifier or the class name is
      *       unrepresentable, with a note carrying the externals entry's
@@ -448,9 +453,13 @@ public final class ModuleIdentityAssembly {
 
     /**
      * The pinned project descriptor-text projection:
-     * {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>}
-     * with the source suffix and file stem omitted; an empty relative
-     * module path yields {@code @<configuredRootText>/<ClassName>}.
+     * {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>},
+     * where the relative components run from the configured root to the
+     * defining file and end with the defining file's own name (the source
+     * suffix included as part of that name). The identity therefore names
+     * one declaration: two same-named sibling files in one directory
+     * project two distinct atoms. An empty component list is admitted only
+     * for a synthetic/harness identity, never for a resolved source file.
      */
     private static String projectDescriptorText(
             ProjectModuleIdentity projectIdentity, String className) {

@@ -41,9 +41,9 @@ public final class TypeChecker {
     //    type. Set only where a binding or an annotated declaration is the
     //    context's source: an object literal constructed under that context
     //    is laid out by that declaration, never by an unrelated same-named
-    //    declaration the lexical scope happens to resolve (two same-named
-    //    declarations share one canonical identity and are
-    //    indistinguishable in Type.Class alone). --
+    //    declaration the lexical scope happens to resolve (a harness-shared
+    //    identity's two declarations are indistinguishable in Type.Class
+    //    alone). --
     private Symbol.ClassSymbol contextualClassDecl = null;
 
     // -- Checked expression facts: the exact class declaration a
@@ -57,9 +57,9 @@ public final class TypeChecker {
 
     // -- Checked expression facts: the exact module-level class declaration
     //    a class-typed expression's own binding/field/context annotation
-    //    names, keyed by the expression node. Two same-named classes of
-    //    sibling modules in one directory share one canonical identity and
-    //    are indistinguishable in Type.Class alone, so the one lowering
+    //    names, keyed by the expression node. The canonical identity names
+    //    the defining file, but a harness-shared identity's two declarations
+    //    are still indistinguishable in Type.Class alone, so the one lowering
     //    consumes this record to select the exact declaring provider of a
     //    field operation (never a unit-local or identity-keyed first
     //    match). --
@@ -453,10 +453,9 @@ public final class TypeChecker {
             // declaration resolves in that module's own scope (the
             // imported alias/export route needs no local AST
             // declaration, and a same-named local declaration of the
-            // same canonical identity never captures it). Two files in
-            // one directory share one canonical identity, so a
-            // name/identity scan has no single answer and is never
-            // consulted for a bound carrier.
+            // same canonical identity never captures it). A harness-shared
+            // identity gives a name/identity scan no single answer, so it
+            // is never consulted for a bound carrier.
             return resolveProviderClassSymbol(cls);
         }
         Symbol.ClassSymbol local = exactLocalClassSymbol(cls);
@@ -675,9 +674,9 @@ public final class TypeChecker {
      * The exact declaration one type annotation names in the given scope,
      * or {@code null} for primitive/function/foreign-surfaceless
      * annotations: a qualified spelling resolves the alias's own declared
-     * class symbol (two same-named siblings in one directory share one
-     * canonical identity, so the alias — never an identity-first match —
-     * selects the declaration), a bare name its local symbol.
+     * class symbol (the alias — never an identity-first match — selects the
+     * declaration; only a harness-shared identity needs that exactness), a
+     * bare name its local symbol.
      */
     private Symbol.ClassSymbol exactAnnotationClassSymbol(SymbolTable scope,
                                                           TypeNode tn) {
@@ -1006,8 +1005,8 @@ public final class TypeChecker {
             // in the scope the function declaration lives in: a returned
             // object literal is constructed by that declaration, never by
             // a same-named local declaration the lexical scope resolves
-            // instead (two same-named classes of sibling modules share
-            // one canonical identity).
+            // instead (a sibling provider's declaration has its own
+            // identity, so the annotation, not a name scan, names it).
             currentReturnContext = exactAnnotationClassSymbol(currentScope,
                 fd.returnType());
             insideAsyncFunction = funcType.isAsync();
@@ -1892,13 +1891,12 @@ public final class TypeChecker {
      * The exact declared class symbol of every callee parameter position
      * (the callee's own function symbol resolved through the identifier
      * or the imported module alias): the parameter's declared annotation
-     * resolved in the callee's declaring module scope. Two same-named
-     * classes of sibling modules share one canonical identity, so the
-     * parameter's own declared provider — never an identity-first match
-     * or the call site's local declaration — names the construction
-     * context. Returns null when the callee carries no declaration
-     * surface (a function-typed value, an intrinsic, a synthetic
-     * symbol).
+     * resolved in the callee's declaring module scope. The parameter's
+     * own declared provider — never an identity-first match or the call
+     * site's local declaration — names the construction context, which
+     * stays exact for a harness-shared identity. Returns null when the
+     * callee carries no declaration surface (a function-typed value, an
+     * intrinsic, a synthetic symbol).
      */
     private List<Symbol.ClassSymbol> getParamClassDeclsForContext(CallExpr call) {
         Symbol.FunctionSymbol callee = calleeDeclarationOf(call);
@@ -2063,8 +2061,8 @@ public final class TypeChecker {
                     // The exact declaration of a class-typed field: the
                     // chained receiver's own annotation resolved in the
                     // declaring module's scope selects the declared
-                    // provider (a sibling module of the same directory
-                    // shares the canonical identity).
+                    // provider (a harness-shared identity has no
+                    // identity-keyed answer).
                     recordExactClassDecl(mae, fieldType,
                         exactFieldClassSymbol(sym, cf.type(), fieldType));
                     if (cf.optional() && !cf.nullable() && !assignmentTargetMode) {
@@ -2307,7 +2305,7 @@ public final class TypeChecker {
         // Whether the enclosing construction context supplied the
         // declaration: only the contextual declaration is published as
         // the literal's exact construction declaration. The scope's own
-        // identity-equal declaration (the unanchored fallback) and the
+        // same-named declaration (the unanchored fallback) and the
         // identity-keyed cross-module route name no construction context:
         // the one lowering then resolves the literal by the recorded
         // contextual provider or fails closed when the canonical identity
@@ -2396,8 +2394,8 @@ public final class TypeChecker {
                 // field-default path uses), so a nested literal of a
                 // same-name sibling declaration is laid out by the
                 // field's provider and never by the enclosing literal's
-                // contextual declaration that shares the canonical
-                // identity (ISSUE-0809 field/construction agreement).
+                // contextual declaration of the same identity (ISSUE-0809
+                // field/construction agreement).
                 contextualClassDecl = exactFieldClassSymbol(cs, cf.type(),
                     fieldType);
                 Type valueType = checkExpression(prop.value());
@@ -2723,12 +2721,13 @@ public final class TypeChecker {
         }
 
         // ISSUE-0717 (defect snippet 47): two same-named class declarations
-        // in one module share the canonical identity (module + name) yet own
-        // distinct declarations and runtime layouts. An assignment that
-        // crosses the two declarations is rejected at the frontend — never
-        // left to the backends' duplicate-layout failure. Nullable class
-        // boundaries are the same crossing (the canonical identity is
-        // unchanged by the nullability wrapper).
+        // of one canonical identity (the same-module nested-shadowing pair,
+        // or a harness-synthesized carrier) own distinct declarations and
+        // runtime layouts. An assignment that crosses the two declarations
+        // is rejected at the frontend — never left to the backends'
+        // duplicate-layout failure. Nullable class boundaries are the same
+        // crossing (the canonical identity is unchanged by the nullability
+        // wrapper).
         checkClassProvenance(declaredClassOf(assign.target()), declaredTarget,
             declaredClassOf(assign.value()), valueType, assign.span());
 
@@ -2789,11 +2788,11 @@ public final class TypeChecker {
     /**
      * The E3019 cross-declaration gate: the value's class provenance and
      * the target's class provenance are two distinct declarations of a
-     * same-named class — the same-module nested-shadowing declarations
-     * share one canonical identity, and each declaration owns its own
-     * runtime layout either way. Applied at assignment
-     * expressions, declaration initialization, and nullable class
-     * boundaries alike (ISSUE-0717 defect snippet 47).
+     * same-named class — a shared identity (the same-module
+     * nested-shadowing pair, or a harness-synthesized carrier) still names
+     * two declarations, and each owns its own runtime layout. Applied at
+     * assignment expressions, declaration initialization, and nullable
+     * class boundaries alike (ISSUE-0717 defect snippet 47).
      */
     private void checkClassProvenance(Symbol.ClassSymbol targetDecl,
             Type targetType, Symbol.ClassSymbol valueDecl, Type valueType,

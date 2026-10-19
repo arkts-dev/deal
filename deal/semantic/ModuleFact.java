@@ -32,11 +32,11 @@ import java.util.Objects;
  * <p>{@code classLiteralProviders} carries the dependency graph's
  * recorded contextual class-literal provider aliases of the module (the
  * literal's source range to the import alias whose exact declaration
- * supplied the construction context): two sibling modules in one
- * directory share one canonical class identity, so the recorded provider
- * occurrence — never an identity scan or a first alias — selects the
- * declaring provider. An absent entry means the literal's context is
- * same-module or unresolvable there.</p>
+ * supplied the construction context): the recorded provider occurrence —
+ * never an identity scan or a first alias, which a harness-shared
+ * identity cannot answer — selects the declaring provider. An absent
+ * entry means the literal's context is same-module or unresolvable
+ * there.</p>
  *
  */
 public record ModuleFact(

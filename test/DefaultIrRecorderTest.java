@@ -407,7 +407,7 @@ public final class DefaultIrRecorderTest {
     }
 
     // =========================================================================
-    // Sibling providers sharing one directory (GitHub #6)
+    // Sibling providers of a harness-shared identity (GitHub #6)
     // =========================================================================
 
     /**
@@ -1368,7 +1368,7 @@ public final class DefaultIrRecorderTest {
             "Ir");
         check(codec.privateIdentity().equals(ir.classIdentity()),
             "the fixture's private same-name class is identity-equal to"
-                + " the demanded class (the directory-keyed model)");
+                + " the demanded class (the harness-shared identity model)");
 
         for (List<SiblingProvider> order : List.of(
                 List.of(ir, codec), List.of(codec, ir))) {
@@ -1423,7 +1423,7 @@ public final class DefaultIrRecorderTest {
             "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
         check(codec.classIdentity().equals(ir.classIdentity()),
             "the fixture's exported same-name siblings are identity-equal"
-                + " (the directory-keyed model)");
+                + " (the harness-shared identity model)");
 
         for (List<SiblingProvider> order : List.of(
                 List.of(ir, codec), List.of(codec, ir))) {
@@ -1459,7 +1459,7 @@ public final class DefaultIrRecorderTest {
             "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
         check(codec.classIdentity().equals(ir.classIdentity()),
             "the fixture's exported same-name siblings are identity-equal"
-                + " (the directory-keyed model)");
+                + " (the harness-shared identity model)");
 
         for (List<SiblingProvider> order : List.of(
                 List.of(ir, codec), List.of(codec, ir))) {
@@ -1536,7 +1536,7 @@ public final class DefaultIrRecorderTest {
             "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
         check(codec.classIdentity().equals(ir.classIdentity()),
             "the fixture's exported same-name siblings are identity-equal"
-                + " (the directory-keyed model)");
+                + " (the harness-shared identity model)");
 
         for (List<SiblingProvider> order : List.of(
                 List.of(ir, codec), List.of(codec, ir))) {
@@ -1588,7 +1588,7 @@ public final class DefaultIrRecorderTest {
             "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
         check(codec.classIdentity().equals(ir.classIdentity()),
             "the fixture's exported same-name siblings are identity-equal"
-                + " (the directory-keyed model)");
+                + " (the harness-shared identity model)");
         Type wrapper = Types.classType("Wrap",
             new CanonicalClassIdentity(sibling, "Wrap"));
 
@@ -1629,7 +1629,7 @@ public final class DefaultIrRecorderTest {
             "/proj/src/m/codec.deal", "src.m.codec", sibling, "Ir");
         check(codec.classIdentity().equals(ir.classIdentity()),
             "the fixture's exported same-name siblings are identity-equal"
-                + " (the directory-keyed model)");
+                + " (the harness-shared identity model)");
 
         for (List<SiblingProvider> order : List.of(
                 List.of(ir, codec), List.of(codec, ir))) {

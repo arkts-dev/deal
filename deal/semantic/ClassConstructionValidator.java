@@ -86,9 +86,9 @@ public final class ClassConstructionValidator {
 
     /**
      * The composed per-module production admission with the supplied
-     * provider-keyed shared-factory facts: two same-named classes of
-     * distinct sibling modules in one directory share one canonical
-     * class identity, so the recorded construction entry — never the
+     * provider-keyed shared-factory facts: a canonical class identity can
+     * carry more than one declaration only in a harness-synthesized
+     * carrier, so the recorded construction entry — never the
      * identity-keyed first match — selects the exact declaring provider
      * of a {@code CLASS_NEW(SHARED_FACTORY)}.
      */
@@ -133,11 +133,11 @@ public final class ClassConstructionValidator {
     /**
      * The declaration one canonical class identity's generated JSON plan
      * carries (the plan owner): its declaring module and, when that
-     * declaration is exported, its construction entry. Two same-named
-     * declarations of sibling modules in one directory share one canonical
-     * identity, so a nested JSON link resolves through this recorded owner
-     * — never through the unit-local sibling layout an identity-keyed
-     * lookup would mask it with.
+     * declaration is exported, its construction entry. A shared identity
+     * (the harness-synthesized pair) still carries one recorded owner, so
+     * a nested JSON link resolves through it — never through the
+     * unit-local sibling layout an identity-keyed lookup would mask it
+     * with.
      */
     public record ClassPlanOwner(ModuleId module, ClassFactoryId constructionEntry) {
         public ClassPlanOwner {
@@ -840,9 +840,9 @@ public final class ClassConstructionValidator {
                     .entrySet()) {
                 // A unit's own layout (and a declaration class's registered
                 // layout) wins over an accumulated foreign provider's for
-                // the same canonical identity: two same-named siblings in
-                // one directory share it, and the unit-local consumer's
-                // own declaration is the lexical one.
+                // the same canonical identity: a harness-synthesized pair
+                // shares it, and the unit-local consumer's own declaration
+                // is the lexical one.
                 layoutContext.putIfAbsent(entry.getKey(), entry.getValue().layout());
                 interfaceContext.putIfAbsent(entry.getKey(),
                     entry.getValue().interfaceEntry());
@@ -1004,11 +1004,10 @@ public final class ClassConstructionValidator {
         /**
          * Whether one canonical class identity carries more than one
          * declaration in the unit's resolution context: the unit's own
-         * layout and the declared providers' shared-factory facts. Two
-         * same-named classes of sibling modules in one directory share one
-         * canonical identity, so such an identity has no single layout and
-         * a field operation of it must carry its exact declaring-provider
-         * reference.
+         * layout and the declared providers' shared-factory facts. A
+         * harness-synthesized identity can still name two declarations, so
+         * such an identity has no single layout and a field operation of it
+         * must carry its exact declaring-provider reference.
          */
         private boolean identityAmbiguous(ClassId classId) {
             java.util.Set<ClassFactoryId> entries = new java.util.LinkedHashSet<>();
@@ -1439,8 +1438,8 @@ public final class ClassConstructionValidator {
             ClassLayout resolved = layoutContext.get(payload.classId());
             // The recorded construction entry of a SHARED_FACTORY
             // construction selects the exact declaring provider's layout:
-            // a same-identity sibling's layout never masks the payload's
-            // (the two declarations share one canonical ClassId).
+            // a same-identity sibling's layout never masks the payload's (a
+            // harness-synthesized identity can carry two declarations).
             SharedFactoryFacts exactProvider = payload.classFactoryRef() == null
                 ? null : providerFactoryFacts.get(payload.classFactoryRef());
             if (exactProvider != null
