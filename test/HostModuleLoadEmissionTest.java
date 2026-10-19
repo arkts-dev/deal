@@ -4505,7 +4505,457 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
-    // 2e. The LuaJIT load under real luajit
+    // 2e. The projected function adapter (ISSUE-0854)
+    //
+    // The one projected function adapter of the host-binding prelude: the
+    // host-driven callback parameter and return crossings and the
+    // documented function value at a declared function position, an
+    // untyped table member and a host class's function-typed field.
+    // =========================================================================
+
+    /**
+     * The declared host module of the projected-function-adapter drive: a
+     * host class with a nested class field, an optional array and a present
+     * nullable field, a host class with a function-typed field, the
+     * callback position, the declared function position, and a declared
+     * function return.
+     */
+    private static final String FN_ADAPTER_DECLARATION_SOURCE = """
+        export class Endpoint {
+          path: string;
+        }
+
+        export class ServerConfig {
+          port: int;
+          endpoint: Endpoint;
+          tags?: string[];
+          note?: string | null;
+        }
+
+        export class Bundle {
+          label: string;
+          action: (x: int) => int;
+        }
+
+        export function consume(f: (s: ServerConfig) => ServerConfig): string;
+        export function consumeTable(f: () => table): string;
+        export function consumeBundle(f: (b: Bundle) => Bundle): string;
+        export function consumeBundleValue(f: () => Bundle): string;
+        export function apply(f: (x: int) => int, v: int): int;
+        export function probeValue(f: (x: int) => int): string;
+        export function bind(): (x: int) => int;
+        export function mismatch(): (x: int) => int;
+        export function consumePair(f: (a: ServerConfig, b: ServerConfig) => boolean): string;
+        """;
+
+    /**
+     * The DEAL side of the adapter drive. {@code tag} reads the declared
+     * fields of the host's own class instance at the callback's declared
+     * class parameter and returns a fresh declared instance; {@code fresh}
+     * returns a table whose member carries a DEAL function value;
+     * {@code relabel} invokes the host-provided function value the host
+     * class's function-typed field carries and returns a declared instance
+     * whose own function-typed field carries a DEAL function value;
+     * {@code runBundleValue} keeps that instance across the crossing and
+     * asserts the body's value still holds the DEAL function value (the
+     * identity comparison against the same DEAL function value) and is
+     * still invocable. The declared function position, the host-provided
+     * function value at a declared function return, and the landed
+     * wrong-signature refusal complete the drive.
+     */
+    private static final String FN_ADAPTER_APP_SOURCE = """
+        import * as host from "host/fn_probe";
+
+        function tag(s: host.ServerConfig): host.ServerConfig {
+          if (s.port !== 8080) {
+            throw { code: "TEST_FAIL", message: "callback port" };
+          }
+          if (s.endpoint.path !== "/e") {
+            throw { code: "TEST_FAIL", message: "callback endpoint" };
+          }
+          let tags: string[] | null = s.tags;
+          if (tags === null) {
+            throw { code: "TEST_FAIL", message: "callback tags absent" };
+          } else {
+            if (tags.length !== 2) {
+              throw { code: "TEST_FAIL", message: "callback tags length" };
+            }
+            if (tags[0] !== "a" || tags[1] !== "b") {
+              throw { code: "TEST_FAIL", message: "callback tag values" };
+            }
+          }
+          if (s.note === null) {
+            return { port: 9090, endpoint: { path: "/back" }, tags: ["r1", "r2"],
+              note: null };
+          } else {
+            throw { code: "TEST_FAIL", message: "callback note" };
+          }
+        }
+
+        function scale(x: int): int {
+          let y: int = x * 2;
+          return y;
+        }
+
+        function fresh(): table {
+          let t: table = { step: scale };
+          return t;
+        }
+
+        function relabel(b: host.Bundle): host.Bundle {
+          if (b.label !== "given") {
+            throw { code: "TEST_FAIL", message: "callback bundle label" };
+          }
+          let value: int = b.action(21);
+          if (value !== 43) {
+            throw { code: "TEST_FAIL", message: "callback host function value" };
+          }
+          return { label: "back", action: scale };
+        }
+
+        export function runConsume(): string {
+          return host.consume(tag);
+        }
+
+        export function runTable(): string {
+          return host.consumeTable(fresh);
+        }
+
+        export function runBundle(): string {
+          return host.consumeBundle(relabel);
+        }
+
+        export function runBundleValue(): string {
+          let shared: host.Bundle = { label: "shared", action: scale };
+          let maker: () => host.Bundle = function(): host.Bundle { return shared; };
+          let crossed: string = host.consumeBundleValue(maker);
+          let kept: string = "no";
+          if (shared.action === scale) {
+            kept = "yes";
+          }
+          let again: int = shared.action(3);
+          let invoked: string = "no";
+          if (again === 6) {
+            invoked = "yes";
+          }
+          return crossed + " kept=" + kept + " again=" + invoked;
+        }
+
+        export function runApply(): string {
+          let result: int = host.apply(scale, 41);
+          let verdict: string = "no";
+          if (result === 182) {
+            verdict = "yes";
+          }
+          return "apply=" + verdict;
+        }
+
+        export function runProbeValue(): string {
+          return host.probeValue(scale);
+        }
+
+        export function runBind(): string {
+          let bound: (x: int) => int = host.bind();
+          let result: int = bound(4);
+          let verdict: string = "no";
+          if (result === 8) {
+            verdict = "yes";
+          }
+          return "bind=" + verdict;
+        }
+
+        export function runMismatch(): string {
+          try {
+            let wrong: (x: int) => int = host.mismatch();
+            let ignored: int = wrong(1);
+            return "mismatch=admitted";
+          } catch (e) {
+            return "mismatch=" + e.code + "|" + e.message;
+          }
+        }
+
+        function same(a: host.ServerConfig, b: host.ServerConfig): boolean {
+          if (a.port !== 8080) {
+            throw { code: "TEST_FAIL", message: "pair port" };
+          }
+          if (b.endpoint.path !== "/e") {
+            throw { code: "TEST_FAIL", message: "pair endpoint" };
+          }
+          return a === b;
+        }
+
+        export function runPair(): string {
+          return host.consumePair(same);
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host module. It builds its class instances through
+     * the shipped runtime's own constructor (so every argument the DEAL
+     * callback receives is a host-origin runtime instance), hands a
+     * host-provided function value at a declared function position and at
+     * a host class's function-typed field, invokes every callback it is
+     * handed, and reports the observed shape, the declared fields, the
+     * wrapper's invocation results, and the closed tuples. The reported
+     * origin is normalized to the project-relative source id so the
+     * transcript does not depend on the temporary root.
+     */
+    private static final String FN_ADAPTER_LUA = """
+        local rt = require("deal.runtime")
+        local K = __dealCarrierKeys
+        local SPEC = "@$external/host/fn_probe/"
+
+        local function origin(o)
+          return (tostring(o):gsub("^.*/src/", "src/"))
+        end
+
+        local function tuple(e)
+          if type(e) ~= "table" then return "raw:" .. type(e) end
+          return tostring(e.code) .. "|" .. tostring(e.m) .. "|" .. tostring(e.e)
+            .. "|" .. tostring(e.a) .. "|" .. origin(e.o)
+        end
+
+        local function endpoint(path)
+          return rt.class_(SPEC .. "Endpoint", {path = ""}, {path = path})
+        end
+
+        local function config(port, path, first, second, note)
+          return rt.class_(SPEC .. "ServerConfig",
+            {port = 0, endpoint = rt.__MISSING, tags = rt.__MISSING,
+             note = rt.__MISSING},
+            {port = port, endpoint = endpoint(path), tags = {first, second},
+             note = note})
+        end
+
+        local function wrapper(f)
+          return {[K.kind] = "function", sig = "(int)->int", f = f}
+        end
+
+        local function bundle(label, action)
+          return rt.class_(SPEC .. "Bundle", {label = "", action = rt.__MISSING},
+            {label = label, action = action})
+        end
+
+        local function accepted(fn)
+          if type(fn) ~= "table" then return "raw:" .. type(fn) end
+          local ok, res = pcall(fn.f, 41)
+          local okBad, bad = pcall(fn.f, "bad")
+          return "kind=" .. tostring(fn[K.kind]) .. " sig=" .. tostring(fn.sig)
+            .. " f=" .. type(fn.f) .. " res=" .. tostring(ok and res or "err")
+            .. " bad=" .. tostring(okBad and "admitted" or tuple(bad))
+        end
+
+        return {
+          Endpoint = {[K.kind] = "class", [K.classname] = SPEC .. "Endpoint"},
+          Endpoint_defaults = {path = "/"},
+          ServerConfig = {[K.kind] = "class",
+            [K.classname] = SPEC .. "ServerConfig"},
+          ServerConfig_defaults = {port = 8080, endpoint = rt.__MISSING,
+            tags = rt.__MISSING, note = rt.__MISSING},
+          Bundle = {[K.kind] = "class", [K.classname] = SPEC .. "Bundle"},
+          Bundle_defaults = {label = "", action = rt.__MISSING},
+          consume = function(f)
+            local given = config(8080, "/e", "a", "b", rt.__NULL)
+            local ok, res = pcall(f, given)
+            if not ok then return "consume=err:" .. tuple(res) end
+            local tags = res.tags
+            local tagsOk = type(tags) == "table" and tags[1] == "r1"
+              and tags[2] == "r2"
+            -- The host's own instance is never mutated by the inbound
+            -- projection: it keeps its runtime class shape and no chunk tag.
+            local untouched = given[K.c] == nil and given[K.kind] == "class"
+              and given.port == 8080
+            local out = "consume=" .. tostring(res.port) .. ","
+              .. tostring(res.endpoint.path) .. ",tags=" .. tostring(tagsOk)
+              .. ",tags-n=" .. tostring(#tags)
+              .. ",note=" .. tostring(res.note == rt.__NULL)
+              .. ",top=" .. tostring(res[K.kind]) .. ","
+              .. tostring(res[K.classname])
+              .. ",given=" .. tostring(untouched)
+            local okWrong, wrong = pcall(f, 42)
+            return out .. " wrong=" .. (okWrong and "admitted" or tuple(wrong))
+          end,
+          consumeTable = function(f)
+            local ok, res = pcall(f)
+            if not ok then return "table=err:" .. tuple(res) end
+            return "table=" .. accepted(res.step)
+          end,
+          consumeBundle = function(f)
+            local ok, res = pcall(f,
+              bundle("given", wrapper(function(x) return x + 22 end)))
+            if not ok then return "bundle=err:" .. tuple(res) end
+            return "bundle=" .. tostring(res.label) .. "," .. accepted(res.action)
+              .. ",top=" .. tostring(res[K.kind]) .. ","
+              .. tostring(res[K.classname])
+          end,
+          consumeBundleValue = function(f)
+            local ok, res = pcall(f)
+            if not ok then return "value=err:" .. tuple(res) end
+            return "value=" .. tostring(res.label) .. "," .. accepted(res.action)
+              .. ",top=" .. tostring(res[K.kind]) .. ","
+              .. tostring(res[K.classname])
+          end,
+          consumePair = function(f)
+            local shared = config(8080, "/e", "a", "b", rt.__NULL)
+            local ok, res = pcall(f, shared, shared)
+            if not ok then return "pair=err:" .. tuple(res) end
+            return "pair=" .. tostring(res)
+          end,
+          apply = function(f, v)
+            return f(v) + 100
+          end,
+          probeValue = function(f)
+            local ok, res = pcall(f, 41)
+            local okBad, bad = pcall(f, "bad")
+            return "f=" .. type(f) .. " res=" .. tostring(ok and res or "err")
+              .. " bad=" .. tostring(okBad and "admitted" or tuple(bad))
+          end,
+          bind = function()
+            return wrapper(function(x) return x * 2 end)
+          end,
+          mismatch = function()
+            return {[K.kind] = "function", sig = "(string)->int",
+              f = function(x) return 1 end}
+          end,
+        }
+        """;
+
+    /**
+     * The exact transcript of the projected-function-adapter drive: the
+     * declared class parameter and return through the one adapter, the
+     * untyped table member's documented wrapper, the host class's
+     * function-typed field in both directions, the declared function
+     * position's cells and return projection (the raw host's arithmetic over
+     * the projected int), the host-provided function value invoked from
+     * DEAL, the landed wrong-signature refusal, and the closed
+     * parameter-entry tuples — both at the host call site's own origin and
+     * at an untyped member position.
+     */
+    private static final String FN_ADAPTER_TRANSCRIPT = """
+        TRANSCRIPT-BEGIN
+        runConsume=consume=9090,/back,tags=true,tags-n=2,note=true,top=class,@$external/host/fn_probe/ServerConfig,given=true wrong=E8001|expected class instance|class|int|src/app.deal:51:10
+        runTable=table=kind=function sig=(int)->int f=function res=82 bad=E8001|expected int|int|string|nil
+        runBundle=bundle=back,kind=function sig=(int)->int f=function res=82 bad=E8001|expected int|int|string|nil,top=class,@$external/host/fn_probe/Bundle
+        runBundleValue=value=shared,kind=function sig=(int)->int f=function res=82 bad=E8001|expected int|int|string|nil,top=class,@$external/host/fn_probe/Bundle kept=yes again=yes
+        runApply=apply=yes
+        runProbeValue=f=function res=82 bad=E8001|expected int|int|string|src/app.deal:88:10
+        runBind=bind=yes
+        runMismatch=mismatch=E8010|return value 1 type mismatch: function signature mismatch: expected (int)->int, got (string)->int
+        runPair=pair=true
+        TRANSCRIPT-END
+        """;
+
+    /**
+     * The projected function adapter on the published LuaJIT artifact
+     * (ISSUE-0854): exactly one {@code __hostFnArg} in the host-binding
+     * prelude, reached from the declared function position's projection and
+     * from the host-carrier bridge's outbound function branch (no second
+     * adapter), whose wrapper runs the bridge's inbound projection at the
+     * cell's canonical descriptor with one memo per invocation and the
+     * declared parameter-entry cell at every recorded position, and whose
+     * return takes the bridge's outbound projection at the declared return
+     * descriptor of its own {@code __hostFnShapes} entry. Then the drive
+     * executes the whole flow under real {@code luajit}: a host class
+     * instance at a declared callback parameter reaches the DEAL body as the
+     * dual-tagged instance with its exact top-level fields, the body's
+     * declared class return reaches the host with the exact top-level
+     * declared fields, a DEAL function value crosses at a declared function
+     * position, at an untyped table member and at a host class's
+     * function-typed field as the one documented wrapper with the same
+     * cells and return projection, a host-provided function value at a
+     * declared function position and at a class field stays invocable from
+     * DEAL, and the closed tuples keep their landed code/text/actual/origin.
+     */
+    private static void testLuaHostFunctionAdapter() throws Exception {
+        System.out.println("-- the projected function adapter: the published"
+            + " LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-fn-adapter-lua");
+        try {
+            Path out = publishLuaHost(root, "fn_probe",
+                FN_ADAPTER_DECLARATION_SOURCE, FN_ADAPTER_APP_SOURCE,
+                FN_ADAPTER_LUA, "host-fn-adapter");
+            if (out == null) {
+                return;
+            }
+            String lua = Files.readString(out.resolve("app.lua"),
+                StandardCharsets.UTF_8);
+            checkEq(1, countOccurrences(lua, "local function __hostFnArg("),
+                "the chunk emits exactly one projected function adapter");
+            checkEq(1, countOccurrences(lua,
+                    "{[__dealCarrierKeys.kind] = \"function\", sig = inner,"),
+                "the adapter builds the documented wrapper at one site");
+            checkEq(1, countOccurrences(lua,
+                    "return __hostFnArg(desc, inner, cells, origin, v)"),
+                "the declared function position delegates to the one adapter");
+            checkEq(1, countOccurrences(lua,
+                    "local out = __hostFnArg(sig, sig, shape.cells, nil, v)"),
+                "the bridge's outbound function branch delegates to the same"
+                    + " adapter");
+            check(!lua.contains("__hostToDealArray"),
+                "the retired one-value array projection is gone from the"
+                    + " prelude: the adapter is the one conversion site and"
+                    + " every array position takes the bridge");
+            check(lua.contains("local shape = __factories.__hostFnShapes[sig]")
+                    && lua.contains("local ret = nil")
+                    && lua.contains("__factories.__hostCarrierOut(ret,")
+                    && lua.contains("value = __factories.__hostCarrierIn(cell[3],"
+                        + " args[i], memo)"),
+                "the adapter reads its declared return descriptor from the"
+                    + " emitted shapes and bridges each parameter cell's value"
+                    + " with one memo");
+            check(lua.contains("[\"(@$external/host/fn_probe/ServerConfig)->"
+                    + "@$external/host/fn_probe/ServerConfig\"] = {ret = "
+                    + "\"@$external/host/fn_probe/ServerConfig\""),
+                "the callback's shape entry carries the declared class return"
+                    + " descriptor");
+            check(lua.contains("[\"(int)->int\"] = {ret = \"int\", cells = "
+                    + "{{\"int\", \"int\", \"int\"}}}"),
+                "the function-typed field and the function values take the"
+                    + " declared parameter-entry cells");
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                print("TRANSCRIPT-BEGIN")
+                local names = { "runConsume", "runTable", "runBundle",
+                  "runBundleValue", "runApply", "runProbeValue", "runBind",
+                  "runMismatch", "runPair" }
+                for _, name in ipairs(names) do
+                  local entry = surface[name]
+                  if entry == nil then fail("missing " .. name) end
+                  local ok2, res = pcall(entry.f)
+                  if not ok2 then
+                    fail(name .. ": " .. tostring(res.code) .. "|"
+                      .. tostring(res.m) .. "|" .. tostring(res.e) .. "|"
+                      .. tostring(res.a) .. "|" .. tostring(res.o))
+                  end
+                  print(name .. "=" .. res)
+                end
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0 && run.stderr().isEmpty()
+                    && run.stdout().equals(FN_ADAPTER_TRANSCRIPT),
+                "the one projected function adapter preserves the declared"
+                    + " class and function values in both directions at the"
+                    + " declared function position, the untyped table member,"
+                    + " and the host class's function-typed field: exit="
+                    + run.exitCode() + " stdout=" + escaped(run.stdout())
+                    + " stderr=" + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
+    // 2f. The LuaJIT load under real luajit
     // =========================================================================
 
     private static void testLuaExecution(Baseline fixture, Baseline missing,
@@ -5657,6 +6107,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostClassCrossings();
             testLuaHostAsyncCompletion();
             testLuaHostAsyncStartCrossings();
+            testLuaHostFunctionAdapter();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);

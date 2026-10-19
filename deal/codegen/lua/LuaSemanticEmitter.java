@@ -9589,62 +9589,6 @@ local function __hostCellAtom(kind, v)
   if v == nil or v == __NULL or v == __rt.__NULL then return "null" end
   return __atom(kind, v)
 end
--- The identity-preserving host-to-DEAL array projection of one declared
--- array position (the host-driven callback adapter's parameter entry,
--- __hostFnArg; the synchronous and asynchronous host completions delegate
--- to the host-carrier bridge instead). The projection recurses through
--- declared array element positions, so a nested array the host passed is a
--- usable DEAL array at every level (the chunk's own carrier mark), never a
--- plain table the ordinary DEAL boundaries would reject. A language-null
--- position is not an array: the one shared null sentinel is preserved
--- before any recursion, so a null nested array element stays the language
--- null, never an empty array carrier a host-boundary read would observe as
--- a different value. The recursion carries an identity-keyed memo through
--- the complete projection: each raw host table maps to exactly one output
--- carrier (registered before its elements are projected, so a
--- self-referential host table terminates), and a repeated inner array the
--- host passed becomes one DEAL array observed through every alias (the
--- reference-identity contract), never two distinct carriers.
---
--- A plain host table is the declared T[] value only when it has the value
--- mapping's 1-based contiguous storage: every key a positive integer and
--- every one-based slot present (a nullable element position's absent slot
--- is the null admission the loaded matcher itself accepts, never a
--- dropped element). A map table, a sparse table at a non-nullable element
--- position and every other non-array table is not the declared array, so
--- it is left unprojected and the position's own typed-boundary cell
--- raises the closed kind failure — never a silently emptied or truncated
--- DEAL array. The shape test stays inside this helper (its own function
--- locals) so the prelude spends no additional chunk-level local.
-local function __hostToDealArray(memo, desc, v)
-  if v == __NULL or v == __rt.__NULL then return __NULL end
-  if type(v) ~= "table" or v[__dealCarrierKeys.a] then return v end
-  local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
-  local inner = string.sub(body, 2, -2)
-  local length = 0
-  local present = 0
-  for k in pairs(v) do
-    if type(k) ~= "number" or k < 1 or k % 1 ~= 0 then return v end
-    if k > length then length = k end
-    present = present + 1
-  end
-  local nullableElement = inner == "null" or string.sub(inner, 1, 1) == "?"
-  if present ~= length and not nullableElement then return v end
-  local mapped = memo[v]
-  if mapped ~= nil then return mapped end
-  local arrayElement = string.sub(inner, 1, 1) == "["
-    or string.sub(inner, 1, 2) == "?["
-  local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.nK] = {}}
-  memo[v] = out
-  for i = 1, length do
-    local element = v[i]
-    if element == __rt.__NULL then element = __NULL end
-    if arrayElement then element = __hostToDealArray(memo, inner, element) end
-    out[i] = element
-  end
-  out[__dealCarrierKeys.n] = length
-  return out
-end
 local function __hostReturnCell(desc, v, origin, nothing)
   if nothing and v == nil then
     return error(__arm("HOST_SYNC_RETURN_NOTHING", {expected = desc}, origin, desc,
@@ -9702,17 +9646,29 @@ end
 -- host calls; a host-facing wrapper passes through unadapted and anything
 -- else is left to the parameter cell.
 --
--- The adapter runs the DEAL function's declared parameter-entry cells at
--- every declared position (ISSUE-0695 acceptance remediation): a declared
--- array position's plain host table is the DEAL array value through the
--- identity-preserving host projection the synchronous host return uses
--- (__hostToDealArray: nested arrays, null elements, aliases and per-slot
--- numeric variants preserved), and the position's own typed-boundary cell
--- then admits the value or raises the closed failure a DEAL call site's
--- FUNCTION_PARAMETER cell raises, so a host-passed value never reaches the
--- body outside its declared type. Every declared position runs its cell,
--- with the value the host supplied or nil for an omitted position, so an
--- omitted non-nullable argument fails closed at the entry and an omitted
+-- The adapter is the one conversion site of a DEAL function value
+-- (ISSUE-0854): a chunk function carrier becomes the documented LuaJIT
+-- function value {[__kind] = "function", sig = <canonical signature>,
+-- f = <plain Lua closure>}, a runtime wrapper passes through unchanged in
+-- both directions, and a raw Lua function passes unchanged so the
+-- declared cell keeps the landed closed kind arm. The declared function
+-- position of __hostProjectArg and the bridge's outbound function branch
+-- both delegate here: there is no second adapter.
+--
+-- Inbound, the adapter runs the DEAL function's declared parameter-entry
+-- cells at every recorded position: the host-supplied value takes the
+-- host-carrier bridge's inbound projection at the cell's canonical
+-- descriptor (__hostCarrierIn: a host class instance becomes the
+-- dual-tagged DEAL instance with its declared top-level fields — nested
+-- class and array values included — a declared array the DEAL array
+-- carrier, class members of a table their DEAL representation, aliases
+-- one DEAL value through the invocation's one memo), and the position's
+-- own typed-boundary cell then admits the projected value or raises the
+-- closed failure a DEAL call site's FUNCTION_PARAMETER cell raises, so a
+-- host-passed value never reaches the body outside its declared type.
+-- Every declared position runs its cell, with the projected value the
+-- host supplied or nil for an omitted position, so an omitted
+-- non-nullable argument fails closed at the entry and an omitted
 -- nullable argument follows the named null mapping — exactly like the
 -- CALLBACK_INVOKE entry and the JS lane's callback prologue. `cells` is
 -- the recorded one-based parameter set of the declared signature ({check
@@ -9721,23 +9677,38 @@ end
 -- site's origin (the crossing that handed the callback to the host), so
 -- the closed failure is attributed to the declared boundary rather than
 -- an unknown origin.
+--
+-- Outbound, the body's result takes the same bridge's outbound projection
+-- at the declared return descriptor of this adapter's own
+-- __hostFnShapes entry, so the host observes the declared value mapping
+-- (a declared class instance with its top-level declared fields, a
+-- declared array carrier, a DEAL function value's documented wrapper, the
+-- deployed null sentinel for a language null) and never a lane-private
+-- carrier. The shape lookup and its missing-entry producer diagnostic are
+-- the bridge's; the cells and the return descriptor read here are the
+-- emitted declaration metadata, and one memo covers the whole invocation.
 local function __hostFnArg(desc, inner, cells, origin, v)
   if type(v) ~= "table" then return v end
   if v[__dealCarrierKeys.kind] == "function" then return v end
   if v[__dealCarrierKeys.fn] == nil then return v end
   local carrier = v
+  local shape = __factories.__hostFnShapes[inner]
+  local ret = nil
+  if shape ~= nil then ret = shape.ret end
   return {[__dealCarrierKeys.kind] = "function", sig = inner,
           f = function(...)
             local n = select("#", ...)
-            if cells == nil then return __dealFnValue(carrier, ...) end
+            local memo = {}
+            if cells == nil then
+              return __factories.__hostCarrierOut(ret,
+                __dealFnValue(carrier, ...), memo)
+            end
             local args = {...}
             for i = 1, #cells do
               local cell = cells[i]
               local value = nil
-              if i <= n then value = args[i] end
-              if string.sub(cell[3], 1, 1) == "["
-                  or string.sub(cell[3], 1, 2) == "?[" then
-                value = __hostToDealArray({}, cell[3], value)
+              if i <= n then
+                value = __factories.__hostCarrierIn(cell[3], args[i], memo)
               end
               local ok, checked = pcall(__bcheck, cell[1], cell[2], value,
                 cell[3])
@@ -9747,7 +9718,8 @@ local function __hostFnArg(desc, inner, cells, origin, v)
               end
               args[i] = checked
             end
-            return __dealFnValue(carrier, unpack(args, 1, n))
+            return __factories.__hostCarrierOut(ret,
+              __dealFnValue(carrier, unpack(args, 1, n)), memo)
           end}
 end
 -- The declared host-facing projection of one checked parameter: after the
