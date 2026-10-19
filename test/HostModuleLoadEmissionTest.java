@@ -1257,6 +1257,483 @@ public class HostModuleLoadEmissionTest {
     }
 
     /**
+     * The host-carrier bridge probe body (ISSUE-0850): appended to the
+     * published host-binding chunk after its export-surface return, so the
+     * chunk's own locals (the factory store, the sentinels, the deployed
+     * runtime binding) are in scope. The body is one function so the main
+     * chunk's local budget is untouched, and it drives both directions of
+     * the emitted pair directly.
+     */
+    private static final String HOST_CARRIER_BRIDGE_PROBE = """
+    local function __bridgeProbe()
+    local K = __dealCarrierKeys
+    local function say(label, value) print(label .. "|" .. tostring(value)) end
+
+    -- ---- DEAL -> host ----
+    local pointerOutToken = {}
+    local point = {[K.c] = true, [K.id] = "@src/util.deal/Point",
+      [K.f] = {x = 1, y = 2}, [K.p] = {x = true, y = true},
+      [K.ptr] = pointerOutToken}
+    local pointOut = __factories.__hostCarrierOut("@src/util.deal/Point", point, {})
+    say("out.point.kind", pointOut[K.kind])
+    say("out.point.identity", pointOut[K.classname])
+    say("out.point.x", pointOut.x)
+    say("out.point.y", pointOut.y)
+    say("out.point.no-carrier-fields", pointOut[K.f] == nil)
+    say("out.point.source-unchanged", point[K.c] == true and point[K.f].x == 1)
+    say("out.point.pointer", pointOut[K.ptr] == pointerOutToken)
+    say("out.point.untyped-identity",
+      __factories.__hostCarrierOut(nil, point, {})[K.classname])
+    say("out.point.declared-identity",
+      __factories.__hostCarrierOut("@$external/host/carrier/Endpoint", point, {})[K.classname])
+
+    local unknownCarrier = {[K.c] = true,
+      [K.id] = "@$external/host/other/Unknown", [K.f] = {v = 1}, [K.p] = {v = true}}
+    local unknownCarrierOut = __factories.__hostCarrierOut(nil, unknownCarrier, {})
+    say("out.unknown.identity", unknownCarrierOut[K.classname])
+    say("out.unknown.chunk-tag", unknownCarrierOut[K.c])
+    say("out.unknown.field", unknownCarrierOut.v)
+
+    local pair = {[K.c] = true, [K.id] = "@$external/native/sample/Pair",
+      [K.f] = {left = 4, right = 9.5}, [K.p] = {left = true, right = true}}
+    local pairOut = __factories.__hostCarrierOut(nil, pair, {})
+    say("out.pair.kind", pairOut[K.kind])
+    say("out.pair.identity", pairOut[K.classname])
+    say("out.pair.left", pairOut.left)
+    say("out.pair.right", pairOut.right)
+
+    local errorCarrier = {[K.d] = true, code = "E_X", m = "boom"}
+    local errorOut = __factories.__hostCarrierOut(nil, errorCarrier, {})
+    say("out.error.kind", errorOut[K.kind])
+    say("out.error.identity", errorOut[K.classname])
+    say("out.error.code", errorOut.code)
+    say("out.error.message", errorOut.message)
+    say("out.error.no-carrier", errorOut[K.d] == nil)
+
+    local fnCarrier = {[K.fn] = function(x) return x + 1 end,
+      [K.sig] = "function(int;int)", [K.csig] = "(int)->int"}
+    local fnOut = __factories.__hostCarrierOut(nil, fnCarrier, {})
+    say("out.fn.kind", fnOut[K.kind])
+    say("out.fn.sig", fnOut.sig)
+    say("out.fn.f-type", type(fnOut.f))
+    say("out.fn.result", fnOut.f(41))
+    local okReject, reject = pcall(fnOut.f, "bad")
+    say("out.fn.reject", tostring(okReject) .. "|" .. tostring(reject.code)
+      .. "|" .. tostring(reject.m))
+    local okShape, shapeErr = pcall(function()
+      __factories.__hostCarrierOut(nil, {[K.fn] = function() end,
+        [K.sig] = "function(boolean;boolean)", [K.csig] = "(boolean)->boolean"}, {})
+    end)
+    say("out.fn.no-shape", tostring(okShape) .. "|" .. tostring(type(shapeErr)))
+    say("out.fn.no-shape-names-signature",
+      type(shapeErr) == "string" and string.find(shapeErr, "(boolean)->boolean", 1, true) ~= nil)
+    say("out.fn.no-shape-producer",
+      type(shapeErr) == "string" and string.find(shapeErr, "producer coverage defect", 1, true) ~= nil)
+    local wrapper = {[K.kind] = "function", sig = "(int)->int", f = function() return 1 end}
+    say("out.fn.wrapper-identity",
+      __factories.__hostCarrierOut(nil, wrapper, {}) == wrapper)
+    local raw = function() return 2 end
+    say("out.fn.raw-identity", __factories.__hostCarrierOut(nil, raw, {}) == raw)
+
+    local dual = {[K.kind] = "class", [K.classname] = "@src/util.deal/Point",
+      [K.c] = true, [K.id] = "@src/util.deal/Point", x = 1, y = 2}
+    say("out.dual.identity", __factories.__hostCarrierOut(nil, dual, {}) == dual)
+    local dualAction = {[K.fn] = function(x) return x + 1 end,
+      [K.sig] = "function(int;int)", [K.csig] = "(int)->int"}
+    local dualBundle = {[K.kind] = "class",
+      [K.classname] = "@$external/host/carrier/Bundle",
+      [K.c] = true, [K.id] = "@$external/host/carrier/Bundle",
+      label = "b", action = dualAction}
+    local dualOut = __factories.__hostCarrierOut(nil, dualBundle, {})
+    say("out.dual.copy", dualOut ~= dualBundle)
+    say("out.dual.copy-kind", dualOut[K.kind])
+    say("out.dual.copy-chunk-tag", dualOut[K.c])
+    say("out.dual.copy-id", dualOut[K.id])
+    say("out.dual.copy-action-kind", dualOut.action[K.kind])
+    say("out.dual.copy-action-result", dualOut.action.f(2))
+    say("out.dual.source-action-carrier", dualBundle.action[K.csig] == "(int)->int"
+      and dualBundle.action[K.kind] == nil)
+
+    local hostOrigin = {[K.kind] = "class",
+      [K.classname] = "@$external/host/carrier/Endpoint", path = "/e"}
+    say("out.host-origin.identity",
+      __factories.__hostCarrierOut(nil, hostOrigin, {}) == hostOrigin)
+    say("out.host-origin.no-chunk-tag", hostOrigin[K.c] == nil)
+    local hostNumericArray = {[K.a] = true, [K.n] = 1,
+      {[K.jn] = true, k = "number", d = 3.5}}
+    local hostNumericInstance = {[K.kind] = "class",
+      [K.classname] = "@$external/host/carrier/ServerConfig", tags = hostNumericArray}
+    say("out.host-origin.numeric-identity",
+      __factories.__hostCarrierOut(nil, hostNumericInstance, {}) == hostNumericInstance)
+    say("out.host-origin.numeric", hostNumericArray[1])
+
+    local numberCarrier = {[K.jn] = true, k = "number", d = 1.5}
+    local sharedArray = {[K.a] = true, [K.n] = 2, 1, numberCarrier}
+    say("out.array.identity",
+      __factories.__hostCarrierOut("[int]", sharedArray, {}) == sharedArray)
+    say("out.array.numeric", sharedArray[2])
+    say("out.array.mark", sharedArray[K.nK][2] == true)
+    local endpointCarrier = {[K.c] = true,
+      [K.id] = "@$external/host/carrier/Endpoint", [K.f] = {path = "/a"},
+      [K.p] = {path = true}}
+    local classArray = {[K.a] = true, [K.n] = 1, endpointCarrier}
+    local classArrayOut = __factories.__hostCarrierOut(
+      "[@$external/host/carrier/Endpoint]", classArray, {})
+    say("out.array.copy", classArrayOut ~= classArray)
+    say("out.array.copy-mark", classArrayOut[K.a] == true)
+    say("out.array.copy-length", classArrayOut[K.n])
+    say("out.array.copy-element-kind", classArrayOut[1][K.kind])
+    say("out.array.copy-element-path", classArrayOut[1].path)
+    say("out.array.source-carrier", classArray[1] == endpointCarrier)
+
+    local sharedTable = {[K.t] = true, [K.keys] = {k = true}, [K.order] = {"k"}, k = "v"}
+    say("out.table.identity",
+      __factories.__hostCarrierOut("table", sharedTable, {}) == sharedTable)
+    local memberTable = {[K.t] = true, [K.keys] = {k = true}, [K.order] = {"k"},
+      k = endpointCarrier}
+    local memberTableOut = __factories.__hostCarrierOut("table", memberTable, {})
+    say("out.table.copy", memberTableOut ~= memberTable)
+    say("out.table.copy-mark", memberTableOut[K.t] == true)
+    say("out.table.copy-keys", memberTableOut[K.keys].k == true)
+    say("out.table.copy-order", memberTableOut[K.order][1])
+    say("out.table.copy-member-kind", memberTableOut.k[K.kind])
+    say("out.table.source-member-carrier", memberTable.k == endpointCarrier)
+    local fnMemberTable = {[K.t] = true, [K.keys] = {a = true, b = true},
+      [K.order] = {"a", "b"}, a = fnCarrier, b = 1}
+    local fnMemberTableOut = __factories.__hostCarrierOut("table", fnMemberTable, {})
+    say("out.table.fn-member",
+      fnMemberTableOut.a[K.kind] .. "|" .. tostring(fnMemberTableOut.a.f(1)))
+    local plainNumericArray = {[K.a] = true, [K.n] = 1,
+      {[K.jn] = true, k = "number", d = 4.5}}
+    local plainNumericHolder = {xs = plainNumericArray}
+    say("out.plain.identity",
+      __factories.__hostCarrierOut(nil, plainNumericHolder, {}) == plainNumericHolder)
+    say("out.plain.numeric", plainNumericArray[1])
+    local aliasTableOut = __factories.__hostCarrierOut(nil, {first = point, second = point}, {})
+    say("out.alias.same", aliasTableOut.first == aliasTableOut.second)
+
+    -- ---- host -> DEAL ----
+    local hostEndpoint = {[K.kind] = "class",
+      [K.classname] = "@$external/host/carrier/Endpoint", path = "/e"}
+    local hostCfg = {[K.kind] = "class",
+      [K.classname] = "@$external/host/carrier/ServerConfig",
+      port = 1, endpoint = hostEndpoint, note = __rt.__NULL}
+    local pointerToken = {}
+    hostCfg[K.ptr] = pointerToken
+    local cfgIn = __factories.__hostCarrierIn(
+      "@$external/host/carrier/ServerConfig", hostCfg, {})
+    say("in.cfg.chunk-tag", cfgIn[K.c])
+    say("in.cfg.kind-tag", cfgIn[K.kind])
+    say("in.cfg.classname", cfgIn[K.classname])
+    say("in.cfg.id", cfgIn[K.id])
+    say("in.cfg.port", cfgIn.port)
+    say("in.cfg.endpoint-chunk-tag", cfgIn.endpoint[K.c])
+    say("in.cfg.endpoint-path", cfgIn.endpoint.path)
+    say("in.cfg.note-null", cfgIn.note == __NULL)
+    say("in.cfg.tags-absent", cfgIn.tags == nil)
+    say("in.cfg.pointer", cfgIn[K.ptr] == pointerToken)
+    say("in.host.not-mutated", hostCfg[K.c] == nil and hostCfg.port == 1)
+    say("in.host.nested-not-mutated", hostEndpoint[K.c] == nil)
+
+    local hostPoint = {[K.kind] = "class", [K.classname] = "@src/util.deal/Point", x = 3, y = 4}
+    local pointIn = __factories.__hostCarrierIn(nil, hostPoint, {})
+    say("in.point.chunk-tag", pointIn[K.c])
+    say("in.point.id", pointIn[K.id])
+    say("in.point.field-x", pointIn[K.f].x)
+    say("in.point.present-x", pointIn[K.p].x)
+    say("in.point.top-level-x", pointIn.x)
+
+    local hostPair = {[K.kind] = "class",
+      [K.classname] = "@$external/native/sample/Pair", left = 7, right = 1.5}
+    local pairIn = __factories.__hostCarrierIn(nil, hostPair, {})
+    say("in.pair.chunk-tag", pairIn[K.c])
+    say("in.pair.field-left", pairIn[K.f].left)
+
+    local hostUnknown = {[K.kind] = "class",
+      [K.classname] = "@$external/host/other/Thing", v = 1}
+    local unknownIn = __factories.__hostCarrierIn(nil, hostUnknown, {})
+    say("in.unknown.chunk-tag", unknownIn[K.c])
+    say("in.unknown.id", unknownIn[K.id])
+    say("in.unknown.field", unknownIn.v)
+
+    local hostError = {[K.kind] = "class", [K.classname] = "Error",
+      code = "E_Y", message = "bad"}
+    local errorIn = __factories.__hostCarrierIn(nil, hostError, {})
+    say("in.error.carrier", errorIn[K.d])
+    say("in.error.code", errorIn.code)
+    say("in.error.m", errorIn.m)
+
+    local dense = {10, 20, 30}
+    local denseIn = __factories.__hostCarrierIn("[int]", dense, {})
+    say("in.array.dense-mark", denseIn[K.a])
+    say("in.array.dense-length", denseIn[K.n])
+    say("in.array.dense-element", denseIn[2])
+    say("in.array.dense-marks", type(denseIn[K.nK]))
+    local sparse = {[1] = 1, [3] = 3}
+    say("in.array.sparse-identity", __factories.__hostCarrierIn("[int]", sparse, {}) == sparse)
+    local mapTable = {a = 1}
+    say("in.array.map-identity", __factories.__hostCarrierIn("[int]", mapTable, {}) == mapTable)
+    local classElementsIn = __factories.__hostCarrierIn(
+      "[@$external/host/carrier/Endpoint]", {hostEndpoint}, {})
+    say("in.array.classes-mark", classElementsIn[K.a])
+    say("in.array.classes-element-chunk-tag", classElementsIn[1][K.c])
+    say("in.array.classes-element-path", classElementsIn[1].path)
+
+    local plainTable = {a = 1, b = {c = 2}}
+    say("in.table.identity", __factories.__hostCarrierIn("table", plainTable, {}) == plainTable)
+    local classMemberTable = {member = hostEndpoint}
+    local classMemberIn = __factories.__hostCarrierIn("table", classMemberTable, {})
+    say("in.table.copy", classMemberIn ~= classMemberTable)
+    say("in.table.member-chunk-tag", classMemberIn.member[K.c])
+    say("in.table.source-member-not-mutated", classMemberTable.member == hostEndpoint)
+    local nestedTableIn = __factories.__hostCarrierIn(nil, {x = {inner = {1, 2}}}, {})
+    say("in.table.nested-not-array", nestedTableIn.x[K.a] == nil)
+    local wrapperTable = {f = wrapper}
+    say("in.table.wrapper-identity",
+      __factories.__hostCarrierIn("table", wrapperTable, {}) == wrapperTable)
+
+    local aliasHost = {first = hostEndpoint, second = hostEndpoint}
+    local aliasIn = __factories.__hostCarrierIn("table", aliasHost, {})
+    say("in.alias.same", aliasIn.first == aliasIn.second)
+    local aliasArrayIn = __factories.__hostCarrierIn(
+      "[@$external/host/carrier/Endpoint]", {hostEndpoint, hostEndpoint}, {})
+    say("in.alias.array-same", aliasArrayIn[1] == aliasArrayIn[2])
+    local nullablePointIn = __factories.__hostCarrierIn("?@src/util.deal/Point", hostPoint, {})
+    say("in.nullable-class.chunk-tag", nullablePointIn[K.c])
+
+    local pointOut1 = __factories.__hostCarrierOut(nil, point, {})
+    say("out.idempotent", __factories.__hostCarrierOut(nil, pointOut1, {}) == pointOut1)
+    local pointIn1 = __factories.__hostCarrierIn(nil, hostPoint, {})
+    say("in.idempotent", __factories.__hostCarrierIn(nil, pointIn1, {}) == pointIn1)
+    say("in.fn.carrier-identity",
+      __factories.__hostCarrierIn(nil, fnCarrier, {}) == fnCarrier)
+    say("in.array.carrier-identity",
+      __factories.__hostCarrierIn("[int]", sharedArray, {}) == sharedArray)
+
+    local cycleOut = {[K.t] = true, [K.keys] = {}, [K.order] = {}}
+    cycleOut.self = cycleOut
+    say("out.cycle", __factories.__hostCarrierOut(nil, cycleOut, {}) == cycleOut)
+    local cycleIn = {[K.kind] = "class", [K.classname] = "@$external/host/other/Cycle"}
+    cycleIn.self = cycleIn
+    local cycleInResult = __factories.__hostCarrierIn(nil, cycleIn, {})
+    say("in.cycle", cycleInResult.self == cycleInResult)
+
+    say("out.nil-null", __factories.__hostCarrierOut(nil, nil, {}) == __rt.__NULL)
+    say("out.null-null", __factories.__hostCarrierOut(nil, __NULL, {}) == __rt.__NULL)
+    say("out.missing-missing", __factories.__hostCarrierOut(nil, __MISSING, {}) == __MISSING)
+    say("out.jn", __factories.__hostCarrierOut(nil, {[K.jn] = true, k = "number", d = 2.5}, {}))
+    say("in.null-null", __factories.__hostCarrierIn(nil, __rt.__NULL, {}) == __NULL)
+    say("in.missing-missing", __factories.__hostCarrierIn(nil, __MISSING, {}) == __MISSING)
+    local inboundJn = {[K.jn] = true, k = "number", d = 2.5}
+    say("in.jn-identity", __factories.__hostCarrierIn(nil, inboundJn, {}) == inboundJn)
+    say("in.number", __factories.__hostCarrierIn(nil, 5, {}))
+    say("in.string", __factories.__hostCarrierIn(nil, "s", {}))
+    end
+    __bridgeProbe()
+    """;
+
+    /**
+     * The exact row transcript of the host-carrier bridge probe: both
+     * directions of the pair (class identity and top-level fields, the
+     * DEAL/extern-C carrier path, the Error mapping, the shared and copied
+     * array/table carriers with their marks, the dense/sparse inbound
+     * arrays, the alias memo, idempotency, cycle termination, and the
+     * null/absent/numeric-variant rules) plus the projected function
+     * value's wrapper shape, declared parameter entry, and the producer
+     * diagnostic of an undeclared signature.
+     */
+    private static final String HOST_CARRIER_BRIDGE_TRANSCRIPT = """
+        out.point.kind|class
+        out.point.identity|@src/util.deal/Point
+        out.point.x|1
+        out.point.y|2
+        out.point.no-carrier-fields|true
+        out.point.source-unchanged|true
+        out.point.pointer|true
+        out.point.untyped-identity|@src/util.deal/Point
+        out.point.declared-identity|@$external/host/carrier/Endpoint
+        out.unknown.identity|@$external/host/other/Unknown
+        out.unknown.chunk-tag|true
+        out.unknown.field|1
+        out.pair.kind|class
+        out.pair.identity|@$external/native/sample/Pair
+        out.pair.left|4
+        out.pair.right|9.5
+        out.error.kind|class
+        out.error.identity|Error
+        out.error.code|E_X
+        out.error.message|boom
+        out.error.no-carrier|true
+        out.fn.kind|function
+        out.fn.sig|(int)->int
+        out.fn.f-type|function
+        out.fn.result|42
+        out.fn.reject|false|E8001|expected int
+        out.fn.no-shape|false|string
+        out.fn.no-shape-names-signature|true
+        out.fn.no-shape-producer|true
+        out.fn.wrapper-identity|true
+        out.fn.raw-identity|true
+        out.dual.identity|true
+        out.dual.copy|true
+        out.dual.copy-kind|class
+        out.dual.copy-chunk-tag|true
+        out.dual.copy-id|@$external/host/carrier/Bundle
+        out.dual.copy-action-kind|function
+        out.dual.copy-action-result|3
+        out.dual.source-action-carrier|true
+        out.host-origin.identity|true
+        out.host-origin.no-chunk-tag|true
+        out.host-origin.numeric-identity|true
+        out.host-origin.numeric|3.5
+        out.array.identity|true
+        out.array.numeric|1.5
+        out.array.mark|true
+        out.array.copy|true
+        out.array.copy-mark|true
+        out.array.copy-length|1
+        out.array.copy-element-kind|class
+        out.array.copy-element-path|/a
+        out.array.source-carrier|true
+        out.table.identity|true
+        out.table.copy|true
+        out.table.copy-mark|true
+        out.table.copy-keys|true
+        out.table.copy-order|k
+        out.table.copy-member-kind|class
+        out.table.source-member-carrier|true
+        out.table.fn-member|function|2
+        out.plain.identity|true
+        out.plain.numeric|4.5
+        out.alias.same|true
+        in.cfg.chunk-tag|true
+        in.cfg.kind-tag|class
+        in.cfg.classname|@$external/host/carrier/ServerConfig
+        in.cfg.id|@$external/host/carrier/ServerConfig
+        in.cfg.port|1
+        in.cfg.endpoint-chunk-tag|true
+        in.cfg.endpoint-path|/e
+        in.cfg.note-null|true
+        in.cfg.tags-absent|true
+        in.cfg.pointer|true
+        in.host.not-mutated|true
+        in.host.nested-not-mutated|true
+        in.point.chunk-tag|true
+        in.point.id|@src/util.deal/Point
+        in.point.field-x|3
+        in.point.present-x|true
+        in.point.top-level-x|nil
+        in.pair.chunk-tag|true
+        in.pair.field-left|7
+        in.unknown.chunk-tag|true
+        in.unknown.id|@$external/host/other/Thing
+        in.unknown.field|1
+        in.error.carrier|true
+        in.error.code|E_Y
+        in.error.m|bad
+        in.array.dense-mark|true
+        in.array.dense-length|3
+        in.array.dense-element|20
+        in.array.dense-marks|table
+        in.array.sparse-identity|true
+        in.array.map-identity|true
+        in.array.classes-mark|true
+        in.array.classes-element-chunk-tag|true
+        in.array.classes-element-path|/e
+        in.table.identity|true
+        in.table.copy|true
+        in.table.member-chunk-tag|true
+        in.table.source-member-not-mutated|true
+        in.table.nested-not-array|true
+        in.table.wrapper-identity|true
+        in.alias.same|true
+        in.alias.array-same|true
+        in.nullable-class.chunk-tag|true
+        out.idempotent|true
+        in.idempotent|true
+        in.fn.carrier-identity|true
+        in.array.carrier-identity|true
+        out.cycle|true
+        in.cycle|true
+        out.nil-null|true
+        out.null-null|true
+        out.missing-missing|true
+        out.jn|2.5
+        in.null-null|true
+        in.missing-missing|true
+        in.jn-identity|true
+        in.number|5
+        in.string|s
+        """;
+
+    /**
+     * The host-carrier bridge pair (ISSUE-0850) on the published LuaJIT
+     * artifact: exactly one {@code __factories.__hostCarrierOut} and one
+     * {@code __factories.__hostCarrierIn} in the host-binding prelude,
+     * emitted after the declaration metadata and the projected function
+     * adapter they compose and before every crossing site, and then driven
+     * directly under real {@code luajit}. The probe rows pin both directions
+     * of the pair: the class identity and top-level fields, the DEAL and
+     * extern-C carrier path, the builtin {@code Error} mapping, the shared
+     * and copied array/table carriers with their marks, the dense and
+     * sparse inbound arrays, the per-crossing alias memo, idempotency,
+     * cycle termination, the null/absent/numeric-variant rules, the
+     * no-mutation post-state, and the projected function value's documented wrapper
+     * shape, declared parameter entry, and producer diagnostic.
+     */
+    private static void testLuaHostCarrierBridge(List<Path> roots)
+            throws Exception {
+        System.out.println("-- the host-carrier bridge pair: the emitted"
+            + " __hostCarrierOut/__hostCarrierIn under real luajit --");
+        Path root = Files.createTempDirectory("host-carrier-bridge");
+        roots.add(root);
+        Path out = publishCarrierMetadataProject(root, CARRIER_APP_SOURCE);
+        if (out == null) {
+            return;
+        }
+        Path artifact = out.resolve("app.lua");
+        check(Files.isRegularFile(artifact), "the published bridge artifact"
+            + " set carries the entry artifact: " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        String lua = Files.readString(artifact, StandardCharsets.UTF_8);
+        checkEq(1, countOccurrences(lua,
+                "__factories.__hostCarrierOut = function"),
+            "the chunk emits exactly one outbound host-carrier bridge");
+        checkEq(1, countOccurrences(lua,
+                "__factories.__hostCarrierIn = function"),
+            "the chunk emits exactly one inbound host-carrier bridge");
+        int outAt = lua.indexOf("__factories.__hostCarrierOut = function");
+        int inAt = lua.indexOf("__factories.__hostCarrierIn = function");
+        check(outAt > lua.indexOf("__factories.__hostFnShapes = "),
+            "the bridge follows the host-carrier declaration metadata");
+        check(outAt > lua.indexOf("local function __hostFnArg"),
+            "the outbound bridge is emitted where the projected function"
+                + " adapter it delegates to is in scope");
+        check(inAt > outAt && inAt < lua.indexOf("__dealMain = function()"),
+            "the bridge pair precedes every crossing site");
+        String tail = "return __exportSurfaces[\"app\"]";
+        check(lua.stripTrailing().endsWith(tail),
+            "the published artifact tail is the export-surface return");
+        int tailAt = lua.lastIndexOf(tail);
+        if (tailAt <= 0) {
+            return;
+        }
+        writeFileIn(out, "bridge_probe.lua",
+            lua.substring(0, tailAt) + HOST_CARRIER_BRIDGE_PROBE);
+        ProcessOutcome run = runProcess(List.of("luajit", "bridge_probe.lua"),
+            out, true);
+        check(run.exitCode() == 0 && run.stderr().isEmpty()
+                && run.stdout().equals(HOST_CARRIER_BRIDGE_TRANSCRIPT),
+            "the emitted host-carrier bridge pair preserves the declared"
+                + " class/function/container values in both directions:"
+                + " exit=" + run.exitCode()
+                + " stdout=" + escaped(run.stdout())
+                + " stderr=" + escaped(run.stderr()));
+    }
+
+    /**
      * The table-declared host parameter at a contextual-read function
      * value (ISSUE-0830): the emitted artifact's loaded matcher must keep
      * the function carrier's own token, so the call fails with the closed
@@ -3378,6 +3855,7 @@ public class HostModuleLoadEmissionTest {
             testLuaArtifactText(abi, aliases);
             testLuaHostCarrierMetadata(roots);
             testLuaHostCarrierMetadataAbsent(roots);
+            testLuaHostCarrierBridge(roots);
             testHostReadCorrelation(hostReads);
             testLuaHostDecodedNumericCarrier();
             testLuaHostTableValue();

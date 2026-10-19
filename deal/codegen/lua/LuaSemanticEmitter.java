@@ -1215,6 +1215,14 @@ public final class LuaSemanticEmitter {
                 // the main chunk's local budget is unchanged.
                 emitHostCarrierMetadata();
                 out.append(HOST_BOUNDARY_PRELUDE);
+                // The host-carrier bridge pair (ISSUE-0850): the two total,
+                // memoized, representation-directed projections every host
+                // crossing delegates to. They ride the one factory store
+                // like the other host-crossing helpers and are emitted after
+                // the declaration metadata and the helper set they compose
+                // (the projected function adapter, the numeric projection,
+                // the array carrier walk), before any crossing site.
+                out.append(HOST_CARRIER_BRIDGE_PRELUDE);
             } else if (bindsBytesRuntime()) {
 
                 out.append("local __rt = require(\"deal.runtime\")\n");
@@ -9682,6 +9690,517 @@ local function __ffiClassPlan(module, class)
       .." every construction in dependency order — a producer defect)", 0)
   end
   return surface[class.."_plan"]
+end
+""";
+
+    /**
+     * The host-carrier bridge pair (ISSUE-0850): the one pair of total,
+     * memoized, representation-directed projections every host crossing
+     * delegates to. {@code __hostCarrierOut} is the DEAL-to-host direction,
+     * {@code __hostCarrierIn} the host-to-DEAL direction; both are fields of
+     * the chunk's one factory store (so no main-chunk local is added), both
+     * take the declared canonical descriptor text at a declared position and
+     * {@code nil} at an untyped position, and both compose no DEAL failure:
+     * the declared cells keep their landed code/text/expected/actual/origin
+     * and the bridge is total, idempotent, and memoized per crossing (the
+     * memo entry is registered before the children, so finite cycles
+     * terminate and every alias maps to one target object). The function
+     * value branch delegates to the one projected function adapter
+     * ({@code __hostFnArg}) using the emitted {@code __hostFnShapes} entry;
+     * a chunk carrier whose canonical signature has no entry is a plain
+     * producer diagnostic naming the signature, never a DEAL failure and
+     * never a body invocation without its declared parameter entry. The
+     * array/table numerics stay the landed in-place projection
+     * ({@code __hostNumProject}); class values use the emitted
+     * {@code __hostClassFields}/{@code __hostClassKinds} metadata; the
+     * DEAL-side value is never mutated beyond the landed in-place numeric
+     * projection and a host-origin object is copied, never mutated. The
+     * pair is emitted only in the host-binding prelude
+     * (after the metadata and the helpers it composes) and never reaches a
+     * host-free chunk.
+     */
+    private static final String HOST_CARRIER_BRIDGE_PRELUDE = """
+-- The host-carrier bridge pair (ISSUE-0850): one pair of total,
+-- memoized, representation-directed projections behind every host-carrier
+-- re-representation. __hostCarrierOut is the DEAL-to-host direction and
+-- __hostCarrierIn the host-to-DEAL direction; both are fields of the
+-- chunk's one factory store (no main-chunk local), both take the declared
+-- canonical descriptor text at a declared position and nil at an untyped
+-- position, and both delegate the function-value adapter and the container
+-- numerics to the landed helpers. Neither composes a DEAL failure: the
+-- declared cells stay the only failure authority (a missing function-shape
+-- entry is a plain producer diagnostic, never a language failure).
+__factories.__hostCarrierOut = function(desc, v, memo)
+  if type(v) ~= "table" then
+    if v == nil then return __rt.__NULL end
+    return v
+  end
+  if v == __NULL or v == __rt.__NULL then return __rt.__NULL end
+  if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then return v end
+  if memo == nil then memo = {} end
+  local cached = memo[v]
+  if cached ~= nil then return cached end
+  if v[__dealCarrierKeys.jn] then return v.d end
+  local function baseOf(d)
+    if d ~= nil and string.sub(d, 1, 1) == "?" then return string.sub(d, 2) end
+    return d
+  end
+  local function arrayElementOf(d)
+    local base = baseOf(d)
+    if base == nil or string.sub(base, 1, 1) ~= "[" then return nil end
+    return string.sub(base, 2, -2)
+  end
+  local function identityOf(d, carried)
+    local base = baseOf(d)
+    if base ~= nil and (base == "Error" or string.sub(base, 1, 1) == "@") then
+      return base
+    end
+    return carried
+  end
+  local function fieldsOf(identity)
+    if identity == nil then return nil end
+    return __factories.__hostClassFields[identity]
+  end
+  local function fieldDescOf(fields, key)
+    if fields == nil then return nil end
+    return fields[key]
+  end
+  local changes
+  changes = function(x, seen)
+    if type(x) ~= "table" then return false end
+    if x == __NULL or x == __rt.__NULL or x == __MISSING
+        or (__rtMissing ~= nil and x == __rtMissing) then return false end
+    if x[__dealCarrierKeys.jn] then return true end
+    if x[__dealCarrierKeys.d] then return true end
+    if x[__dealCarrierKeys.kind] == "function" then return false end
+    if x[__dealCarrierKeys.fn] ~= nil then return true end
+    if seen == nil then seen = {} end
+    if seen[x] then return false end
+    seen[x] = true
+    if x[__dealCarrierKeys.kind] == "class" then
+      if not x[__dealCarrierKeys.c] then return false end
+      local fields = fieldsOf(x[__dealCarrierKeys.classname])
+      for k, val in pairs(x) do
+        if type(k) == "string" and changes(val, seen) then return true end
+      end
+      return false
+    end
+    if x[__dealCarrierKeys.c] then return true end
+    if x[__dealCarrierKeys.a] ~= nil then
+      local n = x[__dealCarrierKeys.n]
+      if type(n) ~= "number" then n = #x end
+      for i = 1, n do
+        local element = x[i]
+        if type(element) == "table"
+            and element[__dealCarrierKeys.jn] then
+          -- The landed in-place numeric projection of a declared array
+          -- slot re-representation: the carrier keeps its identity and its
+          -- per-slot marks.
+        elseif changes(element, seen) then
+          return true
+        end
+      end
+      return false
+    end
+    if x[__dealCarrierKeys.t] ~= nil then
+      for k, val in pairs(x) do
+        if type(k) == "string" then
+          if type(val) == "table" and val[__dealCarrierKeys.jn] then
+            -- The landed in-place numeric projection of an object member.
+          elseif changes(val, seen) then
+            return true
+          end
+        end
+      end
+      return false
+    end
+    for k, val in pairs(x) do
+      if changes(val, seen) then return true end
+    end
+    return false
+  end
+  if v[__dealCarrierKeys.d] then
+    local out = {[__dealCarrierKeys.kind] = "class",
+      [__dealCarrierKeys.classname] = "Error", code = v.code, message = v.m}
+    memo[v] = out
+    return out
+  end
+  if v[__dealCarrierKeys.kind] == "function" then return v end
+  if v[__dealCarrierKeys.kind] == "bytes"
+      or v[__dealCarrierKeys.kind] == "async" then return v end
+  if v[__dealCarrierKeys.fn] ~= nil then
+    local sig = v[__dealCarrierKeys.csig] or v[__dealCarrierKeys.sig]
+    if sig == nil then
+      error("the DEAL function value carries no canonical signature, so the"
+        .. " host-carrier bridge cannot resolve its declared parameter entry"
+        .. " (a producer coverage defect)", 0)
+    end
+    local shape = __factories.__hostFnShapes[sig]
+    if shape == nil then
+      error("the DEAL function value '" .. tostring(sig) .. "' has no"
+        .. " __hostFnShapes entry in the host-carrier metadata (a producer"
+        .. " coverage defect)", 0)
+    end
+    local out = __hostFnArg(sig, sig, shape.cells, nil, v)
+    memo[v] = out
+    return out
+  end
+  if v[__dealCarrierKeys.kind] == "class" then
+    local identity = v[__dealCarrierKeys.classname]
+    local fields = fieldsOf(identity)
+    if not v[__dealCarrierKeys.c] then
+      memo[v] = v
+      for k, val in pairs(v) do
+        if type(k) == "string" then
+          local projected = __factories.__hostNumProject(val, memo)
+          if projected ~= val then v[k] = projected end
+        end
+      end
+      return v
+    end
+    local recreate = false
+    for k, val in pairs(v) do
+      if type(k) == "string" and changes(val) then
+        recreate = true
+        break
+      end
+    end
+    if not recreate then
+      memo[v] = v
+      return v
+    end
+    local out = {[__dealCarrierKeys.kind] = "class",
+      [__dealCarrierKeys.classname] = identity,
+      [__dealCarrierKeys.c] = true,
+      [__dealCarrierKeys.id] = v[__dealCarrierKeys.id]}
+    if v[__dealCarrierKeys.ptr] ~= nil then
+      out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr]
+    end
+    memo[v] = out
+    for k, val in pairs(v) do
+      if type(k) == "string" and val ~= nil then
+        out[k] = __factories.__hostCarrierOut(
+          fieldDescOf(fields, k), val, memo)
+      end
+    end
+    return out
+  end
+  if v[__dealCarrierKeys.c] then
+    local identity = identityOf(desc, v[__dealCarrierKeys.id])
+    local kind = nil
+    if identity ~= nil then kind = __factories.__hostClassKinds[identity] end
+    local fields = fieldsOf(identity)
+    if kind ~= nil and fields == nil then
+      error("the class identity '" .. tostring(identity) .. "' has no"
+        .. " __hostClassFields entry in the host-carrier metadata (a producer"
+        .. " coverage defect)", 0)
+    end
+    local out = {[__dealCarrierKeys.kind] = "class",
+      [__dealCarrierKeys.classname] = identity}
+    if kind == nil then
+      out[__dealCarrierKeys.c] = true
+      out[__dealCarrierKeys.id] = identity
+    end
+    if v[__dealCarrierKeys.ptr] ~= nil then
+      out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr]
+    end
+    memo[v] = out
+    local values = v[__dealCarrierKeys.f]
+    if type(values) == "table" then
+      for k, val in pairs(values) do
+        if type(k) == "string" and val ~= nil then
+          out[k] = __factories.__hostCarrierOut(
+            fieldDescOf(fields, k), val, memo)
+        end
+      end
+    end
+    return out
+  end
+  if v[__dealCarrierKeys.a] ~= nil then
+    local n = v[__dealCarrierKeys.n]
+    if type(n) ~= "number" then n = #v end
+    local elementDesc = arrayElementOf(desc)
+    local recreate = false
+    for i = 1, n do
+      local element = v[i]
+      if not (type(element) == "table"
+          and element[__dealCarrierKeys.jn]) and changes(element) then
+        recreate = true
+        break
+      end
+    end
+    if not recreate then
+      __factories.__hostNumProject(v)
+      memo[v] = v
+      return v
+    end
+    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = n}
+    local sourceMarks = v[__dealCarrierKeys.nK]
+    local marks = nil
+    if type(sourceMarks) == "table" then
+      marks = {}
+      for k, flag in pairs(sourceMarks) do marks[k] = flag end
+      out[__dealCarrierKeys.nK] = marks
+    end
+    memo[v] = out
+    for i = 1, n do
+      local element = v[i]
+      if element ~= nil then
+        if type(element) == "table" and element[__dealCarrierKeys.jn] then
+          out[i] = element.d
+          if element.k == "number" then
+            if marks == nil then
+              marks = {}
+              out[__dealCarrierKeys.nK] = marks
+            end
+            marks[i] = true
+          elseif marks ~= nil then
+            marks[i] = nil
+          end
+        else
+          out[i] = __factories.__hostCarrierOut(elementDesc, element, memo)
+        end
+      end
+    end
+    return out
+  end
+  if v[__dealCarrierKeys.t] ~= nil then
+    local recreate = false
+    for k, val in pairs(v) do
+      if type(k) == "string"
+          and not (type(val) == "table" and val[__dealCarrierKeys.jn])
+          and changes(val) then
+        recreate = true
+        break
+      end
+    end
+    if not recreate then
+      __factories.__hostNumProject(v)
+      memo[v] = v
+      return v
+    end
+    local out = {[__dealCarrierKeys.t] = true,
+      [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}}
+    local sourceMarks = v[__dealCarrierKeys.nK]
+    local marks = nil
+    if type(sourceMarks) == "table" then
+      marks = {}
+      for k, flag in pairs(sourceMarks) do marks[k] = flag end
+      out[__dealCarrierKeys.nK] = marks
+    end
+    memo[v] = out
+    local function put(key, val)
+      if val == nil then return end
+      out[key] = __factories.__hostCarrierOut(nil, val, memo)
+      out[__dealCarrierKeys.keys][key] = true
+      out[__dealCarrierKeys.order][#out[__dealCarrierKeys.order] + 1] = key
+      if type(val) == "table" and val[__dealCarrierKeys.jn]
+          and val.k == "number" then
+        if marks == nil then
+          marks = {}
+          out[__dealCarrierKeys.nK] = marks
+        end
+        marks[key] = true
+      end
+    end
+    local order = v[__dealCarrierKeys.order]
+    if type(order) == "table" then
+      for i = 1, #order do
+        local key = order[i]
+        if type(key) == "string" then put(key, v[key]) end
+      end
+    else
+      for k, val in pairs(v) do
+        if type(k) == "string" then put(k, val) end
+      end
+    end
+    return out
+  end
+  local recreate = false
+  for k, val in pairs(v) do
+    if changes(val) then
+      recreate = true
+      break
+    end
+  end
+  if not recreate then
+    -- The landed in-place numeric projection of the carrier members: a
+    -- plain host table keeps its identity, and its carrier members keep
+    -- theirs while their numeric slots reach the host as declared numbers.
+    for k, val in pairs(v) do
+      if type(val) == "table" then __factories.__hostNumProject(val) end
+    end
+    memo[v] = v
+    return v
+  end
+  local out = {}
+  memo[v] = out
+  for k, val in pairs(v) do
+    if type(k) == "string" then
+      out[k] = __factories.__hostCarrierOut(nil, val, memo)
+    else
+      out[k] = val
+    end
+  end
+  return out
+end
+
+__factories.__hostCarrierIn = function(desc, v, memo)
+  if v == nil then return __NULL end
+  if v == __rt.__NULL or v == __NULL then return __NULL end
+  if type(v) ~= "table" then return v end
+  if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then return v end
+  if memo == nil then memo = {} end
+  local cached = memo[v]
+  if cached ~= nil then return cached end
+  local base = desc
+  if base ~= nil and string.sub(base, 1, 1) == "?" then
+    base = string.sub(base, 2)
+  end
+  local function fieldDescOf(identity, key)
+    if identity == nil then return nil end
+    local fields = __factories.__hostClassFields[identity]
+    if fields == nil then return nil end
+    return fields[key]
+  end
+  if v[__dealCarrierKeys.c] then return v end
+  if v[__dealCarrierKeys.d] then return v end
+  if v[__dealCarrierKeys.a] ~= nil then return v end
+  if v[__dealCarrierKeys.t] ~= nil then return v end
+  if v[__dealCarrierKeys.kind] == "bytes"
+      or v[__dealCarrierKeys.kind] == "async" then return v end
+  if v[__dealCarrierKeys.kind] == "function" then return v end
+  if v[__dealCarrierKeys.fn] ~= nil then return v end
+  if v[__dealCarrierKeys.kind] == "class" then
+    local identity = v[__dealCarrierKeys.classname]
+    if identity == nil then return v end
+    if identity == "Error" then
+      local out = {[__dealCarrierKeys.d] = true, code = v.code, m = v.message}
+      memo[v] = out
+      return out
+    end
+    local kind = __factories.__hostClassKinds[identity]
+    local fields = __factories.__hostClassFields[identity]
+    if kind ~= nil and fields == nil then
+      error("the class identity '" .. tostring(identity) .. "' has no"
+        .. " __hostClassFields entry in the host-carrier metadata (a producer"
+        .. " coverage defect)", 0)
+    end
+    local values = {}
+    for k, val in pairs(v) do
+      if k ~= __dealCarrierKeys.kind
+          and k ~= __dealCarrierKeys.classname
+          and k ~= __dealCarrierKeys.ptr
+          and k ~= __dealCarrierKeys.c
+          and k ~= __dealCarrierKeys.id then
+        values[#values + 1] = {k, val}
+      end
+    end
+    if kind == "deal" or kind == "extc" then
+      local out = {[__dealCarrierKeys.c] = true,
+        [__dealCarrierKeys.id] = identity,
+        [__dealCarrierKeys.f] = {}, [__dealCarrierKeys.p] = {}}
+      if v[__dealCarrierKeys.ptr] ~= nil then
+        out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr]
+      end
+      memo[v] = out
+      for i = 1, #values do
+        local k = values[i][1]
+        local val = values[i][2]
+        local childDesc = nil
+        if type(k) == "string" then childDesc = fieldDescOf(identity, k) end
+        out[__dealCarrierKeys.f][k] =
+          __factories.__hostCarrierIn(childDesc, val, memo)
+        out[__dealCarrierKeys.p][k] = true
+      end
+      return out
+    end
+    local out = {[__dealCarrierKeys.kind] = "class",
+      [__dealCarrierKeys.classname] = identity,
+      [__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = identity}
+    if v[__dealCarrierKeys.ptr] ~= nil then
+      out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr]
+    end
+    memo[v] = out
+    for i = 1, #values do
+      local k = values[i][1]
+      local val = values[i][2]
+      local childDesc = nil
+      if type(k) == "string" then childDesc = fieldDescOf(identity, k) end
+      out[k] = __factories.__hostCarrierIn(childDesc, val, memo)
+    end
+    return out
+  end
+  local elementDesc = nil
+  if base ~= nil and string.sub(base, 1, 1) == "[" then
+    elementDesc = string.sub(base, 2, -2)
+  end
+  if elementDesc ~= nil then
+    local length = 0
+    local present = 0
+    for k in pairs(v) do
+      if type(k) ~= "number" or k < 1 or k % 1 ~= 0 then return v end
+      if k > length then length = k end
+      present = present + 1
+    end
+    local nullableElement = elementDesc == "null"
+      or string.sub(elementDesc, 1, 1) == "?"
+    if present ~= length and not nullableElement then return v end
+    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0,
+      [__dealCarrierKeys.nK] = {}}
+    memo[v] = out
+    for i = 1, length do
+      local element = v[i]
+      if element ~= nil then
+        out[i] = __factories.__hostCarrierIn(elementDesc, element, memo)
+      end
+    end
+    out[__dealCarrierKeys.n] = length
+    return out
+  end
+  local changes
+  changes = function(x, seen)
+    if type(x) ~= "table" then return false end
+    if x == __NULL or x == __rt.__NULL or x == __MISSING
+        or (__rtMissing ~= nil and x == __rtMissing) then return false end
+    if x[__dealCarrierKeys.c] or x[__dealCarrierKeys.d] then return false end
+    if x[__dealCarrierKeys.a] ~= nil or x[__dealCarrierKeys.t] ~= nil then
+      return false
+    end
+    if x[__dealCarrierKeys.kind] == "function"
+        or x[__dealCarrierKeys.kind] == "bytes"
+        or x[__dealCarrierKeys.kind] == "async"
+        or x[__dealCarrierKeys.fn] ~= nil then return false end
+    if x[__dealCarrierKeys.kind] ~= nil then return true end
+    if seen == nil then seen = {} end
+    if seen[x] then return false end
+    seen[x] = true
+    for k, val in pairs(x) do
+      if type(k) == "string" and changes(val, seen) then return true end
+    end
+    return false
+  end
+  local recreate = false
+  for k, val in pairs(v) do
+    if changes(val) then
+      recreate = true
+      break
+    end
+  end
+  if not recreate then
+    memo[v] = v
+    return v
+  end
+  local out = {}
+  memo[v] = out
+  for k, val in pairs(v) do
+    if type(k) == "string" then
+      out[k] = __factories.__hostCarrierIn(nil, val, memo)
+    else
+      out[k] = val
+    end
+  end
+  return out
 end
 """;
 
