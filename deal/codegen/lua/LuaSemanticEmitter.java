@@ -9026,26 +9026,44 @@ end
 -- terminates), and a repeated inner array the host returned becomes one
 -- DEAL array observed through every alias (the reference-identity
 -- contract), never two distinct carriers.
+--
+-- A plain host table is the declared T[] value only when it has the value
+-- mapping's 1-based contiguous storage: every key a positive integer and
+-- every one-based slot present (a nullable element position's absent slot
+-- is the null admission the loaded matcher itself accepts, never a
+-- dropped element). A map table, a sparse table at a non-nullable element
+-- position and every other non-array table is not the declared array, so
+-- it is left unprojected and the position's own typed-boundary cell
+-- raises the closed kind failure — never a silently emptied or truncated
+-- DEAL array. The shape test stays inside this helper (its own function
+-- locals) so the prelude spends no additional chunk-level local.
 local function __hostToDealArray(memo, desc, v)
   if v == __NULL or v == __rt.__NULL then return __NULL end
   if type(v) ~= "table" or v[__dealCarrierKeys.a] then return v end
-  local mapped = memo[v]
-  if mapped ~= nil then return mapped end
   local body = string.sub(desc, 1, 1) == "?" and string.sub(desc, 2) or desc
   local inner = string.sub(body, 2, -2)
+  local length = 0
+  local present = 0
+  for k in pairs(v) do
+    if type(k) ~= "number" or k < 1 or k % 1 ~= 0 then return v end
+    if k > length then length = k end
+    present = present + 1
+  end
+  local nullableElement = inner == "null" or string.sub(inner, 1, 1) == "?"
+  if present ~= length and not nullableElement then return v end
+  local mapped = memo[v]
+  if mapped ~= nil then return mapped end
   local arrayElement = string.sub(inner, 1, 1) == "["
     or string.sub(inner, 1, 2) == "?["
   local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.nK] = {}}
   memo[v] = out
-  local n = 0
-  for i = 1, #v do
+  for i = 1, length do
     local element = v[i]
     if element == __rt.__NULL then element = __NULL end
     if arrayElement then element = __hostToDealArray(memo, inner, element) end
     out[i] = element
-    n = i
   end
-  out[__dealCarrierKeys.n] = n
+  out[__dealCarrierKeys.n] = length
   return out
 end
 local function __hostReturnCell(desc, v, origin, nothing)
@@ -9136,11 +9154,18 @@ end
 -- numeric variants preserved), and the position's own typed-boundary cell
 -- then admits the value or raises the closed failure a DEAL call site's
 -- FUNCTION_PARAMETER cell raises, so a host-passed value never reaches the
--- body outside its declared type. `cells` is the recorded one-based
--- parameter set of the declared signature ({check dialect, static kind,
--- canonical text}); a position without a recorded set keeps the direct
--- invocation.
-local function __hostFnArg(desc, inner, cells, v)
+-- body outside its declared type. Every declared position runs its cell,
+-- with the value the host supplied or nil for an omitted position, so an
+-- omitted non-nullable argument fails closed at the entry and an omitted
+-- nullable argument follows the named null mapping — exactly like the
+-- CALLBACK_INVOKE entry and the JS lane's callback prologue. `cells` is
+-- the recorded one-based parameter set of the declared signature ({check
+-- dialect, static kind, canonical text}); a position without a recorded
+-- set keeps the direct invocation. A cell failure keeps the host call
+-- site's origin (the crossing that handed the callback to the host), so
+-- the closed failure is attributed to the declared boundary rather than
+-- an unknown origin.
+local function __hostFnArg(desc, inner, cells, origin, v)
   if type(v) ~= "table" then return v end
   if v[__dealCarrierKeys.kind] == "function" then return v end
   if v[__dealCarrierKeys.fn] == nil then return v end
@@ -9151,20 +9176,20 @@ local function __hostFnArg(desc, inner, cells, v)
             if cells == nil then return __dealFnValue(carrier, ...) end
             local args = {...}
             for i = 1, #cells do
-              if i <= n then
-                local cell = cells[i]
-                local value = args[i]
-                if string.sub(cell[3], 1, 1) == "["
-                    or string.sub(cell[3], 1, 2) == "?[" then
-                  value = __hostToDealArray({}, cell[3], value)
-                end
-                local ok, checked = pcall(__bcheck, cell[1], cell[2], value,
-                  cell[3])
-                if not ok then
-                  error(checked, 0)
-                end
-                args[i] = checked
+              local cell = cells[i]
+              local value = nil
+              if i <= n then value = args[i] end
+              if string.sub(cell[3], 1, 1) == "["
+                  or string.sub(cell[3], 1, 2) == "?[" then
+                value = __hostToDealArray({}, cell[3], value)
               end
+              local ok, checked = pcall(__bcheck, cell[1], cell[2], value,
+                cell[3])
+              if not ok then
+                if type(checked) == "table" then checked.o = origin end
+                error(checked, 0)
+              end
+              args[i] = checked
             end
             return __dealFnValue(carrier, unpack(args, 1, n))
           end}
@@ -9193,7 +9218,7 @@ local function __hostProjectArg(desc, inner, index, v, origin, cells)
   if v == __rt.__NULL then return v end
   if inner ~= nil and (string.sub(inner, 1, 1) == "("
       or string.sub(inner, 1, 9) == "async(") then
-    return __hostFnArg(desc, inner, cells, v)
+    return __hostFnArg(desc, inner, cells, origin, v)
   end
   if desc == "Error" or string.sub(desc, 1, 1) == "@" then
     return __hostClassProject(desc, v)
@@ -11045,7 +11070,11 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     return __bcheck(string.sub(desc, 10, -2), staticKind, v, innerSig, completion)
   elseif string.sub(desc, 1, 9) == "function(" then
     if type(v) == "function" then
-      return __fnRow(desc, csig, v, v[__dealCarrierKeys.csig], v[__dealCarrierKeys.sig])
+      -- A raw Lua function is not the LuaJIT function value mapping
+      -- ({__kind = "function", sig, f}); it takes the loaded matcher's
+      -- closed kind row (E8001 expected function), never an internal
+      -- index of the function value.
+      return fail("function")
     end
     if type(v) == "table" and v[__dealCarrierKeys.fn] ~= nil then
       return __fnRow(desc, csig, v, v[__dealCarrierKeys.csig], v[__dealCarrierKeys.sig])

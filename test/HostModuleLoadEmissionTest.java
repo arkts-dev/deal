@@ -1772,7 +1772,222 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
-    // 2b. The LuaJIT load under real luajit
+    // 2b. The host array crossing failures (ISSUE-0695 acceptance remediation)
+    // =========================================================================
+
+    /**
+     * The declared host positions of the crossing negatives: async
+     * completions and callback arguments outside the declared {@code int[]}
+     * value mapping (a map table, a sparse table and a numeric carrier), a
+     * callback invocation that omits a declared parameter, a callback with a
+     * declared nullable parameter (the omitted position's null mapping), and
+     * a callback whose function-typed parameter receives a raw Lua function
+     * instead of the DEAL function value wrapper.
+     */
+    private static final String ARRAY_FAILURE_DECLARATION_SOURCE = """
+        export async function produceMap(): int[];
+        export async function produceSparse(): int[];
+        export async function produceNum(): int[];
+        export function consumeMap(f: (xs: int[]) => int): int;
+        export function consumeSparse(f: (xs: int[]) => int): int;
+        export function consumeNum(f: (xs: int[]) => int): int;
+        export function consumeMissing(f: (x: int) => int): int;
+        export function consumeNullable(f: (x: int | null) => int): int;
+        export function consumeRawFn(f: (g: (x: int) => int) => int): int;
+        """;
+
+    /**
+     * The DEAL side of the crossing negatives: the callback bodies read a
+     * parameter the host did not supply and a function parameter the host
+     * supplied raw, so an omitted parameter-entry cell leaves a body-local
+     * read of nil and a raw host function reaches an internal index of the
+     * function value instead of the closed typed-boundary failure.
+     */
+    private static final String ARRAY_FAILURE_APP_SOURCE = """
+        import * as host from "host/arr_probe";
+
+        function sum(xs: int[]): int {
+          let total: int = 0;
+          let i: int = 0;
+          while (i < xs.length) {
+            total = total + xs[i];
+            i = i + 1;
+          }
+          return total;
+        }
+
+        function callbackTotal(xs: int[]): int {
+          return sum(xs);
+        }
+
+        function increment(x: int): int {
+          let y: int = x + 1;
+          return y;
+        }
+
+        function nullableJoin(x: int | null): int {
+          if (x === null) {
+            return 7;
+          } else {
+            return x;
+          }
+        }
+
+        function outer(g: (x: int) => int): int {
+          return g(5);
+        }
+
+        export function runMap(): int { return host.consumeMap(callbackTotal); }
+        export function runSparse(): int { return host.consumeSparse(callbackTotal); }
+        export function runNum(): int { return host.consumeNum(callbackTotal); }
+        export function runMissing(): int { return host.consumeMissing(increment); }
+        export function runNullable(): int { return host.consumeNullable(nullableJoin); }
+        export function runRawFn(): int { return host.consumeRawFn(outer); }
+
+        export async function runAsyncMap(): int {
+          let xs: int[] = await host.produceMap();
+          return sum(xs);
+        }
+
+        export async function runAsyncSparse(): int {
+          let xs: int[] = await host.produceSparse();
+          return sum(xs);
+        }
+
+        export async function runAsyncNum(): int {
+          let xs: int[] = await host.produceNum();
+          return sum(xs);
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host: it completes a real async operation with a map
+     * table, a sparse table and a number, and invokes the DEAL callback with
+     * the same invalid shapes, with no arguments, and with a raw Lua
+     * function at the declared function position.
+     */
+    private static final String ARRAY_FAILURE_LUA = """
+        local rt = require("deal.runtime")
+        return {
+          produceMap = function()
+            return rt.async_start(function() return { foo = "bar" } end)
+          end,
+          produceSparse = function()
+            return rt.async_start(function() return { [1] = 7, [3] = 9 } end)
+          end,
+          produceNum = function()
+            return rt.async_start(function() return 42 end)
+          end,
+          consumeMap = function(f) return f({ foo = "bar" }) end,
+          consumeSparse = function(f) return f({ [1] = 7, [3] = 9 }) end,
+          consumeNum = function(f) return f(42) end,
+          consumeMissing = function(f) return f() end,
+          consumeNullable = function(f) return f() end,
+          consumeRawFn = function(f) return f(function(x) return x end) end,
+        }
+        """;
+
+    /** The exact closed failures the crossing negatives must publish. */
+    private static final String ARRAY_FAILURE_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "runMap=E8001|expected array|array|table",
+        "runSparse=E8001|expected array|array|table",
+        "runNum=E8001|expected array|array|int",
+        "runMissing=E8001|expected int|int|null",
+        "runNullable=ok:7",
+        "runRawFn=E8001|expected function|function|function",
+        "runAsyncMap=E8001|expected array|array|table",
+        "runAsyncSparse=E8001|expected array|array|table",
+        "runAsyncNum=E8001|expected array|array|number",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * A host value outside the declared {@code T[]} mapping fails closed at
+     * the crossing that receives it: the async completion value and the
+     * callback argument take the position's typed-boundary cell (the map
+     * table and the sparse table are never emptied or truncated, the numeric
+     * carrier is never an empty array), an omitted callback parameter runs
+     * its parameter-entry cell at every declared position (a non-nullable
+     * position fails closed and a nullable position follows the null
+     * mapping), and a raw Lua function at a declared function position takes
+     * the closed kind row instead of an internal index failure — on the
+     * published production artifact under real luajit.
+     */
+    private static void testLuaHostArrayCrossingFailures() throws Exception {
+        System.out.println("-- the host array crossing failures: the published"
+            + " LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-array-failure-lua");
+        try {
+            writeFileIn(root, "deal.json", """
+                {"languageVersion": "1.3", "backend": "luajit",
+                 "moduleRoots": ["src"], "output": "out",
+                 "externals": {"host/arr_probe":
+                   {"declaration": "bindings/arr_probe.d.deal"}}}
+                """);
+            writeFileIn(root, "bindings/arr_probe.d.deal",
+                ARRAY_FAILURE_DECLARATION_SOURCE);
+            writeFileIn(root, "src/app.deal", ARRAY_FAILURE_APP_SOURCE);
+            Path entry = root.resolve("src/app.deal").toAbsolutePath();
+            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+            check(exit == 0, "the host-array-crossing-failure project compiles"
+                + " through the public deal compile: exit=" + exit);
+            if (exit != 0) {
+                return;
+            }
+            Path out = root.resolve("out");
+            check(Files.isRegularFile(out.resolve("app.lua")),
+                "the published artifact set carries the entry artifact");
+            writeFileIn(out, "host/arr_probe.lua", ARRAY_FAILURE_LUA);
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                local function result(name, entry)
+                  if entry == nil then fail("missing " .. name .. " export") end
+                  local ok, value = pcall(entry.f)
+                  if ok then return "ok:" .. tostring(value) end
+                  if type(value) ~= "table" then
+                    return "raw:" .. tostring(value)
+                  end
+                  return tostring(value.code) .. "|" .. tostring(value.m) .. "|"
+                    .. tostring(value.e) .. "|" .. tostring(value.a)
+                end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                print("TRANSCRIPT-BEGIN")
+                local names = { "runMap", "runSparse", "runNum", "runMissing",
+                  "runNullable", "runRawFn", "runAsyncMap", "runAsyncSparse",
+                  "runAsyncNum" }
+                for _, name in ipairs(names) do
+                  print(name .. "=" .. result(name, surface[name]))
+                end
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0
+                    && run.stdout().equals(ARRAY_FAILURE_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "a host map table, a sparse table and a numeric carrier fail"
+                    + " closed at the async-completion and callback-parameter"
+                    + " crossings, an omitted callback argument runs its"
+                    + " parameter-entry cell (nullable positions take the null"
+                    + " mapping), and a raw host function takes the closed"
+                    + " kind row: exit=" + run.exitCode() + " stdout="
+                    + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
+    // 2c. The LuaJIT load under real luajit
     // =========================================================================
 
     private static void testLuaExecution(Baseline fixture, Baseline missing,
@@ -2894,6 +3109,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostTableValue();
             testLuaHostTableProjection();
             testLuaHostArrayCrossings();
+            testLuaHostArrayCrossingFailures();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
