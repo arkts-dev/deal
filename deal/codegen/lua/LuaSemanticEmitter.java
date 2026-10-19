@@ -8,6 +8,7 @@ import deal.ffi.FfiGeneratedModule;
 import deal.ffi.FfiFunctionDescriptor;
 import deal.ffi.FfiImportedClassPlanReference;
 import deal.ffi.FfiImportedFunctionReference;
+import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.DescriptorService;
 import deal.semantic.HostDeclarationSurface;
 import deal.semantic.StdlibFunctionCatalog;
@@ -286,6 +287,16 @@ public final class LuaSemanticEmitter {
 
         final Map<ClassId, ModuleId> ffiClassModules = new LinkedHashMap<>();
 
+        /**
+         * The compile's class registration seeds (the declaration classes'
+         * {@link ClassLayout}s and the compiler-owned builtin
+         * {@code Error}), or {@code null} outside a project session. The
+         * host-carrier metadata's extern-C field map reads the declared
+         * extern-C layout here (the class layouts of the units carry only
+         * the project's own DEAL declarations).
+         */
+        final ClassRegistrationSeeds classSeeds;
+
         final FfiEmissionInput ffiInput;
         /**
          * The declaration modules whose load this session's walk already
@@ -320,6 +331,7 @@ public final class LuaSemanticEmitter {
             this.trace = trace;
             this.projectSession = false;
             this.hostSurface = null;
+            this.classSeeds = null;
             this.ffiInput = null;
             this.entryModule = entryModule;
             registerUnit(unit, table, new ClassFactoryRegistry(Map.of()));
@@ -375,6 +387,7 @@ public final class LuaSemanticEmitter {
                     "the entry module is not in the executable closure");
             }
             this.hostSurface = hostSurface;
+            this.classSeeds = project.classSeeds();
             this.ffiInput = ffiInput;
             this.projectSession = true;
             this.trace = trace;
@@ -426,6 +439,333 @@ public final class LuaSemanticEmitter {
         /** Whether one class identity is a declared host class of the compile. */
         private boolean isHostClass(ClassId classId) {
             return hostClassModules.containsKey(classId);
+        }
+
+        /**
+         * The host-carrier declaration metadata (ISSUE-0849): exactly three
+         * fields of the chunk's one factory store, emitted once per
+         * host-binding chunk before the crossing helpers and every crossing
+         * site:
+         *
+         * <ul>
+         *   <li>{@code __hostClassFields} — canonical class identity to its
+         *       {@code {field = canonical field descriptor}} map in
+         *       declaration order, for every HOST-kind declared class (the
+         *       declaration surface's {@code DeclaredClass.fields}) and for
+         *       every extern-C (the declared {@link ClassLayout}) and DEAL
+         *       class of the compile (the class layouts);</li>
+         *   <li>{@code __hostClassKinds} — the same identities to
+         *       {@code "host"}, {@code "deal"}, or {@code "extc"};</li>
+         *   <li>{@code __hostFnShapes} — the canonical function signature to
+         *       {@code {ret = canonical return descriptor, cells = {{internal
+         *       descriptor dialect, static kind, canonical descriptor}, ...}}},
+         *       the one-based declared parameter-entry cells in exactly the
+         *       {@link #hostParamCellsOf} literal shape the host-facing
+         *       function adapter runs.</li>
+         * </ul>
+         *
+         * <p>The builtin {@code Error} identity is never a key, and every
+         * identity, field descriptor, signature, return descriptor, and cell
+         * text is the compiler's one canonical spelling. The assignments are
+         * expression statements over the already-declared factory store: no
+         * main-chunk local and no per-factory local is added (LuaJIT bounds
+         * one function at 200 locals). The emission order is deterministic —
+         * the declaration classes in declaration-module and declaration
+         * order, then the project's own classes in class-layout registration
+         * order, and the shapes in first-encounter order — so a repeated
+         * production emission of one project is byte-identical.</p>
+         */
+        private void emitHostCarrierMetadata() {
+            List<HostCarrierClass> classes = hostCarrierClasses();
+            StringBuilder classFields = new StringBuilder("{");
+            StringBuilder classKinds = new StringBuilder("{");
+            for (int i = 0; i < classes.size(); i++) {
+                HostCarrierClass carrierClass = classes.get(i);
+                if (i > 0) {
+                    classFields.append(", ");
+                    classKinds.append(", ");
+                }
+                String identity = luaString(carrierClass.classId().text());
+                classFields.append("[").append(identity).append("] = {");
+                boolean firstField = true;
+                for (Map.Entry<String, String> field
+                        : carrierClass.fields().entrySet()) {
+                    if (!firstField) {
+                        classFields.append(", ");
+                    }
+                    firstField = false;
+                    classFields.append("[").append(luaString(field.getKey()))
+                        .append("] = ").append(luaString(field.getValue()));
+                }
+                classFields.append("}");
+                classKinds.append("[").append(identity).append("] = ")
+                    .append(luaString(carrierClass.kind()));
+            }
+            classFields.append("}");
+            classKinds.append("}");
+            out.append("__factories.__hostClassFields = ")
+                .append(classFields).append("\n");
+            out.append("__factories.__hostClassKinds = ")
+                .append(classKinds).append("\n");
+            out.append("__factories.__hostFnShapes = ")
+                .append(hostFnShapesLiteral()).append("\n");
+        }
+
+        /**
+         * One class of the emitted host-carrier metadata: its canonical
+         * identity, its declaration kind, and its declaration-ordered
+         * field-to-canonical-descriptor entries.
+         */
+        private record HostCarrierClass(
+            ClassId classId, String kind, Map<String, String> fields) {
+        }
+
+        /**
+         * The metadata's classes in emission order: the declaration
+         * surface's classes in declaration-module and declaration order —
+         * HOST field descriptors from the declaration surface's resolved
+         * declared field types, extern-C field descriptors from the class
+         * registration seed's {@link ClassLayout} (the unit class layouts
+         * carry only the project's own DEAL declarations) — followed by the
+         * project's own classes in class-layout registration order. The
+         * builtin {@code Error} identity is never a key.
+         */
+        private List<HostCarrierClass> hostCarrierClasses() {
+            List<HostCarrierClass> classes = new ArrayList<>();
+            java.util.Set<ClassId> emitted = new java.util.LinkedHashSet<>();
+            if (hostSurface != null) {
+                Map<ModuleId, String> declarationModulePaths =
+                    declarationModulePaths();
+                for (ModuleId declarationModule : hostSurface.moduleIds()) {
+                    HostDeclarationSurface.DeclarationFacts facts =
+                        hostSurface.require(declarationModule);
+                    if (facts.classes().isEmpty()) {
+                        continue;
+                    }
+                    String modulePath =
+                        declarationModulePaths.get(declarationModule);
+                    if (modulePath == null) {
+                        // A declaration module the closure never imports
+                        // cannot be named by any crossing: the identity
+                        // text has exactly one source (the externals raw
+                        // import specifier recorded by the HOST import).
+                        continue;
+                    }
+                    boolean externC = facts.kind()
+                        == HostDeclarationSurface.DeclarationKind.EXTERN_C;
+                    for (HostDeclarationSurface.DeclaredClass declaredClass
+                            : facts.classes().values()) {
+                        ClassId classId =
+                            new ClassId(modulePath, declaredClass.name());
+                        if (ClassId.ERROR.equals(classId)
+                                || !emitted.add(classId)) {
+                            continue;
+                        }
+                        Map<String, String> fields = new LinkedHashMap<>();
+                        if (externC) {
+                            ClassRegistrationSeeds.ClassRegistration
+                                registration = classSeeds == null ? null
+                                    : classSeeds.registrationFor(classId);
+                            if (registration == null) {
+                                throw new IllegalStateException(
+                                    "the declared extern-C class " + classId
+                                        + " carries no class-registration"
+                                        + " seed: the host-carrier metadata's"
+                                        + " extern-C field map reads the"
+                                        + " declared ClassLayout (a producer"
+                                        + " defect)");
+                            }
+                            for (ClassLayout.FieldLayout field
+                                    : registration.layout().fields()) {
+                                fields.put(field.name(),
+                                    field.descriptor().canonicalSpecText());
+                            }
+                        } else {
+                            for (HostDeclarationSurface.DeclaredField field
+                                    : declaredClass.fields()) {
+                                fields.put(field.declaration().name(),
+                                    hostDescriptorText(field.type()));
+                            }
+                        }
+                        classes.add(new HostCarrierClass(classId,
+                            classKindOf(classId, externC ? "extc" : "host"),
+                            fields));
+                    }
+                }
+            }
+            for (Map.Entry<ClassId, ClassLayout> layout
+                    : classLayouts.entrySet()) {
+                ClassId classId = layout.getKey();
+                if (ClassId.ERROR.equals(classId) || !emitted.add(classId)) {
+                    continue;
+                }
+                Map<String, String> fields = new LinkedHashMap<>();
+                for (ClassLayout.FieldLayout field
+                        : layout.getValue().fields()) {
+                    fields.put(field.name(),
+                        field.descriptor().canonicalSpecText());
+                }
+                classes.add(new HostCarrierClass(classId,
+                    classKindOf(classId, "deal"), fields));
+            }
+            return classes;
+        }
+
+        /**
+         * The declared kind of one class identity: {@code "host"} for the
+         * compile's declared host classes, {@code "extc"} for its declared
+         * extern-C classes (both classified by the same maps the load and
+         * plan emission read), and {@code "deal"} for the project's own
+         * class layouts. A declared class the module does not export is
+         * named by no crossing; it keeps its declaration module's kind.
+         */
+        private String classKindOf(ClassId classId, String declaredKind) {
+            if (hostClassModules.containsKey(classId)) {
+                return "host";
+            }
+            if (ffiClassModules.containsKey(classId)) {
+                return "extc";
+            }
+            return declaredKind;
+        }
+
+        /**
+         * The canonical external module path of every declaration module of
+         * the closure ({@code $external/<raw import specifier>}), recorded
+         * by the HOST import ops that resolve it — the one identity source
+         * of the declaration surface's classes.
+         */
+        private Map<ModuleId, String> declarationModulePaths() {
+            Map<ModuleId, String> paths = new LinkedHashMap<>();
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() != SemanticOpKind.MODULE_IMPORT
+                            || !(op.payload()
+                                instanceof KindPayload.ModuleImportPayload
+                                    payload)
+                            || payload.kind() != ModuleImportKind.HOST) {
+                        continue;
+                    }
+                    paths.putIfAbsent(payload.resolvedModule(),
+                        "$external/" + payload.rawSpecifier());
+                }
+            }
+            return paths;
+        }
+
+        /**
+         * The function-shape map literal of the emitted artifacts: every
+         * canonical function signature a carrier of the chunk can hold to
+         * its declared return descriptor and its one-based declared
+         * parameter-entry cells.
+         *
+         * <p>The signature set is exactly the requirement's sources: every
+         * declared host function and function-typed declared class field
+         * (the declaration surface), every class-layout function field
+         * (the project's own class layouts and the declaration classes'
+         * seed layouts), every function-typed value an emitted op produces
+         * or consumes (every function-carrier creation signature — a
+         * closure, an adapter, an intrinsic, a host read, a cross-module
+         * export read — an imported function value included), and every
+         * intrinsic carrier's declared signature.</p>
+         */
+        private String hostFnShapesLiteral() {
+            Map<String, RuntimeDescriptor.Func> shapes =
+                new LinkedHashMap<>();
+            if (hostSurface != null) {
+                for (ModuleId declarationModule : hostSurface.moduleIds()) {
+                    HostDeclarationSurface.DeclarationFacts facts =
+                        hostSurface.require(declarationModule);
+                    for (Type export : facts.exports().values()) {
+                        collectFunctionShapes(shapes,
+                            declarationDescriptor(export));
+                    }
+                    for (HostDeclarationSurface.DeclaredClass declaredClass
+                            : facts.classes().values()) {
+                        for (HostDeclarationSurface.DeclaredField field
+                                : declaredClass.fields()) {
+                            collectFunctionShapes(shapes,
+                                declarationDescriptor(field.type()));
+                        }
+                    }
+                }
+            }
+            for (ClassLayout layout : classLayouts.values()) {
+                collectFunctionShapes(shapes, layout);
+            }
+            if (classSeeds != null) {
+                for (ClassId classId : classSeeds.classIds()) {
+                    if (ClassId.ERROR.equals(classId)) {
+                        continue;
+                    }
+                    collectFunctionShapes(shapes,
+                        classSeeds.registrationFor(classId).layout());
+                }
+            }
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.resultType() instanceof RuntimeDescriptor descriptor) {
+                        collectFunctionShapes(shapes, descriptor);
+                    }
+                    for (RuntimeDescriptor operand : op.operandTypes()) {
+                        collectFunctionShapes(shapes, operand);
+                    }
+                }
+                for (FunctionExecutionBinding binding
+                        : moduleUnit.functionBindings().values()) {
+                    if (binding instanceof FunctionExecutionBinding
+                            .IntrinsicFunction intrinsic) {
+                        collectFunctionShapes(shapes, intrinsic.descriptor());
+                    }
+                }
+            }
+            StringBuilder literal = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<String, RuntimeDescriptor.Func> shape
+                    : shapes.entrySet()) {
+                if (!first) {
+                    literal.append(", ");
+                }
+                first = false;
+                literal.append("[").append(luaString(shape.getKey()))
+                    .append("] = {ret = ")
+                    .append(luaString(shape.getValue().returnType()
+                        .canonicalSpecText()))
+                    .append(", cells = ")
+                    .append(hostParamCellsOf(shape.getValue())).append("}");
+            }
+            return literal.append("}").toString();
+        }
+
+        /** The function fields of one class layout collected into the shape map. */
+        private static void collectFunctionShapes(
+                Map<String, RuntimeDescriptor.Func> shapes,
+                ClassLayout layout) {
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                collectFunctionShapes(shapes, field.descriptor());
+            }
+        }
+
+        /**
+         * One descriptor's function signatures collected into the shape map,
+         * recursively through the nullable, array, and function-composition
+         * forms: every function value a value of the descriptor can carry is
+         * a carrier whose signature takes an entry.
+         */
+        private static void collectFunctionShapes(
+                Map<String, RuntimeDescriptor.Func> shapes,
+                RuntimeDescriptor descriptor) {
+            if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
+                collectFunctionShapes(shapes, nullable.inner());
+            } else if (descriptor instanceof RuntimeDescriptor.Array array) {
+                collectFunctionShapes(shapes, array.element());
+            } else if (descriptor instanceof RuntimeDescriptor.Func func) {
+                shapes.putIfAbsent(func.canonicalSpecText(), func);
+                for (RuntimeDescriptor parameter : func.paramTypes()) {
+                    collectFunctionShapes(shapes, parameter);
+                }
+                collectFunctionShapes(shapes, func.returnType());
+            }
         }
 
         private String ffiPlanExpr(SemanticOp op, ClassId classId) {
@@ -822,6 +1162,14 @@ public final class LuaSemanticEmitter {
                     + "tostring(file)..\":\"..tostring(line)..\":\""
                     + "..tostring(column), expected, actual)\n");
                 out.append("end\n");
+                // The host-carrier declaration metadata (ISSUE-0849): the
+                // three factory-store fields the host-carrier bridge reads
+                // — the canonical class field-descriptor maps, the class
+                // kind map, and the function-shape cell map. Emitted once
+                // per host-binding chunk, before any crossing helper or
+                // crossing site, and as fields of the one factory store so
+                // the main chunk's local budget is unchanged.
+                emitHostCarrierMetadata();
                 out.append(HOST_BOUNDARY_PRELUDE);
             } else if (bindsBytesRuntime()) {
 
@@ -7220,8 +7568,17 @@ public final class LuaSemanticEmitter {
          * producer).
          */
         private String hostDescriptorText(Type type) {
+            return declarationDescriptor(type).canonicalSpecText();
+        }
+
+        /**
+         * The compiled descriptor of one declared export or declared class
+         * field type (the compiled descriptor service — the only
+         * type-to-descriptor producer).
+         */
+        private RuntimeDescriptor declarationDescriptor(Type type) {
             try {
-                return DescriptorService.describe(type).canonicalSpecText();
+                return DescriptorService.describe(type);
             } catch (DescriptorService.Defect defect) {
                 throw new IllegalStateException("a declared host export carries"
                     + " a type with no runtime representation: "

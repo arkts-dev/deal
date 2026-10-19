@@ -429,6 +429,122 @@ public class HostModuleLoadEmissionTest {
         }
         """;
 
+    // =========================================================================
+    // The host-carrier declaration metadata fixture (ISSUE-0849)
+    // =========================================================================
+
+    /**
+     * The host-carrier metadata project's HOST declaration: a class with a
+     * nested class field, an optional array field, and an optional nullable
+     * field, a class with a declared function-typed field, a synchronous
+     * declared host function, and an asynchronous declared host function.
+     */
+    private static final String CARRIER_DECLARATION_SOURCE = """
+        export class Endpoint {
+          path: string;
+        }
+
+        export class ServerConfig {
+          port: int;
+          endpoint: Endpoint;
+          tags?: string[];
+          note?: string | null;
+        }
+
+        export class Bundle {
+          label: string;
+          action: (x: int) => int;
+        }
+
+        export function describe(s: ServerConfig): string;
+        export async function fetchConfig(id: int): ServerConfig;
+        export function apply(f: (x: int) => int, v: int): int;
+        """;
+
+    /**
+     * The host-carrier metadata project's extern-C declaration: one
+     * {@code @c-struct} class whose fields are the declared
+     * {@code ClassLayout} (the corpus FFI drive additionally covers a
+     * field-less {@code @c-pointer} class).
+     */
+    private static final String CARRIER_NATIVE_DECLARATION_SOURCE = """
+        // @extern-c
+
+        // @c-struct
+        export class Pair {
+          left: int = 0;
+          right: number = 0.0;
+        }
+
+        export function probe(): int;
+        """;
+
+    /** The host-carrier metadata project's own module: a DEAL class and an exported function value. */
+    private static final String CARRIER_UTIL_SOURCE = """
+        export class Point {
+          x: int = 0;
+          y: int = 0;
+        }
+
+        export function bump(x: int): int {
+          return x + 1;
+        }
+        """;
+
+    /**
+     * The host-carrier metadata project's application: a DEAL class with a
+     * function-typed field, a chunk-created function value, an imported
+     * function value, and literals of the declared host, extern-C, and DEAL
+     * classes.
+     */
+    private static final String CARRIER_APP_SOURCE = """
+        import * as cfg from "host/carrier";
+        import * as native from "native/sample";
+        import * as util from "./util";
+
+        export class Widget {
+          name: string = "";
+          run: (x: int) => int = function(x: int): int { return x; };
+        }
+
+        export function main(): null {
+          let step: (x: int) => int = function(x: int): int { return x + 1; };
+          let widget: Widget = { name: "w", run: step };
+          let config: cfg.ServerConfig = { port: 1, endpoint: { path: "/" } };
+          let point: util.Point = { x: 1, y: 2 };
+          let pair: native.Pair = { left: 4, right: 9.5 };
+          let bundle: cfg.Bundle = { label: "b", action: step };
+          let bumped: int = util.bump(1);
+          return null;
+        }
+        """;
+
+    /**
+     * The host-free control project: no HOST import and no host cell
+     * boundary, so the artifact binds no host runtime and carries none of
+     * the host-carrier prelude names.
+     */
+    private static final String HOST_FREE_APP_SOURCE = """
+        export class Point {
+          x: int = 0;
+          y: int = 0;
+        }
+
+        export function main(): null {
+          let point: Point = { x: 1, y: 2 };
+          return null;
+        }
+        """;
+
+    private static final String CARRIER_METADATA_DEAL_JSON = """
+        {"languageVersion": "1.3", "backend": "luajit",
+         "moduleRoots": ["src"], "output": "out",
+         "externals": {
+           "host/carrier": {"declaration": "bindings/carrier.d.deal"},
+           "native/sample": {"declaration": "bindings/sample.d.deal",
+                             "nativeLibrary": "libs/sample.so"}}}
+        """;
+
     private record Fixture(
         Path root,
         CheckedProjectInput checkedProject,
@@ -574,6 +690,27 @@ public class HostModuleLoadEmissionTest {
         sources.put("src/app.deal", ERROR_APP_SOURCE);
         return compileProject(sources,
             Map.of(ERROR_SPECIFIER, "src/error_probe.d.deal"));
+    }
+
+    /**
+     * Compiles the host-carrier metadata project through the public
+     * {@code deal compile} and returns its published output root, or
+     * {@code null} when the compile fails.
+     */
+    private static Path publishCarrierMetadataProject(Path root,
+            String appSource) throws Exception {
+        writeFileIn(root, "deal.json", CARRIER_METADATA_DEAL_JSON);
+        writeFileIn(root, "bindings/carrier.d.deal",
+            CARRIER_DECLARATION_SOURCE);
+        writeFileIn(root, "bindings/sample.d.deal",
+            CARRIER_NATIVE_DECLARATION_SOURCE);
+        writeFileIn(root, "src/util.deal", CARRIER_UTIL_SOURCE);
+        writeFileIn(root, "src/app.deal", appSource);
+        int exit = deal.Main.run(new String[] {"compile",
+            root.resolve("src/app.deal").toAbsolutePath().toString()});
+        checkEq(0, exit, "the host-carrier metadata project compiles through"
+            + " the public deal compile");
+        return exit == 0 ? root.resolve("out") : null;
     }
 
     private static SemanticLowerer.ProjectLoweringResult lower(Fixture fixture) {
@@ -903,6 +1040,168 @@ public class HostModuleLoadEmissionTest {
             checkEq(lua, LuaSemanticEmitter.emitProductionProject(project,
                     result.tables(), result.registries(), fixture.surface()),
                 "the repeated production emission is byte-identical");
+        }
+    }
+
+    // =========================================================================
+    // 1b. The host-carrier declaration metadata (ISSUE-0849)
+    // =========================================================================
+
+    /**
+     * The host-carrier declaration metadata on a published artifact
+     * (ISSUE-0849): a host-binding production chunk (at least one HOST
+     * import, compiled through the public {@code deal compile}) carries
+     * exactly three fields of its one factory store, once per chunk — the
+     * canonical class field-descriptor map for every HOST-kind declared
+     * class, every extern-C declared class, and every DEAL class of the
+     * compile (declaration order, the builtin {@code Error} identity never a
+     * key), the class-kind map for exactly those identities, and the
+     * canonical function-signature shape map with the declared
+     * parameter-entry cells.
+     */
+    private static void testLuaHostCarrierMetadata(List<Path> roots)
+            throws Exception {
+        System.out.println("-- the host-carrier declaration metadata: the three"
+            + " factory-store fields of a published host-binding artifact --");
+        Path root = Files.createTempDirectory("host-carrier-metadata");
+        roots.add(root);
+        Path out = publishCarrierMetadataProject(root, CARRIER_APP_SOURCE);
+        if (out == null) {
+            return;
+        }
+        Path artifact = out.resolve("app.lua");
+        check(Files.isRegularFile(artifact), "the published artifact set carries"
+            + " the entry artifact: " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        String lua = Files.readString(artifact, StandardCharsets.UTF_8);
+
+        checkEq(1, countOccurrences(lua, "__factories.__hostClassFields = "),
+            "the chunk emits exactly one class field-descriptor map");
+        checkEq(1, countOccurrences(lua, "__factories.__hostClassKinds = "),
+            "the chunk emits exactly one class-kind map");
+        checkEq(1, countOccurrences(lua, "__factories.__hostFnShapes = "),
+            "the chunk emits exactly one function-shape map");
+
+        // The class field map: declaration order, HOST classes from the
+        // declaration surface, extern-C from the declared ClassLayout, DEAL
+        // classes from the compile's class layouts. The field descriptors
+        // are the canonical texts (a nested class field is the class
+        // identity, an optional array is [?], an optional nullable is ?).
+        String expectedFields = "__factories.__hostClassFields = {"
+            + "[\"@$external/host/carrier/Endpoint\"] = {[\"path\"] = \"string\"}, "
+            + "[\"@$external/host/carrier/ServerConfig\"] = {"
+            + "[\"port\"] = \"int\", "
+            + "[\"endpoint\"] = \"@$external/host/carrier/Endpoint\", "
+            + "[\"tags\"] = \"[string]\", [\"note\"] = \"?string\"}, "
+            + "[\"@$external/host/carrier/Bundle\"] = {"
+            + "[\"label\"] = \"string\", [\"action\"] = \"(int)->int\"}, "
+            + "[\"@$external/native/sample/Pair\"] = {"
+            + "[\"left\"] = \"int\", [\"right\"] = \"number\"}, "
+            + "[\"@src/util.deal/Point\"] = {"
+            + "[\"x\"] = \"int\", [\"y\"] = \"int\"}, "
+            + "[\"@src/app.deal/Widget\"] = {"
+            + "[\"name\"] = \"string\", [\"run\"] = \"(int)->int\"}}";
+        check(lua.contains(expectedFields), "the class field map carries every"
+            + " declared class in declaration order: " + expectedFields);
+
+        String expectedKinds = "__factories.__hostClassKinds = {"
+            + "[\"@$external/host/carrier/Endpoint\"] = \"host\", "
+            + "[\"@$external/host/carrier/ServerConfig\"] = \"host\", "
+            + "[\"@$external/host/carrier/Bundle\"] = \"host\", "
+            + "[\"@$external/native/sample/Pair\"] = \"extc\", "
+            + "[\"@src/util.deal/Point\"] = \"deal\", "
+            + "[\"@src/app.deal/Widget\"] = \"deal\"}";
+        check(lua.contains(expectedKinds), "the class-kind map classifies"
+            + " exactly the emitted classes: " + expectedKinds);
+        check(!lua.contains("[\"Error\"] = "),
+            "the builtin Error identity is never a metadata key");
+
+        // The shape map: the declared host functions, the declared
+        // function-typed fields, the class-layout function field, the
+        // chunk-created function value, and the imported function value, in
+        // the hostParamCellsOf literal shape.
+        for (String shape : List.of(
+                "[\"(@$external/host/carrier/ServerConfig)->string\"] = "
+                    + "{ret = \"string\", cells = "
+                    + "{{\"@$external/host/carrier/ServerConfig\", \"class\", "
+                    + "\"@$external/host/carrier/ServerConfig\"}}}",
+                "[\"async(int)->@$external/host/carrier/ServerConfig\"] = "
+                    + "{ret = \"@$external/host/carrier/ServerConfig\", "
+                    + "cells = {{\"int\", \"int\", \"int\"}}}",
+                "[\"((int)->int,int)->int\"] = {ret = \"int\", cells = "
+                    + "{{\"function(int;int)\", \"function\", \"(int)->int\"}, "
+                    + "{\"int\", \"int\", \"int\"}}}",
+                "[\"(int)->int\"] = {ret = \"int\", "
+                    + "cells = {{\"int\", \"int\", \"int\"}}}")) {
+            check(lua.contains(shape), "the function-shape map carries the"
+                + " declared shape " + shape);
+        }
+
+        // The assignments precede every crossing helper and every crossing
+        // site (the module-init walk that emits the loads and calls).
+        int metadataAt = lua.indexOf("__factories.__hostFnShapes = ");
+        check(metadataAt > 0, "the function-shape map is emitted");
+        check(metadataAt < lua.indexOf("__factories.__hostNumProject = function"),
+            "the metadata precedes the host-crossing prelude helpers");
+        check(metadataAt < lua.indexOf("__dealMain = function()"),
+            "the metadata precedes every crossing site");
+
+        // The repeated production compile of the same project carries
+        // byte-identical metadata text.
+        Path secondRoot = Files.createTempDirectory("host-carrier-metadata-2");
+        roots.add(secondRoot);
+        Path secondOut = publishCarrierMetadataProject(secondRoot,
+            CARRIER_APP_SOURCE);
+        if (secondOut != null) {
+            checkEq(carrierMetadataText(lua),
+                carrierMetadataText(Files.readString(
+                    secondOut.resolve("app.lua"), StandardCharsets.UTF_8)),
+                "the repeated production compile emits byte-identical"
+                    + " host-carrier metadata");
+        }
+    }
+
+    /** The three host-carrier metadata assignment lines of one artifact. */
+    private static String carrierMetadataText(String lua) {
+        StringBuilder text = new StringBuilder();
+        for (String line : lua.split("\n", -1)) {
+            if (line.startsWith("__factories.__hostClassFields = ")
+                    || line.startsWith("__factories.__hostClassKinds = ")
+                    || line.startsWith("__factories.__hostFnShapes = ")) {
+                text.append(line).append("\n");
+            }
+        }
+        return text.toString();
+    }
+
+    /**
+     * The host-free control (ISSUE-0849): a chunk with no HOST import and no
+     * host cell boundary binds no host runtime and carries none of the five
+     * host-carrier prelude names.
+     */
+    private static void testLuaHostCarrierMetadataAbsent(List<Path> roots)
+            throws Exception {
+        System.out.println("-- the host-free control: no host-carrier prelude name"
+            + " on a chunk that binds no host runtime --");
+        Path root = Files.createTempDirectory("host-carrier-free");
+        roots.add(root);
+        Path out = publishCarrierMetadataProject(root, HOST_FREE_APP_SOURCE);
+        if (out == null) {
+            return;
+        }
+        Path artifact = out.resolve("app.lua");
+        check(Files.isRegularFile(artifact), "the host-free artifact exists: "
+            + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        String lua = Files.readString(artifact, StandardCharsets.UTF_8);
+        for (String name : List.of("__hostClassFields", "__hostClassKinds",
+                "__hostFnShapes", "__hostCarrierOut", "__hostCarrierIn")) {
+            check(!lua.contains(name), "the host-free chunk carries no "
+                + name);
         }
     }
 
@@ -3026,6 +3325,8 @@ public class HostModuleLoadEmissionTest {
             Baseline errors = prepare(errorFixture(), false, roots);
             Baseline tableParam = prepare(tableParamFixture(), false, roots);
             testLuaArtifactText(abi, aliases);
+            testLuaHostCarrierMetadata(roots);
+            testLuaHostCarrierMetadataAbsent(roots);
             testHostReadCorrelation(hostReads);
             testLuaHostDecodedNumericCarrier();
             testLuaHostTableValue();

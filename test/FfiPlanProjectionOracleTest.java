@@ -458,6 +458,57 @@ public class FfiPlanProjectionOracleTest {
             // transcript, and the construction region keeps the boundary
             // children before the runtime entry call.
             Artifact emitted = emitAndPublish(fixture, fixture.outputRoot());
+
+            // The host-carrier declaration metadata's extern-C entry
+            // (ISSUE-0849): the declared extern-C classes of the compile are
+            // the class field-descriptor and class-kind entries of the
+            // chunk's one factory store, in declaration order, with the
+            // declared ClassLayout field descriptors (the c-pointer class
+            // carries no fields).
+            check(emitted.text().contains(
+                    "__factories.__hostClassFields = {[\"" + PAIR_DESC + "\"] = "
+                        + "{[\"left\"] = \"int\", [\"right\"] = \"int\"}, "
+                        + "[\"@$external/candidate/native/Handle\"] = {}}"),
+                "the artifact's host-carrier field map carries the declared"
+                    + " extern-C classes in declaration order: "
+                    + emitted.text().lines()
+                        .filter(line -> line.startsWith(
+                            "__factories.__hostClassFields = "))
+                        .findFirst().orElse("<absent>"));
+            check(emitted.text().contains(
+                    "__factories.__hostClassKinds = {[\"" + PAIR_DESC + "\"] = "
+                        + "\"extc\", "
+                        + "[\"@$external/candidate/native/Handle\"] = \"extc\"}"),
+                "the artifact's host-carrier kind map classifies exactly the"
+                    + " declared extern-C classes: "
+                    + emitted.text().lines()
+                        .filter(line -> line.startsWith(
+                            "__factories.__hostClassKinds = "))
+                        .findFirst().orElse("<absent>"));
+            check(emitted.text().contains(
+                    "[\"(@$external/candidate/native/Pair)"
+                        + "->@$external/candidate/native/Pair\"] = "
+                        + "{ret = \"@$external/candidate/native/Pair\", "
+                        + "cells = {{\"@$external/candidate/native/Pair\", "
+                        + "\"class\", "
+                        + "\"@$external/candidate/native/Pair\"}}}"),
+                "the artifact's function-shape map carries a declared"
+                    + " extern-C function's parameter-entry cells");
+
+            // The repeated production emission of the same lowered project
+            // is byte-identical (the host-carrier metadata included).
+            checkEq(
+                LuaSemanticEmitter.emitProductionProject(project,
+                    lowered.tables(), lowered.registries(), fixture.surface(),
+                    new FfiEmissionInput(fixture.externCModules(),
+                        fixture.root().toString())),
+                LuaSemanticEmitter.emitProductionProject(project,
+                    lowered.tables(), lowered.registries(), fixture.surface(),
+                    new FfiEmissionInput(fixture.externCModules(),
+                        fixture.root().toString())),
+                "the repeated production emission of the extern-C project is"
+                    + " byte-identical");
+
             String constructionRegion = constructionRegion(emitted.text(),
                 "pcall(__rt.class_plan_, \"" + PAIR_DESC + "\"");
             check(constructionRegion.indexOf("__provT[\"left\"] = ")
