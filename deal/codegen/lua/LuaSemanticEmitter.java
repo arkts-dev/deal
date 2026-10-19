@@ -3749,6 +3749,8 @@ public final class LuaSemanticEmitter {
                     .append(luaString(desc)).append(", ")
                     .append(sourceTextOf(boundaryPayload.descriptor())).append(", ")
                     .append(index).append(", __chkB, ").append(origin)
+                    .append(", ")
+                    .append(hostParamCellsOf(boundaryPayload.descriptor()))
                     .append(")\n");
                 index++;
             }
@@ -4222,7 +4224,9 @@ public final class LuaSemanticEmitter {
                     .append(sourceTextOf(boundaryPayload.descriptor())).append(", ")
                     .append(index).append(", ")
                     .append(slot(boundaryPayload.input())).append(", ")
-                    .append(luaString(originOf(op))).append(")\n");
+                    .append(luaString(originOf(op))).append(", ")
+                    .append(hostParamCellsOf(boundaryPayload.descriptor()))
+                    .append(")\n");
                 index++;
             }
             emitHostInvocationTail(op, "__dynC", index - 1, returnBoundary);
@@ -4431,6 +4435,13 @@ public final class LuaSemanticEmitter {
             return inner instanceof RuntimeDescriptor.Func;
         }
 
+        /** Whether one declared position is an array type (nullable included). */
+        private boolean isArrayPosition(RuntimeDescriptor descriptor) {
+            RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
+                ? nullable.inner() : descriptor;
+            return inner instanceof RuntimeDescriptor.Array;
+        }
+
         /** The canonical descriptor text of one declared position's inner type. */
         private String innerFunctionText(RuntimeDescriptor descriptor) {
             RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
@@ -4442,6 +4453,36 @@ public final class LuaSemanticEmitter {
         private String sourceTextOf(RuntimeDescriptor descriptor) {
             return isFunctionPosition(descriptor)
                 ? luaString(innerFunctionText(descriptor)) : "nil";
+        }
+
+        /**
+         * The recorded parameter-entry cells of one declared function
+         * position (nil for other positions): the signature's one-based
+         * declared parameter descriptors as {check dialect, static kind,
+         * canonical text}. The adapter a host calls runs these cells at
+         * every position, so a host-passed value takes the DEAL array
+         * projection and the typed-boundary admission the DEAL call site's
+         * {@code FUNCTION_PARAMETER} cell runs — never a body-local read of
+         * a value outside the declared type.
+         */
+        private String hostParamCellsOf(RuntimeDescriptor descriptor) {
+            RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
+                ? nullable.inner() : descriptor;
+            if (!(inner instanceof RuntimeDescriptor.Func func)) {
+                return "nil";
+            }
+            StringBuilder cells = new StringBuilder("{");
+            for (int i = 0; i < func.paramTypes().size(); i++) {
+                RuntimeDescriptor parameter = func.paramTypes().get(i);
+                if (i > 0) {
+                    cells.append(", ");
+                }
+                cells.append("{").append(luaString(descriptorText(parameter)))
+                    .append(", ").append(luaString(staticKind(parameter)))
+                    .append(", ").append(luaString(parameter.canonicalSpecText()))
+                    .append("}");
+            }
+            return cells.append("}").toString();
         }
 
         /** The literal span-triplet arguments of one host call site. */
@@ -6655,9 +6696,25 @@ public final class LuaSemanticEmitter {
             // own origin (the await expression) and publishes the
             // boundary's FAILURE beside the await op's — the oracle's
             // boundary-child pair.
+            //
+            // A host completion at a declared array position carries the
+            // LuaJIT value mapping's ``Lua table with 1-based contiguous
+            // storage'' (a plain host table, never the chunk's carrier), so
+            // the completion crossing applies the same identity-preserving
+            // host-to-DEAL array projection the synchronous host return
+            // applies (__hostToDealArray: nested arrays, null elements,
+            // aliases and per-slot numeric variants preserved) before the
+            // completion cell admits it — the async twin of the sync return
+            // cell. The projection is emitted only for a session that
+            // carries the host prelude, the prelude the helper belongs to.
             out.append("__cA = __tA.value\n");
             out.append("if __tA.owner == \"HOST_OPERATION\" then\n");
             out.append("  __cA = __hostNumVar(__cA)\n");
+            if (bindsHostRuntime() && isArrayPosition(boundaryPayload.descriptor())) {
+                out.append("  __cA = __hostToDealArray({}, ")
+                    .append(luaString(boundaryPayload.descriptor().canonicalSpecText()))
+                    .append(", __cA)\n");
+            }
             emitBoundaryStartAtom(boundary, "__hostAtom(__tA.value)");
             out.append("else\n");
             emitBoundaryStart(boundary, "__tA.value", boundaryPayload.descriptor());
@@ -9070,13 +9127,47 @@ end
 -- declared host wrapper class's LuaJIT twin — a plain Lua function the
 -- host calls; a host-facing wrapper passes through unadapted and anything
 -- else is left to the parameter cell.
-local function __hostFnArg(desc, inner, v)
+--
+-- The adapter runs the DEAL function's declared parameter-entry cells at
+-- every declared position (ISSUE-0695 acceptance remediation): a declared
+-- array position's plain host table is the DEAL array value through the
+-- identity-preserving host projection the synchronous host return uses
+-- (__hostToDealArray: nested arrays, null elements, aliases and per-slot
+-- numeric variants preserved), and the position's own typed-boundary cell
+-- then admits the value or raises the closed failure a DEAL call site's
+-- FUNCTION_PARAMETER cell raises, so a host-passed value never reaches the
+-- body outside its declared type. `cells` is the recorded one-based
+-- parameter set of the declared signature ({check dialect, static kind,
+-- canonical text}); a position without a recorded set keeps the direct
+-- invocation.
+local function __hostFnArg(desc, inner, cells, v)
   if type(v) ~= "table" then return v end
   if v[__dealCarrierKeys.kind] == "function" then return v end
   if v[__dealCarrierKeys.fn] == nil then return v end
   local carrier = v
   return {[__dealCarrierKeys.kind] = "function", sig = inner,
-          f = function(...) return __dealFnValue(carrier, ...) end}
+          f = function(...)
+            local n = select("#", ...)
+            if cells == nil then return __dealFnValue(carrier, ...) end
+            local args = {...}
+            for i = 1, #cells do
+              if i <= n then
+                local cell = cells[i]
+                local value = args[i]
+                if string.sub(cell[3], 1, 1) == "["
+                    or string.sub(cell[3], 1, 2) == "?[" then
+                  value = __hostToDealArray({}, cell[3], value)
+                end
+                local ok, checked = pcall(__bcheck, cell[1], cell[2], value,
+                  cell[3])
+                if not ok then
+                  error(checked, 0)
+                end
+                args[i] = checked
+              end
+            end
+            return __dealFnValue(carrier, unpack(args, 1, n))
+          end}
 end
 -- The declared host-facing projection of one checked parameter: a
 -- declared function position is bridged, a declared class position takes
@@ -9093,13 +9184,16 @@ end
 -- at an incompatible descriptor; the __MISSING absence marker is not a
 -- language null: it takes the named missing-to-null mapping at a nullable
 -- position and the closed parameter cell at every other declared
--- position, never the marker's table shape.
-local function __hostProjectArg(desc, inner, index, v, origin)
+-- position, never the marker's table shape. A declared function position
+-- carries its recorded parameter-entry cells (the `cells` operand) to the
+-- adapter the host then calls (__hostFnArg), so every host-invoked call
+-- runs the DEAL function's own parameter entry.
+local function __hostProjectArg(desc, inner, index, v, origin, cells)
   v = __factories.__hostParamAdmit(desc, index, v, origin)
   if v == __rt.__NULL then return v end
   if inner ~= nil and (string.sub(inner, 1, 1) == "("
       or string.sub(inner, 1, 9) == "async(") then
-    return __hostFnArg(desc, inner, v)
+    return __hostFnArg(desc, inner, cells, v)
   end
   if desc == "Error" or string.sub(desc, 1, 1) == "@" then
     return __hostClassProject(desc, v)

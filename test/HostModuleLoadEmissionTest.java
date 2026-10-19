@@ -1559,6 +1559,219 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
+    // 2a. The host array crossings (ISSUE-0695 acceptance remediation)
+    // =========================================================================
+
+    /**
+     * The declared host array positions: an async operation completing with
+     * a declared {@code int[]} value, a nested {@code int[][]} completion
+     * whose two slots are the host's one inner table (the reference-identity
+     * alias), and a declared function position whose host-driven invocation
+     * passes a declared {@code int[]} argument into the DEAL callback.
+     */
+    private static final String ARRAY_CROSSING_DECLARATION_SOURCE = """
+        export async function produce(): int[];
+        export async function produceNested(): int[][];
+        export function consume(f: (xs: int[]) => int): int;
+        """;
+
+    /**
+     * The DEAL side of the host array crossings: the async completion value
+     * and the host-passed callback argument are read as the DEAL array value
+     * — the exact length and the exact elements at every one-based slot, and
+     * the nested completion's preserved alias — so an unprojected plain host
+     * table (nil length, raw Lua index failure) fails the drive instead of
+     * producing a value.
+     */
+    private static final String ARRAY_CROSSING_APP_SOURCE = """
+        import * as host from "host/arr_probe";
+
+        function sum(xs: int[]): int {
+          let total: int = 0;
+          let i: int = 0;
+          while (i < xs.length) {
+            total = total + xs[i];
+            i = i + 1;
+          }
+          return total;
+        }
+
+        function asyncTotal(xs: int[]): int {
+          if (xs.length !== 3) {
+            throw { code: "TEST_FAIL", message: "async completion length" };
+          }
+          if (xs[0] !== 10 || xs[1] !== 20 || xs[2] !== 30) {
+            throw { code: "TEST_FAIL", message: "async completion elements" };
+          }
+          return sum(xs);
+        }
+
+        function callbackTotal(xs: int[]): int {
+          if (xs.length !== 3) {
+            throw { code: "TEST_FAIL", message: "callback argument length" };
+          }
+          if (xs[0] !== 1 || xs[1] !== 2 || xs[2] !== 3) {
+            throw { code: "TEST_FAIL", message: "callback argument elements" };
+          }
+          return sum(xs);
+        }
+
+        export function runCallback(): int {
+          return host.consume(callbackTotal);
+        }
+
+        export async function runAsync(): int {
+          let xs: int[] = await host.produce();
+          return asyncTotal(xs);
+        }
+
+        export async function runNested(): int {
+          let xs: int[][] = await host.produceNested();
+          if (xs.length !== 2) {
+            throw { code: "TEST_FAIL", message: "nested completion length" };
+          }
+          if (xs[0] !== xs[1]) {
+            throw { code: "TEST_FAIL", message: "nested completion alias" };
+          }
+          if (xs[0].length !== 2 || xs[0][0] !== 7 || xs[0][1] !== 8) {
+            throw { code: "TEST_FAIL", message: "nested completion elements" };
+          }
+          return xs[0][0] + xs[1][1];
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host: it completes a real async operation with the
+     * LuaJIT value mapping's {@code T[]} (a plain Lua table with 1-based
+     * contiguous storage), aliases one inner table in two slots, and invokes
+     * the DEAL callback it was handed with a plain {@code {1,2,3}} table.
+     */
+    private static final String ARRAY_CROSSING_LUA = """
+        local rt = require("deal.runtime")
+        local shared = { 7, 8 }
+        return {
+          produce = function()
+            return rt.async_start(function() return { 10, 20, 30 } end)
+          end,
+          produceNested = function()
+            return rt.async_start(function() return { shared, shared } end)
+          end,
+          consume = function(f) return f({ 1, 2, 3 }) end,
+        }
+        """;
+
+    /** The exact results the two host array crossings must produce. */
+    private static final String ARRAY_CROSSING_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "callback=6",
+        "async=60",
+        "nested=15",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * A host {@code T[]} value is the DEAL array value at every host-to-DEAL
+     * crossing: the async-function completion value and the function-parameter
+     * entry of a DEAL callback the host invokes both take the
+     * identity-preserving array projection the synchronous host return runs
+     * (nested arrays, aliases and null elements preserved), so the body reads
+     * the exact length and the exact elements — never a nil length or a raw
+     * Lua index failure — on the published production artifact under real
+     * luajit.
+     */
+    private static void testLuaHostArrayCrossings() throws Exception {
+        System.out.println("-- the host array crossings: the published LuaJIT"
+            + " artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-array-lua");
+        try {
+            writeFileIn(root, "deal.json", """
+                {"languageVersion": "1.3", "backend": "luajit",
+                 "moduleRoots": ["src"], "output": "out",
+                 "externals": {"host/arr_probe":
+                   {"declaration": "bindings/arr_probe.d.deal"}}}
+                """);
+            writeFileIn(root, "bindings/arr_probe.d.deal",
+                ARRAY_CROSSING_DECLARATION_SOURCE);
+            writeFileIn(root, "src/app.deal", ARRAY_CROSSING_APP_SOURCE);
+            Path entry = root.resolve("src/app.deal").toAbsolutePath();
+            int exit = deal.Main.run(new String[] {"compile", entry.toString()});
+            check(exit == 0, "the host-array-crossing project compiles through"
+                + " the public deal compile: exit=" + exit);
+            if (exit != 0) {
+                return;
+            }
+            Path out = root.resolve("out");
+            check(Files.isRegularFile(out.resolve("app.lua")),
+                "the published artifact set carries the entry artifact");
+            writeFileIn(out, "host/arr_probe.lua", ARRAY_CROSSING_LUA);
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                local callback = surface["runCallback"]
+                if callback == nil then fail("missing runCallback export") end
+                local okC, resC = pcall(callback.f)
+                if not okC then
+                  fail("runCallback: " .. tostring(resC.code) .. "|"
+                    .. tostring(resC.m) .. "|" .. tostring(resC.e) .. "|"
+                    .. tostring(resC.a) .. "|" .. tostring(resC.o))
+                end
+                if resC ~= 6 then
+                  fail("callback argument: " .. tostring(resC))
+                end
+                local async = surface["runAsync"]
+                if async == nil then fail("missing runAsync export") end
+                local okA, handleA = pcall(async.f)
+                if not okA then
+                  fail("runAsync: " .. tostring(handleA.code) .. "|"
+                    .. tostring(handleA.m) .. "|" .. tostring(handleA.e) .. "|"
+                    .. tostring(handleA.a) .. "|" .. tostring(handleA.o))
+                end
+                if type(handleA) ~= "table"
+                    or handleA[__dealCarrierKeys.kind] ~= "async" then
+                  fail("runAsync did not return an async operation")
+                end
+                local nested = surface["runNested"]
+                if nested == nil then fail("missing runNested export") end
+                local okN, handleN = pcall(nested.f)
+                if not okN then
+                  fail("runNested: " .. tostring(handleN.code) .. "|"
+                    .. tostring(handleN.m) .. "|" .. tostring(handleN.e) .. "|"
+                    .. tostring(handleN.a) .. "|" .. tostring(handleN.o))
+                end
+                if type(handleN) ~= "table"
+                    or handleN[__dealCarrierKeys.kind] ~= "async" then
+                  fail("runNested did not return an async operation")
+                end
+                print("TRANSCRIPT-BEGIN")
+                print("callback=" .. tostring(resC))
+                print("async=" .. tostring(handleA.__result))
+                print("nested=" .. tostring(handleN.__result))
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0
+                    && run.stdout().equals(ARRAY_CROSSING_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "a host async completion value and a host-passed callback"
+                    + " argument of a declared array type are the DEAL array"
+                    + " value (exact length, exact elements, nested alias"
+                    + " preserved): exit=" + run.exitCode() + " stdout="
+                    + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
     // 2b. The LuaJIT load under real luajit
     // =========================================================================
 
@@ -2680,6 +2893,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostDecodedNumericCarrier();
             testLuaHostTableValue();
             testLuaHostTableProjection();
+            testLuaHostArrayCrossings();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
