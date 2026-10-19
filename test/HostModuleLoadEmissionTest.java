@@ -4050,7 +4050,462 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
-    // 2d. The LuaJIT load under real luajit
+    // 2d. The host async completion crossing (ISSUE-0853)
+    // =========================================================================
+
+    /**
+     * The declared async completion positions (ISSUE-0853): a host class
+     * with a nested class field, a second field naming the same host
+     * instance (the crossing's alias), an array field, a
+     * declared-{@code number} array field, an absent optional and a present
+     * null; a class-element array; a table carrying a class member and a
+     * host-provided function member; a plain table; a numeric completion;
+     * and a function completion.
+     */
+    private static final String COMPLETION_DECLARATION_SOURCE = """
+        export class Endpoint {
+          path: string;
+        }
+
+        export class ServerConfig {
+          port: int;
+          endpoint: Endpoint;
+          backup: Endpoint;
+          tags?: string[];
+          label?: string;
+          note?: string | null;
+          scores: number[];
+        }
+
+        export async function make(): ServerConfig;
+        export async function makeAll(): Endpoint[];
+        export async function makeBundle(): table;
+        export async function makePlain(): table;
+        export async function makeNumber(): number;
+        export async function makeCallback(): (x: int) => int;
+        export async function makeBadArray(): int[];
+        export async function makeNull(): string | null;
+        export function checkClean(): string;
+        export function inspectPlain(): string;
+        export function inspectBundle(): string;
+        export function checkCallback(): string;
+        export function bag(): table;
+        """;
+
+    /**
+     * The DEAL side of the host async completion crossing: every completion
+     * value is read back at its declared type after {@code await} — the
+     * nested class field, the aliased second field (one DEAL value), the
+     * tags array and the absent optional, the present null, a
+     * class-element array with its two alias slots, a table carrying a
+     * class member and a host-provided function member the DEAL side
+     * invokes, a plain table the DEAL side writes to (the host observes the
+     * write), the numeric completion, and the function completion.
+     */
+    private static final String COMPLETION_APP_SOURCE = """
+        import * as host from "host/complete_probe";
+        import * as json from "std/json";
+
+        function joined(xs: string[]): string {
+          let out: string = "";
+          let i: int = 0;
+          while (i < xs.length) {
+            if (i > 0) {
+              out = out + ",";
+            }
+            out = out + xs[i];
+            i = i + 1;
+          }
+          return out;
+        }
+
+        export async function runClass(): string {
+          let s: host.ServerConfig = await host.make();
+          let bag: table = host.bag();
+          bag.cfg = s;
+          bag.scores = s.scores;
+          if (s.endpoint !== s.backup) {
+            throw { code: "TEST_FAIL", message: "completion field alias" };
+          }
+          let tags: string[] | null = s.tags;
+          let tagText: string = "absent";
+          if (tags !== null) {
+            tagText = joined(tags);
+          }
+          let label: string | null = s.label;
+          if (label !== null) {
+            throw { code: "TEST_FAIL", message: "absent optional" };
+          }
+          let note: string | null = s.note;
+          let noteText: string = "absent";
+          if (note === null) {
+            noteText = "null";
+          }
+          let header: string = json.stringify({ port: s.port });
+          return header + ":" + s.endpoint.path + ":" + tagText + ":"
+            + noteText + ":host=" + host.checkClean();
+        }
+
+        export async function runAll(): string {
+          let xs: host.Endpoint[] = await host.makeAll();
+          if (xs.length !== 2) {
+            throw { code: "TEST_FAIL", message: "class array length" };
+          }
+          if (xs[0] !== xs[1]) {
+            throw { code: "TEST_FAIL", message: "class array alias" };
+          }
+          return json.stringify({ length: xs.length, path: xs[0].path });
+        }
+
+        export async function runBundle(): string {
+          let t: table = await host.makeBundle();
+          let endpoint: host.Endpoint = t.endpoint;
+          let alias: host.Endpoint = t.alias;
+          if (endpoint !== alias) {
+            throw { code: "TEST_FAIL", message: "table copy alias" };
+          }
+          let bump: (x: int) => int = t.bump;
+          let value: int = bump(41);
+          return endpoint.path + ":" + json.stringify({ value: value })
+            + ":host=" + host.inspectBundle();
+        }
+
+        export async function runPlain(): string {
+          let t: table = await host.makePlain();
+          t.extra = 9;
+          return host.inspectPlain();
+        }
+
+        export async function runNumber(): string {
+          let n: number = await host.makeNumber();
+          return json.stringify({ ms: n });
+        }
+
+        export async function runCallback(): string {
+          let g: (x: int) => int = await host.makeCallback();
+          let value: int = g(41);
+          return json.stringify({ value: value })
+            + ":host=" + host.checkCallback();
+        }
+
+        export function peek(): table {
+          return host.bag();
+        }
+
+        export async function runBad(): string {
+          let xs: int[] = await host.makeBadArray();
+          return "unreachable";
+        }
+
+        export async function runNull(): string {
+          let v: string | null = await host.makeNull();
+          if (v !== null) {
+            throw { code: "TEST_FAIL", message: "null completion" };
+          }
+          return "null";
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host for the async completion crossing: every
+     * declared async function returns a real async operation whose
+     * completion is the documented LuaJIT value — a {@code rt.class_}
+     * instance for the declared host class (nested class field, the same
+     * instance in a second field, a plain tags table, an absent optional
+     * and the runtime null sentinel as the present null), a plain Lua table
+     * with one-based contiguous storage of the one shared class instance,
+     * a table carrying a class member and the documented function wrapper,
+     * a plain table, a number outside the signed32 range, and the function
+     * wrapper itself. The reporting entries let the DEAL side assert that
+     * the host's own objects were never mutated and that the plain table
+     * kept its shared identity.
+     */
+    private static final String COMPLETION_HOST_LUA = """
+        local rt = require("deal.runtime")
+        local K = rt.__keys
+
+        local endpoint = rt.class_("@$external/host/complete_probe/Endpoint",
+          { path = "/" }, { path = "/e" })
+        local tags = { "a", "b" }
+        local scores = { 1.5, 2 }
+        local cfg = rt.class_("@$external/host/complete_probe/ServerConfig",
+          { port = 0, endpoint = rt.__MISSING, backup = rt.__MISSING,
+            tags = rt.__MISSING, label = rt.__MISSING, note = rt.__MISSING,
+            scores = rt.__MISSING },
+          { port = 7, endpoint = endpoint, backup = endpoint, tags = tags,
+            note = rt.__NULL, scores = scores })
+
+        local shared = rt.class_("@$external/host/complete_probe/Endpoint",
+          { path = "/" }, { path = "/x" })
+
+        local wrapper = { [K.kind] = "function", sig = "(int)->int",
+          f = function(x) return x + 1 end }
+        local bundle = { endpoint = endpoint, alias = endpoint,
+          bump = wrapper }
+        local plain = { a = 1 }
+        local bag = {}
+
+        return {
+          Endpoint = { [K.kind] = "class",
+            [K.classname] = "@$external/host/complete_probe/Endpoint" },
+          Endpoint_defaults = { path = "/" },
+          ServerConfig = { [K.kind] = "class",
+            [K.classname] = "@$external/host/complete_probe/ServerConfig" },
+          ServerConfig_defaults = { port = 0, endpoint = rt.__MISSING,
+            backup = rt.__MISSING, tags = rt.__MISSING, label = rt.__MISSING,
+            note = rt.__MISSING, scores = rt.__MISSING },
+
+          make = function()
+            return rt.async_start(function() return cfg end)
+          end,
+          makeAll = function()
+            return rt.async_start(function() return { shared, shared } end)
+          end,
+          makeBundle = function()
+            return rt.async_start(function() return bundle end)
+          end,
+          makePlain = function()
+            return rt.async_start(function() return plain end)
+          end,
+          makeNumber = function()
+            return rt.async_start(function() return 1.0e17 end)
+          end,
+          makeCallback = function()
+            return rt.async_start(function() return wrapper end)
+          end,
+          makeBadArray = function()
+            return rt.async_start(function() return { "x" } end)
+          end,
+          makeNull = function()
+            return rt.async_start(function() return rt.__NULL end)
+          end,
+
+          checkClean = function()
+            return tostring(cfg[K.c] == nil and cfg[K.id] == nil
+                and cfg.label == nil and endpoint[K.c] == nil
+                and tags[K.a] == nil and scores[K.a] == nil)
+              .. "/" .. tostring(cfg.port)
+              .. "/" .. tostring(cfg.note == rt.__NULL)
+              .. "/" .. tostring(cfg.tags == tags)
+          end,
+          inspectPlain = function()
+            return tostring(plain.a) .. "/" .. tostring(plain.extra)
+          end,
+          inspectBundle = function()
+            return tostring(bundle.endpoint == endpoint) .. "/"
+              .. tostring(bundle.extra) .. "/"
+              .. tostring(bundle.bump == wrapper)
+          end,
+          checkCallback = function()
+            return tostring(wrapper[K.c] == nil and wrapper[K.fn] == nil
+              and wrapper[K.kind] == "function"
+              and wrapper.sig == "(int)->int")
+          end,
+          bag = function() return bag end,
+        }
+        """;
+
+    /** The exact results the host async completion crossing must publish. */
+    private static final String COMPLETION_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "class={\"port\":7}:/e:a,b:null:host=true/7/true/true",
+        "array={\"length\":2,\"path\":\"/x\"}",
+        "table=/e:{\"value\":42}:host=true/nil/true",
+        "plain=1/9",
+        "number={\"ms\":1.0E17}",
+        "callback={\"value\":42}:host=true",
+        "raw.chunk-tag=true",
+        "raw.chunk-id=true",
+        "raw.kind-tag=true",
+        "raw.endpoint-tag=true",
+        "raw.label-absent=true",
+        "raw.tags-length=2",
+        "raw.note-null=true",
+        "scores.mark=true",
+        "scores.length=2",
+        "scores.elements=1.5,2",
+        "scores.marks=table",
+        "bad=E8003|array element 1 type mismatch|int|string",
+        "null=null",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * The host async completion crossing (ISSUE-0853) on the published
+     * LuaJIT artifact under real {@code luajit}: the completion value is
+     * projected by the host-carrier bridge pair with the completion
+     * descriptor and one memo per await, after the numeric-variant
+     * materialization and before the single {@code ASYNC_COMPLETION}
+     * cell, so a declared host class completion is the dual-tagged DEAL
+     * instance (nested class field, aliased second field, array field,
+     * absent optional, present null, per-slot marks, the host object never
+     * mutated), a class-element array completion keeps its exact elements,
+     * length and alias identity, a table completion keeps its identity
+     * where no member requires re-representation and takes one memoized
+     * copy — class member bridged, function member kept as the wrapper —
+     * otherwise, a numeric completion materializes its variant, and a
+     * function completion keeps the documented wrapper.
+     */
+    private static void testLuaHostAsyncCompletion() throws Exception {
+        System.out.println("-- the host async completion crossing: the"
+            + " published LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-completion-lua");
+        try {
+            Path out = publishLuaHost(root, "complete_probe",
+                COMPLETION_DECLARATION_SOURCE, COMPLETION_APP_SOURCE,
+                COMPLETION_HOST_LUA, "host-async-completion");
+            if (out == null) {
+                return;
+            }
+            String lua = Files.readString(out.resolve("app.lua"),
+                StandardCharsets.UTF_8);
+            String numVar = "  __cA = __hostNumVar(__cA)\n";
+            String carrierIn = "  __cA = __factories.__hostCarrierIn(";
+            int site = 0;
+            int sites = 0;
+            while ((site = lua.indexOf(numVar, site)) >= 0) {
+                sites++;
+                int bridgeLineEnd = lua.indexOf("\n", site + numVar.length());
+                String bridgeLine = bridgeLineEnd < 0 ? ""
+                    : lua.substring(site + numVar.length(), bridgeLineEnd + 1);
+                check(bridgeLine.startsWith(carrierIn)
+                        && bridgeLine.endsWith(", __cA, {})\n"),
+                    "the host completion crossing runs __hostNumVar first and"
+                        + " __hostCarrierIn with the completion descriptor and"
+                        + " one memo per await immediately after: "
+                        + lua.substring(site, Math.min(lua.length(),
+                            site + 200)));
+                site += numVar.length();
+            }
+            checkEq(8, sites, "every HOST_OPERATION await runs the"
+                + " numeric-variant materialization and then the host-carrier"
+                + " bridge");
+            for (String descriptor : List.of(
+                    "\"@$external/host/complete_probe/ServerConfig\"",
+                    "\"[@$external/host/complete_probe/Endpoint]\"",
+                    "\"table\"", "\"number\"", "\"(int)->int\"",
+                    "\"[int]\"", "\"?string\"")) {
+                check(lua.contains(carrierIn + descriptor + ", __cA, {})"),
+                    "the completion crossing of " + descriptor
+                        + " passes its declared descriptor to the bridge");
+            }
+            check(lua.contains("{__hostAtom(__tA.value)}"),
+                "the crossing's START atom still atomizes the raw completion"
+                    + " value, never the projected one");
+            check(!lua.contains("__hostToDealArray({}, \""),
+                "the retired one-value async completion array projection is"
+                    + " gone from every await site");
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then
+                  if type(err) == "table" then
+                    fail("init: " .. tostring(err.code) .. "|"
+                      .. tostring(err.m) .. "|" .. tostring(err.o) .. "|"
+                      .. tostring(err.e) .. "|" .. tostring(err.a))
+                  end
+                  fail("init: " .. tostring(err))
+                end
+                local surface = __exportSurfaces["app"]
+                local rt = require("deal.runtime")
+                local K = __dealCarrierKeys
+                local function result(name)
+                  local entry = surface[name]
+                  if entry == nil then fail("missing " .. name .. " export") end
+                  local okc, handle = pcall(entry.f)
+                  if not okc then
+                    fail(name .. ": " .. tostring(handle.code) .. "|"
+                      .. tostring(handle.m) .. "|" .. tostring(handle.e) .. "|"
+                      .. tostring(handle.a) .. "|" .. tostring(handle.o))
+                  end
+                  if type(handle) ~= "table"
+                      or handle[K.kind] ~= "async" then
+                    fail(name .. " did not return an async operation")
+                  end
+                  return handle.__result
+                end
+                print("TRANSCRIPT-BEGIN")
+                print("class=" .. tostring(result("runClass")))
+                print("array=" .. tostring(result("runAll")))
+                print("table=" .. tostring(result("runBundle")))
+                print("plain=" .. tostring(result("runPlain")))
+                print("number=" .. tostring(result("runNumber")))
+                print("callback=" .. tostring(result("runCallback")))
+                local function failed(name)
+                  local entry = surface[name]
+                  if entry == nil then fail("missing " .. name .. " export") end
+                  local okc, value = pcall(entry.f)
+                  if okc then return "ok:" .. tostring(value) end
+                  if type(value) ~= "table" then
+                    return "raw:" .. tostring(value)
+                  end
+                  return tostring(value.code) .. "|" .. tostring(value.m) .. "|"
+                    .. tostring(value.e) .. "|" .. tostring(value.a)
+                end
+                local function call(name)
+                  local entry = surface[name]
+                  if entry == nil then fail("missing " .. name .. " export") end
+                  local okc, value = pcall(entry.f)
+                  if not okc then
+                    fail(name .. ": " .. tostring(value.code) .. "|"
+                      .. tostring(value.m) .. "|" .. tostring(value.e) .. "|"
+                      .. tostring(value.a) .. "|" .. tostring(value.o))
+                  end
+                  return value
+                end
+                local bag = call("peek")
+                local raw = bag.cfg
+                print("raw.chunk-tag=" .. tostring(raw[K.c] == true))
+                print("raw.chunk-id=" .. tostring(raw[K.id]
+                  == "@$external/host/complete_probe/ServerConfig"))
+                print("raw.kind-tag=" .. tostring(raw[K.kind] == "class"
+                  and raw[K.classname]
+                    == "@$external/host/complete_probe/ServerConfig"))
+                print("raw.endpoint-tag=" .. tostring(raw.endpoint[K.c] == true
+                  and raw.endpoint.path == "/e"))
+                print("raw.label-absent=" .. tostring(raw.label == nil))
+                print("raw.tags-length=" .. tostring(raw.tags[K.n]))
+                print("raw.note-null="
+                  .. tostring(raw.note ~= nil and raw.note == rt.__NULL))
+                local scores = bag.scores
+                print("scores.mark=" .. tostring(scores[K.a] == true))
+                print("scores.length=" .. tostring(scores[K.n]))
+                print("scores.elements=" .. tostring(scores[1]) .. ","
+                  .. tostring(scores[2]))
+                print("scores.marks=" .. tostring(type(scores[K.nK])))
+                print("bad=" .. failed("runBad"))
+                print("null=" .. tostring(result("runNull")))
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0
+                    && run.stdout().equals(COMPLETION_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "a host async completion of a declared class is the"
+                    + " dual-tagged DEAL instance (nested field, aliases,"
+                    + " array field, absent optional and present null), a"
+                    + " class-element array completion keeps its elements,"
+                    + " length and alias identity, a table completion keeps"
+                    + " its identity or takes one memoized copy with its"
+                    + " class member bridged and its function member kept as"
+                    + " the wrapper, a numeric completion materializes its"
+                    + " variant, and a function completion keeps the"
+                    + " documented wrapper: exit=" + run.exitCode()
+                    + " stdout=" + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
+    // 2e. The LuaJIT load under real luajit
     // =========================================================================
 
     private static void testLuaExecution(Baseline fixture, Baseline missing,
@@ -5200,6 +5655,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostArrayCrossingFailures();
             testLuaHostClassConstructionDefaults();
             testLuaHostClassCrossings();
+            testLuaHostAsyncCompletion();
             testLuaHostAsyncStartCrossings();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);

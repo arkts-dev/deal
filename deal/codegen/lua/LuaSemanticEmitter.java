@@ -4902,13 +4902,6 @@ public final class LuaSemanticEmitter {
             return inner instanceof RuntimeDescriptor.Class;
         }
 
-        /** Whether one declared position is an array type (nullable included). */
-        private boolean isArrayPosition(RuntimeDescriptor descriptor) {
-            RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
-                ? nullable.inner() : descriptor;
-            return inner instanceof RuntimeDescriptor.Array;
-        }
-
         /** The canonical descriptor text of one declared position's inner type. */
         private String innerFunctionText(RuntimeDescriptor descriptor) {
             RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
@@ -7273,23 +7266,35 @@ public final class LuaSemanticEmitter {
             // boundary's FAILURE beside the await op's — the oracle's
             // boundary-child pair.
             //
-            // A host completion at a declared array position carries the
-            // LuaJIT value mapping's ``Lua table with 1-based contiguous
-            // storage'' (a plain host table, never the chunk's carrier), so
-            // the completion crossing applies the same identity-preserving
-            // host-to-DEAL array projection the synchronous host return
-            // applies (__hostToDealArray: nested arrays, null elements,
-            // aliases and per-slot numeric variants preserved) before the
-            // completion cell admits it — the async twin of the sync return
-            // cell. The projection is emitted only for a session that
-            // carries the host prelude, the prelude the helper belongs to.
+            // A host completion is re-represented by the host-carrier bridge
+            // pair (ISSUE-0853; the design's position 4): after the raw
+            // completion's numeric variant is materialized (__hostNumVar)
+            // and before the single ASYNC_COMPLETION cell, the completion
+            // value crosses through __factories.__hostCarrierIn with the
+            // completion's declared descriptor and one memo per await, so a
+            // declared host class completion is the dual-tagged DEAL
+            // instance (nested class fields, array fields, aliases and
+            // absent/present-null states preserved, the host object never
+            // mutated), a class-element array completion is the DEAL array
+            // carrier with its exact elements/length/alias identity, a
+            // table completion keeps its identity where no member requires
+            // re-representation and otherwise takes one memoized copy with
+            // its class members bridged and its function members kept as
+            // the runtime wrapper, a function completion keeps the wrapper,
+            // and a numeric variant keeps its carrier. The bridge composes
+            // no failure: the completion cell keeps its exact
+            // code/text/expected/actual/origin after the projection, and the
+            // crossing's START atom still atomizes the raw __tA.value, so
+            // the differential trace is unchanged. The projection is emitted
+            // only for a session that carries the host prelude, where the
+            // bridge exists.
             out.append("__cA = __tA.value\n");
             out.append("if __tA.owner == \"HOST_OPERATION\" then\n");
             out.append("  __cA = __hostNumVar(__cA)\n");
-            if (bindsHostRuntime() && isArrayPosition(boundaryPayload.descriptor())) {
-                out.append("  __cA = __hostToDealArray({}, ")
+            if (bindsHostRuntime()) {
+                out.append("  __cA = __factories.__hostCarrierIn(")
                     .append(luaString(boundaryPayload.descriptor().canonicalSpecText()))
-                    .append(", __cA)\n");
+                    .append(", __cA, {})\n");
             }
             emitBoundaryStartAtom(boundary, "__hostAtom(__tA.value)");
             out.append("else\n");
