@@ -529,34 +529,34 @@ public final class LuaSemanticEmitter {
          * carry only the project's own DEAL declarations) — followed by the
          * project's own classes in class-layout registration order. The
          * builtin {@code Error} identity is never a key.
+         *
+         * <p>Every declaration class identity comes from the compile's
+         * class-registration seeds — the one producer the checker, the
+         * descriptor surface, and the class layouts share — never from the
+         * HOST import ops of the lowered units: a declaration module that
+         * only another {@code .d.deal} imports carries no such op, and its
+         * classes are still declared classes whose canonical externals
+         * identity a crossing can name.</p>
          */
         private List<HostCarrierClass> hostCarrierClasses() {
             List<HostCarrierClass> classes = new ArrayList<>();
             java.util.Set<ClassId> emitted = new java.util.LinkedHashSet<>();
             if (hostSurface != null) {
-                Map<ModuleId, String> declarationModulePaths =
-                    declarationModulePaths();
+                List<ClassId> declaredIds = declaredClassIds();
+                int declaredIndex = 0;
                 for (ModuleId declarationModule : hostSurface.moduleIds()) {
                     HostDeclarationSurface.DeclarationFacts facts =
                         hostSurface.require(declarationModule);
                     if (facts.classes().isEmpty()) {
                         continue;
                     }
-                    String modulePath =
-                        declarationModulePaths.get(declarationModule);
-                    if (modulePath == null) {
-                        // A declaration module the closure never imports
-                        // cannot be named by any crossing: the identity
-                        // text has exactly one source (the externals raw
-                        // import specifier recorded by the HOST import).
-                        continue;
-                    }
                     boolean externC = facts.kind()
                         == HostDeclarationSurface.DeclarationKind.EXTERN_C;
                     for (HostDeclarationSurface.DeclaredClass declaredClass
                             : facts.classes().values()) {
-                        ClassId classId =
-                            new ClassId(modulePath, declaredClass.name());
+                        ClassId classId = declaredClassId(declaredIds,
+                            declaredIndex++, declarationModule,
+                            declaredClass.name());
                         if (ClassId.ERROR.equals(classId)
                                 || !emitted.add(classId)) {
                             continue;
@@ -591,6 +591,15 @@ public final class LuaSemanticEmitter {
                             classKindOf(classId, externC ? "extc" : "host"),
                             fields));
                     }
+                }
+                if (declaredIndex != declaredIds.size()) {
+                    throw new IllegalStateException(
+                        "the compile's class-registration seeds carry "
+                            + (declaredIds.size() - declaredIndex)
+                            + " declared class identity(ies) the declaration"
+                            + " surface does not declare: the metadata's class"
+                            + " set is read from exactly the surface's"
+                            + " declared classes (a producer defect)");
                 }
             }
             for (Map.Entry<ClassId, ClassLayout> layout
@@ -630,27 +639,47 @@ public final class LuaSemanticEmitter {
         }
 
         /**
-         * The canonical external module path of every declaration module of
-         * the closure ({@code $external/<raw import specifier>}), recorded
-         * by the HOST import ops that resolve it — the one identity source
-         * of the declaration surface's classes.
+         * The compile's declared class identities in registration order —
+         * the class-registration seeds' keys, the builtin {@code Error}
+         * entry excluded. The seeds are produced from exactly the
+         * declaration surface this session emits, one registration per
+         * declared class of every declaration module in the surface's
+         * module and declaration order, so the surface walk consumes them
+         * positionally.
          */
-        private Map<ModuleId, String> declarationModulePaths() {
-            Map<ModuleId, String> paths = new LinkedHashMap<>();
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                for (SemanticOp op : moduleUnit.ops()) {
-                    if (op.kind() != SemanticOpKind.MODULE_IMPORT
-                            || !(op.payload()
-                                instanceof KindPayload.ModuleImportPayload
-                                    payload)
-                            || payload.kind() != ModuleImportKind.HOST) {
-                        continue;
-                    }
-                    paths.putIfAbsent(payload.resolvedModule(),
-                        "$external/" + payload.rawSpecifier());
+        private List<ClassId> declaredClassIds() {
+            List<ClassId> ids = new ArrayList<>();
+            if (classSeeds == null) {
+                return ids;
+            }
+            for (ClassId classId : classSeeds.classIds()) {
+                if (!ClassId.ERROR.equals(classId)) {
+                    ids.add(classId);
                 }
             }
-            return paths;
+            return ids;
+        }
+
+        /**
+         * The class-registration seed identity of one declared class of the
+         * surface walk: the seed at the walk's position must name exactly
+         * the declared class (the seeds and the surface are produced from
+         * one declaration-fact source in one order); a mismatch is a
+         * fail-closed producer defect, never an invented identity.
+         */
+        private static ClassId declaredClassId(List<ClassId> declaredIds,
+                int index, ModuleId declarationModule, String className) {
+            if (index >= declaredIds.size()
+                    || !declaredIds.get(index).name().equals(className)) {
+                throw new IllegalStateException(
+                    "the declaration module '" + declarationModule.path()
+                        + "' declares the class '" + className + "' but the"
+                        + " compile's class-registration seeds carry no"
+                        + " matching identity at its declaration position:"
+                        + " the host-carrier metadata's class identities are"
+                        + " the registration seeds (a producer defect)");
+            }
+            return declaredIds.get(index);
         }
 
         /**
@@ -692,6 +721,21 @@ public final class LuaSemanticEmitter {
             }
             for (ClassLayout layout : classLayouts.values()) {
                 collectFunctionShapes(shapes, layout);
+            }
+            // Every catalog row of every imported STDLIB module: the
+            // whole-surface population creates one __stdlibEntry carrier
+            // per row, so each carrier's canonical signature needs a shape
+            // entry even when no read of it is typed (a read adds it again
+            // idempotently through the op result type).
+            for (Map.Entry<ModuleId, ModuleImportKind> imported
+                    : importKinds.entrySet()) {
+                if (imported.getValue() != ModuleImportKind.STDLIB) {
+                    continue;
+                }
+                for (StdlibFunctionCatalog.Entry row
+                        : stdlibRowsOf(imported.getKey().path())) {
+                    collectFunctionShapes(shapes, row.declaredDescriptor());
+                }
             }
             if (classSeeds != null) {
                 for (ClassId classId : classSeeds.classIds()) {

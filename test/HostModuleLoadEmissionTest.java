@@ -435,11 +435,15 @@ public class HostModuleLoadEmissionTest {
 
     /**
      * The host-carrier metadata project's HOST declaration: a class with a
-     * nested class field, an optional array field, and an optional nullable
-     * field, a class with a declared function-typed field, a synchronous
-     * declared host function, and an asynchronous declared host function.
+     * nested class field, an optional array field, an optional nullable
+     * field, and a field of a class declared by a declaration module that
+     * only this declaration file imports, a class with a declared
+     * function-typed field, a synchronous declared host function, and an
+     * asynchronous declared host function.
      */
     private static final String CARRIER_DECLARATION_SOURCE = """
+        import * as base from "host/base";
+
         export class Endpoint {
           path: string;
         }
@@ -449,6 +453,7 @@ public class HostModuleLoadEmissionTest {
           endpoint: Endpoint;
           tags?: string[];
           note?: string | null;
+          root: base.Base;
         }
 
         export class Bundle {
@@ -459,6 +464,21 @@ public class HostModuleLoadEmissionTest {
         export function describe(s: ServerConfig): string;
         export async function fetchConfig(id: int): ServerConfig;
         export function apply(f: (x: int) => int, v: int): int;
+        """;
+
+    /**
+     * The host-carrier metadata project's declaration module that only the
+     * other {@code .d.deal} imports (finding 1's shape): no HOST import op
+     * of any lowered unit names it, so its class identity is reachable only
+     * through the compile's class-registration seeds.
+     */
+    private static final String CARRIER_BASE_DECLARATION_SOURCE = """
+        export class Base {
+          id: int;
+          run: (x: string, y: string) => boolean;
+        }
+
+        export function baseOnly(x: string, y: string, z: string): boolean;
         """;
 
     /**
@@ -494,13 +514,15 @@ public class HostModuleLoadEmissionTest {
     /**
      * The host-carrier metadata project's application: a DEAL class with a
      * function-typed field, a chunk-created function value, an imported
-     * function value, and literals of the declared host, extern-C, and DEAL
-     * classes.
+     * function value, literals of the declared host, extern-C, and DEAL
+     * classes, and an imported stdlib module whose catalog rows are
+     * surface-populated but never read (finding 2's shape).
      */
     private static final String CARRIER_APP_SOURCE = """
         import * as cfg from "host/carrier";
         import * as native from "native/sample";
         import * as util from "./util";
+        import * as json from "std/json";
 
         export class Widget {
           name: string = "";
@@ -509,8 +531,11 @@ public class HostModuleLoadEmissionTest {
 
         export function main(): null {
           let step: (x: int) => int = function(x: int): int { return x + 1; };
+          let accept: (x: string, y: string) => boolean =
+            function(x: string, y: string): boolean { return true; };
           let widget: Widget = { name: "w", run: step };
-          let config: cfg.ServerConfig = { port: 1, endpoint: { path: "/" } };
+          let config: cfg.ServerConfig = { port: 1, endpoint: { path: "/" },
+            root: { id: 2, run: accept } };
           let point: util.Point = { x: 1, y: 2 };
           let pair: native.Pair = { left: 4, right: 9.5 };
           let bundle: cfg.Bundle = { label: "b", action: step };
@@ -541,6 +566,7 @@ public class HostModuleLoadEmissionTest {
          "moduleRoots": ["src"], "output": "out",
          "externals": {
            "host/carrier": {"declaration": "bindings/carrier.d.deal"},
+           "host/base": {"declaration": "bindings/base.d.deal"},
            "native/sample": {"declaration": "bindings/sample.d.deal",
                              "nativeLibrary": "libs/sample.so"}}}
         """;
@@ -702,6 +728,8 @@ public class HostModuleLoadEmissionTest {
         writeFileIn(root, "deal.json", CARRIER_METADATA_DEAL_JSON);
         writeFileIn(root, "bindings/carrier.d.deal",
             CARRIER_DECLARATION_SOURCE);
+        writeFileIn(root, "bindings/base.d.deal",
+            CARRIER_BASE_DECLARATION_SOURCE);
         writeFileIn(root, "bindings/sample.d.deal",
             CARRIER_NATIVE_DECLARATION_SOURCE);
         writeFileIn(root, "src/util.deal", CARRIER_UTIL_SOURCE);
@@ -1089,16 +1117,23 @@ public class HostModuleLoadEmissionTest {
         // classes from the compile's class layouts. The field descriptors
         // are the canonical texts (a nested class field is the class
         // identity, an optional array is [?], an optional nullable is ?).
+        // The Base entry is the declaration module that only the carrier
+        // declaration imports: no HOST import op names it, and its identity
+        // still comes from the compile's class-registration seeds.
         String expectedFields = "__factories.__hostClassFields = {"
             + "[\"@$external/host/carrier/Endpoint\"] = {[\"path\"] = \"string\"}, "
             + "[\"@$external/host/carrier/ServerConfig\"] = {"
             + "[\"port\"] = \"int\", "
             + "[\"endpoint\"] = \"@$external/host/carrier/Endpoint\", "
-            + "[\"tags\"] = \"[string]\", [\"note\"] = \"?string\"}, "
+            + "[\"tags\"] = \"[string]\", [\"note\"] = \"?string\", "
+            + "[\"root\"] = \"@$external/host/base/Base\"}, "
             + "[\"@$external/host/carrier/Bundle\"] = {"
             + "[\"label\"] = \"string\", [\"action\"] = \"(int)->int\"}, "
             + "[\"@$external/native/sample/Pair\"] = {"
             + "[\"left\"] = \"int\", [\"right\"] = \"number\"}, "
+            + "[\"@$external/host/base/Base\"] = {"
+            + "[\"id\"] = \"int\", "
+            + "[\"run\"] = \"(string,string)->boolean\"}, "
             + "[\"@src/util.deal/Point\"] = {"
             + "[\"x\"] = \"int\", [\"y\"] = \"int\"}, "
             + "[\"@src/app.deal/Widget\"] = {"
@@ -1111,6 +1146,7 @@ public class HostModuleLoadEmissionTest {
             + "[\"@$external/host/carrier/ServerConfig\"] = \"host\", "
             + "[\"@$external/host/carrier/Bundle\"] = \"host\", "
             + "[\"@$external/native/sample/Pair\"] = \"extc\", "
+            + "[\"@$external/host/base/Base\"] = \"host\", "
             + "[\"@src/util.deal/Point\"] = \"deal\", "
             + "[\"@src/app.deal/Widget\"] = \"deal\"}";
         check(lua.contains(expectedKinds), "the class-kind map classifies"
@@ -1120,8 +1156,11 @@ public class HostModuleLoadEmissionTest {
 
         // The shape map: the declared host functions, the declared
         // function-typed fields, the class-layout function field, the
-        // chunk-created function value, and the imported function value, in
-        // the hostParamCellsOf literal shape.
+        // chunk-created function value, the imported function value, the
+        // function-typed field of the declaration module that only the
+        // carrier declaration imports, and the catalog rows of the imported
+        // stdlib module (whose __stdlibEntry carriers the surface
+        // population emits), in the hostParamCellsOf literal shape.
         for (String shape : List.of(
                 "[\"(@$external/host/carrier/ServerConfig)->string\"] = "
                     + "{ret = \"string\", cells = "
@@ -1134,7 +1173,19 @@ public class HostModuleLoadEmissionTest {
                     + "{{\"function(int;int)\", \"function\", \"(int)->int\"}, "
                     + "{\"int\", \"int\", \"int\"}}}",
                 "[\"(int)->int\"] = {ret = \"int\", "
-                    + "cells = {{\"int\", \"int\", \"int\"}}}")) {
+                    + "cells = {{\"int\", \"int\", \"int\"}}}",
+                "[\"(string,string)->boolean\"] = {ret = \"boolean\", "
+                    + "cells = {{\"string\", \"string\", \"string\"}, "
+                    + "{\"string\", \"string\", \"string\"}}}",
+                "[\"(string,string,string)->boolean\"] = "
+                    + "{ret = \"boolean\", cells = "
+                    + "{{\"string\", \"string\", \"string\"}, "
+                    + "{\"string\", \"string\", \"string\"}, "
+                    + "{\"string\", \"string\", \"string\"}}}",
+                "[\"(string)->table\"] = {ret = \"table\", "
+                    + "cells = {{\"string\", \"string\", \"string\"}}}",
+                "[\"(table)->string\"] = {ret = \"string\", "
+                    + "cells = {{\"table\", \"table\", \"table\"}}}")) {
             check(lua.contains(shape), "the function-shape map carries the"
                 + " declared shape " + shape);
         }
