@@ -2278,8 +2278,11 @@ end
 --   1. top-level input gate — a non-table parsed value or the __NULL
 --      sentinel rejects;
 --   2. key gate — every parsed key must be a declared plan field name
---      (extra/unknown keys and non-empty array-shaped input reject; the
---      empty {} / [] parse collapse decodes the defaulted instance);
+--      (extra/unknown keys, the private carrier marks of a decoded
+--      array, and the integer keys of a non-empty array-shaped input
+--      reject; the empty object document decodes the defaulted
+--      instance, and no array-shaped input is an empty-object
+--      collapse);
 --   3. provided-value validation in class source order through
 --      check_canonical_type — a failure returns nil immediately and no
 --      defaults run (a provided-value failure runs no defaults);
@@ -2424,8 +2427,11 @@ function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
       return nil
     end
   end
-  -- 7. Empty parsed input accepted: decodes as the defaulted instance
-  -- (D2a — the []/{} parse collapse).
+  -- 7. The empty object document decodes as the defaulted instance. An
+  -- array-shaped document is never an object: a decoded array carrier
+  -- records the private array/order marks the key gate above rejects,
+  -- and a non-empty array rejects on its integer keys, so there is no
+  -- empty-array-to-object collapse at this class gate.
   -- 8. Defaults acyclicity (D4): cyclic defaults → nil before _deep_copy.
   if not __rt._json_defaults_acyclic(defaults, {}) then
     return nil

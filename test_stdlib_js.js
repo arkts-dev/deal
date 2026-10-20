@@ -358,6 +358,11 @@ test("table.keys returns the insertion-ordered string keys of a validated Map", 
   t2.set("2", "two");
   t2.set("1", "one");
   assertArrayEqual(table.keys.$f(t2, "f.js", 1, 1), ["2", "1"], "set order is insertion order");
+  // A present null-valued key is a present key (docs/spec-v1.3.md:1911).
+  const t3 = rt.makeTable({ a: 1 });
+  t3.set("n", null);
+  assertArrayEqual(table.keys.$f(t3, "f.js", 1, 1), ["a", "n"],
+    "a present null-valued key stays a key");
 });
 
 // ===========================================================================

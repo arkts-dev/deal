@@ -2078,13 +2078,10 @@ function $jsonEntryDescriptor($entry) {
 // absent nested optionals still materialize as $rt.MISSING.
 function $jsonFromDocument($identity, $doc, $fields, $defaultsThunk, $file, $line, $column) {
   // Top-level gate (D3): only a JSON object may decode; a scalar, JSON
-  // null, or a non-empty array returns the DEAL null. The empty object
-  // and the empty array both continue — the documented parse collapse
-  // ([] has no own keys, so every later step sees an empty document).
-  if ($doc === null || typeof $doc !== "object") {
-    return null;
-  }
-  if ($Array.isArray($doc) && $doc.length !== 0) {
+  // null, or an array document — the empty array included — returns the
+  // DEAL null. The class helper accepts exactly its specified object
+  // shape, so no root or nested class value is an empty-array collapse.
+  if ($doc === null || typeof $doc !== "object" || $Array.isArray($doc)) {
     return null;
   }
   if (!$Array.isArray($fields)) {
@@ -2221,6 +2218,9 @@ function $jsonFromValue($entry, $raw, $file, $line, $column, $numberVariant) {
       }
       return $rt.jsonParseValue($raw, $file, $line, $column);
     case "class":
+      // The nested class value is a JSON object, exactly the root gate's
+      // own shape: an array value of any length, the empty array
+      // included, is a validation failure (no empty-object collapse).
       if (!$isPlainObject($raw)) {
         $rt.fail("E8001", "expected class instance", $file, $line, $column, "class", $kindOf($raw));
       }
@@ -3565,10 +3565,9 @@ const $rt = {
   // source order -> omitted required defaults (the thunk, once per
   // construction, only after every provided value decoded) -> final
   // validation through the canonical matcher rows -> publish. The
-  // top-level gate (D3): a scalar, JSON null, or non-empty array
-  // document returns the DEAL null; the empty object and the empty
-  // array both decode to the defaulted instance with identical
-  // jsonToJson text. Every failure — malformed input, unpaired
+  // top-level gate (D3): a scalar, JSON null, or array document — the
+  // empty array included — returns the DEAL null; only a JSON object
+  // decodes. Every failure — malformed input, unpaired
   // surrogates, extra keys, provided-value failures, evaluator
   // failures, final-validation mismatches — returns the DEAL null and
   // publishes no instance; the walker never throws (the public

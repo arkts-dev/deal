@@ -8096,9 +8096,6 @@ end
 local function __jsonIsArray(v)
   return type(v) == "table" and v[__dealCarrierKeys.ja] == true
 end
-local function __jsonEmptyObject()
-  return {[__dealCarrierKeys.jo] = true, [__dealCarrierKeys.jkeys] = {}, [__dealCarrierKeys.jnum] = {}}
-end
 local function __jsonUtf8(cp)
   if cp < 0x80 then return string.char(cp) end
   if cp < 0x800 then
@@ -8683,13 +8680,15 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     -- The nested @jsonable class decode (K-D8 step 6): the nested
     -- class's own plan drives the same phase order, and its omitted
     -- required-present defaults run their recorded CLASS_DEFAULT
-    -- functions. An unresolvable nested plan is a producer defect.
+    -- functions. An unresolvable nested plan is a producer defect. The
+    -- nested value is a JSON object, exactly the root gate's own shape:
+    -- an array value of any length, the empty array included, is a
+    -- validation failure, never an empty-object collapse.
     local nested = __plans[inner]
     if nested == nil then
       error("JSON_FROM_CLASS has no plan " .. inner .. " for a nested @jsonable "
         .. "class field (producer defect)", 0)
     end
-    if __jsonIsArray(v) and v[__dealCarrierKeys.n] == 0 then v = __jsonEmptyObject() end
     if not __jsonIsObject(v) then return false end
     local ok, inst = __jsonDecodeClass(nested, v)
     if not ok then return false end
@@ -8751,7 +8750,9 @@ __jsonDecodeClass = function(plan, doc)
   return true, __jsonInstanceOf(plan, fields, provided, values)
 end
 -- The JSON_FROM_CLASS walk: the tagged instance, or language null on
--- every listed failure (the JSON_FROM_NULL projection).
+-- every listed failure (the JSON_FROM_NULL projection). Only a JSON
+-- object document decodes: a scalar, a JSON null, and an array document
+-- of any length — the empty array included — are failures.
 local function __jsonFromClassOp(planName, text)
   local plan = __plans[planName]
   if plan == nil then
@@ -8759,7 +8760,6 @@ local function __jsonFromClassOp(planName, text)
   end
   local doc = __jsonParse(text)
   if doc == __JSONSYNTAX or doc == __JNULL then return nil end
-  if __jsonIsArray(doc) and doc[__dealCarrierKeys.n] == 0 then doc = __jsonEmptyObject() end
   if not __jsonIsObject(doc) then return nil end
   local ok, inst = __jsonDecodeClass(plan, doc)
   if not ok then return nil end

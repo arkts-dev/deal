@@ -6532,8 +6532,9 @@ public class JsBackendTest {
         if (!nodeAvailable) { skipNode("jsonable runtime walkers"); return; }
 
         // Direct $rt-surface probes of the pinned walker contract
-        // (js-v12-jsonable-completion D2-D5): the top-level gate and the
-        // {}/[] collapse, extra-key rejection, the three-state roundtrip,
+        // (js-v12-jsonable-completion D2-D5): the top-level object gate
+        // (the empty array included, at the root and at a nested class
+        // value), extra-key rejection, the three-state roundtrip,
         // the int-range E8004 null collapse, the provided-value
         // failure/zero-defaults phase order, and the toJson E8001 arms.
         NodeResult run = runRuntimeProbe("jsonable-walkers", """
@@ -6552,19 +6553,23 @@ public class JsBackendTest {
             const $fields = [$f("name", "string", false, false),
               $f("nick", "string", true, true), $f("age", "int", false, false)];
             const $thunk = () => ({ name: "", nick: $rt.MISSING, age: 0 });
-            // Top-level gate: scalars, null, and [1,2] are null; {}/[]
-            // both decode to the defaulted instance with equal texts.
+            // Top-level gate: scalars, null, and any array — the empty
+            // array included — are null; {} decodes to the defaulted
+            // instance.
             if ($rt.jsonFromJson("@m/U", $fields, $thunk, "42", "p.js", 1, 1) !== null) $fail = "scalar";
             if ($rt.jsonFromJson("@m/U", $fields, $thunk, "null", "p.js", 1, 1) !== null) $fail = "null-doc";
             if ($rt.jsonFromJson("@m/U", $fields, $thunk, "[1,2]", "p.js", 1, 1) !== null) $fail = "array-doc";
+            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "[]", "p.js", 1, 1) !== null) $fail = "empty-array-doc";
             const $o = $rt.jsonFromJson("@m/U", $fields, $thunk, "{}", "p.js", 1, 1);
-            const $a = $rt.jsonFromJson("@m/U", $fields, $thunk, "[]", "p.js", 1, 1);
-            if ($o === null || $a === null) $fail = "collapse-null";
+            if ($o === null) $fail = "empty-object-null";
             if ($o.$kind !== "class" || $o.$classname !== "@m/U") $fail = "tags";
             if ($rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1)
-                !== $rt.jsonToJson("@m/U", $a, $fields, "p.js", 1, 1)) $fail = "collapse-text";
-            if ($rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1)
-                !== '{"name":"","age":0}') $fail = "collapse-omit:" + $rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1);
+                !== '{"name":"","age":0}') $fail = "empty-object-text:" + $rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1);
+            // A nested class value accepts only a JSON object: [] is a
+            // validation failure returning the DEAL null.
+            const $nestedFields = [$f("child", "class", false, false,
+              { className: "@m/U", fields: $fields })];
+            if ($rt.jsonFromJson("@m/P", $nestedFields, $thunk, '{"child":[]}', "p.js", 1, 1) !== null) $fail = "nested-empty-array";
             // Extra-key rejection, before any defaults run.
             if ($rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"Ada","extra":1}', "p.js", 1, 1) !== null) $fail = "extra-key";
             // Three-state: missing omitted, present-null kept, value kept.
@@ -6594,8 +6599,9 @@ public class JsBackendTest {
             """);
         check(run.exitCode() == 0
                 && run.output().equals("JSONABLE-WALKERS-OK"),
-            "the jsonable runtime walkers honor the top-level gate, the "
-                + "{}/[] collapse, extra-key rejection, the three-state "
+            "the jsonable runtime walkers honor the top-level object gate "
+                + "(the empty array rejected at the root and at a nested class value), "
+                + "extra-key rejection, the three-state "
                 + "roundtrip, the E8004 int collapse, the zero-defaults "
                 + "phase order, and the toJson E8001 arms: " + run.output());
     }

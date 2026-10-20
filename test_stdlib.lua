@@ -503,6 +503,41 @@ test("table.keys preserves the deterministic iteration order of the current stat
     "order mismatch: " .. table.concat(keys, ","))
 end)
 
+test("table.keys returns a chunk table carrier's present-null key (v1.3)", function()
+  -- docs/spec-v1.3.md:1909–1912 — each present string key once,
+  -- null-valued keys included. The chunk table carrier records a present
+  -- null as an ordered presence key whose slot stores no value, so the
+  -- key list is the carrier's recorded order, never a walk of the stored
+  -- values.
+  local carrier = {[__K.t] = true, [__K.keys] = { a = true, b = true, c = true },
+    [__K.order] = { "a", "b", "c" }, a = 1, c = 3}
+  local keys = tablelib.keys.f(carrier)
+  assert(#keys == 3, "expected the present-null key too, got " .. #keys)
+  assert(keys[1] == "a" and keys[2] == "b" and keys[3] == "c",
+    "order mismatch: " .. table.concat(keys, ","))
+  -- The __NULL-sentinel member of the same carrier is a present key too.
+  local __rt = require("deal.runtime")
+  local sentinel = {[__K.t] = true, [__K.keys] = { n = true, x = true },
+    [__K.order] = { "n", "x" }, n = __rt.__NULL, x = 1}
+  local sentinelKeys = tablelib.keys.f(sentinel)
+  assert(#sentinelKeys == 2 and sentinelKeys[1] == "n" and sentinelKeys[2] == "x",
+    "the sentinel member is a present key: " .. table.concat(sentinelKeys, ","))
+end)
+
+test("table.keys keeps a decoded object carrier's present-null member (v1.3)", function()
+  -- A decoded std/json object stores a present null as the runtime's null
+  -- sentinel, so the member is a present key of the table (the
+  -- specification pins no order for keys).
+  local json = require("std.json")
+  local parsed = json.parse.f('{"n":null,"x":1}')
+  local keys = tablelib.keys.f(parsed)
+  assert(#keys == 2, "expected two keys, got " .. #keys)
+  local found = {}
+  for _, k in ipairs(keys) do found[k] = true end
+  assert(found.n and found.x, "the present-null member is a key: "
+    .. table.concat(keys, ","))
+end)
+
 test("table.keys on empty table returns empty array", function()
   local keys = tablelib.keys.f({})
   assert(#keys == 0)

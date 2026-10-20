@@ -1817,9 +1817,10 @@ public final class ClassOpsExecutor {
         if (document instanceof Value.Null) {
             return Value.Null.INSTANCE;
         }
-        if (document instanceof Value.Array empty && empty.array().size() == 0) {
-            document = emptyTable();
-        }
+        // The root gate: only a JSON object document decodes (the class
+        // helper's one accepted shape). An array document of any length —
+        // the empty array included — is a decode failure returning
+        // language null, never an empty-object collapse.
         if (!(document instanceof Value.Table table)) {
             return Value.Null.INSTANCE;
         }
@@ -2218,16 +2219,13 @@ public final class ClassOpsExecutor {
                         + classDescriptor.canonicalSpecText() + ", got null (a JSON "
                         + "null on a non-nullable field fails)");
                 }
+                // The nested class value is a JSON object, exactly the
+                // root gate's own shape: an array value of any length —
+                // the empty array included — is a validation failure,
+                // never an empty-object collapse.
                 if (raw instanceof Value.Table) {
                     yield decodeNestedClass(op, classDescriptor.classId(),
                         (Value.Table) raw, layouts, nestedFactory, bodyRunner);
-                }
-                if (raw instanceof Value.Array empty && empty.array().size() == 0) {
-                    // The {}/[] collapse of the nested walk's own
-                    // top-level gate: [] decodes as the nested defaulted
-                    // instance.
-                    yield decodeNestedClass(op, classDescriptor.classId(),
-                        (Value.Table) emptyTable(), layouts, nestedFactory, bodyRunner);
                 }
                 throw new JsonFromFailure("expected "
                     + classDescriptor.canonicalSpecText() + ", got " + raw.actualKind());
@@ -2618,11 +2616,6 @@ public final class ClassOpsExecutor {
 
     private static String fieldPathOf(String parent, String fieldName) {
         return parent.isEmpty() ? fieldName : parent + "." + fieldName;
-    }
-
-    /** A fresh empty table value (the {@code {}} document shape). */
-    private static Value.Table emptyTable() {
-        return new Value.Table(new SemanticTable<>());
     }
 
     private static Value taggedInstance(ClassLayout layout,
