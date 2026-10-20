@@ -61,22 +61,42 @@ function M.describeAsync(w, g)
 end
 
 local lastTable = nil
+local lastWidget = nil
+local lastAction = nil
 
 function M.makeTable()
+  lastWidget = widget("made", 9)
+  lastAction = functionValue()
   lastTable = {
-    widget = widget("made", 9),
-    action = functionValue(),
+    widget = lastWidget,
+    action = lastAction,
   }
   return lastTable
 end
 
+-- The host object the copied crossing projects: every member is still the
+-- exact object the host put there (no replacement by a DEAL value and no
+-- in-place rewrite of a member into the DEAL carrier), the class member
+-- stays the host class instance with top-level fields and no DEAL chunk
+-- carrier marks, and the action member stays the host function wrapper.
 function M.tableIntact()
   if lastTable == nil then
     return false
   end
   local member = lastTable.widget
-  return type(member) == "table" and member[K.kind] == "class"
-    and member[K.classname] == WIDGET
+  if not rawequal(member, lastWidget) then
+    return false
+  end
+  if type(member) ~= "table" or member[K.kind] ~= "class"
+      or member[K.classname] ~= WIDGET then
+    return false
+  end
+  if member[K.c] ~= nil or member[K.f] ~= nil then
+    return false
+  end
+  local action = lastTable.action
+  return rawequal(action, lastAction) and type(action) == "table"
+    and action[K.kind] == "function"
 end
 
 function M.describeTable(t)

@@ -25,6 +25,8 @@ function functionValue() {
 }
 
 let LAST_TABLE = null;
+let LAST_WIDGET = null;
+let LAST_ACTION = null;
 
 function widget(label, weight) {
   return {
@@ -57,19 +59,30 @@ module.exports = {
   },
 
   makeTable: function () {
+    LAST_WIDGET = widget("made", 9);
+    LAST_ACTION = functionValue();
     LAST_TABLE = new Map();
-    LAST_TABLE.set("widget", widget("made", 9));
-    LAST_TABLE.set("action", functionValue());
+    LAST_TABLE.set("widget", LAST_WIDGET);
+    LAST_TABLE.set("action", LAST_ACTION);
     return LAST_TABLE;
   },
 
+  // The host object the copied crossing projects: every member is still
+  // the exact object the host put there (no replacement by a projected
+  // value and no in-place rewrite of a member), the class member stays the
+  // host class instance with its declared identity and fields, and the
+  // action member stays the host function wrapper.
   tableIntact: function () {
     if (LAST_TABLE === null) {
       return false;
     }
     const member = LAST_TABLE.get("widget");
-    return member !== null && typeof member === "object" &&
-      member.$kind === "class" && member.$classname === WIDGET;
+    const action = LAST_TABLE.get("action");
+    return member === LAST_WIDGET && action === LAST_ACTION &&
+      member !== null && typeof member === "object" &&
+      member.$kind === "class" && member.$classname === WIDGET &&
+      action !== null && typeof action === "object" &&
+      action.$kind === "function";
   },
 
   describeTable: function (t) {

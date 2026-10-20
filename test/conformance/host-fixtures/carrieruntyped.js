@@ -2,11 +2,13 @@
 
 // Host fixture implementation for the three-lane untyped-nested-carrier
 // round-trip conformance test. The host reports the member kinds it
-// observed, invokes the function member with the declared argument, and
-// echoes the container back. The echoed container is a fresh table carrier
-// holding the same member values, so the values the host observed are the
-// values DEAL receives back; the class value's identity, its fields and
-// the alias are the host-readable shape of the declared table mapping.
+// observed (the DEAL class instance identity and top-level fields, the
+// function wrapper and its invocation result, and the builtin Error
+// instance identity with its code/message), and echoes the container back.
+// The echoed container is a fresh table carrier holding the same member
+// values, so the values the host observed are the values DEAL receives
+// back. The array export reports each element's class member the same way
+// and the observed alias identity between the elements.
 
 const $rt = require("../deal/runtime");
 
@@ -41,7 +43,28 @@ function report(t) {
       stepText = "false:" + String(error && error.code);
     }
   }
-  return kind + "|" + fields + "|" + alias + "|" + stepText;
+  let errText = "none";
+  const err = t.get("err");
+  if (err !== null && typeof err === "object" && err.$kind === "class" &&
+      err.$classname === "Error") {
+    errText = "true:" + String(err.code) + ":" + String(err.message);
+  }
+  return kind + "|" + fields + "|" + alias + "|" + stepText + "|" + errText;
+}
+
+// One array element's class member as the host observes it: the declared
+// class identity and the top-level declared fields. A member left in a
+// DEAL-internal representation carries no host-readable class tag and no
+// top-level field, so it reports "false|-" here.
+function reportElement(item) {
+  const member = item.get("point");
+  if (member === null || typeof member !== "object" ||
+      member.$kind !== "class") {
+    return "false|-";
+  }
+  const name = String(member.$classname);
+  return String(name.endsWith("/Point")) + "|" +
+    String(member.x) + "," + String(member.y);
 }
 
 module.exports = {
@@ -53,9 +76,16 @@ module.exports = {
   },
 
   roundTripArray: function (items) {
+    const firstPoint = items.length > 0 && items[0] instanceof Map
+      ? items[0].get("point") : null;
     const out = [];
     for (let index = 0; index < items.length; index++) {
-      out.push(copyTable(items[index]));
+      const item = items[index];
+      const entry = copyTable(item);
+      const alias = index === 0 ? "self"
+        : String(item.get("point") === firstPoint);
+      entry.set("observed", reportElement(item) + "|" + alias);
+      out.push(entry);
     }
     return out;
   },

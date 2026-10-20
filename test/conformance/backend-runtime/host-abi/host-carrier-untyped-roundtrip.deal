@@ -1,5 +1,5 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: The untyped-nested-carrier round trip: a DEAL-declared class value (twice, and once more inside an array element), a DEAL function value whose signature is no declared host position, and a builtin Error value carried in a table member cross to the host as the documented shapes, keep their alias identity, and round-trip to the exact DEAL values; the host reports the observed member kinds, its function invocation result and the container back.
+// @description: The untyped-nested-carrier round trip: a DEAL-declared class value (twice, and once more inside an array element), a DEAL function value whose signature is no declared host position, and a builtin Error value carried in a table member cross to the host as the documented shapes, keep their alias identity, and round-trip to the exact DEAL values; the host reports the observed class, function and builtin Error instance shapes (identity, top-level fields, invocation result, Error code/message), the class instance each array element carries and the observed alias identity between the elements, and the container back.
 // @expected: runtime-ok
 // @features: modules, host-abi, tables, classes, functions, errors
 
@@ -24,7 +24,7 @@ export function test_untyped_container(): null {
   let holder: table = { point: point, twin: point, step: util.bump, err: failure };
   let back: table = host.roundTrip(holder);
   let observed: string = back.observed;
-  check(observed === "true|3,4|true|true:42", "the host observes the untyped-nested class and function carriers");
+  check(observed === "true|3,4|true|true:42|true:E_X:boom", "the host observes the untyped-nested class, function and builtin Error carriers");
   let first: Point = back.point;
   check(first.x === 3 && first.y === 4, "the DEAL class value round-trips at its declared type");
   let second: Point = back.twin;
@@ -42,9 +42,13 @@ export function test_untyped_array(): null {
   let back: table[] = host.roundTripArray(items);
   check(back.length === 2, "the untyped array length");
   let firstElement: table = back[0];
+  let firstObserved: string = firstElement.observed;
+  check(firstObserved === "true|5,6|self", "the host observes the class instance inside the first array element");
   let first: Point = firstElement.point;
   check(first.x === 5 && first.y === 6, "the class value inside an array element round-trips");
   let secondElement: table = back[1];
+  let secondObserved: string = secondElement.observed;
+  check(secondObserved === "true|5,6|true", "the host observes the same class instance inside both array elements");
   let second: Point = secondElement.point;
   check(first === second, "the class value inside two array elements is one DEAL value");
   return null;

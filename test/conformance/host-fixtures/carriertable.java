@@ -59,21 +59,33 @@ final class HostCarriertable {
   }
 
   static deal.codegen.jvm.JvmRuntime.Table LAST_TABLE;
+  static Object LAST_WIDGET;
+  static Object LAST_ACTION;
 
   public static Object makeTable() {
+    LAST_WIDGET = widget("made", 9);
+    LAST_ACTION = functionValue();
     LAST_TABLE = new deal.codegen.jvm.JvmRuntime.Table();
-    LAST_TABLE.write("widget", widget("made", 9));
-    LAST_TABLE.write("action", functionValue());
+    LAST_TABLE.write("widget", LAST_WIDGET);
+    LAST_TABLE.write("action", LAST_ACTION);
     return LAST_TABLE;
   }
 
+  // The host object the copied crossing projects: every member is still
+  // the exact object the host put there (no replacement by a projected
+  // value and no in-place rewrite of a member into another carrier), the
+  // class member stays the host class instance with its declared identity
+  // and fields, and the action member stays the host function wrapper.
   public static boolean tableIntact() {
     if (LAST_TABLE == null) {
       return false;
     }
     Object member = LAST_TABLE.read("widget");
-    return member instanceof deal.codegen.jvm.JvmRuntime.ClassInstance instance
-        && instance.classIdText().endsWith("/Widget");
+    Object action = LAST_TABLE.read("action");
+    return member == LAST_WIDGET && action == LAST_ACTION
+        && member instanceof deal.codegen.jvm.JvmRuntime.ClassInstance instance
+        && instance.classIdText().endsWith("/Widget")
+        && action instanceof deal.codegen.jvm.JvmRuntime.FunctionValue;
   }
 
   public static Object describeTable(Object value) {
