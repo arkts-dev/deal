@@ -1,5 +1,5 @@
 // @spec: Classes — Construction
-// @description: A recursive non-jsonable class default is plan availability, never execution demand: only a construction that omits the recursive field evaluates it (docs/spec-v1.3.md §Construction — provided fields suppress defaults), so the self-defaulting Node, the mutual Ping/Pong pair and a default whose own literal supplies the recursive field all stay finite when the construction supplies the recursive field. The effectful default beside the suppressed one still runs exactly once per construction in declaration order, a supplied field runs none, class registration runs none, a supplied value is never replaced by the default it suppresses, and the construction's explicit null, absent-optional and present-optional states stay distinct.
+// @description: A recursive non-jsonable class default is plan availability, never execution demand: only a construction that omits the recursive field evaluates it (docs/spec-v1.3.md §Construction — provided fields suppress defaults), so the self-defaulting Node, the mutual Ping/Pong pair and a default whose own literal supplies the recursive field all stay finite when the construction supplies the recursive field. The effectful default beside the suppressed one still runs exactly once per construction in declaration order, a supplied field runs none, class registration runs none, a supplied value is never replaced by the default it suppresses, a suppressed default contributes none of its own host calls, and the construction's explicit null, absent-optional and present-optional states stay distinct.
 // @expected: runtime-ok
 // @features: v1.3, runtime, defaults, classes, recursion
 
@@ -32,6 +32,11 @@ class Pong {
 
 class Holder {
   node: Node = { stamp: 0, next: null };
+}
+
+class Spin {
+  next: Spin | null = { spin: nextStamp() };
+  spin: int = 0;
 }
 
 export function test_suppressed_self_default_keeps_override(): null {
@@ -74,6 +79,15 @@ export function test_suppressed_mutual_defaults(): null {
   check(ping.pong === null, "the supplied field suppresses its recursive default");
   check(pong.ping === null, "the other class's supplied field suppresses its recursive default");
   check(probe.valueCount() === base, "a suppressed recursive default ran its effect");
+  return null;
+}
+
+export function test_nonexecuted_suppressed_default_side_effect(): null {
+  let base: int = probe.valueCount();
+  let spun: Spin = { next: null };
+  check(spun.next === null, "the supplied recursive field suppresses its own host call");
+  check(spun.spin === 0, "the omitted non-recursive default still runs for this construction");
+  check(probe.valueCount() === base, "the suppressed recursive default evaluated its host call");
   return null;
 }
 
