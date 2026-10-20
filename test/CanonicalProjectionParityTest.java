@@ -443,13 +443,21 @@ public class CanonicalProjectionParityTest {
         // backend error — and the array-element cell keeps the specified
         // E8003 arm. An index chain's receiver and key are the same kind of
         // consumer: the chain's admission publishes the read's own value and
-        // the length/normalize/commit children consume it.
+        // the length/normalize/commit children consume it. Each direct
+        // condition arm (if, while, the control-flow for and the let-headed
+        // for) has its own uncaught fixture, so the in-place condition
+        // admission's exact tuple is pinned per arm, not only through the
+        // logical branch's operand path.
         mainEntry("types/narrowed-capture-arithmetic-e8001"),
         mainEntry("types/narrowed-capture-unary-e8001"),
         mainEntry("types/narrowed-capture-comparison-e8001"),
         mainEntry("types/narrowed-capture-equality-e8001"),
         mainEntry("types/narrowed-capture-boolean-e8001"),
         mainEntry("types/narrowed-capture-condition-logical-e8001"),
+        mainEntry("types/narrowed-capture-condition-if-e8001"),
+        mainEntry("types/narrowed-capture-condition-while-e8001"),
+        mainEntry("types/narrowed-capture-condition-for-e8001"),
+        mainEntry("types/narrowed-capture-condition-for-let-e8001"),
         mainEntry("types/narrowed-capture-string-e8001"),
         mainEntry("types/narrowed-capture-array-element-e8003"),
         mainEntry("types/narrowed-capture-array-element-function-e8003"),

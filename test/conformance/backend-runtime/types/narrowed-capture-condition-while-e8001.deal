@@ -1,0 +1,18 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A narrowed boolean read consumed as a while condition after a capturing closure cleared the binding is validated at the read: the condition reports the typed-boundary tuple (E8001, expected boolean, actual null) at the read instead of treating the cleared value as false, and the loop body never runs.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, control-flow, runtime-errors
+
+export function main(): null {
+  let flag: boolean | null = true;
+  let clear: () => null = function(): null {
+    flag = null;
+    return null;
+  };
+  if (flag !== null) {
+    clear();
+    while (flag) {
+    }
+  }
+  return null;
+}
