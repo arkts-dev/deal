@@ -3768,15 +3768,27 @@ public class HostModuleLoadEmissionTest {
             return 1;
           };
           // The arity-extended adapter-over-async host call, statically fixed
-          // nested source: the reassignment defeats the source binding's
-          // immutability proof, so the adapted declaration takes the
-          // shared-cell source mode over the loaded host surface entry.
+          // nested source: the source binding is never assigned, so the
+          // adapted declaration records the value it was created over and
+          // the nested source start is the emitted static host call.
+          let valueSrc: async (s: host.ServerConfig, g: (x: int) => int) => string =
+            host.describeAsync;
+          let fixed: async (s: host.ServerConfig, g: (x: int) => int,
+                            extra: int) => string = valueSrc;
+          let fixedText: string = await fixed(cfg, cb, extra());
+          // The arity-extended adapter-over-async host call over an assigned
+          // source binding: the reassignment defeats the source binding's
+          // immutability proof (the shared-cell source mode) and a read of
+          // that binding observes the current value at every invocation, so
+          // the source's execution class is selected at execution (the
+          // runtime-resolved nested start, the dynamic HOST arm under
+          // ELIDED_BY_ADAPTER).
           let src: async (s: host.ServerConfig, g: (x: int) => int) => string =
             host.describeAsync;
           src = src;
-          let fixed: async (s: host.ServerConfig, g: (x: int) => int,
-                            extra: int) => string = src;
-          let fixedText: string = await fixed(cfg, cb, extra());
+          let sharedFixed: async (s: host.ServerConfig, g: (x: int) => int,
+                                  extra: int) => string = src;
+          let sharedFixedText: string = await sharedFixed(cfg, cb, extra());
           // The arity-extended adapter-over-async host call, runtime-resolved
           // nested source: the materialized source value's execution class is
           // selected at execution (the dynamic HOST arm under
@@ -3793,12 +3805,14 @@ public class HostModuleLoadEmissionTest {
           return "direct=" + direct + "\\n"
             + "dynamic=" + dynamicText + "\\n"
             + "fixed=" + fixedText + "\\n"
+            + "sharedFixed=" + sharedFixedText + "\\n"
             + "dynFixed=" + dynText + "\\n"
             + "pair=" + pairText + "\\n"
             + "same=" + check(fixedText === direct, "fixed result")
+            + ":" + check(sharedFixedText === direct, "shared-cell source result")
             + ":" + check(dynText === direct, "runtime-resolved result")
             + ":" + check(dynamicText === direct, "dynamic result")
-            + ":extra=" + check(marker.count === 2, "extra evaluation");
+            + ":extra=" + check(marker.count === 3, "extra evaluation");
         }
 
         export function main(): null {
@@ -3897,10 +3911,12 @@ public class HostModuleLoadEmissionTest {
             + "E8001|expected int",
         "fixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
             + "E8001|expected int",
+        "sharedFixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:"
+            + "42:E8001|expected int",
         "dynFixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
             + "E8001|expected int",
         "pair=B|n=2:alias=true:kind=class:label=b:action=true:42",
-        "same=ok:ok:ok:extra=ok",
+        "same=ok:ok:ok:ok:extra=ok",
         "TRANSCRIPT-END",
         "");
 
@@ -3913,10 +3929,13 @@ public class HostModuleLoadEmissionTest {
      * wrapper the loaded surface adapts to the adapter closure, which the
      * host invokes with the declared result and whose parameter-entry cell
      * rejects an out-of-type argument); the arity-extended
-     * adapter-over-async host call projects and forwards exactly the leading
-     * target parameters at both nested-source shapes, the extra target
-     * parameter is evaluated in DEAL and never forwarded, and both calls
-     * return the declared result; and two aliased class arguments of one
+     * adapter-over-async host calls project and forward exactly the leading
+     * target parameters at every nested-source shape — the never-assigned
+     * source binding's statically fixed nested start, the assigned source
+     * binding's runtime-resolved nested start, and the materialized
+     * (call-result) source's runtime-resolved nested start — the extra target
+     * parameter is evaluated in DEAL and never forwarded, and every call
+     * returns the declared result; and two aliased class arguments of one
      * start cross as one host object. The emitted artifact keeps the
      * declared-position projection as slot rewrites before the host call,
      * passes only the one-based carrier slots and the literal span triplet,
@@ -3971,32 +3990,43 @@ public class HostModuleLoadEmissionTest {
             }
             checkEq(2, staticCalls.size(),
                 "the declared host start and the statically fixed nested"
-                    + " adapter start are the emitted static host async call"
-                    + " sites");
+                    + " adapter start (the never-assigned source binding) are"
+                    + " the emitted static host async call sites");
             for (String call : staticCalls) {
                 checkHostAsyncCallShape(lines, call);
             }
-            // The runtime-resolved host start's dynamic HOST arm: the same
-            // projection and the same call shape.
-            int dynamicCall = indexOfLineContaining(lines, "pcall(__dynC.f,");
-            check(dynamicCall >= 0,
-                "the runtime-resolved host start emits the dynamic HOST arm");
-            if (dynamicCall >= 0) {
-                checkHostAsyncCallShape(lines, lines.get(dynamicCall));
+            // The runtime-resolved host starts' dynamic HOST arm: the same
+            // projection and the same call shape for the callee read that is
+            // only known at execution, for the arity-extended adapter over an
+            // assigned source binding, and for the arity-extended adapter
+            // over a materialized (call-result) source.
+            List<String> dynamicCalls = new ArrayList<>();
+            for (String line : lines) {
+                if (line.contains("pcall(__dynC.f,")) {
+                    dynamicCalls.add(line);
+                }
+            }
+            checkEq(3, dynamicCalls.size(),
+                "the runtime-resolved host starts emit the dynamic HOST arm"
+                    + " (the callee read, the assigned-source adapter and the"
+                    + " materialized-source adapter)");
+            for (String call : dynamicCalls) {
+                checkHostAsyncCallShape(lines, call);
             }
             // The arity-extended calls: each outer adapter start records the
             // three target parameters, while every nested host start carries
             // and forwards exactly the leading two.
-            checkEq(2, countOccurrences(lua, ".__argn = 3"),
-                "both arity-extended adapter starts record the three target"
+            checkEq(3, countOccurrences(lua, ".__argn = 3"),
+                "every arity-extended adapter start records the three target"
                     + " arguments");
             ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
                 out, true);
             check(run.exitCode() == 0
                     && run.stdout().equals(ASYNC_START_TRANSCRIPT)
                     && run.stderr().isEmpty(),
-                "the declared, the runtime-resolved and both arity-extended"
-                    + " asynchronous host crossings preserve the declared"
+                "the declared, the runtime-resolved and the three"
+                    + " arity-extended asynchronous host crossings preserve the"
+                    + " declared"
                     + " class and function arguments (the extra target"
                     + " argument evaluated in DEAL and never forwarded) and"
                     + " two aliased class arguments cross as one host object:"

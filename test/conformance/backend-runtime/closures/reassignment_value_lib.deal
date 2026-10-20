@@ -1,0 +1,7 @@
+// @expected: companion
+// @description: Classified support module — two same-signature exported
+// function values the parent fixture assigns to one function-typed binding
+// (the imported-origin call-selection subject). Compiled by the companion
+// catalog when a parent conformance fixture imports it.
+export function inc(x: int): int { return x + 1; }
+export function dec(x: int): int { return x - 1; }

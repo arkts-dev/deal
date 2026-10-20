@@ -1335,10 +1335,14 @@ public class AdapterShapeMapPayloadTest {
                 "each adapter identity registers exactly one AdapterBinding naming its "
                     + "producing op");
         }
-        check(unit.functionBindings().size() == 14,
-            "the registry holds exactly fourteen bindings: five bodies (inner, even, "
+        check(unit.functionBindings().size() == 16,
+            "the registry holds exactly sixteen bindings: five bodies (inner, even, "
                 + "odd, main, the function expression) + six adapters + the three "
-                + "producer-less intrinsic seeds (ISSUE-0632); got "
+                + "producer-less intrinsic seeds (ISSUE-0632) + the two "
+                + "function-typed loads of the assigned binding 'f' (a load of a "
+                + "binding assigned anywhere in its declaring body publishes no "
+                + "tracked allocation identity, so it registers the producer "
+                + "rule's dynamic materialization); got "
                 + unit.functionBindings().size());
 
         // Loads preserve the adapter identity: `let p: (a,b) => null = g;`
