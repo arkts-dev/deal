@@ -1,5 +1,5 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: An arity-extended host async call through an adapter-over-async preserves the declared class and function arguments at the leading positions and never forwards the extra target parameter, at both the statically fixed and the runtime-resolved nested-source shapes: the host observes the declared class field, invokes the function argument with the declared argument and its exact declared result, and the extra target parameter is evaluated in DEAL exactly once per call.
+// @description: An arity-extended host async call through an adapter-over-async preserves the declared class and function arguments at the leading positions and never forwards the extra target parameter, at both the statically fixed and the runtime-resolved nested-source shapes: the host reports the exact argument count it received (the declared two), observes the declared class field, invokes the function argument with the declared argument and its exact declared result, and the extra target parameter is evaluated exactly once per call.
 // @expected: runtime-ok
 // @features: modules, host-abi, async-await, functions, arity-extension
 
@@ -28,9 +28,9 @@ function pick(): async (t: host.Target, g: (x: int) => int) => string {
 export async function test_arity_extended_adapter(): null {
   let target: host.Target = { name: "target" };
   let callback: (x: int) => int = bump;
-  let marker: Marker = {};
-  let extra = function(): int {
-    marker.count = marker.count + 1;
+  let fixedMarker: Marker = {};
+  let fixedExtra = function(): int {
+    fixedMarker.count = fixedMarker.count + 1;
     return 1;
   };
   let source: async (t: host.Target, g: (x: int) => int) => string =
@@ -38,15 +38,22 @@ export async function test_arity_extended_adapter(): null {
   source = source;
   let fixed: async (t: host.Target, g: (x: int) => int, extra: int) => string =
     source;
-  let fixedText: string = await fixed(target, callback, extra());
-  check(fixedText === "T|target|true:42", "the statically fixed arity-extended host async call");
+  let fixedText: string = await fixed(target, callback, fixedExtra());
+  check(fixedText === "T|target|true:42|n=2", "the statically fixed arity-extended host async call");
+  check(fixedMarker.count === 1, "the extra target parameter is evaluated exactly once at the statically fixed call");
+  let runtimeMarker: Marker = {};
+  let runtimeExtra = function(): int {
+    runtimeMarker.count = runtimeMarker.count + 1;
+    return 1;
+  };
   let runtimeSource: async (t: host.Target, g: (x: int) => int) => string =
     pick();
   let dynamic: async (t: host.Target, g: (x: int) => int, extra: int) => string =
     runtimeSource;
-  let dynamicText: string = await dynamic(target, callback, extra());
-  check(dynamicText === fixedText, "the runtime-resolved arity-extended host async call");
-  check(marker.count === 2, "the extra target parameter is evaluated once per call and never forwarded");
+  let dynamicText: string = await dynamic(target, callback, runtimeExtra());
+  check(dynamicText === "T|target|true:42|n=2", "the runtime-resolved arity-extended host async call");
+  check(dynamicText === fixedText, "the two nested-source shapes observe the same declared arguments");
+  check(runtimeMarker.count === 1, "the extra target parameter is evaluated exactly once at the runtime-resolved call");
   return null;
 }
 

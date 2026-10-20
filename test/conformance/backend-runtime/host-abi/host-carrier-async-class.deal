@@ -1,5 +1,5 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: A declared host class crosses the asynchronous host boundary in both directions: the statically resolved and the runtime-resolved async host call preserve the class argument's nested class field, array field, optional array and present null, and the host-invoked function argument's declared result; an async class completion delivers a nested class field, an array field, an absent optional and a present null; a host-returned class-element array and a class-field array preserve their elements and length, and two slots naming one host instance are one DEAL value.
+// @description: A declared host class crosses the asynchronous host boundary in both directions: the statically resolved and the runtime-resolved async host call preserve the class argument's nested class field, array field, optional array and present null, and the host-invoked function argument's declared result; an async class completion delivers a nested class field, an array field, an absent optional that stays absent and a present null that stays present (both read as language null and distinguished by has); a host-returned class-element array and a class-field array preserve their elements and length, and two slots naming one host instance are one DEAL value.
 // @expected: runtime-ok
 // @features: modules, host-abi, async-await, classes, arrays, functions
 
@@ -45,8 +45,10 @@ export async function test_async_class_completion(): null {
   check(made.parts[0] === "a" && made.parts[1] === "b", "the async class completion array field elements");
   let tags: string[] | null = made.tags;
   check(tags === null, "the async class completion absent optional");
+  check(!has(made.tags), "the async class completion absent optional stays absent");
   let note: string | null = made.note;
   check(note === null, "the async class completion present null");
+  check(has(made.note), "the async class completion present null stays present");
   return null;
 }
 
