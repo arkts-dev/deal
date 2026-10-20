@@ -3615,6 +3615,441 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
+    // 2c-bis. The asynchronous host-start parameter crossings (ISSUE-0852)
+    // =========================================================================
+
+    /**
+     * The declared asynchronous host positions of the async-start crossing
+     * drive: a class parameter carrying a nested class field, an optional
+     * array and a present null plus a declared function parameter, a class
+     * parameter pair for the alias assertion, and a class whose
+     * function-typed field forces a host-facing copy.
+     */
+    private static final String ASYNC_START_DECLARATION_SOURCE = """
+        export class Endpoint {
+          path: string;
+        }
+
+        export class ServerConfig {
+          port: int;
+          endpoint: Endpoint;
+          tags?: string[];
+          note?: string | null;
+        }
+
+        export class Bundle {
+          label: string;
+          action: (x: int) => int;
+        }
+
+        export async function describeAsync(s: ServerConfig, g: (x: int) => int): string;
+        export async function describeBundlesAsync(a: Bundle, b: Bundle): string;
+        """;
+
+    /**
+     * The DEAL side of the asynchronous host-start crossings: the declared
+     * async host call, the runtime-resolved async host call (the callee
+     * value's execution class is selected at execution), and the
+     * arity-extended adapter-over-async host call once per nested-source
+     * shape (a statically fixed host source and a runtime-resolved source),
+     * where the extra target parameter is evaluated at the outer adapter
+     * start and never forwarded. The last crossing passes two aliased class
+     * arguments whose function-typed field needs a host-facing copy, so the
+     * one crossing memo makes them one host object.
+     */
+    private static final String ASYNC_START_APP_SOURCE = """
+        import * as host from "host/async_probe";
+
+        class Marker {
+          count: int = 0;
+        }
+
+        function bump(x: int): int {
+          let y: int = x + 1;
+          return y;
+        }
+
+        function check(condition: boolean, message: string): string {
+          if (!condition) {
+            throw { code: "TEST_FAIL", message: message };
+          }
+          return "ok";
+        }
+
+        function pick(): async (s: host.ServerConfig, g: (x: int) => int) => string {
+          return host.describeAsync;
+        }
+
+        export async function run(): string {
+          let cfg: host.ServerConfig = {
+            port: 9090,
+            endpoint: { path: "/api" },
+            tags: ["dev"],
+            note: null,
+          };
+          let cb: (x: int) => int = bump;
+          // The declared async host call (the statically resolved host
+          // start under RUN).
+          let direct: string = await host.describeAsync(cfg, cb);
+          // The runtime-resolved async host call: the callee value's
+          // execution class resolves to the loaded host surface entry at
+          // execution (the dynamic HOST arm under RUN).
+          let dyn: async (s: host.ServerConfig, g: (x: int) => int) => string =
+            pick();
+          let dynamicText: string = await dyn(cfg, cb);
+          let marker: Marker = {};
+          let extra = function(): int {
+            marker.count = marker.count + 1;
+            return 1;
+          };
+          // The arity-extended adapter-over-async host call, statically fixed
+          // nested source: the reassignment defeats the source binding's
+          // immutability proof, so the adapted declaration takes the
+          // shared-cell source mode over the loaded host surface entry.
+          let src: async (s: host.ServerConfig, g: (x: int) => int) => string =
+            host.describeAsync;
+          src = src;
+          let fixed: async (s: host.ServerConfig, g: (x: int) => int,
+                            extra: int) => string = src;
+          let fixedText: string = await fixed(cfg, cb, extra());
+          // The arity-extended adapter-over-async host call, runtime-resolved
+          // nested source: the materialized source value's execution class is
+          // selected at execution (the dynamic HOST arm under
+          // ELIDED_BY_ADAPTER).
+          let dynSrc: async (s: host.ServerConfig, g: (x: int) => int) => string =
+            pick();
+          let dynFixed: async (s: host.ServerConfig, g: (x: int) => int,
+                               extra: int) => string = dynSrc;
+          let dynText: string = await dynFixed(cfg, cb, extra());
+          // Two aliased class arguments whose function-typed field needs a
+          // host-facing copy: the one crossing memo makes them one object.
+          let bundle: host.Bundle = { label: "b", action: bump };
+          let pairText: string = await host.describeBundlesAsync(bundle, bundle);
+          return "direct=" + direct + "\\n"
+            + "dynamic=" + dynamicText + "\\n"
+            + "fixed=" + fixedText + "\\n"
+            + "dynFixed=" + dynText + "\\n"
+            + "pair=" + pairText + "\\n"
+            + "same=" + check(fixedText === direct, "fixed result")
+            + ":" + check(dynText === direct, "runtime-resolved result")
+            + ":" + check(dynamicText === direct, "dynamic result")
+            + ":extra=" + check(marker.count === 2, "extra evaluation");
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host: every class parameter is read at the documented
+     * top-level class fields, every function parameter is invoked with the
+     * declared argument (and with a value outside the declared parameter
+     * type, proving the parameter-entry cell ran), and each async operation
+     * reports the exact argument count it received — the arity-extended
+     * calls must never forward their extra target parameter.
+     */
+    private static final String ASYNC_START_LUA = """
+        local rt = require("deal.runtime")
+        local K = __dealCarrierKeys
+
+        local SC = "@$external/host/async_probe/ServerConfig"
+        local EP = "@$external/host/async_probe/Endpoint"
+        local BUNDLE = "@$external/host/async_probe/Bundle"
+
+        local M = {}
+
+        M.Endpoint = { [K.kind] = "class", [K.classname] = EP }
+        M.Endpoint_defaults = { path = "/" }
+        M.ServerConfig = { [K.kind] = "class", [K.classname] = SC }
+        M.ServerConfig_defaults = { port = 0, endpoint = rt.__MISSING,
+                                    tags = rt.__MISSING, note = rt.__MISSING }
+        M.Bundle = { [K.kind] = "class", [K.classname] = BUNDLE }
+        M.Bundle_defaults = { label = "", action = rt.__MISSING }
+
+        local function describe(n, s, g)
+          local tags = s.tags
+          local tagsText = "absent"
+          if tags == rt.__NULL then
+            tagsText = "null"
+          elseif type(tags) == "table" then
+            tagsText = tostring(#tags) .. ":" .. tostring(tags[1])
+          end
+          local note = s.note
+          local noteText = "nil"
+          if note == rt.__NULL then
+            noteText = "null"
+          elseif note ~= nil then
+            noteText = tostring(note)
+          end
+          local gText = type(g)
+          if type(g) == "function" then
+            local ok, value = pcall(g, 41)
+            local okBad, bad = pcall(g, "x")
+            local badText = "none"
+            if not okBad and type(bad) == "table" then
+              badText = tostring(bad.code) .. "|" .. tostring(bad.m)
+            end
+            gText = tostring(ok) .. ":" .. tostring(value) .. ":" .. badText
+          end
+          return "n=" .. tostring(n) .. ":port=" .. type(s.port) .. ":"
+            .. tostring(s.port) .. ":ep=" .. tostring(s.endpoint.path)
+            .. ":tags=" .. tagsText .. ":note=" .. noteText .. ":g=" .. gText
+        end
+
+        function M.describeAsync(...)
+          local n = select("#", ...)
+          local s, g = ...
+          return rt.async_start(function()
+            return "SC|" .. describe(n, s, g)
+          end)
+        end
+
+        function M.describeBundlesAsync(...)
+          local n = select("#", ...)
+          local a, b = ...
+          local actionText = type(a.action)
+          if type(a.action) == "table" and a.action[K.kind] == "function" then
+            local ok, value = pcall(a.action.f, 41)
+            actionText = tostring(ok) .. ":" .. tostring(value)
+          end
+          return rt.async_start(function()
+            return "B|n=" .. tostring(n) .. ":alias=" .. tostring(rawequal(a, b))
+              .. ":kind=" .. tostring(a[K.kind]) .. ":label=" .. tostring(a.label)
+              .. ":action=" .. actionText
+          end)
+        end
+
+        return M
+        """;
+
+    /** The exact transcript the asynchronous host-start crossings publish. */
+    private static final String ASYNC_START_TRANSCRIPT = String.join("\n",
+        "TRANSCRIPT-BEGIN",
+        "direct=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
+            + "E8001|expected int",
+        "dynamic=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
+            + "E8001|expected int",
+        "fixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
+            + "E8001|expected int",
+        "dynFixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
+            + "E8001|expected int",
+        "pair=B|n=2:alias=true:kind=class:label=b:action=true:42",
+        "same=ok:ok:ok:extra=ok",
+        "TRANSCRIPT-END",
+        "");
+
+    /**
+     * The asynchronous host-start parameter crossings on the published
+     * LuaJIT artifact (ISSUE-0852): the declared host start and the
+     * runtime-resolved host start hand the raw host the declared class value
+     * (nested class field, array field and present null at their top-level
+     * declared fields) and the declared function value (the documented
+     * wrapper the loaded surface adapts to the adapter closure, which the
+     * host invokes with the declared result and whose parameter-entry cell
+     * rejects an out-of-type argument); the arity-extended
+     * adapter-over-async host call projects and forwards exactly the leading
+     * target parameters at both nested-source shapes, the extra target
+     * parameter is evaluated in DEAL and never forwarded, and both calls
+     * return the declared result; and two aliased class arguments of one
+     * start cross as one host object. The emitted artifact keeps the
+     * declared-position projection as slot rewrites before the host call,
+     * passes only the one-based carrier slots and the literal span triplet,
+     * and no longer references the retired one-value argument projection.
+     */
+    private static void testLuaHostAsyncStartCrossings() throws Exception {
+        System.out.println("-- the asynchronous host-start parameter crossings:"
+            + " the published LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-async-start-lua");
+        try {
+            Path out = publishLuaHost(root, "async_probe",
+                ASYNC_START_DECLARATION_SOURCE, ASYNC_START_APP_SOURCE,
+                ASYNC_START_LUA, "async-start-crossing");
+            if (out == null) {
+                return;
+            }
+            writeFileIn(out, "probe.lua", """
+                local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                local entry = surface["run"]
+                if entry == nil then fail("missing run export") end
+                local okA, handle = pcall(entry.f)
+                if not okA then fail("run: " .. tostring(handle)) end
+                if type(handle) ~= "table"
+                    or handle[__dealCarrierKeys.kind] ~= "async" then
+                  fail("run did not return an async operation")
+                end
+                print("TRANSCRIPT-BEGIN")
+                print(tostring(handle.__result))
+                print("TRANSCRIPT-END")
+                """);
+            String lua = Files.readString(out.resolve("app.lua"),
+                StandardCharsets.UTF_8);
+            List<String> lines = lua.lines().toList();
+            check(!lua.contains("__hostAsyncArg"),
+                "the emitted artifact no longer references the retired"
+                    + " one-value async argument projection");
+            // The declared host start and the statically fixed nested
+            // adapter start: the same converged host call shape, the
+            // projection slot rewrites before the call, and only the
+            // one-based carrier slots plus the literal span triplet in the
+            // argument list.
+            List<String> staticCalls = new ArrayList<>();
+            for (String line : lines) {
+                if (line.contains("pcall((__exportSurfaces["
+                        + "\"host.async_probe\"][\"describeAsync\"]).f,")) {
+                    staticCalls.add(line);
+                }
+            }
+            checkEq(2, staticCalls.size(),
+                "the declared host start and the statically fixed nested"
+                    + " adapter start are the emitted static host async call"
+                    + " sites");
+            for (String call : staticCalls) {
+                checkHostAsyncCallShape(lines, call);
+            }
+            // The runtime-resolved host start's dynamic HOST arm: the same
+            // projection and the same call shape.
+            int dynamicCall = indexOfLineContaining(lines, "pcall(__dynC.f,");
+            check(dynamicCall >= 0,
+                "the runtime-resolved host start emits the dynamic HOST arm");
+            if (dynamicCall >= 0) {
+                checkHostAsyncCallShape(lines, lines.get(dynamicCall));
+            }
+            // The arity-extended calls: each outer adapter start records the
+            // three target parameters, while every nested host start carries
+            // and forwards exactly the leading two.
+            checkEq(2, countOccurrences(lua, ".__argn = 3"),
+                "both arity-extended adapter starts record the three target"
+                    + " arguments");
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0
+                    && run.stdout().equals(ASYNC_START_TRANSCRIPT)
+                    && run.stderr().isEmpty(),
+                "the declared, the runtime-resolved and both arity-extended"
+                    + " asynchronous host crossings preserve the declared"
+                    + " class and function arguments (the extra target"
+                    + " argument evaluated in DEAL and never forwarded) and"
+                    + " two aliased class arguments cross as one host object:"
+                    + " exit=" + run.exitCode() + " stdout="
+                    + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * One emitted host async call line: the trailing argument list holds
+     * exactly the one-based carrier slots {@code 1..argn} of one
+     * {@code S.__sa<op>} table plus the literal span triplet, and the
+     * declared-position projection slot rewrites for those positions precede
+     * the call.
+     */
+    private static void checkHostAsyncCallShape(List<String> lines, String call) {
+        String calleeSuffix = ".f,";
+        int at = call.indexOf(calleeSuffix + " ");
+        check(at >= 0, "the host async call carries the loaded entry callee: "
+            + call);
+        if (at < 0) {
+            return;
+        }
+        String tail = call.substring(at + calleeSuffix.length() + 1);
+        check(tail.endsWith(")"), "the host async call closes its argument"
+            + " list: " + call);
+        if (!tail.endsWith(")")) {
+            return;
+        }
+        String[] tokens = tail.substring(0, tail.length() - 1).split(", ");
+        checkEq(5, tokens.length, "the host async call passes the one-based"
+            + " carrier slots and the literal span triplet only: " + call);
+        if (tokens.length != 5) {
+            return;
+        }
+        String carrier = tokens[0].substring(0, tokens[0].lastIndexOf('['));
+        checkEq(carrier + "[1]", tokens[0],
+            "the first host async argument is the carrier's first slot: " + call);
+        checkEq(carrier + "[2]", tokens[1],
+            "the second host async argument is the carrier's second slot: "
+                + call);
+        check(tokens[2].startsWith("\"") && tokens[2].endsWith("\"")
+                && tokens[3].chars().allMatch(Character::isDigit)
+                && tokens[4].chars().allMatch(Character::isDigit),
+            "the trailing host async arguments are the literal span triplet: "
+                + call);
+        int callIndex = lines.indexOf(call);
+        int first = indexOfLineStartingWith(lines, carrier + "[1] = __hostProjectArg(");
+        int second = indexOfLineStartingWith(lines, carrier + "[2] = __hostProjectArg(");
+        check(first >= 0 && first < callIndex,
+            "the first argument's declared-position projection precedes the"
+                + " host async call: " + call);
+        check(second > first && second < callIndex,
+            "the second argument's declared-position projection precedes the"
+                + " host async call: " + call);
+        int construction = indexOfLineStartingWith(lines, carrier + " = {");
+        check(construction >= 0 && construction < callIndex,
+            "the carrier table is built before the host async call: " + call);
+        if (construction >= 0) {
+            String built = lines.get(construction).trim();
+            String operands = built.substring(
+                built.indexOf('{') + 1, built.length() - 1);
+            String[] slots = operands.isEmpty() ? new String[0]
+                : operands.split(", ");
+            if (slots.length > 0) {
+                // The nested adapter start (ELIDED_BY_ADAPTER): the carrier
+                // holds exactly the leading completed operand values.
+                checkEq(2, slots.length, "the nested host async start carries"
+                    + " exactly the leading two completed arguments: " + call);
+                for (String slot : slots) {
+                    check(slot.startsWith("S."), "the nested host async start"
+                        + " carries the completed argument values: " + call);
+                }
+            } else {
+                // The declared host start (RUN): the carrier starts empty and
+                // every declared position stores its admitted value.
+                check(indexOfLineStartingWith(lines,
+                        carrier + "[1] = __chkB") >= 0
+                    && indexOfLineStartingWith(lines,
+                        carrier + "[2] = __chkB") >= 0
+                    && indexOfLineStartingWith(lines,
+                        carrier + "[3] = __chkB") < 0,
+                    "the declared host async start admits and stores exactly"
+                        + " its two declared parameters: " + call);
+            }
+        }
+        check(indexOfLineStartingWith(lines, carrier + ".__argn = 2") >= 0,
+            "the carrier records exactly the two completed host arguments: "
+                + call);
+        check(indexOfLineStartingWith(lines, carrier + ".__argn = 3") < 0,
+            "the host async call never forwards the extra target parameter: "
+                + call);
+    }
+
+    /** The first line whose trimmed text starts with the given prefix. */
+    private static int indexOfLineStartingWith(List<String> lines, String prefix) {
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).trim().startsWith(prefix)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The first line containing the given text. */
+    private static int indexOfLineContaining(List<String> lines, String needle) {
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).contains(needle)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // =========================================================================
     // 2d. The LuaJIT load under real luajit
     // =========================================================================
 
@@ -4765,6 +5200,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostArrayCrossingFailures();
             testLuaHostClassConstructionDefaults();
             testLuaHostClassCrossings();
+            testLuaHostAsyncStartCrossings();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);

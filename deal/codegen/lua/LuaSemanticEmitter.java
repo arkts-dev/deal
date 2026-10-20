@@ -95,7 +95,7 @@ public final class LuaSemanticEmitter {
      * resolves the field at call time — never a nil global — and each
      * body captures the one table instead of one upvalue per factory.
      * The host prelude's chunk-bound host-crossing helpers
-     * ({@code __factories.__hostDeclKind/__hostParamAdmit/__hostAsyncArg})
+     * ({@code __factories.__hostDeclKind/__hostParamAdmit})
      * are fields of the same store: a helper assigned to a global name is
      * clobbered when a second chunk of the same process loads, while a
      * field of the owning chunk's store keeps a retained export on its own
@@ -4846,10 +4846,17 @@ public final class LuaSemanticEmitter {
                     + "..\"\\n\")\n");
                 out.append("  io.stderr:flush()\n");
             }
+            // The declared-position projection of every completed
+            // argument (the host-carrier crossing table's position 3): one
+            // slot rewrite per recorded argument — from this start's
+            // recorded cells under RUN, from the outer adapter start's
+            // leading recorded cells under ELIDED_BY_ADAPTER — running
+            // after the recorded cells' events and before the loaded entry
+            // call, never inline in the host call.
+            List<String> hostArgs = emitAsyncHostStartArguments(op, payload, "  ");
             out.append("  __okH, __resH = pcall(__dynC.f");
-            for (int i = 1; i <= recordedArgCount(payload, op); i++) {
-                out.append(", __factories.__hostAsyncArg(").append(carrierArgs)
-                    .append("[").append(i).append("])");
+            for (String hostArg : hostArgs) {
+                out.append(", ").append(hostArg);
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
             out.append("  if not __okH then\n");
@@ -6880,8 +6887,7 @@ public final class LuaSemanticEmitter {
                     } else {
                         emitAsyncHostStart(op, token,
                             hostSurfaceEntry(host.hostModuleId().path(),
-                                host.exportName()),
-                            asyncStartArgs(op, payload));
+                                host.exportName()));
                     }
                 }
                 case FunctionExecutionBinding.HostFunctionValue hostValue -> {
@@ -6890,8 +6896,8 @@ public final class LuaSemanticEmitter {
                             hostValue.hostModuleId().path(),
                             "@value#" + hostValue.materializingBoundaryOpId().id());
                     } else {
-                        emitAsyncHostStart(op, token, hostValueTarget(op, hostValue),
-                            asyncStartArgs(op, payload));
+                        emitAsyncHostStart(op, token,
+                            hostValueTarget(op, hostValue));
                     }
                 }
                 case FunctionExecutionBinding.ExternalFunction external ->
@@ -6918,23 +6924,127 @@ public final class LuaSemanticEmitter {
         }
 
         /**
-         * The completed argument slots of one {@code ASYNC_START} arm: the
-         * per-position entries of the {@code S.__sa<op>} carrier table.
-         * Each argument is passed as its own expression — a trailing
-         * {@code unpack} would be truncated to one value in a non-final
-         * argument position under Lua 5.1/LuaJIT semantics, silently
-         * dropping arguments and colliding with the trailing span triplet.
+         * One recorded declared argument position of a host-resolved
+         * {@code ASYNC_START}: its declared descriptor and the emitted
+         * origin literal of the parameter cell that admitted it.
          */
-        private List<String> asyncStartArgs(SemanticOp op,
-                KindPayload.AsyncStartPayload payload) {
-            int count = payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN
-                ? payload.parameterBoundaryOpIds().size()
-                : op.operands().size();
+        private record AsyncHostStartCell(RuntimeDescriptor descriptor,
+                                          String origin) {
+        }
+
+        /**
+         * The declared-position projection of every completed argument of
+         * one host-resolved {@code ASYNC_START} (the host-carrier crossing
+         * table's position 3): one slot rewrite per recorded argument at its
+         * own one-based carrier position, emitted after the recorded cells'
+         * events and before the loaded entry call — the declared-position
+         * operand shape {@code emitHostParameterCells} uses. The descriptors
+         * are the recorded {@code HOST_PARAMETER} cells under {@code RUN}
+         * (their admission is idempotent, so the projection re-admits
+         * without changing a value an outer cell already admitted) and the
+         * outer adapter start's leading recorded cells under
+         * {@code ELIDED_BY_ADAPTER} (the nested source start records none;
+         * the adapter creation rule makes the leading target parameter
+         * types byte-equal to them). One crossing memo per start threads
+         * every position, so two aliased arguments reach the host as one
+         * object; the memo is dropped once every position is projected, so
+         * the crossing's projected source objects are never retained past
+         * the start.
+         */
+        private List<String> emitAsyncHostStartArguments(SemanticOp op,
+                KindPayload.AsyncStartPayload payload, String indent) {
+            String carrier = "S.__sa" + op.opId().id();
+            int count = recordedArgCount(payload, op);
+            List<AsyncHostStartCell> cells = asyncHostStartCells(op, payload, count);
+            out.append(indent).append("__factories.__hostMemo = {}\n");
+            for (int i = 0; i < count; i++) {
+                AsyncHostStartCell cell = cells.get(i);
+                String slot = carrier + "[" + (i + 1) + "]";
+                out.append(indent).append(slot).append(" = __hostProjectArg(")
+                    .append(luaString(cell.descriptor().canonicalSpecText()))
+                    .append(", ").append(sourceTextOf(cell.descriptor()))
+                    .append(", ").append(i + 1).append(", ").append(slot)
+                    .append(", ").append(cell.origin()).append(", ")
+                    .append(hostParamCellsOf(cell.descriptor())).append(")\n");
+            }
+            out.append(indent).append("__factories.__hostMemo = nil\n");
             List<String> args = new ArrayList<>();
             for (int i = 1; i <= count; i++) {
-                args.add("S.__sa" + op.opId().id() + "[" + i + "]");
+                args.add(carrier + "[" + i + "]");
             }
             return args;
+        }
+
+        /**
+         * The declared descriptor and origin of every projected argument of
+         * one host-resolved {@code ASYNC_START}. Under {@code RUN} they are
+         * the recorded parameter cells in one-based order. Under
+         * {@code ELIDED_BY_ADAPTER} they are the outer adapter start's
+         * recorded cells' first {@code operands.size()} entries in recorded
+         * order: {@code R-ELIDED-PLACEMENT} guarantees the parent is the
+         * adapter-over-async {@code ASYNC_START} and the adapter creation
+         * rule guarantees the leading {@code M} target parameter types are
+         * exactly the source signature's {@code M} parameters, so their
+         * canonical descriptor texts are byte-equal. A host-resolved nested
+         * start with no adapter parent, or with more operands than the
+         * parent records, is a fail-closed producer diagnostic — never an
+         * unvalidated crossing.
+         */
+        private List<AsyncHostStartCell> asyncHostStartCells(SemanticOp op,
+                KindPayload.AsyncStartPayload payload, int count) {
+            if (payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
+                List<AsyncHostStartCell> cells = new ArrayList<>();
+                for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                    cells.add(asyncHostStartCell(op, boundaryId));
+                }
+                if (cells.size() != count) {
+                    throw rejectedOp(op, "ASYNC_START " + op.opId() + " records "
+                        + cells.size() + " parameter cell(s) for " + count
+                        + " completed argument(s) (a producer defect)");
+                }
+                return cells;
+            }
+            OpId parentId = op.origin().parentOpId();
+            SemanticOp parent = parentId == null ? null : opsById.get(parentId);
+            if (parent == null
+                    || parent.kind() != SemanticOpKind.ASYNC_START
+                    || !(parent.payload()
+                        instanceof KindPayload.AsyncStartPayload adapter)
+                    || adapter.parameterBoundaryMode()
+                        != ParameterBoundaryMode.RUN) {
+                throw rejectedOp(op, "the nested host async start " + op.opId()
+                    + " under ELIDED_BY_ADAPTER has no outer adapter"
+                    + " ASYNC_START parent with recorded parameter cells"
+                    + " (a producer defect)");
+            }
+            if (count > adapter.parameterBoundaryOpIds().size()) {
+                throw rejectedOp(op, "the nested host async start " + op.opId()
+                    + " forwards " + count + " leading argument(s) but its outer"
+                    + " adapter start " + parent.opId() + " records only "
+                    + adapter.parameterBoundaryOpIds().size()
+                    + " parameter cell(s) (a producer defect)");
+            }
+            List<AsyncHostStartCell> cells = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                cells.add(asyncHostStartCell(op,
+                    adapter.parameterBoundaryOpIds().get(i)));
+            }
+            return cells;
+        }
+
+        /** One recorded parameter cell of a host-resolved async start. */
+        private AsyncHostStartCell asyncHostStartCell(SemanticOp op, OpId boundaryId) {
+            SemanticOp boundary = opsById.get(boundaryId);
+            if (boundary == null
+                    || !(boundary.payload()
+                        instanceof KindPayload.BoundaryPayload cell)) {
+                throw rejectedOp(op, "ASYNC_START " + op.opId()
+                    + " names the parameter cell " + boundaryId
+                    + ", which is not a boundary op of the emitted closure"
+                    + " (a producer defect)");
+            }
+            return new AsyncHostStartCell(cell.descriptor(),
+                luaString(originOf(boundary)));
         }
 
         private void emitAsyncHostSeamStart(SemanticOp op, AsyncTokenId token,
@@ -6966,7 +7076,7 @@ public final class LuaSemanticEmitter {
         }
 
         private void emitAsyncHostStart(SemanticOp op, AsyncTokenId token,
-                                        String target, List<String> args) {
+                                        String target) {
             KindPayload.AsyncStartPayload payload =
                 (KindPayload.AsyncStartPayload) op.payload();
             String label = payload.hostOperationLabel();
@@ -6975,21 +7085,22 @@ public final class LuaSemanticEmitter {
                     .append(luaString(label)).append(")..\"\\n\")\n");
                 out.append("io.stderr:flush()\n");
             }
+            // The declared-position projection of every completed argument
+            // (the host-carrier crossing table's position 3): one slot
+            // rewrite per recorded argument, before the loaded entry call
+            // and outside it, so a declared-position admission failure
+            // surfaces as the recorded cell's failure at the start origin
+            // and is never re-wrapped by the host error path.
+            List<String> args = emitAsyncHostStartArguments(op, payload, "");
             // The converged host-boundary call shape, identical to the
             // sync arm: the trailing literal span triplet is how the
             // loaded wrapper's declared-async shape check reports the DEAL
             // call site byte-exact (the pinned E8010 at the call origin),
-            // and every recorded argument crosses through the host-facing
-            // projection — the chunk's language-null representation (the
-            // raw nil the null literal emits and the chunk's own __NULL
-            // sentinel) normalizes to the deployed runtime's explicit null
-            // sentinel and the value model's numeric variant carrier
-            // projects to its number, exactly like the sync crossing's
-            // declared parameter cell.
+            // and every recorded argument reaches the loaded entry as the
+            // declared-value projection its declared cell admitted.
             out.append("__okT, __resT = pcall((").append(target).append(").f");
             for (String arg : args) {
-                out.append(", __factories.__hostAsyncArg(").append(arg)
-                    .append(")");
+                out.append(", ").append(arg);
             }
             out.append(", ").append(spanTripletArgs(op)).append(")\n");
             out.append("if not __okT then\n");
@@ -9580,45 +9691,6 @@ end
 local function __dealFnValue(w, ...)
   if w[__dealCarrierKeys.mode] ~= nil then return __adaptInvoke(w, "-", ...) end
   return w[__dealCarrierKeys.fn](...)
-end
--- The host-facing projection of one recorded DEAL-to-host argument at the
--- async-start crossing — the async twin of the sync crossing's declared
--- parameter cell (__hostParamAdmit): the chunk's language-null
--- representation — the raw nil the null literal emits and the chunk's own
--- __NULL sentinel — becomes the deployed runtime's explicit null sentinel,
--- so the loaded wrapper admits a declared null/nullable position and the
--- raw host observes the sentinel, never a plain nil; and the value
--- model's numeric variant carrier (the read-side carrier and the host
--- completion crossing's carrier) projects to the number it stands for, so
--- a completed host future — or any numeric carrier value — forwarded as a
--- recorded argument reaches the loaded wrapper's own matcher as its
--- host-facing numeric value and the raw host observes the number its
--- declared carrier names, never the carrier table's Lua shape (exactly
--- like the sync crossing's declared parameter cell and the shared JVM
--- runtime's declared boxed carrier), and a numeric carrier inside a shared
--- array carrier takes the same numeric projection (__hostNumProject). The
--- __MISSING absence marker is not a language null and stays the absent
--- value the loaded matcher classifies; every other value crosses
--- unchanged. The helper rides the chunk's one factory store like the other
--- host-crossing helpers, so a retained export keeps its own chunk's
--- projection (a global assignment would be clobbered by the next chunk)
--- without spending a main-chunk local.
-__factories.__hostAsyncArg = function(v)
-  if v == nil or v == __NULL then return __rt.__NULL end
-  if type(v) == "table" and v[__dealCarrierKeys.jn] then return v.d end
-  -- A numeric carrier inside a shared array carrier takes the same
-  -- declared-value projection the sync crossing's cell runs
-  -- (__hostNumProject): the raw host observes the declared numbers of the
-  -- array it was handed, and the array's per-slot variant marks keep an
-  -- echoed decoded array's exact int/number spelling.
-  if type(v) == "table" then return __factories.__hostNumProject(v) end
-  -- Every other value crosses unchanged in both directions: the chunk's
-  -- null sentinel is the deployed runtime's own __rt.__NULL (the
-  -- runtime-binding preamble aliases them), so the loaded wrapper's
-  -- matcher admits a null element at a nullable position and the raw host
-  -- observes the sentinel while the DEAL side keeps the array carrier's
-  -- identity, its aliases, and the host's in-place writes (ISSUE-0814).
-  return v
 end
 -- The host-facing projection of one declared function position (H7): the
 -- declared host wrapper class's LuaJIT twin — a plain Lua function the

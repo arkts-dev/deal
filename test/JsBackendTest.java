@@ -5956,7 +5956,7 @@ public class JsBackendTest {
      * variant carrier, and the async-export invoker projects a checked
      * completion's numeric carriers to their numbers at the top level and
      * every nested container leaf (the JVM host-cell/completion projection
-     * and the LuaJIT __hostParamAdmit/__hostAsyncArg/__asyncExportCompletion
+     * and the LuaJIT __hostParamAdmit/__hostNumVar/__asyncExportCompletion
      * rules). The drive is the production frontend -> public production compilation ->
      * deployed runtime chain under node over a manifest-declared host
      * module: a number-variant carrier and an int-variant carrier (a decoded
