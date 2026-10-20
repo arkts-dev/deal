@@ -449,6 +449,7 @@ public class CanonicalProjectionParityTest {
         mainEntry("types/narrowed-capture-comparison-e8001"),
         mainEntry("types/narrowed-capture-equality-e8001"),
         mainEntry("types/narrowed-capture-boolean-e8001"),
+        mainEntry("types/narrowed-capture-condition-logical-e8001"),
         mainEntry("types/narrowed-capture-string-e8001"),
         mainEntry("types/narrowed-capture-array-element-e8003"),
         mainEntry("types/narrowed-capture-array-element-function-e8003"),

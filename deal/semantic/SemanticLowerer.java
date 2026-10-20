@@ -14366,10 +14366,15 @@ public final class SemanticLowerer {
          * The slot-threading variant of {@link #lowerOperand(ExpressionNode)}
          * (the logical short-circuit arm's right operand publishes the
          * enclosing slot): the read completes into the given slot and the
-         * refinement validation republishes its admitted value.
+         * refinement validation republishes its admitted value into that
+         * one identity, so the enclosing consumer keeps the pre-allocated
+         * value it named — a {@code LOOP(FOR)} condition stays one
+         * identity across the init-block production and the per-iteration
+         * update-block re-production, and the logical branch's result is
+         * that same condition value.
          */
         private ValueId lowerOperand(ExpressionNode expr, ValueId slot) {
-            return emitNarrowedReadCheck(expr, lowerExpression(expr, slot));
+            return emitNarrowedReadCheck(expr, lowerExpression(expr, slot), slot);
         }
 
         /**
@@ -14400,9 +14405,24 @@ public final class SemanticLowerer {
          * Admits one lowered operand value against the {@code NARROWED_READ}
          * cell when its expression is a null-narrowing-refined identifier
          * read ({@code checks.narrowedReads()}); every other operand value
-         * passes through unchanged.
+         * passes through unchanged. The admission publishes its own fresh
+         * value (the chain/operand positions' consumer names it).
          */
         private ValueId emitNarrowedReadCheck(ExpressionNode expr, ValueId value) {
+            return emitNarrowedReadCheck(expr, value, null);
+        }
+
+        /**
+         * Admits one lowered operand value against the {@code NARROWED_READ}
+         * cell, publishing the admitted value into the caller's slot when
+         * one is given ({@code null} allocates a fresh result identity): a
+         * slot-threading consumer pre-allocated the value it consumes, so
+         * the validation must republish that one identity instead of a
+         * second one — the logical short-circuit arm's result and the
+         * {@code LOOP(FOR)} condition would otherwise diverge.
+         */
+        private ValueId emitNarrowedReadCheck(ExpressionNode expr, ValueId value,
+                                              ValueId slot) {
             if (!checks.narrowedReads().contains(expr)) {
                 return value;
             }
@@ -14415,14 +14435,16 @@ public final class SemanticLowerer {
                 // second value: the reference selectors compare the one
                 // allocated value, and no operator position can place a
                 // function-typed operand inside an address chain (only the
-                // reference equality rows consume one).
+                // reference equality rows consume one). The load itself
+                // ignores the slot for a tracked function identity.
                 return emitNarrowedConditionCheck(expr, value);
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(expr.span()),
                 SourceOriginKind.USER, anchor, currentParent());
-            ValueId admitted = ids.nextValueId(module, nextOrdinal++, 0);
+            ValueId admitted = slot != null ? slot
+                : ids.nextValueId(module, nextOrdinal++, 0);
             emit(buildOp(opId, SemanticOpKind.BOUNDARY,
                 new KindPayload.BoundaryPayload(BoundaryKind.NARROWED_READ, descriptor,
                     value, new BoundaryRealization.RuntimeValidation(

@@ -1,0 +1,18 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared T | null binding read as the right operand of a for-condition's logical conjunction is validated at that read: the condition reports the typed-boundary tuple (E8001, expected boolean, actual null) at the read instead of testing the raw value, and the loop body never runs.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, control-flow, runtime-errors
+
+export function main(): null {
+  let flag: boolean | null = true;
+  let clear: () => null = function(): null {
+    flag = null;
+    return null;
+  };
+  if (flag !== null) {
+    clear();
+    for (let step: int = 0; step < 1 && flag; step = step + 1) {
+    }
+  }
+  return null;
+}

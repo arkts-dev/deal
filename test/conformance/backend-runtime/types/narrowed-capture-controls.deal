@@ -1,5 +1,5 @@
 // @spec: Type system — Nullable semantics (narrowing invalidation across calls)
-// @description: The narrowing contract's controls: a declared nullable equality stays a null test, a call-preserved refinement whose value is still valid flows through every consumer unchanged with its reference binding intact, and after a capturing closure clears the binding every typed boundary and every operator consumer raises its own catchable DEAL error — the direct assignment the spec allows to compile is checked at the declaration (E8001) and the array-element cell keeps the specified E8003.
+// @description: The narrowing contract's controls: a declared nullable equality stays a null test, a call-preserved refinement whose value is still valid flows through every consumer unchanged with its reference binding intact — the if/while/for condition positions included, each positive consumer proving the branch or loop body ran — and after a capturing closure clears the binding every typed boundary and every operator consumer raises its own catchable DEAL error recorded and asserted outside the consumer, so a missing admission fails instead of silently skipping it — the direct assignment the spec allows to compile is checked at the declaration (E8001) and the array-element cell keeps the specified E8003.
 // @expected: runtime-ok
 // @features: type-system, nullable, narrowing, runtime-errors, arrays, classes
 
@@ -95,6 +95,46 @@ export function main(): null {
     expectTrue("boolean condition", flag);
     expectTrue("boolean conjunction", flag && true);
     expectTrue("boolean negation", !flag === false);
+    // The positive condition consumers: a present refined boolean drives
+    // every condition position, so the branch and each loop body run.
+    let conditionHits: int = 0;
+    if (flag) {
+      conditionHits = conditionHits + 1;
+    }
+    while (flag) {
+      conditionHits = conditionHits + 1;
+      break;
+    }
+    for (; flag; ) {
+      conditionHits = conditionHits + 1;
+      break;
+    }
+    expectEqual("boolean condition positions", conditionHits, 3);
+    if (false || flag) {
+      conditionHits = conditionHits + 1;
+    }
+    expectEqual("logical or condition", conditionHits, 4);
+    // A comparison composed with the refined read keeps one condition
+    // identity: the bounded loop runs exactly the iteration the
+    // comparison admits, whichever side carries the read (an unbounded
+    // loop here would be a re-produced condition that ignores the
+    // comparison).
+    let rightSteps: int = 0;
+    for (let step: int = 0; step < 1 && flag; step = step + 1) {
+      rightSteps = rightSteps + 1;
+      if (rightSteps > 3) {
+        break;
+      }
+    }
+    expectEqual("logical for condition (read on the right)", rightSteps, 1);
+    let leftSteps: int = 0;
+    for (let step: int = 0; flag && step < 1; step = step + 1) {
+      leftSteps = leftSteps + 1;
+      if (leftSteps > 3) {
+        break;
+      }
+    }
+    expectEqual("logical for condition (read on the left)", leftSteps, 1);
   }
   let name: string | null = "Ada";
   let clearName: () => null = function(): null {
@@ -201,13 +241,65 @@ export function main(): null {
   }
   if (flag !== null) {
     clearFlag();
+    // Every condition negative records its catch and asserts it outside
+    // the consumer: a missing admission leaves the cleared value falsy on
+    // JS and the JVM, so the consumer would silently skip and only the
+    // recorded count exposes it.
+    let caught: int = 0;
     try {
       if (flag) {
-        expectNoError("boolean condition");
+        expectNoError("boolean if condition");
       }
     } catch (e) {
-      expectCaught(e, "boolean condition", "E8001");
+      expectCaught(e, "boolean if condition", "E8001");
+      caught = caught + 1;
     }
+    expectEqual("boolean if condition raised", caught, 1);
+    try {
+      while (flag) {
+        expectNoError("boolean while condition");
+      }
+    } catch (e) {
+      expectCaught(e, "boolean while condition", "E8001");
+      caught = caught + 1;
+    }
+    expectEqual("boolean while condition raised", caught, 2);
+    try {
+      for (; flag; ) {
+        expectNoError("boolean for condition");
+      }
+    } catch (e) {
+      expectCaught(e, "boolean for condition", "E8001");
+      caught = caught + 1;
+    }
+    expectEqual("boolean for condition raised", caught, 3);
+    try {
+      for (let step: int = 0; step < 1 && flag; step = step + 1) {
+        expectNoError("logical for condition (read on the right)");
+      }
+    } catch (e) {
+      expectCaught(e, "logical for condition (read on the right)", "E8001");
+      caught = caught + 1;
+    }
+    expectEqual("logical for condition (read on the right) raised", caught, 4);
+    try {
+      for (let step: int = 0; flag && step < 1; step = step + 1) {
+        expectNoError("logical for condition (read on the left)");
+      }
+    } catch (e) {
+      expectCaught(e, "logical for condition (read on the left)", "E8001");
+      caught = caught + 1;
+    }
+    expectEqual("logical for condition (read on the left) raised", caught, 5);
+    try {
+      if (false || flag) {
+        expectNoError("logical or condition");
+      }
+    } catch (e) {
+      expectCaught(e, "logical or condition", "E8001");
+      caught = caught + 1;
+    }
+    expectEqual("logical or condition raised", caught, 6);
     try {
       let flipped: boolean = !flag;
       expectNoError("boolean negation");
@@ -219,20 +311,6 @@ export function main(): null {
       expectNoError("boolean conjunction");
     } catch (e) {
       expectCaught(e, "boolean conjunction", "E8001");
-    }
-    try {
-      while (flag) {
-        expectNoError("while condition");
-      }
-    } catch (e) {
-      expectCaught(e, "while condition", "E8001");
-    }
-    try {
-      for (let step: int = 0; flag; step = step + 1) {
-        expectNoError("for condition");
-      }
-    } catch (e) {
-      expectCaught(e, "for condition", "E8001");
     }
   }
   if (name !== null) {
