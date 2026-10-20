@@ -98,8 +98,8 @@ let s: string = `Items: ${xs[0]}, ${xs[1]}`;
  - `-0` is normalized to `0` in `int` checks and arithmetic. Negative zero does not exist in `int`.
  - Runtime check: `int(x)` rejects `NaN`, `Infinity`, non-integer values, and values outside the signed 32-bit range.
 
-- `number` is a 64-bit IEEE 754 double.
- - `NaN`, `Infinity`, `-Infinity` are representable values. `NaN` is not equal to itself (`x === x` is false).
+- `number` is IEEE 754 binary64. Decimal literals round to nearest, ties to even; overflow produces infinity, underflow may produce signed zero. Number operations preserve IEEE signed-zero semantics.
+ - `NaN`, `Infinity`, `-Infinity` are representable.
  - Division returns `number` only when both operands are `number`.
  - Division by zero of a `number` produces `Infinity` or `NaN`, not a runtime error.
  - `number` comparisons follow IEEE 754:
@@ -478,7 +478,15 @@ if (n === null) {
 }
 ```
 
-Narrowing is supported only for local variables and parameters with direct comparisons `x !== null` and `x === null`. No property-path narrowing.
+Narrowing supports only locals and parameters compared directly with `null` using `!==` or `===`, not property paths:
+
+```ts
+class Profile { nick: string | null = null; }
+let p: Profile = { nick: "Ada" };
+if (p.nick !== null) {
+ let nick: string = p.nick; // error: properties are not narrowed
+}
+```
 
 Outside a narrowing block:
 
@@ -488,11 +496,10 @@ let i: int = n; // compile-time Error
 
 Narrowing invalidation:
 
-- Assigning to a narrowed variable invalidates its narrowed type after the assignment.
-- Passing a narrowed variable to a function does not invalidate it because primitives/classes are references but the variable binding itself is unchanged.
-- Property-path narrowing is not supported, so aliasing of object fields does not affect narrowing.
+- Direct assignment invalidates the binding's refinement.
+- Calls do not invalidate refinements. Indirect captured-binding mutation can therefore cause a later runtime type check to fail.
 - Narrowing does not cross function boundaries or loop back-edges.
-- Narrowing is invalidated after an `await` expression. After `await`, all narrowed variables in the enclosing async function revert to their declared types.
+- `await` invalidates all enclosing-function refinements.
 
 ```ts
 let x: string | null = "a";
@@ -500,6 +507,30 @@ if (x !== null) {
  let a: string = x; // OK
  x = null;
  let b: string = x; // Error
+}
+```
+
+```ts
+let x: int | null = 1;
+let clear: () => null = function(): null {
+ x = null;
+ return null;
+};
+if (x !== null) {
+ clear();
+ let y: int = x; // compiles; raises a runtime type error
+}
+```
+
+```ts
+async function tick(): null { return null; }
+async function use(x: string | null): null {
+ if (x !== null) {
+  let before: string = x; // OK
+  await tick();
+  let after: string = x; // error: narrowing was invalidated
+ }
+ return null;
 }
 ```
 
@@ -560,7 +591,7 @@ number vs number
 string vs string
 ```
 
-`number` comparisons follow IEEE 754 semantics. `NaN` makes relational comparisons false.
+Strings compare lexicographically by Unicode scalar value; a proper prefix sorts first. No normalization or locale rules apply.
 
 ### Type-of-expression rules
 
@@ -671,13 +702,13 @@ export class User {
 - `T | null` where `T` is jsonable
 - class type `C` only if `C` has generated or declared JSON functions visible to the compiler
 
-A type is jsonable if it is one of the primitive JSON-compatible types above, or a class type with visible `C$fromJson` and `C$toJson` functions.
+Jsonable types follow the list above; classes require visible `C$fromJson` and `C$toJson` functions.
 
-If any field type is not jsonable, the compiler emits a compile-time error at the field declaration.
+Non-jsonable fields produce compile-time errors at their declarations.
 
-Circular dependencies between `@jsonable` classes are compile-time errors. This includes dependencies through `T[]` and `T | null`.
+Circular `@jsonable` dependencies, including through arrays and nullables, are compile-time errors.
 
-In declaration files, `// @jsonable` has no effect. Declaration files may explicitly declare compatible `C$fromJson` and `C$toJson` functions.
+In declaration files, `// @jsonable` has no effect; compatible `C$fromJson` and `C$toJson` functions may be declared explicitly.
 
 **Generated functions.** For a `@jsonable` class `C`, the compiler emits two module-level export functions:
 
@@ -686,9 +717,11 @@ C$fromJson(s: string): C | null
 C$toJson(v: C): string
 ```
 
-The `$` sigil is reserved for compiler-generated names (see Lexical elements).
+**fromJson.** Parses an object; rejects extra keys. Recursively decodes provided fields, then evaluates omitted required-field defaults, both in declaration order; missing optionals stay absent. Any failure returns `null`, never throws or publishes partial instances. Earlier effects remain, including nested defaults before outer-field failures.
 
-**fromJson.** Parses the JSON string. Validates each key against declared class fields. Applies defaults for omitted required-present fields. Treats missing optional keys as absent. Rejects extra keys. Returns `null` on parse or validation failure. No throw.
+```ts
+let invalid: User | null = User$fromJson("{\"name\":\"Ada\",\"naem\":\"Bob\"}"); // null: extra key
+```
 
 **toJson.** Serializes each declared field to its JSON representation. Omits missing optional fields. Preserves `null` for nullable fields.
 
@@ -748,10 +781,9 @@ let u: User = { name: "Ada" };
 
 Default evaluation semantics:
 
-- Defaults are evaluated per construction, not once at class declaration time.
-- Mutable default arrays, tables, and nested class objects are freshly constructed for every instance.
-- Defaults are deep-constructed according to their typed literal structure.
-- Runtime values returned by function calls used as defaults are not deep-copied; the call is re-executed per construction.
+- Evaluate provided expressions left-to-right, then omitted required-field defaults in declaration order; provided fields suppress defaults.
+- Per construction, deep-construct mutable literals; do not copy function results.
+- Failure publishes no instance; earlier effects remain.
 
 ```ts
 class Bag {
@@ -1024,13 +1056,13 @@ function find(id: int): User | null {
 
 ### Function values, calls, and wrappers
 
-A function declaration produces a first-class typed function value. The source call syntax is always normal TypeScript-style syntax:
+Declarations produce first-class typed function values; calls use TypeScript syntax:
 
 ```ts
 let r: int = add(1, 2);
 ```
 
-Function values carry runtime type information, including whether the function is async. This is observable only through type checking and at the host interop boundary, not as a source-level value.
+Function runtime types include the async marker, observable through checking and host interop, not source-level inspection.
 
 Compile-time call checking:
 
@@ -1430,7 +1462,7 @@ for (let c: string of s) {
 }
 ```
 
-The iterated expression must be `T[]` or `string`. The loop variable type is `T` (for arrays) or `string` (for strings). For strings, iteration yields one `string` containing exactly one Unicode scalar value per iteration, in order. The loop variable is a fresh binding per iteration (like `let` in `for-of` in TypeScript). `break` and `continue` are supported.
+Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes from zero using live length/contents: appends and unvisited replacements are observed; variable reassignment cannot redirect traversal. Strings yield successive scalars. Loop-variable types are `T` or `string`; see [Closures and captured variables](#closures-and-captured-variables) for binding freshness. Supports `break` and `continue`.
 
 ### Break / Continue
 
@@ -1573,7 +1605,7 @@ All async function completion values cross the typed boundary defined in the bac
 
 ### No user-defined globals
 
-Every source file compiles to a module that returns an export table. Top-level declarations are local. User code cannot define global variables.
+Each file compiles to an export-table module. Top-level declarations are local; user-defined globals are forbidden.
 
 When a compiler invocation selects an entry module, that module must export `main` with non-async signature `(): null`; the backend invokes `main()` from that module.
 
@@ -1864,13 +1896,20 @@ export function split(s: string, sep: string): string[];
 export function trim(s: string): string;
 ```
 
-String lengths and positions are measured in Unicode scalar values.
+Lengths and positions count Unicode scalars. Searches are literal, not patterns.
+
+- `substring`: inclusive start, exclusive end, both clamped to `0..length`; reversed ranges yield `""`.
+- `replace`: all non-overlapping matches, left-to-right; empty search returns input; literal replacement.
+- `split`: empty input yields `[]`; empty separator splits scalars; otherwise preserves empty parts.
+- `trim`: removes only U+0009–U+000D and U+0020 from both ends.
 
 #### `std/table.d.deal`
 
 ```ts
 export function keys(t: table): string[];
 ```
+
+Returns each present string key once, including null-valued keys; order is unspecified.
 
 #### `std/json.d.deal`
 
@@ -1879,9 +1918,7 @@ export function parse(s: string): table;
 export function stringify(t: table): string;
 ```
 
-Integral JSON numbers within `int` range parse as `int`; others as `number`.
-
-`parse` raises `Error` for malformed JSON or duplicate keys.
+`parse` requires an object root; malformed JSON, duplicate keys, and other roots raise `Error`. JSON numbers are classified before binary64 rounding: mathematically integral values within `int` range are `int`; others round to `number`. This rule applies to `parse` and generated class decoding.
 
 `stringify` raises `Error` for non-JSON values, non-finite numbers, or cycles.
 
@@ -1903,6 +1940,8 @@ export function maxInt(a: int, b: int): int;
 export function nowMillis(): number;
 ```
 
+Returns Unix-epoch wall-clock milliseconds with backend-dependent resolution; readings need not increase.
+
 Usage:
 
 ```ts
@@ -1915,15 +1954,7 @@ let t: table = json.parse("{\"name\":\"Ada\"}");
 
 ### Host APIs
 
-DEAL source has no implicit global namespace.
-
-A host API is available only through an imported module with a `.d.deal` declaration.
-
-The compiler type-checks host API use from the declaration file. Runtime values crossing the host boundary are checked according to the backend conformance contract.
-
-Raw backend APIs, including Lua `require`, Lua `ffi`, JVM reflection, filesystem, process, networking, and debug APIs, are not source-language features unless exposed by an imported declaration module.
-
-C FFI is available only through `// @extern-c` declaration files.
+Backend globals and APIs are unavailable to source code unless exposed through an imported declaration module.
 
 ### Host ABI and interoperability
 
@@ -1957,10 +1988,6 @@ Function values are **wrappers**. The backend always emits explicit `.f(...)` ca
 { __kind = "function", sig = "(int,int)->int", f = function(...) ... end }
 ```
 
-Reason: runtime type system must preserve signatures and support runtime function type checks. Avoiding `__call` keeps generated code explicit, portable, and easier to debug.
-
-Calling a typed function compiles to `.f(...)` internally. User syntax remains normal:
-
 ```ts
 let x: int = add(1, 2);
 ```
@@ -1985,11 +2012,7 @@ __rt.from_lua_function("(int)->int", raw_f)
 
 ### Host error and debugging
 
-Errors propagate through function wrappers, module boundaries, and call chains. If not caught by `catch`, an error escapes to the host as a `DEALRuntimeError` object with source location, code, message, and stack frames.
-
-Errors caught by `catch` are reified as `Error` class values. Uncaught errors behave as described in the host ABI section.
-
-DEALRuntimeError format:
+Errors propagate through wrappers, modules, and calls. `catch` reifies them as `Error`; uncaught errors escape as `DEALRuntimeError`:
 
 ```txt
 code
@@ -2007,7 +2030,7 @@ cause (if applicable)
 
 - The backend emits source comments before generated statement groups.
 - Compiler emits source map sidecars mapping generated positions to original `.deal` files, lines and columns across modules.
-- Runtime errors use generated check metadata to report original `.deal` location.
+- Runtime errors report original `.deal` locations: one-based lines and Unicode-scalar columns; tabs count one column; CRLF counts one line break.
 - Stack traces include both generated function names and original source function names.
 
 ---
@@ -2365,13 +2388,10 @@ __rt.class_("User",
 ```
 
 The runtime:
-1. Evaluates defaults per construction.
-2. Deep-constructs literal defaults so mutable defaults are not shared.
-3. Overrides with provided fields.
-4. Rejects any extra provided field.
-5. Validates all required-present and optional-present types.
-6. Tags the table with class name.
-7. Returns the table.
+1. Uses evaluated provided fields; evaluates omitted required defaults per construction, in declaration order.
+2. Freshly deep-constructs mutable literal defaults.
+3. Rejects extra fields and validates present fields.
+4. Tags and returns the instance only after success. Failure retains earlier effects.
 
 Optional fields not provided are represented internally via key absence (`nil`) or side-table metadata. Direct source-level field reads translate missing to `__NULL`; `has(obj.field)` distinguishes missing from explicit `null`.
 
@@ -2840,7 +2860,7 @@ Evaluation is strict and left-to-right:
 
 1. Evaluate receiver expression before member/index/call arguments.
 2. Evaluate call arguments left-to-right.
-3. Evaluate assignment RHS before LHS write check.
+3. Assignment evaluates receiver, index (if present), then RHS once, before validation and write. Variables evaluate only RHS. Failed validation leaves the target unwritten; earlier effects remain.
 4. Short-circuit `&&` and `||`.
 5. Function calls create a new local scope.
 6. Class object literal construction evaluates provided fields left-to-right, applies defaults for omitted required-present fields, validates all fields, then tags the object.
