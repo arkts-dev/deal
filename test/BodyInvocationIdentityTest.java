@@ -31,6 +31,7 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.AssignTargetKind;
+import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.ClosedSelector;
@@ -40,6 +41,7 @@ import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
+import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.JsonDefaultChildTable;
@@ -57,6 +59,7 @@ import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.ValueId;
 import deal.test.conformance.ProducedProjectIdentityAudit;
@@ -1633,6 +1636,89 @@ public class BodyInvocationIdentityTest {
     }
 
     /**
+     * The function-valued for-let counter across the three consumers: the
+     * semantic oracle, the shared LuaJIT artifact and the shared JVM
+     * artifact execute the same bounded counter fixture — the assigned
+     * counter's current-binding reads, the never-assigned counter's tracked
+     * identity and the arity-adapted counter's adapter — with one event
+     * sequence and one success terminal. The fixture's loops re-execute
+     * their condition ops, which the harness's per-op one-START gate assumes
+     * away, so the traces are compared directly (the same repeat the
+     * assigned-binding drive documents).
+     */
+    static void testForLetFunctionCounterCrossConsumerTraceEquality() throws Exception {
+        System.out.println("-- the function-valued for-let counter on the oracle and "
+            + "both shared artifacts: one event sequence, one success terminal --");
+        RealProject project = null;
+        Path workspace = Files.createTempDirectory("for-let-counter-diff-");
+        try {
+            project = compileProject("""
+                function one(): int { return 1; }
+                function two(): int { return 2; }
+                export function main(): null {
+                  let visits: int = 0;
+                  for (let f: () => int = one; f() === 1; f = two) {
+                    visits = visits + 1;
+                    if (visits > 3) { break; }
+                  }
+                  let stable: int = 0;
+                  for (let g: () => int = two; g() === 2;) {
+                    stable = stable + 1;
+                    if (stable === 2) { break; }
+                  }
+                  let adapted: int = 0;
+                  for (let h: (x: int) => int = one; h(7) === 1; h = two) {
+                    adapted = adapted + 1;
+                    if (adapted > 3) { break; }
+                  }
+                  if (visits !== 1 || stable !== 2 || adapted !== 1) {
+                    throw { code: "TEST_FAIL", message: "function counters" };
+                  }
+                  return null;
+                }
+                """);
+            SemanticLowerer.ProjectLoweringResult result = lower(project);
+            if (result.project() == null || !result.diagnostics().isEmpty()) {
+                fail("the function-valued for-let counter lowers for the differential "
+                    + "matrix: " + result.diagnostics());
+                return;
+            }
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runProject(result.project(),
+                    result.tables(), result.registries(),
+                    SemanticDifferentialHarness.Expectation.success(
+                        "the function-valued for-let counter", List.of(), "null"),
+                    workspace);
+            checkEq(3, verdict.runs().size(),
+                "the matrix produced the oracle and both shared artifacts: "
+                    + verdict.failures());
+            if (verdict.runs().size() != 3) {
+                return;
+            }
+            List<String> oracleTrace = new ArrayList<>();
+            for (SemanticRuntimeModel.TraceEvent event : verdict.runs().get(0).trace()) {
+                oracleTrace.add(event.text());
+            }
+            check(!oracleTrace.isEmpty(),
+                "the oracle executed the counter fixture and published events");
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                List<String> trace = new ArrayList<>();
+                for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                    trace.add(event.text());
+                }
+                checkEq(oracleTrace, trace, "the " + run.consumer()
+                    + " trace equals the oracle's event-for-event");
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the " + run.consumer() + " reached the successful terminal: "
+                        + run.terminal());
+            }
+        } finally {
+            deleteRecursively(project == null ? null : project.root());
+            deleteRecursively(workspace);
+        }
+    }
+
+    /**
      * The never-assigned control: a function-typed binding whose declaring
      * body assigns only other names publishes no dynamic materialization and
      * keeps every call's statically resolved callee — the assigned-binding
@@ -1761,6 +1847,368 @@ public class BodyInvocationIdentityTest {
         }
     }
 
+    /**
+     * The function-valued for-let counter (ISSUE-0864): the loop-head
+     * {@code let} is an ordinary declaration position, so a function-typed
+     * counter takes the shared declaration-initializer production — the
+     * annotated declaration's {@code VARIABLE_DECLARATION} boundary carrying
+     * the exact declared signature on the {@code FUNCTION_SIGNATURE} policy,
+     * then the single {@code BINDING_INIT} — and its two synthetic carry
+     * loads (the body-top generation-0 read and the update block's
+     * generation-1 read) resolve like every other function-typed cell read.
+     *
+     * <p>An assigned counter has no statically tracked allocation identity:
+     * every read — the two carries and the two condition productions —
+     * publishes the producer rule's dynamic materialization correlated to its
+     * own load op, and each condition call records that read as the closed
+     * {@code Dynamic} callee (the current-binding read). A never-assigned
+     * counter republishes its tracked identity on every read, registers no
+     * dynamic materialization, and keeps the statically resolved callee, so
+     * the admission is not "make every function-valued counter dynamic".</p>
+     */
+    static void testFunctionValuedForLetCounter() throws Exception {
+        System.out.println("-- a function-valued for-let counter: the loop-head "
+            + "declaration stores the declared signature, the assigned counter "
+            + "reads the current binding and the never-assigned counter keeps its "
+            + "tracked identity --");
+        RealProject project = null;
+        try {
+            project = compileProject("""
+                function one(): int { return 1; }
+                function two(): int { return 2; }
+                export function main(): null {
+                  let visits: int = 0;
+                  for (let f: () => int = one; f() === 1; f = two) {
+                    visits = visits + 1;
+                    if (visits > 4) { break; }
+                  }
+                  let stable: int = 0;
+                  for (let g: () => int = two; g() === 2;) {
+                    stable = stable + 1;
+                    if (stable > 2) { break; }
+                  }
+                  if (visits !== 1 || stable !== 3) {
+                    throw { code: "TEST_FAIL", message: "function counters" };
+                  }
+                  return null;
+                }
+                """);
+            SemanticLowerer.ProjectLoweringResult result = lower(project);
+            if (result.project() == null || !result.diagnostics().isEmpty()) {
+                fail("the function-valued for-let counter lowers through the project "
+                    + "entry with zero CONSTRUCT_UNLOWERED: " + result.diagnostics());
+                return;
+            }
+            LoweredModuleUnit unit = onlyModule(result.project());
+            StructuredBodyTable table = result.tableOf(unit.moduleId());
+            List<SemanticOp> loops = opsOfKind(unit, SemanticOpKind.LOOP);
+            checkEq(2, loops.size(), "exactly two LOOP ops (the assigned and the "
+                + "never-assigned counter); got " + loops.size());
+            if (loops.size() != 2) {
+                return;
+            }
+            KindPayload.LoopPayload assigned =
+                (KindPayload.LoopPayload) loops.get(0).payload();
+            KindPayload.LoopPayload stable =
+                (KindPayload.LoopPayload) loops.get(1).payload();
+            BindingId assignedCounter = forLetCounterOf(unit, assigned);
+            BindingId stableCounter = forLetCounterOf(unit, stable);
+            if (assignedCounter == null || stableCounter == null) {
+                return;
+            }
+
+            // The declaration position: the annotated boundary carries the
+            // declared counter signature on the function policy, and the
+            // single INIT commits the initializer's value.
+            List<OpId> initMembers = table.blockOps().getOrDefault(
+                assigned.initBlock(), List.of());
+            check(initMembers.size() >= 4, "the assigned counter's init block "
+                + "carries the ALLOC, the initializer, the declaration boundary and "
+                + "the INIT; got " + initMembers.size());
+            if (initMembers.size() >= 4) {
+                Map<OpId, SemanticOp> byId = opsById(unit);
+                SemanticOp alloc = byId.get(initMembers.get(0));
+                SemanticOp initializer = byId.get(initMembers.get(1));
+                SemanticOp boundary = byId.get(initMembers.get(2));
+                SemanticOp init = byId.get(initMembers.get(3));
+                check(alloc != null && alloc.kind() == SemanticOpKind.BINDING_ALLOC
+                        && alloc.payload() instanceof KindPayload.BindingAllocPayload
+                            allocPayload
+                        && allocPayload.binding().equals(assignedCounter)
+                        && allocPayload.generation() == 0,
+                    "the for-let counter's generation-0 ALLOC opens the init block");
+                check(boundary != null && boundary.kind() == SemanticOpKind.BOUNDARY
+                        && boundary.payload()
+                            instanceof KindPayload.BoundaryPayload boundaryPayload
+                        && boundaryPayload.kind() == BoundaryKind.VARIABLE_DECLARATION
+                        && boundaryPayload.descriptor().equals(counterSignature())
+                        && boundary.failurePolicy() == FailurePolicyId.FUNCTION_SIGNATURE
+                        && initializer != null
+                        && boundaryPayload.input().equals(initializer.result()),
+                    "the declaration boundary checks the initializer against the "
+                        + "exact declared counter signature on the FUNCTION_SIGNATURE "
+                        + "policy");
+                check(init != null && init.kind() == SemanticOpKind.BINDING_INIT
+                        && init.payload() instanceof KindPayload.BindingInitPayload
+                            initPayload
+                        && initPayload.binding().equals(assignedCounter)
+                        && initPayload.generation() == 0
+                        && initializer != null
+                        && initPayload.value().equals(initializer.result()),
+                    "the single INIT commits the initializer's value");
+            }
+
+            // The assigned counter: every function-typed read publishes its
+            // own dynamic materialization correlated to its load op, and the
+            // two condition calls record those reads as Dynamic callees.
+            List<SemanticOp> assignedLoads = new ArrayList<>();
+            for (SemanticOp load : opsOfKind(unit, SemanticOpKind.BINDING_LOAD)) {
+                if (load.payload() instanceof KindPayload.BindingLoadPayload payload
+                        && payload.binding().equals(assignedCounter)) {
+                    assignedLoads.add(load);
+                }
+            }
+            checkEq(4, assignedLoads.size(), "the assigned counter carries four "
+                + "reads (the two carry loads and the two condition productions); "
+                + "got " + assignedLoads.size());
+            Set<Long> assignedReads = new LinkedHashSet<>();
+            for (SemanticOp load : assignedLoads) {
+                ValueId value = (ValueId) load.result();
+                assignedReads.add(value.id());
+                check(load.resultType().equals(counterSignature()),
+                    "the counter read carries the exact declared function "
+                        + "signature; got " + load.resultType());
+                FunctionExecutionBinding binding = unit.functionBindings().get(
+                    new FunctionAllocationIdentity(value.id()));
+                check(binding instanceof FunctionExecutionBinding.DynamicFunctionValue
+                        dynamic && dynamic.materializingOpId().equals(load.opId())
+                        && dynamic.descriptor().equals(counterSignature()),
+                    "load " + load.opId() + " publishes exactly one dynamic "
+                        + "materialization of the declared signature correlated to "
+                        + "the load op; got " + binding);
+            }
+            checkEq(4, assignedReads.size(), "each assigned counter read allocates its "
+                + "own materialization identity; got " + assignedReads.size());
+            int assignedDynamicCalls = 0;
+            for (SemanticOp call : opsOfKind(unit, SemanticOpKind.CALL)) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic
+                        && assignedReads.contains(dynamic.callee().id())) {
+                    assignedDynamicCalls++;
+                    check(payload.mode() == CallMode.INDIRECT,
+                        "the dynamic callee is recorded under CallMode.INDIRECT; got "
+                            + payload.mode());
+                }
+            }
+            checkEq(2, assignedDynamicCalls, "the two condition calls of the assigned "
+                + "counter record the current-binding read as the Dynamic callee; "
+                + "got " + assignedDynamicCalls);
+
+            // The never-assigned counter: every read republishes the tracked
+            // identity (zero dynamic registrations) and the calls keep their
+            // statically resolved callee.
+            List<SemanticOp> stableLoads = new ArrayList<>();
+            for (SemanticOp load : opsOfKind(unit, SemanticOpKind.BINDING_LOAD)) {
+                if (load.payload() instanceof KindPayload.BindingLoadPayload payload
+                        && payload.binding().equals(stableCounter)) {
+                    stableLoads.add(load);
+                }
+            }
+            checkEq(4, stableLoads.size(), "the never-assigned counter carries four "
+                + "reads; got " + stableLoads.size());
+            Set<Long> stableIdentities = new LinkedHashSet<>();
+            for (SemanticOp load : stableLoads) {
+                ValueId value = (ValueId) load.result();
+                stableIdentities.add(value.id());
+                check(!(unit.functionBindings().get(
+                        new FunctionAllocationIdentity(value.id()))
+                    instanceof FunctionExecutionBinding.DynamicFunctionValue),
+                    "load " + load.opId() + " republishes the tracked identity "
+                        + "instead of registering a dynamic materialization");
+            }
+            checkEq(1, stableIdentities.size(), "every never-assigned counter read "
+                + "publishes the one tracked identity; got " + stableIdentities);
+            int stableDeclaredBodyCalls = 0;
+            for (SemanticOp call : opsOfKind(unit, SemanticOpKind.CALL)) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                if (payload.callee() instanceof KindPayload.CallCallee.Static staticCallee
+                        && staticCallee.binding()
+                            instanceof FunctionExecutionBinding.LoweredBody body) {
+                    LoweredFunction function = unit.functions().get(body.functionId());
+                    if (function != null && "two".equals(function.sourceName())) {
+                        stableDeclaredBodyCalls++;
+                    }
+                }
+            }
+            checkEq(2, stableDeclaredBodyCalls, "the two condition calls of the "
+                + "never-assigned counter resolve two's declared body statically; "
+                + "got " + stableDeclaredBodyCalls);
+        } finally {
+            deleteRecursively(project == null ? null : project.root());
+        }
+    }
+
+    /**
+     * The arity-adapted function-valued for-let counter: the loop-head
+     * declaration is an assignable-but-not-exact position like any other
+     * {@code let}, so exactly one {@code FUNCTION_ADAPT} adapts the shorter
+     * source to the declared counter signature, its result is the direct
+     * input of the position's own {@code VARIABLE_DECLARATION} boundary and
+     * the single {@code BINDING_INIT} commits the adapter identity — the
+     * counter cell therefore holds the target signature, and every read of
+     * it carries that exact descriptor.
+     */
+    static void testFunctionValuedForLetCounterArityAdapter() throws Exception {
+        System.out.println("-- an arity-adapted function-valued for-let counter: one "
+            + "FUNCTION_ADAPT at the loop head, wired into the declaration boundary "
+            + "and committed by the single INIT --");
+        RealProject project = null;
+        try {
+            project = compileProject("""
+                function one(): int { return 1; }
+                function two(): int { return 2; }
+                export function main(): null {
+                  let visits: int = 0;
+                  for (let f: (x: int) => int = one; f(0) === 1; f = two) {
+                    visits = visits + 1;
+                    if (visits > 4) { break; }
+                  }
+                  if (visits !== 1) {
+                    throw { code: "TEST_FAIL", message: "adapted counter" };
+                  }
+                  return null;
+                }
+                """);
+            SemanticLowerer.ProjectLoweringResult result = lower(project);
+            if (result.project() == null || !result.diagnostics().isEmpty()) {
+                fail("the arity-adapted counter lowers through the project entry "
+                    + "with zero CONSTRUCT_UNLOWERED: " + result.diagnostics());
+                return;
+            }
+            LoweredModuleUnit unit = onlyModule(result.project());
+            StructuredBodyTable table = result.tableOf(unit.moduleId());
+            List<SemanticOp> loops = opsOfKind(unit, SemanticOpKind.LOOP);
+            checkEq(1, loops.size(), "exactly one LOOP op; got " + loops.size());
+            if (loops.size() != 1) {
+                return;
+            }
+            KindPayload.LoopPayload loop = (KindPayload.LoopPayload) loops.get(0).payload();
+            BindingId counter = forLetCounterOf(unit, loop);
+            if (counter == null) {
+                return;
+            }
+            RuntimeDescriptor.Func targetSignature = new RuntimeDescriptor.Func(
+                List.of(RuntimeDescriptor.Int.INSTANCE), RuntimeDescriptor.Int.INSTANCE);
+            List<OpId> initMembers = table.blockOps().getOrDefault(
+                loop.initBlock(), List.of());
+            Map<OpId, SemanticOp> byId = opsById(unit);
+            SemanticOp adapt = null;
+            for (OpId member : initMembers) {
+                SemanticOp op = byId.get(member);
+                if (op != null && op.kind() == SemanticOpKind.FUNCTION_ADAPT) {
+                    adapt = op;
+                }
+            }
+            check(adapt != null, "the counter's loop-head declaration emits its "
+                + "FUNCTION_ADAPT inside the init block (the creation precedes the "
+                + "position's boundary)");
+            if (adapt == null) {
+                return;
+            }
+            // The update's reassignment of the same target signature adapts
+            // too: exactly one creation per adapted position, and the
+            // counter's own creation is the init block's.
+            checkEq(2, opsOfKind(unit, SemanticOpKind.FUNCTION_ADAPT).size(),
+                "exactly two FUNCTION_ADAPTs (the counter declaration and the "
+                    + "update's reassignment), never a duplicated creation");
+            ValueId adapterIdentity = (ValueId) adapt.result();
+            KindPayload.FunctionAdaptPayload adaptPayload =
+                (KindPayload.FunctionAdaptPayload) adapt.payload();
+            check(adaptPayload.sourceSignature().equals(new RuntimeDescriptor.Func(
+                    List.of(), RuntimeDescriptor.Int.INSTANCE))
+                    && adaptPayload.targetSignature().equals(targetSignature),
+                "the adapter carries the shorter source and the declared counter "
+                    + "signature; got " + adaptPayload.sourceSignature() + " -> "
+                    + adaptPayload.targetSignature());
+            FunctionExecutionBinding adapterBinding = unit.functionBindings().get(
+                new FunctionAllocationIdentity(adapterIdentity.id()));
+            check(adapterBinding instanceof FunctionExecutionBinding.AdapterBinding adapter
+                    && adapter.adaptOpId().equals(adapt.opId()),
+                "the adapter registers exactly one AdapterBinding keyed by its "
+                    + "published identity; got " + adapterBinding);
+
+            SemanticOp boundary = null;
+            SemanticOp init = null;
+            for (OpId member : initMembers) {
+                SemanticOp op = byId.get(member);
+                if (op != null && op.kind() == SemanticOpKind.BOUNDARY
+                        && op.payload()
+                            instanceof KindPayload.BoundaryPayload payload
+                        && payload.kind() == BoundaryKind.VARIABLE_DECLARATION) {
+                    boundary = op;
+                }
+                if (op != null && op.kind() == SemanticOpKind.BINDING_INIT
+                        && op.payload()
+                            instanceof KindPayload.BindingInitPayload payload
+                        && payload.binding().equals(counter)
+                        && payload.generation() == 0) {
+                    init = op;
+                }
+            }
+            check(boundary != null
+                    && boundary.payload()
+                        instanceof KindPayload.BoundaryPayload boundaryPayload
+                    && boundaryPayload.descriptor().equals(targetSignature)
+                    && boundaryPayload.input().equals(adapterIdentity)
+                    && boundary.failurePolicy() == FailurePolicyId.FUNCTION_SIGNATURE,
+                "the declaration boundary takes the adapter result as its direct "
+                    + "input under the declared counter signature");
+            check(init != null
+                    && init.payload()
+                        instanceof KindPayload.BindingInitPayload initPayload
+                    && initPayload.value().equals(adapterIdentity),
+                "the single INIT commits the adapter identity into the counter cell");
+
+            // Every counter read carries the target signature (the adapted
+            // cell's own descriptor), and the assigned counter's reads stay
+            // current-binding reads.
+            int counterReads = 0;
+            for (SemanticOp load : opsOfKind(unit, SemanticOpKind.BINDING_LOAD)) {
+                if (load.payload() instanceof KindPayload.BindingLoadPayload payload
+                        && payload.binding().equals(counter)) {
+                    counterReads++;
+                    check(load.resultType().equals(targetSignature),
+                        "the adapted counter read carries the target signature; got "
+                            + load.resultType());
+                }
+            }
+            check(counterReads >= 4, "the adapted counter carries its two carry loads "
+                + "and the two condition productions; got " + counterReads);
+        } finally {
+            deleteRecursively(project == null ? null : project.root());
+        }
+    }
+
+    /** The for-let counter's generation-0 binding (its ALLOC names the init block). */
+    private static BindingId forLetCounterOf(LoweredModuleUnit unit,
+                                             KindPayload.LoopPayload loop) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.BINDING_ALLOC
+                    && op.payload() instanceof KindPayload.BindingAllocPayload payload
+                    && payload.scope().equals(loop.initBlock())
+                    && payload.generation() == 0) {
+                return payload.binding();
+            }
+        }
+        fail("the for-let init block carries its counter's generation-0 ALLOC");
+        return null;
+    }
+
+    /** The declared {@code () => int} counter signature descriptor. */
+    private static RuntimeDescriptor counterSignature() {
+        return new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Int.INSTANCE);
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
@@ -1817,6 +2265,9 @@ public class BodyInvocationIdentityTest {
             testAssignedBindingCrossConsumerTraceEquality();
             testNeverAssignedFunctionBindingKeepsStaticCallee();
             testAssignedBindingKeepsArityExtension();
+            testFunctionValuedForLetCounter();
+            testFunctionValuedForLetCounterArityAdapter();
+            testForLetFunctionCounterCrossConsumerTraceEquality();
         } finally {
             deleteRecursively(storedExpression == null ? null : storedExpression.root());
             deleteRecursively(zeroCallSite == null ? null : zeroCallSite.root());

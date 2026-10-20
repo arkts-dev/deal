@@ -745,19 +745,19 @@ public class ProductionDispatchTest {
         """;
 
     /**
-     * The unrealized construct seed: a function-typed {@code for} counter
-     * (the per-iteration carry load's function identity is outside the
-     * closed lowering coverage, B5), so the production compile still fails
-     * the module with the named E6005 {@code CONSTRUCT_UNLOWERED} before any
-     * emission. The forward function-typed materialization this battery
-     * previously pinned as a later slice's construct is production-covered
-     * now: a module-level declaration's execution binding registers at the
-     * hoist, so a forward alias resolves its body.
+     * The unlowered-construct seed: a for-let update that is not the
+     * assignment chain the update block lowers ({@code ForUpdate ::=
+     * LeftHandSideExpression '=' AssignmentExpression}), so the production
+     * compile still fails the module with the named E6005
+     * {@code CONSTRUCT_UNLOWERED} before any emission. The function-typed
+     * for-counter this battery previously pinned as a later slice's
+     * construct is production-covered now: the counter's declaration takes
+     * the shared declaration-initializer production and its carry loads
+     * resolve the current binding.
      */
     private static final String UNREALIZED_CONSTRUCT_SOURCE = """
         export function main(): null {
-          let counter: (a: int) => int = function(a: int): int { return a; };
-          for (let f: (a: int) => int = counter; f(1) === 1; f = counter) {
+          for (let i: int = 0; i < 3; i + 1) {
             break;
           }
           return null;
@@ -2434,7 +2434,7 @@ public class ProductionDispatchTest {
             ProjectOutcome compile = productionCompile(project, "src/main.deal",
                 "out");
             check(compile.exitCode() != 0,
-                "the function-typed for-counter production compile fails "
+                "the unlowered for-let update shape production compile fails "
                     + "closed");
             check(compile.stderr().contains("E6005")
                     && compile.stderr().contains("CONSTRUCT_UNLOWERED"),
@@ -2634,7 +2634,7 @@ public class ProductionDispatchTest {
 
         checkBytesProductionCoverage();
         checkTimeNowMillisCoverage();
-        checkLaterSliceConstruct("function-typed for-counter",
+        checkLaterSliceConstruct("for-let update outside the assignment chain",
             Map.of("src/main.deal", UNREALIZED_CONSTRUCT_SOURCE),
             "CONSTRUCT_UNLOWERED");
         checkBuiltinErrorConstruction();
@@ -7212,6 +7212,101 @@ public class ProductionDispatchTest {
                 Map.of(), "host-fixtures/function_binding.d.deal"));
 
     /**
+     * The function-valued for-let counter subject (ISSUE-0864): the
+     * declaration initializer, the update's reassignment, an omitted update
+     * with a body assignment, the arity-adapted initializer, the captured
+     * per-iteration value and a recursive function value, each bounded by a
+     * visit guard so a stale callee or a lost carry fails the exact count
+     * instead of running away. The observed transcript is the single
+     * {@code ok} line: every row throws its own {@code TEST_FAIL} error
+     * when the counter's value or call target is wrong.
+     */
+    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = """
+        import * as console from "std/console";
+
+        function one(): int { return 1; }
+        function two(): int { return 2; }
+
+        function fib(n: int): int {
+          if (n < 2) { return n; }
+          return fib(n - 1) + fib(n - 2);
+        }
+
+        export function main(): null {
+          let visits: int = 0;
+          for (let f: () => int = one; f() === 1; f = two) {
+            visits = visits + 1;
+            if (visits > 4) { break; }
+          }
+          if (visits !== 1) {
+            throw { code: "TEST_FAIL", message: "the update did not select two" };
+          }
+
+          let bodyVisits: int = 0;
+          for (let f: () => int = one; f() === 1;) {
+            bodyVisits = bodyVisits + 1;
+            f = two;
+            if (bodyVisits > 4) { break; }
+          }
+          if (bodyVisits !== 1) {
+            throw { code: "TEST_FAIL", message: "the body assignment did not reach the test" };
+          }
+
+          let adapted: int = 0;
+          for (let f: (x: int) => int = one; f(0) === 1; f = two) {
+            adapted = adapted + 1;
+            if (adapted > 4) { break; }
+          }
+          if (adapted !== 1) {
+            throw { code: "TEST_FAIL", message: "the adapted counter visited wrongly" };
+          }
+
+          let captured: int = 0;
+          for (let f: () => int = one; captured < 2; f = two) {
+            if (f() !== (captured + 1)) {
+              throw { code: "TEST_FAIL", message: "the per-iteration value is stale" };
+            }
+            captured = captured + 1;
+          }
+          if (captured !== 2) {
+            throw { code: "TEST_FAIL", message: "the per-iteration rows did not finish" };
+          }
+
+          let recursive: int = 0;
+          for (let f: (n: int) => int = fib; f(5) === 5; f = one) {
+            recursive = recursive + 1;
+            if (recursive > 4) { break; }
+          }
+          if (recursive !== 1) {
+            throw { code: "TEST_FAIL", message: "the recursive counter visited wrongly" };
+          }
+
+          console.log("ok");
+          return null;
+        }
+        """;
+
+    /**
+     * The function-valued for-let counter on every production lane: the
+     * subject compiles clean through the release-owned CLI and its generated
+     * Java artifact compiles with {@code javac --release 25 -proc:none}, and
+     * each lane executes the artifact under its real toolchain with the one
+     * pinned {@code ok} line, an empty stderr and exit 0 — so a stale
+     * callee (a read of the declaration's initializer instead of the
+     * binding) or a lost carry changes the observed counts and fails the
+     * row.
+     */
+    private static void testForLetFunctionCounterThreeLanes() throws Exception {
+        System.out.println("-- the function-valued for-let counter on LuaJIT, the "
+            + "JVM and the JS lane (clean public compile, generated Java "
+            + "compile, executed counts) --");
+        checkPublicProject("function-valued for-let counter",
+            "production-for-let-function-counter-",
+            Map.of("src/main.deal", FOR_LET_FUNCTION_COUNTER_SOURCE),
+            List.of("js", "luajit", "jvm"));
+    }
+
+    /**
      * The current function-value call selection on the published artifacts of
      * all three lanes: the three corpus subjects are published through the
      * release-owned CLI for each backend and executed under the real
@@ -7385,6 +7480,7 @@ public class ProductionDispatchTest {
         testRetainedCornerCaseDiamond();
         testRetainedCornerCaseNegatives();
         testFunctionBindingCurrentValueThreeLanes();
+        testForLetFunctionCounterThreeLanes();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

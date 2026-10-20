@@ -1,0 +1,284 @@
+// @spec: Control flow — For (C-style)
+// @description: A function-valued for-let counter initializes, re-tests, reassigns and carries per-iteration values
+// @expected: runtime-ok
+// @features: control-flow, for, functions, closures, arity, recursion
+
+function one(): int { return 1; }
+function two(): int { return 2; }
+function makeSeven(): () => int { return function(): int { return 7; }; }
+
+// The declaration initializer and the update's reassignment: the first test
+// observes one(), the update stores two, and the re-test observes the
+// current binding (one body visit). The guard binding bounds the loop so a
+// stale-call regression that keeps testing one() fails the exact count
+// instead of running away.
+function testDeclarationInitializerAndReassignment(): null {
+  let visits: int = 0;
+  for (let f: () => int = one; f() === 1; f = two) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the function-typed counter visited wrongly" };
+  }
+  return;
+}
+
+// The function-expression initializer: the closure value is the counter's
+// first value and the update replaces it.
+function testExpressionInitializer(): null {
+  let visits: int = 0;
+  for (let f: () => int = function(): int { return 7; }; f() === 7; f = one) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the expression-initialized counter visited wrongly" };
+  }
+  return;
+}
+
+// The omitted update: a body assignment replaces the counter, so the re-test
+// reads the current binding (one body visit) instead of the initializer.
+function testOmittedUpdateWithBodyAssignment(): null {
+  let visits: int = 0;
+  for (let f: () => int = one; f() === 1;) {
+    visits = visits + 1;
+    f = two;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the update-less counter lost the body assignment" };
+  }
+  return;
+}
+
+// A never-assigned counter keeps its value across iterations: the loop
+// re-tests the same function value every time (captured per-iteration
+// incarnations included).
+function testNeverAssignedCounter(): null {
+  let visits: int = 0;
+  for (let f: () => int = two; f() === 2;) {
+    visits = visits + 1;
+    if (visits === 3) { break; }
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "the never-assigned counter stopped re-testing" };
+  }
+  return;
+}
+
+// A closure created in an iteration captures that iteration's counter
+// incarnation: the stored functions observe one, then two.
+function testCapturedPerIterationValues(): null {
+  let fs: (() => int)[] = [
+    function(): int { return -1; },
+    function(): int { return -1; }
+  ];
+  let k: int = 0;
+  let visits: int = 0;
+  for (let f: () => int = one; visits < 2; f = two) {
+    fs[k] = function(): int { return f(); };
+    k = k + 1;
+    visits = visits + 1;
+  }
+  if (fs[0]() !== 1 || fs[1]() !== 2) {
+    throw { code: "TEST_FAIL", message: "the per-iteration captures are not fresh" };
+  }
+  return;
+}
+
+// The alias initializer reads another function-typed binding, and the loop's
+// counter is a distinct binding (the alias keeps its own value).
+function testAliasInitializer(): null {
+  let alias: () => int = two;
+  let visits: int = 0;
+  for (let f: () => int = alias; f() === 2; f = one) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1 || alias() !== 2) {
+    throw { code: "TEST_FAIL", message: "the alias-initialized counter visited wrongly" };
+  }
+  return;
+}
+
+// A returned closure as the initializer: the counter holds a call-result
+// function value and the update replaces it with a declaration value.
+function testCallResultInitializer(): null {
+  let visits: int = 0;
+  for (let f: () => int = makeSeven(); f() === 7; f = one) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the call-result counter visited wrongly" };
+  }
+  return;
+}
+
+// The arity extension: a shorter source is adapted to the declared target at
+// the loop head, and every later assignment adapts again, so a dropped
+// trailing argument never reaches the source body.
+function testArityAdapterCounter(): null {
+  let visits: int = 0;
+  for (let f: (x: int) => int = one; f(0) === 1; f = two) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the adapted counter visited wrongly" };
+  }
+  return;
+}
+
+// The continue path runs the update and the re-test: the body's continue on
+// the first visit still transfers the iteration's counter value, so the
+// second test observes the reassigned two and the loop ends after one visit.
+function testContinueRunsUpdate(): null {
+  let visits: int = 0;
+  for (let f: () => int = one; f() === 1; f = two) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+    continue;
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the continue path lost the counter update" };
+  }
+  return;
+}
+
+// A break skips the update: the counter is never reassigned, so the loop
+// exits on the source break after exactly one visit.
+function testBreakSkipsUpdate(): null {
+  let visits: int = 0;
+  for (let f: () => int = one; f() === 1; f = two) {
+    visits = visits + 1;
+    break;
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the break path ran the counter update" };
+  }
+  return;
+}
+
+// Recursive function values keep their own bodies: a direct-recursive value
+// and a mutually recursive pair stay callable through the counter, and the
+// counter's reassignment selects the current one.
+function fib(n: int): int {
+  if (n < 2) { return n; }
+  return fib(n - 1) + fib(n - 2);
+}
+
+function isEven(n: int): boolean {
+  if (n === 0) { return true; }
+  return isOdd(n - 1);
+}
+
+function isOdd(n: int): boolean {
+  if (n === 0) { return false; }
+  return isEven(n - 1);
+}
+
+function testRecursiveCounterValues(): null {
+  let visits: int = 0;
+  for (let f: (n: int) => int = fib; f(5) === 5; f = one) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the recursive counter visited wrongly" };
+  }
+  return;
+}
+
+function testMutuallyRecursiveCounterValues(): null {
+  let visits: int = 0;
+  for (let f: (n: int) => boolean = isEven; f(10); f = isOdd) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the mutually recursive counter visited wrongly" };
+  }
+  return;
+}
+
+// The loop-head let is not visible to its own initializer: the initializer's
+// f resolves the enclosing binding, and the loop leaves that binding
+// untouched.
+function testLexicalScopeOfTheCounter(): null {
+  let f: () => int = two;
+  let visits: int = 0;
+  for (let f: () => int = one; f() === 1;) {
+    visits = visits + 1;
+    if (visits === 2) { break; }
+  }
+  if (visits !== 2 || f() !== 2) {
+    throw { code: "TEST_FAIL", message: "the counter leaked into the enclosing scope" };
+  }
+  return;
+}
+
+function testShadowedInitializerReadsTheEnclosingBinding(): null {
+  let f: () => int = one;
+  let visits: int = 0;
+  for (let f: () => int = f; f() === 1;) {
+    visits = visits + 1;
+    if (visits === 2) { break; }
+  }
+  if (visits !== 2) {
+    throw { code: "TEST_FAIL", message: "the shadowed initializer did not read the enclosing binding" };
+  }
+  return;
+}
+
+// The conversion intrinsic as the counter's value: the seeded identity
+// crosses the loop-head declaration and every read republishes it under the
+// intrinsic's own declared signature.
+function testIntrinsicCounter(): null {
+  let visits: int = 0;
+  for (let f: (x: number) => int = int; f(1.0) === 1;) {
+    visits = visits + 1;
+    break;
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the intrinsic counter visited wrongly" };
+  }
+  return;
+}
+
+// The nullable function variant: the counter's declared type is a nullable
+// function and the update stores the null value, so the re-test ends the
+// loop without ever calling a possibly-null value.
+function testNullableFunctionCounter(): null {
+  let visits: int = 0;
+  for (let f: (() => int) | null = one; f !== null; f = null) {
+    visits = visits + 1;
+    if (visits > 4) { break; }
+  }
+  if (visits !== 1) {
+    throw { code: "TEST_FAIL", message: "the nullable counter visited wrongly" };
+  }
+  return;
+}
+
+export function main(): null {
+  testDeclarationInitializerAndReassignment();
+  testExpressionInitializer();
+  testOmittedUpdateWithBodyAssignment();
+  testNeverAssignedCounter();
+  testCapturedPerIterationValues();
+  testAliasInitializer();
+  testCallResultInitializer();
+  testArityAdapterCounter();
+  testContinueRunsUpdate();
+  testBreakSkipsUpdate();
+  testRecursiveCounterValues();
+  testMutuallyRecursiveCounterValues();
+  testLexicalScopeOfTheCounter();
+  testShadowedInitializerReadsTheEnclosingBinding();
+  testIntrinsicCounter();
+  testNullableFunctionCounter();
+  return null;
+}

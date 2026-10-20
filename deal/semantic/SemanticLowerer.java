@@ -6147,6 +6147,23 @@ public final class SemanticLowerer {
                 new KindPayload.BindingAllocPayload(binding, currentBlock(), true,
                     cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            lowerDeclaredInitializer(decl, binding, incarnation);
+        }
+
+        /**
+         * The shared declaration-initializer production behind every
+         * {@code let} position this walk lowers — the statement walk's
+         * declaration arm and the for-let counter's loop-head
+         * declaration (the counter is a {@code let} of the for-head
+         * scope, and the grammar imposes no initializer-type
+         * restriction on it): the initializer's value ops (the adapted
+         * production at an assignable-but-not-exact function position),
+         * the declaration boundary of an annotated declaration, the
+         * incarnation's tracked function identity, and exactly one
+         * generation-0 {@code BINDING_INIT}.
+         */
+        private void lowerDeclaredInitializer(VariableDeclaration decl, BindingId binding,
+                                              BindingCoreIncarnation incarnation) {
             if ((shapeMapAnalysis || e7Calls) && declaredTypeOf(decl) instanceof Type.Func) {
                 Type sourceType = checkedType(decl.initializer());
                 if (AdapterCreationRule.variableDisposition(sourceType,
@@ -6159,7 +6176,7 @@ public final class SemanticLowerer {
                     // VARIABLE_DECLARATION boundary chain (an inferred
                     // declaration's result feeds its BINDING_INIT
                     // directly).
-                    lowerAdaptedVarDecl(decl, binding, incarnation);
+                    lowerAdaptedDeclInitializer(decl, binding, incarnation);
                     return;
                 }
             }
@@ -6291,7 +6308,10 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The shape-map child's adapted {@code let} declaration (B6-B9):
+         * The shape-map child's adapted {@code let} declaration production
+         * (B6-B9), shared by the statement walk's declaration arm and the
+         * for-let counter's loop-head declaration (the position's
+         * {@code BINDING_ALLOC} is the caller's):
          * the closed mode map selects exactly one mode from checker
          * facts (B7), the per-mode payload is built from birth (B8),
          * and exactly one {@code FUNCTION_ADAPT} op is emitted before
@@ -6326,8 +6346,8 @@ public final class SemanticLowerer {
          * the shape-map child's thunk arm).</p>
          *
          */
-        private void lowerAdaptedVarDecl(VariableDeclaration decl, BindingId binding,
-                                         BindingCoreIncarnation incarnation) {
+        private void lowerAdaptedDeclInitializer(VariableDeclaration decl, BindingId binding,
+                                                 BindingCoreIncarnation incarnation) {
             Type.Func sourceType = (Type.Func) checkedType(decl.initializer());
             Type.Func targetType = (Type.Func) declaredTypeOf(decl);
             RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
@@ -7178,13 +7198,18 @@ public final class SemanticLowerer {
             VariableDeclaration decl = varDecl.decl();
             BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);
             Type counterType = counterTypeOf(statement, decl);
-            if (closureCore
-                    && counterDescriptor(counterType, decl)
-                        instanceof RuntimeDescriptor.Func) {
-                throw new ConstructUnlowered("function-typed for-let counter (the "
-                    + "per-iteration carry load's function identity is the registry "
-                    + "child's resolution, B5)", statement.span());
-            }
+            // The counter's own result descriptor (D2): the declared type
+            // annotation when the counter declares one, the counter
+            // declaration itself for an inferred type. The function-typed
+            // row is an ordinary declaration descriptor — the grammar
+            // imposes no initializer-type restriction on a for-head `let`
+            // (docs/spec-v1.3.md §For, C-style: `ForInit ::= 'let'
+            // Identifier TypeAnnotation? '=' Expression`), so the counter
+            // cell, its carry loads and the calls through it carry the
+            // exact checked signature.
+            RuntimeDescriptor counterResultDescriptor = counterDescriptor(counterType, decl);
+            boolean functionCounter = closureCore
+                && counterResultDescriptor instanceof RuntimeDescriptor.Func;
             BlockId initBlock = allocateBlock();
             BlockId bodyBlock = allocateBlock();
             BlockId updateBlock = allocateBlock();
@@ -7225,12 +7250,23 @@ public final class SemanticLowerer {
                 new KindPayload.BindingAllocPayload(counter, initBlock, true,
                     cellKinds.cellKindOf(counterIncarnation), INITIAL_LOOP_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId initializer = lowerExpression(decl.initializer());
-            registerBinding(decl.name(), counter, counterIncarnation);
-            emitUserNullOp(SemanticOpKind.BINDING_INIT,
-                new KindPayload.BindingInitPayload(counter, INITIAL_LOOP_GENERATION,
-                    initializer),
-                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            if (functionCounter) {
+                // A function-typed counter is a `let` declaration of the
+                // loop-head scope: the shared declaration-initializer
+                // production stores a value of the declared signature at
+                // the position (the adapted production at an
+                // assignable-but-not-exact initializer, the annotated
+                // declaration boundary and the tracked function identity)
+                // and registers the counter after its own initializer.
+                lowerDeclaredInitializer(decl, counter, counterIncarnation);
+            } else {
+                ValueId initializer = lowerExpression(decl.initializer());
+                registerBinding(decl.name(), counter, counterIncarnation);
+                emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                    new KindPayload.BindingInitPayload(counter, INITIAL_LOOP_GENERATION,
+                        initializer),
+                    decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            }
             ValueId condition;
             if (statement.condition().isPresent()) {
                 condition = fullProgram
@@ -7274,14 +7310,22 @@ public final class SemanticLowerer {
                 new KindPayload.BindingAllocPayload(counter, bodyBlock, true,
                     cellKinds.cellKindOf(perIteration), PER_ITERATION_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId carry = emitSyntheticValueOp(SemanticOpKind.BINDING_LOAD,
-                new KindPayload.BindingLoadPayload(counter, INITIAL_LOOP_GENERATION),
-                decl.span(), counterDescriptor(counterType, decl),
-                FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId carry = emitForLetCounterLoad(counter, decl.name(),
+                INITIAL_LOOP_GENERATION, decl.span(), counterResultDescriptor);
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
                 new KindPayload.BindingInitPayload(counter, PER_ITERATION_GENERATION,
                     carry),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            if (functionCounter) {
+                // The per-iteration cell's function identity is the value
+                // the carry load published: the cell's INIT commits it, so
+                // a body read (and a call through it) resolves the same
+                // identity — identity preservation, exactly like the
+                // declaration arm. A body store updates this entry through
+                // the assignment chain, and an assigned counter's reads
+                // never consult it ({@link #assignedFunctionBinding}).
+                functionIdentity.put(perIteration, carry);
+            }
             statementWalk.walk(statement.body().statements(), false);
             // The composite marking of the for-let loop arm (D3): a
             // literal-true condition whose body exits only by
@@ -7325,10 +7369,8 @@ public final class SemanticLowerer {
             // snapshot). Return and throw leave the body without reaching
             // this block (no update runs), and a `break` jumps past it.
             blockStack.push(updateBlock);
-            ValueId carriedBodyValue = emitSyntheticValueOp(SemanticOpKind.BINDING_LOAD,
-                new KindPayload.BindingLoadPayload(counter, PER_ITERATION_GENERATION),
-                decl.span(), counterDescriptor(counterType, decl),
-                FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId carriedBodyValue = emitForLetCounterLoad(counter, decl.name(),
+                PER_ITERATION_GENERATION, decl.span(), counterResultDescriptor);
             emitUserNullOp(SemanticOpKind.BINDING_STORE,
                 new KindPayload.BindingStorePayload(counter, INITIAL_LOOP_GENERATION,
                     carriedBodyValue),
@@ -7351,6 +7393,45 @@ public final class SemanticLowerer {
             blockStack.pop();
             popBindingFrame();
             checkerScopeNodes.pop();
+        }
+
+        /**
+         * One synthetic for-let counter carry load (the body-top
+         * generation-0 read and the update block's generation-1 read) with
+         * the shared function-typed resolution every function-typed cell
+         * read uses: a function-typed counter the declaring function body
+         * assigns anywhere — the loop's own update included — carries no
+         * statically tracked allocation identity, so the load publishes the
+         * producer rule's dynamic materialization keyed by its own identity
+         * (M2 item 2's typed-binding-load arm: the current-binding read the
+         * calls resolve at execution), while a never-assigned
+         * function-typed counter republishes the tracked allocation identity
+         * (identity preservation; R-FUNCTION-BINDING holds by construction).
+         * A non-function counter keeps the plain synthetic load: no
+         * registration, a fresh value identity.
+         */
+        private ValueId emitForLetCounterLoad(BindingId counter, String name,
+                                              long generation, Span span,
+                                              RuntimeDescriptor descriptor) {
+            ValueId value = descriptor instanceof RuntimeDescriptor.Func
+                    && !assignedBinding(counter, name)
+                ? identityOfIncarnation(counter, generation) : null;
+            boolean trackedIdentity = value != null;
+            if (!trackedIdentity) {
+                value = ids.nextValueId(module, nextOrdinal++, 0);
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.SYNTHETIC, anchor, null);
+            emit(buildOp(opId, SemanticOpKind.BINDING_LOAD,
+                new KindPayload.BindingLoadPayload(counter, generation), value,
+                descriptor, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+                origin));
+            if (!trackedIdentity) {
+                registerDynamicMaterialization(value, opId, descriptor);
+            }
+            return value;
         }
 
         private void lowerBindingForOf(ForOfStatement statement) {
@@ -8007,8 +8088,18 @@ public final class SemanticLowerer {
          * the spec's capture-by-binding rule requires.
          */
         private boolean assignedFunctionBinding(FrameEntry entry) {
-            Set<String> assigned = assignedNamesOfBinding.get(entry.cell().id);
-            return assigned != null && assigned.contains(entry.cell().name);
+            return assignedBinding(entry.cell().id, entry.cell().name);
+        }
+
+        /**
+         * True iff the named binding of this identity is assigned anywhere
+         * in its declaring function body (the {@link #assignedFunctionBinding}
+         * fact, addressed by cell identity and name — the form the
+         * for-let counter's synthetic carry loads resolve).
+         */
+        private boolean assignedBinding(BindingId binding, String name) {
+            Set<String> assigned = assignedNamesOfBinding.get(binding);
+            return assigned != null && assigned.contains(name);
         }
 
         /** Pushes one binding-environment scope frame (innermost first). */

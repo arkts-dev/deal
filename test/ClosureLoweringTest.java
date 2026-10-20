@@ -32,6 +32,7 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
+import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailurePolicyId;
@@ -997,6 +998,130 @@ public class ClosureLoweringTest {
     }
 
     /**
+     * The function-valued for-let counter (ISSUE-0864): the loop-head
+     * {@code let} of the binding-core window admits a function type, its
+     * declaration carries the annotated {@code VARIABLE_DECLARATION}
+     * boundary on the function policy before the single INIT, and the two
+     * synthetic carry loads resolve like every other function-typed cell
+     * read — a never-assigned counter republishes its tracked identity (no
+     * registration), an assigned counter publishes its own dynamic
+     * materialization (the current-binding read).
+     */
+    static void testForLetFunctionCounterRegistration() {
+        System.out.println("-- function-valued for-let counter: declaration boundary, "
+            + "tracked identity and current-binding carry loads --");
+
+        SemanticLowerer.ClosureCoreResult stable = lowerSlice("""
+            function one(): null {}
+            function outer(): null {
+              let guard: int = 0;
+              for (let f: () => null = one; guard < 2;) {
+                guard = guard + 1;
+              }
+            }
+            """);
+        checkForLetFunctionCounter(stable, false);
+
+        SemanticLowerer.ClosureCoreResult assigned = lowerSlice("""
+            function one(): null {}
+            function two(): null {}
+            function outer(): null {
+              let guard: int = 0;
+              for (let f: () => null = one; guard < 2; f = two) {
+                guard = guard + 1;
+              }
+            }
+            """);
+        checkForLetFunctionCounter(assigned, true);
+    }
+
+    /** One function-typed for-let slice's declaration and carry registrations. */
+    private static void checkForLetFunctionCounter(
+            SemanticLowerer.ClosureCoreResult result, boolean assigned) {
+        if (result == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            if (result != null) {
+                fail("the function-typed for-let slice lowers to a validated unit: "
+                    + result.lowering().diagnostics());
+            }
+            return;
+        }
+        List<SemanticOp> ops = result.lowering().unit().ops();
+        SemanticLowerer.BindingCoreBinding f = fact(result.bindingFacts(), "f");
+        if (f == null) {
+            return;
+        }
+        List<SemanticOp> loops = ofKind(ops, SemanticOpKind.LOOP);
+        check(loops.size() == 1, "exactly one LOOP op; got " + loops.size());
+        if (loops.size() != 1) {
+            return;
+        }
+        KindPayload.LoopPayload loop = (KindPayload.LoopPayload) loops.get(0).payload();
+        List<OpId> initMembers = result.lowering().table().blockOps()
+            .getOrDefault(loop.initBlock(), List.of());
+        SemanticOp boundary = null;
+        SemanticOp init = null;
+        for (SemanticOp op : ops) {
+            if (!initMembers.contains(op.opId())) {
+                continue;
+            }
+            if (op.kind() == SemanticOpKind.BOUNDARY
+                    && op.payload() instanceof KindPayload.BoundaryPayload payload
+                    && payload.kind() == BoundaryKind.VARIABLE_DECLARATION) {
+                boundary = op;
+            }
+            if (op.kind() == SemanticOpKind.BINDING_INIT
+                    && op.payload() instanceof KindPayload.BindingInitPayload payload
+                    && payload.binding().equals(f.binding())
+                    && payload.generation() == SemanticLowerer.INITIAL_LOOP_GENERATION) {
+                init = op;
+            }
+        }
+        check(boundary != null
+                && boundary.payload() instanceof KindPayload.BoundaryPayload payload
+                && payload.descriptor().equals(new RuntimeDescriptor.Func(List.of(),
+                    RuntimeDescriptor.Null.INSTANCE))
+                && boundary.failurePolicy() == FailurePolicyId.FUNCTION_SIGNATURE,
+            "the counter's annotated declaration boundary carries the declared "
+                + "function signature on the function policy");
+        check(init != null,
+            "the counter's single generation-0 INIT commits its initial value");
+        if (init == null) {
+            return;
+        }
+        KindPayload.BindingInitPayload initPayload =
+            (KindPayload.BindingInitPayload) init.payload();
+        int carryLoads = 0;
+        for (SemanticOp op : ofKind(ops, SemanticOpKind.BINDING_LOAD)) {
+            if (!(op.payload() instanceof KindPayload.BindingLoadPayload payload)
+                    || !payload.binding().equals(f.binding())) {
+                continue;
+            }
+            carryLoads++;
+            FunctionExecutionBinding binding = result.lowering().unit()
+                .functionBindings().get(new FunctionAllocationIdentity(
+                    ((ValueId) op.result()).id()));
+            if (assigned) {
+                check(binding instanceof FunctionExecutionBinding.DynamicFunctionValue
+                        dynamic && dynamic.materializingOpId().equals(op.opId()),
+                    "the assigned counter's read " + op.opId() + " publishes exactly "
+                        + "one dynamic materialization correlated to the load; got "
+                        + binding);
+            } else {
+                check(!(binding instanceof FunctionExecutionBinding.DynamicFunctionValue),
+                    "the never-assigned counter's read " + op.opId() + " republishes "
+                        + "the tracked identity instead of registering a dynamic "
+                        + "materialization; got " + binding);
+                check(((ValueId) op.result()).equals(initPayload.value()),
+                    "the never-assigned counter's read " + op.opId() + " publishes "
+                        + "the initializer's identity (identity preservation)");
+            }
+        }
+        check(carryLoads >= 2, "the counter carries its two synthetic carry loads; got "
+            + carryLoads);
+    }
+
+    /**
      * Narrowed flow types are never captured: the capture list carries
      * {@code BindingId}s only (no type payload exists per capture), the
      * {@code LoweredFunction}/{@code CLOSURE_NEW} carry the declared
@@ -1865,6 +1990,7 @@ public class ClosureLoweringTest {
         testCaptureOfLaterDeclaredModuleFunctionResolvesToHoistedAlloc(hoisted);
         testForBodyClosureCapturesPerIterationIncarnation();
         testForLetBodyCarryTransfer();
+        testForLetFunctionCounterRegistration();
         testNarrowedFlowTypesNeverCaptured();
         testCellKindClosureCaptureArm();
         testDeterminism(hoistedSlice, hoisted);

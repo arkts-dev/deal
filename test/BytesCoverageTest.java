@@ -1302,18 +1302,18 @@ public class BytesCoverageTest {
     }
 
     /**
-     * The scratch unrealized-construct seed: a function-typed {@code for}
-     * counter (the per-iteration carry load's function identity is outside
-     * the closed lowering coverage, B5), so the production compile still
-     * fails closed with the named E6005 {@code CONSTRUCT_UNLOWERED}. The
-     * forward function-typed materialization this seed previously named is
-     * production-covered now (a module-level declaration's execution
-     * binding registers at the hoist, so a forward alias resolves).
+     * The scratch unlowered-construct seed: a for-let update that is not the
+     * assignment chain the update block lowers ({@code ForUpdate ::=
+     * LeftHandSideExpression '=' AssignmentExpression}), so the production
+     * compile still fails closed with the named E6005
+     * {@code CONSTRUCT_UNLOWERED}. The function-typed for-counter this seed
+     * previously named is production-covered now: the counter's declaration
+     * takes the shared declaration-initializer production and its carry
+     * loads resolve the current binding.
      */
     private static final String GUARD_SEED = """
         export function main(): null {
-          let counter: (a: int) => int = function(a: int): int { return a; };
-          for (let f: (a: int) => int = counter; f(1) === 1; f = counter) {
+          for (let i: int = 0; i < 3; i + 1) {
             break;
           }
           return null;
