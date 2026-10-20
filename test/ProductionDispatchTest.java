@@ -56,6 +56,17 @@ import java.util.stream.Stream;
 
 public class ProductionDispatchTest {
 
+    /**
+     * This JVM's own {@code v12-corner-case-*} scratch-root marker. The
+     * raw-profile control observes the production scratch roots the drive
+     * allocates; without a JVM-private marker a concurrent test process in
+     * another checkout (whose roots share {@code java.io.tmpdir}) would be
+     * observed as this process's allocation and make the before/after
+     * snapshot racy.
+     */
+    private static final String V12_SCRATCH_TOKEN =
+        java.util.UUID.randomUUID().toString().replace("-", "");
+
     private static int passed = 0;
     private static int failed = 0;
 
@@ -5478,7 +5489,8 @@ public class ProductionDispatchTest {
             for (String backend : jsEntry && entryContract
                     ? List.of("luajit", "jvm", "js") : List.of("luajit", "jvm")) {
                 Path project = Files.createTempDirectory(
-                    "v12-corner-case-" + name + "-" + backend + "-");
+                    "v12-corner-case-" + name + "-" + backend + "-"
+                        + V12_SCRATCH_TOKEN + "-");
                 try {
                     write(project, "src/main.deal", source);
                     write(project, "deal.json", switch (backend) {
@@ -5667,12 +5679,22 @@ public class ProductionDispatchTest {
         }
     }
 
-    /** The owned {@code v12-corner-case-*} scratch roots in a directory. */
+    /**
+     * This JVM's owned {@code v12-corner-case-*} scratch roots in a
+     * directory. The name carries {@link #V12_SCRATCH_TOKEN}, so a
+     * concurrent test process in another checkout (whose roots share
+     * {@code java.io.tmpdir}) is never mistaken for an allocation of this
+     * run.
+     */
     private static Set<Path> v12CornerCaseScratchRoots(Path parent)
             throws Exception {
+        String marker = "-" + V12_SCRATCH_TOKEN + "-";
         try (Stream<Path> listing = Files.list(parent)) {
-            return listing.filter(p -> p.getFileName().toString()
-                    .startsWith("v12-corner-case-"))
+            return listing.filter(p -> {
+                    String entry = p.getFileName().toString();
+                    return entry.startsWith("v12-corner-case-")
+                        && entry.contains(marker);
+                })
                 .collect(java.util.stream.Collectors.toSet());
         }
     }
