@@ -1,0 +1,69 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared host class crosses the asynchronous host boundary in both directions: the statically resolved and the runtime-resolved async host call preserve the class argument's nested class field, array field, optional array and present null, and the host-invoked function argument's declared result; an async class completion delivers a nested class field, an array field, an absent optional that stays absent and a present null that stays present (both read as language null and distinguished by has); a host-returned class-element array and a class-field array preserve their elements and length, and two slots naming one host instance are one DEAL value.
+// @expected: runtime-ok
+// @features: modules, host-abi, async-await, classes, arrays, functions
+
+import * as host from "host/carrierasync";
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+function bump(x: int): int {
+  let y: int = x + 1;
+  return y;
+}
+
+function pick(): async (s: host.ServerConfig, g: (x: int) => int) => string {
+  return host.describeAsync;
+}
+
+export async function test_async_class_parameter(): null {
+  let cfg: host.ServerConfig = {
+    port: 9090,
+    endpoint: { path: "/api" },
+    parts: ["p1", "p2"],
+    tags: ["dev"],
+    note: null,
+  };
+  let direct: string = await host.describeAsync(cfg, bump);
+  check(direct === "SC|9090|/api|2:p1|1:dev|null|true:42", "the declared async host call preserves the class and function arguments");
+  let dyn: async (s: host.ServerConfig, g: (x: int) => int) => string = pick();
+  let runtime: string = await dyn(cfg, bump);
+  check(runtime === direct, "the runtime-resolved async host call preserves the class and function arguments");
+  return null;
+}
+
+export async function test_async_class_completion(): null {
+  let made: host.ServerConfig = await host.make();
+  check(made.port === 4242, "the async class completion port");
+  check(made.endpoint.path === "/made", "the async class completion nested class field");
+  check(made.parts.length === 2, "the async class completion array field length");
+  check(made.parts[0] === "a" && made.parts[1] === "b", "the async class completion array field elements");
+  let tags: string[] | null = made.tags;
+  check(tags === null, "the async class completion absent optional");
+  check(!has(made.tags), "the async class completion absent optional stays absent");
+  let note: string | null = made.note;
+  check(note === null, "the async class completion present null");
+  check(has(made.note), "the async class completion present null stays present");
+  return null;
+}
+
+export function test_class_arrays(): null {
+  let all: host.ServerConfig[] = host.makeAll();
+  check(all.length === 2, "the class-element array length");
+  check(all[0] === all[1], "two slots naming one host instance are one DEAL value");
+  check(all[0].endpoint.path === "/one", "the class-element array nested class field");
+  let farm: host.Farm = host.makeFarm();
+  check(farm.servers.length === 1, "the class-field array length");
+  check(farm.servers[0].port === 12, "the class-field array element");
+  check(farm.primary.path === "/p", "the class-field array nested class");
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

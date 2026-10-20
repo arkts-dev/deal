@@ -1,0 +1,10 @@
+// @expected: companion
+// @description: Classified support module — compiled by the companion
+// catalog when a parent conformance fixture imports it. Exports one
+// function value whose signature is not a declared position of any host
+// declaration, so its host-facing wrapper can only come from the emitted
+// function-shape metadata.
+export function bump(x: int): int {
+  let y: int = x + 1;
+  return y;
+}

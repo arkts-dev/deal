@@ -1,0 +1,28 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+// Host fixture declaration for the three-lane host-carrier table-member
+// conformance test (luajit-host-carrier-projection D8 V2 (b)). The
+// declared class carries a function-typed field, a class-element array
+// field and a table-typed field; the exports declare a table-typed return
+// and parameter, and the async export that drives the runtime-resolved
+// async host call with a class and a function argument.
+
+export class Widget {
+  label: string;
+  weight: int;
+  action: (x: int) => int;
+}
+
+export class Board {
+  title: string;
+  widgets: Widget[];
+  meta: table;
+}
+
+export async function describeAsync(w: Widget, g: (x: int) => int): string;
+export function makeTable(): table;
+export function tableIntact(): boolean;
+export function describeTable(t: table): string;
+export function makeBoard(): Board;

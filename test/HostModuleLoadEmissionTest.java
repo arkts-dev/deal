@@ -694,6 +694,62 @@ public class HostModuleLoadEmissionTest {
             Map.of(MISSING_SPECIFIER, "src/missing_export.d.deal"));
     }
 
+    // =========================================================================
+    // The corpus host-fixture declarations the JVM scope must carry
+    // (ISSUE-0857): every on-disk host implementation compiles unchanged
+    // against the synthesized $DealRt scope, so the declarations whose
+    // records those implementations name are imported here.
+    // =========================================================================
+
+    /** The corpus host-fixture stems whose implementations name records. */
+    private static final List<String> CARRIER_HOST_STEMS = List.of(
+        "carrierasync", "carriertable", "carrierarity", "carrieruntyped");
+
+    /**
+     * The corpus host-fixture declaration source with its classification
+     * headers stripped (the fixture files are harness companions, not
+     * discovered corpus cases).
+     */
+    private static String corpusHostDeclaration(String stem) throws Exception {
+        StringBuilder stripped = new StringBuilder();
+        for (String line : Files.readString(Path.of("test", "conformance",
+                "host-fixtures", stem + ".d.deal"), StandardCharsets.UTF_8)
+                .split("\n", -1)) {
+            if (line.startsWith("// @")) {
+                continue;
+            }
+            stripped.append(line).append('\n');
+        }
+        return stripped.toString();
+    }
+
+    /**
+     * The JVM host-scope project: the ABI declaration, the declared-class
+     * declaration, and every corpus host-fixture declaration the deployed
+     * implementations name, imported by the application module so the
+     * synthesized records exist in the emitted scope.
+     */
+    private static Fixture carrierHostFixture() throws Exception {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/abi_probe.d.deal", ABI_DECLARATION_SOURCE);
+        sources.put("src/cfg.d.deal", CFG_DECLARATION_SOURCE);
+        Map<String, String> externals = new LinkedHashMap<>();
+        externals.put(PROBE_SPECIFIER, "src/abi_probe.d.deal");
+        externals.put(CFG_SPECIFIER, "src/cfg.d.deal");
+        StringBuilder app = new StringBuilder();
+        app.append("import * as probe from \"host/abi_probe\";\n");
+        app.append("import * as cfg from \"host/cfg\";\n");
+        for (String stem : CARRIER_HOST_STEMS) {
+            sources.put("src/" + stem + ".d.deal", corpusHostDeclaration(stem));
+            externals.put("host/" + stem, "src/" + stem + ".d.deal");
+            app.append("import * as ").append(stem).append(" from \"host/")
+                .append(stem).append("\";\n");
+        }
+        app.append("\nexport function main(): null {\n  return null;\n}\n");
+        sources.put("src/app.deal", app.toString());
+        return compileProject(sources, externals);
+    }
+
     private static Fixture arrayFixture() throws Exception {
         Map<String, String> sources = new LinkedHashMap<>();
         sources.put("src/array_probe.d.deal", ARRAY_DECLARATION_SOURCE);
@@ -6062,6 +6118,14 @@ public class HostModuleLoadEmissionTest {
     //    compile, the wrappers run the pinned cells
     // =========================================================================
 
+    /**
+     * The JVM artifact and every on-disk corpus host implementation compile
+     * under {@code javac --release 25 -proc:none} and the emitted wrapper
+     * cells run. The scope project imports the declarations the
+     * implementations name (the ABI and declared-class declarations plus the
+     * host-carrier declarations), so a corpus implementation is compiled
+     * unchanged against the records and carriers it declares.
+     */
     private static void testJvmToolchain(Baseline fixture) throws Exception {
         System.out.println("-- the JVM artifact under javac + java: the deployed host "
             + "fixtures compile and the wrapper cells run --");
@@ -6718,6 +6782,7 @@ public class HostModuleLoadEmissionTest {
             Baseline array = prepare(arrayFixture(), true, roots);
             Baseline errors = prepare(errorFixture(), false, roots);
             Baseline tableParam = prepare(tableParamFixture(), false, roots);
+            Baseline carrierHost = prepare(carrierHostFixture(), true, roots);
             testLuaArtifactText(abi, aliases);
             testLuaHostCarrierMetadata(roots);
             testLuaHostCarrierMetadataAbsent(roots);
@@ -6737,7 +6802,7 @@ public class HostModuleLoadEmissionTest {
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
-            testJvmToolchain(abi);
+            testJvmToolchain(carrierHost);
             testJvmMissingExport(missing, cfg);
             testJvmDeclaredArrayElementProjection(array);
         } finally {

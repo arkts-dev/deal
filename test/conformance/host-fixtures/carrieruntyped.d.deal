@@ -1,0 +1,12 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+// Host fixture declaration for the three-lane untyped-nested-carrier
+// round-trip conformance test (luajit-host-carrier-projection D8 V2 (d)):
+// a table-typed container and an array whose elements are tables carry
+// DEAL-side class, function and builtin Error values through the host and
+// back.
+
+export function roundTrip(t: table): table;
+export function roundTripArray(items: table[]): table[];

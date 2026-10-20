@@ -448,6 +448,23 @@ public class CanonicalProjectionParityTest {
     private static final List<Case> RUNTIME_OK = List.of(
         mainEntry("classes/same-name-sibling-crossing-controls"));
 
+    /**
+     * The host-carrier runtime-ok corpus pins (ISSUE-0857;
+     * {@code luajit-host-carrier-projection} D8 V2): each fixture's
+     * assertion body is driven as the production lane protocol dictates on
+     * the LuaJIT and JVM artifacts — the entry terminal once, then the
+     * fixture's own zero-arity exports in declaration order — and compared
+     * byte-exact against its sidecar. The JS lane executes the same source
+     * and sidecar through {@code JsConformanceTest}, and every stem's
+     * {@code .lua}/{@code .java}/{@code .js} implementation is validated by
+     * the on-disk host-fixture triplet gate there.
+     */
+    private static final List<Case> HOST_CARRIER_RUNTIME_OK = List.of(
+        mainEntry("host-abi/host-carrier-async-class"),
+        mainEntry("host-abi/host-carrier-table-members"),
+        mainEntry("host-abi/host-carrier-async-arity"),
+        mainEntry("host-abi/host-carrier-untyped-roundtrip"));
+
     /** The host-boundary families with a corpus pin. */
     private static final List<Case> HOST_FAMILIES = List.of(
         host("host-abi/host-bytes-param-mismatch-e8010",
@@ -7883,6 +7900,226 @@ public class CanonicalProjectionParityTest {
     }
 
     // =========================================================================
+    // 3d. The host-carrier runtime-ok corpus fixtures (ISSUE-0857)
+    // =========================================================================
+
+    /**
+     * The host-carrier runtime-ok corpus fixtures through the LuaJIT and
+     * JVM production artifacts ({@code luajit-host-carrier-projection} D8
+     * V2): the fixture's assertion body runs as the production lane protocol
+     * dictates — the entry terminal once, then the fixture's own zero-arity
+     * exports in declaration order — and the observation is compared
+     * byte-exact against the sidecar. The sidecar must pin the three claimed
+     * backends (LuaJIT, JVM, and JS; the JS lane executes the same source
+     * through {@code JsConformanceTest}), and every host stem the fixture
+     * imports must carry the complete on-disk implementation triplet. A
+     * skipped lane, a missing implementation, or a fixture whose body never
+     * runs is a named failure, never a pass.
+     */
+    private static void testHostCarrierRuntimeOkFixtures() throws Exception {
+        System.out.println("-- the host-carrier runtime-ok corpus fixtures: the "
+            + "entry terminal and every zero-arity export on the LuaJIT and "
+            + "JVM production artifacts against the sidecar pins --");
+        for (Case spec : HOST_CARRIER_RUNTIME_OK) {
+            safely(spec.what(), () -> driveHostCarrierRuntimeOkCase(spec));
+        }
+    }
+
+    private static void driveHostCarrierRuntimeOkCase(Case spec) throws Exception {
+        SidecarExpectations.RuntimeExpectation.Executed lua = runtimeOkPin(spec,
+            "luajit");
+        SidecarExpectations.RuntimeExpectation.Executed jvm = runtimeOkPin(spec,
+            "jvm");
+        SidecarExpectations.RuntimeExpectation.Executed js = runtimeOkPin(spec,
+            "js");
+        check(lua != null && jvm != null && js != null, spec.what()
+            + ": the sidecar pins a runtime-ok execution for the LuaJIT, JVM "
+            + "and JS backends");
+        if (lua == null || jvm == null || js == null) {
+            return;
+        }
+        String source = Files.readString(CONFORMANCE.resolve(spec.fixtureFile()),
+            StandardCharsets.UTF_8);
+        List<String> exports = zeroArityTestExports(source);
+        check(!exports.isEmpty(), spec.what() + ": the fixture declares at "
+            + "least one zero-arity assertion export");
+        Compiled compiled = compile(spec);
+        try {
+            check(!compiled.hostStems().isEmpty(), spec.what() + ": the fixture "
+                + "imports at least one declared host module");
+            for (String stem : compiled.hostStems()) {
+                for (String suffix : List.of(".d.deal", ".lua", ".java", ".js")) {
+                    Path implementation = Path.of("test", "conformance",
+                        "host-fixtures", stem + suffix);
+                    check(Files.isRegularFile(implementation), spec.what()
+                        + ": the host fixture triplet carries " + implementation);
+                }
+            }
+            assertTerminal(luaArtifactLaneProtocol(compiled, exports), lua, spec,
+                "luajit");
+            assertTerminal(jvmArtifactLaneProtocol(compiled, exports), jvm, spec,
+                "jvm");
+        } finally {
+            deleteRecursively(compiled.root());
+        }
+    }
+
+    /**
+     * The fixture's own zero-arity {@code test_} exports in declaration
+     * order — the assertion bodies the production lane protocol drives after
+     * the entry terminal.
+     */
+    private static List<String> zeroArityTestExports(String source) {
+        List<String> exports = new ArrayList<>();
+        Matcher matcher = Pattern.compile(
+            "^export (?:async )?function (test_[A-Za-z0-9_]+)\\(\\)",
+            Pattern.MULTILINE).matcher(source);
+        while (matcher.find()) {
+            exports.add(matcher.group(1));
+        }
+        return exports;
+    }
+
+    /**
+     * Runs the LuaJIT production artifact under the lane-protocol probe: the
+     * artifact's module initialization runs the entry terminal exactly once
+     * at load (no {@code DEAL_DEFER_MAIN} override), the probe's explicit
+     * {@code __dealMain()} is a no-op on the already-initialized module
+     * state, and every declared zero-arity assertion export runs in
+     * declaration order (an async export must complete inline, never
+     * suspend). A probe defect prints a named diagnostic and exits 2, so it
+     * can never satisfy a runtime-ok sidecar.
+     */
+    private static ArtifactTerminal luaArtifactLaneProtocol(Compiled compiled,
+            List<String> exports) throws Exception {
+        Path out = compiled.root().resolve("out");
+        stageLuaHosts(compiled, Map.of(), out);
+        String entryModule = compiled.checkedProject().entryModule().path();
+        String artifact = out.resolve(entryModule.replace('.', '/') + ".lua")
+            .toAbsolutePath().toString();
+        StringBuilder probe = new StringBuilder();
+        probe.append("local function defect(m) print(\"LANE-PROTOCOL-DEFECT: \" .. m)")
+            .append(" os.exit(2) end\n");
+        probe.append("dofile(\"").append(artifact).append("\")\n");
+        probe.append("local ok, err = __dealMain()\n");
+        probe.append("if not ok then defect(\"entry terminal: \" .. tostring(err))")
+            .append(" end\n");
+        probe.append("local surface = __exportSurfaces[\"").append(entryModule)
+            .append("\"]\n");
+        probe.append("if surface == nil then defect(\"no entry export surface\")")
+            .append(" end\n");
+        for (String export : exports) {
+            probe.append("do local entry = surface[\"").append(export)
+                .append("\"]\n");
+            probe.append("if type(entry) ~= \"table\" or type(entry.f) ~= \"function\"")
+                .append(" then defect(\"no export ").append(export)
+                .append("\") end\n");
+            probe.append("local okE, res = pcall(entry.f)\n");
+            probe.append("if not okE then defect(\"").append(export)
+                .append(": \" .. tostring(res)) end\n");
+            probe.append("if type(res) == \"table\" and res[__dealCarrierKeys.kind]")
+                .append(" == \"async\" and res.__done ~= true then defect(\"")
+                .append(export).append(" did not complete\") end\n");
+            probe.append("end\n");
+        }
+        probe.append("os.exit(0)\n");
+        Files.writeString(out.resolve("lane_protocol.lua"), probe.toString(),
+            StandardCharsets.UTF_8);
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            List.of("luajit", "lane_protocol.lua"), out, Map.of());
+        String diagnostics = captured.stdout() + captured.stderr();
+        check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+            compiled.spec().what() + " (luajit): the lane-protocol output is not"
+                + " truncated: " + diagnostics);
+        return new ArtifactTerminal(captured.exitCode(), captured.stdout(),
+            captured.stderr());
+    }
+
+    /**
+     * Runs the JVM production artifact under the lane-protocol probe: the
+     * emitted entry class and the deployed host implementations compile under
+     * {@code javac --release 25 -proc:none}, then the probe runs the entry
+     * terminal once and every declared zero-arity assertion export in
+     * declaration order. A probe defect prints a named diagnostic and exits
+     * 2, so it can never satisfy a runtime-ok sidecar.
+     */
+    private static ArtifactTerminal jvmArtifactLaneProtocol(Compiled compiled,
+            List<String> exports) throws Exception {
+        Path out = compiled.root().resolve("out-jvm");
+        JvmPreparation preparation = compiled.jvmPreparation();
+        if (!preparation.emitted) {
+            emit(compiled, Backend.JVM, out);
+            preparation.emitted = true;
+        }
+        Path workspace = Files.createTempDirectory(compiled.root(),
+            "jvm-lane-protocol-");
+        Path classes = workspace.resolve("classes");
+        Files.createDirectories(classes);
+        String entryModule = compiled.checkedProject().entryModule().path();
+        String className = JvmNames.classNameFor(entryModule);
+        List<String> javacArgs = new ArrayList<>(List.of("javac", "--release",
+            "25", "-proc:none", "-cp", absoluteClasspath(), "-d",
+            classes.toString()));
+        javacArgs.add(out.resolve(className + ".java").toAbsolutePath().toString());
+        for (String stem : compiled.hostStems()) {
+            Path source = workspace.resolve(
+                JvmNames.classNameFor("host/" + stem) + ".java");
+            Files.writeString(source, Files.readString(Path.of("test",
+                "conformance", "host-fixtures", stem + ".java")),
+                StandardCharsets.UTF_8);
+            javacArgs.add(source.toString());
+        }
+        String probeName = "HostCarrierLaneProtocolProbe";
+        StringBuilder probe = new StringBuilder();
+        probe.append("public final class ").append(probeName).append(" {\n");
+        probe.append("  public static void main(String[] args) {\n");
+        probe.append("    try {\n      ").append(className).append(".dealMain();\n");
+        probe.append("    } catch (java.lang.Throwable t) { defect(\"entry\", t);")
+            .append(" return; }\n");
+        probe.append("    deal.codegen.jvm.JvmRuntime.Table surface = ")
+            .append(className).append(".EXPORT_SURFACES.get(\"").append(entryModule)
+            .append("\");\n");
+        probe.append("    if (surface == null) { defect(\"surface\", null); return; }\n");
+        for (String export : exports) {
+            probe.append("    {\n      java.lang.Object value = surface.read(\"")
+                .append(export).append("\");\n");
+            probe.append("      if (!(value instanceof deal.codegen.jvm.JvmRuntime")
+                .append(".FunctionValue fn)) { defect(\"no export ").append(export)
+                .append("\", null); return; }\n");
+            probe.append("      try { fn.fn.invoke(new java.lang.Object[]{}); }\n");
+            probe.append("      catch (java.lang.Throwable t) { defect(\"")
+                .append(export).append("\", t); return; }\n");
+            probe.append("    }\n");
+        }
+        probe.append("  }\n");
+        probe.append("  private static void defect(java.lang.String where,")
+            .append(" java.lang.Throwable t) {\n");
+        probe.append("    java.lang.System.out.println(\"LANE-PROTOCOL-DEFECT \"")
+            .append(" + where + \": \" + java.lang.String.valueOf(t));\n");
+        probe.append("    java.lang.System.exit(2);\n  }\n}\n");
+        Path probeFile = workspace.resolve(probeName + ".java");
+        Files.writeString(probeFile, probe.toString(), StandardCharsets.UTF_8);
+        javacArgs.add(probeFile.toString());
+        JvmCompilation.Result javac = JvmCompilation.compile(javacArgs, workspace);
+        String javacOutput = javac.stdout() + javac.stderr();
+        check(javac.exitCode() == 0, compiled.spec().what() + " (jvm): the"
+            + " production artifact, the host implementations and the"
+            + " lane-protocol probe compile: " + javacOutput);
+        if (javac.exitCode() != 0) {
+            return null;
+        }
+        BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
+            List.of("java", "-cp", classes + File.pathSeparator
+                + absoluteClasspath(), probeName), out, Map.of());
+        String diagnostics = captured.stdout() + captured.stderr();
+        check(!captured.stdoutTruncated() && !captured.stderrTruncated(),
+            compiled.spec().what() + " (jvm): the lane-protocol output is not"
+                + " truncated: " + diagnostics);
+        return new ArtifactTerminal(captured.exitCode(), captured.stdout(),
+            captured.stderr());
+    }
+
+    // =========================================================================
     // 4. The FOR_EACH traversal over a deleted and an appended slot
     // =========================================================================
 
@@ -9355,6 +9592,7 @@ public class CanonicalProjectionParityTest {
         testNamedDivergences();
         testArmFamilies();
         testRuntimeOkIdentityControls();
+        testHostCarrierRuntimeOkFixtures();
         testHostSyncReturnPresence();
         testHostNumericReturnCarriers();
         testHostNumericCompletions();
