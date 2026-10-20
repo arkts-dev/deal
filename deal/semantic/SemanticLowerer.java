@@ -160,6 +160,15 @@ public final class SemanticLowerer {
 
     public static final long INITIAL_LOOP_GENERATION = 0L;
 
+    /**
+     * The generation of a for-let loop's per-iteration incarnation (B1):
+     * the body block's {@code BINDING_ALLOC}, the cell a body store writes
+     * and a body closure captures. The iteration's final value reaches the
+     * loop-carried counter ({@link #INITIAL_LOOP_GENERATION}) through the
+     * update block's carry transfer before the update and the next test.
+     */
+    public static final long PER_ITERATION_GENERATION = 1L;
+
     public static final String CLASS_DEFAULT_CAPTURE = "CLASS_DEFAULT_CAPTURE";
 
     public static final String RETAINED_ABI_DEFERRED = "RETAINED_ABI_DEFERRED";
@@ -7184,19 +7193,20 @@ public final class SemanticLowerer {
             checkerScopeNodes.push(statement.body());
             pushBindingFrame();
             BindingCoreIncarnation perIteration = new BindingCoreIncarnation(
-                1L, bodyBlock, BindingCellKind.SHARED_CELL, true,
+                PER_ITERATION_GENERATION, bodyBlock, BindingCellKind.SHARED_CELL, true,
                 BindingProducer.BINDING_ALLOC, true);
             registerBinding(decl.name(), counter, perIteration);
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(counter, bodyBlock, true,
-                    cellKinds.cellKindOf(perIteration), 1L),
+                    cellKinds.cellKindOf(perIteration), PER_ITERATION_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId carry = emitSyntheticValueOp(SemanticOpKind.BINDING_LOAD,
                 new KindPayload.BindingLoadPayload(counter, INITIAL_LOOP_GENERATION),
                 decl.span(), counterDescriptor(counterType, decl),
                 FailurePolicyId.NO_DEAL_FAILURE);
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
-                new KindPayload.BindingInitPayload(counter, 1L, carry),
+                new KindPayload.BindingInitPayload(counter, PER_ITERATION_GENERATION,
+                    carry),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             statementWalk.walk(statement.body().statements(), false);
             // The composite marking of the for-let loop arm (D3): a
@@ -7217,10 +7227,38 @@ public final class SemanticLowerer {
                     && forLetBodyExit == BlockExitState.RETURN_OR_THROW) {
                 markExit(currentBlock(), BlockExitState.RETURN_OR_THROW);
             }
-            // Update block: the update's assignment chain, then the
-            // condition re-production (update-block members — C-D4;
-            // both reference the generation-0 counter).
+            // Update block: the per-iteration carry transfer, then the
+            // update's assignment chain, then the condition re-production
+            // (update-block members — C-D4; the update and the re-test
+            // reference the generation-0 counter).
+            //
+            // The carry transfer is the for→while desugaring's last step
+            // of one iteration: the value the body leaves in the
+            // per-iteration incarnation (generation 1) becomes the
+            // loop-carried counter's value (generation 0) before the
+            // update and the next test run, exactly like the spec's
+            // `for (let i = …; test; update) body` desugaring whose
+            // fresh iteration binding copies the finished iteration's
+            // value before the increment. A body store — a plain
+            // assignment, a store issued by a closure the body created, or
+            // a store on a `continue` path — therefore feeds the
+            // iteration's update and the subsequent condition instead of
+            // being dropped when the iteration ends. The copy reads the
+            // body cell's current value and writes the counter cell; the
+            // body's own incarnation keeps its identity, so a closure
+            // created in an earlier iteration still observes that
+            // iteration's value (binding capture, never a by-value
+            // snapshot). Return and throw leave the body without reaching
+            // this block (no update runs), and a `break` jumps past it.
             blockStack.push(updateBlock);
+            ValueId carriedBodyValue = emitSyntheticValueOp(SemanticOpKind.BINDING_LOAD,
+                new KindPayload.BindingLoadPayload(counter, PER_ITERATION_GENERATION),
+                decl.span(), counterDescriptor(counterType, decl),
+                FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_STORE,
+                new KindPayload.BindingStorePayload(counter, INITIAL_LOOP_GENERATION,
+                    carriedBodyValue),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             if (statement.update().isPresent()) {
                 lowerExpression(statement.update().get());
             }

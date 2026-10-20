@@ -51,6 +51,8 @@ import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
 
@@ -829,17 +831,41 @@ public class ClosureLoweringTest {
                 "the capture resolves the per-iteration incarnation (generation 1, body "
                     + "block): " + capture);
         }
-        // The load inside f's body names {i, 1}.
-        int gen1Loads = 0;
+        // The generation-1 loads of i: exactly one inside f's body (the
+        // capture's own read) and exactly one in the loop's update block
+        // (the per-iteration carry transfer, which copies the value the
+        // body leaves into the generation-0 counter before the update and
+        // the next test).
+        StructuredBodyTable table = result.lowering().table();
+        BlockId updateBlock = null;
+        for (SemanticOp op : ofKind(ops, SemanticOpKind.LOOP)) {
+            if (op.payload() instanceof KindPayload.LoopPayload loop
+                    && loop.bodyBlock().equals(perIteration.scope())) {
+                updateBlock = loop.updateBlock();
+            }
+        }
+        check(updateBlock != null,
+            "the for-let LOOP names its update block (the carry transfer's block)");
+        List<OpId> updateMembers = updateBlock == null ? List.of()
+            : table.blockOps().getOrDefault(updateBlock, List.of());
+        int gen1LoadsInBody = 0;
+        int gen1LoadsInUpdate = 0;
         for (SemanticOp op : ofKind(ops, SemanticOpKind.BINDING_LOAD)) {
             if (op.payload() instanceof KindPayload.BindingLoadPayload load
                     && load.binding().equals(i.binding())
                     && load.generation() == 1) {
-                gen1Loads++;
+                if (updateMembers.contains(op.opId())) {
+                    gen1LoadsInUpdate++;
+                } else {
+                    gen1LoadsInBody++;
+                }
             }
         }
-        check(gen1Loads == 1, "exactly one generation-1 load of i (inside f's body); got "
-            + gen1Loads);
+        check(gen1LoadsInBody == 1,
+            "exactly one generation-1 load of i outside the update block (inside f's "
+                + "body); got " + gen1LoadsInBody);
+        check(gen1LoadsInUpdate == 1, "exactly one generation-1 load of i in the update "
+            + "block (the carry transfer); got " + gen1LoadsInUpdate);
         // The counter's generation-0 loads (condition/update) stay
         // generation 0.
         int gen0Loads = 0;
@@ -852,6 +878,122 @@ public class ClosureLoweringTest {
         }
         check(gen0Loads >= 2,
             "the condition/update counter loads name generation 0; got " + gen0Loads);
+    }
+
+    /**
+     * The for-let per-iteration carry transfer (ISSUE-0863): the update
+     * block opens with the synthetic generation-1 load of the counter and
+     * the generation-0 store of that loaded value, before the update chain
+     * and the condition re-production — so a body store reaches the
+     * iteration's update and the subsequent test (the spec's
+     * {@code for}-to-{@code while} desugaring, docs/spec-v1.3.md
+     * §Control flow — For (C-style)). The update-less row carries the same
+     * transfer before its condition re-production, and the body's own
+     * incarnation stays the captured generation-1 cell.
+     */
+    static void testForLetBodyCarryTransfer() {
+        System.out.println("-- for-let carry transfer: body stores feed update and re-test --");
+
+        SemanticLowerer.ClosureCoreResult updated = lowerSlice("""
+            function outer(): null {
+              for (let i: int = 0; i < 3; i = i + 1) {
+                i = i + 1;
+              }
+            }
+            """);
+        checkForLetCarryTransfer(updated, true);
+
+        SemanticLowerer.ClosureCoreResult updateLess = lowerSlice("""
+            function outer(): null {
+              for (let i: int = 0; i < 3;) {
+                i = i + 1;
+              }
+            }
+            """);
+        checkForLetCarryTransfer(updateLess, false);
+    }
+
+    /** One for-let slice's carry-transfer shape (the update block's first two ops). */
+    private static void checkForLetCarryTransfer(
+            SemanticLowerer.ClosureCoreResult result, boolean hasUpdate) {
+        if (result == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            if (result != null) {
+                fail("the for-let slice lowers to a validated unit: "
+                    + result.lowering().diagnostics());
+            }
+            return;
+        }
+        List<SemanticOp> ops = result.lowering().unit().ops();
+        SemanticLowerer.BindingCoreBinding i = fact(result.bindingFacts(), "i");
+        if (i == null) {
+            return;
+        }
+        List<SemanticOp> loops = ofKind(ops, SemanticOpKind.LOOP);
+        check(loops.size() == 1, "exactly one LOOP op; got " + loops.size());
+        if (loops.size() != 1) {
+            return;
+        }
+        KindPayload.LoopPayload loop = (KindPayload.LoopPayload) loops.get(0).payload();
+        List<OpId> updateMembers = result.lowering().table().blockOps()
+            .getOrDefault(loop.updateBlock(), List.of());
+        check(updateMembers.size() >= 2,
+            "the update block carries the carry transfer and the header row; got "
+                + updateMembers.size() + " members");
+        if (updateMembers.size() < 2) {
+            return;
+        }
+        SemanticOp transferLoad = null;
+        SemanticOp transferStore = null;
+        for (SemanticOp op : ops) {
+            if (op.opId().equals(updateMembers.get(0))) {
+                transferLoad = op;
+            }
+            if (op.opId().equals(updateMembers.get(1))) {
+                transferStore = op;
+            }
+        }
+        check(transferLoad != null && transferLoad.kind() == SemanticOpKind.BINDING_LOAD
+                && transferLoad.payload() instanceof KindPayload.BindingLoadPayload load
+                && load.binding().equals(i.binding())
+                && load.generation() == SemanticLowerer.PER_ITERATION_GENERATION,
+            "the update block's first op is the generation-1 load of the counter");
+        check(transferLoad != null
+                && transferLoad.origin().kind() == SourceOriginKind.SYNTHETIC,
+            "the carry transfer's load is SYNTHETIC (a lowering step, not a source read)");
+        check(transferStore != null && transferStore.kind() == SemanticOpKind.BINDING_STORE
+                && transferStore.payload() instanceof KindPayload.BindingStorePayload store
+                && store.binding().equals(i.binding())
+                && store.generation() == SemanticLowerer.INITIAL_LOOP_GENERATION
+                && transferLoad != null && store.value() != null
+                && store.value().equals(transferLoad.result()),
+            "the update block's second op stores the loaded body value into the "
+                + "generation-0 counter");
+        // The header row follows the transfer: the update chain (when the
+        // source carries one) and then the condition re-production.
+        List<SemanticOp> header = new ArrayList<>();
+        for (OpId member : updateMembers.subList(2, updateMembers.size())) {
+            for (SemanticOp op : ops) {
+                if (op.opId().equals(member)) {
+                    header.add(op);
+                }
+            }
+        }
+        boolean sawUpdateChain = header.stream()
+            .anyMatch(op -> op.kind() == SemanticOpKind.ASSIGN);
+        check(sawUpdateChain == hasUpdate,
+            "the update chain follows the transfer (the update-less row carries none); "
+                + "got " + sawUpdateChain);
+        check(!header.isEmpty(), "the header row keeps the condition re-production after the "
+            + "transfer");
+        for (SemanticOp op : header) {
+            if (op.kind() == SemanticOpKind.BINDING_LOAD
+                    && op.payload() instanceof KindPayload.BindingLoadPayload load
+                    && load.binding().equals(i.binding())) {
+                check(load.generation() == SemanticLowerer.INITIAL_LOOP_GENERATION,
+                    "the header row reads the generation-0 counter after the transfer");
+            }
+        }
     }
 
     /**
@@ -1722,6 +1864,7 @@ public class ClosureLoweringTest {
         SemanticLowerer.ClosureCoreResult hoisted = lowerSlice(hoistedSlice);
         testCaptureOfLaterDeclaredModuleFunctionResolvesToHoistedAlloc(hoisted);
         testForBodyClosureCapturesPerIterationIncarnation();
+        testForLetBodyCarryTransfer();
         testNarrowedFlowTypesNeverCaptured();
         testCellKindClosureCaptureArm();
         testDeterminism(hoistedSlice, hoisted);
