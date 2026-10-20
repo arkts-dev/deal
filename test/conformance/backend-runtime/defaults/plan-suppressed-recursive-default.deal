@@ -1,5 +1,5 @@
 // @spec: Classes — Construction
-// @description: A recursive non-jsonable class default is plan availability, never execution demand: only a construction that omits the recursive field evaluates it (docs/spec-v1.3.md §Construction — provided fields suppress defaults), so the self-defaulting Node, the mutual Ping/Pong pair and a default whose own literal supplies the recursive field all stay finite when the construction supplies the recursive field. The effectful default beside the suppressed one still runs exactly once per construction in declaration order, a supplied field runs none, class registration runs none, and a supplied value is never replaced by the default it suppresses.
+// @description: A recursive non-jsonable class default is plan availability, never execution demand: only a construction that omits the recursive field evaluates it (docs/spec-v1.3.md §Construction — provided fields suppress defaults), so the self-defaulting Node, the mutual Ping/Pong pair and a default whose own literal supplies the recursive field all stay finite when the construction supplies the recursive field. The effectful default beside the suppressed one still runs exactly once per construction in declaration order, a supplied field runs none, class registration runs none, a supplied value is never replaced by the default it suppresses, and the construction's explicit null, absent-optional and present-optional states stay distinct.
 // @expected: runtime-ok
 // @features: v1.3, runtime, defaults, classes, recursion
 
@@ -19,6 +19,7 @@ function check(condition: boolean, message: string): null {
 class Node {
   stamp: int = nextStamp();
   next: Node | null = {};
+  tag?: string | null;
 }
 
 class Ping {
@@ -36,17 +37,33 @@ class Holder {
 export function test_suppressed_self_default_keeps_override(): null {
   let base: int = probe.valueCount();
   let first: Node = { next: null };
-  check(probe.valueCount() === base + 1, "the omitted effectful default does not run once per construction");
+  check(probe.valueCount() === base + 1, "the omitted effectful default did not run exactly once for this construction");
   check(first.stamp === (base + 1) * 10, "the omitted effectful default publishes this construction's value");
   check(first.next === null, "the supplied recursive field suppresses its default");
   let second: Node = { next: null };
-  check(probe.valueCount() === base + 2, "each construction does not evaluate its own omission");
+  check(probe.valueCount() === base + 2, "the second construction did not evaluate its own omission");
   check(second.stamp === (base + 2) * 10, "the second construction's default value is fresh");
   check(second.next === null, "the second supplied recursive field suppresses its default");
   let explicit: Node = { stamp: 5, next: null };
   check(probe.valueCount() === base + 2, "a fully supplied literal runs no default");
   check(explicit.stamp === 5, "the supplied effectful field keeps its value");
   check(explicit.next === null, "the supplied recursive field keeps its value");
+  check(!has(explicit.tag), "an omitted optional field stays absent");
+  let explicitTag: string | null = explicit.tag;
+  check(explicitTag === null, "the absent optional field reads as null");
+  let presentNull: Node = { next: null, tag: null };
+  check(probe.valueCount() === base + 3, "the present-null construction ran its omitted default once");
+  check(has(presentNull.tag), "an explicitly null optional field is present");
+  let presentNullTag: string | null = presentNull.tag;
+  check(presentNullTag === null, "the present optional field keeps its explicit null");
+  let presentText: Node = { next: null, tag: "kept" };
+  check(probe.valueCount() === base + 4, "the present-value construction ran its omitted default once");
+  let presentTextTag: string | null = presentText.tag;
+  check(presentTextTag !== null, "the present optional field lost its value");
+  if (presentTextTag !== null) {
+    check(presentTextTag === "kept", "the present optional field keeps its value");
+  }
+  check(presentText.next === null, "the supplied recursive field still suppresses its default");
   return null;
 }
 
