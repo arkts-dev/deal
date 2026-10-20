@@ -2967,10 +2967,28 @@ public final class JsSemanticEmitter {
                     emit(label + ": while (true) {");
                     indent++;
                     emit("if (!" + condition + ") { break " + label + "; }");
-                    emitScopedBlock(unit, payload.bodyBlock());
+                    // The body block's block-scoped cells and the update
+                    // block share one per-iteration scope: the recorded
+                    // update block reads the incarnation the body leaves
+                    // (a for-let counter's per-iteration generation-1
+                    // cell, which its carry transfer copies into the
+                    // loop-carried generation-0 cell before the update and
+                    // the next test). A JavaScript `let` inside the
+                    // per-iteration braces is a fresh live cell per
+                    // iteration, so the body's closure captures stay
+                    // per-iteration while the update still sees this
+                    // iteration's cell. A `continue` re-runs the recorded
+                    // update block at its own transfer site, inside this
+                    // same scope.
+                    emit("{");
+                    indent++;
+                    declareBlockBindings(unit, payload.bodyBlock());
+                    emitOps(unit, payload.bodyBlock());
                     if (payload.updateBlock() != null) {
                         emitScopedBlock(unit, payload.updateBlock());
                     }
+                    indent--;
+                    emit("}");
                     indent--;
                     emit("}");
                     indent--;
