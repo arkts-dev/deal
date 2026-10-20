@@ -4943,6 +4943,23 @@ public class ProductionDispatchTest {
                 """);
             driveBoundaryCorpusFixture("stdlib/table/keys-nonstring-exclusion",
                 "test_table_keys_decimal_string_names", false, drivers);
+            // ISSUE-0860: a table with a present-null member reports every
+            // present string key on both retained production targets too,
+            // not only on the JS lane.
+            driveBoundaryCorpusFixture("stdlib/table/keys-string-inclusion",
+                "test_table_keys_string_inclusion", false, drivers);
+            // ISSUE-0860: fromJson parses an object on both retained
+            // production targets: an array root of any length, the empty
+            // array included, returns language null.
+            driveBoundaryCorpusFixture(
+                "jsonable/jsonable-fromjson-top-level-scalar",
+                "test_fromJson_empty_documents", false, drivers);
+            // ISSUE-0860: the nested class arm has the same object-only
+            // shape: a nested "[]" — a class field and a class-array
+            // element — returns null on both retained targets.
+            driveBoundaryCorpusFixture(
+                "jsonable/jsonable-fromjson-nested-empty-array",
+                "test_nested_empty_array_rejected", false, drivers);
             driveBoundaryCorpusFixture(
                 "class-runtime-errors/dynamic-bad-class-array-element-e8001",
                 "test_dynamic_bad_class_array_element", true, drivers);
