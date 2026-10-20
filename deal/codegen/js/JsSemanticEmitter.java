@@ -2262,9 +2262,21 @@ public final class JsSemanticEmitter {
                         + ") { $rt.fail(\"E8002\", \"array index out of"
                         + " bounds\", " + spanArgs(boundary) + "); }");
                 }
-                default -> emit(input + " = $rt.checkType("
-                    + jsString(payload.descriptor().canonicalSpecText()) + ", "
-                    + input + ", " + spanArgs(boundary) + ");");
+                default -> {
+                    String checked = "$rt.checkType("
+                        + jsString(payload.descriptor().canonicalSpecText()) + ", "
+                        + input + ", " + spanArgs(boundary) + ")";
+                    if (boundary.result() instanceof ValueId result) {
+                        // A value-publishing chain boundary (the
+                        // refined-operand cell): the admitted value is the
+                        // chain's own receiver/key identity, so the check
+                        // publishes its own slot and never rewrites the
+                        // read's.
+                        emit(slot(result) + " = " + checked + ";");
+                    } else {
+                        emit(input + " = " + checked + ";");
+                    }
+                }
             }
         }
 

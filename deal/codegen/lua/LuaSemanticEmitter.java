@@ -3576,8 +3576,26 @@ public final class LuaSemanticEmitter {
                 }
                 default -> {
                     emitBoundaryStart(boundary, input, payload.descriptor());
-                    out.append("__chk = ")
-                        .append(bcheckExpr(payload.descriptor(), input)).append("\n");
+                    out.append("__okB, __chk = pcall(__bcheck, ")
+                        .append(bcheckArgs(payload.descriptor(), input)).append(")\n");
+                    out.append("if not __okB then\n");
+                    // The cell's own origin (the free boundary's rewrite):
+                    // a chain boundary failure carries the boundary's own
+                    // source location, never the enclosing chain's.
+                    out.append("  __chk.o = ").append(luaString(originOf(boundary)))
+                        .append("\n");
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "__errtext(__chk)");
+                    out.append("  error(__chk, 0)\n");
+                    out.append("end\n");
+                    if (boundary.result() instanceof ValueId result) {
+                        // A value-publishing chain boundary (the
+                        // refined-operand cell): the admitted value is the
+                        // chain's own receiver/key identity, so the check
+                        // publishes its own slot and never rewrites the
+                        // read's.
+                        out.append(slot(result)).append(" = __chk\n");
+                    }
                     emitBoundarySuccess(boundary, "__chk", payload.descriptor());
                 }
             }

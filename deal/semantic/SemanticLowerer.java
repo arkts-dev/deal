@@ -8917,9 +8917,9 @@ public final class SemanticLowerer {
             OpId normalizeOp;
             OpId commitOp;
             try {
-                ValueId container = lowerExpression(index.array());
+                ValueId container = lowerOperand(index.array());
                 containerOp = producerOpId(container);
-                ValueId key = lowerExpression(index.index());
+                ValueId key = lowerOperand(index.index());
                 keyOp = producerOpId(key);
                 value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
@@ -8977,9 +8977,9 @@ public final class SemanticLowerer {
             OpId boundaryOp;
             OpId commitOp;
             try {
-                ValueId container = lowerExpression(index.array());
+                ValueId container = lowerOperand(index.array());
                 containerOp = producerOpId(container);
-                ValueId key = lowerExpression(index.index());
+                ValueId key = lowerOperand(index.index());
                 keyOp = producerOpId(key);
                 value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
@@ -9061,9 +9061,9 @@ public final class SemanticLowerer {
             OpId boundaryOp;
             OpId commitOp;
             try {
-                ValueId container = lowerExpression(index.array());
+                ValueId container = lowerOperand(index.array());
                 containerOp = producerOpId(container);
-                ValueId key = lowerExpression(index.index());
+                ValueId key = lowerOperand(index.index());
                 keyOp = producerOpId(key);
                 value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
@@ -9261,9 +9261,9 @@ public final class SemanticLowerer {
             OpId normalizeOp;
             OpId commitOp;
             try {
-                ValueId container = lowerExpression(index.array());
+                ValueId container = lowerOperand(index.array());
                 containerOp = producerOpId(container);
-                ValueId key = lowerExpression(index.index());
+                ValueId key = lowerOperand(index.index());
                 keyOp = producerOpId(key);
                 ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, key, key),
@@ -9310,9 +9310,9 @@ public final class SemanticLowerer {
             OpId boundaryOp;
             OpId commitOp;
             try {
-                ValueId container = lowerExpression(index.array());
+                ValueId container = lowerOperand(index.array());
                 containerOp = producerOpId(container);
-                ValueId key = lowerExpression(index.index());
+                ValueId key = lowerOperand(index.index());
                 keyOp = producerOpId(key);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
@@ -13852,8 +13852,8 @@ public final class SemanticLowerer {
             RuntimeDescriptor intDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE);
             RuntimeDescriptor resultType = intDescriptor;
-            ValueId container = lowerExpression(index.array());
-            ValueId key = lowerExpression(index.index());
+            ValueId container = lowerOperand(index.array());
+            ValueId key = lowerOperand(index.index());
             ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH,
                 new KindPayload.ArrayLengthPayload(container), index.span(),
                 intDescriptor, FailurePolicyId.INT32_RESULT);
@@ -13905,8 +13905,8 @@ public final class SemanticLowerer {
             }
             RuntimeDescriptor resultType =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(index));
-            ValueId container = lowerExpression(index.array());
-            ValueId key = lowerExpression(index.index());
+            ValueId container = lowerOperand(index.array());
+            ValueId key = lowerOperand(index.index());
             ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH,
                 new KindPayload.ArrayLengthPayload(container), index.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
@@ -14149,7 +14149,7 @@ public final class SemanticLowerer {
                         instanceof LiteralValue.StringLiteral stringLiteral) {
                 // The literal-key optimization: the constant key needs no
                 // evaluation step (the static member read's shape).
-                return lowerTableRead(lowerExpression(index.array()),
+                return lowerTableRead(lowerOperand(index.array()),
                     stringLiteral.value(), index.span(), checkedType(index), slot,
                     null);
             }
@@ -14173,8 +14173,8 @@ public final class SemanticLowerer {
             RuntimeDescriptor stringDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE);
             // Receiver before key (the spec's evaluation order).
-            ValueId container = lowerExpression(index.array());
-            ValueId key = lowerExpression(index.index());
+            ValueId container = lowerOperand(index.array());
+            ValueId key = lowerOperand(index.index());
             ValueId normalizedSlot = emitOperandOp(SemanticOpKind.INDEX_NORMALIZE,
                 new KindPayload.IndexNormalizePayload(IndexMode.TABLE_READ, key, key),
                 List.of(key, key), List.of(stringDescriptor, stringDescriptor),
@@ -14328,16 +14328,17 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Lowers one operator operand or condition expression: the
-         * operand's completed value plus, for an identifier read whose
-         * checked type is a null-narrowing refinement of the binding's
-         * declared nullable type (declared {@code T | null}, read as
-         * {@code T}), the {@code NARROWED_READ} validation of that read.
+         * Lowers one operator operand, condition expression, or index
+         * receiver/key expression: the operand's completed value plus, for
+         * an identifier read whose checked type is a null-narrowing
+         * refinement of the binding's declared nullable type (declared
+         * {@code T | null}, read as {@code T}), the {@code NARROWED_READ}
+         * validation of that read.
          *
          * <p>docs/spec-v1.3.md Nullable semantics keeps calls
          * non-invalidating on purpose, so a capturing closure call can
          * leave the binding null while the refinement claim still holds;
-         * the operator then consumes a value its checked type does not
+         * the consumer then receives a value its checked type does not
          * admit. The validation admits the read against the refined
          * descriptor at the read's own origin — the standard
          * typed-boundary projection (E8001, or the descriptor-kind family
@@ -14346,8 +14347,13 @@ public final class SemanticLowerer {
          * {@code try}. It publishes the admitted value and the consumer
          * uses that.</p>
          *
-         * <p>Only the operator/condition positions go through this helper:
-         * every other position (a declaration, assignment, parameter,
+         * <p>An index chain lowers its receiver and key through this
+         * helper, so the chain's length/normalize/commit children and the
+         * commit's resolved receiver/key reference the admitted value
+         * (the chain's closed A-D9 child shape is unchanged: the
+         * admission is the receiver/key child itself). An index read uses
+         * the admitted value as its {@code INDEX_READ} container/key.
+         * Every other position (a declaration, assignment, parameter,
          * return, class/array construction or element write) is a typed
          * boundary owned by its own cell, which keeps its recorded
          * projection — the array-element E8003 arm included.</p>

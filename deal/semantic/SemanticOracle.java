@@ -4235,7 +4235,14 @@ public final class SemanticOracle {
                         (KindPayload.BoundaryPayload) child.payload();
                     BoundaryContext context = chainBoundaryContext(op, boundaryPayload.kind());
                     Value input = valueOf(boundaryPayload.input());
-                    runBoundaryChild(child, input, context);
+                    Value checked = runBoundaryChild(child, input, context);
+                    if (child.result() instanceof ValueId resultId) {
+                        // A value-publishing chain boundary (the
+                        // refined-operand cell) publishes the admitted
+                        // value the chain's own receiver/key children
+                        // consume.
+                        putValue(resultId, checked);
+                    }
                 } else {
                     execute(child);
                 }
@@ -4330,8 +4337,16 @@ public final class SemanticOracle {
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) child.payload();
-                    runBoundaryChild(child, valueOf(boundaryPayload.input()),
+                    Value checked = runBoundaryChild(child,
+                        valueOf(boundaryPayload.input()),
                         chainBoundaryContext(op, boundaryPayload.kind()));
+                    if (child.result() instanceof ValueId resultId) {
+                        // A value-publishing chain boundary (the
+                        // refined-operand cell) publishes the admitted
+                        // value the chain's own receiver/key children
+                        // consume.
+                        putValue(resultId, checked);
+                    }
                 } else {
                     execute(child);
                 }

@@ -3215,13 +3215,35 @@ public final class JvmSemanticEmitter {
                 }
                 default -> {
                     emitBoundaryStart(boundary, input, payload.descriptor(), indent);
-                    out.append(indent(indent)).append("Object __cb_")
-                        .append(boundary.opId().id())
-                        .append(" = ")
-                        .append(bcheckArgs(payload.descriptor(), input))
+                    String checked = "__cb_" + boundary.opId().id();
+                    out.append(indent(indent)).append("Object ").append(checked)
                         .append(";\n");
-                    emitBoundarySuccess(boundary, "__cb_" + boundary.opId().id(),
-                        payload.descriptor(), indent);
+                    out.append(indent(indent)).append("try {\n");
+                    out.append(indent(indent + 1)).append(checked).append(" = ")
+                        .append(bcheckArgs(payload.descriptor(), input)).append(";\n");
+                    out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
+                    // The cell's own origin (the free boundary's rewrite):
+                    // a chain boundary failure carries the boundary's own
+                    // source location, never the enclosing chain's.
+                    out.append(indent(indent + 1))
+                        .append("JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                            + "__be.code, __be.msg, ")
+                        .append(javaString(originOf(boundary)))
+                        .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    out.append(indent(indent + 1)).append("throw __bre;\n");
+                    out.append(indent(indent)).append("}\n");
+                    if (boundary.result() instanceof ValueId result) {
+                        // A value-publishing chain boundary (the
+                        // refined-operand cell): the admitted value is the
+                        // chain's own receiver/key identity, so the check
+                        // publishes its own slot and never rewrites the
+                        // read's.
+                        out.append(indent(indent)).append(slot(result))
+                            .append(" = ").append(checked).append(";\n");
+                    }
+                    emitBoundarySuccess(boundary, checked, payload.descriptor(), indent);
                 }
             }
         }

@@ -441,7 +441,9 @@ public class CanonicalProjectionParityTest {
         // reports the typed-boundary tuple at the read on the oracle and
         // both production artifacts — never a coerced value or a raw
         // backend error — and the array-element cell keeps the specified
-        // E8003 arm.
+        // E8003 arm. An index chain's receiver and key are the same kind of
+        // consumer: the chain's admission publishes the read's own value and
+        // the length/normalize/commit children consume it.
         mainEntry("types/narrowed-capture-arithmetic-e8001"),
         mainEntry("types/narrowed-capture-unary-e8001"),
         mainEntry("types/narrowed-capture-comparison-e8001"),
@@ -450,7 +452,11 @@ public class CanonicalProjectionParityTest {
         mainEntry("types/narrowed-capture-string-e8001"),
         mainEntry("types/narrowed-capture-array-element-e8003"),
         mainEntry("types/narrowed-capture-array-element-function-e8003"),
-        mainEntry("types/narrowed-capture-array-index-e8001"));
+        mainEntry("types/narrowed-capture-array-index-e8001"),
+        mainEntry("types/narrowed-capture-array-receiver-write-e8001"),
+        mainEntry("types/narrowed-capture-array-index-write-e8001"),
+        mainEntry("types/narrowed-capture-array-receiver-read-e8001"),
+        mainEntry("types/narrowed-capture-array-index-read-e8001"));
 
     /**
      * The runtime-ok class-identity controls with a corpus pin: the
@@ -467,7 +473,11 @@ public class CanonicalProjectionParityTest {
         // consumer unchanged with its reference binding intact, and every
         // cleared-binding consumer raises its own catchable DEAL error with
         // the recorded code (E8001, or E8003 at the array-element cell).
-        mainEntry("types/narrowed-capture-controls"));
+        mainEntry("types/narrowed-capture-controls"),
+        // The index-position controls: the refined receiver/key flows
+        // through array, table and bytes reads and writes unchanged, and a
+        // cleared binding raises its own catchable E8001 at each position.
+        mainEntry("types/narrowed-capture-index-controls"));
 
     /**
      * The host-carrier runtime-ok corpus pins (ISSUE-0857;

@@ -6,6 +6,7 @@ import deal.ast.Block;
 import deal.ast.DeleteStatement;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
+import deal.ast.IfStatement;
 import deal.ast.ForOfStatement;
 import deal.ast.IdentifierExpr;
 import deal.ast.IndexExpr;
@@ -80,6 +81,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 public class AddressChainLoweringTest {
 
@@ -1881,6 +1883,203 @@ public class AddressChainLoweringTest {
         catch (Throwable failure) { check(type.isInstance(failure), "exact normalization exception " + failure); }
     }
 
+    // =========================================================================
+    // 13. The refined index receiver/key admission (ISSUE-0861)
+    // =========================================================================
+
+    /**
+     * A null-narrowed read consumed as an index chain's receiver or key is
+     * the same unvalidated consumer class as an operator operand: the read
+     * is admitted through the {@code NARROWED_READ} cell and the chain's
+     * length/normalize/commit children consume the admitted value. The
+     * admission is the receiver/key child itself, so the closed A-D9 child
+     * shape (count, positions, parentage) is unchanged and the protocol
+     * still validates the unit.
+     */
+    static void testNarrowedReceiverAndKeyAdmission() {
+        System.out.println("-- Refined index receiver/key: NARROWED_READ admission is the "
+            + "receiver/key child --");
+
+        // The refined reads are the chain's receiver and key; the checker
+        // publishes exactly those two identifier reads in
+        // CheckResult.narrowedReads (declared T | null, read as T).
+        IdentifierExpr receiver = ident("xs", 1);
+        IdentifierExpr key = ident("i", 4);
+        IndexExpr target = index(receiver, key, 3);
+        LiteralExpr value = intLit(3, 8);
+        AssignmentExpr assignment = assign(target, value);
+        IdentifierExpr readReceiver = ident("xs", 11);
+        IdentifierExpr readKey = ident("i", 14);
+        IndexExpr read = index(readReceiver, readKey, 13);
+        Type.Array arrayType = new Type.Array(Type.Int.INSTANCE);
+        SymbolTable table = new SymbolTable();
+        table.define("xs", new Symbol.VariableSymbol("xs", arrayType, false));
+        table.define("i", new Symbol.VariableSymbol("i", Type.Int.INSTANCE, false));
+        CheckResult checked = new CheckResult(
+            Map.of(receiver, arrayType, key, Type.Int.INSTANCE, target, Type.Int.INSTANCE,
+                value, Type.Int.INSTANCE, readReceiver, arrayType,
+                readKey, Type.Int.INSTANCE, read, Type.Int.INSTANCE),
+            table, Map.of(), List.of(), Map.of(), Map.of(), Map.of(),
+            Set.of(receiver, key, readReceiver, readKey));
+
+        SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
+        lowerer.openForEachScope("xs");
+        lowerer.openForEachScope("i");
+        lowerer.lowerAssignment(assignment);
+        lowerer.lowerExpression(read);
+        lowerer.closeForEachScope();
+        lowerer.closeForEachScope();
+        List<SemanticOp> opList = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(opList)).isEmpty(),
+            "the admission-bearing chain passes the production-time address-chain "
+                + "protocol: " + AddressChainProtocol.validate(protocolUnit(opList)));
+
+        SemanticOp chain = null;
+        SemanticOp indexRead = null;
+        for (SemanticOp op : opList) {
+            if (op.kind() == SemanticOpKind.ASSIGN
+                    && ((KindPayload.AssignPayload) op.payload()).targetKind()
+                        == AssignTargetKind.ARRAY_SLOT) {
+                chain = op;
+            }
+            if (op.kind() == SemanticOpKind.INDEX_READ) {
+                indexRead = op;
+            }
+        }
+        check(chain != null, "the slice carries one ASSIGN ARRAY_SLOT chain");
+        check(indexRead != null, "the slice carries one ARRAY_READ INDEX_READ");
+        if (chain == null || indexRead == null) {
+            return;
+        }
+        KindPayload.AssignPayload payload = (KindPayload.AssignPayload) chain.payload();
+        check(payload.childOps().size() == 7,
+            "the chain keeps the closed seven-child ARRAY_SLOT shape; got "
+                + payload.childOps().size());
+        if (payload.childOps().size() != 7) {
+            return;
+        }
+        Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+        for (SemanticOp op : opList) {
+            byId.put(op.opId(), op);
+        }
+        SemanticOp receiverCell = byId.get(payload.childOps().get(0));
+        SemanticOp keyCell = byId.get(payload.childOps().get(1));
+        SemanticOp length = byId.get(payload.childOps().get(3));
+        SemanticOp normalize = byId.get(payload.childOps().get(4));
+        SemanticOp commit = byId.get(payload.childOps().get(6));
+        check(receiverCell != null && keyCell != null && length != null
+                && normalize != null && commit != null,
+            "the chain's receiver/key/length/normalize/commit children resolve");
+
+        checkAdmission("the chain's receiver child", receiverCell, BoundaryKind.NARROWED_READ,
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE), chain);
+        checkAdmission("the chain's key child", keyCell, BoundaryKind.NARROWED_READ,
+            RuntimeDescriptor.Int.INSTANCE, chain);
+        if (receiverCell != null && keyCell != null && length != null
+                && normalize != null && commit != null) {
+            KindPayload.ArrayLengthPayload lengthPayload =
+                (KindPayload.ArrayLengthPayload) length.payload();
+            check(lengthPayload.arrayValue().equals(receiverCell.result()),
+                "the length child reads the admitted receiver (the admission's result)");
+            KindPayload.IndexNormalizePayload normalizePayload =
+                (KindPayload.IndexNormalizePayload) normalize.payload();
+            check(normalizePayload.rawKey().equals(keyCell.result()),
+                "the normalize child keys on the admitted index (the admission's result)");
+            check(normalizePayload.currentLength().equals(length.result()),
+                "the normalize child reads the length child's result");
+            KindPayload.IndexWritePayload commitWrite =
+                (KindPayload.IndexWritePayload) commit.payload();
+            check(commitWrite.container().equals(receiverCell.result()),
+                "the commit writes through the admitted receiver");
+            check(commitWrite.slot().equals(normalize.result()),
+                "the commit uses the normalize child's slot");
+            check(!commitWrite.container().equals(
+                    ((KindPayload.BoundaryPayload) receiverCell.payload()).input()),
+                "the commit never reuses the unadmitted receiver read identity");
+        }
+
+        KindPayload.IndexReadPayload readPayload =
+            (KindPayload.IndexReadPayload) indexRead.payload();
+        SemanticOp readBoundary = byId.get(readPayload.elementBoundaryOpId());
+        check(readBoundary != null
+                && ((KindPayload.BoundaryPayload) readBoundary.payload()).kind()
+                    == BoundaryKind.ARRAY_ELEMENT_READ,
+            "the index read keeps its ARRAY_ELEMENT_READ boundary child");
+        SemanticOp readContainerProducer = null;
+        SemanticOp readKeyProducer = null;
+        for (SemanticOp op : opList) {
+            if (!(op.result() instanceof ValueId valueId)) {
+                continue;
+            }
+            if (valueId.equals(readPayload.container())) {
+                readContainerProducer = op;
+            }
+            if (valueId.equals(readPayload.slot())) {
+                readKeyProducer = op;
+            }
+        }
+        check(readContainerProducer != null
+                && readContainerProducer.kind() == SemanticOpKind.BOUNDARY
+                && ((KindPayload.BoundaryPayload) readContainerProducer.payload()).kind()
+                    == BoundaryKind.NARROWED_READ,
+            "the index read's container is the admitted receiver (the admission's result), "
+                + "never the raw refined read");
+        check(readKeyProducer != null
+                && readKeyProducer.kind() == SemanticOpKind.INDEX_NORMALIZE,
+            "the index read's slot is the normalize child");
+        if (readKeyProducer != null) {
+            KindPayload.IndexNormalizePayload readNormalize =
+                (KindPayload.IndexNormalizePayload) readKeyProducer.payload();
+            SemanticOp readKeyAdmission = null;
+            for (SemanticOp op : opList) {
+                if (op.result() instanceof ValueId valueId
+                        && valueId.equals(readNormalize.rawKey())) {
+                    readKeyAdmission = op;
+                }
+            }
+            check(readKeyAdmission != null
+                    && readKeyAdmission.kind() == SemanticOpKind.BOUNDARY
+                    && ((KindPayload.BoundaryPayload) readKeyAdmission.payload()).kind()
+                        == BoundaryKind.NARROWED_READ,
+                "the index read's normalize keys on the admitted index (the admission's "
+                    + "result), never the raw refined read");
+        }
+        long readAdmissions = opList.stream()
+            .filter(op -> op.kind() == SemanticOpKind.BOUNDARY
+                && ((KindPayload.BoundaryPayload) op.payload()).kind()
+                    == BoundaryKind.NARROWED_READ)
+            .count();
+        check(readAdmissions == 4,
+            "the slice carries exactly the four refined-read admissions (write receiver, "
+                + "write key, read receiver, read key); got " + readAdmissions);
+    }
+
+    /** Asserts one chain position's NARROWED_READ admission cell. */
+    private static void checkAdmission(String what, SemanticOp op, BoundaryKind kind,
+                                       RuntimeDescriptor descriptor, SemanticOp chain) {
+        check(op != null, what + " resolves");
+        if (op == null) {
+            return;
+        }
+        check(op.kind() == SemanticOpKind.BOUNDARY,
+            what + " is a BOUNDARY op");
+        KindPayload.BoundaryPayload boundary = (KindPayload.BoundaryPayload) op.payload();
+        check(boundary.kind() == kind,
+            what + " carries kind " + kind + " (got " + boundary.kind() + ")");
+        check(boundary.descriptor().equals(descriptor),
+            what + " carries the read's refined descriptor " + descriptor.canonicalSpecText()
+                + " (got " + boundary.descriptor().canonicalSpecText() + ")");
+        check(op.result() instanceof ValueId, what + " publishes the admitted value");
+        check(!boundary.input().equals(op.result()),
+            what + " publishes a distinct admitted value (the chain consumes it)");
+        check(op.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+            what + " carries the descriptor-kind policy of its own descriptor");
+        checkCanonicalRealization(what, boundary.realization());
+        checkParentage(what, op, chain.opId());
+        check(op.origin().kind() == SourceOriginKind.USER,
+            what + " keeps the read's own USER origin");
+    }
+
     public static void main(String[] args) {
         System.out.println("=== Address Chain Lowering Test (ISSUE-0405) ===\n");
 
@@ -1898,6 +2097,7 @@ public class AddressChainLoweringTest {
         testProtocolMutationMatrix();
         testComposedAdmissionOrder();
         testModuleCorpusAndDeterminism();
+        testNarrowedReceiverAndKeyAdmission();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

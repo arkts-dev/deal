@@ -1,0 +1,138 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The index-position controls of the call-preserved narrowing refinement: while the value is valid the refined receiver and key flow through array, table and bytes reads and writes unchanged, and after a capturing closure clears the binding every index position raises its own catchable E8001 — never a silently accepted write and never a raw backend index or arithmetic error.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, runtime-errors, arrays, bytes
+
+function expectNoError(what: string): null {
+  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+}
+
+function expectCaught(e: Error, what: string, code: string): null {
+  if (e.code !== code) {
+    throw { code: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.code };
+  }
+  return null;
+}
+
+function expectEqual(what: string, actual: int, expected: int): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+export function main(): null {
+  // The valid refinement flows through every index position unchanged: the
+  // admission republishes the read and the chain consumes the admitted value.
+  let row: int[] | null = [3, 4];
+  let which: int | null = 1;
+  if (row !== null) {
+    if (which !== null) {
+      expectEqual("array index read", row[which], 4);
+      row[which] = 9;
+      expectEqual("array index write", row[1], 9);
+    }
+  }
+  let maybeRow: int[] | null = [5];
+  let seed: int | null = 6;
+  if (maybeRow !== null) {
+    if (seed !== null) {
+      expectEqual("array receiver read", maybeRow[0], 5);
+      maybeRow[0] = seed;
+      expectEqual("array receiver write", maybeRow[0], 6);
+    }
+  }
+  let config: table | null = { a: 1 };
+  if (config !== null) {
+    config["a"] = 2;
+    let stored: int = config["a"];
+    expectEqual("table receiver write", stored, 2);
+  }
+  let buffer: bytes | null = bytes(2);
+  if (buffer !== null) {
+    buffer[0] = 5;
+    let element: int = buffer[0];
+    expectEqual("bytes receiver write", element, 5);
+  }
+
+  // After the capturing closure clears each binding, every index position
+  // raises its own catchable typed-boundary error.
+  let clearRow: () => null = function(): null {
+    row = null;
+    return null;
+  };
+  let clearWhich: () => null = function(): null {
+    which = null;
+    return null;
+  };
+  let clearConfig: () => null = function(): null {
+    config = null;
+    return null;
+  };
+  let clearBuffer: () => null = function(): null {
+    buffer = null;
+    return null;
+  };
+  if (row !== null) {
+    clearRow();
+    try {
+      let first: int = row[0];
+      expectNoError("array receiver read");
+    } catch (e) {
+      expectCaught(e, "array receiver read", "E8001");
+    }
+    try {
+      row[0] = 9;
+      expectNoError("array receiver write");
+    } catch (e) {
+      expectCaught(e, "array receiver write", "E8001");
+    }
+  }
+  let numbers: int[] = [1, 2];
+  if (which !== null) {
+    clearWhich();
+    try {
+      let picked: int = numbers[which];
+      expectNoError("array index read");
+    } catch (e) {
+      expectCaught(e, "array index read", "E8001");
+    }
+    try {
+      numbers[which] = 5;
+      expectNoError("array index write");
+    } catch (e) {
+      expectCaught(e, "array index write", "E8001");
+    }
+  }
+  if (config !== null) {
+    clearConfig();
+    try {
+      config["a"] = 3;
+      expectNoError("table receiver write");
+    } catch (e) {
+      expectCaught(e, "table receiver write", "E8001");
+    }
+    try {
+      let stored: int = config["a"];
+      expectNoError("table receiver read");
+    } catch (e) {
+      expectCaught(e, "table receiver read", "E8001");
+    }
+  }
+  if (buffer !== null) {
+    clearBuffer();
+    try {
+      buffer[0] = 6;
+      expectNoError("bytes receiver write");
+    } catch (e) {
+      expectCaught(e, "bytes receiver write", "E8001");
+    }
+    try {
+      let element: int = buffer[0];
+      expectNoError("bytes receiver read");
+    } catch (e) {
+      expectCaught(e, "bytes receiver read", "E8001");
+    }
+  }
+  return null;
+}

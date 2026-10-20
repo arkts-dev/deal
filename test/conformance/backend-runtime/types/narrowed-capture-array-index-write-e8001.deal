@@ -1,0 +1,18 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared T | null binding read as an array write's index is validated at that read: the write reports the typed-boundary tuple (E8001, expected int, actual null) at the index instead of a raw backend nil comparison, and the write never runs.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, arrays, runtime-errors
+
+export function main(): null {
+  let items: int[] = [0, 0, 0];
+  let i: int | null = 1;
+  let clear: () => null = function(): null {
+    i = null;
+    return null;
+  };
+  if (i !== null) {
+    clear();
+    items[i] = 7;
+  }
+  return null;
+}
