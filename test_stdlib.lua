@@ -749,14 +749,22 @@ end)
 -- closed JSON_STRINGIFY_UNSUPPORTED arm's own tuple (E8001 "unsupported type
 -- for JSON encoding: number", expected "string, number, boolean, or table",
 -- actual "number") — exactly the tuple the emitted LuaJIT chunk, the JS
--- realization and the JVM runtime publish for the same subject.
-local function assert_nonfinite_stringify_error(fn, label)
+-- realization and the JVM runtime publish for the same subject. When the
+-- call site is supplied the tuple's origin fields are pinned too: the arm
+-- reports the caller's forwarded span, never the stdlib interior.
+local function assert_nonfinite_stringify_error(fn, label, file, line, column)
   local err = assert_error_code(fn, "E8001")
   assert(err.message == "unsupported type for JSON encoding: number",
     label .. ": message " .. tostring(err.message))
   assert(err.expected == "string, number, boolean, or table",
     label .. ": expected " .. tostring(err.expected))
   assert(err.actual == "number", label .. ": actual " .. tostring(err.actual))
+  if file ~= nil then
+    assert(err.file == file and err.line == line and err.column == column,
+      label .. ": the tuple carries the call-site triplet, got "
+        .. tostring(err.file) .. ":" .. tostring(err.line) .. ":" .. tostring(err.column))
+  end
+  return err
 end
 
 test("json.stringify rejects NaN with E8001", function()
@@ -772,6 +780,18 @@ end)
 test("json.stringify rejects negative Infinity with E8001", function()
   assert_nonfinite_stringify_error(function() json.stringify.f({ x = -1.0/0.0 }) end,
     "negative Infinity member")
+end)
+
+-- The same closed tuple through a forwarded call site: the shipped realization
+-- and the compiled lanes publish identical code/message/expected/actual; only
+-- the origin differs, and it is the caller's span (the corpus fixture
+-- stdlib/json/json-stringify-nonfinite pins the same tuple for luajit, jvm
+-- and js).
+test("json.stringify nonfinite tuple matches the compiled-lane pin", function()
+  local err = assert_nonfinite_stringify_error(function()
+    json.stringify.f({ x = 1.0/0.0 }, "caller.deal", 7, 9)
+  end, "forwarded nonfinite", "caller.deal", 7, 9)
+  assert(err.code == "E8001", "the closed arm code, got: " .. tostring(err.code))
 end)
 
 test("json.stringify accepts finite numbers unchanged", function()
@@ -1287,13 +1307,19 @@ end)
 -- shipped LuaJIT realization exactly as the emitted chunk, the JS runtime and
 -- the JVM runtime do (the carrier-kind projection, never a private
 -- invalid-UTF-8 message).
-local function assert_invalid_scalar_stringify_error(fn, label)
+local function assert_invalid_scalar_stringify_error(fn, label, file, line, column)
   local err = assert_error_code(fn, "E8001")
   assert(err.message == "unsupported type for JSON encoding: string",
     label .. ": message " .. tostring(err.message))
   assert(err.expected == "string, number, boolean, or table",
     label .. ": expected " .. tostring(err.expected))
   assert(err.actual == "string", label .. ": actual " .. tostring(err.actual))
+  if file ~= nil then
+    assert(err.file == file and err.line == line and err.column == column,
+      label .. ": the tuple carries the call-site triplet, got "
+        .. tostring(err.file) .. ":" .. tostring(err.line) .. ":" .. tostring(err.column))
+  end
+  return err
 end
 
 test("json.stringify rejects invalid UTF-8 leaves with E8001", function()
@@ -1313,6 +1339,17 @@ test("json.stringify rejects invalid UTF-8 keys with E8001", function()
   t[string.char(0xED, 0xA0, 0x80)] = "value"
   assert_invalid_scalar_stringify_error(function() json.stringify.f(t) end,
     "invalid scalar key")
+end)
+
+-- The invalid-scalar key arm through a forwarded call site: the shipped
+-- realization publishes the closed string token and the caller's span, the
+-- same tuple std/json.js and the compiled lanes publish for the same subject.
+test("json.stringify invalid-scalar tuple matches the compiled-lane pin", function()
+  local t = {}
+  t[string.char(0xC0, 0xAF)] = 1
+  assert_invalid_scalar_stringify_error(function()
+    json.stringify.f(t, "caller.deal", 4, 2)
+  end, "forwarded invalid scalar key", "caller.deal", 4, 2)
 end)
 
 test("json.parse rejects raw invalid UTF-8 input with E8001 (entry gate)", function()
