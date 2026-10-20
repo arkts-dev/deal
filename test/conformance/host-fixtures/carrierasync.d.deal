@@ -1,0 +1,34 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+// Host fixture declaration for the three-lane host-carrier async-class
+// conformance test (luajit-host-carrier-projection D8 V2 (a)). The class
+// carries a nested class field, a required array field, an optional array
+// field and an optional nullable field, so a declared class value crosses
+// with its nested values; the async exports declare the class parameter
+// (with a function parameter), the class completion, and the
+// class-element / class-field arrays.
+
+export class Endpoint {
+  path: string;
+}
+
+export class ServerConfig {
+  port: int;
+  endpoint: Endpoint;
+  parts: string[];
+  tags?: string[];
+  note?: string | null;
+}
+
+export class Farm {
+  name: string;
+  servers: ServerConfig[];
+  primary: Endpoint;
+}
+
+export async function describeAsync(s: ServerConfig, g: (x: int) => int): string;
+export async function make(): ServerConfig;
+export function makeAll(): ServerConfig[];
+export function makeFarm(): Farm;

@@ -1,0 +1,73 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A table-typed host return, a table-typed host parameter and a table-typed host-class field preserve a class member at its declared type and a host-provided function member that DEAL invokes; a host-origin class member is never left in the host representation, the host object a copied crossing projects is not mutated, and the runtime-resolved async host call preserves a class argument (nested class field, class field array, table field) and a function argument whose declared result the host reports.
+// @expected: runtime-ok
+// @features: modules, host-abi, tables, classes, functions, async-await
+
+import * as host from "host/carriertable";
+
+class Point {
+  x: int = 0;
+  y: int = 0;
+}
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+function bump(x: int): int {
+  let y: int = x + 1;
+  return y;
+}
+
+function pick(): async (w: host.Widget, g: (x: int) => int) => string {
+  return host.describeAsync;
+}
+
+export async function test_runtime_resolved_async(): null {
+  let w: host.Widget = { label: "w", weight: 7, action: bump };
+  let dyn: async (w: host.Widget, g: (x: int) => int) => string = pick();
+  let text: string = await dyn(w, bump);
+  check(text === "W|w|7|true:42", "the runtime-resolved async host call preserves the class and function arguments");
+  return null;
+}
+
+export function test_table_return(): null {
+  let t: table = host.makeTable();
+  let w: host.Widget = t.widget;
+  check(w.label === "made", "the table-typed host return class member label");
+  check(w.weight === 9, "the table-typed host return class member weight");
+  let field: (x: int) => int = w.action;
+  check(field(41) === 42, "the table-typed host return class member function field");
+  let member: (x: int) => int = t.action;
+  check(member(41) === 42, "the table-typed host return function member");
+  check(host.tableIntact(), "the host object the bridge copies is not mutated");
+  return null;
+}
+
+export function test_table_parameter(): null {
+  let point: Point = { x: 3, y: 4 };
+  let holder: table = { point: point, twin: point, step: bump };
+  let report: string = host.describeTable(holder);
+  check(report === "T|true|3,4|true|true:42", "the table-typed host parameter preserves the class member, its alias and the function member");
+  return null;
+}
+
+export function test_table_field(): null {
+  let board: host.Board = host.makeBoard();
+  check(board.title === "board", "the table-typed host-class field carrier title");
+  check(board.widgets.length === 1, "the host-class class-array field length");
+  check(board.widgets[0].label === "w0", "the host-class class-array field element");
+  let meta: table = board.meta;
+  let w: host.Widget = meta.widget;
+  check(w.weight === 5, "the table-typed host-class field class member");
+  let member: (x: int) => int = meta.action;
+  check(member(41) === 42, "the table-typed host-class field function member");
+  return null;
+}
+
+export function main(): null {
+  return null;
+}
