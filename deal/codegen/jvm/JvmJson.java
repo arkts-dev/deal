@@ -589,14 +589,16 @@ public final class JvmJson {
     // The from-json walk (JSON_FROM_NULL)
     // =========================================================================
 
-    /** The JSON_FROM_CLASS walk: the tagged instance or language null. */
+    /**
+     * The JSON_FROM_CLASS walk: the tagged instance or language null.
+     * Only a JSON object document decodes: a scalar, a JSON null, and an
+     * array document of any length — the empty array included — return
+     * the language null.
+     */
     public static Object fromClass(Plan plan, String text) {
         Object doc = parse(text);
         if (doc == SYNTAX || doc == JNULL) {
             return null;
-        }
-        if (doc instanceof JvmRuntime.Array && ((JvmRuntime.Array) doc).length == 0) {
-            doc = new JvmRuntime.Table();
         }
         if (!(doc instanceof JvmRuntime.Table table)) {
             return null;
@@ -720,16 +722,12 @@ public final class JvmJson {
         }
         if (descriptor.startsWith("@")) {
             // The nested @jsonable class decode (K-D8 step 6): the nested
-            // class's own plan drives the same phase order, its omitted
+            // class's own plan drives the same phase order and its omitted
             // required-present defaults run their recorded CLASS_DEFAULT
-            // thunks, and the decoded document collapses [] to the empty
-            // object exactly like the top-level gate.
-            JvmRuntime.Table document;
-            if (raw instanceof JvmRuntime.Table table) {
-                document = table;
-            } else if (raw instanceof JvmRuntime.Array empty && empty.length == 0) {
-                document = new JvmRuntime.Table();
-            } else {
+            // thunks. The nested value is a JSON object, exactly the root
+            // gate's own shape: an array value of any length, the empty
+            // array included, is a validation failure.
+            if (!(raw instanceof JvmRuntime.Table document)) {
                 return FAIL;
             }
             Object nested = decodeNestedClass(descriptor, document);

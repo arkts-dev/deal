@@ -389,11 +389,11 @@ public class JsonClassExecutorTest {
     }
 
     // =========================================================================
-    // (b) JSON_FROM_CLASS: the top-level gate and the {}/[] collapse
+    // (b) JSON_FROM_CLASS: the top-level object gate
     // =========================================================================
 
     private static void testFromJsonTopLevelGate() {
-        System.out.println("-- fromJson: the top-level gate and the {}/[] collapse --");
+        System.out.println("-- fromJson: the top-level object gate --");
 
         ClassLayout point = layoutOf(POINT,
             field("x", INT, true),
@@ -429,8 +429,8 @@ public class JsonClassExecutorTest {
         check(emptyObject instanceof Value.Null,
             "{} with absent required no-default fields returns null (K-D9)");
 
-        // The [] collapse equals the {} collapse: with defaults, both
-        // decode as the defaulted instance.
+        // The empty object document decodes through the omitted defaults:
+        // with defaults, {} publishes the defaulted instance.
         ClassLayout defaulted = layoutOf(POINT,
             field("x", INT, true),
             field("tag", STRING, true));
@@ -446,25 +446,28 @@ public class JsonClassExecutorTest {
         List<String> logDefaults = new ArrayList<>();
         ScriptedBodyRunner defaultsRunner = new ScriptedBodyRunner(logDefaults, produced,
             null);
-        Value collapsedObject = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
+        Value defaultedObject = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
             Map.of(defaultJsonId, Value.string("{}")), List.of(xDefault.opId(),
                 tagDefault.opId()), defaultedOps, Map.of(POINT, defaulted),
             JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), defaultsRunner);
-        check(collapsedObject instanceof Value.Class instance
+        check(defaultedObject instanceof Value.Class instance
                 && fieldValue(instance, defaulted, "x") instanceof Value.Int intValue
                 && intValue.value() == 40,
             "{} decodes as the defaulted instance (default x = 40)");
-        List<String> logCollapse = new ArrayList<>();
-        ScriptedBodyRunner collapseRunner = new ScriptedBodyRunner(logCollapse, produced,
+        // The [] document is not an object: an array of any length — the
+        // empty array included — is a decode failure, never the defaulted
+        // instance.
+        List<String> logRejected = new ArrayList<>();
+        ScriptedBodyRunner rejectedRunner = new ScriptedBodyRunner(logRejected, produced,
             null);
-        Value collapsedArray = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
+        Value rejectedArray = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
             Map.of(defaultJsonId, Value.string("[]")), List.of(xDefault.opId(),
                 tagDefault.opId()), defaultedOps, Map.of(POINT, defaulted),
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), collapseRunner);
-        check(collapsedArray instanceof Value.Class instance
-                && fieldValue(instance, defaulted, "tag") instanceof Value.String string
-                && carrier(string).equals("pt"),
-            "[] decodes as the defaulted instance (the pinned {}/[] collapse)");
+            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), rejectedRunner);
+        check(rejectedArray instanceof Value.Null,
+            "[] returns null: the class helper accepts only a JSON object");
+        check(logRejected.isEmpty(),
+            "the rejected [] document runs no default: " + logRejected);
     }
 
     private static NestedClassFactory missingFactorySeam() {
@@ -709,6 +712,20 @@ public class JsonClassExecutorTest {
             new ScriptedBodyRunner(new ArrayList<>(), produced, null));
         check(nestedFailure instanceof Value.Null,
             "a nested extra-key failure returns null end-to-end");
+
+        // A nested class value is a JSON object, exactly the root gate's
+        // own shape: an empty array is a validation failure returning
+        // null, never the nested defaulted instance.
+        List<String> logNestedArray = new ArrayList<>();
+        Value nestedEmptyArray = ClassOpsExecutor.executeJsonFromClass(op,
+            Map.of(jsonId, Value.string("{\"home\":[]}")),
+            List.of(nameDefault.opId()), defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), seam,
+            new ScriptedBodyRunner(logNestedArray, produced, null));
+        check(nestedEmptyArray instanceof Value.Null,
+            "a nested [] class value returns null end-to-end: the nested walk accepts "
+                + "only a JSON object");
+        check(logNestedArray.isEmpty(),
+            "the rejected nested [] value runs no nested default: " + logNestedArray);
 
         List<String> failingLog = new ArrayList<>();
         NestedClassFactory failingSeam = (classId, providedFields) -> {

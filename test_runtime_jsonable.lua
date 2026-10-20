@@ -106,7 +106,7 @@ test("json_from_json applies defaults for missing keys", function()
   assert(instance.b == "default")
 end)
 
-test("json_from_json with empty parsed table applies all defaults", function()
+test("json_from_json with empty object document applies all defaults", function()
   local fields = {
     { name = "x", jtype = "int", optional = false, nullable = false },
     { name = "y", jtype = "string", optional = false, nullable = false }
@@ -117,6 +117,16 @@ test("json_from_json with empty parsed table applies all defaults", function()
   assert(instance ~= nil)
   assert(instance.x == 5)
   assert(instance.y == "hi")
+end)
+
+test("json_from_json rejects a decoded empty array carrier (no []/{} collapse)", function()
+  local fields = {
+    { name = "x", jtype = "int", optional = false, nullable = false }
+  }
+  local defaults = { x = 5 }
+  -- The std/json decode marks an array carrier even when it is empty, so
+  -- the class gate never reads [] as an empty object document.
+  assert(__rt.json_from_json("C", { [__K.a] = true, [__K.n] = 0 }, defaults, fields) == nil)
 end)
 
 -- ==================== json_from_json: defaults deep-copied ====================
@@ -2026,7 +2036,7 @@ test("decode matrix: a deep nested class has no fixed cap", function()
   assert(__rt.json_from_json("L1", p514, d514, f514) ~= nil)
 end)
 
-test("decode matrix: empty parsed table decodes as the defaulted instance ([]/{} collapse)", function()
+test("decode matrix: empty object document decodes as the defaulted instance", function()
   local fields = {
     { name = "x", jtype = "int", optional = false, nullable = false }
   }
@@ -2036,11 +2046,13 @@ test("decode matrix: empty parsed table decodes as the defaulted instance ([]/{}
   assert(from_obj.x == 5)
   assert(from_obj[__K.kind] == "class")
   assert(from_obj[__K.classname] == "C")
-  -- json.parse("[]") and json.parse("{}") produce the same fresh empty
-  -- table, so both decode identically (D2a).
+  -- A decoded array carrier records the private array/order marks even at
+  -- length zero, so [] is never an empty object document (v1.3).
+  assert(__rt.json_from_json("C", { [__K.a] = true, [__K.n] = 0 },
+    defaults, fields) == nil)
 end)
 
-test("decode matrix: []/{} collapse holds one level down", function()
+test("decode matrix: an empty nested object applies the nested defaults", function()
   local child_fields = {
     { name = "x", jtype = "int", optional = false, nullable = false }
   }
@@ -2060,6 +2072,12 @@ test("decode matrix: []/{} collapse holds one level down", function()
   assert(instance.child[__K.kind] == "class")
   assert(#instance.items == 0)
   assert(next(instance.meta) == nil)
+  -- The nested class gate has the same shape: a decoded empty array
+  -- carrier is a validation failure, never a defaulted nested instance.
+  local nested_array = { [__K.a] = true, [__K.n] = 0 }
+  local rejected = __rt.json_from_json("Parent",
+    { child = nested_array, items = {}, meta = {} }, parent_defaults, parent_fields)
+  assert(rejected == nil)
 end)
 
 -- ==================== json_to_json encode matrix (ISSUE-0187 T3) ====================

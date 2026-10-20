@@ -1739,12 +1739,20 @@ test("json_from_plan non-empty array-shaped input returns nil", function()
   assert(__rt.json_from_plan("C", int_plan(), { 1, 2 }, "f.deal", 1, 1) == nil)
 end)
 
-test("json_from_plan empty parsed input decodes the defaulted instance", function()
-  -- In the Lua value model the {} and [] parse collapse is invisible
-  -- (both parse to one empty table), so the decoded instance is the
-  -- defaulted one either way.
+test("json_from_plan empty object document decodes the defaulted instance", function()
+  -- An empty object document is a JSON object: the omitted
+  -- required-present defaults evaluate and the instance publishes.
   local u = __rt.json_from_plan("C", int_plan(), {}, "f.deal", 1, 1)
   assert(u ~= nil and u.id == 0 and u.name == "anon" and u.nick == nil)
+end)
+
+test("json_from_plan decoded empty array carrier returns nil (no []/{} collapse)", function()
+  -- A decoded array carrier records the private array/order marks, so the
+  -- class gate never reads it as an empty object document.
+  local empty_array = { [__K.a] = true, [__K.n] = 0 }
+  assert(__rt.json_from_plan("C", int_plan(), empty_array, "f.deal", 1, 1) == nil)
+  local decoded_empty_array = { [__K.t] = true, [__K.a] = true, [__K.n] = 0 }
+  assert(__rt.json_from_plan("C", int_plan(), decoded_empty_array, "f.deal", 1, 1) == nil)
 end)
 
 test("json_from_plan evaluator failure returns nil", function()

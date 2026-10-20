@@ -1,5 +1,5 @@
 // @spec: Classes — @jsonable fromJson top-level input gate
-// @description: @jsonable fromJson returns null (never throws) for scalar, null, and non-empty-array JSON documents, and treats "[]" and "{}" alike — both decode to the defaulted instance (the documented parse collapse)
+// @description: @jsonable fromJson parses an object: scalar, null, and array JSON documents — the empty array included — return null (never throw), while "{}" decodes to the defaulted instance
 // @expected: runtime-ok
 // @features: jsonable, fromJson, validation
 
@@ -27,21 +27,24 @@ export function test_fromJson_top_level_scalars(): null {
   return null;
 }
 
-export function test_fromJson_empty_collapse(): null {
+export function test_fromJson_empty_documents(): null {
   let from_obj: C | null = C$fromJson("{}");
-  let from_arr: C | null = C$fromJson("[]");
-  if (from_obj !== null) {
-    if (from_arr !== null) {
-      let s_obj: string = C$toJson(from_obj);
-      let s_arr: string = C$toJson(from_arr);
-      if (s_obj !== s_arr) {
-        throw { code: "TEST_FAIL", message: "fromJson({}) and fromJson([]) must roundtrip identically" };
-      }
-    } else {
-      throw { code: "TEST_FAIL", message: "fromJson([]) should decode the defaulted instance" };
-    }
-  } else {
+  if (from_obj === null) {
     throw { code: "TEST_FAIL", message: "fromJson({}) should decode the defaulted instance" };
+  } else {
+    let s_obj: string = C$toJson(from_obj);
+    if (s_obj !== "{\"x\":0}") {
+      throw { code: "TEST_FAIL", message: "fromJson({}) should keep the defaulted field" };
+    }
+  }
+  // The class helper accepts only its specified object shape: an empty
+  // JSON array is a validation failure returning null, never the
+  // defaulted instance.
+  if (C$fromJson("[]") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson([]) should return null" };
+  }
+  if (C$fromJson(" [ ] ") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson(\" [ ] \") should return null" };
   }
   return null;
 }

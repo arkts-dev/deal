@@ -1,0 +1,41 @@
+// @spec: Classes — @jsonable fromJson nested class values
+// @description: A nested @jsonable class value — a class field and every class-array element — accepts only a JSON object: a nested "[]", the empty array included, is a validation failure returning null on every lane, never a defaulted nested instance (v1.3)
+// @expected: runtime-ok
+// @features: jsonable, fromJson, nested-class, validation, v1.3
+
+// @jsonable
+export class Child {
+  n: int = 7;
+}
+
+// @jsonable
+export class Parent {
+  child: Child = {};
+  items: Child[] = [];
+}
+
+export function test_nested_empty_array_rejected(): null {
+  if (Parent$fromJson("{\"child\":[]}") !== null) {
+    throw { code: "TEST_FAIL", message: "a nested empty-array class field should return null" };
+  }
+  if (Parent$fromJson("{\"items\":[[]]}") !== null) {
+    throw { code: "TEST_FAIL", message: "a nested empty-array class element should return null" };
+  }
+  let ok: Parent | null = Parent$fromJson("{\"child\":{},\"items\":[]}");
+  if (ok === null) {
+    throw { code: "TEST_FAIL", message: "the object forms should decode" };
+  } else {
+    let n: int = ok.child.n;
+    if (n !== 7) {
+      throw { code: "TEST_FAIL", message: "the nested default should apply" };
+    }
+    if (ok.items.length !== 0) {
+      throw { code: "TEST_FAIL", message: "the empty class array should stay empty" };
+    }
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

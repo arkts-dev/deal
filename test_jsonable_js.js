@@ -155,10 +155,10 @@ test("jsonFromJson rejects extra keys in document order (null, never throws)", f
 });
 
 // =========================================================================
-// Top-level gate and the empty collapse (D3)
+// Top-level object gate (D3)
 // =========================================================================
 
-test("top-level gate: scalar/null/non-empty-array documents return null", function() {
+test("top-level gate: scalar/null/array documents return null", function() {
   const fields = [f("name", "string", false, false)];
   const thunk = () => ({ name: "" });
   assertNull(rt.jsonFromJson("@m/User", fields, thunk, "42", ...LOC), "number document");
@@ -166,18 +166,34 @@ test("top-level gate: scalar/null/non-empty-array documents return null", functi
   assertNull(rt.jsonFromJson("@m/User", fields, thunk, "true", ...LOC), "boolean document");
   assertNull(rt.jsonFromJson("@m/User", fields, thunk, "null", ...LOC), "null document");
   assertNull(rt.jsonFromJson("@m/User", fields, thunk, "[1,2]", ...LOC), "non-empty array document");
+  assertNull(rt.jsonFromJson("@m/User", fields, thunk, "[]", ...LOC), "empty array document");
+  assertNull(rt.jsonFromJson("@m/User", fields, thunk, " [ ] ", ...LOC), "spaced empty array document");
 });
 
-test("empty collapse: {} and [] decode to the defaulted instance with identical toJson text", function() {
+test("the empty object decodes to the defaulted instance and [] never does", function() {
   const fields = [f("name", "string", false, false), f("age", "int", false, false)];
   const thunk = () => ({ name: "", age: 0 });
   const fromObj = rt.jsonFromJson("@m/User", fields, thunk, "{}", ...LOC);
-  const fromArr = rt.jsonFromJson("@m/User", fields, thunk, "[]", ...LOC);
-  assert(fromObj !== null && fromArr !== null, "collapse decode");
-  const a = rt.jsonToJson("@m/User", fromObj, fields, ...LOC);
-  const b = rt.jsonToJson("@m/User", fromArr, fields, ...LOC);
-  assertEqual(a, b, "identical collapse texts");
-  assertEqual(a, '{"name":"","age":0}', "collapse text");
+  assert(fromObj !== null, "{} decode");
+  assertEqual(rt.jsonToJson("@m/User", fromObj, fields, ...LOC),
+    '{"name":"","age":0}', "object text");
+  assertNull(rt.jsonFromJson("@m/User", fields, thunk, "[]", ...LOC),
+    "the empty array document is not an object");
+});
+
+test("a nested class value accepts only a JSON object: [] returns null", function() {
+  const child = [{ name: "n", jtype: "int", optional: false, nullable: false, hasDefault: true }];
+  const fields = [
+    f("child", "class", false, false, { className: "@m/Child", fields: child }),
+    f("items", "array", false, false, { element: { jtype: "class", optional: false, nullable: false, className: "@m/Child", fields: child } }),
+  ];
+  const thunk = () => ({ child: { n: 7 }, items: [] });
+  assertNull(rt.jsonFromJson("@m/Parent", fields, thunk, '{"child":[]}', ...LOC),
+    "a nested empty-array class value is a validation failure");
+  assertNull(rt.jsonFromJson("@m/Parent", fields, thunk, '{"items":[[]]}', ...LOC),
+    "a nested empty-array class element is a validation failure");
+  assert(rt.jsonFromJson("@m/Parent", fields, thunk, '{"child":{"n":7},"items":[]}', ...LOC) !== null,
+    "the object forms still decode");
 });
 
 test("malformed JSON returns null and never throws", function() {
