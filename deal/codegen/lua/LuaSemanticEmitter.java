@@ -9876,6 +9876,19 @@ __factories.__hostCarrierOut = function(desc, v, memo)
     if base == nil or string.sub(base, 1, 1) ~= "[" then return nil end
     return string.sub(base, 2, -2)
   end
+  -- A declared position whose value needs no representation change in
+  -- either direction: the primitive and null descriptors (and bytes,
+  -- whose carrier is the DEAL representation both ways). The container
+  -- walk is descriptor-directed, so it never inspects an element/member
+  -- the declared descriptor cannot re-represent (a later deep or cyclic
+  -- subtree at a scalar position stays untouched and the declared cell
+  -- remains the failure authority).
+  local function scalarDesc(d)
+    local base = baseOf(d)
+    return base == "string" or base == "int" or base == "number"
+      or base == "boolean" or base == "null" or base == "bytes"
+  end
+  if scalarDesc(desc) then return v end
   local function identityOf(d, carried)
     local base = baseOf(d)
     if base ~= nil and (base == "Error" or string.sub(base, 1, 1) == "@") then
@@ -10067,12 +10080,14 @@ __factories.__hostCarrierOut = function(desc, v, memo)
     if type(n) ~= "number" then n = #v end
     local elementDesc = arrayElementOf(desc)
     local recreate = false
-    for i = 1, n do
-      local element = v[i]
-      if not (type(element) == "table"
-          and element[__dealCarrierKeys.jn]) and changes(element) then
-        recreate = true
-        break
+    if not scalarDesc(elementDesc) then
+      for i = 1, n do
+        local element = v[i]
+        if not (type(element) == "table"
+            and element[__dealCarrierKeys.jn]) and changes(element) then
+          recreate = true
+          break
+        end
       end
     end
     if not recreate then
@@ -10236,10 +10251,21 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     if fields == nil then return nil end
     return fields[key]
   end
+  -- The same descriptor-directed rule as the outbound direction: a
+  -- declared primitive/bytes position needs no representation change, so
+  -- an invalid table at it is left for the declared cell and a later deep
+  -- or cyclic subtree of a declared array's scalar element is never
+  -- inspected.
+  local function scalarDesc(d)
+    if d == nil then return false end
+    local base = d
+    if string.sub(base, 1, 1) == "?" then base = string.sub(base, 2) end
+    return base == "string" or base == "int" or base == "number"
+      or base == "boolean" or base == "null" or base == "bytes"
+  end
+  if scalarDesc(desc) then return v end
   if v[__dealCarrierKeys.c] then return v end
   if v[__dealCarrierKeys.d] then return v end
-  if v[__dealCarrierKeys.a] ~= nil then return v end
-  if v[__dealCarrierKeys.t] ~= nil then return v end
   if v[__dealCarrierKeys.kind] == "bytes"
       or v[__dealCarrierKeys.kind] == "async" then return v end
   if v[__dealCarrierKeys.kind] == "function" then return v end
@@ -10308,6 +10334,97 @@ __factories.__hostCarrierIn = function(desc, v, memo)
   if base ~= nil and string.sub(base, 1, 1) == "[" then
     elementDesc = string.sub(base, 2, -2)
   end
+  -- A value-directed walk of an inbound container: a member/element that
+  -- is not already the DEAL representation (a host class instance or the
+  -- runtime Error instance, directly or inside a nested container) needs
+  -- the crossing. A private carrier that is already DEAL (the __c class
+  -- carrier, the __d Error carrier, the __fn function carrier, a numeric
+  -- variant, a bytes/async value) does not.
+  local changes
+  changes = function(x, seen)
+    if type(x) ~= "table" then return false end
+    if x == __NULL or x == __rt.__NULL or x == __MISSING
+        or (__rtMissing ~= nil and x == __rtMissing) then return false end
+    if x[__dealCarrierKeys.c] or x[__dealCarrierKeys.d] then return false end
+    if x[__dealCarrierKeys.jn] then return false end
+    if x[__dealCarrierKeys.kind] == "function"
+        or x[__dealCarrierKeys.kind] == "bytes"
+        or x[__dealCarrierKeys.kind] == "async"
+        or x[__dealCarrierKeys.fn] ~= nil then return false end
+    if x[__dealCarrierKeys.kind] ~= nil then return true end
+    if seen == nil then seen = {} end
+    if seen[x] then return false end
+    seen[x] = true
+    if x[__dealCarrierKeys.a] ~= nil then
+      local n = x[__dealCarrierKeys.n]
+      if type(n) ~= "number" then n = #x end
+      for i = 1, n do
+        local element = x[i]
+        if not (type(element) == "table"
+            and element[__dealCarrierKeys.jn])
+            and changes(element, seen) then return true end
+      end
+      return false
+    end
+    for k, val in pairs(x) do
+      if type(k) == "string"
+          and not (type(val) == "table" and val[__dealCarrierKeys.jn])
+          and changes(val, seen) then return true end
+    end
+    return false
+  end
+  -- An inbound array carrier (the host echoed a DEAL value the outbound
+  -- direction re-represented, so its elements are host-facing): a carrier
+  -- whose elements are already DEAL values keeps its identity, and one
+  -- holding a host representation takes one memoized copy with the same
+  -- carrier marks and per-slot numeric marks and its elements projected.
+  if v[__dealCarrierKeys.a] ~= nil then
+    local n = v[__dealCarrierKeys.n]
+    if type(n) ~= "number" then n = #v end
+    local recreate = false
+    if not scalarDesc(elementDesc) then
+      for i = 1, n do
+        local element = v[i]
+        if not (type(element) == "table"
+            and element[__dealCarrierKeys.jn])
+            and changes(element) then
+          recreate = true
+          break
+        end
+      end
+    end
+    if not recreate then
+      memo[v] = v
+      return v
+    end
+    local out = {}
+    memo[v] = out
+    for k, val in pairs(v) do
+      if type(k) == "string" then
+        out[k] = val
+      elseif k ~= __dealCarrierKeys.nK then
+        out[k] = val
+      end
+    end
+    local sourceMarks = v[__dealCarrierKeys.nK]
+    if type(sourceMarks) == "table" then
+      local marks = {}
+      for k, flag in pairs(sourceMarks) do marks[k] = flag end
+      out[__dealCarrierKeys.nK] = marks
+    end
+    out[__dealCarrierKeys.n] = n
+    for i = 1, n do
+      local element = v[i]
+      if element ~= nil then
+        if type(element) == "table" and element[__dealCarrierKeys.jn] then
+          out[i] = element
+        else
+          out[i] = __factories.__hostCarrierIn(elementDesc, element, memo)
+        end
+      end
+    end
+    return out
+  end
   if elementDesc ~= nil then
     local length = 0
     local present = 0
@@ -10330,28 +10447,6 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     end
     out[__dealCarrierKeys.n] = length
     return out
-  end
-  local changes
-  changes = function(x, seen)
-    if type(x) ~= "table" then return false end
-    if x == __NULL or x == __rt.__NULL or x == __MISSING
-        or (__rtMissing ~= nil and x == __rtMissing) then return false end
-    if x[__dealCarrierKeys.c] or x[__dealCarrierKeys.d] then return false end
-    if x[__dealCarrierKeys.a] ~= nil or x[__dealCarrierKeys.t] ~= nil then
-      return false
-    end
-    if x[__dealCarrierKeys.kind] == "function"
-        or x[__dealCarrierKeys.kind] == "bytes"
-        or x[__dealCarrierKeys.kind] == "async"
-        or x[__dealCarrierKeys.fn] ~= nil then return false end
-    if x[__dealCarrierKeys.kind] ~= nil then return true end
-    if seen == nil then seen = {} end
-    if seen[x] then return false end
-    seen[x] = true
-    for k, val in pairs(x) do
-      if type(k) == "string" and changes(val, seen) then return true end
-    end
-    return false
   end
   local recreate = false
   for k, val in pairs(v) do

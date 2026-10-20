@@ -4955,6 +4955,621 @@ public class HostModuleLoadEmissionTest {
     }
 
     // =========================================================================
+    // 2e2. The untyped-position carrier crossings (ISSUE-0856)
+    //
+    // The cross-cutting untyped positions of the host-carrier projection:
+    // `table`-typed host returns, parameters and host-class fields carrying
+    // class and host-provided function members; DEAL-declared class,
+    // function and Error values inside table and array members in both
+    // directions; a DEAL function value at a host class's function-typed
+    // field and at a table member; host-provided function values invoked
+    // from DEAL; and the D4 shared/copy rule, aliases, null/absent states
+    // and numeric variants.
+    // =========================================================================
+
+    /**
+     * The declared host module of the untyped-position drive: a host class
+     * with two numeric fields, a host class with a function-typed field and
+     * a {@code table}-typed field, and the declared {@code table} return,
+     * parameter and echo positions. No declared position carries the
+     * imported {@code (int) => int} function type, so the DEAL function
+     * value's wrapper can only be sourced from the emitted
+     * {@code __hostFnShapes} metadata.
+     */
+    private static final String UNTYPED_DECLARATION_SOURCE = """
+        export class Cfg {
+          count: int;
+          ratio: number;
+        }
+
+        export class Bundle {
+          label: string;
+          action: (s: string) => string;
+          extras: table;
+        }
+
+        export function makeTable(): table;
+        export function consumeTable(t: table): string;
+        export function echoTable(t: table): table;
+        export function makeBundle(): Bundle;
+        export function consumeBundle(b: Bundle): string;
+        export function makeBadBundle(): Bundle;
+        export function makePlainTable(): table;
+        export function observePlain(t: table): string;
+        export function makeClassyTable(): table;
+        export function observeClassy(t: table): string;
+        export function makeDenseTable(): table;
+        export function observeDense(items: table): string;
+        export function makeNullTable(): table;
+        export function observeNull(t: table): string;
+        export function observeMade(): string;
+        export function makeBadValues(): table;
+        """;
+
+    /** The second module of the drive: a DEAL function value whose signature
+     * is not a declared position anywhere in the host declaration. */
+    private static final String UNTYPED_UTIL_SOURCE = """
+        export function bump(x: int): int {
+          return x + 1;
+        }
+        """;
+
+    /**
+     * The DEAL side of the untyped-position drive. {@code runConsumeTable}
+     * fills one {@code table} parameter with a host class member, a
+     * host-provided function member, a DEAL-declared class member twice plus
+     * once in a nested array, a DEAL function value and a builtin
+     * {@code Error} value twice; {@code runEcho} receives the host's echo of
+     * that container and asserts the round-trip values at their declared
+     * types; the remaining functions pin the D4 shared/copy rule, the
+     * host-provided function values invoked from DEAL, the declared
+     * signature refusals, and null/absent/numeric preservation.
+     */
+    private static final String UNTYPED_APP_SOURCE = """
+        import * as host from "host/untyped_probe";
+        import * as util from "./util";
+        import * as json from "std/json";
+
+        class Point {
+          x: int = 0;
+          y: int = 0;
+        }
+
+        function scale(s: string): string {
+          return s + "!";
+        }
+
+        export function runMakeTable(): string {
+          let t: table = host.makeTable();
+          let cfg: host.Cfg = t.cfg;
+          let fn: (n: int) => int = t.fn;
+          let r: int = fn(41);
+          let ok: string = "no";
+          if (cfg.count === 7 && cfg.ratio === 2.5 && r === 42) {
+            ok = "yes";
+          }
+          return "makeTable=" + ok + "," + host.observeMade();
+        }
+
+        export function runConsumeTable(): string {
+          let made: table = host.makeTable();
+          let cfg: host.Cfg = made.cfg;
+          let hfn: (n: int) => int = made.fn;
+          let r: int = hfn(41);
+          let p: Point = { x: 3, y: 4 };
+          let e: Error = { code: "E_X", message: "boom" };
+          let t: table = { cfg: cfg, hfn: hfn, fn: util.bump, pt: p,
+            other: p, xs: [p], err: e, errs: [e] };
+          let ok: string = "no";
+          if (r === 42 && cfg.count === 7) {
+            ok = "yes";
+          }
+          return host.consumeTable(t) + ",invoked=" + ok;
+        }
+
+        export function runEcho(): string {
+          let p: Point = { x: 3, y: 4 };
+          let e: Error = { code: "E_X", message: "boom" };
+          let t: table = { pt: p, other: p, xs: [p], fn: util.bump,
+            err: e, errs: [e] };
+          let echoed: table = host.echoTable(t);
+          let a: Point = echoed.pt;
+          let b: Point = echoed.other;
+          let xs: Point[] = echoed.xs;
+          let c: Point = xs[0];
+          let fn: (n: int) => int = echoed.fn;
+          let r: int = fn(41);
+          let err: Error = echoed.err;
+          let errs: Error[] = echoed.errs;
+          let errInArray: Error = errs[0];
+          let alias: string = "no";
+          if (a === b && a === c && a.x === 3 && a.y === 4) {
+            alias = "yes";
+          }
+          let invoke: string = "no";
+          if (r === 42) {
+            invoke = "yes";
+          }
+          let errok: string = "no";
+          if (err === errInArray
+              && err.code === "E_X" && err.message === "boom"
+              && errInArray.code === "E_X"
+              && errInArray.message === "boom") {
+            errok = "yes";
+          }
+          return "echo=alias:" + alias + ",fn:" + invoke + ",err:" + errok;
+        }
+
+        export function runBundle(): string {
+          let made: table = host.makeTable();
+          let cfg: host.Cfg = made.cfg;
+          let hfn: (n: int) => int = made.fn;
+          let r: int = hfn(41);
+          let p: Point = { x: 5, y: 6 };
+          let b: host.Bundle = { label: "box", action: scale,
+            extras: { cfg: cfg, hfn: hfn, pt: p } };
+          let ok: string = "no";
+          if (r === 42) {
+            ok = "yes";
+          }
+          return host.consumeBundle(b) + ",invoked=" + ok;
+        }
+
+        export function runFieldCall(): string {
+          let b: host.Bundle = host.makeBundle();
+          let action: (s: string) => string = b.action;
+          let v: string = action("ab");
+          let ok: string = "no";
+          if (v === "ab?") {
+            ok = "yes";
+          }
+          return "field=" + ok;
+        }
+
+        export function runWrongField(): string {
+          let b: host.Bundle = host.makeBadBundle();
+          try {
+            let action: (s: string) => string = b.action;
+            let v: string = action("x");
+            return "wrongField=admitted";
+          } catch (e) {
+            return "wrongField=" + e.code + "|" + e.message;
+          }
+        }
+
+        export function runWrongMember(): string {
+          let t: table = host.makeTable();
+          try {
+            let fn: (s: string) => int = t.fn;
+            let r: int = fn("x");
+            return "wrongMember=admitted";
+          } catch (e) {
+            return "wrongMember=" + e.code + "|" + e.message;
+          }
+        }
+
+        export function runShare(): string {
+          let t: table = host.makePlainTable();
+          t.extra = 9;
+          return host.observePlain(t);
+        }
+
+        export function runCopy(): string {
+          let t: table = host.makeClassyTable();
+          let nested: table = t.nested;
+          let same: table = t.again;
+          let memo: string = "no";
+          if (nested === same) {
+            memo = "yes";
+          }
+          nested.marker = 3;
+          return host.observeClassy(t) + ",memo=" + memo;
+        }
+
+        export function runDense(): string {
+          let t: table = host.makeDenseTable();
+          let items: table = t.items;
+          return host.observeDense(items);
+        }
+
+        export function runNull(): string {
+          let t: table = host.makeNullTable();
+          let note: string | null = t.note;
+          let ratio: number = t.ratio;
+          let missing: string | null = t.missing;
+          let ok: string = "no";
+          if (note === null && missing === null && ratio === 2.5) {
+            ok = "yes";
+          }
+          return "null=" + ok + "," + host.observeNull(t);
+        }
+
+        export function runNumeric(): string {
+          let decoded: table = json.parse("{\\"a\\":1,\\"b\\":0.1,\\"n\\":null}");
+          let t: table = { doc: decoded };
+          let echoed: table = host.echoTable(t);
+          let doc: table = echoed.doc;
+          return "numeric=" + json.stringify(doc);
+        }
+
+        export function runWrongRawFunction(): string {
+          let t: table = host.makeBadValues();
+          try {
+            let fn: (n: int) => int = t.raw;
+            let r: int = fn(41);
+            return "rawFunction=admitted";
+          } catch (e) {
+            return "rawFunction=" + e.code + "|" + e.message;
+          }
+        }
+
+        export function runWrongClassValue(): string {
+          let t: table = host.makeTable();
+          try {
+            let c: host.Cfg = t.fn;
+            return "wrongClass=admitted";
+          } catch (e) {
+            return "wrongClass=" + e.code + "|" + e.message;
+          }
+        }
+
+        export function runWrongElement(): string {
+          let p: Point = { x: 1, y: 2 };
+          let t: table = { xs: [p] };
+          let echoed: table = host.echoTable(t);
+          try {
+            let xs: host.Cfg[] = echoed.xs;
+            return "wrongElement=admitted";
+          } catch (e) {
+            return "wrongElement=" + e.code + "|" + e.message;
+          }
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /**
+     * The deployed raw host module. It observes every crossing through the
+     * shipped runtime's {@code typed_kind} and private key set, keeps its
+     * own objects so it can report that the inbound projection never
+     * mutated them, invokes the DEAL and host-provided function values with
+     * the exact declared arguments, and reports the closed tuples with
+     * their origin normalized to the project-relative source id, so the
+     * transcript does not depend on the temporary root.
+     */
+    private static final String UNTYPED_HOST_LUA = """
+        local rt = require("deal.runtime")
+        local K = rt.__keys
+        local SPEC = "@$external/host/untyped_probe/"
+
+        local function origin(o)
+          return (tostring(o):gsub("^.*/src/", "src/"))
+        end
+
+        local function tuple(e)
+          if type(e) ~= "table" then return "raw:" .. type(e) end
+          return tostring(e.code) .. "|" .. tostring(e.m) .. "|"
+            .. tostring(e.e) .. "|" .. tostring(e.a) .. "|" .. origin(e.o)
+        end
+
+        local function wrapper(sig, f)
+          return {[K.kind] = "function", sig = sig, f = f}
+        end
+
+        local function cfg(count, ratio)
+          return rt.class_(SPEC .. "Cfg", {count = 0, ratio = 0.0},
+            {count = count, ratio = ratio})
+        end
+
+        local keptPlain
+        local keptClassy
+        local keptCfg
+
+        local function objectShape(v)
+          if type(v) ~= "table" then return "none" end
+          return "kind=" .. tostring(v[K.kind]) .. " typed="
+            .. tostring(rt.typed_kind(v)) .. " ctag="
+            .. tostring(rawget(v, K.c))
+        end
+
+        local function errShape(v)
+          if type(v) ~= "table" then return "none" end
+          return "kind=" .. tostring(v[K.kind]) .. " typed="
+            .. tostring(rt.typed_kind(v)) .. " code=" .. tostring(v.code)
+            .. " message=" .. tostring(v.message) .. " dmark="
+            .. tostring(rawget(v, K.d))
+        end
+
+        local function accepted(fn, arg, badArg)
+          if type(fn) ~= "table" then return "raw:" .. type(fn) end
+          local ok, res = pcall(fn.f, arg)
+          local okBad, bad = pcall(fn.f, badArg)
+          return "kind=" .. tostring(fn[K.kind]) .. " typed="
+            .. tostring(rt.typed_kind(fn)) .. " sig=" .. tostring(fn.sig)
+            .. " f=" .. type(fn.f) .. " fnmark="
+            .. tostring(rawget(fn, K.fn))
+            .. " res=" .. tostring(ok and res or "err")
+            .. " bad=" .. tostring(okBad and "admitted" or tuple(bad))
+        end
+
+        local function hostAccepted(fn, arg)
+          if type(fn) ~= "table" then return "raw:" .. type(fn) end
+          local ok, res = pcall(fn.f, arg)
+          return "kind=" .. tostring(fn[K.kind]) .. " typed="
+            .. tostring(rt.typed_kind(fn)) .. " sig=" .. tostring(fn.sig)
+            .. " f=" .. type(fn.f) .. " fnmark="
+            .. tostring(rawget(fn, K.fn))
+            .. " res=" .. tostring(ok and res or "err")
+        end
+
+        return {
+          Cfg = {[K.kind] = "class", [K.classname] = SPEC .. "Cfg"},
+          Cfg_defaults = {count = 0, ratio = 0.0},
+          Bundle = {[K.kind] = "class", [K.classname] = SPEC .. "Bundle"},
+          Bundle_defaults = {label = "", action = rt.__MISSING,
+            extras = rt.__MISSING},
+
+          makeTable = function()
+            keptCfg = cfg(7, 2.5)
+            return {cfg = keptCfg,
+              fn = wrapper("(int)->int", function(x) return x + 1 end)}
+          end,
+
+          observeMade = function()
+            return "made=" .. objectShape(keptCfg) .. ",count="
+              .. tostring(keptCfg.count) .. ",ratio="
+              .. tostring(keptCfg.ratio)
+          end,
+
+          consumeTable = function(t)
+            local ptShape = "none"
+            if type(t.pt) == "table" then
+              ptShape = "x=" .. tostring(t.pt.x) .. " y="
+                .. tostring(t.pt.y) .. " " .. objectShape(t.pt)
+            end
+            local ptAlias = rawequal(t.pt, t.other)
+            local arrayAlias = false
+            if type(t.xs) == "table" then
+              arrayAlias = rawequal(t.xs[1], t.pt)
+            end
+            local errAlias = rawequal(t.err, t.errs[1])
+            return "consume=cfg:" .. objectShape(t.cfg)
+              .. ",pt:" .. ptShape
+              .. ",alias=" .. tostring(ptAlias) .. ","
+              .. tostring(arrayAlias)
+              .. ",fn:" .. accepted(t.fn, 41, "bad")
+              .. ",hfn:" .. hostAccepted(t.hfn, 41)
+              .. ",err:" .. errShape(t.err) .. ",errs:"
+              .. errShape(t.errs[1])
+              .. ",erralias=" .. tostring(errAlias)
+          end,
+
+          echoTable = function(t)
+            return t
+          end,
+
+          makeBundle = function()
+            local extras = {fn = wrapper("(int)->int",
+              function(x) return x * 2 end)}
+            return rt.class_(SPEC .. "Bundle",
+              {label = "", action = rt.__MISSING,
+               extras = rt.__MISSING},
+              {label = "made",
+               action = wrapper("(string)->string",
+                 function(s) return s .. "?" end),
+               extras = extras})
+          end,
+
+          consumeBundle = function(b)
+            local ex = b.extras
+            local cfgShape = "none"
+            local ptShape = "none"
+            local hfnText = "none"
+            if type(ex) == "table" then
+              if type(ex.cfg) == "table" then
+                cfgShape = "count=" .. tostring(ex.cfg.count) .. " ratio="
+                  .. tostring(ex.cfg.ratio) .. " " .. objectShape(ex.cfg)
+              end
+              if type(ex.pt) == "table" then
+                ptShape = "x=" .. tostring(ex.pt.x) .. " y="
+                  .. tostring(ex.pt.y) .. " " .. objectShape(ex.pt)
+              end
+              hfnText = hostAccepted(ex.hfn, 41)
+            end
+            return "bundle=" .. tostring(b.label)
+              .. ",action:" .. accepted(b.action, "ab", 41)
+              .. ",extras.cfg:" .. cfgShape
+              .. ",extras.pt:" .. ptShape
+              .. ",extras.hfn:" .. hfnText
+          end,
+
+          makeBadBundle = function()
+            return rt.class_(SPEC .. "Bundle",
+              {label = "", action = rt.__MISSING,
+               extras = rt.__MISSING},
+              {label = "bad",
+               action = wrapper("(int)->int",
+                 function(x) return x + 1 end),
+               extras = {}})
+          end,
+
+          makePlainTable = function()
+            local t = {n = 1, fn = wrapper("(int)->int",
+              function(x) return x + 1 end)}
+            keptPlain = t
+            return t
+          end,
+
+          observePlain = function(t)
+            return "plain=extra:" .. tostring(t.extra) .. ",shared:"
+              .. tostring(rawequal(t, keptPlain)) .. ",hostextra:"
+              .. tostring(keptPlain.extra)
+          end,
+
+          makeClassyTable = function()
+            local nested = {cfg = cfg(2, 1.5)}
+            local t = {nested = nested, again = nested}
+            keptClassy = t
+            return t
+          end,
+
+          observeClassy = function(t)
+            return "classy=marker:" .. tostring(t.nested.marker)
+              .. ",hostmarker:" .. tostring(keptClassy.nested.marker)
+              .. ",copy:" .. tostring(not rawequal(t, keptClassy))
+          end,
+
+          makeDenseTable = function()
+            return {items = {1, 2, 3}}
+          end,
+
+          observeDense = function(items)
+            return "dense=n:" .. tostring(#items) .. ",array:"
+              .. tostring(items[K.a] ~= nil) .. ",v1:"
+              .. tostring(items[1])
+          end,
+
+          makeBadValues = function()
+            return {raw = function(x) return x end}
+          end,
+
+          makeNullTable = function()
+            return {note = rt.__NULL, ratio = 2.5}
+          end,
+
+          observeNull = function(t)
+            return "null=note:" .. tostring(t.note == rt.__NULL)
+              .. ",missing:" .. tostring(t.missing == nil)
+              .. ",ratio:" .. type(t.ratio) .. ":"
+              .. tostring(t.ratio)
+          end,
+        }
+        """;
+
+    /**
+     * The exact transcript of the untyped-position drive: the host-observed
+     * class/function/Error shapes through {@code typed_kind}, the alias
+     * identity of the class and Error members on both sides, the declared
+     * parameter-entry cells of the DEAL function values, the wrapper-sourced
+     * imported signature, the D4 shared/copy rule (identity, memoized copy,
+     * unmutated host object, nested descent, dense table not reclassified),
+     * the declared signature refusals, and null/absent/numeric
+     * preservation. The host origin is normalized to the project-relative
+     * source id.
+     */
+    private static final String UNTYPED_TRANSCRIPT = """
+        TRANSCRIPT-BEGIN
+        runMakeTable=makeTable=yes,made=kind=class typed=@$external/host/untyped_probe/Cfg ctag=nil,count=7,ratio=2.5
+        runConsumeTable=consume=cfg:kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,pt:x=3 y=4 kind=class typed=@src/app.deal/Point ctag=nil,alias=true,true,fn:kind=function typed=function sig=(int)->int f=function fnmark=nil res=42 bad=E8001|expected int|int|string|nil,hfn:kind=function typed=function sig=(int)->int f=function fnmark=nil res=42,err:kind=class typed=Error code=E_X message=boom dmark=nil,errs:kind=class typed=Error code=E_X message=boom dmark=nil,erralias=true,invoked=yes
+        runEcho=echo=alias:yes,fn:yes,err:yes
+        runBundle=bundle=box,action:kind=function typed=function sig=(string)->string f=function fnmark=nil res=ab! bad=E8001|expected string|string|int|nil,extras.cfg:count=7 ratio=2.5 kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,extras.pt:x=5 y=6 kind=class typed=@src/app.deal/Point ctag=nil,extras.hfn:kind=function typed=function sig=(int)->int f=function fnmark=nil res=42,invoked=yes
+        runFieldCall=field=yes
+        runWrongField=wrongField=E8010|function signature mismatch: expected (string)->string, got (int)->int
+        runWrongMember=wrongMember=E8010|function signature mismatch: expected (string)->int, got (int)->int
+        runShare=plain=extra:9,shared:true,hostextra:9
+        runCopy=classy=marker:3,hostmarker:nil,copy:true,memo=yes
+        runDense=dense=n:3,array:false,v1:1
+        runNull=null=yes,null=note:true,missing:true,ratio:number:2.5
+        runNumeric=numeric={"a":1,"b":0.1,"n":null}
+        runWrongRawFunction=rawFunction=E8001|expected function
+        runWrongClassValue=wrongClass=E8001|expected class instance
+        runWrongElement=wrongElement=E8003|array element 1 type mismatch
+        TRANSCRIPT-END
+        """;
+
+    /**
+     * The untyped-position host-carrier crossings on the published LuaJIT
+     * artifact (ISSUE-0856): a {@code table} host return, parameter and
+     * host-class field carry class and host-provided function members; a
+     * DEAL-declared class value appears twice in a table member and once in
+     * a nested array member and the host observes one object for all three
+     * positions; the host echoes the container and DEAL reads both aliases
+     * and the array element as one declared class value; a DEAL function
+     * value whose signature is not a declared position crosses only through
+     * the emitted {@code __hostFnShapes} entry, the host invokes it and its
+     * parameter-entry cell rejects an argument outside the declared type;
+     * a builtin {@code Error} value in a table member and an array member
+     * crosses as the runtime Error instance and round-trips to the
+     * {@code __d} carrier; a DEAL function value at the host class's
+     * function-typed field and at a table member reaches the host as the
+     * documented wrapper; host-provided function values stay invocable from
+     * DEAL and a mismatched declared signature fails closed; and the D4
+     * shared/copy rule, aliases, null/absent states and numeric variants
+     * hold observably — all under real {@code luajit} with empty stderr.
+     */
+    private static void testLuaHostUntypedCarrierCrossings() throws Exception {
+        System.out.println("-- the untyped-position host-carrier crossings:"
+            + " the published LuaJIT artifact under real luajit --");
+        Path root = Files.createTempDirectory("host-untyped-lua");
+        try {
+            Path out = publishLuaHost(root, "untyped_probe",
+                UNTYPED_DECLARATION_SOURCE, UNTYPED_APP_SOURCE,
+                UNTYPED_HOST_LUA, "host-untyped-carrier",
+                Map.of("src/util.deal", UNTYPED_UTIL_SOURCE));
+            if (out == null) {
+                return;
+            }
+            String lua = Files.readString(out.resolve("app.lua"),
+                StandardCharsets.UTF_8);
+            check(lua.contains("[\"(int)->int\"] = {ret = \"int\","
+                    + " cells = {{\"int\", \"int\", \"int\"}}}"),
+                "the imported DEAL function value's otherwise-undeclared"
+                    + " signature is emitted into __hostFnShapes");
+            check(lua.contains("__factories.__hostCarrierOut = function")
+                    && lua.contains("__factories.__hostCarrierIn = function"),
+                "the published prelude carries the one host-carrier bridge"
+                    + " pair");
+            checkEq(2, countOccurrences(lua,
+                    "if v[__dealCarrierKeys.a] ~= nil then"),
+                "both bridge directions walk an array carrier so a host"
+                    + " representation inside a member is re-represented");
+            writeFileIn(out, "probe.lua", """
+                local function fail(m)
+                  print("PROBE-FAIL: " .. m)
+                  os.exit(1)
+                end
+                dofile("app.lua")
+                local ok, err = __dealMain()
+                if not ok then fail("init: " .. tostring(err)) end
+                local surface = __exportSurfaces["app"]
+                print("TRANSCRIPT-BEGIN")
+                local names = { "runMakeTable", "runConsumeTable", "runEcho",
+                  "runBundle", "runFieldCall", "runWrongField",
+                  "runWrongMember", "runShare", "runCopy", "runDense",
+                  "runNull", "runNumeric", "runWrongRawFunction",
+                  "runWrongClassValue", "runWrongElement" }
+                for _, name in ipairs(names) do
+                  local entry = surface[name]
+                  if entry == nil then fail("missing " .. name) end
+                  local ok2, res = pcall(entry.f)
+                  if not ok2 then
+                    fail(name .. ": " .. tostring(res.code) .. "|"
+                      .. tostring(res.m) .. "|" .. tostring(res.e) .. "|"
+                      .. tostring(res.a) .. "|" .. tostring(res.o))
+                  end
+                  print(name .. "=" .. res)
+                end
+                print("TRANSCRIPT-END")
+                """);
+            ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
+                out, true);
+            check(run.exitCode() == 0 && run.stderr().isEmpty()
+                    && run.stdout().equals(UNTYPED_TRANSCRIPT),
+                "the untyped-position crossings preserve the declared class,"
+                    + " function and Error values in both directions, keep"
+                    + " the D4 shared/copy rule, aliases, null/absent states"
+                    + " and numeric variants, and keep the landed tuples:"
+                    + " exit=" + run.exitCode() + " stdout="
+                    + escaped(run.stdout()) + " stderr="
+                    + escaped(run.stderr()));
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    // =========================================================================
     // 2f. The LuaJIT load under real luajit
     // =========================================================================
 
@@ -5904,6 +6519,13 @@ public class HostModuleLoadEmissionTest {
 
     private static Path publishLuaHost(Path root, String module, String declaration,
             String app, String host, String label) throws Exception {
+        return publishLuaHost(root, module, declaration, app, host, label,
+            Map.of());
+    }
+
+    private static Path publishLuaHost(Path root, String module, String declaration,
+            String app, String host, String label,
+            Map<String, String> extraSources) throws Exception {
         writeFileIn(root, "deal.json", """
             {"languageVersion": "1.3", "backend": "luajit",
              "moduleRoots": ["src"], "output": "out",
@@ -5912,6 +6534,9 @@ public class HostModuleLoadEmissionTest {
             """.formatted(module, module));
         writeFileIn(root, "bindings/" + module + ".d.deal", declaration);
         writeFileIn(root, "src/app.deal", app);
+        for (Map.Entry<String, String> source : extraSources.entrySet()) {
+            writeFileIn(root, source.getKey(), source.getValue());
+        }
         int exit = deal.Main.run(new String[] {"compile",
             root.resolve("src/app.deal").toAbsolutePath().toString()});
         checkEq(0, exit, "the " + label + " project compiles through the public deal compile");
@@ -6108,6 +6733,7 @@ public class HostModuleLoadEmissionTest {
             testLuaHostAsyncCompletion();
             testLuaHostAsyncStartCrossings();
             testLuaHostFunctionAdapter();
+            testLuaHostUntypedCarrierCrossings();
             testLuaExecution(aliases, missing, cfg, tableParam);
             testLuaErrorCrossing(errors);
             testJvmArtifactText(abi);
