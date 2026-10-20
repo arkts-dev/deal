@@ -7982,8 +7982,10 @@ public class CanonicalProjectionParityTest {
 
     /**
      * Runs the LuaJIT production artifact under the lane-protocol probe: the
-     * artifact mounts with {@code DEAL_DEFER_MAIN=1}, the entry terminal runs
-     * once, and every declared zero-arity assertion export runs in
+     * artifact's module initialization runs the entry terminal exactly once
+     * at load (no {@code DEAL_DEFER_MAIN} override), the probe's explicit
+     * {@code __dealMain()} is a no-op on the already-initialized module
+     * state, and every declared zero-arity assertion export runs in
      * declaration order (an async export must complete inline, never
      * suspend). A probe defect prints a named diagnostic and exits 2, so it
      * can never satisfy a runtime-ok sidecar.
