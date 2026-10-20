@@ -2566,6 +2566,10 @@ public final class JsBackend {
      * the boolean boundary; the chain closes exactly once.
      */
     private void emitElseChain(IfStatement node) {
+        if (node.elseBranch().isEmpty()) {
+            line("}");
+            return;
+        }
         switch (node.elseBranch().get()) {
             case Either.Left<IfStatement, Block> left -> {
                 IfStatement elseIf = left.value();

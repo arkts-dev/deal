@@ -131,6 +131,7 @@ public class JsBackendTest {
             testBytesClosureDeepCompositionsNode();
             testBytesClosureModuleBoundary();
             testBytesClosureNoE6000Pins();
+            testElseIfWithoutElse();
             testNumModFloored();
             testScalarStringOps();
             testOptionalThreeState();
@@ -3717,6 +3718,21 @@ public class JsBackendTest {
                     + "on Node (alias true, distinct buffers false; "
                     + "returns 1): " + eqRun.output());
         }
+    }
+
+    private static void testElseIfWithoutElse() throws Exception {
+        if (!nodeAvailable) { skipNode("else-if without final else"); return; }
+        NodeResult run = runDealNode("""
+            function pick(n: int): int {
+                if (n === 0) { return 10; }
+                else if (n === 1) { return 20; }
+                else if (n === 2) { return 30; }
+                return 40;
+            }
+            export function test(): int { return pick(0) + pick(1) + pick(2) + pick(3); }
+            """, "else-if-no-else");
+        check(run.exitCode() == 0 && run.output().equals("100"),
+            "else-if chain without final else closes and falls through: " + run.output());
     }
 
     private static void testNumModFloored() throws Exception {
