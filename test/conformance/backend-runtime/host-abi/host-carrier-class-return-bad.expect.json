@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"return value 1 type mismatch: expected class instance\",\"sourceFile\":\"backend-runtime/host-abi/host-carrier-class-return-bad.deal\",\"line\":9,\"column\":29,\"expected\":\"@$external/host.carrierclass/Holder\",\"actual\":\"number\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "return value 1 type mismatch: expected class instance",
+      "sourceFile": "backend-runtime/host-abi/host-carrier-class-return-bad.deal",
+      "line": 9,
+      "column": 29,
+      "expected": "@$external/host.carrierclass/Holder",
+      "actual": "number"
+    }
+  }
+}

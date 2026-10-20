@@ -1,0 +1,15 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host function returning a value that violates a declared host class return raises the closed E8010 return cell at the call expression, naming the declared class descriptor as the expected token and the returned value's kind as the actual token.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, classes, runtime-errors
+
+import * as host from "host/carrierclass";
+
+export function test_wrong_kind_class_return(): null {
+  let holder: host.Holder = host.makeWrongKind();
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

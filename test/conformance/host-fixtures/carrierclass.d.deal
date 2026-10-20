@@ -1,0 +1,44 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+// Host fixture declaration for the three-lane host-carrier class-value
+// conformance test (luajit-host-carrier-projection D8 V2, the ISSUE-0848
+// acceptance shapes). The class carries one declared int field, so every
+// published-artifact assertion reads the preserved value 42 at a declared
+// position: the asynchronous class parameter, the asynchronous class
+// completion, the class-element array return and the single synchronous
+// class return. The nullable class positions (a nullable return, a
+// nullable parameter, an asynchronous nullable completion and a class's
+// present-null and absent optional-nullable class fields) are declared
+// next to the mandatory ones, the callback position carries the class in
+// both directions, and the last four exports are the declared cell's
+// negatives: a wrong-kind class return, a present-null class return, a
+// wrong array element, a sparse array and a map-shaped array.
+
+export class Config {
+  value: int;
+}
+
+export class Holder {
+  label: string;
+  primary: Config;
+  optional: Config | null;
+  maybe?: Config | null;
+  items: Config[];
+}
+
+export async function describeAsync(c: Config): int;
+export async function makeAsync(): Config;
+export function makeSync(): Config;
+export function makeAll(): Config[];
+export function maybeMake(flag: boolean): Config | null;
+export function describeOrNull(c: Config | null): int;
+export async function maybeMakeAsync(flag: boolean): Config | null;
+export function makeHolder(): Holder;
+export function consume(cb: (c: Config) => Config): int;
+export function makeWrongKind(): Holder;
+export function makeNullClass(): Holder;
+export function makeWrongElement(): Config[];
+export function makeSparse(): Config[];
+export function makeMap(): Config[];

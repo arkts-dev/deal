@@ -463,7 +463,8 @@ public class CanonicalProjectionParityTest {
         mainEntry("host-abi/host-carrier-async-class"),
         mainEntry("host-abi/host-carrier-table-members"),
         mainEntry("host-abi/host-carrier-async-arity"),
-        mainEntry("host-abi/host-carrier-untyped-roundtrip"));
+        mainEntry("host-abi/host-carrier-untyped-roundtrip"),
+        mainEntry("host-abi/host-carrier-class-values"));
 
     /** The host-boundary families with a corpus pin. */
     private static final List<Case> HOST_FAMILIES = List.of(
@@ -486,7 +487,13 @@ public class CanonicalProjectionParityTest {
             "missing_export"),
         async("host-abi/host-async-shape-bad", "test_host_async_shape_bad",
             "async_shape_bad"),
-        async("host-abi/host-async-bad", "test_host_async_bad", "async_bad"));
+        async("host-abi/host-async-bad", "test_host_async_bad", "async_bad"),
+        // The declared host class return's closed cell (ISSUE-0848): a
+        // wrong-kind value names the declared class descriptor as expected
+        // and the value's kind as actual at the call expression, byte-exact
+        // and identical on the three consumers.
+        host("host-abi/host-carrier-class-return-bad",
+            "test_wrong_kind_class_return", "carrierclass"));
 
     // =========================================================================
     // The lane-equivalent materialization and the production invocation

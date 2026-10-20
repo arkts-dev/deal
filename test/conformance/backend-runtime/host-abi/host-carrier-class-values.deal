@@ -1,0 +1,177 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared host class preserves its declared value across every synchronous and asynchronous host crossing: the asynchronous class parameter, the asynchronous class completion, the class-element array return and the synchronous class return each deliver value 42, and two array slots naming one host instance are one DEAL value. The nullable class positions keep the language null on their absent branch and the declared instance on their present branch (a nullable return, a nullable parameter, an asynchronous nullable completion, a class's present-null nullable field and its absent optional nullable field), a host-invoked callback receives and returns the declared class value, and a wrong-kind class return, a present-null class return, a wrong array element, a sparse array and a map-shaped array keep the declared cells' exact structured failures.
+// @expected: runtime-ok
+// @features: modules, host-abi, classes, arrays, async-await, functions
+
+import * as host from "host/carrierclass";
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+function read(c: host.Config): host.Config {
+  check(c.value === 42, "the host-invoked callback class parameter value");
+  return c;
+}
+
+function expectFailure(label: string, code: string, message: string,
+                        run: () => null): null {
+  let caught: boolean = false;
+  try {
+    run();
+  } catch (e) {
+    check(e.code === code, label + ": code was " + e.code);
+    check(e.message === message, label + ": message was " + e.message);
+    caught = true;
+  }
+  check(caught, label + ": no failure raised");
+  return null;
+}
+
+export async function test_async_class_parameter(): null {
+  let c: host.Config = { value: 42 };
+  let got: int = await host.describeAsync(c);
+  check(got === 42, "the asynchronous class parameter value");
+  return null;
+}
+
+export async function test_async_class_completion(): null {
+  let made: host.Config = await host.makeAsync();
+  check(made.value === 42, "the asynchronous class completion value");
+  return null;
+}
+
+export function test_sync_class_return(): null {
+  let made: host.Config = host.makeSync();
+  check(made.value === 42, "the synchronous class return value");
+  return null;
+}
+
+export function test_class_element_array(): null {
+  let all: host.Config[] = host.makeAll();
+  check(all.length === 2, "the class-element array length");
+  check(all[0].value === 42, "the class-element array element value");
+  check(all[0] === all[1], "two slots naming one host instance are one DEAL value");
+  return null;
+}
+
+export function test_nullable_class_return(): null {
+  let absent: host.Config | null = host.maybeMake(false);
+  check(absent === null, "the nullable class return absence");
+  let present: host.Config | null = host.maybeMake(true);
+  if (present === null) {
+    check(false, "the nullable class return lost its instance");
+  } else {
+    check(present.value === 42, "the nullable class return value");
+  }
+  return null;
+}
+
+export function test_nullable_class_parameter(): null {
+  let nullArgument: host.Config | null = null;
+  let absent: int = host.describeOrNull(nullArgument);
+  check(absent === -1, "the nullable class parameter language null");
+  let valueArgument: host.Config | null = { value: 42 };
+  let present: int = host.describeOrNull(valueArgument);
+  check(present === 42, "the nullable class parameter value");
+  return null;
+}
+
+export async function test_async_nullable_completion(): null {
+  let absent: host.Config | null = await host.maybeMakeAsync(false);
+  check(absent === null, "the asynchronous nullable completion absence");
+  let present: host.Config | null = await host.maybeMakeAsync(true);
+  if (present === null) {
+    check(false, "the asynchronous nullable completion lost its instance");
+  } else {
+    check(present.value === 42, "the asynchronous nullable completion value");
+  }
+  return null;
+}
+
+export function test_class_fields(): null {
+  let holder: host.Holder = host.makeHolder();
+  check(holder.label === "holder", "the class label field");
+  check(holder.primary.value === 42, "the nested class field value");
+  let optional: host.Config | null = holder.optional;
+  check(optional === null, "the present-null nullable class field");
+  let maybe: host.Config | null = holder.maybe;
+  check(maybe === null, "the absent optional nullable class field");
+  check(!has(holder.maybe), "the absent optional nullable class field stays absent");
+  check(holder.items.length === 1, "the class array field length");
+  check(holder.items[0].value === 42, "the class array field element value");
+  return null;
+}
+
+export function test_host_invoked_callback(): null {
+  let got: int = host.consume(read);
+  check(got === 42, "the host-invoked callback class parameter and return");
+  return null;
+}
+
+export function test_wrong_kind_class_return(): null {
+  expectFailure("the wrong-kind class return", "E8010",
+    "return value 1 type mismatch: expected class instance",
+    wrongKind);
+  return null;
+}
+
+function wrongKind(): null {
+  let holder: host.Holder = host.makeWrongKind();
+  return null;
+}
+
+export function test_null_class_return(): null {
+  expectFailure("the present-null class return", "E8010",
+    "return value 1 type mismatch: expected class instance",
+    nullClass);
+  return null;
+}
+
+function nullClass(): null {
+  let holder: host.Holder = host.makeNullClass();
+  return null;
+}
+
+export function test_wrong_array_element(): null {
+  expectFailure("the wrong array element", "E8010",
+    "return value 1 type mismatch: array element 2 type mismatch",
+    wrongElement);
+  return null;
+}
+
+function wrongElement(): null {
+  let all: host.Config[] = host.makeWrongElement();
+  return null;
+}
+
+export function test_sparse_array(): null {
+  expectFailure("the sparse class array", "E8010",
+    "return value 1 type mismatch: array element 2 type mismatch",
+    sparse);
+  return null;
+}
+
+function sparse(): null {
+  let all: host.Config[] = host.makeSparse();
+  return null;
+}
+
+export function test_map_shaped_array(): null {
+  expectFailure("the map-shaped class array", "E8010",
+    "return value 1 type mismatch: expected array",
+    mapShaped);
+  return null;
+}
+
+function mapShaped(): null {
+  let all: host.Config[] = host.makeMap();
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

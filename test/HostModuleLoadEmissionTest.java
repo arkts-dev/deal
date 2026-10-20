@@ -703,7 +703,8 @@ public class HostModuleLoadEmissionTest {
 
     /** The corpus host-fixture stems whose implementations name records. */
     private static final List<String> CARRIER_HOST_STEMS = List.of(
-        "carrierasync", "carriertable", "carrierarity", "carrieruntyped");
+        "carrierasync", "carriertable", "carrierarity", "carrieruntyped",
+        "carrierclass");
 
     /**
      * The corpus host-fixture declaration source with its classification
@@ -741,6 +742,14 @@ public class HostModuleLoadEmissionTest {
         app.append("import * as cfg from \"host/cfg\";\n");
         for (String stem : CARRIER_HOST_STEMS) {
             sources.put("src/" + stem + ".d.deal", corpusHostDeclaration(stem));
+            // The corpus lane materializes every host declaration with the
+            // dotted class-identity key first, so the corpus host
+            // implementations name their instances and function wrappers
+            // with the dotted external identity. The scope project imports
+            // the same declarations under the same identity form, or the
+            // deployed implementations would compile against a different
+            // identity text than the one the corpus lane runs them with.
+            externals.put("host." + stem, "src/" + stem + ".d.deal");
             externals.put("host/" + stem, "src/" + stem + ".d.deal");
             app.append("import * as ").append(stem).append(" from \"host/")
                 .append(stem).append("\";\n");
