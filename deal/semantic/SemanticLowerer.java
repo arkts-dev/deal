@@ -7162,8 +7162,10 @@ public final class SemanticLowerer {
             ValueId condition;
             if (statement.condition().isPresent()) {
                 condition = fullProgram
-                    ? lowerExpression(statement.condition().get(), conditionSlot)
-                    : lowerExpression(statement.condition().get());
+                    ? emitNarrowedConditionCheck(statement.condition().get(),
+                        lowerExpression(statement.condition().get(), conditionSlot))
+                    : emitNarrowedConditionCheck(statement.condition().get(),
+                        lowerExpression(statement.condition().get()));
             } else {
                 // The test-less FOR row of the for-let arm: exactly one
                 // CONST true in the init block as the condition production
@@ -7265,10 +7267,14 @@ public final class SemanticLowerer {
             if (statement.condition().isPresent() && fullProgram) {
                 // The update-block condition re-production publishes the
                 // one condition slot (C-D4; the test-less row's synthetic
-                // constant needs no re-production).
-                lowerExpression(statement.condition().get(), conditionSlot);
+                // constant needs no re-production) — the refinement
+                // validation included, so every iteration's condition
+                // value is admitted.
+                emitNarrowedConditionCheck(statement.condition().get(),
+                    lowerExpression(statement.condition().get(), conditionSlot));
             } else if (statement.condition().isPresent()) {
-                lowerExpression(statement.condition().get());
+                emitNarrowedConditionCheck(statement.condition().get(),
+                    lowerExpression(statement.condition().get()));
             }
             blockStack.pop();
             popBindingFrame();
@@ -13073,7 +13079,8 @@ public final class SemanticLowerer {
          * {@code alternateBlock}.
          */
         private void lowerIfStatement(IfStatement statement) {
-            ValueId condition = lowerExpression(statement.condition());
+            ValueId condition = emitNarrowedConditionCheck(statement.condition(),
+                lowerExpression(statement.condition()));
             BlockId selectedBlock = allocateBlock();
             boolean hasElse = statement.elseBranch().isPresent();
             BlockId alternateBlock = hasElse ? allocateBlock() : null;
@@ -13144,7 +13151,8 @@ public final class SemanticLowerer {
             pushBlock(initBlock);
             ValueId condition;
             try {
-                condition = lowerExpression(statement.condition());
+                condition = emitNarrowedConditionCheck(statement.condition(),
+                    lowerExpression(statement.condition()));
             } finally {
                 popBlock();
             }
@@ -13219,7 +13227,8 @@ public final class SemanticLowerer {
                     }
                 });
                 if (statement.condition().isPresent()) {
-                    lowerExpression(statement.condition().get(), condition);
+                    emitNarrowedConditionCheck(statement.condition().get(),
+                        lowerExpression(statement.condition().get(), condition));
                 } else {
                     // The test-less FOR row: exactly one CONST true in
                     // initBlock as the condition production.
@@ -13257,8 +13266,11 @@ public final class SemanticLowerer {
                 if (statement.condition().isPresent()) {
                     // The per-iteration condition re-production: the same
                     // condition ValueId, re-produced by the updateBlock
-                    // production (most recently produced value wins).
-                    lowerExpression(statement.condition().get(), condition);
+                    // production (most recently produced value wins) — the
+                    // refinement validation included, so every iteration's
+                    // condition value is admitted.
+                    emitNarrowedConditionCheck(statement.condition().get(),
+                        lowerExpression(statement.condition().get(), condition));
                 }
             } finally {
                 popBlock();
@@ -13519,7 +13531,11 @@ public final class SemanticLowerer {
                         + "(class/module members are E9's/E10's)", identifier.span());
                 }
                 maybeRegisterCapture(identifier.name(), resolution);
-                return emitResolvedLoad(identifier, type, resolution.entry());
+                // The slot-threaded read (a declaration initializer or a
+                // loop condition) publishes the caller's slot: a
+                // LOOP(FOR) condition is read once per iteration from that
+                // one identity, so both productions must write it.
+                return emitResolvedLoad(identifier, type, resolution.entry(), slot);
             }
 
             if (bindingSiteResolver != null) {
@@ -13528,7 +13544,7 @@ public final class SemanticLowerer {
                     return emitDynamicAwareLoad(
                         new KindPayload.BindingLoadPayload(site.binding(), site.generation()),
                         identifier.span(),
-                        ContainerPayloadDescriptors.resultDescriptorOf(type), null);
+                        ContainerPayloadDescriptors.resultDescriptorOf(type), slot);
                 }
             }
             throw new ConstructUnlowered("identifier '" + identifier.name()
@@ -14311,6 +14327,105 @@ public final class SemanticLowerer {
                 && !(descriptor instanceof RuntimeDescriptor.Bytes);
         }
 
+        /**
+         * Lowers one operator operand or condition expression: the
+         * operand's completed value plus, for an identifier read whose
+         * checked type is a null-narrowing refinement of the binding's
+         * declared nullable type (declared {@code T | null}, read as
+         * {@code T}), the {@code NARROWED_READ} validation of that read.
+         *
+         * <p>docs/spec-v1.3.md Nullable semantics keeps calls
+         * non-invalidating on purpose, so a capturing closure call can
+         * leave the binding null while the refinement claim still holds;
+         * the operator then consumes a value its checked type does not
+         * admit. The validation admits the read against the refined
+         * descriptor at the read's own origin — the standard
+         * typed-boundary projection (E8001, or the descriptor-kind family
+         * for a function descriptor) — so no backend coerces the value and
+         * none lets a raw arithmetic/index error escape a DEAL
+         * {@code try}. It publishes the admitted value and the consumer
+         * uses that.</p>
+         *
+         * <p>Only the operator/condition positions go through this helper:
+         * every other position (a declaration, assignment, parameter,
+         * return, class/array construction or element write) is a typed
+         * boundary owned by its own cell, which keeps its recorded
+         * projection — the array-element E8003 arm included.</p>
+         */
+        private ValueId lowerOperand(ExpressionNode expr) {
+            return emitNarrowedReadCheck(expr, lowerExpression(expr));
+        }
+
+        /**
+         * The slot-threading variant of {@link #lowerOperand(ExpressionNode)}
+         * (the logical short-circuit arm's right operand publishes the
+         * enclosing slot): the read completes into the given slot and the
+         * refinement validation republishes its admitted value.
+         */
+        private ValueId lowerOperand(ExpressionNode expr, ValueId slot) {
+            return emitNarrowedReadCheck(expr, lowerExpression(expr, slot));
+        }
+
+        /**
+         * Admits one lowered condition value in place against the
+         * {@code NARROWED_READ} cell when the condition expression is a
+         * null-narrowing-refined identifier read: the read's own value
+         * identity is validated where it stands (the consuming
+         * {@code BRANCH}/{@code LOOP} carries that identity), so the
+         * per-iteration {@code LOOP(FOR)} condition re-production keeps
+         * publishing the one condition identity.
+         */
+        private ValueId emitNarrowedConditionCheck(ExpressionNode expr, ValueId value) {
+            if (!checks.narrowedReads().contains(expr)) {
+                return value;
+            }
+            RuntimeDescriptor descriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(expr));
+            emit(buildNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.NARROWED_READ, descriptor,
+                    value, new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                expr.span(), descriptorKindPolicy(descriptor),
+                SourceOriginKind.USER, currentParent()));
+            return value;
+        }
+
+        /**
+         * Admits one lowered operand value against the {@code NARROWED_READ}
+         * cell when its expression is a null-narrowing-refined identifier
+         * read ({@code checks.narrowedReads()}); every other operand value
+         * passes through unchanged.
+         */
+        private ValueId emitNarrowedReadCheck(ExpressionNode expr, ValueId value) {
+            if (!checks.narrowedReads().contains(expr)) {
+                return value;
+            }
+            RuntimeDescriptor descriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(expr));
+            if (descriptor instanceof RuntimeDescriptor.Func) {
+                // A function-typed read is one allocated identity (the
+                // function-binding registry keys it), so its validation
+                // republishes that identity in place and never publishes a
+                // second value: the reference selectors compare the one
+                // allocated value, and no operator position can place a
+                // function-typed operand inside an address chain (only the
+                // reference equality rows consume one).
+                return emitNarrowedConditionCheck(expr, value);
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(expr.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            ValueId admitted = ids.nextValueId(module, nextOrdinal++, 0);
+            emit(buildOp(opId, SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.NARROWED_READ, descriptor,
+                    value, new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                admitted, descriptor, List.of(value), List.of(descriptor),
+                descriptorKindPolicy(descriptor), origin));
+            return admitted;
+        }
+
         /** {@code STRING_CONCAT}/{@code BINARY} — the binary dispatch (I3 arithmetic). */
         private ValueId lowerBinary(BinaryExpr binary) {
             return lowerBinary(binary, null);
@@ -14356,8 +14471,8 @@ public final class SemanticLowerer {
          * session in source order.
          */
         private ValueId lowerComparisonBinary(BinaryExpr binary, ValueId slot) {
-            ValueId left = lowerExpression(binary.left());
-            ValueId right = lowerExpression(binary.right());
+            ValueId left = lowerOperand(binary.left());
+            ValueId right = lowerOperand(binary.right());
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(binary.span()),
                 SourceOriginKind.USER, anchor, chainParents.peek());
@@ -14405,7 +14520,7 @@ public final class SemanticLowerer {
             }
             ControlSelector selector = binary.op() == BinaryOp.AND
                 ? ControlSelector.LOGICAL_AND : ControlSelector.LOGICAL_OR;
-            ValueId left = lowerExpression(binary.left());
+            ValueId left = lowerOperand(binary.left());
             BlockId selectedBlock = allocateBlock();
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -14414,7 +14529,7 @@ public final class SemanticLowerer {
             pushBlock(selectedBlock);
             ValueId right;
             try {
-                right = lowerExpression(binary.right(), slot);
+                right = lowerOperand(binary.right(), slot);
             } finally {
                 popBlock();
                 popBlockParent();
@@ -14434,8 +14549,8 @@ public final class SemanticLowerer {
         }
 
         private ValueId lowerStringConcat(BinaryExpr binary, ValueId slot) {
-            ValueId left = lowerExpression(binary.left());
-            ValueId right = lowerExpression(binary.right());
+            ValueId left = lowerOperand(binary.left());
+            ValueId right = lowerOperand(binary.right());
             return emitValueOp(SemanticOpKind.STRING_CONCAT,
                 new KindPayload.StringConcatPayload(List.of(left, right)),
                 binary.span(),
@@ -14496,8 +14611,8 @@ public final class SemanticLowerer {
                     + " (a checked arithmetic expression must be int- or number-typed)",
                         binary.span());
             }
-            ValueId left = lowerExpression(binary.left());
-            ValueId right = lowerExpression(binary.right());
+            ValueId left = lowerOperand(binary.left());
+            ValueId right = lowerOperand(binary.right());
             return emitOperandOp(SemanticOpKind.BINARY,
                 new KindPayload.BinaryPayload(selector, null, null),
                 List.of(left, right),
@@ -14546,7 +14661,7 @@ public final class SemanticLowerer {
                 default -> throw new ConstructUnlowered("unary operator " + unary.op()
                     + " outside the closed UnarySelector rows (producer defect)", unary.span());
             }
-            ValueId operand = lowerExpression(unary.expr());
+            ValueId operand = lowerOperand(unary.expr());
             return emitOperandOp(SemanticOpKind.UNARY,
                 new KindPayload.UnaryPayload(selector),
                 List.of(operand), List.of(valueDescriptorOf(operandType)),
@@ -14684,7 +14799,7 @@ public final class SemanticLowerer {
                     }
                     fragments.add(lowerConst(literal));
                 } else {
-                    fragments.add(lowerExpression(part));
+                    fragments.add(lowerOperand(part));
                 }
             }
             return emitValueOp(SemanticOpKind.STRING_CONCAT,

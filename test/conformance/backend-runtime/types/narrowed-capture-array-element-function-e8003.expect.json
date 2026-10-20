@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8003\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8003\",\"message\":\"array element 1 type mismatch\",\"sourceFile\":\"backend-runtime/types/narrowed-capture-array-element-function-e8003.deal\",\"line\":12,\"column\":38,\"expected\":\"(int)->int\",\"actual\":\"function\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8003",
+      "message": "array element 1 type mismatch",
+      "sourceFile": "backend-runtime/types/narrowed-capture-array-element-function-e8003.deal",
+      "line": 12,
+      "column": 38,
+      "expected": "(int)->int",
+      "actual": "function"
+    }
+  }
+}

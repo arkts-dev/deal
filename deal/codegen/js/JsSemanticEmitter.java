@@ -1414,9 +1414,21 @@ public final class JsSemanticEmitter {
                 ValueId value = payload.values().get(i);
                 SemanticOp boundary = opsById.get(
                     payload.elementBoundaryOpIds().get(i));
-                emitBoundaryCheck(boundary, slot(value),
-                    payload.elementDescriptor(),
-                    payload.elementBoundaryOpIds().get(i));
+                if (boundary == null) {
+                    throw new IllegalStateException("an element or field boundary"
+                        + " child is missing (producer defect)");
+                }
+                String input = slot(value);
+                // The ARRAY_LITERAL_ELEMENT cell is the closed
+                // ARRAY_ELEMENT_DESCRIPTOR row: its failure is E8003 with
+                // the 1-based element index, the element descriptor and
+                // the element's reference kind (the same projection the
+                // entire-array checkArray walk runs), never the generic
+                // E8001 descriptor row.
+                emit(input + " = $rt.arrayElementCheck("
+                    + jsString(payload.elementDescriptor().canonicalSpecText())
+                    + ", " + (i + 1) + ", " + input + ", "
+                    + spanArgs(boundary) + ");");
             }
             StringBuilder expression = new StringBuilder("[");
             for (int i = 0; i < payload.values().size(); i++) {
@@ -1696,6 +1708,16 @@ public final class JsSemanticEmitter {
         private void emitFreeBoundary(SemanticOp op) {
             KindPayload.BoundaryPayload payload =
                 (KindPayload.BoundaryPayload) op.payload();
+            if (op.result() instanceof ValueId valueId) {
+                // A value-publishing free boundary (the refined-operand
+                // cell): the admitted value is the consumer's operand, so
+                // the check publishes its own slot instead of rewriting
+                // the read's (an address chain's operand closure executes
+                // this op at its consuming child's position).
+                emit(slot(valueId) + " = "
+                    + boundaryCheckExpr(op, slot(payload.input())) + ";");
+                return;
+            }
             emitBoundaryCheck(op, slot(payload.input()), payload.descriptor());
         }
 

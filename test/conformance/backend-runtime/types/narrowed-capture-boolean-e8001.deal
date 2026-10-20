@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A narrowed boolean read consumed by the logical not is validated at the operand: the operator reports the typed-boundary tuple (E8001, expected boolean, actual null) at the read instead of treating a null as falsy.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, runtime-errors
+
+export function main(): null {
+  let flag: boolean | null = true;
+  let clear: () => null = function(): null {
+    flag = null;
+    return null;
+  };
+  if (flag !== null) {
+    clear();
+    let flipped: boolean = !flag;
+  }
+  return null;
+}

@@ -8,6 +8,8 @@ import deal.types.Type;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 public record CheckResult(
     Map<ExpressionNode, Type> typeMap,
@@ -16,8 +18,25 @@ public record CheckResult(
     List<CompilerDiagnostic> diagnostics,
     Map<ClassDeclaration, SymbolTable> classScopes,
     Map<ExpressionNode, ClassDeclaration> constructedClassDecls,
-    Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations
+    Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations,
+    Set<ExpressionNode> narrowedReads
 ) {
+
+    /**
+     * Convenience constructor for callers without the narrowing facts
+     * (synthetic checked facts, retained test harnesses): no identifier
+     * read is a null-narrowing refinement, so the lowering emits no
+     * refined-operand validation.
+     */
+    public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
+                       Map<StatementNode, SymbolTable> scopeMap,
+                       List<CompilerDiagnostic> diagnostics,
+                       Map<ClassDeclaration, SymbolTable> classScopes,
+                       Map<ExpressionNode, ClassDeclaration> constructedClassDecls,
+                       Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations) {
+        this(typeMap, symbolTable, scopeMap, diagnostics, classScopes,
+            constructedClassDecls, exactClassDeclarations, Set.of());
+    }
 
     /**
      * Convenience constructor for callers without a pass-1 scope map
@@ -28,7 +47,7 @@ public record CheckResult(
     public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                        List<CompilerDiagnostic> diagnostics) {
         this(typeMap, symbolTable, Map.of(), diagnostics, Map.of(), Map.of(),
-            Map.of());
+            Map.of(), Set.of());
     }
 
     /**
@@ -42,7 +61,7 @@ public record CheckResult(
                        List<CompilerDiagnostic> diagnostics,
                        Map<ClassDeclaration, SymbolTable> classScopes) {
         this(typeMap, symbolTable, scopeMap, diagnostics, classScopes, Map.of(),
-            Map.of());
+            Map.of(), Set.of());
     }
 
     /**
@@ -57,7 +76,7 @@ public record CheckResult(
                        Map<ClassDeclaration, SymbolTable> classScopes,
                        Map<ExpressionNode, ClassDeclaration> constructedClassDecls) {
         this(typeMap, symbolTable, scopeMap, diagnostics, classScopes,
-            constructedClassDecls, Map.of());
+            constructedClassDecls, Map.of(), Set.of());
     }
 
     public CheckResult {
@@ -73,6 +92,8 @@ public record CheckResult(
             throw new IllegalArgumentException(
                 "exactClassDeclarations must not be null");
         }
+        narrowedReads = Set.copyOf(
+            Objects.requireNonNull(narrowedReads, "narrowedReads must not be null"));
     }
 
     public boolean hasErrors() {

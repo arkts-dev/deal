@@ -6,7 +6,7 @@ import java.util.List;
  * The closed boundary-kind set of {@code deal.semantic-ir/2} (parent
  * "Closed boundary-assignment table (normative)"; schema S3).
  *
- * <p>Closed set — exactly the 27 values below in the pinned order; no open
+ * <p>Closed set — exactly the 28 values below in the pinned order; no open
  * or unknown fallback member and no external extension point exist. Every
  * reachable typed boundary is one {@code BOUNDARY} op whose
  * {@code (kind, descriptor, policy)} triple comes from the closed
@@ -48,7 +48,20 @@ public enum BoundaryKind {
     EXTERNAL_PARAMETER,
     EXTERNAL_RETURN,
     JSON_FROM_FIELD,
-    JSON_TO_FIELD;
+    JSON_TO_FIELD,
+    /**
+     * The operand/condition position's validation of one identifier read
+     * whose checked type is a null-narrowing refinement of the binding's
+     * declared nullable type (declared {@code T | null}, read as
+     * {@code T}) — docs/spec-v1.3.md Nullable semantics: narrowing is
+     * optimistic across calls, so an indirect captured-binding mutation
+     * leaves the refined read's value invalid and the consuming operator
+     * must report the typed-boundary projection instead of coercing it or
+     * letting a raw backend error escape. The op publishes the admitted
+     * value (its result is the consumer's operand) and carries the
+     * descriptor-kind policy of its own descriptor.
+     */
+    NARROWED_READ;
 
     /**
      * The reserved boundary names, invalid as {@code BoundaryKind} values

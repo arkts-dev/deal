@@ -1,0 +1,17 @@
+// @spec: Runtime execution model — Array runtime checks (E8003)
+// @description: A narrowed int read used as an array literal element is validated by the array-element cell: the failure is the specified E8003 arm (array element 1 type mismatch, expected int, actual null) at the element read on every backend.
+// @expected: runtime-error E8003
+// @features: type-system, nullable, narrowing, arrays, runtime-errors
+
+export function main(): null {
+  let x: int | null = 1;
+  let clear: () => null = function(): null {
+    x = null;
+    return null;
+  };
+  if (x !== null) {
+    clear();
+    let xs: int[] = [x];
+  }
+  return null;
+}

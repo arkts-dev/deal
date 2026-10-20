@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A narrowed string read interpolated into a template is validated at the fragment: the concatenation reports the typed-boundary tuple (E8001, expected string, actual null) at the read instead of rendering a null as text.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, runtime-errors, templates
+
+export function main(): null {
+  let name: string | null = "Ada";
+  let clear: () => null = function(): null {
+    name = null;
+    return null;
+  };
+  if (name !== null) {
+    clear();
+    let text: string = `hello ${name}`;
+  }
+  return null;
+}

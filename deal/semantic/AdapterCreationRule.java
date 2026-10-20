@@ -242,7 +242,7 @@ public final class AdapterCreationRule {
     // =========================================================================
 
     /**
-     * The closed position-kind map over the 27 {@link BoundaryKind}
+     * The closed position-kind map over the 28 {@link BoundaryKind}
      * values: {@code VARIABLE_DECLARATION} → {@code VARIABLE_INITIALIZER},
      * {@code VARIABLE_ASSIGNMENT} → {@code VARIABLE_ASSIGNMENT_TARGET},
      * and every other kind → {@code TYPED_BOUNDARY}. The map is total
@@ -262,7 +262,8 @@ public final class AdapterCreationRule {
                  UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CONTEXTUAL_TABLE_READ,
                  IMPORTED_MEMBER_READ, MODULE_EXPORT, HOST_TO_DEAL, DEAL_TO_HOST,
                  STDLIB_PARAMETER, STDLIB_RETURN, EXTERNAL_PARAMETER, EXTERNAL_RETURN,
-                 JSON_FROM_FIELD, JSON_TO_FIELD -> PositionKind.TYPED_BOUNDARY;
+                 JSON_FROM_FIELD, JSON_TO_FIELD, NARROWED_READ ->
+                PositionKind.TYPED_BOUNDARY;
         };
     }
 

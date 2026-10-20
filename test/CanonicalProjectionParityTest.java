@@ -435,7 +435,22 @@ public class CanonicalProjectionParityTest {
         mainEntry("classes/same-name-sibling-function-crossing"),
         mainEntry("classes/same-name-sibling-field-crossing"),
         mainEntry("classes/same-name-sibling-json-helper-crossing"),
-        mainEntry("classes/same-name-sibling-different-name-crossing"));
+        mainEntry("classes/same-name-sibling-different-name-crossing"),
+        // The call-preserved narrowing refinement (ISSUE-0861): a capturing
+        // closure clears the binding, so the operand/condition position
+        // reports the typed-boundary tuple at the read on the oracle and
+        // both production artifacts — never a coerced value or a raw
+        // backend error — and the array-element cell keeps the specified
+        // E8003 arm.
+        mainEntry("types/narrowed-capture-arithmetic-e8001"),
+        mainEntry("types/narrowed-capture-unary-e8001"),
+        mainEntry("types/narrowed-capture-comparison-e8001"),
+        mainEntry("types/narrowed-capture-equality-e8001"),
+        mainEntry("types/narrowed-capture-boolean-e8001"),
+        mainEntry("types/narrowed-capture-string-e8001"),
+        mainEntry("types/narrowed-capture-array-element-e8003"),
+        mainEntry("types/narrowed-capture-array-element-function-e8003"),
+        mainEntry("types/narrowed-capture-array-index-e8001"));
 
     /**
      * The runtime-ok class-identity controls with a corpus pin: the
@@ -446,7 +461,13 @@ public class CanonicalProjectionParityTest {
      * fixtures (ISSUE-0847 review cycle 1, finding 2).
      */
     private static final List<Case> RUNTIME_OK = List.of(
-        mainEntry("classes/same-name-sibling-crossing-controls"));
+        mainEntry("classes/same-name-sibling-crossing-controls"),
+        // The narrowing controls (ISSUE-0861): the nullable equality rows
+        // stay null tests, the valid refinement flows through every
+        // consumer unchanged with its reference binding intact, and every
+        // cleared-binding consumer raises its own catchable DEAL error with
+        // the recorded code (E8001, or E8003 at the array-element cell).
+        mainEntry("types/narrowed-capture-controls"));
 
     /**
      * The host-carrier runtime-ok corpus pins (ISSUE-0857;

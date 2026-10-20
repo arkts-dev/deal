@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A narrowed int read consumed by a relational comparison is validated at the operand: the ordering reports the typed-boundary tuple (E8001, expected int, actual null) at the read instead of folding a null into a boolean result.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, runtime-errors
+
+export function main(): null {
+  let x: int | null = 1;
+  let clear: () => null = function(): null {
+    x = null;
+    return null;
+  };
+  if (x !== null) {
+    clear();
+    let ordered: boolean = x < 1;
+  }
+  return null;
+}

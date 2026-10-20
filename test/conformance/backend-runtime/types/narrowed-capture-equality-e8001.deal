@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The equality rows distinguish the nullable null test from an operand the narrowing claims non-null: inside the block the operand's checked type is int, so the equality against an int literal reports the typed-boundary tuple (E8001, expected int, actual null) at the read instead of a false result.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, runtime-errors, equality
+
+export function main(): null {
+  let x: int | null = 1;
+  let clear: () => null = function(): null {
+    x = null;
+    return null;
+  };
+  if (x !== null) {
+    clear();
+    let same: boolean = x === 1;
+  }
+  return null;
+}

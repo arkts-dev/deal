@@ -3088,6 +3088,24 @@ const $rt = {
     return v;
   },
 
+  // arrayElementCheck: the ARRAY_ELEMENT_DESCRIPTOR cell of one array
+  // literal element (docs/spec-v1.3.md Runtime diagnostics: E8003 is
+  // "array element type check failed"). The element's descriptor check
+  // runs first and its admitted value is the element the literal stores;
+  // a failing element is reported as the E8003 row with the 1-based
+  // element index, the element descriptor as expected and the element's
+  // reference kind as actual ($elemKindOf) — exactly the projection the
+  // whole-array checkArray walk and the LuaJIT/JVM element arms carry, so
+  // one corpus case observes one code, message and field pair on every
+  // lane. Pure: no mutation of the element or the container.
+  arrayElementCheck: function $arrayElementCheck(descriptor, oneBasedIndex, v, file, line, column) {
+    try {
+      return $rt.checkType(descriptor, v, file, line, column);
+    } catch ($e) {
+      $rt.fail("E8003", "array element " + oneBasedIndex + " type mismatch", file, line, column, descriptor, $elemKindOf(v));
+    }
+  },
+
   // arrayAt: the position read of an array value checkArray admitted —
   // the carrier split is checkArray's own (a native Array first, the
   // json-array-marked Map second), so an emitted consumer sees exactly

@@ -2647,6 +2647,34 @@ public final class SemanticIrValidator {
                     : Optional.of(kind.name() + " boundary policy " + policy.name()
                         + " violates the descriptor-kind rule");
             }
+            case NARROWED_READ -> {
+                // The operand/condition position's refinement cell: the
+                // descriptor-kind policy of its own descriptor, and the
+                // input is one identifier read (a BINDING_LOAD result) —
+                // the refinement claim is about a binding, never about an
+                // arbitrary value.
+                if (!matchesDescriptorKind(descriptor, policy)) {
+                    return Optional.of(kind.name() + " boundary policy " + policy.name()
+                        + " violates the descriptor-kind rule");
+                }
+                ValueId input = parseBoundaryInput(boundary);
+                boolean readProduced = false;
+                if (input != null) {
+                    for (RawOp candidate : unit.ops()) {
+                        if (input.equals(candidate.resultValue())
+                                && enumByName(SemanticOpKind.class, candidate.kind())
+                                    == SemanticOpKind.BINDING_LOAD) {
+                            readProduced = true;
+                            break;
+                        }
+                    }
+                }
+                if (!readProduced) {
+                    return Optional.of(kind.name() + " boundary input is not a"
+                        + " binding read (the refinement claim is about a binding)");
+                }
+                return Optional.empty();
+            }
             case FUNCTION_PARAMETER, FUNCTION_RETURN, STDLIB_PARAMETER, STDLIB_RETURN,
                  EXTERNAL_PARAMETER, EXTERNAL_RETURN, HOST_TO_DEAL, DEAL_TO_HOST -> {
                 RawOp invocation = resolveEnclosingInvocation(boundary, unit, closure);

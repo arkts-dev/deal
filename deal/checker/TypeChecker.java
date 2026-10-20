@@ -76,6 +76,20 @@ public final class TypeChecker {
     private final Map<ExpressionNode, ClassDeclaration> constructedDeclNodes =
         new IdentityHashMap<>();
 
+    // -- Checked expression facts: the identifier reads whose checked type
+    //    is a null-narrowing refinement of the binding's declared nullable
+    //    type (declared T | null read as T), keyed by the read node. The
+    //    refinement is a flow-sensitive claim about a mutable binding: an
+    //    indirect mutation (a capturing closure call) can leave the binding
+    //    null while the claim still holds, so the one lowering validates
+    //    every such read at an operator operand/condition position (the
+    //    positions with no owning typed boundary) and reports the standard
+    //    typed-boundary projection instead of coercing the value or letting
+    //    a raw backend error escape. The fact is recorded here because the
+    //    checker owns the narrowing analysis and its scope-correct binding
+    //    resolution (a shadowing block-local declaration never contributes).
+    private final Set<ExpressionNode> narrowedReads = new HashSet<>();
+
     // -- Tracking variables assigned in try blocks --
     private final Set<String> varsAssignedInTry = new HashSet<>();
     private boolean insideTry = false;
@@ -185,7 +199,8 @@ public final class TypeChecker {
             List.copyOf(checker.diagnostics),
             Map.copyOf(checker.classDeclarationScopes),
             Map.copyOf(checker.constructedDeclNodes),
-            Map.copyOf(checker.exactClassDecls)
+            Map.copyOf(checker.exactClassDecls),
+            Set.copyOf(checker.narrowedReads)
         );
     }
 
@@ -1637,6 +1652,14 @@ public final class TypeChecker {
 
         Type declaredType = getDeclaredType(sym);
         Type narrowedType = narrowing.getNarrowedType(id.name());
+        if (narrowedType != null
+                && declaredType instanceof Type.Nullable nullable
+                && Types.equals(nullable.inner(), narrowedType)) {
+            // The read is a refinement claim (declared T | null, read as
+            // T): publish the fact the one lowering consumes at the
+            // operator operand and condition positions.
+            narrowedReads.add(id);
+        }
         // The checked expression fact of every class-typed binding read:
         // the binding's own declaration (a narrowed nullable read keeps
         // the same declaration).

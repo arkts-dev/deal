@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A call-preserved narrowing refinement whose binding a capturing closure cleared is validated at the arithmetic operand: the int add reports the typed-boundary tuple (E8001, expected int, actual null) at the read instead of coercing null to a number or escaping a raw backend arithmetic error.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, runtime-errors
+
+export function main(): null {
+  let x: int | null = 1;
+  let clear: () => null = function(): null {
+    x = null;
+    return null;
+  };
+  if (x !== null) {
+    clear();
+    let y: int = x + 1;
+  }
+  return null;
+}

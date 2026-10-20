@@ -1,0 +1,14 @@
+// @spec: Runtime execution model — Array runtime checks (E8003)
+// @description: A function-typed array literal element keeps the closed ARRAY_ELEMENT_DESCRIPTOR row: a mismatched signature is reported as the specified E8003 arm (array element 1 type mismatch, the element descriptor as expected, function as actual) with the leaf signature failure as its cause — never the bare E8010 row and never the array element's own E8001.
+// @expected: runtime-error E8003
+// @features: type-system, arrays, functions, descriptors, runtime-errors
+
+function asString(value: int): string {
+  return "s";
+}
+
+export function main(): null {
+  let holder: table = { f: asString };
+  let xs: ((value: int) => int)[] = [holder.f];
+  return null;
+}

@@ -1,0 +1,273 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The narrowing contract's controls: a declared nullable equality stays a null test, a call-preserved refinement whose value is still valid flows through every consumer unchanged with its reference binding intact, and after a capturing closure clears the binding every typed boundary and every operator consumer raises its own catchable DEAL error — the direct assignment the spec allows to compile is checked at the declaration (E8001) and the array-element cell keeps the specified E8003.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, runtime-errors, arrays, classes
+
+class Box {
+  value: int = 0;
+}
+
+function needInt(value: int): int {
+  return value;
+}
+
+function returnsNarrowed(): int {
+  let x: int | null = 1;
+  let clear: () => null = function(): null {
+    x = null;
+    return null;
+  };
+  if (x !== null) {
+    clear();
+    return x;
+  }
+  return 0;
+}
+
+function expectNoError(what: string): null {
+  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+}
+
+function expectCaught(e: Error, what: string, code: string): null {
+  if (e.code !== code) {
+    throw { code: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.code };
+  }
+  return null;
+}
+
+function expectEqual(what: string, actual: int, expected: int): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+export function main(): null {
+  // The nullable equality rows stay null tests: a declared nullable read is
+  // never validated as the non-null type.
+  let x: int | null = 1;
+  if (x === null) {
+    expectNoError("a present value is not null");
+  }
+  x = null;
+  if (x !== null) {
+    expectNoError("a cleared value is null");
+  }
+  x = 1;
+  let clear: () => null = function(): null {
+    x = null;
+    return null;
+  };
+  let peek: () => int | null = function(): int | null {
+    return x;
+  };
+
+  // The valid refinement flows through every consumer unchanged: the
+  // operand validation admits the value and never rewrites it.
+  if (x !== null) {
+    expectEqual("arithmetic", x + 1, 2);
+    expectEqual("unary", -x, -1);
+    expectTrue("relational comparison", x < 2);
+    expectTrue("equality comparison", x === 1);
+    let items: int[] = [x, 2];
+    expectEqual("array literal", items[0], 1);
+    items[1] = x;
+    expectEqual("array write", items[1], 1);
+    let boxed: Box = { value: x };
+    boxed.value = x;
+    expectEqual("class field", boxed.value, 1);
+    expectEqual("parameter", needInt(x), 1);
+    expectTrue("boolean condition", true);
+  }
+  let flag: boolean | null = true;
+  let clearFlag: () => null = function(): null {
+    flag = null;
+    return null;
+  };
+  if (flag !== null) {
+    expectTrue("boolean condition", flag);
+    expectTrue("boolean conjunction", flag && true);
+    expectTrue("boolean negation", !flag === false);
+  }
+  let name: string | null = "Ada";
+  let clearName: () => null = function(): null {
+    name = null;
+    return null;
+  };
+  if (name !== null) {
+    let text: string = `hi ${name}`;
+    expectTrue("template interpolation", text === "hi Ada");
+    expectTrue("string concatenation", ("x" + name) === "xAda");
+    expectTrue("string comparison", name < "B");
+  }
+  let instance: Box | null = { value: 7 };
+  let other: Box = { value: 8 };
+  if (instance !== null) {
+    expectTrue("class reference identity", !(instance === other));
+  }
+
+  // After the capturing closure clears each binding, the closure still
+  // observes the cleared value (a reference binding, never a copied
+  // value) and every typed boundary keeps its own recorded projection —
+  // E8001, or the specified E8003 for the array-element cell — raised as
+  // a catchable DEAL error.
+  if (x !== null) {
+    clear();
+    if (peek() !== null) {
+      expectNoError("reference-binding capture");
+    }
+    try {
+      let y: int = x;
+      expectNoError("direct assignment");
+    } catch (e) {
+      expectCaught(e, "direct assignment", "E8001");
+    }
+    try {
+      let assigned: int = 0;
+      assigned = x;
+      expectNoError("assignment");
+    } catch (e) {
+      expectCaught(e, "assignment", "E8001");
+    }
+    try {
+      needInt(x);
+      expectNoError("parameter entry");
+    } catch (e) {
+      expectCaught(e, "parameter entry", "E8001");
+    }
+    try {
+      let y: int = returnsNarrowed();
+      expectNoError("return position");
+    } catch (e) {
+      expectCaught(e, "return position", "E8001");
+    }
+    try {
+      let built: Box = { value: x };
+      expectNoError("class construction");
+    } catch (e) {
+      expectCaught(e, "class construction", "E8001");
+    }
+    try {
+      let xs: int[] = [x];
+      expectNoError("array construction");
+    } catch (e) {
+      expectCaught(e, "array construction", "E8003");
+    }
+    try {
+      let xs: int[] = [0];
+      xs[0] = x;
+      expectNoError("array write");
+    } catch (e) {
+      expectCaught(e, "array write", "E8001");
+    }
+    try {
+      let written: Box = { value: 0 };
+      written.value = x;
+      expectNoError("class field write");
+    } catch (e) {
+      expectCaught(e, "class field write", "E8001");
+    }
+    try {
+      let y: int = x + 1;
+      expectNoError("arithmetic operand");
+    } catch (e) {
+      expectCaught(e, "arithmetic operand", "E8001");
+    }
+    try {
+      let y: int = -x;
+      expectNoError("unary operand");
+    } catch (e) {
+      expectCaught(e, "unary operand", "E8001");
+    }
+    try {
+      let ordered: boolean = x < 1;
+      expectNoError("comparison operand");
+    } catch (e) {
+      expectCaught(e, "comparison operand", "E8001");
+    }
+    try {
+      let same: boolean = x === 1;
+      expectNoError("equality operand");
+    } catch (e) {
+      expectCaught(e, "equality operand", "E8001");
+    }
+  }
+  if (flag !== null) {
+    clearFlag();
+    try {
+      if (flag) {
+        expectNoError("boolean condition");
+      }
+    } catch (e) {
+      expectCaught(e, "boolean condition", "E8001");
+    }
+    try {
+      let flipped: boolean = !flag;
+      expectNoError("boolean negation");
+    } catch (e) {
+      expectCaught(e, "boolean negation", "E8001");
+    }
+    try {
+      let conjunction: boolean = flag && true;
+      expectNoError("boolean conjunction");
+    } catch (e) {
+      expectCaught(e, "boolean conjunction", "E8001");
+    }
+    try {
+      while (flag) {
+        expectNoError("while condition");
+      }
+    } catch (e) {
+      expectCaught(e, "while condition", "E8001");
+    }
+    try {
+      for (let step: int = 0; flag; step = step + 1) {
+        expectNoError("for condition");
+      }
+    } catch (e) {
+      expectCaught(e, "for condition", "E8001");
+    }
+  }
+  if (name !== null) {
+    clearName();
+    try {
+      let text: string = `hi ${name}`;
+      expectNoError("template interpolation");
+    } catch (e) {
+      expectCaught(e, "template interpolation", "E8001");
+    }
+    try {
+      let text: string = "x" + name;
+      expectNoError("string concatenation");
+    } catch (e) {
+      expectCaught(e, "string concatenation", "E8001");
+    }
+    try {
+      let ordered: boolean = name < "b";
+      expectNoError("string comparison");
+    } catch (e) {
+      expectCaught(e, "string comparison", "E8001");
+    }
+  }
+  if (instance !== null) {
+    let clearInstance: () => null = function(): null {
+      instance = null;
+      return null;
+    };
+    clearInstance();
+    try {
+      let same: boolean = instance === other;
+      expectNoError("class reference equality");
+    } catch (e) {
+      expectCaught(e, "class reference equality", "E8001");
+    }
+  }
+  return null;
+}

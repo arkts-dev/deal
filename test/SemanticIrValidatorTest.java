@@ -580,6 +580,29 @@ public class SemanticIrValidatorTest {
                     null))), FACTS),
             "R-BOUNDARY-TRIPLE", "FUNCTION_PARAMETER");
 
+        // R-BOUNDARY-TRIPLE: the refined-operand cell carries the
+        // descriptor-kind policy of its own descriptor (a foreign policy
+        // fails closed).
+        assertE6005(SemanticIrValidator.validate(unit(List.of(
+                boundary(BoundaryKind.NARROWED_READ, INT,
+                    FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, null))), FACTS),
+            "R-BOUNDARY-TRIPLE", "NARROWED_READ", "descriptor-kind rule");
+
+        // R-BOUNDARY-TRIPLE: the refined-operand cell's input is one
+        // identifier read — an input no BINDING_LOAD produces fails closed
+        // (the refinement claim is about a binding, never a value). The
+        // typed surface and the canonical text surface reject identically.
+        {
+            LoweredModuleUnit readless = unit(List.of(
+                boundary(BoundaryKind.NARROWED_READ, INT,
+                    FailurePolicyId.TYPE_DESCRIPTOR, null)));
+            assertE6005(SemanticIrValidator.validate(readless, FACTS),
+                "R-BOUNDARY-TRIPLE", "NARROWED_READ", "not a binding read");
+            assertE6005(SemanticIrValidator.validateText(
+                    SemanticIrValidator.toUnitText(readless), FACTS),
+                "R-BOUNDARY-TRIPLE", "NARROWED_READ", "not a binding read");
+        }
+
         // R-ELIDED-PLACEMENT: ELIDED_BY_ADAPTER with no parent op.
         {
             OpId startOp = nextOpId();
