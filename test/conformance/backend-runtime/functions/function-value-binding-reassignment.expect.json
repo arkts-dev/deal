@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "{\"captured\":2,\"visits\":1,\"nested\":2,\"alias\":121,\"afterBranch\":1,\"staticControls\":57,\"widened\":4}\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

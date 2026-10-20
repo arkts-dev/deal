@@ -1,0 +1,10 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) for the
+// host-origin function-value binding subject: two same-signature exports the
+// fixture assigns to one function-typed binding, plus the invocation trace
+// the fixture pins. Resolved on demand by the host-fixture registry; the
+// discovery walk skips test/conformance/host-fixtures/ entirely.
+
+export function inc(x: int): int;
+export function dec(x: int): int;
+export function trace(): string;

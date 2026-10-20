@@ -28,6 +28,7 @@ import deal.semantic.LoweringSupport;
 import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
+import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BoundaryKind;
@@ -36,6 +37,8 @@ import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FunctionAllocationIdentity;
+import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ClassBindingFacts;
@@ -1390,6 +1393,375 @@ public class BodyInvocationIdentityTest {
     }
 
     // =========================================================================
+    // The assigned function-typed binding: reads observe the current binding
+    // =========================================================================
+
+    /**
+     * The current-value call selection fixture: an assigned function-typed
+     * binding read through a closure body, through a repeated loop
+     * condition, and after a conditional store, beside the positive static
+     * controls (a never-assigned function-typed binding, a recursive
+     * declaration, a mutually recursive pair) and a bounded loop (the
+     * {@code visits < 5} guard terminates a stale callee instead of
+     * hanging).
+     */
+    private static final String REASSIGNED_BINDING_SOURCE = """
+        function one(): int { return 1; }
+        function two(): int { return 2; }
+        function fib(n: int): int {
+          if (n < 2) { return n; }
+          return fib(n - 1) + fib(n - 2);
+        }
+        function isEven(n: int): boolean {
+          if (n === 0) { return true; }
+          return isOdd(n - 1);
+        }
+        function isOdd(n: int): boolean {
+          if (n === 0) { return false; }
+          return isEven(n - 1);
+        }
+        export function main(): null {
+          let f: () => int = one;
+          let call: () => int = function(): int { return f(); };
+          f = two;
+          let captured: int = call();
+          let visits: int = 0;
+          while (f() === 2 && visits < 5) {
+            visits = visits + 1;
+            f = one;
+          }
+          let cond: boolean = false;
+          if (cond) { f = two; }
+          let afterBranch: int = f();
+          let stable: () => int = two;
+          let stableValue: int = stable();
+          let recursive: int = fib(10);
+          let mutual: boolean = isEven(10);
+          if (captured !== 2 || visits !== 1 || afterBranch !== 1
+              || stableValue !== 2 || recursive !== 55 || !mutual) {
+            throw { code: "TEST_FAIL", message: "current binding" };
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * A function-typed binding assigned anywhere in its declaring body
+     * carries no statically resolved callee: every read of it publishes the
+     * producer rule's dynamic materialization (the load's own allocation
+     * identity, correlated to the load op), and every call through it
+     * records that loaded value as a {@code Dynamic} callee — the spec's
+     * capture-by-binding rule ("if the captured variable is assigned later,
+     * reads through the closure observe the current value of that
+     * binding"). The never-assigned binding, the recursive declaration, and
+     * the mutually recursive declarations keep their statically resolved
+     * callees, so the fix is not "make every call dynamic".
+     */
+    static void testAssignedFunctionBindingCallsReadTheCurrentValue() throws Exception {
+        System.out.println("-- an assigned function-typed binding: the closure body, "
+            + "the repeated loop condition and the post-branch call read the current "
+            + "binding; the never-assigned, recursive and mutual callees stay static --");
+        RealProject project = null;
+        try {
+            project = compileProject(REASSIGNED_BINDING_SOURCE);
+            SemanticLowerer.ProjectLoweringResult result = lower(project);
+            if (result.project() == null || !result.diagnostics().isEmpty()) {
+                fail("the reassigned-binding fixture lowers through the project entry "
+                    + "with zero CONSTRUCT_UNLOWERED: " + result.diagnostics());
+                return;
+            }
+            LoweredModuleUnit unit = onlyModule(result.project());
+            List<SemanticOp> loads = opsOfKind(unit, SemanticOpKind.BINDING_LOAD);
+            List<SemanticOp> calls = opsOfKind(unit, SemanticOpKind.CALL);
+
+            // The dynamic materializations: exactly the two reads of the
+            // assigned binding (the closure body's read and the loop
+            // condition's read), each keyed by its own load result and
+            // correlated to that load op.
+            Map<Long, FunctionExecutionBinding.DynamicFunctionValue> dynamicLoads =
+                new LinkedHashMap<>();
+            for (SemanticOp load : loads) {
+                FunctionExecutionBinding binding = unit.functionBindings().get(
+                    new FunctionAllocationIdentity(((ValueId) load.result()).id()));
+                if (binding instanceof FunctionExecutionBinding.DynamicFunctionValue dynamic) {
+                    check(dynamic.materializingOpId().equals(load.opId()),
+                        "the dynamic materialization of load " + load.opId()
+                            + " is correlated to that load op; got "
+                            + dynamic.materializingOpId());
+                    dynamicLoads.put(((ValueId) load.result()).id(), dynamic);
+                }
+            }
+            checkEq(3, dynamicLoads.size(),
+                "exactly the three reads of the assigned binding register the producer "
+                    + "rule's dynamic materialization (the closure body's read, the "
+                    + "loop condition's read and the post-branch read); got "
+                    + dynamicLoads.size());
+
+            List<SemanticOp> dynamicCalls = new ArrayList<>();
+            for (SemanticOp call : calls) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
+                    dynamicCalls.add(call);
+                    check(dynamicLoads.containsKey(dynamic.callee().id()),
+                        "the dynamic callee of " + call.opId()
+                            + " names a read of the assigned binding; got "
+                            + dynamic.callee());
+                    check(payload.mode() == CallMode.INDIRECT,
+                        "the dynamic callee is recorded under CallMode.INDIRECT; got "
+                            + payload.mode());
+                }
+            }
+            checkEq(3, dynamicCalls.size(),
+                "the closure body's call, the loop condition's call and the "
+                    + "post-branch call are the dynamic callees; got "
+                    + dynamicCalls.size());
+
+            // The positive static controls: every other call resolves its
+            // callee statically (a declared body, an adapter, or a host
+            // surface entry) — never through an untracked read.
+            List<SemanticOp> staticCalls = new ArrayList<>();
+            for (SemanticOp call : calls) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                if (payload.callee() instanceof KindPayload.CallCallee.Dynamic) {
+                    continue;
+                }
+                staticCalls.add(call);
+                check(payload.callee() instanceof KindPayload.CallCallee.Static
+                        || payload.callee() instanceof KindPayload.CallCallee.Indirect,
+                    "a statically resolved callee is a Static or Indirect record; got "
+                        + payload.callee());
+            }
+            check(staticCalls.size() >= 6,
+                "the fixture keeps its statically resolved calls (the never-assigned "
+                    + "binding, the recursive and the two mutually recursive "
+                    + "declarations, plus the entry and body invocations); got "
+                    + staticCalls.size());
+
+            // The never-assigned binding's call and the two recursive
+            // declarations resolve to registered declared bodies.
+            List<String> staticCalleeClasses = new ArrayList<>();
+            for (SemanticOp call : staticCalls) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                staticCalleeClasses.add(payload.callee().getClass().getSimpleName());
+            }
+            check(staticCalleeClasses.stream().anyMatch(name -> name.equals("Indirect")),
+                "the never-assigned binding's call is the value-carried static arm; got "
+                    + staticCalleeClasses);
+            check(staticCalleeClasses.stream().anyMatch(name -> name.equals("Static")),
+                "the recursive and mutual declared-name calls keep the static callee "
+                    + "record; got " + staticCalleeClasses);
+
+            // The recursion control: the self-call inside fib resolves to
+            // fib's own registered body, never to a dynamic carrier.
+            boolean fibSelfCall = false;
+            for (SemanticOp call : staticCalls) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                if (payload.callee() instanceof KindPayload.CallCallee.Indirect indirect) {
+                    FunctionExecutionBinding binding = unit.functionBindings().get(
+                        new FunctionAllocationIdentity(indirect.callee().id()));
+                    if (binding instanceof FunctionExecutionBinding.LoweredBody body
+                            && unit.functions().get(body.functionId()) != null
+                            && "fib".equals(unit.functions().get(body.functionId()).sourceName())) {
+                        fibSelfCall = true;
+                    }
+                }
+            }
+            check(fibSelfCall,
+                "the recursive call inside fib resolves to fib's registered "
+                    + "LoweredBody (recursion stays statically resolved)");
+        } finally {
+            deleteRecursively(project == null ? null : project.root());
+        }
+    }
+
+    /**
+     * The cross-consumer equality over the assigned-binding fixture: the
+     * semantic oracle, the shared LuaJIT artifact and the shared JVM artifact
+     * execute the same dynamic callee reads and publish the same events
+     * event-for-event. The fixture's loop re-executes its condition op, which
+     * the harness's per-op one-START gate assumes away (the same repeat the
+     * landing documents for recursive bodies), so the traces are compared
+     * directly: all three consumers must agree, and every consumer must reach
+     * the successful terminal.
+     */
+    static void testAssignedBindingCrossConsumerTraceEquality() throws Exception {
+        System.out.println("-- the assigned-binding fixture on the oracle and"
+            + " both shared artifacts: one event sequence, one success terminal --");
+        RealProject project = null;
+        Path workspace = Files.createTempDirectory("body-invocation-diff-");
+        try {
+            project = compileProject(REASSIGNED_BINDING_SOURCE);
+            SemanticLowerer.ProjectLoweringResult result = lower(project);
+            if (result.project() == null || !result.diagnostics().isEmpty()) {
+                fail("the reassigned-binding fixture lowers for the differential "
+                    + "matrix: " + result.diagnostics());
+                return;
+            }
+            SemanticDifferentialHarness.Verdict verdict =
+                SemanticDifferentialHarness.runProject(result.project(),
+                    result.tables(), result.registries(),
+                    SemanticDifferentialHarness.Expectation.success(
+                        "the assigned function-typed binding", List.of(), "null"),
+                    workspace);
+            checkEq(3, verdict.runs().size(),
+                "the matrix produced the oracle and both shared artifacts: "
+                    + verdict.failures());
+            if (verdict.runs().size() != 3) {
+                return;
+            }
+            List<String> oracleTrace = new ArrayList<>();
+            for (SemanticRuntimeModel.TraceEvent event : verdict.runs().get(0).trace()) {
+                oracleTrace.add(event.text());
+            }
+            check(!oracleTrace.isEmpty(),
+                "the oracle executed the fixture and published events");
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                List<String> trace = new ArrayList<>();
+                for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                    trace.add(event.text());
+                }
+                checkEq(oracleTrace, trace, "the " + run.consumer()
+                    + " trace equals the oracle's event-for-event");
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    "the " + run.consumer() + " reached the successful terminal: "
+                        + run.terminal());
+            }
+        } finally {
+            deleteRecursively(project == null ? null : project.root());
+            deleteRecursively(workspace);
+        }
+    }
+
+    /**
+     * The never-assigned control: a function-typed binding whose declaring
+     * body assigns only other names publishes no dynamic materialization and
+     * keeps every call's statically resolved callee — the assigned-binding
+     * rule withholds the static callee only where a store can change the
+     * binding.
+     */
+    static void testNeverAssignedFunctionBindingKeepsStaticCallee() throws Exception {
+        System.out.println("-- a never-assigned function-typed binding: the load "
+            + "republishes the tracked identity and the call keeps its static callee --");
+        RealProject project = null;
+        try {
+            project = compileProject("""
+                function one(): int { return 1; }
+                function two(): int { return 2; }
+                export function main(): null {
+                  let alt: () => int = two;
+                  let f: () => int = one;
+                  let a: int = alt();
+                  let b: int = f();
+                  if (a !== 2 || b !== 1) {
+                    throw { code: "TEST_FAIL", message: "static control" };
+                  }
+                  return null;
+                }
+                """);
+            SemanticLowerer.ProjectLoweringResult result = lower(project);
+            if (result.project() == null || !result.diagnostics().isEmpty()) {
+                fail("the never-assigned fixture lowers with zero "
+                    + "CONSTRUCT_UNLOWERED: " + result.diagnostics());
+                return;
+            }
+            LoweredModuleUnit unit = onlyModule(result.project());
+            for (SemanticOp load : opsOfKind(unit, SemanticOpKind.BINDING_LOAD)) {
+                FunctionExecutionBinding binding = unit.functionBindings().get(
+                    new FunctionAllocationIdentity(((ValueId) load.result()).id()));
+                check(!(binding instanceof FunctionExecutionBinding.DynamicFunctionValue),
+                    "the never-assigned fixture registers no dynamic materialization "
+                        + "(load " + load.opId() + " published "
+                        + (binding == null ? "no registration" : binding.getClass()
+                            .getSimpleName()) + ")");
+            }
+            for (SemanticOp call : opsOfKind(unit, SemanticOpKind.CALL)) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                check(!(payload.callee() instanceof KindPayload.CallCallee.Dynamic),
+                    "the never-assigned fixture's call " + call.opId()
+                        + " keeps its statically resolved callee");
+            }
+        } finally {
+            deleteRecursively(project == null ? null : project.root());
+        }
+    }
+
+    /**
+     * The arity-extension control: an adapted declaration over an assigned
+     * binding still produces exactly one {@code FUNCTION_ADAPT} and its
+     * call resolves the adapter statically (the adapter's own source mode is
+     * the shape map's, unchanged by the current-value call rule) while an
+     * ordinary read of the same binding dispatches on the loaded value.
+     */
+    static void testAssignedBindingKeepsArityExtension() throws Exception {
+        System.out.println("-- an assigned binding under arity extension: the "
+            + "adapter stays one registered FUNCTION_ADAPT and its call resolves it "
+            + "statically --");
+        RealProject project = null;
+        try {
+            project = compileProject("""
+                function one(x: int): int { return x; }
+                function two(x: int): int { return x; }
+                export function main(): null {
+                  let f: (x: int) => int = one;
+                  let g: (x: int, y: int) => int = f;
+                  f = two;
+                  let r: int = g(1, 2);
+                  let direct: int = f(1);
+                  if (r !== 1 || direct !== 1) {
+                    throw { code: "TEST_FAIL", message: "arity extension" };
+                  }
+                  return null;
+                }
+                """);
+            SemanticLowerer.ProjectLoweringResult result = lower(project);
+            if (result.project() == null || !result.diagnostics().isEmpty()) {
+                fail("the arity fixture lowers with zero CONSTRUCT_UNLOWERED: "
+                    + result.diagnostics());
+                return;
+            }
+            LoweredModuleUnit unit = onlyModule(result.project());
+            List<SemanticOp> adapts = opsOfKind(unit, SemanticOpKind.FUNCTION_ADAPT);
+            checkEq(1, adapts.size(), "exactly one FUNCTION_ADAPT for the adapted "
+                + "declaration");
+            if (adapts.size() != 1) {
+                return;
+            }
+            ValueId adapterIdentity = (ValueId) adapts.get(0).result();
+            FunctionExecutionBinding adapterBinding = unit.functionBindings().get(
+                new FunctionAllocationIdentity(adapterIdentity.id()));
+            check(adapterBinding instanceof FunctionExecutionBinding.AdapterBinding,
+                "the adapted declaration registers exactly one AdapterBinding keyed "
+                    + "by the FUNCTION_ADAPT result identity");
+            boolean adapterCall = false;
+            boolean directDynamic = false;
+            for (SemanticOp call : opsOfKind(unit, SemanticOpKind.CALL)) {
+                KindPayload.CallPayload payload = (KindPayload.CallPayload) call.payload();
+                if (payload.callee() instanceof KindPayload.CallCallee.Static staticCallee
+                        && staticCallee.binding()
+                            instanceof FunctionExecutionBinding.AdapterBinding adapter
+                        && adapter.adaptOpId().equals(adapts.get(0).opId())) {
+                    adapterCall = true;
+                }
+                if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
+                    FunctionExecutionBinding binding = unit.functionBindings().get(
+                        new FunctionAllocationIdentity(dynamic.callee().id()));
+                    if (binding instanceof FunctionExecutionBinding.DynamicFunctionValue) {
+                        directDynamic = true;
+                    }
+                }
+            }
+            check(adapterCall,
+                "the arity-extended call resolves the adapter's published identity "
+                    + "statically (the adapter's source mode is unchanged)");
+            check(directDynamic,
+                "the ordinary read of the same assigned binding still dispatches on "
+                    + "the loaded value");
+        } finally {
+            deleteRecursively(project == null ? null : project.root());
+        }
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
@@ -1441,6 +1813,10 @@ public class BodyInvocationIdentityTest {
             testBodyLocalIdentityWithAssignedShape(zeroBaseline);
             testBodyLocalBoundaryOutsideReturn(storedBaseline);
             testProducedProjectDanglingIdentityGuard(zeroCallSite);
+            testAssignedFunctionBindingCallsReadTheCurrentValue();
+            testAssignedBindingCrossConsumerTraceEquality();
+            testNeverAssignedFunctionBindingKeepsStaticCallee();
+            testAssignedBindingKeepsArityExtension();
         } finally {
             deleteRecursively(storedExpression == null ? null : storedExpression.root());
             deleteRecursively(zeroCallSite == null ? null : zeroCallSite.root());

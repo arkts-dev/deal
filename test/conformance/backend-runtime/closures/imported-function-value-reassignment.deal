@@ -1,0 +1,25 @@
+// @spec: Functions — Closures and captured variables
+// @description: An assigned binding holding an imported function value is read by binding: the closure body dispatches on the export the assignment stored
+// @features: functions, closures, modules, imports, mutation
+// @expected: runtime-ok
+
+import * as console from "std/console";
+import * as json from "std/json";
+import * as Values from "./reassignment_value_lib";
+
+export function test_imported_function_binding(): int {
+  let f: (x: int) => int = Values.inc;
+  let call: () => int = function(): int { return f(1); };
+  f = Values.dec;
+  let result: int = call();
+  if (result !== 0) {
+    throw { code: "TEST_FAIL", message: "the imported read observes the current binding" };
+  }
+  return result;
+}
+
+export function main(): null {
+  let imported: int = test_imported_function_binding();
+  console.log(json.stringify({ imported: imported }));
+  return null;
+}

@@ -1,0 +1,26 @@
+// @spec: Functions — Closures and captured variables / Modules and host ABI
+// @description: An assigned binding holding a host function value is read by binding: the closure body dispatches on the host export the assignment stored
+// @expected: runtime-ok
+// @features: functions, closures, modules, host-abi, mutation
+
+import * as console from "std/console";
+import * as json from "std/json";
+import * as host from "host/function_binding";
+
+export function test_host_function_binding(): int {
+  let f: (x: int) => int = host.inc;
+  let call: () => int = function(): int { return f(1); };
+  f = host.dec;
+  let result: int = call();
+  if (result !== 0) {
+    throw { code: "TEST_FAIL", message: "the host-origin read observes the current binding" };
+  }
+  return result;
+}
+
+export function main(): null {
+  let observed: int = test_host_function_binding();
+  let trace: string = host.trace();
+  console.log(json.stringify({ host: observed, trace: trace }));
+  return null;
+}

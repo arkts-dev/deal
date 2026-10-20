@@ -3291,6 +3291,26 @@ public final class SemanticLowerer {
         private final IdentityHashMap<BindingCoreIncarnation, ValueId> functionIdentity =
             new IdentityHashMap<>();
         /**
+         * The assigned-name surface of the open function-body walks,
+         * innermost first: the identifier names assigned anywhere in one
+         * body's subtree, nested bodies included. The module-init walk is
+         * the bottom scope (pushed before the module's statements walk), so
+         * a module-level name is assigned exactly when some function of the
+         * module assigns it.
+         */
+        private final ArrayDeque<Set<String>> assignedNameScopes = new ArrayDeque<>();
+        /**
+         * The assigned-name scope each registered binding was declared in
+         * (keyed by binding identity, first incarnation wins). A
+         * function-typed binding whose declaring scope names it is mutable:
+         * a read observes the current binding, never the allocation the
+         * declaration's initializer produced (docs/spec-v1.3.md §Closures
+         * and captured variables — captured variables are captured by
+         * binding, not by value).
+         */
+        private final Map<BindingId, Set<String>> assignedNamesOfBinding =
+            new LinkedHashMap<>();
+        /**
          * The capture borders of the currently open detached-body walks
          * (closure-core mode), innermost first: the number of binding
          * frames outside the function recorded before its own frame was
@@ -4197,6 +4217,13 @@ public final class SemanticLowerer {
 
         private void hoistModuleLevelAllocs(List<StatementNode> statements,
                                             Set<FunctionDeclaration> groupMembers) {
+            // The module-init assigned-name scope (the bottom of the
+            // function-body stack): every module-level name the module's
+            // functions assign, so a module-level function-typed binding's
+            // reads observe the current binding.
+            if (assignedNameScopes.isEmpty()) {
+                pushAssignedNameScope(statements);
+            }
             hoistModuleLevelClassLayouts(statements);
             for (StatementNode statement : statements) {
                 if (statement instanceof ExportDeclaration exportDeclaration
@@ -6634,14 +6661,19 @@ public final class SemanticLowerer {
                 BlockId bodyBlock = allocateBlock();
                 checkerScopeNodes.push(function);
                 pushBindingFrame();
+                pushAssignedNameScope(function.body().statements());
                 blockStack.push(bodyBlock);
                 lowerParameterBindings(bodyBlock, function.params());
                 checkerScopeNodes.push(function.body());
-                statementWalk.walk(function.body().statements(), false);
-                checkerScopeNodes.pop();
-                blockStack.pop();
-                popBindingFrame();
-                checkerScopeNodes.pop();
+                try {
+                    statementWalk.walk(function.body().statements(), false);
+                } finally {
+                    popAssignedNameScope();
+                    checkerScopeNodes.pop();
+                    blockStack.pop();
+                    popBindingFrame();
+                    checkerScopeNodes.pop();
+                }
                 return;
             }
             // --- Closure-core mode: CLOSURE_NEW + BINDING_INIT at the
@@ -6715,6 +6747,7 @@ public final class SemanticLowerer {
             try {
                 checkerScopeNodes.push(function);
                 pushBindingFrame();
+                pushAssignedNameScope(function.body().statements());
                 blockStack.push(bodyBlock);
                 lowerParameterBindings(bodyBlock, function.params());
                 checkerScopeNodes.push(function.body());
@@ -6755,6 +6788,7 @@ public final class SemanticLowerer {
                     checkerScopeNodes.pop();
                     blockStack.pop();
                     popBindingFrame();
+                    popAssignedNameScope();
                     checkerScopeNodes.pop();
                 }
             } finally {
@@ -6893,6 +6927,7 @@ public final class SemanticLowerer {
                 try {
                     checkerScopeNodes.push(member);
                     pushBindingFrame();
+                    pushAssignedNameScope(member.body().statements());
                     blockStack.push(bodyBlock);
                     if (reservedContext != null) {
                         functionStack.push(reservedContext);
@@ -6928,6 +6963,7 @@ public final class SemanticLowerer {
                         checkerScopeNodes.pop();
                         blockStack.pop();
                         popBindingFrame();
+                        popAssignedNameScope();
                         checkerScopeNodes.pop();
                     }
                 } finally {
@@ -7607,6 +7643,154 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The identifier names assigned anywhere in one function-body
+         * subtree — nested blocks and nested function bodies included —
+         * which is the mutable-name surface that body's bindings are read
+         * against. Position-independent and deliberately scope-blind: a
+         * shadowing declaration of the same name marks the name too, which
+         * can only withhold a statically resolved callee, never select a
+         * wrong one.
+         */
+        private static Set<String> assignedNamesIn(List<StatementNode> statements) {
+            Set<String> assigned = new HashSet<>();
+            collectAssignedNames(statements, assigned);
+            return assigned;
+        }
+
+        private static void collectAssignedNames(List<StatementNode> statements,
+                                                 Set<String> assigned) {
+            for (StatementNode statement : statements) {
+                collectAssignedNames(statement, assigned);
+            }
+        }
+
+        private static void collectAssignedNames(StatementNode statement,
+                                                 Set<String> assigned) {
+            switch (statement) {
+                case VariableDeclaration decl ->
+                    collectAssignedNames(decl.initializer(), assigned);
+                case FunctionDeclaration function ->
+                    collectAssignedNames(function.body().statements(), assigned);
+                case Block block -> collectAssignedNames(block.statements(), assigned);
+                case IfStatement ifStatement -> {
+                    collectAssignedNames(ifStatement.condition(), assigned);
+                    collectAssignedNames(ifStatement.thenBlock().statements(), assigned);
+                    if (ifStatement.elseBranch().isPresent()) {
+                        switch (ifStatement.elseBranch().get()) {
+                            case Either.Left<IfStatement, Block> left ->
+                                collectAssignedNames(left.value(), assigned);
+                            case Either.Right<IfStatement, Block> right ->
+                                collectAssignedNames(right.value().statements(), assigned);
+                        }
+                    }
+                }
+                case WhileStatement whileStatement -> {
+                    collectAssignedNames(whileStatement.condition(), assigned);
+                    collectAssignedNames(whileStatement.body().statements(), assigned);
+                }
+                case ForStatement forStatement -> {
+                    if (forStatement.init().isPresent()) {
+                        switch (forStatement.init().get()) {
+                            case ForInit.VarDecl varDecl ->
+                                collectAssignedNames(varDecl.decl().initializer(),
+                                    assigned);
+                            case ForInit.AssignExpr assignExpr ->
+                                collectAssignedNames(assignExpr.expr(), assigned);
+                        }
+                    }
+                    if (forStatement.condition().isPresent()) {
+                        collectAssignedNames(forStatement.condition().get(), assigned);
+                    }
+                    if (forStatement.update().isPresent()) {
+                        collectAssignedNames(forStatement.update().get(), assigned);
+                    }
+                    collectAssignedNames(forStatement.body().statements(), assigned);
+                }
+                case ForOfStatement forOf -> {
+                    collectAssignedNames(forOf.iterable(), assigned);
+                    collectAssignedNames(forOf.body().statements(), assigned);
+                }
+                case TryStatement tryStatement -> {
+                    collectAssignedNames(tryStatement.tryBlock().statements(), assigned);
+                    collectAssignedNames(tryStatement.catchBlock().statements(), assigned);
+                }
+                case ExpressionStatement expressionStatement ->
+                    collectAssignedNames(expressionStatement.expr(), assigned);
+                case ReturnStatement returnStatement -> {
+                    if (returnStatement.expr().isPresent()) {
+                        collectAssignedNames(returnStatement.expr().get(), assigned);
+                    }
+                }
+                case ThrowStatement throwStatement ->
+                    collectAssignedNames(throwStatement.expr(), assigned);
+                case DeleteStatement deleteStatement ->
+                    collectAssignedNames(deleteStatement.target(), assigned);
+                case ExportDeclaration exportDeclaration ->
+                    collectAssignedNames(exportDeclaration.declaration(), assigned);
+                case ClassDeclaration classDeclaration -> {
+                    for (ClassField field : classDeclaration.fields()) {
+                        if (field.defaultExpr().isPresent()) {
+                            collectAssignedNames(field.defaultExpr().get(), assigned);
+                        }
+                    }
+                }
+                case BreakStatement _, ContinueStatement _, ImportDeclaration _ -> { }
+            }
+        }
+
+        private static void collectAssignedNames(ExpressionNode expr,
+                                                 Set<String> assigned) {
+            switch (expr) {
+                case LiteralExpr ignored -> { }
+                case IdentifierExpr ignored -> { }
+                case BinaryExpr binary -> {
+                    collectAssignedNames(binary.left(), assigned);
+                    collectAssignedNames(binary.right(), assigned);
+                }
+                case UnaryExpr unary -> collectAssignedNames(unary.expr(), assigned);
+                case CallExpr call -> {
+                    collectAssignedNames(call.callee(), assigned);
+                    for (ExpressionNode arg : call.args()) {
+                        collectAssignedNames(arg, assigned);
+                    }
+                }
+                case MemberAccessExpr access ->
+                    collectAssignedNames(access.object(), assigned);
+                case IndexExpr index -> {
+                    collectAssignedNames(index.array(), assigned);
+                    collectAssignedNames(index.index(), assigned);
+                }
+                case ArrayLiteralExpr array -> {
+                    for (ExpressionNode element : array.elements()) {
+                        collectAssignedNames(element, assigned);
+                    }
+                }
+                case ObjectLiteralExpr object -> {
+                    for (Property property : object.properties()) {
+                        collectAssignedNames(property.value(), assigned);
+                    }
+                }
+                case FunctionExpr functionExpr ->
+                    collectAssignedNames(functionExpr.body().statements(), assigned);
+                case HasExpr has -> collectAssignedNames(has.object(), assigned);
+                case AssignmentExpr assignment -> {
+                    if (assignment.target() instanceof IdentifierExpr target) {
+                        assigned.add(target.name());
+                    }
+                    collectAssignedNames(assignment.target(), assigned);
+                    collectAssignedNames(assignment.value(), assigned);
+                }
+                case TemplateLiteralExpr template -> {
+                    for (ExpressionNode part : template.parts()) {
+                        collectAssignedNames(part, assigned);
+                    }
+                }
+                case AwaitExpression awaitExpression ->
+                    collectAssignedNames(awaitExpression.callee(), assigned);
+            }
+        }
+
+        /**
          * The declared type of a let declaration (the annotated type for
          * annotated declarations, the inferred type otherwise): resolved
          * from the checker's per-scoped-statement symbol table of the
@@ -7680,6 +7864,37 @@ public final class SemanticLowerer {
             return blockStack.peek();
         }
 
+        /**
+         * Opens one function-body walk's assigned-name scope: the
+         * identifier names the body's whole subtree assigns. The scope is
+         * a conservative over-approximation of the binding resolution (a
+         * shadowing declaration of the same name counts), which can only
+         * cost a statically resolved callee, never a wrong one.
+         */
+        private void pushAssignedNameScope(List<StatementNode> body) {
+            assignedNameScopes.push(assignedNamesIn(body));
+        }
+
+        /** Closes the innermost function-body assigned-name scope. */
+        private void popAssignedNameScope() {
+            if (!assignedNameScopes.isEmpty()) {
+                assignedNameScopes.pop();
+            }
+        }
+
+        /**
+         * True iff the resolved binding is assigned anywhere in its
+         * declaring function body (nested bodies included): no read of it
+         * may publish the statically tracked allocation identity, and no
+         * call through it may name a statically resolved callee — the cell
+         * holds whichever function value the current execution stored, as
+         * the spec's capture-by-binding rule requires.
+         */
+        private boolean assignedFunctionBinding(FrameEntry entry) {
+            Set<String> assigned = assignedNamesOfBinding.get(entry.cell().id);
+            return assigned != null && assigned.contains(entry.cell().name);
+        }
+
         /** Pushes one binding-environment scope frame (innermost first). */
         private void pushBindingFrame() {
             bindingScopes.add(0, new LinkedHashMap<>());
@@ -7709,6 +7924,10 @@ public final class SemanticLowerer {
                 cell = new BindingCell(name, binding);
                 cellsById.put(binding, cell);
                 bindingCells.add(cell);
+            }
+            Set<String> declaringAssignedNames = assignedNameScopes.peek();
+            if (declaringAssignedNames != null) {
+                assignedNamesOfBinding.putIfAbsent(binding, declaringAssignedNames);
             }
             Map<String, FrameEntry> frame = bindingScopes.get(0);
             frame.put(name, new FrameEntry(cell, incarnation));
@@ -10033,7 +10252,13 @@ public final class SemanticLowerer {
         private ValueId lowerUserCallBinding(CallExpr call, ValueId slot,
                                              IdentifierExpr identifier) {
             FrameResolution resolution = resolveFrame(identifier.name());
+            // A mutable function-typed binding (assigned anywhere in its
+            // declaring body) carries no statically resolved callee: the
+            // call dispatches on the value the load reads, exactly like
+            // every other runtime-resolved callee (the spec's
+            // capture-by-binding rule).
             ValueId identity = resolution == null
+                    || assignedFunctionBinding(resolution.entry())
                 ? null : functionIdentity.get(resolution.entry().incarnation());
             if (identity == null) {
                 // The dynamic arm (the callee value has no statically
@@ -11153,7 +11378,12 @@ public final class SemanticLowerer {
                     return lowerAwaitDeclared(call, slot, awaitSpan, identifier, context);
                 }
                 FrameResolution resolution = resolveFrame(identifier.name());
+                // The awaited twin of the call arm's mutable-binding rule:
+                // an assigned async function-typed binding resolves its
+                // callee class from the awaited value, never from the
+                // declaration's initializer.
                 ValueId identity = resolution == null
+                        || assignedFunctionBinding(resolution.entry())
                     ? null : functionIdentity.get(resolution.entry().incarnation());
                 if (identity == null) {
                     // The dynamic async arm (the awaited callee value has no
@@ -13279,7 +13509,8 @@ public final class SemanticLowerer {
                                          FrameEntry entry, ValueId slot) {
             RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(type);
             ValueId result = null;
-            if (descriptor instanceof RuntimeDescriptor.Func) {
+            if (descriptor instanceof RuntimeDescriptor.Func
+                    && !assignedFunctionBinding(entry)) {
                 result = functionIdentity.get(entry.incarnation());
             }
             boolean trackedIdentity = result != null;
@@ -13399,6 +13630,7 @@ public final class SemanticLowerer {
             try {
                 checkerScopeNodes.push(functionExpr.body());
                 pushBindingFrame();
+                pushAssignedNameScope(functionExpr.body().statements());
                 blockStack.push(bodyBlock);
                 FunctionContext reservedClosureContext = null;
                 if (e7Calls) {
@@ -13438,6 +13670,7 @@ public final class SemanticLowerer {
                     }
                     blockStack.pop();
                     popBindingFrame();
+                    popAssignedNameScope();
                     checkerScopeNodes.pop();
                 }
             } finally {

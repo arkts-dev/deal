@@ -1,0 +1,145 @@
+// @spec: Functions — Closures and captured variables
+// @description: An assigned function-typed binding is read by binding: the closure body, a nested capture, an alias of a later read, the repeated loop condition and a post-branch call dispatch on the current function value, while never-assigned, recursive and mutually recursive callees stay statically resolved
+// @expected: runtime-ok
+// @features: functions, closures, mutation, loops, recursion, arity
+
+import * as console from "std/console";
+import * as json from "std/json";
+
+function one(): int { return 1; }
+function two(): int { return 2; }
+function bump(x: int): int { return x + 1; }
+
+function fib(n: int): int {
+  if (n < 2) { return n; }
+  return fib(n - 1) + fib(n - 2);
+}
+
+function isEven(n: int): boolean {
+  if (n === 0) { return true; }
+  return isOdd(n - 1);
+}
+
+function isOdd(n: int): boolean {
+  if (n === 0) { return false; }
+  return isEven(n - 1);
+}
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+// The captured read: the closure body calls the binding's current value.
+export function test_captured_function_binding(): int {
+  let f: () => int = one;
+  let call: () => int = function(): int { return f(); };
+  f = two;
+  let result: int = call();
+  check(result === 2, "the captured read observes the current binding");
+  return result;
+}
+
+// The repeated loop condition: the assignment inside the body governs the
+// next iteration's condition. The visits guard bounds the loop, so a stale
+// callee terminates after at most five iterations instead of never.
+export function test_loop_function_binding(): int {
+  let f: () => int = one;
+  let visits: int = 0;
+  while (f() === 1 && visits < 5) {
+    visits = visits + 1;
+    f = two;
+  }
+  check(visits === 1, "the loop condition observes the current binding");
+  return visits;
+}
+
+// The nested capture: a closure body nested inside another closure body
+// reads the enclosing binding's current value.
+export function test_nested_capture_function_binding(): int {
+  let f: () => int = one;
+  let outer: () => (() => int) = function(): (() => int) {
+    return function(): int { return f(); };
+  };
+  f = two;
+  let inner: () => int = outer();
+  let result: int = inner();
+  check(result === 2, "the nested capture read observes the current binding");
+  return result;
+}
+
+// The alias: a copied value keeps the function value it copied, while a read
+// of the source binding observes the current one — including when the store
+// sits on a conditional path.
+export function test_alias_function_binding(): int {
+  let f: () => int = one;
+  let copied: () => int = f;
+  f = two;
+  let copiedValue: int = copied();
+  let currentValue: int = f();
+  let cond: boolean = false;
+  let branchy: () => int = one;
+  if (cond) { branchy = two; }
+  let branchAlias: () => int = branchy;
+  let branchValue: int = branchAlias();
+  check(copiedValue === 1, "the alias keeps the copied function value");
+  check(currentValue === 2, "the source read observes the current value");
+  check(branchValue === 1, "the branch alias copies the taken path's value");
+  return copiedValue * 100 + currentValue * 10 + branchValue;
+}
+
+// The conditional store: a call after the branch observes the value of the
+// path that ran.
+export function test_branch_function_binding(): int {
+  let f: () => int = one;
+  let cond: boolean = false;
+  if (cond) { f = two; }
+  let result: int = f();
+  check(result === 1, "the post-branch call observes the taken path");
+  return result;
+}
+
+// The positive static controls: a never-assigned binding, direct recursion
+// and mutual recursion keep their statically resolved callees.
+export function test_static_function_controls(): int {
+  let stable: () => int = two;
+  let stableValue: int = stable();
+  let recursive: int = fib(10);
+  let mutual: boolean = isEven(10);
+  check(stableValue === 2, "the never-assigned binding stays callable");
+  check(recursive === 55, "direct recursion");
+  check(mutual, "mutual recursion");
+  return stableValue + recursive;
+}
+
+// The arity-extension control: the adapter keeps its own source mode.
+export function test_arity_extension_control(): int {
+  let src: (x: int) => int = bump;
+  let widened: (x: int, y: int) => int = src;
+  src = bump;
+  let result: int = widened(3, 4);
+  check(result === 4, "arity extension keeps the source value");
+  return result;
+}
+
+export function main(): null {
+  let captured: int = test_captured_function_binding();
+  let visits: int = test_loop_function_binding();
+  let nested: int = test_nested_capture_function_binding();
+  let alias: int = test_alias_function_binding();
+  let afterBranch: int = test_branch_function_binding();
+  let staticControls: int = test_static_function_controls();
+  let widened: int = test_arity_extension_control();
+  console.log(json.stringify({
+    captured: captured,
+    visits: visits,
+    nested: nested,
+    alias: alias,
+    afterBranch: afterBranch,
+    staticControls: staticControls,
+    widened: widened
+  }));
+  return null;
+}

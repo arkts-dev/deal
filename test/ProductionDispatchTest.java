@@ -36,6 +36,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.test.conformance.ProducedProjectIdentityAudit;
 import deal.test.conformance.JvmCompilation;
+import deal.test.conformance.SidecarExpectations;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -6936,6 +6937,151 @@ public class ProductionDispatchTest {
         checkEq("", run.stderr(), context + ": empty stderr");
     }
 
+    // =========================================================================
+    // The current function-value call selection (assigned function bindings)
+    // =========================================================================
+
+    /**
+     * The published corpus subjects of the current-value call selection: the
+     * same-module capture/loop/branch subject, the imported-value subject,
+     * and the host-origin subject. Each entry names the fixture, its
+     * companion source modules, and — for the host subject — the host
+     * declaration fixture.
+     */
+    private record FunctionBindingSubject(String label, String fixture,
+            Map<String, String> companions, String hostDeclarationFixture) {
+    }
+
+    private static final List<FunctionBindingSubject> FUNCTION_BINDING_SUBJECTS =
+        List.of(
+            new FunctionBindingSubject("capture and loop",
+                "backend-runtime/functions/function-value-binding-reassignment.deal",
+                Map.of(), null),
+            new FunctionBindingSubject("imported value",
+                "backend-runtime/closures/imported-function-value-reassignment.deal",
+                Map.of("src/reassignment_value_lib.deal",
+                    "backend-runtime/closures/reassignment_value_lib.deal"), null),
+            new FunctionBindingSubject("host origin",
+                "backend-runtime/host-abi/host-function-value-binding.deal",
+                Map.of(), "host-fixtures/function_binding.d.deal"));
+
+    /**
+     * The current function-value call selection on the published artifacts of
+     * all three lanes: the three corpus subjects are published through the
+     * release-owned CLI for each backend and executed under the real
+     * toolchain, and every observation is compared with the subject's own
+     * sidecar pin — so one authority fixes the expected values, the exact
+     * {@code json.stringify} transcript, the exit code and the empty stderr.
+     * A function-typed binding assigned anywhere in its declaring body is
+     * read by binding: the closure body, the repeated loop condition, the
+     * post-branch call, the imported-value read and the host-origin read all
+     * dispatch on the current value, while the never-assigned, recursive,
+     * mutually recursive and arity-extended controls keep their statically
+     * resolved callees.
+     */
+    private static void testFunctionBindingCurrentValueThreeLanes() throws Exception {
+        System.out.println("-- the current function binding after reassignment on "
+            + "LuaJIT, the JVM and the JS lane (the published subjects executed "
+            + "under the real toolchains, pinned by their own sidecars) --");
+        Path corpus = Path.of("test", "conformance");
+        Map<String, String> hostSources = new LinkedHashMap<>();
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            String extension = switch (backend) {
+                case "luajit" -> "lua";
+                case "jvm" -> "java";
+                default -> "js";
+            };
+            hostSources.put(backend, Files.readString(
+                corpus.resolve("host-fixtures/function_binding." + extension)));
+        }
+        for (FunctionBindingSubject subject : FUNCTION_BINDING_SUBJECTS) {
+            String fixturePath = subject.fixture();
+            String source = ConformanceHarnessMetadata.productionCorpusSource(
+                Files.readString(corpus.resolve(fixturePath)), fixturePath);
+            String sidecar = Files.readString(corpus.resolve(
+                fixturePath.substring(0, fixturePath.length() - ".deal".length())
+                    + ".expect.json"));
+            SidecarExpectations.StructuredExpectationSidecar pinned =
+                SidecarExpectations.StructuredExpectationSidecar.parse(sidecar);
+            for (String backend : List.of("luajit", "jvm", "js")) {
+                SidecarExpectations.RuntimeExpectation expectation =
+                    pinned.expectationFor(backend);
+                if (!(expectation
+                        instanceof SidecarExpectations.RuntimeExpectation.Executed
+                            executed)) {
+                    fail(backend + ": " + subject.label()
+                        + ": the subject's sidecar pins no executed expectation");
+                    continue;
+                }
+                String hostDeclaration = subject.hostDeclarationFixture() == null
+                    ? null : ConformanceHarnessMetadata.productionCorpusSource(
+                        Files.readString(corpus.resolve(
+                            subject.hostDeclarationFixture())),
+                        subject.hostDeclarationFixture());
+                Path project = Files.createTempDirectory(
+                    "production-function-binding-");
+                try {
+                    write(project, "src/main.deal", source);
+                    for (Map.Entry<String, String> companion
+                            : subject.companions().entrySet()) {
+                        String companionPath = companion.getValue();
+                        write(project, companion.getKey(),
+                            ConformanceHarnessMetadata.productionCorpusSource(
+                                Files.readString(corpus.resolve(companionPath)),
+                                companionPath));
+                    }
+                    String externals = hostDeclaration == null ? ""
+                        : """
+                          ,
+                              "externals": {
+                                "host/function_binding": { "declaration": "bindings/function_binding.d.deal" }
+                              }
+                          """;
+                    if (hostDeclaration != null) {
+                        write(project, "bindings/function_binding.d.deal",
+                            hostDeclaration);
+                    }
+                    write(project, "deal.json", """
+                        {
+                          "languageVersion": "1.3",
+                          "moduleRoots": ["src"],
+                          "output": "out",
+                          "backend": "%s"%s
+                        }
+                        """.formatted(backend, externals));
+                    if (!compileRetainedSubject(project,
+                            backend + ": function binding (" + subject.label() + ")",
+                            true)) {
+                        continue;
+                    }
+                    String expectedStdout = new String(executed.stdout(),
+                        StandardCharsets.UTF_8);
+                    if (hostDeclaration != null) {
+                        switch (backend) {
+                            case "luajit" -> write(project,
+                                "out/host/function_binding.lua",
+                                hostSources.get(backend));
+                            case "js" -> write(project,
+                                "out/host/function_binding.js",
+                                hostSources.get(backend));
+                            default -> write(project, "HostFunction_binding.java",
+                                hostSources.get(backend));
+                        }
+                    }
+                    Path hostSource = hostDeclaration != null
+                            && "jvm".equals(backend)
+                        ? project.resolve("HostFunction_binding.java") : null;
+                    checkRetainedSubjectRun(project, backend,
+                        "function binding (" + subject.label() + ")",
+                        expectedStdout,
+                        hostSource == null ? new Path[0] : new Path[] {hostSource});
+                } finally {
+                    deleteRecursively(project);
+                }
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Production Dispatch and Cutover Acceptance "
             + "Tests (ISSUE-0643) ===\n");
@@ -6991,6 +7137,7 @@ public class ProductionDispatchTest {
         testDefaultReentrantAttemptScratchBothTargets();
         testRetainedCornerCaseDiamond();
         testRetainedCornerCaseNegatives();
+        testFunctionBindingCurrentValueThreeLanes();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
