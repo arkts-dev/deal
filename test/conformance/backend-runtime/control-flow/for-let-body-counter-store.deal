@@ -45,6 +45,25 @@ function testContinueInTryAfterStore(): null {
   return;
 }
 
+function testContinueInNestedBlocks(): null {
+  let hits: int = 0;
+  let second: int = 0;
+  for (let i: int = 0; i < 3; i = i + 1) {
+    hits = hits + 1;
+    i = i + 1;
+    {
+      {
+        if (hits === 1) { continue; }
+      }
+    }
+    second = second + 1;
+  }
+  if (hits !== 2 || second !== 1) {
+    throw { code: "TEST_FAIL", message: "a nested-block continue path lost the body store" };
+  }
+  return;
+}
+
 function testClosureMutationFeedsUpdate(): null {
   let visits: int = 0;
   for (let i: int = 0; i < 4; i = i + 1) {
@@ -181,6 +200,7 @@ export function main(): null {
   testBodyStoreFeedsUpdateAndTest();
   testOmittedUpdateStillCarries();
   testContinueInTryAfterStore();
+  testContinueInNestedBlocks();
   testClosureMutationFeedsUpdate();
   testUpdateReadsOtherState();
   testBreakBeforeUpdate();
