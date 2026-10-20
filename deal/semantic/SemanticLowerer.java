@@ -2885,6 +2885,26 @@ public final class SemanticLowerer {
             classLayoutPlans = new java.util.LinkedHashMap<>();
 
         /**
+         * The class declarations this unit lowers, keyed by canonical
+         * identity: the declaration ASTs the demanded-default construction
+         * walk reads for a default expression's own class-typed literal
+         * sites. A class the unit does not declare (an imported provider, a
+         * declaration-file class, a builtin or a C-struct seed) carries no
+         * entry, so its defaults stay that declaration's own facts.
+         */
+        private final java.util.LinkedHashMap<ClassId, ClassDeclaration>
+            unitClassDeclarations = new java.util.LinkedHashMap<>();
+
+        /**
+         * The default-construction nodes whose demanded evaluation is proven
+         * to terminate: the declaration graph is a static fact, so a node
+         * proven terminating at one construction site is terminating at every
+         * later site and the demanded walk never re-explores it.
+         */
+        private final Set<ClassDefaultNode> terminatingClassDefaults =
+            new HashSet<>();
+
+        /**
          * The module-level class declarations whose full lowering already ran
          * at the module hoist (identity keyed): the declaration-position walk
          * emits nothing for them.
@@ -4425,9 +4445,14 @@ public final class SemanticLowerer {
          * the construction graph: a provided field skips its default, an
          * optional field runs none, and a class literal inside a function
          * expression is deferred to the call, so none of them orders anything.
-         * A direct construction cycle (a default that constructs a class whose
-         * own omitted required default constructs this one) has no terminating
-         * reading and fails closed before any default lowers.</p>
+         * Registration is plan availability, not execution demand: a default
+         * that no construction of this module reaches is never evaluated, so
+         * it neither lowers eagerly nor fails a construction closed. The
+         * construction that really omits a required defaulted field demands
+         * its evaluation and rejects a cycle through the demanded defaults
+         * there ({@link #rejectNonterminatingConstructionDemand}), so a
+         * recursive default a provided field suppresses never rejects the
+         * otherwise finite construction.</p>
          */
         private void hoistModuleLevelClassDeclarations(List<StatementNode> statements) {
             if (!classCore || !fullProgram) {
@@ -4439,7 +4464,6 @@ public final class SemanticLowerer {
             List<ClassDeclaration> declarations = new ArrayList<>();
             Set<ClassDeclaration> exportedDeclarations =
                 java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-            Map<ClassId, ClassDeclaration> declarationsByClass = new LinkedHashMap<>();
             for (StatementNode statement : statements) {
                 if (statement instanceof ExportDeclaration exportDeclaration) {
                     if (exportDeclaration.declaration()
@@ -4454,23 +4478,7 @@ public final class SemanticLowerer {
                 }
             }
             for (ClassDeclaration declaration : declarations) {
-                declarationsByClass.put(classIdOf(declaration), declaration);
-            }
-            for (ClassDeclaration declaration : declarations) {
                 preRegisterClassDefaults(declaration);
-            }
-            Set<ClassDefaultNode> open = new HashSet<>();
-            Set<ClassDefaultNode> visited = new HashSet<>();
-            for (ClassDeclaration declaration : declarations) {
-                ClassId classId = classIdOf(declaration);
-                for (ClassField field : declaration.fields()) {
-                    if (field.optional() || field.defaultExpr().isEmpty()) {
-                        continue;
-                    }
-                    rejectEagerConstructionCycle(
-                        new ClassDefaultNode(classId, field.name()),
-                        declarationsByClass, open, visited);
-                }
             }
             for (ClassDeclaration declaration : declarations) {
                 lowerClassDeclaration(declaration, exportedDeclarations.contains(declaration));
@@ -4494,23 +4502,30 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Rejects a class-default construction cycle: evaluating a default
-         * expression that constructs a class whose own omitted required default
-         * reaches this default again never terminates. Only the defaults the
-         * construction really evaluates are edges — a field the literal
-         * provides skips its default, an optional field runs none, and a literal
-         * inside a function expression is deferred to the call, after the
-         * enclosing construction completed, so none of them make the
-         * construction non-terminating.
+         * Rejects a demanded class-default construction cycle: the construction
+         * that omits a required defaulted field evaluates that default at the
+         * construction site (docs/spec-v1.3.md §Construction: a provided field
+         * suppresses its default, an optional field runs none), and evaluating a
+         * default expression that constructs a class whose own omitted required
+         * default reaches this default again never terminates. Only the defaults
+         * a demanded construction really evaluates are edges — a field the
+         * literal provides skips its default, an optional field runs none, and a
+         * literal inside a function expression is deferred to the call, after
+         * the enclosing construction completed, so none of them make the
+         * demanded construction non-terminating. The walk starts at the demand,
+         * so a default no construction reaches stays an unexecuted plan and the
+         * finite construction that suppresses it is admitted; the terminating
+         * nodes are memoized across demand sites because the graph is a
+         * declaration fact.
          */
-        private void rejectEagerConstructionCycle(ClassDefaultNode node,
-                Map<ClassId, ClassDeclaration> declarationsByClass,
-                Set<ClassDefaultNode> open, Set<ClassDefaultNode> visited) {
-            if (visited.contains(node)) {
+        private void rejectDemandedConstructionCycle(ClassDefaultNode node,
+                Set<ClassDefaultNode> open) {
+            if (terminatingClassDefaults.contains(node)) {
                 return;
             }
             if (!open.add(node)) {
-                ClassDeclaration declaration = declarationsByClass.get(node.classId());
+                ClassDeclaration declaration =
+                    unitClassDeclarations.get(node.classId());
                 throw new ConstructUnlowered("cyclic class-default construction: "
                     + "class '" + (declaration == null ? node.classId().text()
                         : declaration.name()) + "' is reached again"
@@ -4522,14 +4537,59 @@ public final class SemanticLowerer {
             }
             try {
                 for (ClassDefaultNode dependency
-                        : eagerDefaultConstructionDependencies(node, declarationsByClass)) {
-                    rejectEagerConstructionCycle(dependency, declarationsByClass,
-                        open, visited);
+                        : eagerDefaultConstructionDependencies(node)) {
+                    rejectDemandedConstructionCycle(dependency, open);
                 }
             } finally {
                 open.remove(node);
             }
-            visited.add(node);
+            terminatingClassDefaults.add(node);
+        }
+
+        /**
+         * Rejects a non-terminating default-construction cycle at the
+         * construction that demands it. A class literal's omitted
+         * required-present defaulted fields are exactly the defaults that
+         * construction evaluates (docs/spec-v1.3.md §Construction: a provided
+         * field suppresses its default, an optional field runs none), so they
+         * are the nodes whose evaluation this construction demands. Only the
+         * construction's own demand — never a default's registration — can
+         * reject a program: a recursive default whose evaluation no
+         * construction of this module reaches is an unexecuted plan, and the
+         * construction that supplies the recursive field stays finite.
+         *
+         * <p>The literal's construction declaration decides the plan's
+         * availability: this unit's own declaration supplies the registered
+         * {@code CLASS_DEFAULT} plans, while an imported provider, a
+         * declaration-file class, a builtin or a C-struct seed carries its own
+         * defaults (a shared factory's transfer, a host defaults map or a
+         * builtin seed) and is never walked here — the exact declaration's own
+         * lowering owns it.</p>
+         */
+        private void rejectNonterminatingConstructionDemand(ObjectLiteralExpr literal,
+                ClassId classId) {
+            ClassLayoutPlan plan = classLayoutPlans.get(classId);
+            Map<String, ClassDefaultFact> facts = classDefaults.get(classId);
+            if (plan == null || facts == null) {
+                // No registered local default plan constructs this literal: a
+                // provider's, a declaration-file class's, a builtin's or a
+                // C-struct plan's defaults belong to their own declaration.
+                return;
+            }
+            Set<String> provided = new LinkedHashSet<>();
+            for (Property property : literal.properties()) {
+                provided.add(property.name());
+            }
+            Set<ClassDefaultNode> open = new HashSet<>();
+            for (ClassField field : plan.declaration().fields()) {
+                if (field.optional() || field.defaultExpr().isEmpty()
+                        || provided.contains(field.name())
+                        || !facts.containsKey(field.name())) {
+                    continue;
+                }
+                rejectDemandedConstructionCycle(
+                    new ClassDefaultNode(classId, field.name()), open);
+            }
         }
 
         /**
@@ -4611,9 +4671,8 @@ public final class SemanticLowerer {
          * constructs no local default and adds no edge.
          */
         private List<ClassDefaultNode> eagerDefaultConstructionDependencies(
-                ClassDefaultNode node,
-                Map<ClassId, ClassDeclaration> declarationsByClass) {
-            ClassDeclaration declaration = declarationsByClass.get(node.classId());
+                ClassDefaultNode node) {
+            ClassDeclaration declaration = unitClassDeclarations.get(node.classId());
             ClassField field = classFieldOf(declaration, node.field());
             if (field == null || field.defaultExpr().isEmpty()) {
                 throw new ConstructUnlowered("the construction graph reaches "
@@ -4625,7 +4684,7 @@ public final class SemanticLowerer {
             collectClassLiteralSites(field.defaultExpr().get(), sites);
             List<ClassDefaultNode> dependencies = new ArrayList<>();
             for (ClassLiteralSite site : sites) {
-                ClassDeclaration provider = declarationsByClass.get(site.classId());
+                ClassDeclaration provider = unitClassDeclarations.get(site.classId());
                 if (provider == null) {
                     continue;
                 }
@@ -5148,6 +5207,7 @@ public final class SemanticLowerer {
                 ClassLayoutPlan plan = computeClassLayout(classId, declaration);
                 classLayoutPlans.put(classId, plan);
                 classLayouts.put(classId, plan.layout());
+                unitClassDeclarations.put(classId, declaration);
             }
         }
 
@@ -5221,6 +5281,7 @@ public final class SemanticLowerer {
                 plan = computeClassLayout(classId, declaration);
                 classLayoutPlans.put(classId, plan);
                 classLayouts.put(classId, plan.layout());
+                unitClassDeclarations.put(classId, declaration);
             }
             Map<String, RuntimeDescriptor> descriptors = plan.descriptors();
             Map<String, ModuleId> fieldProviders = plan.fieldProviders();
@@ -5810,6 +5871,17 @@ public final class SemanticLowerer {
                 defaultOwner = seed.owner();
             }
 
+            if (sharedFacts == null && defaultContexts.isEmpty()) {
+                // A construction outside every default expression is a real
+                // demand: an omitted required defaulted field is evaluated by
+                // this construction, so a non-terminating default cycle is
+                // rejected here — and a recursive default this construction
+                // (or its own literal) suppresses never is. A literal inside a
+                // default expression is plan availability, not demand: only a
+                // construction that evaluates that default reaches it, and the
+                // demanded walk below reads exactly those literal sites.
+                rejectNonterminatingConstructionDemand(literal, classId);
+            }
             List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
             Map<String, ValueId> providedValues = new LinkedHashMap<>();
             for (Property property : literal.properties()) {

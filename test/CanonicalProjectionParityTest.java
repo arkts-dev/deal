@@ -489,22 +489,30 @@ public class CanonicalProjectionParityTest {
         mainEntry("types/narrowed-capture-index-controls"));
 
     /**
-     * The host-carrier runtime-ok corpus pins (ISSUE-0857;
-     * {@code luajit-host-carrier-projection} D8 V2): each fixture's
-     * assertion body is driven as the production lane protocol dictates on
-     * the LuaJIT and JVM artifacts — the entry terminal once, then the
-     * fixture's own zero-arity exports in declaration order — and compared
-     * byte-exact against its sidecar. The JS lane executes the same source
-     * and sidecar through {@code JsConformanceTest}, and every stem's
-     * {@code .lua}/{@code .java}/{@code .js} implementation is validated by
-     * the on-disk host-fixture triplet gate there.
+     * The lane-protocol runtime-ok corpus pins (ISSUE-0857;
+     * {@code luajit-host-carrier-projection} D8 V2, extended by the
+     * suppressed-default admission of ISSUE-0865): each fixture's assertion
+     * body is driven as the production lane protocol dictates on the LuaJIT
+     * and JVM artifacts — the entry terminal once, then the fixture's own
+     * zero-arity exports in declaration order — and compared byte-exact
+     * against its sidecar. Every one of them imports a declared host module:
+     * the host-carrier cases drive the projected carriers and the defaults
+     * case counts its own default evaluations there. The JS lane executes the
+     * same source and sidecar through {@code JsConformanceTest}, and every
+     * stem's {@code .lua}/{@code .java}/{@code .js} implementation is
+     * validated by the on-disk host-fixture triplet gate there.
      */
     private static final List<Case> HOST_CARRIER_RUNTIME_OK = List.of(
         mainEntry("host-abi/host-carrier-async-class"),
         mainEntry("host-abi/host-carrier-table-members"),
         mainEntry("host-abi/host-carrier-async-arity"),
         mainEntry("host-abi/host-carrier-untyped-roundtrip"),
-        mainEntry("host-abi/host-carrier-class-values"));
+        mainEntry("host-abi/host-carrier-class-values"),
+        // The suppressed recursive class default (ISSUE-0865): a default
+        // whose recursive construction no construction demands stays an
+        // unexecuted plan, and the effectful default beside it still runs
+        // per construction on the LuaJIT and JVM production artifacts.
+        mainEntry("defaults/plan-suppressed-recursive-default"));
 
     /** The host-boundary families with a corpus pin. */
     private static final List<Case> HOST_FAMILIES = List.of(

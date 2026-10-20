@@ -2103,6 +2103,114 @@ public class ProductionProjectEmissionTest {
         return null;
     }
 
+    /**
+     * A recursive class default is plan availability, never execution demand
+     * (ISSUE-0865): the self-defaulting {@code Node} compiles and keeps the
+     * construction's supplied {@code next} because no construction of the
+     * program evaluates that default, and the same program with the field
+     * omitted still fails closed with the named cycle rule — the finite
+     * override case and the genuinely non-terminating construction stay
+     * distinguishable. The mutual pair covers the two-declaration form on the
+     * same construction sites.
+     */
+    private static void testSuppressedRecursiveDefaultDemand(boolean node)
+            throws Exception {
+        System.out.println("-- a suppressed recursive class default admits the finite "
+            + "construction and a demanded one stays fail-closed --");
+        Path root = Files.createTempDirectory("js-suppressed-default-");
+        try {
+            writeFileIn(root, "src/app.deal", SUPPRESSED_RECURSIVE_DEFAULT_APP_SOURCE);
+            Path out = root.resolve("out");
+            CompilationOrchestrator orchestrator = compileJs(root,
+                root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
+            check(orchestrator.diagnostics().isEmpty(),
+                "the suppressed recursive default admits the finite"
+                    + " construction: " + orchestrator.diagnostics());
+            check(Files.exists(out.resolve("app.js")),
+                "the admitted compile publishes the entry artifact");
+            if (!node) {
+                System.out.println("  SKIP: the suppressed-default Node drive"
+                    + " needs node");
+            } else {
+                ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+                assertEmitterRun("the supplied recursive fields keep their values",
+                    run, 0, "PROBE|JS|SUPPRESSED-DEFAULTS\n");
+            }
+
+            writeFileIn(root, "src/demanded.deal",
+                DEMANDED_RECURSIVE_DEFAULT_APP_SOURCE);
+            Path rejected = root.resolve("out-demanded");
+            CompilationOrchestrator demanded = compileJs(root,
+                root.resolve("src/demanded.deal").toAbsolutePath(), rejected,
+                false, Map.of());
+            check(demanded.diagnostics().stream().anyMatch(d -> "E6005"
+                    .equals(d.code()) && d.message().contains(
+                        "cyclic class-default construction")),
+                "the demanded recursive default keeps the named E6005 rule: "
+                    + demanded.diagnostics());
+            check(!Files.exists(rejected.resolve("demanded.js")),
+                "the rejected demanded construction publishes no artifact");
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /**
+     * The finite construction that overrides a recursive class default: the
+     * self-defaulting {@code Node} and the mutually defaulting {@code A}/{@code B}
+     * pair both supply the recursive field at the construction site, so the
+     * default is never evaluated and the supplied value must survive.
+     */
+    private static final String SUPPRESSED_RECURSIVE_DEFAULT_APP_SOURCE = """
+        import * as console from "std/console";
+
+        export function main(): null {
+          let n: Node = { next: null };
+          if (n.next !== null) {
+            throw { code: "JS_PROBE", message: "override lost" };
+          }
+          let a: A = { b: null };
+          if (a.b !== null) {
+            throw { code: "JS_PROBE", message: "mutual override lost" };
+          }
+          let b: B = { a: null };
+          if (b.a !== null) {
+            throw { code: "JS_PROBE", message: "mutual override lost" };
+          }
+          console.log("PROBE|JS|SUPPRESSED-DEFAULTS");
+          return null;
+        }
+
+        class Node {
+          next: Node | null = {};
+        }
+
+        class A {
+          b: B | null = {};
+        }
+
+        class B {
+          a: A | null = {};
+        }
+        """;
+
+    /**
+     * The same recursive defaults with the recursive field omitted at the
+     * construction site: that construction evaluates the default, which
+     * constructs the class whose own omitted default constructs it again, so
+     * the program has no terminating reading and stays a named E6005.
+     */
+    private static final String DEMANDED_RECURSIVE_DEFAULT_APP_SOURCE = """
+        export function main(): null {
+          let n: Node = {};
+          return null;
+        }
+
+        class Node {
+          next: Node | null = {};
+        }
+        """;
+
     /** A direct default construction cycle stays fail-closed with the named rule. */
     private static void testDirectDefaultConstructionCycleFailsClosed() throws Exception {
         Path root = Files.createTempDirectory("js-cyclic-defaults-");
@@ -5041,6 +5149,7 @@ public class ProductionProjectEmissionTest {
             testDeferredClassDefaults(node);
             testDirectDefaultConstructionCycleFailsClosed();
             testProvidedFieldDefaultTermination(node);
+            testSuppressedRecursiveDefaultDemand(node);
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);

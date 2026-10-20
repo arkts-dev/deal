@@ -1,0 +1,75 @@
+// @spec: Classes — Construction
+// @description: A recursive non-jsonable class default is plan availability, never execution demand: only a construction that omits the recursive field evaluates it (docs/spec-v1.3.md §Construction — provided fields suppress defaults), so the self-defaulting Node, the mutual Ping/Pong pair and a default whose own literal supplies the recursive field all stay finite when the construction supplies the recursive field. The effectful default beside the suppressed one still runs exactly once per construction in declaration order, a supplied field runs none, class registration runs none, and a supplied value is never replaced by the default it suppresses.
+// @expected: runtime-ok
+// @features: v1.3, runtime, defaults, classes, recursion
+
+import * as probe from "host/planprobe";
+
+function nextStamp(): int {
+  return probe.nextValue();
+}
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+class Node {
+  stamp: int = nextStamp();
+  next: Node | null = {};
+}
+
+class Ping {
+  pong: Pong | null = {};
+}
+
+class Pong {
+  ping: Ping | null = {};
+}
+
+class Holder {
+  node: Node = { stamp: 0, next: null };
+}
+
+export function test_suppressed_self_default_keeps_override(): null {
+  let base: int = probe.valueCount();
+  let first: Node = { next: null };
+  check(probe.valueCount() === base + 1, "the omitted effectful default does not run once per construction");
+  check(first.stamp === (base + 1) * 10, "the omitted effectful default publishes this construction's value");
+  check(first.next === null, "the supplied recursive field suppresses its default");
+  let second: Node = { next: null };
+  check(probe.valueCount() === base + 2, "each construction does not evaluate its own omission");
+  check(second.stamp === (base + 2) * 10, "the second construction's default value is fresh");
+  check(second.next === null, "the second supplied recursive field suppresses its default");
+  let explicit: Node = { stamp: 5, next: null };
+  check(probe.valueCount() === base + 2, "a fully supplied literal runs no default");
+  check(explicit.stamp === 5, "the supplied effectful field keeps its value");
+  check(explicit.next === null, "the supplied recursive field keeps its value");
+  return null;
+}
+
+export function test_suppressed_mutual_defaults(): null {
+  let base: int = probe.valueCount();
+  let ping: Ping = { pong: null };
+  let pong: Pong = { ping: null };
+  check(ping.pong === null, "the supplied field suppresses its recursive default");
+  check(pong.ping === null, "the other class's supplied field suppresses its recursive default");
+  check(probe.valueCount() === base, "a suppressed recursive default ran its effect");
+  return null;
+}
+
+export function test_nested_default_literal_override(): null {
+  let base: int = probe.valueCount();
+  let holder: Holder = {};
+  check(holder.node.next === null, "the demanded default's own literal supplies the recursive field, so its construction terminates");
+  check(holder.node.stamp === 0, "the demanded default's own literal supplies the effectful field");
+  check(probe.valueCount() === base, "a suppressed default ran for the nested construction");
+  return null;
+}
+
+export function main(): null {
+  check(probe.valueCount() === 0, "class registration executed a default");
+  return null;
+}
