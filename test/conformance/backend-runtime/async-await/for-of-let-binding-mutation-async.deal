@@ -1,0 +1,98 @@
+// @spec: Async/Await — For-of — mutable iteration binding across an await
+// @description: An await inside a for-of body resumes into the same mutable iteration binding: the assignment made before the await survives the suspension, a captured closure reads it, a closure that assigns it writes the iteration's own cell, and the awaited resumption keeps visiting each element exactly once
+// @expected: runtime-ok
+// @features: async-await, await, for-of, closure, binding
+
+async function identityInt(x: int): int {
+  return x;
+}
+
+async function identityText(x: string): string {
+  return x;
+}
+
+export async function testAsyncArrayMutation(): int {
+  let readers: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of [1, 2, 3]) {
+    n = n + 10;
+    let echoed: int = await identityInt(n);
+    if (echoed !== n) {
+      throw { code: "TEST_FAIL", message: "the awaited resumption lost the mutated binding" };
+    }
+    readers[visits] = function(): int { return n; };
+    total = total + n;
+    visits = visits + 1;
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "async for-of body skipped or repeated" };
+  }
+  if (total !== 36) {
+    throw { code: "TEST_FAIL", message: "async for-of direct mutation lost" };
+  }
+  if (readers[0]() !== 11) {
+    throw { code: "TEST_FAIL", message: "async for-of first closure reader mismatch" };
+  }
+  if (readers[1]() !== 12) {
+    throw { code: "TEST_FAIL", message: "async for-of second closure reader mismatch" };
+  }
+  if (readers[2]() !== 13) {
+    throw { code: "TEST_FAIL", message: "async for-of third closure reader mismatch" };
+  }
+  return total;
+}
+
+export async function testAsyncStringMutation(): string {
+  let visits: int = 0;
+  let seen: string = "";
+  for (let c: string of "ab") {
+    c = c + "+";
+    let echoed: string = await identityText(c);
+    if (echoed !== c) {
+      throw { code: "TEST_FAIL", message: "the awaited resumption lost the mutated string binding" };
+    }
+    seen = seen + c;
+    visits = visits + 1;
+  }
+  if (visits !== 2) {
+    throw { code: "TEST_FAIL", message: "async string for-of body skipped or repeated" };
+  }
+  if (seen !== "a+b+") {
+    throw { code: "TEST_FAIL", message: "async string for-of direct mutation lost" };
+  }
+  return seen;
+}
+
+export async function testAsyncClosureMutation(): int {
+  let bump: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }];
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of [1, 2]) {
+    n = n + 10;
+    await identityInt(n);
+    bump[visits] = function(): int { n = n + 100; return n; };
+    total = total + n;
+    visits = visits + 1;
+  }
+  if (visits !== 2) {
+    throw { code: "TEST_FAIL", message: "async for-of closure body skipped or repeated" };
+  }
+  if (total !== 23) {
+    throw { code: "TEST_FAIL", message: "async for-of closure write body mismatch" };
+  }
+  if (bump[0]() !== 111) {
+    throw { code: "TEST_FAIL", message: "async for-of closure write did not reach the binding" };
+  }
+  if (bump[1]() !== 112) {
+    throw { code: "TEST_FAIL", message: "async for-of iterations share one binding cell" };
+  }
+  if (bump[0]() !== 211) {
+    throw { code: "TEST_FAIL", message: "the first async iteration binding is not a live cell" };
+  }
+  return total;
+}
+
+export function main(): null {
+  return null;
+}
