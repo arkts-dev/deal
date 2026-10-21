@@ -22,8 +22,8 @@
 // ===== Host-global capture (js-backend-runtime-artifact D10) =====
 // The only module-scope bindings of the host globals the runtime owns.
 // Every later runtime use of process, console, Math, Map, Array,
-// Uint8Array, or undefined is confined to these captures; generated code
-// spells none of them bare (js-backend-architecture D2). Object and
+// Uint8Array, Infinity, or undefined is confined to these captures;
+// generated code spells none of them bare (js-backend-architecture D2). Object and
 // String are not in the capture list and may be spelled bare inside this
 // trusted file. The native JSON object is not captured: the conforming
 // scanner and the canonical text encoder are the runtime's own (DEAL v1.3
@@ -36,6 +36,7 @@ const $Math = Math;
 const $Map = Map;
 const $Array = Array;
 const $Uint8Array = Uint8Array;
+const $Infinity = Infinity;
 const $undefined = void 0;
 
 // ===== Error spine: the module-private $DEALError class =====
@@ -2559,10 +2560,65 @@ function $executionRecord($id) {
   return $record;
 }
 
+// $numberHex: the canonical hex-float spelling of one IEEE-754 double —
+// the JS mirror of deal/semantic's CanonicalJson#numberHex
+// (Double.toHexString) that the LuaJIT prelude's __numHex and the JVM
+// runtime's Double.toHexString also realize: NaN, both infinities and
+// both zeros carry their Java spellings, a subnormal its fixed-exponent
+// denormal form (the 13-digit fraction with its trailing zeros stripped
+// and the pinned p-1022 exponent), every other finite nonzero value its
+// shortest exact "0x1.<digits>p<exp>" form. The significand is recovered
+// by exact power-of-two scaling (no rounding: every intermediate keeps
+// the value's own 52 fraction bits), so the digits never drift from the
+// value. The single renderer of the stdlib closed-arm actuals that spell
+// a number (SQRT_NEGATIVE).
+function $numberHex($v) {
+  if ($v !== $v) return "NaN";
+  if ($v === $Infinity) return "Infinity";
+  if ($v === -$Infinity) return "-Infinity";
+  const $sign = ($v < 0 || ($v === 0 && 1 / $v < 0)) ? "-" : "";
+  const $magnitude = $v < 0 ? -$v : $v;
+  if ($magnitude === 0) return $sign + "0x0.0p0";
+  if ($magnitude < $Math.pow(2, -1022)) {
+    // A subnormal keeps Java's fixed-exponent denormal spelling: two
+    // exact power-of-two scalings recover its integer significand
+    // (magnitude * 2^1074), never the normalized 2^52-scale form.
+    const $scaled = $magnitude * $Math.pow(2, 537) * $Math.pow(2, 537);
+    return $sign + "0x0." + $hexDigits($scaled) + "p-1022";
+  }
+  let $exponent = $Math.floor($Math.log2($magnitude));
+  if ($magnitude >= $Math.pow(2, $exponent + 1)) {
+    $exponent += 1;
+  } else if ($magnitude < $Math.pow(2, $exponent)) {
+    $exponent -= 1;
+  }
+  const $fraction =
+    ($magnitude / $Math.pow(2, $exponent) - 1) * 4503599627370496;
+  return $sign + "0x1." + $hexDigits($fraction) + "p" + $exponent;
+}
+
+// $hexDigits: the 13 hex digits of one exact integer fraction of a
+// double's significand, trailing zeros stripped, never empty ("0" for a
+// zero fraction — Java's "0x1.0p<exp>").
+function $hexDigits($fraction) {
+  let $text = $fraction.toString(16);
+  while ($text.length < 13) $text = "0" + $text;
+  while ($text.length > 1 && $text.charAt($text.length - 1) === "0") {
+    $text = $text.slice(0, $text.length - 1);
+  }
+  return $text;
+}
+
 const $rt = {
   MISSING: $MISSING,
   NULL: null,
   undefined: $undefined,
+
+  // numberHex: the canonical hex-float spelling (the member the shipped
+  // std/math realization's SQRT_NEGATIVE actual goes through).
+  numberHex: function $numberHexPublic(v) {
+    return $numberHex(v);
+  },
 
   // numOf: the emitted numeric value view (the same private unwrap the
   // numeric runtime members use) — a read-side number-variant carrier

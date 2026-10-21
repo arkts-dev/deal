@@ -6066,6 +6066,35 @@ test("FFI ISSUE-0163 D19: ISSUE-0163 structural pins hold in the FFI half (rooti
 end)
 
 
+-- ==================== The canonical hex-float spelling
+-- (Double.toHexString parity, the closed-arm actuals that spell a
+-- number) ====================
+
+test("number_hex publishes the canonical hex-float spellings", function()
+  assert(__rt.number_hex(1.0) == "0x1.0p0", __rt.number_hex(1.0))
+  assert(__rt.number_hex(-1.0) == "-0x1.0p0", __rt.number_hex(-1.0))
+  assert(__rt.number_hex(0.5) == "0x1.0p-1", __rt.number_hex(0.5))
+  assert(__rt.number_hex(-0.5) == "-0x1.0p-1", __rt.number_hex(-0.5))
+  assert(__rt.number_hex(0.0) == "0x0.0p0", __rt.number_hex(0.0))
+  assert(__rt.number_hex(-0.0) == "-0x0.0p0", __rt.number_hex(-0.0))
+  assert(__rt.number_hex(3.0) == "0x1.8p1", __rt.number_hex(3.0))
+  assert(__rt.number_hex(0.1) == "0x1.999999999999ap-4",
+    __rt.number_hex(0.1))
+  assert(__rt.number_hex(0.0 / 0.0) == "NaN", __rt.number_hex(0.0 / 0.0))
+  assert(__rt.number_hex(1.0 / 0.0) == "Infinity",
+    __rt.number_hex(1.0 / 0.0))
+  assert(__rt.number_hex(-1.0 / 0.0) == "-Infinity",
+    __rt.number_hex(-1.0 / 0.0))
+  -- A subnormal keeps Java's fixed-exponent denormal spelling (never the
+  -- normalized power), and the smallest double keeps its one significand
+  -- digit.
+  assert(__rt.number_hex(2 ^ -1074) == "0x0.0000000000001p-1022",
+    __rt.number_hex(2 ^ -1074))
+  assert(__rt.number_hex(-2 ^ -1074) == "-0x0.0000000000001p-1022",
+    __rt.number_hex(-2 ^ -1074))
+end)
+
+
 -- ==================== Summary ====================
 
 print("")
