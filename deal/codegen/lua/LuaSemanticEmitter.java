@@ -3266,6 +3266,8 @@ public final class LuaSemanticEmitter {
             out.append(", __m = ").append(payload.sourceSignature().paramTypes().size())
                 .append(", __csrc = ")
                 .append(luaString(payload.sourceSignature().canonicalSpecText()))
+                .append(", __tp = ").append(targetParameterCells(
+                    payload.targetSignature()))
                 .append(", [__dealCarrierKeys.sig] = ")
                 .append(luaString(descriptorText(payload.targetSignature())))
                 .append(", [__dealCarrierKeys.csig] = ")
@@ -3283,6 +3285,29 @@ public final class LuaSemanticEmitter {
             out.append("}\n");
             out.append(target).append("[__dealCarrierKeys.fn] = __adaptInvoke\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * The adapter's target-signature parameter cells: one
+         * {@code {descriptor text, static kind, canonical text}} triple per
+         * declared target parameter, which the D15 invocation protocol
+         * checks before the leading-M projection. The ignored trailing
+         * parameters of an arity extension are checked exactly like the
+         * forwarded leading ones (docs/spec-v1.3.md Arity extension
+         * adapter), so a host invocation of the published adapter value
+         * enforces the whole declared target signature.
+         */
+        private static String targetParameterCells(RuntimeDescriptor.Func target) {
+            StringBuilder cells = new StringBuilder("{");
+            for (RuntimeDescriptor parameter : target.paramTypes()) {
+                cells.append('{')
+                    .append(luaString(descriptorText(parameter))).append(", ")
+                    .append(luaString(staticKind(parameter))).append(", ")
+                    .append(containsFunction(parameter)
+                        ? luaString(parameter.canonicalSpecText()) : "nil")
+                    .append("},");
+            }
+            return cells.append('}').toString();
         }
 
         private String adaptValueExpr(AdaptSourceRef.Value value) {
@@ -12974,14 +12999,36 @@ local function __adaptSource(w)
   elseif w[__dealCarrierKeys.mode] == 1 then return w.__cell[1]
   else return w.__thunk() end
 end
--- The D15 adapter invocation protocol: resolve the source per the
--- closed capture mode (0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK),
--- the source-signature check, then the source invocation with the
--- leading M arguments only. A DEAL-body source owns its own frame (its
--- carrier wrapper pushes and pops it); the identical completion error
--- propagates unchanged.
+-- The D15 adapter invocation protocol: the target signature's
+-- parameter cells (the ignored trailing parameters of an arity
+-- extension included — docs/spec-v1.3.md Arity extension adapter), the
+-- source resolution per the closed capture mode (0 VALUE, 1
+-- SHARED_CELL, 2 REEVALUATE_THUNK), the source-signature check, then
+-- the source invocation with the leading M arguments only. A DEAL-body
+-- source owns its own frame (its carrier wrapper pushes and pops it);
+-- the identical completion error propagates unchanged.
 local function __adaptInvoke(w, origin, ...)
   local __cargs = {...}
+  -- The adapter's own wrapper admits every declared target parameter at
+  -- the invoking position, exactly like a function wrapper's parameter
+  -- checks: a DEAL call site's parameter cells already admitted the same
+  -- values (the repeated check is idempotent), while a host that invokes
+  -- the published adapter value directly has no cell of its own — this
+  -- wrapper is its only enforcement point, so a wrong-typed ignored
+  -- target argument fails closed instead of being dropped.
+  local __tp = w.__tp
+  if __tp ~= nil then
+    for __ti = 1, #__tp do
+      local __cell = __tp[__ti]
+      local __okP, __chkP = pcall(__bcheck, __cell[1], __cell[2],
+        __cargs[__ti], __cell[3])
+      if not __okP then
+        if type(__chkP) == "table" then __chkP.o = origin or "-" end
+        error(__chkP, 0)
+      end
+      __cargs[__ti] = __chkP
+    end
+  end
   local src = __adaptSource(w)
   __fncheck(src, w.__csrc, origin)
   -- An adapter-valued source is an ordinary function value of its declared

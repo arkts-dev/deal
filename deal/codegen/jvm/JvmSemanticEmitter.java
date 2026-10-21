@@ -2917,8 +2917,33 @@ public final class JvmSemanticEmitter {
             out.append(", ").append(payload.sourceSignature().paramTypes().size())
                 .append(", ")
                 .append(javaString(payload.sourceSignature().canonicalSpecText()))
+                .append(", ").append(targetParameterCells(payload.targetSignature()))
                 .append(");\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * The adapter's target-signature parameter cells: the
+         * {@code {descriptor, static kind, canonical}} triple of every
+         * declared target parameter, which
+         * {@code JvmRuntime.invokeAdapter} admits before the leading-M
+         * projection. The ignored trailing parameters of an arity extension
+         * are checked exactly like the forwarded leading ones
+         * (docs/spec-v1.3.md Arity extension adapter), so a host that
+         * invokes the published adapter value directly enforces the whole
+         * declared target signature.
+         */
+        private static String targetParameterCells(RuntimeDescriptor.Func target) {
+            StringBuilder cells = new StringBuilder("new JvmRuntime.TargetCell[] {");
+            for (RuntimeDescriptor parameter : target.paramTypes()) {
+                cells.append("new JvmRuntime.TargetCell(")
+                    .append(javaString(descriptorText(parameter))).append(", ")
+                    .append(javaString(staticKind(parameter))).append(", ")
+                    .append(containsFunction(parameter)
+                        ? javaString(parameter.canonicalSpecText()) : "null")
+                    .append("), ");
+            }
+            return cells.append('}').toString();
         }
 
         private String adaptValueExpr(AdaptSourceRef.Value value) {

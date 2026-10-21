@@ -11232,7 +11232,16 @@ public final class SemanticLowerer {
             };
         }
 
-        /** The pinned host-call parameter cells: DEAL_TO_HOST + HOST_PARAMETER. */
+        /**
+         * The pinned host-call parameter cells: DEAL_TO_HOST + HOST_PARAMETER.
+         * A function-typed position adapter built for its argument records its
+         * emission fact here: this cell is the adapted position's own
+         * boundary (the invocation-projection agreement the bindings validator
+         * admits), exactly like a {@code FUNCTION_PARAMETER} cell, so the
+         * shape-map fact surface carries one record per emitted
+         * {@code FUNCTION_ADAPT} op instead of leaving the position's pending
+         * entry unclaimed.
+         */
         private void hostParameterBoundaries(RuntimeDescriptor.Func descriptor,
                 List<ValueId> args, CallExpr call, OpId callOpId,
                 List<SemanticOp> parameterBoundaryOps, List<OpId> parameterBoundaryIds) {
@@ -11240,6 +11249,8 @@ public final class SemanticLowerer {
                 SemanticOp boundary = buildChildBoundaryWithPolicy(
                     BoundaryKind.DEAL_TO_HOST, descriptor.paramTypes().get(i),
                     FailurePolicyId.HOST_PARAMETER, args.get(i), call.span(), callOpId);
+                recordPositionAdapterAt(args.get(i), boundary.opId(),
+                    BoundaryKind.DEAL_TO_HOST);
                 parameterBoundaryOps.add(boundary);
                 parameterBoundaryIds.add(boundary.opId());
             }

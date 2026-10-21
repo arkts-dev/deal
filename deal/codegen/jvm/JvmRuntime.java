@@ -431,11 +431,24 @@ public final class JvmRuntime {
     }
 
     /**
+     * One declared target-signature parameter cell of an arity-extension
+     * adapter: the parameter's runtime descriptor text, its static kind, and
+     * the canonical spec text a function-carrying position projects
+     * ({@code null} otherwise) — exactly the arguments the emission-time
+     * type-boundary check emits for the same descriptor.
+     */
+    public record TargetCell(String descriptor, String staticKind, String canonical) {
+    }
+
+    /**
      * A {@code FUNCTION_ADAPT} adapter value (D15): the closed capture
      * mode state ({@code VALUE}: the retained source identity;
      * {@code SHARED_CELL}: the generation cell re-read per invocation;
      * {@code REEVALUATE_THUNK}: the thunk re-executor), the source
-     * arity/spec, and the target signature carried for boundary checks.
+     * arity/spec, the target signature carried for boundary checks, and
+     * the target signature's parameter cells the invocation protocol
+     * admits (the ignored trailing parameters of an arity extension
+     * included — docs/spec-v1.3.md Arity extension adapter).
      */
     public static final class AdapterValue extends FunctionValue {
         /** 0 = VALUE, 1 = SHARED_CELL, 2 = REEVALUATE_THUNK. */
@@ -445,9 +458,11 @@ public final class JvmRuntime {
         public final Fn thunk;
         public final int arity;
         public final String sourceSpec;
+        public final TargetCell[] targetCells;
 
         public AdapterValue(Fn fn, String signature, String spec, int mode, Object value,
-                            Object[] cell, Fn thunk, int arity, String sourceSpec) {
+                            Object[] cell, Fn thunk, int arity, String sourceSpec,
+                            TargetCell[] targetCells) {
             super(fn, signature, spec, null);
             this.mode = mode;
             this.value = value;
@@ -455,6 +470,7 @@ public final class JvmRuntime {
             this.thunk = thunk;
             this.arity = arity;
             this.sourceSpec = sourceSpec;
+            this.targetCells = targetCells == null ? new TargetCell[0] : targetCells;
         }
     }
 
@@ -1715,19 +1731,30 @@ public final class JvmRuntime {
     }
 
     /**
-     * The D15 adapter invocation: resolve the source per the closed
-     * capture mode (VALUE retains, SHARED_CELL re-reads the generation
-     * cell, REEVALUATE_THUNK re-executes the thunk), the source-signature
-     * check, then the source invocation with the leading M arguments
-     * only. A DEAL-body source owns its own stack frame (the carrier
-     * wrapper pushes and pops it); the identical completion error
-     * propagates unchanged.
+     * The D15 adapter invocation: the target signature's parameter cells
+     * (the ignored trailing parameters of an arity extension included —
+     * docs/spec-v1.3.md Arity extension adapter), the source resolution
+     * per the closed capture mode (VALUE retains, SHARED_CELL re-reads
+     * the generation cell, REEVALUATE_THUNK re-executes the thunk), the
+     * source-signature check, then the source invocation with the
+     * leading M arguments only. A DEAL-body source owns its own stack
+     * frame (the carrier wrapper pushes and pops it); the identical
+     * completion error propagates unchanged.
+     *
+     * <p>The parameter admission runs before the source resolution so an
+     * invalid declared target argument fails closed before any source
+     * effect: a DEAL call site's parameter cells already admitted the
+     * same values (the repeated check is idempotent), while a host that
+     * invokes the published adapter value directly — a host-declared
+     * function parameter or a callback's adapted return — has no cell of
+     * its own, so this wrapper is its only enforcement point.</p>
      */
     public static Object invokeAdapter(AdapterValue adapter, String origin, Object[] args) {
+        Object[] admitted = admitTargetParameters(adapter, args);
         Object source = adapterSource(adapter);
         fnCheck(source, adapter.sourceSpec, origin);
         Object[] leading = new Object[adapter.arity];
-        System.arraycopy(args, 0, leading, 0, adapter.arity);
+        System.arraycopy(admitted, 0, leading, 0, adapter.arity);
         // An adapter-valued source is an ordinary function value of its
         // declared signature (docs/spec-v1.3.md Function type
         // compatibility): runtime provenance as an adapter is not part of
@@ -1774,6 +1801,36 @@ public final class JvmRuntime {
                 callOrigins.pop();
             }
         }
+    }
+
+    /**
+     * The adapter's target-signature parameter admission: every declared
+     * target parameter is checked at its own descriptor before the
+     * leading-M projection, the ignored trailing parameters of an arity
+     * extension included (docs/spec-v1.3.md Arity extension adapter — the
+     * wrapper checks the parameter it ignores). The admitted values replace
+     * the received ones exactly like a parameter cell's admitted value, so
+     * an {@code int} position's normalization reaches the projection. A
+     * cell-less adapter (never produced by the lowering) returns the
+     * received array unchanged, and a call that receives fewer arguments
+     * than the target declares admits the absent position as the internal
+     * missing value, so it fails closed with the closed kind row rather
+     * than a raw index error.
+     */
+    private static Object[] admitTargetParameters(AdapterValue adapter, Object[] args) {
+        TargetCell[] cells = adapter.targetCells;
+        if (cells.length == 0) {
+            return args;
+        }
+        Object[] admitted = new Object[Math.max(cells.length, args.length)];
+        System.arraycopy(args, 0, admitted, 0, args.length);
+        for (int i = 0; i < cells.length; i++) {
+            TargetCell cell = cells[i];
+            Object received = i < args.length ? args[i] : MISSING;
+            admitted[i] = bcheck(cell.descriptor(), cell.staticKind(), received,
+                false, cell.canonical());
+        }
+        return admitted;
     }
 
     /**

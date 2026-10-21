@@ -3608,6 +3608,11 @@ public class JsSemanticEmitterTest {
             if (out.callable) {
               out.value = f.$f(7, 8);
               out.second = f.$f(3, 4);
+              try {
+                out.bad = f.$f(7, "bad");
+              } catch (e) {
+                out.bad = { code: e.code, expected: e.expected };
+              }
             }
             console.log(JSON.stringify(out));
             """, StandardCharsets.UTF_8);
@@ -3625,6 +3630,11 @@ public class JsSemanticEmitterTest {
                 + run.output());
         check(run.output().contains("\"second\":3"),
             "the returned adapter is a reusable working value: "
+                + run.output());
+        check(run.output().contains(
+                "\"bad\":{\"code\":\"E8001\",\"expected\":\"int\"}"),
+            "the published adapter admits its ignored target parameter, so the "
+                + "host's wrong-typed trailing argument fails closed: "
                 + run.output());
     }
 

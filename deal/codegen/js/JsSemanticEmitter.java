@@ -2084,6 +2084,23 @@ public final class JsSemanticEmitter {
                 + ", " + keyword + "(" + adapterParameters(targetArity)
                 + ") => {");
             indent++;
+            // The adapter's own wrapper checks every parameter of the
+            // target signature — the ignored trailing parameters of an
+            // arity extension included — before it resolves the source
+            // and before the leading-M projection
+            // (docs/spec-v1.3.md Arity extension adapter: the wrapper
+            // checks the ignored parameter too). A DEAL call site's
+            // parameter cells already admitted the same values, so the
+            // repeated check is idempotent; a host that invokes the
+            // published adapter value directly (a host-declared function
+            // parameter or a callback's adapted return) has no cell of
+            // its own, and this wrapper is its only enforcement point.
+            for (int i = 0; i < targetArity; i++) {
+                emit("$p" + i + " = $rt.checkType("
+                    + jsString(payload.targetSignature().paramTypes().get(i)
+                        .canonicalSpecText())
+                    + ", $p" + i + ", $file, $line, $column);");
+            }
             emit("const $src = " + (thunkFn == null ? sourceExpr
                 : thunkFn + "()") + ";");
             // The resolved source is recorded on the carrier instance the

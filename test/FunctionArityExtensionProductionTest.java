@@ -7,16 +7,22 @@ import deal.codegen.jvm.JvmNames;
 import deal.codegen.lua.AsyncExportInvocationRequest;
 import deal.codegen.lua.LuaJitAsyncExportInvoker;
 import deal.module.CompilationOrchestrator;
+import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedProjectBuildResult;
+import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.CompilerInvocation;
+import deal.semantic.ContainerClaimingSeam;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.ReleaseConfiguration;
+import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.test.conformance.JvmCompilation;
@@ -26,6 +32,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -118,6 +125,8 @@ public final class FunctionArityExtensionProductionTest {
         export function useTriple(f: (x: int, y: int, z: int) => int): int;
 
         export function useParse(f: (text: string, extra: int) => table): table;
+
+        export function useIntTable(f: (x: int, y: table) => int): int;
         """;
 
     /** The subject's LuaJIT host implementation. */
@@ -134,6 +143,9 @@ public final class FunctionArityExtensionProductionTest {
           end,
           useParse = function(f)
             return f("{}", 9)
+          end,
+          useIntTable = function(f)
+            return f(5, "bad")
           end,
         }
         """;
@@ -154,6 +166,9 @@ public final class FunctionArityExtensionProductionTest {
           },
           useParse: function (f) {
             return f.$f("{}", 9);
+          },
+          useIntTable: function (f) {
+            return f.$f(5, "bad");
           },
         };
         """;
@@ -176,6 +191,10 @@ public final class FunctionArityExtensionProductionTest {
           public static Object useParse($DealRt.Fn2_S_I_R_$table f) {
             return f.invoke("{}", 9);
           }
+
+          public static Object useIntTable($DealRt.Fn2_I_$table_R_I f) {
+            return Integer.valueOf(f.invoke(5, "bad"));
+          }
         }
         """;
 
@@ -192,6 +211,57 @@ public final class FunctionArityExtensionProductionTest {
         export function main(): null {
           let holder: table = { f: one };
           let r: int = host.usePair(holder.f);
+          return null;
+        }
+        """;
+
+    /**
+     * The emission-fact entry: the entry module imports the fixture library
+     * so the library's module walk is the one under test.
+     */
+    private static final String HOST_PARAMETER_FACT_ENTRY = """
+        import * as lib from "./lib";
+
+        export function main(): null { return null; }
+        """;
+
+    /**
+     * The emission-fact subject: a host-declared parameter position beside a
+     * class-default position, in a library module exported by nothing and
+     * calling no function-typed parameter — the per-module project walk this
+     * test drives then needs no callee module facts.
+     */
+    private static final String HOST_PARAMETER_FACT_SOURCE = """
+        import * as host from "host/arity_extension_host";
+
+        function one(x: int): int { return x; }
+
+        class Holder {
+          pair: (x: int, y: int) => int = one;
+          n: int = host.usePair(one);
+        }
+        """;
+
+    /**
+     * The host-invoked adapter's target-signature contract: the adapter
+     * wrapper admits every declared target parameter, so the host that
+     * invokes the published adapter value with a wrong-typed ignored
+     * (trailing) argument fails closed with the typed-boundary row instead
+     * of silently dropping the argument (docs/spec-v1.3.md Arity extension
+     * adapter: the wrapper checks the parameter it ignores). The declared
+     * parameter is {@code table} so the JVM host ABI's declared function
+     * wrapper can hand a non-table value to the trailing position.
+     */
+    private static final String HOST_TARGET_PARAMETER_SOURCE = """
+        import * as host from "host/arity_extension_host";
+
+        function oneInt(x: int): int { return x; }
+
+        export function main(): null {
+          let r: int = host.useIntTable(oneInt);
+          if (r !== 5) {
+            throw { code: "TEST_FAIL", message: "the adapted host parameter ran" };
+          }
           return null;
         }
         """;
@@ -256,6 +326,164 @@ public final class FunctionArityExtensionProductionTest {
           return null;
         }
         """;
+
+    // =========================================================================
+    // The host-invoked adapter's target parameters
+    // =========================================================================
+
+    /** The host-invoked adapter's target-parameter project. */
+    private static Project writeHostTargetParameterProject(Path root) throws Exception {
+        return writeProjectSource(root, HOST_TARGET_PARAMETER_SOURCE,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+    }
+
+    /**
+     * The LuaJIT host-invoked adapter: the declared function wrapper and the
+     * adapter's own target cells both admit the ignored trailing parameter,
+     * so the wrong-typed second argument raises the typed-boundary failure
+     * instead of being dropped.
+     */
+    private static void testLuaJitHostTargetParameter(Path root) throws Exception {
+        System.out.println("-- the LuaJIT host-invoked adapter's target "
+            + "parameters --");
+        Project project = writeHostTargetParameterProject(root);
+        assertProductionEmission(productionCompile(project, Backend.LUAJIT,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION)),
+            "luajit:host-target-parameter");
+        writeFile(project.out(), "host/arity_extension_host.lua",
+            HOST_LUA_SOURCE);
+        ProcessOutcome run = runProcess(
+            List.of("luajit", ENTRY_MODULE + ".lua"), project.out());
+        checkEq(1, run.exitCode(), "luajit: the host-invoked adapter's "
+            + "wrong-typed ignored argument exits one: " + run.stdout()
+            + run.stderr());
+        checkEq("DEAL_ERROR_CODE: E8001\n", run.stdout(), "luajit: the "
+            + "host-invoked adapter raises the typed-boundary row");
+        checkEq("", run.stderr(), "luajit: the target-parameter control's stderr");
+    }
+
+    /**
+     * The JVM host-invoked adapter: the host ABI's declared function wrapper
+     * reaches {@code JvmRuntime.invokeAdapter}, whose target cells admit the
+     * ignored trailing parameter.
+     */
+    private static void testJvmHostTargetParameter(Path root) throws Exception {
+        System.out.println("-- the JVM host-invoked adapter's target "
+            + "parameters --");
+        Project project = writeHostTargetParameterProject(root);
+        Path hostSource = project.root().resolve("HostArity_extension_host.java");
+        writeFile(project.root(), "HostArity_extension_host.java",
+            HOST_JAVA_SOURCE);
+        JvmArtifacts artifacts = compileJvmProject(project,
+            "jvm:host-target-parameter", List.of(hostSource),
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+        ProcessOutcome run = runProcess(List.of("java", "-cp",
+            artifacts.classes() + File.pathSeparator + absoluteClasspath(),
+            artifacts.className()), artifacts.project().out());
+        checkEq(1, run.exitCode(), "jvm: the host-invoked adapter's "
+            + "wrong-typed ignored argument exits one: " + run.stdout()
+            + run.stderr());
+        checkEq("DEAL_ERROR_CODE: E8001\n", run.stdout(), "jvm: the "
+            + "host-invoked adapter raises the typed-boundary row");
+        checkEq("", run.stderr(), "jvm: the target-parameter control's stderr");
+    }
+
+    /**
+     * The JS host-invoked adapter: the host calls the published adapter's
+     * own {@code $f}, which is the only enforcement point for the declared
+     * target signature (no call-site cell exists), so the emitted wrapper's
+     * target checks must fire.
+     */
+    private static void testJsHostTargetParameter(Path root) throws Exception {
+        System.out.println("-- the JS host-invoked adapter's target "
+            + "parameters --");
+        Project project = writeHostTargetParameterProject(root);
+        assertProductionEmission(productionCompile(project, Backend.JS,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION)),
+            "js:host-target-parameter");
+        writeFile(project.out(), "host/arity_extension_host.js", HOST_JS_SOURCE);
+        ProcessOutcome run = runProcess(List.of("node", ENTRY_MODULE + ".js"),
+            project.out());
+        checkEq(1, run.exitCode(), "js: the host-invoked adapter's "
+            + "wrong-typed ignored argument exits one: " + run.stdout()
+            + run.stderr());
+        checkEq("", run.stdout(), "js: the target-parameter control's stdout");
+        checkEq("DEAL_ERROR_CODE: E8001 expected table\n", run.stderr(),
+            "js: the emitted adapter wrapper admits the ignored trailing "
+                + "parameter with the typed-boundary row");
+    }
+
+    /**
+     * The host-declared parameter position's emission fact: the per-module
+     * production walk records one {@link SemanticLowerer.AdapterEmission} per
+     * emitted {@code FUNCTION_ADAPT} op — the host parameter cell included —
+     * so the shape-map fact surface stays complete and no position leaves a
+     * pending entry behind.
+     */
+    private static void testHostParameterEmissionFact(Path root) throws Exception {
+        System.out.println("-- the host-declared parameter position's emission "
+            + "fact --");
+        Project project = writeProjectSource(root, HOST_PARAMETER_FACT_ENTRY,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+        writeFile(root, "src/lib.deal", HOST_PARAMETER_FACT_SOURCE);
+        CompilationOrchestrator orchestrator = productionCompile(project,
+            Backend.LUAJIT, Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+        deal.semantic.EmissionFactWalk.Walk walk =
+            deal.semantic.EmissionFactWalk.walk(orchestrator, "lib");
+        check(walk.succeeded(), "the fixture library's per-module walk produces "
+            + "the unit: " + walk.diagnostics());
+        if (!walk.succeeded()) {
+            return;
+        }
+        List<SemanticOp> adapters = new ArrayList<>();
+        for (SemanticOp op : walk.unit().ops()) {
+            if (op.kind() == SemanticOpKind.FUNCTION_ADAPT) {
+                adapters.add(op);
+            }
+        }
+        List<SemanticLowerer.AdapterEmission> emissions = walk.facts().emissions();
+        checkEq(adapters.size(), emissions.size(), "the shape-map fact surface "
+            + "carries exactly one record per emitted FUNCTION_ADAPT op (the "
+            + "host-declared parameter position included)");
+        java.util.Map<BoundaryKind, Integer> wiredKinds = new java.util.LinkedHashMap<>();
+        for (SemanticLowerer.AdapterEmission emission : emissions) {
+            SemanticOp wiring = null;
+            for (SemanticOp op : walk.unit().ops()) {
+                if (op.opId().equals(emission.wiringTargetOpId())) {
+                    wiring = op;
+                }
+            }
+            check(wiring != null, "the emission records a wiring target that "
+                + "exists in the produced unit");
+            if (wiring == null) {
+                continue;
+            }
+            if (wiring.kind() == SemanticOpKind.BOUNDARY
+                    && wiring.payload()
+                        instanceof KindPayload.BoundaryPayload boundary) {
+                checkEq(emission.adapterIdentity(), boundary.input(), "the "
+                    + "emission's wiring target admits the adapter identity");
+                checkEq(emission.wiringBoundaryKind(), boundary.kind(), "the "
+                    + "emission's recorded boundary kind is the wiring cell's kind");
+                if (boundary.kind() == BoundaryKind.DEAL_TO_HOST) {
+                    checkEq(FailurePolicyId.HOST_PARAMETER, wiring.failurePolicy(),
+                        "the host-declared parameter emission wires the "
+                            + "DEAL_TO_HOST cell under the HOST_PARAMETER policy");
+                }
+                wiredKinds.merge(boundary.kind(), 1, Integer::sum);
+                continue;
+            }
+            checkEq(SemanticOpKind.CLASS_DEFAULT, wiring.kind(), "a non-boundary "
+                + "emission wiring target is the class default's own publisher");
+            checkEq(emission.adapterIdentity(), wiring.result(), "the class "
+                + "default publisher publishes the adapter identity");
+            wiredKinds.merge(emission.wiringBoundaryKind(), 1, Integer::sum);
+        }
+        checkEq(1, wiredKinds.getOrDefault(BoundaryKind.DEAL_TO_HOST, 0),
+            "the host-declared parameter position owns one recorded emission");
+        checkEq(1, wiredKinds.getOrDefault(BoundaryKind.CLASS_DEFAULT_FIELD, 0),
+            "the class default position keeps its recorded emission");
+    }
 
     /** The completion the async position corpus proves. */
     private static final String ASYNC_COMPLETION = "320";
@@ -1325,6 +1553,10 @@ public final class FunctionArityExtensionProductionTest {
                 hostParameter.get("jvm"));
             testJsHostStdlib(root.resolve("js-host-stdlib"),
                 hostParameter.get("js"));
+            testLuaJitHostTargetParameter(root.resolve("luajit-host-target-parameter"));
+            testJvmHostTargetParameter(root.resolve("jvm-host-target-parameter"));
+            testJsHostTargetParameter(root.resolve("js-host-target-parameter"));
+            testHostParameterEmissionFact(root.resolve("host-parameter-facts"));
             testCallbackReturnPosition(root.resolve("callback-return"));
             testLuaJitHostDynamicSource(root.resolve("luajit-host-dynamic"));
             testJvmHostDynamicSource(root.resolve("jvm-host-dynamic"));
