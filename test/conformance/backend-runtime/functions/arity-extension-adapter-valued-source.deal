@@ -1,0 +1,90 @@
+// @spec: Functions — Function type compatibility; Arity extension adapter
+// @description: A function value whose declared type is a shorter signature adapts at a further statically typed position, whether the source value was itself produced by an arity-extension adapter: the binding, field, array element, argument and return positions each add exactly one adapter over the value's declared signature and the nested invocation protocol forwards only each level's leading parameters.
+// @expected: runtime-ok
+// @features: functions, arity-extension, classes, arrays, closures
+
+import * as console from "std/console";
+
+class Marker {
+  count: int = 0;
+}
+
+class Holder {
+  pair: (x: int, y: int) => int = one;
+}
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+function one(x: int): int { return x; }
+
+function zero(): int { return 41; }
+
+function needTriple(f: (x: int, y: int, z: int) => int): int { return f(1, 2, 3); }
+
+function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+
+function passTriple(f: (x: int, y: int, z: int) => int): int { return f(4, 5, 6); }
+
+function bump(marker: Marker): int {
+  marker.count = marker.count + 1;
+  return 2;
+}
+
+function widenPair(f: (x: int, y: int) => int): (x: int, y: int, z: int) => int {
+  return f;
+}
+
+function widenZero(f: () => int): (x: int, y: int) => int {
+  return f;
+}
+
+export function main(): null {
+  // --- a parameter position over an adapted binding ------------------------
+  let pair: (x: int, y: int) => int = one;
+  check(needTriple(pair) === 1, "an adapted binding adapts again at a parameter");
+  check(passTriple(pair) === 4,
+    "the second adapter forwards only the declared source's leading parameters");
+
+  // --- a class-field source -----------------------------------------------
+  let holder: Holder = {};
+  check(needTriple(holder.pair) === 1, "an adapted field value adapts at a parameter");
+
+  // --- an array-element source --------------------------------------------
+  let pairs: ((x: int, y: int) => int)[] = [one];
+  check(needTriple(pairs[0]) === 1, "an adapted array element adapts at a parameter");
+
+  // --- a return position ---------------------------------------------------
+  let widened: (x: int, y: int, z: int) => int = widenPair(pair);
+  check(widened(7, 8, 9) === 7, "an adapted value adapts at a return position");
+
+  // --- an assignment position ---------------------------------------------
+  let assigned: (x: int, y: int, z: int) => int = one;
+  assigned = pair;
+  check(assigned(8, 9, 10) === 8, "an adapted value adapts at an assignment position");
+
+  // --- a zero-to-one chain -------------------------------------------------
+  let zeroValue: () => int = zero;
+  let oneWide: (x: int) => int = zeroValue;
+  let twoWide: (x: int, y: int) => int = oneWide;
+  check(twoWide(9, 10) === 41, "a zero-to-one chain keeps each level's marker");
+
+  // --- once-only evaluation of the ignored target argument -----------------
+  let marker: Marker = {};
+  let short: (x: int, y: int) => int = one;
+  let wide: (x: int, y: int, z: int) => int = short;
+  check(wide(3, bump(marker), 9) === 3,
+    "the ignored third parameter is evaluated and never forwarded");
+  check(marker.count === 1, "the ignored third parameter evaluates exactly once");
+
+  // --- an exact adapted value keeps its own working identity ---------------
+  let exact: (x: int, y: int) => int = pair;
+  check(needPair(exact) === 3, "an exact target stores the adapted value directly");
+
+  console.log("OK");
+  return null;
+}

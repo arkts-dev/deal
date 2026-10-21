@@ -35,6 +35,8 @@ function returnPair(): (x: int, y: int) => int { return one; }
 
 function returnZero(): (x: int) => int { return zero; }
 
+export function returnExportedPair(): (x: int, y: int) => int { return one; }
+
 function nextShort(marker: Marker): (x: int) => int {
   marker.count = marker.count + 1;
   return one;
@@ -75,6 +77,10 @@ export function main(): null {
   check(returnZero()(7) === 41, "a return position adapts zero-to-one");
   check(returnPair()(1, 2) + returnZero()(3) === 42,
     "two returned adapters are distinct working values");
+  check(returnExportedPair()(6, 7) === 6,
+    "an exported sync function's return position adapts one-to-two");
+  check(lib.returnPair()(8, 9) === 8,
+    "a cross-module exported return position adapts one-to-two");
 
   // --- class field construction and write positions ------------------------
   let supplied: Dispatch = { pair: one };

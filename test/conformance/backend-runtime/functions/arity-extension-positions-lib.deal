@@ -3,3 +3,5 @@
 export function one(x: int): int { return x; }
 
 export function needPair(f: (x: int, y: int) => int): int { return f(5, 6); }
+
+export function returnPair(): (x: int, y: int) => int { return one; }

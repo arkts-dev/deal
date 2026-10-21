@@ -2814,12 +2814,18 @@ public final class BindingsProductionValidator {
      * function-value position — the variable declaration/assignment
      * cells, the parameter cells, the return cell, the class
      * construction/write cells, and the array literal/write cells
-     * ({@link AdapterCreationRule#admitsAdaptation}).
+     * ({@link AdapterCreationRule#admitsAdaptation}). The two shared cell
+     * kinds remain in the set only for the parent-aware classifier:
+     * {@code DEAL_TO_HOST} is a parameter cell under a host invocation and
+     * a return cell under a callback {@code RETURN}, and
+     * {@code EXTERNAL_RETURN} is always a return cell (an exported sync
+     * function's {@code RETURN} or a retained-ABI call result).
      */
     private static final Set<BoundaryKind> ADAPTER_POSITION_BOUNDARIES = Set.of(
         BoundaryKind.VARIABLE_DECLARATION, BoundaryKind.VARIABLE_ASSIGNMENT,
         BoundaryKind.FUNCTION_PARAMETER, BoundaryKind.EXTERNAL_PARAMETER,
         BoundaryKind.STDLIB_PARAMETER, BoundaryKind.FUNCTION_RETURN,
+        BoundaryKind.EXTERNAL_RETURN, BoundaryKind.DEAL_TO_HOST,
         BoundaryKind.CLASS_LITERAL_FIELD, BoundaryKind.CLASS_DEFAULT_FIELD,
         BoundaryKind.ARRAY_LITERAL_ELEMENT, BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
         BoundaryKind.CLASS_FIELD_ASSIGNMENT);
@@ -2906,7 +2912,7 @@ public final class BindingsProductionValidator {
                 BoundaryKind kind =
                     ((KindPayload.BoundaryPayload) candidate.payload()).kind();
                 if (ADAPTER_POSITION_BOUNDARIES.contains(kind)
-                        && AdapterCreationRule.admitsAdaptation(kind)) {
+                        && adapterPositionAdmits(model, candidate, kind)) {
                     positionCells.add(candidate);
                 }
             }
@@ -3006,53 +3012,55 @@ public final class BindingsProductionValidator {
     }
 
     /**
+     * The parent-aware adaptation admission of one candidate cell: the
+     * statically typed function-value kinds of
+     * {@link AdapterCreationRule#positionKindOf(BoundaryKind,
+     * SemanticOpKind)} resolved by the cell's own parent operation. A
+     * {@code DEAL_TO_HOST} parameter cell under a host invocation and an
+     * exported or callback return cell therefore admit the position
+     * adapter, while every other crossing of the same boundary kind (an
+     * unattached host return, a runtime read) stays a typed boundary.
+     */
+    private static boolean adapterPositionAdmits(Model model, SemanticOp cell,
+                                                 BoundaryKind kind) {
+        if (kind != BoundaryKind.EXTERNAL_RETURN && kind != BoundaryKind.DEAL_TO_HOST) {
+            return AdapterCreationRule.admitsAdaptation(kind);
+        }
+        SemanticOp parent = parentOpOf(model, cell);
+        return parent != null
+            && AdapterCreationRule.admitsAdaptation(kind, parent.kind());
+    }
+
+    /**
      * The per-position wiring agreement of one position cell: {@code null}
      * when the position's own consumer observes the adapter identity, else
-     * the violation text.
+     * the violation text. The two shared cell kinds resolve their
+     * agreement by the cell's parent operation: a return cell (the
+     * exported, cross-module or callback {@code RETURN}) uses the
+     * RETURN-value agreement, and a host-declared parameter cell uses the
+     * invocation-projection agreement.
      */
     private static String adapterPositionFailure(Model model, ValueId adapterValue,
                                                  SemanticOp cell, BoundaryKind kind) {
+        if (kind == BoundaryKind.EXTERNAL_RETURN) {
+            return returnPositionFailure(model, adapterValue, cell);
+        }
         switch (kind) {
             case VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT -> {
                 return null;
             }
-            case FUNCTION_PARAMETER, EXTERNAL_PARAMETER, STDLIB_PARAMETER -> {
-                for (SemanticOp invocation : model.unit.ops()) {
-                    List<OpId> cells = switch (invocation.payload()) {
-                        case KindPayload.CallPayload call ->
-                            call.parameterBoundaryOpIds();
-                        case KindPayload.AsyncStartPayload start ->
-                            start.parameterBoundaryOpIds();
-                        case KindPayload.CallbackInvokePayload callback ->
-                            callback.parameterBoundaryOpIds();
-                        default -> List.of();
-                    };
-                    int index = cells.indexOf(cell.opId());
-                    if (index < 0) {
-                        continue;
-                    }
-                    if (index < invocation.operands().size()
-                            && adapterValue.equals(invocation.operands().get(index))) {
-                        return null;
-                    }
-                    return "the invocation " + invocation.opId() + " projects no adapted "
-                        + "operand at parameter " + (index + 1);
+            case DEAL_TO_HOST -> {
+                SemanticOp parent = parentOpOf(model, cell);
+                if (parent != null && parent.kind() == SemanticOpKind.RETURN) {
+                    return returnPositionFailure(model, adapterValue, cell);
                 }
-                return "the parameter cell " + cell.opId() + " is no invocation's "
-                    + "parameter boundary";
+                return parameterPositionFailure(model, adapterValue, cell);
+            }
+            case FUNCTION_PARAMETER, EXTERNAL_PARAMETER, STDLIB_PARAMETER -> {
+                return parameterPositionFailure(model, adapterValue, cell);
             }
             case FUNCTION_RETURN -> {
-                for (SemanticOp candidate : model.unit.ops()) {
-                    if (candidate.kind() == SemanticOpKind.RETURN
-                            && candidate.payload() instanceof KindPayload.ReturnPayload
-                                returned
-                            && adapterValue.equals(returned.value())
-                            && cell.opId().equals(returned.returnBoundaryOpId())) {
-                        return null;
-                    }
-                }
-                return "no RETURN op returns the adapted value through the FUNCTION_RETURN "
-                    + "cell " + cell.opId();
+                return returnPositionFailure(model, adapterValue, cell);
             }
             case ARRAY_LITERAL_ELEMENT -> {
                 for (SemanticOp candidate : model.unit.ops()) {
@@ -3134,6 +3142,70 @@ public final class BindingsProductionValidator {
                 return "the " + kind + " kind is no adaptation position";
             }
         }
+    }
+
+    /**
+     * The RETURN-value agreement of one return cell: a {@code RETURN} op
+     * returns the adapter identity through exactly this cell. The same
+     * agreement covers a {@code FUNCTION_RETURN}, an exported sync
+     * function's {@code EXTERNAL_RETURN} and a callback entry's
+     * {@code DEAL_TO_HOST} return boundary — the invocation shape decides
+     * the cell kind, never whether the return position adapts.
+     */
+    private static String returnPositionFailure(Model model, ValueId adapterValue,
+                                                SemanticOp cell) {
+        for (SemanticOp candidate : model.unit.ops()) {
+            if (candidate.kind() == SemanticOpKind.RETURN
+                    && candidate.payload() instanceof KindPayload.ReturnPayload
+                        returned
+                    && adapterValue.equals(returned.value())
+                    && cell.opId().equals(returned.returnBoundaryOpId())) {
+                return null;
+            }
+        }
+        return "no RETURN op returns the adapted value through the " + boundaryKindOf(cell)
+            + " cell " + cell.opId();
+    }
+
+    /**
+     * The invocation-projection agreement of one parameter cell: the cell
+     * is one invocation's parameter boundary and that invocation projects
+     * the adapter identity at the same index. A host-declared
+     * {@code DEAL_TO_HOST} parameter cell uses the same agreement as the
+     * same-module, cross-module and stdlib parameter cells: the adapter
+     * result is the argument the invocation's own exact descriptor check
+     * validates.
+     */
+    private static String parameterPositionFailure(Model model, ValueId adapterValue,
+                                                   SemanticOp cell) {
+        for (SemanticOp invocation : model.unit.ops()) {
+            List<OpId> cells = switch (invocation.payload()) {
+                case KindPayload.CallPayload call ->
+                    call.parameterBoundaryOpIds();
+                case KindPayload.AsyncStartPayload start ->
+                    start.parameterBoundaryOpIds();
+                case KindPayload.CallbackInvokePayload callback ->
+                    callback.parameterBoundaryOpIds();
+                default -> List.of();
+            };
+            int index = cells.indexOf(cell.opId());
+            if (index < 0) {
+                continue;
+            }
+            if (index < invocation.operands().size()
+                    && adapterValue.equals(invocation.operands().get(index))) {
+                return null;
+            }
+            return "the invocation " + invocation.opId() + " projects no adapted "
+                + "operand at parameter " + (index + 1);
+        }
+        return "the parameter cell " + cell.opId() + " is no invocation's "
+            + "parameter boundary";
+    }
+
+    /** The boundary kind of one boundary cell (the diagnostic text's own fact). */
+    private static BoundaryKind boundaryKindOf(SemanticOp cell) {
+        return ((KindPayload.BoundaryPayload) cell.payload()).kind();
     }
 
     /** The op naming the given op's {@code parentOpId}, or {@code null}. */

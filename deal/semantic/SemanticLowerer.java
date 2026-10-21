@@ -6689,42 +6689,19 @@ public final class SemanticLowerer {
             if (!(checkedType(value) instanceof Type.Func sourceType)) {
                 return false;
             }
-            if (adaptedBindingSource(value)) {
-                // No double adaptation: a binding whose tracked function
-                // identity is already an adapter's is an ordinary function
-                // value of the source signature, and the closed adapter
-                // invocation protocol does not nest (an adapter's source
-                // resolution is the statically fixed body, host or intrinsic
-                // class). The position keeps its own exact-signature cell.
-                return false;
-            }
+            // A binding whose tracked identity is already an adapter's is an
+            // ordinary function value of its declared signature
+            // (docs/spec-v1.3.md Function type compatibility): runtime
+            // provenance as an adapter is not part of the type, so a
+            // position whose target signature is wider adapts it like any
+            // other compatible function value. The adapter protocol
+            // resolves such a source through its own published invocation
+            // at the same leading-M projection, never by stacking a second
+            // unresolved wrapper.
             return ContainerPayloadDescriptors.resultDescriptorOf(sourceType)
                     instanceof RuntimeDescriptor.Func sourceSignature
                 && AdapterCreationRule.assignableButNotExact(sourceSignature,
                     targetSignature);
-        }
-
-        /**
-         * True iff the position's source is a binding reference whose
-         * dominant incarnation at this position already holds an adapted
-         * function value (the cell's tracked function identity is a
-         * registered {@code AdapterBinding}). Such a value is never adapted
-         * again — one position never stacks adapters, and the nested
-         * adapter invocation protocol is the closed adapter-of-adapter
-         * unit's, not this position's.
-         */
-        private boolean adaptedBindingSource(ExpressionNode value) {
-            if (!(value instanceof IdentifierExpr identifier)) {
-                return false;
-            }
-            FrameResolution resolution = resolveFrame(identifier.name());
-            if (resolution == null) {
-                return false;
-            }
-            ValueId identity = functionIdentity.get(resolution.entry().incarnation());
-            return identity != null
-                && registry.bindings().get(new FunctionAllocationIdentity(identity.id()))
-                    instanceof FunctionExecutionBinding.AdapterBinding;
         }
 
         /**
@@ -6818,16 +6795,18 @@ public final class SemanticLowerer {
          * handling) or exactly one arity-extension adapter over it. The
          * adapter is created at the argument's own position, so the
          * argument's evaluation order and its once-only effects are
-         * unchanged. A host parameter cell is a host crossing: its
-         * projection owns the argument's shape and its value is validated
-         * exactly, so no adapter is created there.
+         * unchanged. The position is the callee's checked parameter
+         * descriptor — the same descriptor a host-declared parameter cell
+         * carries — so a compatible shorter DEAL function value adapts
+         * before a host crossing exactly as it does at a same-module,
+         * cross-module or stdlib parameter; the host parameter cell then
+         * validates the adapter's exact target signature, and a dynamic
+         * host- or table-produced value keeps that exact check.
          */
         private ValueId lowerParameterArgument(CallExpr call, int index,
-                                               boolean asCallArgument,
-                                               boolean hostParameterCell) {
+                                               boolean asCallArgument) {
             ExpressionNode argument = call.args().get(index);
-            RuntimeDescriptor target = hostParameterCell
-                ? null : callParameterDescriptor(call, index);
+            RuntimeDescriptor target = callParameterDescriptor(call, index);
             if (target == null || !positionAdapts(argument, target)) {
                 return asCallArgument ? lowerCallArgument(argument) : lowerExpression(argument);
             }
@@ -10611,7 +10590,7 @@ public final class SemanticLowerer {
                 // parameter position like any other: an assignable-but-
                 // not-exact function argument takes its arity-extension
                 // adapter before the parameter cell validates it.
-                args.add(lowerParameterArgument(call, i, false, false));
+                args.add(lowerParameterArgument(call, i, false));
             }
             List<RuntimeDescriptor> parameterDescriptors = entry.parameterDescriptors();
             if (args.size() != parameterDescriptors.size()) {
@@ -10865,7 +10844,7 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (int i = 0; i < call.args().size(); i++) {
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, true, false));
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11079,7 +11058,7 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (int i = 0; i < call.args().size(); i++) {
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, false, false));
+                args.add(lowerParameterArgument(call, i, false));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11382,9 +11361,6 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             boolean declaredBodyCallee =
                 binding instanceof FunctionExecutionBinding.LoweredBody;
-            boolean hostCallee =
-                binding instanceof FunctionExecutionBinding.HostFunction
-                || binding instanceof FunctionExecutionBinding.HostFunctionValue;
             for (int i = 0; i < call.args().size(); i++) {
                 // A resolved declared body keeps the declared-callee
                 // contextual-argument handling: the argument walk defers a
@@ -11395,7 +11371,7 @@ public final class SemanticLowerer {
                 // own parameter boundaries at the call site and keeps the
                 // read's own check.
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, declaredBodyCallee, hostCallee));
+                args.add(lowerParameterArgument(call, i, declaredBodyCallee));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11646,10 +11622,20 @@ public final class SemanticLowerer {
                                 adapter.sourceSignature(), result, call.span(), callOpId);
                             returnBoundaryOpId = hostCrossing.opId();
                         }
-                        case FunctionExecutionBinding.AdapterBinding nested ->
-                            throw new ConstructUnlowered("nested adapter source of '"
-                                + calleeName + "' (adapter-of-adapter invocation is "
-                                + "ISSUE-0531's)", call.span());
+                        case FunctionExecutionBinding.AdapterBinding ignored -> {
+                            // An adapter-valued source: runtime provenance as
+                            // an adapter is not part of the type, so the
+                            // outer adapter resolves to its own source's
+                            // execution class at execution (the closed D15
+                            // protocol descends the chain). The recorded cell
+                            // is the host source's family cell, exactly the
+                            // runtime-resolved source arm; a DEAL-body source
+                            // runs its own single return cell inside the
+                            // body and adds no caller-side cell.
+                            hostCrossing = emitHostReturnBoundary(
+                                adapter.sourceSignature(), result, call.span(), callOpId);
+                            returnBoundaryOpId = hostCrossing.opId();
+                        }
                     }
                 }
                 case FunctionExecutionBinding.HostFunction host -> {
@@ -11948,14 +11934,11 @@ public final class SemanticLowerer {
                     + "checker's E3014 pins the shape; the await arm owns async starts)",
                         call.span());
             }
-            boolean hostCallee =
-                binding instanceof FunctionExecutionBinding.HostFunction
-                || binding instanceof FunctionExecutionBinding.HostFunctionValue;
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (int i = 0; i < call.args().size(); i++) {
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, true, hostCallee));
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12210,7 +12193,7 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (int i = 0; i < call.args().size(); i++) {
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, false, false));
+                args.add(lowerParameterArgument(call, i, false));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12315,7 +12298,7 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (int i = 0; i < call.args().size(); i++) {
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, true, false));
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12460,12 +12443,9 @@ public final class SemanticLowerer {
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            boolean hostCallee =
-                binding instanceof FunctionExecutionBinding.HostFunction
-                || binding instanceof FunctionExecutionBinding.HostFunctionValue;
             for (int i = 0; i < call.args().size(); i++) {
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, true, hostCallee));
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12688,7 +12668,7 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (int i = 0; i < call.args().size(); i++) {
                 ExpressionNode argument = call.args().get(i);
-                args.add(lowerParameterArgument(call, i, false, false));
+                args.add(lowerParameterArgument(call, i, false));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12846,7 +12826,8 @@ public final class SemanticLowerer {
                 }
                 case FunctionExecutionBinding.AdapterBinding nestedAdapter ->
                     throw new ConstructUnlowered("nested adapter source of '" + calleeName
-                        + "' (adapter-of-adapter invocation is ISSUE-0531's)", call.span());
+                        + "' (adapter-of-adapter async invocation is ISSUE-0531's)",
+                        call.span());
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
                     if (sourceSignature.paramTypes().size()

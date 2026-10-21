@@ -6,6 +6,7 @@ import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.SemanticOpKind;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -331,6 +332,37 @@ public final class AdapterCreationRule {
     }
 
     /**
+     * The parent-aware position-kind map: the same closed classifier with
+     * the two shared cell kinds resolved by the cell's parent operation —
+     * a return position is the cell its own {@code RETURN} runs
+     * ({@code EXTERNAL_RETURN} for a sync {@code EXTERNAL_ENTRY} and for a
+     * retained-ABI external call, {@code DEAL_TO_HOST} for a callback
+     * entry), and a host-declared parameter position is the
+     * {@code DEAL_TO_HOST} parameter cell its {@code CALL}/{@code
+     * ASYNC_START} invocation runs. A statically typed return or call
+     * position is decided by the source/target signature pair, never by the
+     * boundary kind the invocation shape selected: a compatible shorter
+     * function value adapts at an exported, cross-module or callback
+     * return and at a host-declared call parameter exactly as it does at
+     * the same-module cells, while the position's own cell keeps its exact
+     * descriptor check. Every other kind keeps {@link #positionKindOf}.
+     */
+    public static PositionKind positionKindOf(BoundaryKind kind,
+                                              SemanticOpKind parentOpKind) {
+        Objects.requireNonNull(kind, "kind must not be null");
+        Objects.requireNonNull(parentOpKind, "parentOpKind must not be null");
+        return switch (kind) {
+            case EXTERNAL_RETURN -> PositionKind.RETURN;
+            case DEAL_TO_HOST -> switch (parentOpKind) {
+                case RETURN -> PositionKind.RETURN;
+                case CALL, ASYNC_START -> PositionKind.PARAMETER;
+                default -> PositionKind.TYPED_BOUNDARY;
+            };
+            default -> positionKindOf(kind);
+        };
+    }
+
+    /**
      * True exactly for the variable positions — the positions whose own
      * boundary belongs to a {@code [value, boundary, commit]} variable
      * chain.
@@ -351,6 +383,18 @@ public final class AdapterCreationRule {
      */
     public static boolean admitsAdaptation(BoundaryKind kind) {
         return positionKindOf(kind) != PositionKind.TYPED_BOUNDARY;
+    }
+
+    /**
+     * True iff the parent-aware position kind admits the adaptation arm
+     * (the same predicate over {@link #positionKindOf(BoundaryKind,
+     * SemanticOpKind)}: a host-declared call parameter or an exported,
+     * cross-module and callback return cell admits it, every other
+     * host/external crossing does not).
+     */
+    public static boolean admitsAdaptation(BoundaryKind kind,
+                                           SemanticOpKind parentOpKind) {
+        return positionKindOf(kind, parentOpKind) != PositionKind.TYPED_BOUNDARY;
     }
 
     // =========================================================================

@@ -1728,6 +1728,21 @@ public final class JvmRuntime {
         fnCheck(source, adapter.sourceSpec, origin);
         Object[] leading = new Object[adapter.arity];
         System.arraycopy(args, 0, leading, 0, adapter.arity);
+        // An adapter-valued source is an ordinary function value of its
+        // declared signature (docs/spec-v1.3.md Function type
+        // compatibility): runtime provenance as an adapter is not part of
+        // the type. Descend the nested adapter's own source resolution and
+        // source-signature check, keeping its own leading-M projection, so
+        // the invocation reaches the statically fixed body or host class at
+        // the end of the chain — never the adapter guard's placeholder
+        // invoker.
+        while (source instanceof AdapterValue nested) {
+            source = adapterSource(nested);
+            fnCheck(source, nested.sourceSpec, origin);
+            Object[] inner = new Object[nested.arity];
+            System.arraycopy(leading, 0, inner, 0, nested.arity);
+            leading = inner;
+        }
         FunctionValue function = (FunctionValue) source;
         // The invoking call's origin: a failure inside the adapted source
         // whose arm renders the call origin (the @jsonable toJson walk)
