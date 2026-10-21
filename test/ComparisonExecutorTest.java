@@ -190,6 +190,37 @@ public class ComparisonExecutorTest {
         }
     }
 
+    /**
+     * {@code NULLABLE_NULL_*}: a present boolean is never null, false
+     * included, at either declared side and in both operand orders; the
+     * null and internal missing operands remain the null-equivalent pair.
+     */
+    private static void testNullableNullBooleanRows() {
+        for (NullableSide side : List.of(NullableSide.LEFT, NullableSide.RIGHT)) {
+            for (ComparisonOperandView nullish : List.of(NULL, MISSING)) {
+                for (boolean present : List.of(false, true)) {
+                    ComparisonOperandView value = b(present);
+                    ComparisonOperandView presentNamedLeft =
+                        side == NullableSide.LEFT ? value : nullish;
+                    ComparisonOperandView presentNamedRight =
+                        side == NullableSide.LEFT ? nullish : value;
+                    exact(new ComparisonRow(BinarySelector.NULLABLE_NULL_EQ,
+                        presentNamedLeft, presentNamedRight, BOOLEAN, side, false));
+                    exact(new ComparisonRow(BinarySelector.NULLABLE_NULL_NE,
+                        presentNamedLeft, presentNamedRight, BOOLEAN, side, true));
+                    ComparisonOperandView nullNamedLeft =
+                        side == NullableSide.LEFT ? nullish : value;
+                    ComparisonOperandView nullNamedRight =
+                        side == NullableSide.LEFT ? value : nullish;
+                    exact(new ComparisonRow(BinarySelector.NULLABLE_NULL_EQ,
+                        nullNamedLeft, nullNamedRight, BOOLEAN, side, true));
+                    exact(new ComparisonRow(BinarySelector.NULLABLE_NULL_NE,
+                        nullNamedLeft, nullNamedRight, BOOLEAN, side, false));
+                }
+            }
+        }
+    }
+
     private static void expectException(Class<? extends Throwable> type, Runnable action) {
         try { action.run(); check(false, "expected " + type.getName()); }
         catch (Throwable failure) { check(type.isInstance(failure), "expected " + type.getName() + ", got " + failure); }
@@ -253,6 +284,7 @@ public class ComparisonExecutorTest {
         testViewShapes();
         testScalarAndIdentityMatrices();
         testExactNullMissingMatrix();
+        testNullableNullBooleanRows();
         testDefects();
         testScalarAndIdentityMatrices();
         testExactNullMissingMatrix();

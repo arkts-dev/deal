@@ -1,0 +1,183 @@
+// @spec: Type system — Nullable semantics
+// @description: Nullable-null equality preserves a false-valued operand and keeps missing, present null, and present false distinct
+// @expected: runtime-ok
+// @features: type-system, nullable, comparison, narrowing, classes, optional
+
+import * as console from "std/console";
+
+class Flags {
+  flag?: boolean | null;
+}
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: what };
+  }
+  return null;
+}
+
+function expectFalse(what: string, condition: boolean): null {
+  if (condition) {
+    throw { code: "TEST_FAIL", message: what };
+  }
+  return null;
+}
+
+export function main(): null {
+  // A nullable false compared directly with null, in both operand orders
+  // and with both operators.
+  let falseFlag: boolean | null = false;
+  expectFalse("false === null", falseFlag === null);
+  expectFalse("null === false", null === falseFlag);
+  expectTrue("false !== null", falseFlag !== null);
+  expectTrue("null !== false", null !== falseFlag);
+
+  // A nullable true keeps its existing correct value.
+  let trueFlag: boolean | null = true;
+  expectFalse("true === null", trueFlag === null);
+  expectFalse("null === true", null === trueFlag);
+  expectTrue("true !== null", trueFlag !== null);
+  expectTrue("null !== true", null !== trueFlag);
+
+  // A nullable null is null on both sides.
+  let nullFlag: boolean | null = null;
+  expectTrue("null === null", nullFlag === null);
+  expectTrue("null === null (reversed)", null === nullFlag);
+  expectFalse("null !== null", nullFlag !== null);
+  expectFalse("null !== null (reversed)", null !== nullFlag);
+
+  // Narrowing and branch behavior: a false-valued nullable enters the
+  // non-null branch and keeps its false value.
+  let falseEntered: boolean = false;
+  let falseWasNull: boolean = false;
+  if (falseFlag !== null) {
+    let narrowed: boolean = falseFlag;
+    if (!narrowed) {
+      falseEntered = true;
+    }
+  } else {
+    falseWasNull = true;
+  }
+  expectTrue("false !== null branch ran with false", falseEntered);
+  expectFalse("false === null branch did not run", falseWasNull);
+
+  // The equality form's else branch narrows the same way.
+  let equalityEntered: boolean = false;
+  let equalityWasNull: boolean = false;
+  if (falseFlag === null) {
+    equalityWasNull = true;
+  } else {
+    let narrowed: boolean = falseFlag;
+    if (!narrowed) {
+      equalityEntered = true;
+    }
+  }
+  expectTrue("false === null else branch narrowed to false", equalityEntered);
+  expectFalse("false === null branch did not run", equalityWasNull);
+
+  // The null value takes the null branch; the non-null branch is skipped.
+  let nullEntered: boolean = false;
+  let nullSkipped: boolean = true;
+  if (nullFlag !== null) {
+    nullEntered = true;
+  }
+  if (nullFlag === null) {
+    nullSkipped = false;
+  }
+  expectFalse("null !== null branch did not run", nullEntered);
+  expectFalse("null === null branch ran", nullSkipped);
+
+  // The true value keeps its narrowing and value.
+  let trueEntered: boolean = false;
+  if (trueFlag !== null) {
+    let narrowed: boolean = trueFlag;
+    if (narrowed) {
+      trueEntered = true;
+    }
+  }
+  expectTrue("true !== null branch ran with true", trueEntered);
+
+  // A closure-captured nullable false keeps its captured value at the
+  // comparison operand position.
+  let captured: boolean | null = false;
+  let readCaptured: () => boolean | null = function(): boolean | null {
+    return captured;
+  };
+  let capturedValue: boolean | null = readCaptured();
+  expectFalse("closure-captured false === null", capturedValue === null);
+  expectTrue("closure-captured false !== null", capturedValue !== null);
+  let capturedNarrowed: boolean = false;
+  if (capturedValue !== null) {
+    let narrowed: boolean = capturedValue;
+    if (!narrowed) {
+      capturedNarrowed = true;
+    }
+  }
+  expectTrue("closure-captured false narrows to false", capturedNarrowed);
+
+  // Array elements preserve the same values through the read path.
+  let values: (boolean | null)[] = [false, true, null];
+  let first: boolean | null = values[0];
+  let second: boolean | null = values[1];
+  let third: boolean | null = values[2];
+  expectFalse("array false === null", first === null);
+  expectTrue("array false !== null", first !== null);
+  expectFalse("array true === null", second === null);
+  expectTrue("array true !== null", second !== null);
+  expectTrue("array null === null", third === null);
+  expectFalse("array null !== null", third !== null);
+
+  // Optional nullable fields: absence, present null, and present false
+  // stay three distinct states; only absence and present null are null
+  // at a direct read, never a present false.
+  let missing: Flags = {};
+  let presentNull: Flags = { flag: null };
+  let presentFalse: Flags = { flag: false };
+  let presentTrue: Flags = { flag: true };
+  expectFalse("missing field is not present", has(missing.flag));
+  expectTrue("present null field is present", has(presentNull.flag));
+  expectTrue("present false field is present", has(presentFalse.flag));
+  expectTrue("present true field is present", has(presentTrue.flag));
+
+  let missingRead: boolean | null = missing.flag;
+  let nullRead: boolean | null = presentNull.flag;
+  let falseRead: boolean | null = presentFalse.flag;
+  let trueRead: boolean | null = presentTrue.flag;
+  expectTrue("missing direct read is null", missingRead === null);
+  expectFalse("missing direct read is not non-null", missingRead !== null);
+  expectTrue("present null direct read is null", nullRead === null);
+  expectFalse("present null direct read is not non-null", nullRead !== null);
+  expectFalse("present false direct read is not null", falseRead === null);
+  expectTrue("present false direct read is non-null", falseRead !== null);
+  expectFalse("present true direct read is not null", trueRead === null);
+  expectTrue("present true direct read is non-null", trueRead !== null);
+
+  let presentFalseNarrowed: boolean = false;
+  if (falseRead !== null) {
+    let narrowed: boolean = falseRead;
+    if (!narrowed) {
+      presentFalseNarrowed = true;
+    }
+  }
+  expectTrue("present false direct read narrows to false", presentFalseNarrowed);
+
+  let presentTrueNarrowed: boolean = false;
+  if (trueRead !== null) {
+    let narrowed: boolean = trueRead;
+    if (narrowed) {
+      presentTrueNarrowed = true;
+    }
+  }
+  expectTrue("present true direct read narrows to true", presentTrueNarrowed);
+
+  // Deleting the present false returns the field to absence: the direct
+  // read is null again, while the false value was never conflated with it.
+  delete presentFalse.flag;
+  expectFalse("deleted field is missing", has(presentFalse.flag));
+  let deletedRead: boolean | null = presentFalse.flag;
+  expectTrue("deleted direct read is null", deletedRead === null);
+  expectFalse("deleted direct read is not non-null", deletedRead !== null);
+
+  console.log("OK");
+  return null;
+}

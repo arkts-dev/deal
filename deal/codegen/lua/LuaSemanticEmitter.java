@@ -12455,14 +12455,21 @@ end
 local function __cmp(selector, kindL, l, kindR, r, side)
   local lnil = (l == nil or l == __MISSING)
   local rnil = (r == nil or r == __MISSING)
+  -- The nullable-null rows are total over both operand positions, exactly
+  -- like the shared comparison executor: the side names the nullable
+  -- operand, selected by an explicit branch, never Lua's and/or idiom,
+  -- which would select the other operand when the named one is false
+  -- (B-D1: false is a present value, not null).
+  if selector == "NULLABLE_NULL_EQ" then
+    local named = l
+    if side ~= "LEFT" then named = r end
+    return (named == nil or named == __MISSING)
+  elseif selector == "NULLABLE_NULL_NE" then
+    local named = l
+    if side ~= "LEFT" then named = r end
+    return not (named == nil or named == __MISSING)
+  end
   if lnil or rnil then
-    if selector == "NULLABLE_NULL_EQ" then
-      local named = (side == "LEFT") and l or r
-      return (named == nil or named == __MISSING)
-    elseif selector == "NULLABLE_NULL_NE" then
-      local named = (side == "LEFT") and l or r
-      return not (named == nil or named == __MISSING)
-    end
     local both = lnil and rnil
     if string.sub(selector, -3) == "_EQ" then return both end
     if string.sub(selector, -3) == "_NE" then return not both end
