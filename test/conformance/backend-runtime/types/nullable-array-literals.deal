@@ -6,8 +6,9 @@
 export function test_empty_nullable_array(): int {
   let a: int[] | null = [];
   if (a === null) {
-    return -1;
+    throw {code: "TEST_FAIL", message: "empty nullable array became null"};
   } else {
+    if (a.length !== 0) { throw {code: "TEST_FAIL", message: "empty nullable array length"}; }
     return a.length;
   }
 }
@@ -23,6 +24,7 @@ export function test_parenthesized_nullable_array(): int {
       count = count + v;
     }
   }
+  if (count !== 5) { throw {code: "TEST_FAIL", message: "nullable element sum"}; }
   return count;
 }
 

@@ -409,7 +409,7 @@ public class CanonicalProjectionParityTest {
         // top-level JSON array and null cross the table boundary as the
         // array/language-null carriers and render the shared expected
         // table tuple on the oracle and both production artifacts (the JS
-        // lane executes the same fixtures through JsConformanceTest).
+        // corpus driver executes the same fixtures through CorpusConformanceTest).
         driver("stdlib/json/json-parse-top-level-array-table-error",
             "test_json_parse_top_level_array"),
         driver("stdlib/json/json-parse-top-level-null-table-error",
@@ -567,7 +567,7 @@ public class CanonicalProjectionParityTest {
      * against its sidecar. Every one of them imports a declared host module:
      * the host-carrier cases drive the projected carriers and the defaults
      * case counts its own default evaluations there. The JS lane executes the
-     * same source and sidecar through {@code JsConformanceTest}, and every
+     * same source and sidecar through {@code CorpusConformanceTest}, and every
      * stem's {@code .lua}/{@code .java}/{@code .js} implementation is
      * validated by the on-disk host-fixture triplet gate there.
      */
@@ -7879,7 +7879,7 @@ public class CanonicalProjectionParityTest {
      * The runtime-ok class-identity controls (ISSUE-0847 acceptance
      * criterion 3): the fixture's own three-backend claim is exercised on
      * the LuaJIT and JVM production artifacts — Node is executed by the JS
-     * lane ({@code JsConformanceTest}) — by running each artifact's
+     * corpus driver ({@code CorpusConformanceTest}) — by running each artifact's
      * production terminal and comparing its exit code and both streams to
      * the sidecar byte-exact. The control's values are only reachable when
      * each declaration keeps its own atom: a rejected correct-provider
@@ -8040,7 +8040,7 @@ public class CanonicalProjectionParityTest {
      * exports in declaration order — and the observation is compared
      * byte-exact against the sidecar. The sidecar must pin the three claimed
      * backends (LuaJIT, JVM, and JS; the JS lane executes the same source
-     * through {@code JsConformanceTest}), and every host stem the fixture
+     * through {@code CorpusConformanceTest}), and every host stem the fixture
      * imports must carry the complete on-disk implementation triplet. A
      * skipped lane, a missing implementation, or a fixture whose body never
      * runs is a named failure, never a pass.

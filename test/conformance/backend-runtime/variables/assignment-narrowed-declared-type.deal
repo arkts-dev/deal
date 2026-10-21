@@ -8,6 +8,7 @@ export function test_assignment_declared_type(): boolean {
   if (x !== null) {
     x = null;
   }
+  if (x !== null) { throw {code: "TEST_FAIL", message: "assignment did not invalidate refinement"}; }
   return x === null;
 }
 

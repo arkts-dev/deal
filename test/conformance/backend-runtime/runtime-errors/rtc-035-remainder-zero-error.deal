@@ -8,6 +8,5 @@ export function test_remainder_zero_error(): int {
 }
 
 export function main(): null {
-  let value: int = test_remainder_zero_error();
   return null;
 }

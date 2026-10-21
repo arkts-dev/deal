@@ -6,7 +6,10 @@
 export function test_parameter_shadow(): int {
   let x: string | null = "a";
   let f: (x: int) => int = function(x: int): int { return x; };
-  return f(4);
+  let result: int = f(4);
+  if (result !== 4 || x === null) { throw {code: "TEST_FAIL", message: "parameter binding shadow"}; }
+  if (x !== null) { if (x !== "a") { throw {code: "TEST_FAIL", message: "outer binding changed"}; } }
+  return result;
 }
 
 export function main(): null {

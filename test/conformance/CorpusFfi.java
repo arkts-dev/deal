@@ -321,21 +321,19 @@ public final class CorpusFfi {
         }
         Path library = buildDir.resolve(NATIVE_LIBRARY_NAME);
         try {
-            Process gcc = new ProcessBuilder("gcc", "-shared", "-fPIC",
-                "-O2", "-o", library.toString(), nativeSource.toString())
-                .redirectErrorStream(true)
-                .start();
-            String output = new String(
-                gcc.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
-            int exit = gcc.waitFor();
+            var gcc = deal.test.BoundedProcess.runCaptured(List.of("gcc", "-shared", "-fPIC",
+                "-O2", "-o", library.toString(), nativeSource.toString()));
+            String output = gcc.stdout() + gcc.stderr();
+            int exit = gcc.exitCode();
+            if (gcc.stdoutTruncated() || gcc.stderrTruncated()) throw new IllegalStateException(
+                "the FFI native-library bootstrap capture was truncated");
             if (exit != 0 || !Files.isRegularFile(library)) {
                 throw new IllegalStateException(
                     "the FFI native-library bootstrap failed (gcc exit "
                         + exit + "): " + output.trim());
             }
         } catch (IOException | InterruptedException e) {
-            Thread.interrupted(); // clear the residual flag (no-op normally)
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new IllegalStateException(
                 "the FFI native-library bootstrap failed: "
                     + e.getMessage());

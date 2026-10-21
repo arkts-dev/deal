@@ -29,7 +29,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
-public class JsConformanceTest {
+public class CorpusConformanceTest {
+    private static final ThreadLocal<Backend> TARGET = ThreadLocal.withInitial(() -> Backend.JS);
+    private static String backend() { return TARGET.get().name().toLowerCase(java.util.Locale.ROOT); }
+    private static final Set<String> completedLegs = ConcurrentHashMap.newKeySet();
+    private static final Set<String> requiredLegs = new java.util.TreeSet<>();
 
     private static final CompilerInvocation LANE_INVOCATION =
         CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
@@ -52,7 +56,7 @@ public class JsConformanceTest {
     private enum Kind {
         /** compile-ok / compile-error — backend-neutral frontend gate. */
         FRONTEND,
-        /** runtime-ok / runtime-error — JS-applicable backend test. */
+        /** runtime-ok / runtime-error — three production-backend obligations. */
         APPLICABLE,
         /** @expected: companion — classified support module;
          *  standalone-compiled, never node-executed standalone. */
@@ -222,6 +226,10 @@ public class JsConformanceTest {
             // wrong-shaped implementation is a harness failure, never a
             // pass).
             validateHostHarness();
+            for (String tool : List.of("luajit", "javac", "gcc")) {
+                var check = BoundedProcess.runCaptured(List.of(tool, tool.equals("luajit") ? "-v" : "--version"));
+                if (check.exitCode() != 0) throw new HarnessFailure("TOOL_MISSING: " + tool);
+            }
 
             // The corpus capture controls next: the bounded capture's
             // cap boundary and the structured verdict's refusal of
@@ -232,6 +240,10 @@ public class JsConformanceTest {
             List<TestFile> tests = discoverTests();
             List<Classified> classified = classifyAll(tests);
             computeCompanionAccounting(tests, classified);
+            for (Classified item : classified) if (item.kind() == Kind.APPLICABLE) {
+                var sidecar = sidecarOf(item.test().path());
+                for (String backend : sidecar.byBackend().keySet()) requiredLegs.add(item.test().relativePath() + ":" + backend);
+            }
 
             int frontend = (int) classified.stream()
                 .filter(c -> c.kind() == Kind.FRONTEND).count();
@@ -239,15 +251,14 @@ public class JsConformanceTest {
                 .filter(c -> c.kind() == Kind.APPLICABLE).count();
             int companions = (int) classified.stream()
                 .filter(c -> c.kind() == Kind.COMPANION).count();
-            System.out.println("=== DEAL v1.3 JavaScript Corpus "
-                + "Conformance (ISSUE-0278 — JsConformanceTest) ===");
+            System.out.println("=== DEAL v1.3 Production Corpus Conformance (JS / LuaJIT / JVM) ===");
             System.out.println("Root: " + conformanceRoot);
             System.out.println("Node: available (a missing node is a hard "
                 + "run failure, never a skip)");
             System.out.println("Discovered " + tests.size()
                 + " backend-runtime conformance test(s): " + frontend
                 + " frontend-classified, " + applicable
-                + " JS-applicable backend-runtime, " + companions
+                + " runtime fixtures (three backend obligations each), " + companions
                 + " companions (classified support modules)");
             System.out.println();
 
@@ -257,6 +268,7 @@ public class JsConformanceTest {
             ordered.sort(Comparator.comparing(
                 c -> c.test().relativePath()));
 
+            CorpusExecution.controls();
             int jobs = Integer.parseInt(System.getProperty("deal.test.jobs", "1"));
             if (jobs < 1) {
                 throw new IllegalArgumentException("deal.test.jobs must be positive");
@@ -297,14 +309,8 @@ public class JsConformanceTest {
     /** Probes that {@code node} is invocable and functional (the same
      * hard gate the JS e2e runner uses). */
     private static boolean probeNode() {
-        try {
-            Process probe = new ProcessBuilder("node", "--version")
-                .redirectErrorStream(true).start();
-            return probe.waitFor(30, TimeUnit.SECONDS)
-                && probe.exitValue() == 0;
-        } catch (IOException | InterruptedException e) {
-            return false;
-        }
+        try { return BoundedProcess.runCaptured(List.of("node", "--version")).exitCode() == 0; }
+        catch (IOException | InterruptedException e) { return false; }
     }
 
     // =========================================================================
@@ -603,7 +609,23 @@ public class JsConformanceTest {
         try {
             Outcome outcome = switch (classified.kind()) {
                 case FRONTEND -> runFrontend(classified);
-                case APPLICABLE -> runApplicable(classified);
+                case APPLICABLE -> {
+                    Outcome last = null;
+                    for (Backend target : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM)) {
+                        TARGET.set(target);
+                        try { last = runApplicable(classified); }
+                        catch (Throwable e) {
+                            applicableFailed.incrementAndGet();
+                            last = new Outcome(classified.test(), classified, false, backend() + ": " + e);
+                        }
+                        outcomes.add(last);
+                        log("    " + backend() + ": " + (last.pass() ? "PASS" : "FAIL " + last.message()));
+                        if (last.pass() && !completedLegs.add(classified.test().relativePath() + ":" + backend()))
+                            throw new HarnessFailure("duplicate consumer leg");
+                    }
+                    TARGET.remove();
+                    yield null;
+                }
                 case COMPANION -> runCompanion(classified);
             };
             if (outcome != null) {
@@ -626,6 +648,7 @@ public class JsConformanceTest {
                     false, "runner exception: " + e.getMessage()));
             }
         } finally {
+            TARGET.remove();
             WORKER_OUTPUT.remove();
             synchronized (CONSOLE_LOCK) {
                 System.out.print(buffer);
@@ -1059,17 +1082,20 @@ public class JsConformanceTest {
                 deal.test.conformance.SidecarExpectations
                         .StructuredExpectationSidecar sidecar =
                     sidecarOf(test.path());
+                List<CompilerDiagnostic> errors = run.diagnostics().stream().filter(d -> "error".equals(d.severity())).toList();
                 if (sidecar != null
-                        && sidecar.expectationFor("js")
+                        && sidecar.expectationFor(backend())
                             instanceof deal.test.conformance
                                 .SidecarExpectations.RuntimeExpectation
                                 .Rejected rejected
-                        && "E6006".equals(rejected.code())
-                        && run.diagnostics().stream().anyMatch(
-                            d -> "error".equals(d.severity())
-                                && "E6006".equals(d.code()))
-                        && !Files.exists(outputRoot.resolve(
-                            entryModulePath + ".js"))) {
+                        && errors.size() == 1
+                        && rejected.code().equals(errors.getFirst().code())
+                        && (!rejected.line().isPresent() || rejected.line().getAsInt() == errors.getFirst().line())
+                        && (!rejected.column().isPresent() || rejected.column().getAsInt() == errors.getFirst().column())
+                        && !Files.exists(outputRoot.resolve(entryModulePath + ".js"))
+                        && !Files.exists(outputRoot.resolve(entryModulePath + ".lua"))
+                        && !Files.exists(outputRoot.resolve(deal.codegen.jvm.JvmNames.classNameFor(
+                            (corpusRelOf(test.path()) + "/main").replace('/', '.')) + ".java"))) {
                         applicablePassed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] OK (compile-reject E6006 "
@@ -1090,7 +1116,7 @@ public class JsConformanceTest {
             // or deployment is never a pass.
             Path entryArtifact = outputRoot.resolve(
                 entryModulePath + ".js");
-            if (!Files.exists(entryArtifact)) {
+            if (TARGET.get() == Backend.JS && !Files.exists(entryArtifact)) {
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] FAIL (JS codegen produced no '"
@@ -1099,7 +1125,7 @@ public class JsConformanceTest {
                     "no .js artifact produced");
             }
             Path runtimeArtifact = outputRoot.resolve("deal/runtime.js");
-            if (!Files.exists(runtimeArtifact)) {
+            if (TARGET.get() == Backend.JS && !Files.exists(runtimeArtifact)) {
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] FAIL (deal/runtime.js not deployed — a "
@@ -1112,7 +1138,7 @@ public class JsConformanceTest {
             // host implementation lands at
             // <outputRoot>/<raw specifier>.js, the file the emitted
             // relative require resolves.
-            for (String hostName : hostNames) {
+            for (String hostName : TARGET.get() == Backend.JS ? hostNames : Set.<String>of()) {
                 byte[] hostSource = HOST_JS.get(hostName);
                 if (hostSource == null) {
                     throw new HarnessFailure("no HOST_JS implementation "
@@ -1129,7 +1155,7 @@ public class JsConformanceTest {
             // 6. The fixture's structured expectation: the runtime-ok and
             // runtime-error lanes both compare through it (the exact
             // comparator, never a code substring). The runner reports
-            // exactly the optional error fields the js sidecar pins, so
+            // exactly the optional error fields the backend sidecar pins, so
             // the observation stays sidecar-authoritative and an unpinned
             // field never leaks into the snapshot.
             deal.test.conformance.SidecarExpectations
@@ -1137,7 +1163,10 @@ public class JsConformanceTest {
                 sidecarOf(test.path());
             deal.test.conformance.SidecarExpectations.RuntimeExpectation
                 jsExpectation = sidecar == null ? null
-                    : sidecar.expectationFor("js");
+                    : sidecar.expectationFor(backend());
+            if (jsExpectation == null) throw new HarnessFailure("missing backend expectation: " + backend());
+            if (jsExpectation instanceof deal.test.conformance.SidecarExpectations.RuntimeExpectation.Rejected)
+                throw new HarnessFailure("expected compile rejection, but production compilation succeeded");
             List<String> pinnedOptionals = new ArrayList<>();
             if (jsExpectation instanceof deal.test.conformance
                     .SidecarExpectations.RuntimeExpectation.Executed
@@ -1159,17 +1188,31 @@ public class JsConformanceTest {
             // DEAL_ERROR_SNAPSHOT on stdout, exit 1, empty stderr), which
             // the structured comparator consumes field-exact.
             ProgramNode entryProgram = parseEntryProgram(entryFile);
-            Files.writeString(outputRoot.resolve("JsConformanceRunner.js"),
-                buildJsCorpusRunner(entryProgram,
-                    entryModulePath, sourcePins(written, entryFile,
-                        corpusRelOf(test.path())),
-                    corpusTokens(projectRoot, written, entryFile,
-                        corpusRelOf(test.path())),
-                    pinnedOptionals));
-
-            // 7. Execute the deployed artifact set with a real node
-            // subprocess.
-            NodeResult result = runNode(outputRoot);
+            boolean expectedFailure = jsExpectation instanceof deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed executed && executed.isRuntimeError();
+            List<CorpusExecution.Probe> probes = CorpusExecution.probes(entryProgram, expectedFailure);
+            NodeResult result;
+            if (TARGET.get() == Backend.JS) {
+                Files.writeString(outputRoot.resolve("JsConformanceRunner.js"),
+                    buildJsCorpusRunner(entryProgram, entryModulePath,
+                        sourcePins(written, entryFile, corpusRelOf(test.path())),
+                        corpusTokens(projectRoot, written, entryFile, corpusRelOf(test.path())), pinnedOptionals, probes));
+                result = runNode(outputRoot);
+            } else {
+                Map<String, CorpusExecution.Source> pins = new LinkedHashMap<>();
+                sourcePins(written, entryFile, corpusRelOf(test.path())).forEach((path, pin) ->
+                    pins.put(path, new CorpusExecution.Source(pin.corpusPath(), pin.headerLines())));
+                String module = (corpusRelOf(test.path()) + "/main").replace('/', '.');
+                var capture = CorpusExecution.run(TARGET.get(), outputRoot, module, probes, pins,
+                    corpusTokens(projectRoot, written, entryFile, corpusRelOf(test.path())), pinnedOptionals,
+                    hostNames, hostFixturesRoot);
+                result = new NodeResult(capture.exitCode(), capture.stdout(), capture.stderr(),
+                    capture.stdoutTruncated(), capture.stderrTruncated());
+            }
+            boolean loadFailure = expectedFailure && ((deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed)jsExpectation)
+                .error().code().equals("FFI_LIBRARY_LOAD") || expectedFailure &&
+                ((deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed)jsExpectation).error().code().equals("E8011");
+            var invocationFailure = CorpusExecution.receiptVerdict(outputRoot, probes, expectedFailure, loadFailure);
+            if (invocationFailure.isPresent()) throw new HarnessFailure(backend() + ": " + invocationFailure.get() + "; exit=" + result.exitCode() + "; stdout=" + result.stdout() + "; stderr=" + result.stderr());
 
             // The capture contract comes first: a capture that hit the
             // shared helper's per-stream cap is an incomplete observation —
@@ -1214,7 +1257,7 @@ public class JsConformanceTest {
                     }
                 } else {
                     mismatch = Optional.of("the runtime-error fixture "
-                        + "carries no js sidecar expectation — a missing "
+                        + "carries no backend sidecar expectation — a missing "
                         + "exact expectation is a corpus defect, never a "
                         + "pass");
                 }
@@ -1226,7 +1269,7 @@ public class JsConformanceTest {
                             + mismatch.get());
                     return new Outcome(test, classified, false,
                         "structured expectation mismatch: "
-                            + mismatch.get());
+                            + mismatch.get() + " [exit=" + result.exitCode() + ", stderr=" + result.stderr() + "]");
                 }
                 if (runtimeErrorMode) {
                     if (!(jsExpectation instanceof deal.test.conformance
@@ -1235,12 +1278,12 @@ public class JsConformanceTest {
                             || !executed.isRuntimeError()) {
                             applicableFailed.incrementAndGet();
                             log("  [" + test.relativePath()
-                                + "] FAIL (the js sidecar does not pin a "
+                                + "] FAIL (the backend sidecar does not pin a "
                                 + "runtime error)");
                         return new Outcome(test, classified, false,
-                            "the js sidecar does not pin a runtime error");
+                            "the backend sidecar does not pin a runtime error");
                     }
-                    if (runtimeErrorObservation.get() == null
+                    if (TARGET.get() == Backend.JS && runtimeErrorObservation.get() == null
                             && executed.error().actual().isPresent()
                             && executed.error().pinsSpan()) {
                         runtimeErrorObservation.compareAndSet(null,
@@ -1310,14 +1353,17 @@ public class JsConformanceTest {
                     StandardCharsets.UTF_8));
                 System.setErr(new PrintStream(captured, true,
                     StandardCharsets.UTF_8));
-                CompilationOrchestrator orchestrator =
-                    new CompilationOrchestrator(
-                        entryFile.toAbsolutePath().normalize(),
-                        outputRoot.toAbsolutePath().normalize(),
-                        false, false, false, false, Backend.JS,
-                        externalsDeclarations,
-                        List.of(projectRoot.toAbsolutePath().normalize()),
-                        REPO_ROOT, null, LANE_INVOCATION);
+                CompilationOrchestrator orchestrator;
+                if (externalsDeclarations.keySet().stream().anyMatch(k -> deal.test.conformance.CorpusFfi.isFfiImport(conformanceRoot, k))) {
+                    var located = deal.project.ProjectLocator.locate(entryFile.toAbsolutePath().toString(), null);
+                    if (located.context() == null) throw new HarnessFailure("invalid corpus project: " + located.e2010());
+                    orchestrator = new CompilationOrchestrator(located.context(), entryFile.toAbsolutePath().normalize(),
+                        false, false, false, false, null, LANE_INVOCATION);
+                } else {
+                    orchestrator = new CompilationOrchestrator(entryFile.toAbsolutePath().normalize(),
+                        outputRoot.toAbsolutePath().normalize(), false, false, false, false, TARGET.get(),
+                        externalsDeclarations, List.of(projectRoot.toAbsolutePath().normalize()), REPO_ROOT, null, LANE_INVOCATION);
+                }
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success,
                     orchestrator.diagnostics(),
@@ -1349,9 +1395,9 @@ public class JsConformanceTest {
             throws IOException {
         StringBuilder dealJson = new StringBuilder();
         dealJson.append("{\n  \"languageVersion\": \"1.3\",\n");
-        dealJson.append("  \"moduleRoots\": [\".\"],\n");
-        dealJson.append("  \"output\": \"out\",\n");
-        dealJson.append("  \"backend\": \"js\"");
+        dealJson.append("  \"moduleRoots\": [\"conformance\"],\n");
+        dealJson.append("  \"output\": \"conformance/out\",\n");
+        dealJson.append("  \"backend\": \"").append(backend()).append("\"");
         Map<String, String> externals = new LinkedHashMap<>();
 
         for (String raw : ffiImports) {
@@ -1360,7 +1406,7 @@ public class JsConformanceTest {
                     conformanceRoot, raw);
             if (wiring == null) {
                 throw new HarnessFailure(
-                    "no corpus FFI wiring for " + raw + " — the JS lane "
+                    "no corpus FFI wiring for " + raw + " — the corpus driver "
                         + "cannot wire the externals entry");
             }
             Path declaration = conformanceRoot.resolve(
@@ -1406,7 +1452,7 @@ public class JsConformanceTest {
                 Files.writeString(declTarget,
                     sourceSnapshot(decl).stripped());
                 dealJson.append("    \"host/").append(hostName)
-                    .append("\": { \"declaration\": \"")
+                    .append("\": { \"declaration\": \"conformance/")
                     .append(declRel).append("\" }");
 
                 String declPath = declTarget.toAbsolutePath()
@@ -1420,14 +1466,17 @@ public class JsConformanceTest {
                 }
                 first = false;
                 dealJson.append("    \"").append(raw)
-                    .append("\": { \"declaration\": \"bindings/ffi/")
-                    .append(raw.replace('/', '_'))
-                    .append(".d.deal\" }");
+                    .append("\": { \"declaration\": \"conformance/bindings/ffi/")
+                    .append(raw.replace('/', '_')).append(".d.deal\"");
+                dealJson.append(", \"nativeLibrary\": ")
+                    .append(jsStringLiteral(deal.test.conformance.CorpusFfi.loaderTextFor(conformanceRoot,
+                        deal.test.conformance.CorpusFfi.wiringFor(conformanceRoot, raw))));
+                dealJson.append(" }");
             }
             dealJson.append("\n  }");
         }
         dealJson.append("\n}\n");
-        Files.writeString(projectRoot.resolve("deal.json"), dealJson);
+        Files.writeString(projectRoot.getParent().resolve("deal.json"), dealJson);
         return externals;
     }
 
@@ -1717,23 +1766,11 @@ public class JsConformanceTest {
      */
     private static String buildJsCorpusRunner(ProgramNode program,
             String entryModule, Map<String, SourcePin> sourcePins,
-            Map<String, String> corpusTokens, List<String> pinnedOptionals) {
-        boolean hasMain = false;
-        List<String> zeroAry = new ArrayList<>();
-        for (StatementNode stmt : program.statements()) {
-            if (stmt instanceof ExportDeclaration ed
-                    && ed.declaration() instanceof FunctionDeclaration fd
-                    && fd.params().isEmpty()
-                    && !fd.name().contains("$")) {
-                if (fd.name().equals("main")) {
-                    hasMain = true;
-                } else {
-                    zeroAry.add(fd.name());
-                }
-            }
-        }
+            Map<String, String> corpusTokens, List<String> pinnedOptionals, List<CorpusExecution.Probe> probes) {
+        boolean hasMain = true;
+        List<String> zeroAry = probes.stream().map(CorpusExecution.Probe::name).filter(n -> !n.equals("main")).toList();
         StringBuilder sb = new StringBuilder();
-        sb.append("// Generated by deal.test.JsConformanceTest — JS corpus runner.\n");
+        sb.append("// Generated by deal.test.CorpusConformanceTest — JS corpus adapter.\n");
         sb.append("// Requires the entry artifact, invokes main once first when\n");
         sb.append("// exported, then the remaining zero-arity exported wrappers in\n");
         sb.append("// declaration order (each exactly once, results discarded), and\n");
@@ -1746,6 +1783,7 @@ public class JsConformanceTest {
         sb.append("\"use strict\";\n");
         sb.append("const $path = require(\"path\");\n");
         sb.append("const $rt = require(\"./deal/runtime\");\n");
+        sb.append("const $fs = require('fs'); const $mark = s => $fs.appendFileSync('").append(CorpusExecution.RECEIPT).append("',s+'\\n');\n");
         sb.append("const $order = [");
         boolean firstEntry = true;
         if (hasMain) {
@@ -1879,13 +1917,12 @@ function $snapshot($err) {
         // failure (a host loadHost E8011, a module-load error) routes
         // through the same framing — never a raw uncaught stack trace.
         sb.append("(async () => {\n");
-        sb.append("  const $entry = require(\"./").append(entryModule)
-            .append("\");\n");
+        sb.append("  $mark('load:start'); const $entry = require(\"./").append(entryModule)
+            .append("\"); $mark('load:done');\n");
         sb.append("  for (const $k of $order) {\n");
         sb.append("    const $v = $entry[$k];\n");
-        sb.append("    if ($v && $v.$kind === \"function\") {\n");
-        sb.append("      await $v.$f();\n");
-        sb.append("    }\n");
+        sb.append("    if (!$v || $v.$kind !== 'function') throw new Error('missing corpus probe '+$k);\n");
+        sb.append("    $mark($k+':start'); await $v.$f(); $mark($k+':done');\n");
         sb.append("  }\n");
         sb.append("})().catch(($e) => {\n");
         sb.append("  const $err = $rt.reifyError($e);\n");
@@ -2041,7 +2078,7 @@ function $snapshot($err) {
             return Optional.of(refusal);
         }
         return deal.test.conformance.StructuredExpectationComparator
-            .compare("js", pinned,
+            .compare(backend(), pinned,
                 new deal.test.conformance.LaneExecution.Executed(
                     result.stdout.getBytes(StandardCharsets.UTF_8),
                     result.stderr.getBytes(StandardCharsets.UTF_8),
@@ -2352,8 +2389,7 @@ function $snapshot($err) {
 
     private static void printReport(List<Outcome> sorted) {
         System.out.println();
-        System.out.println("=== DEAL v1.3 JavaScript Corpus Conformance "
-            + "Summary (ISSUE-0278 — JsConformanceTest) ===");
+        System.out.println("=== DEAL v1.3 Production Corpus Conformance Summary ===");
 
         int ft = frontendTotal.get();
         int fp = frontendPassed.get();
@@ -2365,10 +2401,10 @@ function $snapshot($err) {
         int at = applicableTotal.get();
         int ap = applicablePassed.get();
         int af = applicableFailed.get();
-        int denominator = onDiskRuntimeDenominator;
+        int denominator = onDiskRuntimeDenominator * 3;
         double pct = denominator == 0 ? 0.0
             : ap * 100.0 / denominator;
-        System.out.printf("Backend-runtime on Node: denominator %d, passed %d, "
+        System.out.printf("Backend obligations (JS/LuaJIT/JVM, execution or exact rejection): denominator %d, passed %d, "
             + "failed %d, node subprocess runs %d — pass rate %.1f%%%n",
             denominator, ap, af, nodeExecuted.get(), pct);
         System.out.println();
@@ -2429,7 +2465,7 @@ function $snapshot($err) {
             ok = false;
         }
         if (pct < 100.0) {
-            System.out.println("GATE FAILURE: node-executed pass rate "
+            System.out.println("GATE FAILURE: backend-obligation pass rate "
                 + String.format(java.util.Locale.ROOT, "%.1f", pct)
                 + "% below the 100% threshold (denominator "
                 + denominator + ")");
@@ -2476,7 +2512,13 @@ function $snapshot($err) {
                 + "runtime denominator " + denominator);
             ok = false;
         }
-        int classifiedTotal = ft + at + ct;
+        int classifiedTotal = ft + at / 3 + ct;
+        if (!completedLegs.equals(requiredLegs)) {
+            Set<String> missing = new java.util.TreeSet<>(requiredLegs); missing.removeAll(completedLegs);
+            Set<String> unexpected = new java.util.TreeSet<>(completedLegs); unexpected.removeAll(requiredLegs);
+            System.out.println("GATE FAILURE: backend consumer conservation: missing " + missing + "; unexpected " + unexpected);
+            ok = false;
+        }
         if (classifiedTotal != onDiskTotal) {
             System.out.println("GATE FAILURE: classified total (FRONTEND "
                 + "+ APPLICABLE + COMPANION) "
@@ -2488,7 +2530,7 @@ function $snapshot($err) {
             System.exit(1);
         }
         System.out.println("Gates PASSED: frontend 100%; backend-runtime "
-            + "on node zero failures and 100% of the node-executed "
+            + "on all three production backends zero failures and 100% of the declared "
             + denominator + "-test denominator; companion counts equal the "
             + "on-disk corpus and every companion standalone-compiles and "
             + "participates in its importers' temp projects.");

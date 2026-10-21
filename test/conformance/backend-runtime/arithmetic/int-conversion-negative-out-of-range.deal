@@ -1,0 +1,12 @@
+// @spec: Runtime execution model — Intrinsic conversions
+// @description: int() below the signed 32-bit minimum raises E8004 independently of the positive-overflow probe
+// @expected: runtime-error E8004
+// @features: runtime, int, conversion, overflow
+
+export function test_int_conversion_negative_out_of_range(): int {
+  return int(-2147483649.0);
+}
+
+export function main(): null {
+  return null;
+}
