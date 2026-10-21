@@ -1886,9 +1886,14 @@ public final class TypeChecker {
             contextualClassDecl = savedContextual;
         }
 
-        // Intrinsic call?
+        // Intrinsic call? The callee's own visible binding decides: a
+        // lexically shadowing local, parameter or enclosing-block binding
+        // — and a same-block `let` that is not declared yet
+        // (docs/spec-v1.3.md §Name resolution — Declaration order) —
+        // precedes the root intrinsic, exactly as checkIdentifier
+        // resolved the callee expression's type above.
         if (call.callee() instanceof IdentifierExpr id) {
-            Symbol sym = currentScope.resolve(id.name());
+            Symbol sym = resolveVisibleBinding(id.name());
             if (sym instanceof Symbol.IntrinsicSymbol is) {
                 return is.resolver().checkCall(call, argTypes, ctx);
             }

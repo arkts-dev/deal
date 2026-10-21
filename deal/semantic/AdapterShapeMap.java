@@ -12,6 +12,7 @@ import deal.semantic.ir.SemanticOpKind;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 public final class AdapterShapeMap {
 
@@ -80,6 +81,27 @@ public final class AdapterShapeMap {
                                             Function<String, Symbol> resolve) {
         Objects.requireNonNull(source, "source must not be null");
         Objects.requireNonNull(resolve, "resolve must not be null");
+        return sourceShapeAtPosition(source,
+            name -> isConversionIntrinsic(resolve.apply(name)));
+    }
+
+    /**
+     * The source-shape classification of one adapted source expression
+     * under a per-position intrinsic predicate: the caller's own
+     * per-occurrence resolution decides whether an identifier denotes a
+     * {@code int}/{@code number}/{@code bytes} intrinsic at its position
+     * (docs/spec-v1.3.md §Name resolution — a lexically shadowing local,
+     * parameter, enclosing-block or module-level binding precedes the
+     * compiler intrinsics), so a shadowed name classifies as the
+     * {@link SourceShape#BINDING_REFERENCE} it is, never as the intrinsic.
+     * Every non-identifier arm keeps the closed classification of
+     * {@link #sourceShapeOf(ExpressionNode, Function)}.
+     */
+    public static SourceShape sourceShapeAtPosition(ExpressionNode source,
+                                                    Predicate<String> positionIsIntrinsic) {
+        Objects.requireNonNull(source, "source must not be null");
+        Objects.requireNonNull(positionIsIntrinsic,
+            "positionIsIntrinsic must not be null");
         if (source instanceof AwaitExpression) {
             return SourceShape.AWAITED_RESULT;
         }
@@ -87,16 +109,22 @@ public final class AdapterShapeMap {
             return SourceShape.FUNCTION_EXPRESSION;
         }
         if (source instanceof IdentifierExpr identifier) {
-            Symbol symbol = resolve.apply(identifier.name());
-            if (symbol instanceof Symbol.IntrinsicSymbol intrinsic
-                    && ("int".equals(intrinsic.name())
-                        || "number".equals(intrinsic.name())
-                        || "bytes".equals(intrinsic.name()))) {
-                return SourceShape.INTRINSIC_FUNCTION_VALUE;
-            }
-            return SourceShape.BINDING_REFERENCE;
+            return positionIsIntrinsic.test(identifier.name())
+                ? SourceShape.INTRINSIC_FUNCTION_VALUE
+                : SourceShape.BINDING_REFERENCE;
         }
         return SourceShape.NON_IDENTIFIER_EXPRESSION;
+    }
+
+    /**
+     * True iff the resolved symbol is one of the conversion/allocation
+     * intrinsics ({@code int}, {@code number}, {@code bytes}).
+     */
+    private static boolean isConversionIntrinsic(Symbol symbol) {
+        return symbol instanceof Symbol.IntrinsicSymbol intrinsic
+            && ("int".equals(intrinsic.name())
+                || "number".equals(intrinsic.name())
+                || "bytes".equals(intrinsic.name()));
     }
 
     // =========================================================================

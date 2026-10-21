@@ -1,0 +1,6 @@
+// @expected: companion
+// @description: Classified support module — the import alias in the
+// importing fixture is named bytes, so the imported module binding
+// (step 4 of the v1.3 name-resolution order) precedes the compiler
+// intrinsic (step 5). Keep it compiling standalone.
+export function convert(n: int): int { return n + 1; }
