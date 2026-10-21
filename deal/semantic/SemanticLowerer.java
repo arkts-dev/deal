@@ -9027,7 +9027,7 @@ public final class SemanticLowerer {
             OpId valueOp;
             OpId commitOp;
             try {
-                ValueId container = lowerExpression(access.object());
+                ValueId container = lowerOperand(access.object());
                 containerOp = producerOpId(container);
                 value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
@@ -9385,7 +9385,7 @@ public final class SemanticLowerer {
             OpId containerOp;
             OpId commitOp;
             try {
-                ValueId container = lowerExpression(access.object());
+                ValueId container = lowerOperand(access.object());
                 containerOp = producerOpId(container);
                 commitOp = emitNullOp(SemanticOpKind.MEMBER_DELETE,
                     new KindPayload.MemberDeletePayload(container, access.field()),
@@ -14288,7 +14288,7 @@ public final class SemanticLowerer {
         }
 
         private ValueId lowerMemberRead(MemberAccessExpr access, ValueId slot) {
-            return lowerTableRead(lowerExpression(access.object()), access.field(),
+            return lowerTableRead(lowerOperand(access.object()), access.field(),
                 access.span(), checkedType(access), slot, access);
         }
 
@@ -14491,12 +14491,12 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Lowers one operator operand, condition expression, or index
-         * receiver/key expression: the operand's completed value plus, for
-         * an identifier read whose checked type is a null-narrowing
-         * refinement of the binding's declared nullable type (declared
-         * {@code T | null}, read as {@code T}), the {@code NARROWED_READ}
-         * validation of that read.
+         * Lowers one operator operand, condition expression, index
+         * receiver/key expression, or table member receiver expression:
+         * the operand's completed value plus, for an identifier read whose
+         * checked type is a null-narrowing refinement of the binding's
+         * declared nullable type (declared {@code T | null}, read as
+         * {@code T}), the {@code NARROWED_READ} validation of that read.
          *
          * <p>docs/spec-v1.3.md Nullable semantics keeps calls
          * non-invalidating on purpose, so a capturing closure call can
@@ -14515,11 +14515,17 @@ public final class SemanticLowerer {
          * commit's resolved receiver/key reference the admitted value
          * (the chain's closed A-D9 child shape is unchanged: the
          * admission is the receiver/key child itself). An index read uses
-         * the admitted value as its {@code INDEX_READ} container/key.
-         * Every other position (a declaration, assignment, parameter,
-         * return, class/array construction or element write) is a typed
-         * boundary owned by its own cell, which keeps its recorded
-         * projection — the array-element E8003 arm included.</p>
+         * the admitted value as its {@code INDEX_READ} container/key. A
+         * table member read/write/delete lowers its receiver through this
+         * helper too, so the {@code MEMBER_READ}/{@code MEMBER_WRITE}/
+         * {@code MEMBER_DELETE} operation dereferences the admitted value
+         * (the chain's container child is the admission) and never the
+         * unadmitted read — the receiver is a consumed value like any
+         * other, not a typed-boundary position. Every other position (a
+         * declaration, assignment, parameter, return, class/array
+         * construction or element write) is a typed boundary owned by its
+         * own cell, which keeps its recorded projection — the
+         * array-element E8003 arm included.</p>
          */
         private ValueId lowerOperand(ExpressionNode expr) {
             return emitNarrowedReadCheck(expr, lowerExpression(expr));

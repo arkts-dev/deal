@@ -1,0 +1,138 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The member-position controls of the call-preserved narrowing refinement: a call-preserved refinement whose value is still valid flows through table member reads, writes, deletes and the nested address chain unchanged, the contextual read keeps the absent-versus-present-null key results, and after a capturing closure clears the binding every member position raises its own catchable E8001 with the typed-boundary message — recorded and asserted outside the consumer so a missing admission fails instead of silently skipping the consumer — while the aliased table keeps its member value, proving a failed write or delete mutates nothing.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, tables, runtime-errors
+
+function expectNoError(what: string): null {
+  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+}
+
+function expectCaught(e: Error, what: string): null {
+  if (e.code !== "E8001") {
+    throw { code: "CONTROL_FAIL", message: what + ": expected E8001, got " + e.code };
+  }
+  if (e.message !== "expected table") {
+    throw { code: "CONTROL_FAIL", message: what + ": expected the typed-boundary text, got " + e.message };
+  }
+  return null;
+}
+
+function expectEqual(what: string, actual: int, expected: int): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+export function main(): null {
+  // A call between the narrowing and the member read does not invalidate the
+  // refinement, and the valid value flows through every member position
+  // unchanged: the admission republishes the read and the member operation
+  // consumes the admitted value.
+  let returns: int = 0;
+  let bump: () => int = function(): int {
+    returns = returns + 1;
+    return 9;
+  };
+  let config: table | null = {a: 1, inner: {b: 3}};
+  let noop: () => null = function(): null {
+    return null;
+  };
+  if (config !== null) {
+    noop();
+    let stored: int = config.a;
+    expectEqual("member read after a call", stored, 1);
+    config.a = bump();
+    let written: int = config.a;
+    expectEqual("member write", written, 9);
+    expectEqual("member write evaluates its right side once", returns, 1);
+    config.inner.b = 4;
+    let nested: table = config.inner;
+    let deep: int = nested.b;
+    expectEqual("nested address chain write", deep, 4);
+    config.a = 5;
+    let beforeDelete: int = config.a;
+    expectEqual("member value before the delete", beforeDelete, 5);
+    delete config.a;
+    let afterDelete: int | null = config.a;
+    expectTrue("member delete removes the key", afterDelete === null);
+    config.a = 6;
+  }
+
+  // The contextual table read keeps the absent-versus-present-null key
+  // results: a member read is not rewritten by the refinement admission,
+  // with a plain receiver and through a refined receiver alike.
+  let slots: table = {present: null, value: 7};
+  let presentNull: int | null = slots.present;
+  let absent: int | null = slots.absent;
+  let presentValue: int = slots.value;
+  expectTrue("present null key reads as null", presentNull === null);
+  expectTrue("absent key reads as null", absent === null);
+  expectEqual("present value key", presentValue, 7);
+  if (config !== null) {
+    let narrowedPresentNull: int | null = config.present;
+    let narrowedAbsent: int | null = config.absent;
+    expectTrue("narrowed receiver: present null key reads as null",
+      narrowedPresentNull === null);
+    expectTrue("narrowed receiver: absent key reads as null", narrowedAbsent === null);
+  }
+
+  // After the capturing closure clears the binding, every member position
+  // raises its own catchable typed-boundary error at the receiver.
+  let keep: table = {a: 1};
+  let t: table | null = keep;
+  let clear: () => null = function(): null {
+    t = null;
+    return null;
+  };
+  if (t !== null) {
+    clear();
+    let caught: int = 0;
+    try {
+      let value: int = t.a;
+      expectNoError("member read");
+    } catch (e) {
+      expectCaught(e, "member read");
+      caught = caught + 1;
+    }
+    expectEqual("member read raised", caught, 1);
+    try {
+      t.a = 2;
+      expectNoError("member write");
+    } catch (e) {
+      expectCaught(e, "member write");
+      caught = caught + 1;
+    }
+    expectEqual("member write raised", caught, 2);
+    try {
+      delete t.a;
+      expectNoError("member delete");
+    } catch (e) {
+      expectCaught(e, "member delete");
+      caught = caught + 1;
+    }
+    expectEqual("member delete raised", caught, 3);
+    try {
+      t.inner.b = 4;
+      expectNoError("nested address chain write");
+    } catch (e) {
+      expectCaught(e, "nested address chain write");
+      caught = caught + 1;
+    }
+    expectEqual("nested address chain write raised", caught, 4);
+    // The failed write and delete mutated nothing: the aliased table still
+    // holds its original member value.
+    let kept: int = keep.a;
+    expectEqual("a failed member write or delete mutates nothing", kept, 1);
+    let keptAgain: int | null = keep.a;
+    expectTrue("the aliased member is still present", keptAgain !== null);
+  }
+  return null;
+}

@@ -2063,6 +2063,9 @@ public class AddressChainLoweringTest {
         }
         check(op.kind() == SemanticOpKind.BOUNDARY,
             what + " is a BOUNDARY op");
+        if (op.kind() != SemanticOpKind.BOUNDARY) {
+            return;
+        }
         KindPayload.BoundaryPayload boundary = (KindPayload.BoundaryPayload) op.payload();
         check(boundary.kind() == kind,
             what + " carries kind " + kind + " (got " + boundary.kind() + ")");
@@ -2078,6 +2081,179 @@ public class AddressChainLoweringTest {
         checkParentage(what, op, chain.opId());
         check(op.origin().kind() == SourceOriginKind.USER,
             what + " keeps the read's own USER origin");
+    }
+
+    /**
+     * A null-narrowed read consumed as a table member's receiver is the same
+     * unvalidated consumer class: the read is admitted through the
+     * {@code NARROWED_READ} cell and the {@code MEMBER_READ} /
+     * {@code MEMBER_WRITE} / {@code MEMBER_DELETE} operation dereferences the
+     * admitted value — never the unadmitted read. The admission is the
+     * chain's container child itself, so the closed A-D9 child shape (count,
+     * positions, parentage) is unchanged and the protocol still validates the
+     * unit.
+     */
+    static void testNarrowedMemberReceiverAdmission() {
+        System.out.println("-- Refined member receiver: the NARROWED_READ admission is the "
+            + "member operation's receiver --");
+
+        // The refined reads are the member operations' receivers; the
+        // checker publishes exactly those identifier reads in
+        // CheckResult.narrowedReads (declared table | null, read as table).
+        IdentifierExpr writeReceiver = ident("t", 3);
+        MemberAccessExpr writeTarget = member(writeReceiver, "a", 3);
+        LiteralExpr value = intLit(2, 9);
+        AssignmentExpr write = assign(writeTarget, value);
+        IdentifierExpr deleteReceiver = ident("t", 16);
+        MemberAccessExpr deleteTarget = member(deleteReceiver, "b", 16);
+        DeleteStatement remove = delete(deleteTarget);
+        IdentifierExpr readReceiver = ident("t", 30);
+        MemberAccessExpr read = member(readReceiver, "c", 30);
+        SymbolTable table = new SymbolTable();
+        table.define("t", new Symbol.VariableSymbol("t",
+            new Type.Nullable(Type.Table.INSTANCE), false));
+        CheckResult checked = new CheckResult(
+            Map.of(writeReceiver, Type.Table.INSTANCE, writeTarget, Type.Int.INSTANCE,
+                value, Type.Int.INSTANCE, deleteReceiver, Type.Table.INSTANCE,
+                deleteTarget, Type.Int.INSTANCE, readReceiver, Type.Table.INSTANCE,
+                read, Type.Int.INSTANCE),
+            table, Map.of(), List.of(), Map.of(), Map.of(), Map.of(),
+            Set.of(writeReceiver, deleteReceiver, readReceiver));
+
+        SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
+        lowerer.openForEachScope("t");
+        lowerer.lowerAssignment(write);
+        lowerer.lowerDelete(remove);
+        lowerer.lowerExpression(read);
+        lowerer.closeForEachScope();
+        List<SemanticOp> opList = lowerer.ops();
+        check(AddressChainProtocol.validate(protocolUnit(opList)).isEmpty(),
+            "the admission-bearing member chains pass the production-time "
+                + "address-chain protocol: " + AddressChainProtocol.validate(protocolUnit(opList)));
+
+        Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
+        for (SemanticOp op : opList) {
+            byId.put(op.opId(), op);
+        }
+        SemanticOp writeChain = null;
+        SemanticOp deleteChain = null;
+        SemanticOp memberRead = null;
+        for (SemanticOp op : opList) {
+            if (op.kind() == SemanticOpKind.ASSIGN
+                    && ((KindPayload.AssignPayload) op.payload()).targetKind()
+                        == AssignTargetKind.TABLE_SLOT) {
+                writeChain = op;
+            }
+            if (op.kind() == SemanticOpKind.DELETE
+                    && ((KindPayload.DeletePayload) op.payload()).targetKind()
+                        == DeleteTargetKind.TABLE_SLOT) {
+                deleteChain = op;
+            }
+            if (op.kind() == SemanticOpKind.MEMBER_READ) {
+                memberRead = op;
+            }
+        }
+        check(writeChain != null, "the slice carries one ASSIGN TABLE_SLOT chain");
+        check(deleteChain != null, "the slice carries one DELETE TABLE_SLOT chain");
+        check(memberRead != null, "the slice carries one MEMBER_READ");
+        if (writeChain == null || deleteChain == null || memberRead == null) {
+            return;
+        }
+
+        // (a) The member write: [containerOp, valueOp, commitOp(MEMBER_WRITE)]
+        // keeps its closed three-child shape, and the container child is the
+        // admission the commit writes through.
+        KindPayload.AssignPayload writePayload =
+            (KindPayload.AssignPayload) writeChain.payload();
+        check(writePayload.childOps().size() == 3,
+            "the member write keeps the closed three-child shape; got "
+                + writePayload.childOps().size());
+        if (writePayload.childOps().size() == 3) {
+            SemanticOp receiverCell = byId.get(writePayload.childOps().get(0));
+            SemanticOp commit = byId.get(writePayload.childOps().get(2));
+            checkAdmission("the member write's container child", receiverCell,
+                BoundaryKind.NARROWED_READ, RuntimeDescriptor.Table.INSTANCE, writeChain);
+            check(commit != null && commit.kind() == SemanticOpKind.MEMBER_WRITE,
+                "the member write's commit child is the MEMBER_WRITE op");
+            if (receiverCell != null && commit != null
+                    && receiverCell.kind() == SemanticOpKind.BOUNDARY) {
+                KindPayload.MemberWritePayload commitWrite =
+                    (KindPayload.MemberWritePayload) commit.payload();
+                check(commitWrite.table().equals(receiverCell.result()),
+                    "the member write writes through the admitted receiver");
+                check(!commitWrite.table().equals(
+                        ((KindPayload.BoundaryPayload) receiverCell.payload()).input()),
+                    "the member write never reuses the unadmitted receiver read identity");
+            }
+        }
+
+        // (b) The member delete: [containerOp, commitOp(MEMBER_DELETE)] keeps
+        // its closed two-child shape, and the container child is the
+        // admission the commit deletes through.
+        KindPayload.DeletePayload deletePayload =
+            (KindPayload.DeletePayload) deleteChain.payload();
+        check(deletePayload.childOps().size() == 2,
+            "the member delete keeps the closed two-child shape; got "
+                + deletePayload.childOps().size());
+        if (deletePayload.childOps().size() == 2) {
+            SemanticOp receiverCell = byId.get(deletePayload.childOps().get(0));
+            SemanticOp commit = byId.get(deletePayload.childOps().get(1));
+            checkAdmission("the member delete's container child", receiverCell,
+                BoundaryKind.NARROWED_READ, RuntimeDescriptor.Table.INSTANCE, deleteChain);
+            check(commit != null && commit.kind() == SemanticOpKind.MEMBER_DELETE,
+                "the member delete's commit child is the MEMBER_DELETE op");
+            if (receiverCell != null && commit != null
+                    && receiverCell.kind() == SemanticOpKind.BOUNDARY) {
+                KindPayload.MemberDeletePayload commitDelete =
+                    (KindPayload.MemberDeletePayload) commit.payload();
+                check(commitDelete.table().equals(receiverCell.result()),
+                    "the member delete deletes through the admitted receiver");
+                check(!commitDelete.table().equals(
+                        ((KindPayload.BoundaryPayload) receiverCell.payload()).input()),
+                    "the member delete never reuses the unadmitted receiver read identity");
+            }
+        }
+
+        // (c) The member read: the MEMBER_READ's table operand is the admitted
+        // receiver (the admission's result), never the raw refined read.
+        KindPayload.MemberReadPayload readPayload =
+            (KindPayload.MemberReadPayload) memberRead.payload();
+        SemanticOp readReceiverCell = null;
+        for (SemanticOp op : opList) {
+            if (op.result() instanceof ValueId valueId
+                    && valueId.equals(readPayload.table())) {
+                readReceiverCell = op;
+            }
+        }
+        check(readReceiverCell != null,
+            "the member read's table operand is produced by a prior step");
+        boolean readAdmitted = readReceiverCell != null
+            && readReceiverCell.kind() == SemanticOpKind.BOUNDARY
+            && ((KindPayload.BoundaryPayload) readReceiverCell.payload()).kind()
+                == BoundaryKind.NARROWED_READ;
+        check(readAdmitted,
+            "the member read's table operand is the admitted receiver (the "
+                + "admission's result), never the raw refined read");
+        if (readAdmitted) {
+            KindPayload.BoundaryPayload boundary =
+                (KindPayload.BoundaryPayload) readReceiverCell.payload();
+            check(boundary.descriptor().equals(RuntimeDescriptor.Table.INSTANCE),
+                "the member read's admission carries the read's refined descriptor table");
+            check(readReceiverCell.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+                "the member read's admission carries the descriptor-kind policy");
+            check(readReceiverCell.origin().kind() == SourceOriginKind.USER,
+                "the member read's admission keeps the read's own USER origin");
+            check(!boundary.input().equals(readReceiverCell.result()),
+                "the member read's admission publishes a distinct admitted value");
+        }
+        long admissions = opList.stream()
+            .filter(op -> op.kind() == SemanticOpKind.BOUNDARY
+                && ((KindPayload.BoundaryPayload) op.payload()).kind()
+                    == BoundaryKind.NARROWED_READ)
+            .count();
+        check(admissions == 3,
+            "the slice carries exactly the three refined-read admissions (write, delete "
+                + "and read receiver); got " + admissions);
     }
 
     public static void main(String[] args) {
@@ -2098,6 +2274,7 @@ public class AddressChainLoweringTest {
         testComposedAdmissionOrder();
         testModuleCorpusAndDeterminism();
         testNarrowedReceiverAndKeyAdmission();
+        testNarrowedMemberReceiverAdmission();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

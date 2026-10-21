@@ -465,7 +465,17 @@ public class CanonicalProjectionParityTest {
         mainEntry("types/narrowed-capture-array-receiver-write-e8001"),
         mainEntry("types/narrowed-capture-array-index-write-e8001"),
         mainEntry("types/narrowed-capture-array-receiver-read-e8001"),
-        mainEntry("types/narrowed-capture-array-index-read-e8001"));
+        mainEntry("types/narrowed-capture-array-index-read-e8001"),
+        // The narrowed table member receiver (ISSUE-0871): the member
+        // read/write/delete and the address chain's nested member read
+        // consume the admitted receiver, so a cleared binding reports the
+        // typed-boundary tuple at the read instead of a raw backend index
+        // error (LuaJIT), a null dereference (JVM) or a reified native
+        // TypeError (JS).
+        mainEntry("types/narrowed-capture-table-member-read-e8001"),
+        mainEntry("types/narrowed-capture-table-member-write-e8001"),
+        mainEntry("types/narrowed-capture-table-member-delete-e8001"),
+        mainEntry("types/narrowed-capture-table-member-chain-e8001"));
 
     /**
      * The runtime-ok class-identity controls with a corpus pin: the
@@ -486,7 +496,14 @@ public class CanonicalProjectionParityTest {
         // The index-position controls: the refined receiver/key flows
         // through array, table and bytes reads and writes unchanged, and a
         // cleared binding raises its own catchable E8001 at each position.
-        mainEntry("types/narrowed-capture-index-controls"));
+        mainEntry("types/narrowed-capture-index-controls"),
+        // The member-position controls (ISSUE-0871): the refined receiver
+        // flows through table member reads, writes, deletes and the nested
+        // address chain unchanged, the contextual read keeps the
+        // absent-versus-present-null key results, and a cleared binding
+        // raises its own catchable E8001 at each member position with the
+        // aliased table left unmutated.
+        mainEntry("types/narrowed-capture-member-controls"));
 
     /**
      * The lane-protocol runtime-ok corpus pins (ISSUE-0857;
