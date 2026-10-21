@@ -82,8 +82,9 @@ public final class TypeChecker {
     //    refinement is a flow-sensitive claim about a mutable binding: an
     //    indirect mutation (a capturing closure call) can leave the binding
     //    null while the claim still holds, so the one lowering validates
-    //    every such read at an operator operand/condition position (the
-    //    positions with no owning typed boundary) and reports the standard
+    //    every such read at an operator operand/condition, index
+    //    receiver/key and table member receiver position (the positions
+    //    with no owning typed boundary) and reports the standard
     //    typed-boundary projection instead of coercing the value or letting
     //    a raw backend error escape. The fact is recorded here because the
     //    checker owns the narrowing analysis and its scope-correct binding
@@ -1657,7 +1658,8 @@ public final class TypeChecker {
                 && Types.equals(nullable.inner(), narrowedType)) {
             // The read is a refinement claim (declared T | null, read as
             // T): publish the fact the one lowering consumes at the
-            // operator operand and condition positions.
+            // operator operand, condition, index receiver/key and table
+            // member receiver positions.
             narrowedReads.add(id);
         }
         // The checked expression fact of every class-typed binding read:

@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared T | null binding read as a table member write's receiver is validated before the write: the chain reports the typed-boundary tuple (E8001, expected table, actual null) at the receiver instead of a raw index error or a null dereference, and no member is written.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, tables, runtime-errors
+
+export function main(): null {
+  let t: table | null = {a: 1};
+  let clear: () => null = function(): null {
+    t = null;
+    return null;
+  };
+  if (t !== null) {
+    clear();
+    t.a = 2;
+  }
+  return null;
+}

@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared T | null binding read as an address chain's outer receiver (t.a.b = 1) is validated where that read stands: the nested member read reports the typed-boundary tuple (E8001, expected table, actual null) at the receiver instead of a raw index error or a null dereference, and the chain commits nothing.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, tables, runtime-errors
+
+export function main(): null {
+  let t: table | null = {a: 1};
+  let clear: () => null = function(): null {
+    t = null;
+    return null;
+  };
+  if (t !== null) {
+    clear();
+    t.a.b = 2;
+  }
+  return null;
+}
