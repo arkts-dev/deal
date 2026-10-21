@@ -94,6 +94,22 @@ function assertErrorMessage(fn, expectedCode, needle) {
   return err;
 }
 
+// The closed JSON_STRINGIFY_UNSUPPORTED tuple exactly as the shipped JS
+// realization publishes it: E8001, the arm's own message carrying the
+// carrier-kind token, the arm's pinned expected text, the same token as
+// actual, and the caller's forwarded span — the fields the corpus fixture
+// stdlib/json/json-stringify-nonfinite pins for the luajit/jvm/js lanes, so
+// the shipped module and the compiled lanes agree field for field.
+function assertUnsupportedStringifyTuple(fn, token, label) {
+  const err = assertErrorCode(fn, "E8001");
+  assertEqual(err.message, "unsupported type for JSON encoding: " + token,
+    label + " message");
+  assertEqual(err.expected, "string, number, boolean, or table", label + " expected");
+  assertEqual(err.actual, token, label + " actual");
+  assertSpan(err, "f.js", 1, 1);
+  return err;
+}
+
 // ===========================================================================
 // Module surfaces (the epic's all-six-modules criterion: exact member sets,
 // pinned signature strings, wrapper shapes)
@@ -517,21 +533,23 @@ test("json.stringify rejects a stored wrapper with the function E8001", function
     "unsupported type for JSON encoding: function");
 });
 
-test("json.stringify rejects NaN with E8001", function() {
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ x: NaN }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: number");
+test("json.stringify rejects NaN with the closed unsupported tuple", function() {
+  assertUnsupportedStringifyTuple(function() { json.stringify.$f(rt.makeTable({ x: NaN }), "f.js", 1, 1); },
+    "number", "NaN member");
   const nested = rt.makeTable({ val: NaN });
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ data: nested }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: number");
+  assertUnsupportedStringifyTuple(function() {
+    json.stringify.$f(rt.makeTable({ data: nested }), "f.js", 1, 1);
+  }, "number", "nested NaN");
 });
 
-test("json.stringify rejects Infinity with E8001", function() {
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ x: Infinity }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: number");
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ x: -Infinity }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: number");
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ data: [1, Infinity] }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: number");
+test("json.stringify rejects Infinity with the closed unsupported tuple", function() {
+  assertUnsupportedStringifyTuple(function() { json.stringify.$f(rt.makeTable({ x: Infinity }), "f.js", 1, 1); },
+    "number", "Infinity member");
+  assertUnsupportedStringifyTuple(function() { json.stringify.$f(rt.makeTable({ x: -Infinity }), "f.js", 1, 1); },
+    "number", "negative Infinity member");
+  assertUnsupportedStringifyTuple(function() {
+    json.stringify.$f(rt.makeTable({ data: [1, Infinity] }), "f.js", 1, 1);
+  }, "number", "array Infinity");
 });
 
 test("json.stringify rejects a self-referencing table with the cycle E8001", function() {
@@ -565,15 +583,16 @@ test("json.stringify rejects a bytes value with the explicit bytes E8001 arm", f
     "unsupported type for JSON encoding: bytes");
 });
 
-test("json.stringify rejects unpaired-surrogate string values with E8001", function() {
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: string");
+test("json.stringify rejects unpaired-surrogate string values with the closed unsupported tuple", function() {
+  assertUnsupportedStringifyTuple(function() {
+    json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1);
+  }, "string", "invalid scalar leaf");
 });
 
 test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and mixed-key array-marked)", function() {
   const plain = rt.makeTable({ ["\uD800"]: 1 });
-  assertErrorMessage(function() { json.stringify.$f(plain, "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: string");
+  assertUnsupportedStringifyTuple(function() { json.stringify.$f(plain, "f.js", 1, 1); },
+    "string", "invalid scalar key");
   // The array-marked Map comes from the shared decode conversion (the
   // declared parse exit rejects a top-level array, so the decode
   // producer is the runtime member). It can never reach the declared
@@ -582,8 +601,8 @@ test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and m
   // consumes.
   const marked = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   marked.set("\uD800", 3);
-  assertErrorMessage(function() { rt.jsonStringifyText(marked, [], "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: string");
+  assertUnsupportedStringifyTuple(function() { rt.jsonStringifyText(marked, [], "f.js", 1, 1); },
+    "string", "array-marked invalid scalar key");
 });
 
 // ===========================================================================
