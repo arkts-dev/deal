@@ -1,0 +1,187 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The for-of iterable admission controls: a valid narrowed array or string iterable still evaluates once and iterates live positions with fresh per-iteration bindings, break and continue intact, empty and nonempty arrays consumed, and string scalars unchanged; after a capturing closure clears the binding each loop reports its own catchable E8001 at the iterable with zero body visits, recorded and asserted outside the loop and the try, so a missing admission fails here instead of escaping as a raw backend dereference.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, control-flow, for-of, arrays, strings, runtime-errors
+
+function expectEqual(what: string, actual: int, expected: int): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+function expectCaught(what: string, e: Error, code: string): null {
+  if (e.code !== code) {
+    throw { code: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.code };
+  }
+  return null;
+}
+
+export function main(): null {
+  // A valid refinement is admitted unchanged: the narrowed array iterable
+  // still supplies every element once.
+  let items: int[] | null = [1, 2, 3];
+  if (items !== null) {
+    let total: int = 0;
+    for (let n: int of items) {
+      total = total + n;
+    }
+    expectEqual("narrowed array iteration", total, 6);
+  }
+
+  // An empty array is a valid iterable: the loop body never runs.
+  let empty: int[] | null = [];
+  if (empty !== null) {
+    let visits: int = 0;
+    for (let n: int of empty) {
+      visits = visits + 1;
+    }
+    expectEqual("empty array visits", visits, 0);
+  }
+
+  // The iterable expression completes exactly once: the call runs once and
+  // its one carrier supplies every element.
+  let calls: int = 0;
+  let build: () => int[] = function(): int[] {
+    calls = calls + 1;
+    return [7, 8];
+  };
+  let built: int = 0;
+  for (let n: int of build()) {
+    built = built + n;
+  }
+  expectEqual("iterable evaluated once", calls, 1);
+  expectEqual("iterable value consumed", built, 15);
+
+  // Live iteration: an appended position and an unvisited replacement are
+  // observed, while reassigning the binding never redirects the traversal.
+  let live: int[] | null = [1, 4];
+  if (live !== null) {
+    let alias: int[] = live;
+    let visited: int = 0;
+    for (let n: int of live) {
+      if (n === 1) {
+        alias[1] = 2;
+        alias[2] = 3;
+      }
+      visited = visited + 1;
+    }
+    expectEqual("live array positions", visited, 3);
+  }
+  let original: int[] = [1, 2];
+  let redirect: int[] = [9, 9, 9, 9];
+  let target: int[] | null = original;
+  if (target !== null) {
+    let visited: int = 0;
+    for (let n: int of target) {
+      target = redirect;
+      visited = visited + 1;
+    }
+    expectEqual("reassignment cannot redirect traversal", visited, 2);
+  }
+
+  // Break and continue keep targeting the for-of op.
+  let numbers: int[] | null = [1, 2, 3, 4, 5];
+  if (numbers !== null) {
+    let broken: int = 0;
+    for (let n: int of numbers) {
+      if (n === 3) {
+        break;
+      }
+      broken = broken + n;
+    }
+    expectEqual("for-of break", broken, 3);
+    let continued: int = 0;
+    for (let n: int of numbers) {
+      if (n === 3) {
+        continue;
+      }
+      continued = continued + n;
+    }
+    expectEqual("for-of continue", continued, 12);
+  }
+
+  // Each iteration still creates a fresh binding for a captured variable.
+  let source: int[] | null = [1, 2, 3];
+  if (source !== null) {
+    let captured: (() => int)[] = [
+      function(): int { return -1; },
+      function(): int { return -1; },
+      function(): int { return -1; }
+    ];
+    let index: int = 0;
+    for (let n: int of source) {
+      captured[index] = function(): int { return n; };
+      index = index + 1;
+    }
+    expectEqual("fresh binding first", captured[0](), 1);
+    expectEqual("fresh binding second", captured[1](), 2);
+    expectEqual("fresh binding third", captured[2](), 3);
+  }
+
+  // String iteration is unchanged: one Unicode scalar value per iteration.
+  let text: string | null = "aé中";
+  if (text !== null) {
+    let scalars: int = 0;
+    let joined: string = "";
+    for (let c: string of text) {
+      scalars = scalars + 1;
+      joined = joined + c;
+    }
+    expectEqual("string scalar count", scalars, 3);
+    expectTrue("string scalar content", joined === "aé中");
+  }
+
+  // After a capturing closure clears the binding, the for-of iterable
+  // admission raises a catchable E8001 before the body runs. The catch is
+  // recorded inside and asserted outside the loop and the try, so a raw
+  // backend dereference (or a silently skipped loop) fails the control.
+  let cleared: int[] | null = [1, 2];
+  let clearArray: () => null = function(): null {
+    cleared = null;
+    return null;
+  };
+  if (cleared !== null) {
+    clearArray();
+    let visits: int = 0;
+    let caught: int = 0;
+    try {
+      for (let n: int of cleared) {
+        visits = visits + 1;
+      }
+    } catch (e) {
+      expectCaught("array iterable admission", e, "E8001");
+      caught = caught + 1;
+    }
+    expectEqual("array iterable admission raised", caught, 1);
+    expectEqual("array iterable body visits", visits, 0);
+  }
+  let clearedName: string | null = "ab";
+  let clearName: () => null = function(): null {
+    clearedName = null;
+    return null;
+  };
+  if (clearedName !== null) {
+    clearName();
+    let visits: int = 0;
+    let caught: int = 0;
+    try {
+      for (let c: string of clearedName) {
+        visits = visits + 1;
+      }
+    } catch (e) {
+      expectCaught("string iterable admission", e, "E8001");
+      caught = caught + 1;
+    }
+    expectEqual("string iterable admission raised", caught, 1);
+    expectEqual("string iterable body visits", visits, 0);
+  }
+  return null;
+}

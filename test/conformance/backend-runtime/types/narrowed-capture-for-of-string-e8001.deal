@@ -1,0 +1,19 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared nullable string iterable is admitted at the for-of iterable: the loop reports the typed-boundary tuple (E8001, expected string, actual null) at the read before its initialization dereferences the carrier — never a raw backend byte read — and the body never runs; string iteration itself is unchanged.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, control-flow, for-of, strings, runtime-errors
+
+export function main(): null {
+  let name: string | null = "ab";
+  let clear: () => null = function(): null {
+    name = null;
+    return null;
+  };
+  if (name !== null) {
+    clear();
+    for (let c: string of name) {
+      throw { code: "TEST_FAIL", message: "the loop body must not run" };
+    }
+  }
+  return null;
+}

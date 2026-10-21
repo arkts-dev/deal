@@ -449,7 +449,10 @@ public class CanonicalProjectionParityTest {
         // direct condition arm (if, while, the control-flow for and the
         // let-headed for) has its own uncaught fixture, so the in-place
         // condition admission's exact tuple is pinned per arm, not only
-        // through the logical branch's operand path.
+        // through the logical branch's operand path. The for-of iterable is
+        // the same kind of consumer (ISSUE-0873): the loop's prior-step
+        // admission reports the tuple at the read before its initialization
+        // dereferences the carrier, for the array and the string arm.
         mainEntry("types/narrowed-capture-arithmetic-e8001"),
         mainEntry("types/narrowed-capture-unary-e8001"),
         mainEntry("types/narrowed-capture-comparison-e8001"),
@@ -461,6 +464,8 @@ public class CanonicalProjectionParityTest {
         mainEntry("types/narrowed-capture-condition-for-e8001"),
         mainEntry("types/narrowed-capture-condition-for-let-e8001"),
         mainEntry("types/narrowed-capture-string-e8001"),
+        mainEntry("types/narrowed-capture-for-of-array-e8001"),
+        mainEntry("types/narrowed-capture-for-of-string-e8001"),
         mainEntry("types/narrowed-capture-array-element-e8003"),
         mainEntry("types/narrowed-capture-array-element-function-e8003"),
         mainEntry("types/narrowed-capture-array-index-e8001"),
@@ -506,6 +511,11 @@ public class CanonicalProjectionParityTest {
         // cleared-binding consumer raises its own catchable DEAL error with
         // the recorded code (E8001, or E8003 at the array-element cell).
         mainEntry("types/narrowed-capture-controls"),
+        // The for-of iterable controls (ISSUE-0873): a valid narrowed
+        // array/string iterable evaluates once and iterates live positions
+        // with fresh bindings, break and continue intact; a cleared binding
+        // raises its own catchable E8001 with zero body visits.
+        mainEntry("types/narrowed-capture-for-of-controls"),
         // The index-position controls: the refined receiver/key flows
         // through array, table and bytes reads and writes unchanged, and a
         // cleared binding raises its own catchable E8001 at each position.

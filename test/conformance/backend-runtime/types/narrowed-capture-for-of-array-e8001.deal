@@ -1,0 +1,19 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A call-preserved narrowing refinement whose binding a capturing closure cleared is admitted at the for-of iterable: the loop reports the typed-boundary tuple (E8001, expected array, actual null) at the read before its initialization dereferences the carrier — never a raw backend nil/NULL dereference — and the body never runs.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, control-flow, for-of, arrays, runtime-errors
+
+export function main(): null {
+  let xs: int[] | null = [1];
+  let clear: () => null = function(): null {
+    xs = null;
+    return null;
+  };
+  if (xs !== null) {
+    clear();
+    for (let n: int of xs) {
+      throw { code: "TEST_FAIL", message: "the loop body must not run" };
+    }
+  }
+  return null;
+}

@@ -966,6 +966,108 @@ public class ControlFlowLoweringTest {
             label + ": the left comparison never publishes the condition identity");
     }
 
+    /**
+     * The for-of iterable is an operand position without an owning typed
+     * boundary (ISSUE-0873): a null-narrowing-refined identifier read is
+     * admitted by one {@code NARROWED_READ} op in the enclosing block
+     * before the {@code FOR_EACH} dereferences the carrier, and the loop
+     * consumes that admitted value — never a second read, so the iterable
+     * still completes exactly once. Both iterable arms are covered: the
+     * array carrier and the string carrier (string iteration itself is
+     * unchanged).
+     */
+    static void testNarrowedForOfIterableAdmission() {
+        System.out.println("-- FOR_EACH: the refined iterable is admitted before the loop --");
+        narrowedForOfIterable("the array arm", """
+            let xs: int[] | null = [1, 2];
+            if (xs !== null) {
+              for (let n: int of xs) { break; }
+            }
+            """, IterationMode.ARRAY_VALUES,
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE));
+        narrowedForOfIterable("the string arm", """
+            let name: string | null = "ab";
+            if (name !== null) {
+              for (let c: string of name) { break; }
+            }
+            """, IterationMode.STRING_SCALARS, RuntimeDescriptor.String.INSTANCE);
+    }
+
+    /** One refined for-of iterable slice through the full-program session. */
+    static void narrowedForOfIterable(String label, String source,
+                                      IterationMode mode, RuntimeDescriptor descriptor) {
+        CheckedSlice slice = checkSlice(source);
+        if (slice == null) {
+            return;
+        }
+        SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModuleFullProgram(
+            moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32, detectedCoverage(slice),
+            INTERFACE_HASH, REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(MODULE)));
+        check(result != null && !result.hasErrors(),
+            label + ": the refined for-of slice lowers: "
+                + (result == null ? "null" : result.diagnostics()));
+        if (result == null || result.hasErrors()) {
+            return;
+        }
+        List<SemanticOp> ops = result.unit().ops();
+        List<SemanticOp> forEaches = ofKind(ops, SemanticOpKind.FOR_EACH);
+        check(forEaches.size() == 1,
+            label + ": exactly one FOR_EACH op; got " + forEaches.size());
+        if (forEaches.size() != 1) {
+            return;
+        }
+        SemanticOp forEach = forEaches.get(0);
+        KindPayload.ForEachPayload payload =
+            (KindPayload.ForEachPayload) forEach.payload();
+        check(payload.mode() == mode, label + ": the mode is " + mode);
+        SemanticOp admission = null;
+        for (SemanticOp op : ofKind(ops, SemanticOpKind.BOUNDARY)) {
+            if (op.payload() instanceof KindPayload.BoundaryPayload boundary
+                    && boundary.kind() == BoundaryKind.NARROWED_READ) {
+                admission = op;
+            }
+        }
+        check(admission != null,
+            label + ": the iterable carries one NARROWED_READ admission");
+        if (admission == null) {
+            return;
+        }
+        KindPayload.BoundaryPayload boundary =
+            (KindPayload.BoundaryPayload) admission.payload();
+        check(payload.iterable().equals(admission.result()),
+            label + ": the FOR_EACH consumes the admitted value, never a second read");
+        check(boundary.descriptor().equals(descriptor),
+            label + ": the admission's refined descriptor is "
+                + descriptor.canonicalSpecText());
+        check(admission.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+            label + ": the admission carries the TYPE_DESCRIPTOR policy");
+        SemanticOp load = null;
+        for (SemanticOp op : ofKind(ops, SemanticOpKind.BINDING_LOAD)) {
+            if (op.result().equals(boundary.input())) {
+                load = op;
+            }
+        }
+        check(load != null,
+            label + ": the admission input is the iterable's binding read");
+        if (load == null) {
+            return;
+        }
+        check(ops.indexOf(load) < ops.indexOf(admission)
+                && ops.indexOf(admission) < ops.indexOf(forEach),
+            label + ": the read, then the admission, then the FOR_EACH");
+        ForOfStatement statement = first(slice.program(), ForOfStatement.class);
+        Span iterableSpan = statement.iterable().span();
+        check(admission.origin().span().startLine() == iterableSpan.startLine()
+                && admission.origin().span().startColumn() == iterableSpan.startColumn(),
+            label + ": the admission origin is the iterable read's own span");
+        check(admission.origin().kind() == SourceOriginKind.USER,
+            label + ": the admission origin is USER");
+        check(java.util.Objects.equals(forEach.origin().parentOpId(),
+                admission.origin().parentOpId()),
+            label + ": the read admission and the FOR_EACH share one enclosing block");
+    }
+
     static void testTestlessForArm(SemanticLowerer.LoweringResult result) {
         System.out.println("-- Test-less FOR: one CONST true in initBlock, update ops only --");
 
@@ -2076,6 +2178,7 @@ public class ControlFlowLoweringTest {
         testWhileArm();
         testForArm();
         testNarrowedLogicalForCondition();
+        testNarrowedForOfIterableAdmission();
         testForEachArrayValuesArm();
         testTryCatchThrowArm();
         testBreakContinueTargets();

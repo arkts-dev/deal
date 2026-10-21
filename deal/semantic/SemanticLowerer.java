@@ -8460,9 +8460,15 @@ public final class SemanticLowerer {
          * Lowers one checked for-of statement with a string-typed
          * iterable through the D1 arm: the iterable prior step, the
          * {@code FOR_EACH} op, then the body block's statements under the
-         * loop-binding frame. An array-typed iterable fails hard with
-         * {@link ConstructUnlowered} ({@code FOR_EACH(ARRAY_VALUES)} is
-         * E5's).
+         * loop-binding frame. The iterable is lowered through
+         * {@link #lowerOperand(ExpressionNode)}: a null-narrowing-refined
+         * identifier read is admitted by its {@code NARROWED_READ} cell,
+         * so a capturing closure that cleared the binding reports the
+         * typed-boundary failure before the loop dereferences the
+         * iterable — the {@code FOR_EACH} consumes the admitted value and
+         * the iterable still completes exactly once. An array-typed
+         * iterable fails hard with {@link ConstructUnlowered}
+         * ({@code FOR_EACH(ARRAY_VALUES)} is E5's).
          *
          */
         public OpId lowerForOfStatement(ForOfStatement stmt) {
@@ -8477,7 +8483,7 @@ public final class SemanticLowerer {
                     + "iterables only)", stmt.span());
             }
             BlockId bodyBlock = allocateBlock();
-            ValueId iterable = lowerExpression(stmt.iterable());
+            ValueId iterable = lowerOperand(stmt.iterable());
             ForEachFrame frame = openForEachScope(stmt.varName());
             openForEachBindingFrame(stmt.varName(), frame, bodyBlock);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -8577,10 +8583,19 @@ public final class SemanticLowerer {
             }
         }
 
+        /**
+         * The array for-of arm: the iterable is lowered through
+         * {@link #lowerOperand(ExpressionNode)}, so a null-narrowing-refined
+         * identifier read is admitted by its {@code NARROWED_READ} cell
+         * before this arm dereferences the carrier — a capturing closure
+         * that cleared the binding raises the typed-boundary failure with
+         * zero body visits, the {@code FOR_EACH} consumes the admitted
+         * value, and the iterable still completes exactly once.
+         */
         private OpId lowerArrayForOf(ForOfStatement stmt, Type.Array arrayType) {
             containerElementDescriptor(arrayType.element(), stmt.iterable().span());
             BlockId bodyBlock = allocateBlock();
-            ValueId iterable = lowerExpression(stmt.iterable());
+            ValueId iterable = lowerOperand(stmt.iterable());
             ForEachFrame frame = openForEachScope(stmt.varName());
             openForEachBindingFrame(stmt.varName(), frame, bodyBlock);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
