@@ -1,5 +1,5 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: An @jsonable class helper's toJson accepts a host-returned plain Lua table at a table field, a plain table nested in a table carrier, the host table's own nested object and array members, and a table[] element holding a host table; the exact JSON text is identical on LuaJIT, JVM and JS, and a self-referential host table takes the closed cycle arm (v1.3)
+// @description: An @jsonable class helper's toJson accepts a host-returned plain Lua table at a table field, a plain table nested in a table carrier, the host table's own nested object and array members, and a table[] element holding a host table; the exact JSON text is identical on LuaJIT, JVM and JS. A self-referential host table takes the closed cycle arm, a non-finite numeric leaf of a host table (an object member, a nested plain table's member, an array element) takes the closed finite arm at its own path, and an object key that is not a Unicode scalar sequence takes the closed invalid-unicode arm naming the object's own path (v1.3)
 // @expected: runtime-ok
 // @features: classes, jsonable, toJson, tables, host-abi, v1.3
 
@@ -10,6 +10,19 @@ function check(condition: boolean, message: string): null {
     throw { code: "TEST_FAIL", message: message };
   }
   return null;
+}
+
+// The closed outcome of one helper call: the exact text, or the failure's
+// code and message. Each call is independent (JsonEncodeV13), so a probe
+// never observes another call's state.
+function closedOutcome(w: TableField): string {
+  let outcome: string = "no-failure";
+  try {
+    outcome = "OK:" + TableField$toJson(w);
+  } catch (e) {
+    outcome = e.code + "|" + e.message;
+  }
+  return outcome;
 }
 
 // @jsonable
@@ -46,6 +59,44 @@ export function test_host_table_array_elements(): null {
   let text: string = TableElements$toJson(w);
   check(text === "{\"rows\":[{\"a\":1},{\"inner\":{\"a\":1},\"xs\":[10,20]}]}",
     "a table[] element holding a host table spells " + text);
+  return null;
+}
+
+export function test_host_table_non_finite(): null {
+  let infinite: TableField = { data: host.makeInfinite() };
+  check(closedOutcome(infinite)
+      === "E8001|value at data.a is not JSON serializable: number",
+    "an infinite host-table member takes the closed finite arm: "
+      + closedOutcome(infinite));
+  let nan: TableField = { data: host.makeNotANumber() };
+  check(closedOutcome(nan)
+      === "E8001|value at data.a is not JSON serializable: number",
+    "a not-a-number host-table member takes the closed finite arm: "
+      + closedOutcome(nan));
+  let nested: TableField = { data: host.makeNestedInfinite() };
+  check(closedOutcome(nested)
+      === "E8001|value at data.inner.a is not JSON serializable: number",
+    "a non-finite leaf of a nested plain host table keeps its own path: "
+      + closedOutcome(nested));
+  let elements: TableField = { data: host.makeInfiniteElements() };
+  check(closedOutcome(elements)
+      === "E8001|value at data.xs[0] is not JSON serializable: number",
+    "a non-finite element of an array-shaped host table keeps its index path: "
+      + closedOutcome(elements));
+  return null;
+}
+
+export function test_host_table_invalid_key(): null {
+  let bad: TableField = { data: host.makeBadKey() };
+  check(closedOutcome(bad)
+      === "E8001|value at data is not JSON serializable: invalid-unicode",
+    "an invalid-scalar host-table key names the object's own path: "
+      + closedOutcome(bad));
+  let nested: TableField = { data: host.makeNestedBadKey() };
+  check(closedOutcome(nested)
+      === "E8001|value at data.inner is not JSON serializable: invalid-unicode",
+    "an invalid-scalar key of a nested plain host table names that object: "
+      + closedOutcome(nested));
   return null;
 }
 

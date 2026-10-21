@@ -8957,6 +8957,15 @@ local function __jsonToClassOp(planName, root)
           if text == nil then return fail(elementPath, element) end
           out[#out + 1] = text
         else
+          -- An unmarked numeric leaf (a plain host table carries no
+          -- per-slot marks) is JSON content only when it is finite: the
+          -- non-finite values are not JSON-shaped (docs/spec-v1.3.md:728)
+          -- and take the closed typed-boundary failure at their own
+          -- position, exactly like the JVM/JS walks' finite check.
+          if element ~= element or element == math.huge
+              or element == -math.huge then
+            return fail(elementPath, element)
+          end
           out[#out + 1] = tostring(element)
         end
         return true
@@ -9086,9 +9095,11 @@ local function __jsonToClassOp(planName, root)
           if element == __NULL then element = nil end
           local elementPath = (frame.path == "") and key or (frame.path .. "." .. key)
           -- The object key is a JSON string: an invalid scalar sequence
-          -- fails the walk at this member position like every other
-          -- invalid string carrier (the JVM/JS walks' closed result).
-          if not __jsonValidUtf8(key) then return fail(elementPath, key) end
+          -- fails the walk at the object's own position like every other
+          -- invalid string carrier — the member path would interpolate
+          -- the non-scalar key into the message, so the failure names
+          -- the object exactly as the JVM/JS walks do.
+          if not __jsonValidUtf8(key) then return fail(frame.path, key) end
           if i > 1 then out[#out + 1] = "," end
           out[#out + 1] = __QT .. __jsonEscapeString(key) .. __QT .. ":"
           if not emitValue(element, elementPath, out, frames, frame.marks,

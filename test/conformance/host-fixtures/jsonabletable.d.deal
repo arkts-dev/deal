@@ -7,8 +7,18 @@
 // carry the JSON-shaped data a @jsonable class helper's toJson walk must
 // accept as a plain Lua table (LuaJIT), a runtime table (JVM), or a
 // runtime table Map (JS) — an object, a nested object with an array
-// member, and a self-referential table for the closed cycle arm.
+// member, and a self-referential table for the closed cycle arm. The
+// closed arms' returns carry content the finite acyclic JSON domain
+// excludes: a non-finite numeric leaf (an object member, a nested plain
+// table's member and an array element) and an object key that is not a
+// Unicode scalar sequence (at the root object and inside a nested one).
 
 export function makeTable(): table;
 export function makeNested(): table;
 export function makeCycle(): table;
+export function makeInfinite(): table;
+export function makeNotANumber(): table;
+export function makeNestedInfinite(): table;
+export function makeInfiniteElements(): table;
+export function makeBadKey(): table;
+export function makeNestedBadKey(): table;
