@@ -997,22 +997,43 @@ public final class Parser {
     }
 
     private TypeNode parseNullableType() {
-        // "null |" prefix — can be chained: null | null | T
+        // 'null' is a BuiltinType, and the grammar's ArrayType admits every
+        // PrimaryType with any number of '[]' suffixes. A leading 'null'
+        // therefore starts either the plain null primary, an array whose
+        // element chain is rooted at null (null[], null[][]), or the
+        // "null |" nullable prefix. The array suffixes bind tighter than
+        // '|', so they are consumed before any nullable decision.
         if (match(TokenType.NULL)) {
             Token nullToken = previous();
-            if (match(TokenType.PIPE)) {
+            TypeNode nullType = parseArraySuffixes(new NamedType(spanOf(nullToken), "null"));
+            // "null |" prefix — can be chained: null | null | T
+            if (isPlainNull(nullType) && match(TokenType.PIPE)) {
                 TypeNode inner = parseNullableType();
                 if (inner == null) return null;
                 return new NullableType(spanBetween(nullToken, previousOrCurrent()), inner);
             }
-            // Just "null" — return as NamedType
-            return new NamedType(spanOf(nullToken), "null");
+            return parseNullableSuffix(nullType);
         }
 
         TypeNode inner = parseArrayType();
         if (inner == null) return null;
 
-        // "| null" suffix — can be chained: T | null | null
+        return parseNullableSuffix(inner);
+    }
+
+    /** Whether a parsed type node is the bare {@code null} builtin primary. */
+    private static boolean isPlainNull(TypeNode type) {
+        return type instanceof NamedType named && named.name().equals("null");
+    }
+
+    /**
+     * The "| null" suffix of a nullable type. The grammar admits at most
+     * one suffix; chained forms ({@code T | null | null}) are parsed here
+     * and rejected by the type checker's nullable invariant (E3005) so the
+     * exact diagnostic stays the checker's.
+     */
+    private TypeNode parseNullableSuffix(TypeNode type) {
+        TypeNode inner = type;
         while (match(TokenType.PIPE)) {
             if (match(TokenType.NULL)) {
                 inner = new NullableType(
@@ -1023,14 +1044,18 @@ public final class Parser {
                 break;
             }
         }
-
         return inner;
     }
 
     private TypeNode parseArrayType() {
         TypeNode type = parsePrimaryType();
         if (type == null) return null;
+        return parseArraySuffixes(type);
+    }
 
+    /** Consumes the {@code ('[' ']')*} suffixes of an ArrayType onto its primary. */
+    private TypeNode parseArraySuffixes(TypeNode primary) {
+        TypeNode type = primary;
         while (match(TokenType.LBRACKET)) {
             if (!match(TokenType.RBRACKET)) {
                 error(DiagnosticCode.E1031, "Expected ']' in array type", peek());

@@ -1,0 +1,91 @@
+// @spec: Type system — Type grammar (ArrayType over BuiltinType null)
+// @description: A null array element type written with '[]' suffixes (null[], null[][]) parses wherever the normative Type grammar applies — variable, class field, parameter, return, and for-of annotations, and nested arrays — and the emitted array keeps its read, write, append, length, and iteration behavior; the parenthesized (null)[] spelling stays an equivalent passing control
+// @expected: runtime-ok
+// @features: types, arrays, nullable, parser
+
+import * as console from "std/console";
+
+class Slot {
+  xs: null[] = [null];
+  grid: null[][] = [[null]];
+}
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: what };
+  }
+  return null;
+}
+
+function takeNulls(xs: null[]): null[] {
+  return xs;
+}
+
+function emptyNulls(): null[] {
+  return [];
+}
+
+export function main(): null {
+  // The variable annotation: length, read, append, write, and iteration.
+  let xs: null[] = [null];
+  expectTrue("initial length is one", xs.length === 1);
+  let read0: null = xs[0];
+  xs[xs.length] = null;
+  expectTrue("append grows length to two", xs.length === 2);
+  let appended: null = xs[1];
+  xs[0] = null;
+  let rewritten: null = xs[0];
+  let seen: int = 0;
+  for (let e: null of xs) {
+    seen = seen + 1;
+  }
+  expectTrue("iteration visits every element", seen === xs.length);
+
+  // Repeated suffixes: nested arrays, with the inner row's own write,
+  // append, length, and iteration.
+  let grid: null[][] = [[null], [null, null]];
+  expectTrue("nested outer length", grid.length === 2);
+  expectTrue("nested inner length", grid[1].length === 2);
+  grid[0][0] = null;
+  grid[0][grid[0].length] = null;
+  expectTrue("nested append", grid[0].length === 2);
+  let rows: int = 0;
+  for (let row: null[] of grid) {
+    rows = rows + 1;
+  }
+  expectTrue("nested rows iterate once each", rows === 2);
+  let cells: int = 0;
+  for (let cell: null of grid[1]) {
+    cells = cells + 1;
+  }
+  expectTrue("nested inner row iterates", cells === 2);
+
+  // The nullable prefix and suffix forms over a null array canonicalize
+  // onto the same Nullable<null[]> type.
+  let left: null | null[] = [null, null];
+  let right: null[] | null = left;
+  if (right !== null) {
+    expectTrue("left null canonicalizes onto the null array", right.length === 2);
+  }
+
+  // The parenthesized control spelling keeps its own behavior.
+  let parenthesized: (null)[] = [null];
+  expectTrue("parenthesized control keeps its length", parenthesized.length === 1);
+
+  // The class field annotation, including the defaulted nested field.
+  let slot: Slot = {};
+  expectTrue("field default length", slot.xs.length === 1);
+  slot.xs[slot.xs.length] = null;
+  expectTrue("field append", slot.xs.length === 2);
+  let fieldRead: null = slot.xs[0];
+  expectTrue("field grid default", slot.grid.length === 1);
+
+  // The parameter and return annotations.
+  let shared: null[] = takeNulls(xs);
+  expectTrue("parameter and return annotation", shared.length === xs.length);
+  let none: null[] = emptyNulls();
+  expectTrue("empty null array", none.length === 0);
+
+  console.log("OK");
+  return null;
+}

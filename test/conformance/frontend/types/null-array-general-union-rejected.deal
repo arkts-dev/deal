@@ -1,0 +1,9 @@
+// @spec: Type system — NullableType
+// @description: '|' after a null array admits only 'null'; 'null[] | int' is a general union and stays E1030
+// @expected: compile-error E1030
+// @features: types, parser, nullable, diagnostics
+
+export function main(): null {
+  let mixed: null[] | int = null;
+  return null;
+}

@@ -96,6 +96,18 @@ public class ParserTest {
         return null;
     }
 
+    @SuppressWarnings("unchecked")
+    private static <T extends TypeNode> T assertTypeInstance(TypeNode node, Class<T> clazz,
+            String context) {
+        if (clazz.isInstance(node)) {
+            passed++;
+            return (T) node;
+        }
+        fail(context + ": expected " + clazz.getSimpleName()
+             + ", got " + (node == null ? "null" : node.getClass().getSimpleName()));
+        return null;
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -212,6 +224,9 @@ public class ParserTest {
         testAsyncTypeAnnotation();
         testExportAsyncFunction();
         testAsyncExprStatement();
+
+        // 'null' as a BuiltinType array primary (ISSUE-0879)
+        testNullArrayElementTypeSuffixes();
 
         // @deal-version file directive value validation (DEAL v1.3)
         testDealVersionDirectives();
@@ -2631,6 +2646,176 @@ public class ParserTest {
             "end-to-end: the jsonable event anchors at the LET token");
         check(lex.tokens().get(0).type() == TokenType.LET,
             "end-to-end: LET is the first token");
+    }
+
+    // =========================================================================
+    // 'null' as a BuiltinType array primary: the ArrayType '[]' suffixes
+    // (ISSUE-0879)
+    // =========================================================================
+
+    /** The declared type node of the single `let` statement's annotation. */
+    private static TypeNode letAnnotationType(String source) {
+        ParseResult r = parse(source);
+        assertNoParseErrors(r, source);
+        if (r.program().statements().size() != 1) {
+            fail(source + ": expected one statement, got "
+                + r.program().statements().size());
+            return null;
+        }
+        VariableDeclaration vd = assertInstance(r.program().statements().get(0),
+            VariableDeclaration.class, source);
+        if (vd == null || vd.typeAnnotation().isEmpty()) {
+            fail(source + ": expected a declared type annotation");
+            return null;
+        }
+        return vd.typeAnnotation().get();
+    }
+
+    /** Checks that an array node's element chain is rooted at the null primary. */
+    private static void checkNullElement(ArrayType array, String context) {
+        if (array == null) {
+            return;
+        }
+        NamedType element = assertTypeInstance(array.elementType(), NamedType.class,
+            context);
+        if (element != null) {
+            check(element.name().equals("null"), context
+                + ": element type is null, got " + element.name());
+        }
+    }
+
+    static void testNullArrayElementTypeSuffixes() {
+        System.out.println("-- null as a BuiltinType array primary (ISSUE-0879) --");
+
+        // null[] — one suffix over the null builtin primary.
+        checkNullElement(assertTypeInstance(letAnnotationType("let xs: null[] = [null];"),
+            ArrayType.class, "null[] annotation"), "null[]");
+
+        // null[][] — repeated suffixes nest the array constructor.
+        ArrayType nested = assertTypeInstance(
+            letAnnotationType("let xs: null[][] = [[null]];"),
+            ArrayType.class, "null[][] annotation");
+        checkNullElement(assertTypeInstance(nested == null ? null : nested.elementType(),
+            ArrayType.class, "null[][] inner array"), "null[][]");
+
+        // The parenthesized (null)[] control keeps the same element type.
+        checkNullElement(assertTypeInstance(
+            letAnnotationType("let xs: (null)[] = [null];"),
+            ArrayType.class, "(null)[] annotation"), "(null)[]");
+
+        // null[] | null and null | null[] both yield Nullable<null[]>.
+        for (String source : List.of("let xs: null[] | null = null;",
+                "let xs: null | null[] = null;")) {
+            NullableType nullable = assertTypeInstance(letAnnotationType(source),
+                NullableType.class, source);
+            checkNullElement(assertTypeInstance(
+                nullable == null ? null : nullable.innerType(),
+                ArrayType.class, source + " inner"), source);
+        }
+
+        // The 'null |' prefix still wraps a non-null array element type.
+        NullableType prefix = assertTypeInstance(
+            letAnnotationType("let xs: null | int[] = null;"),
+            NullableType.class, "null | int[]");
+        ArrayType intArray = assertTypeInstance(prefix == null ? null : prefix.innerType(),
+            ArrayType.class, "null | int[] inner");
+        NamedType intElement = assertTypeInstance(
+            intArray == null ? null : intArray.elementType(), NamedType.class,
+            "null | int[] element");
+        check(intElement != null && intElement.name().equals("int"),
+            "null | int[] keeps the int element, got "
+                + (intElement == null ? "null" : intElement.name()));
+
+        // null | null stays the parser's Nullable(null) node, so the
+        // checker's nullable invariant (E3005) still reports it instead
+        // of the frontend flattening it into an admitted spelling.
+        NullableType duplicated = assertTypeInstance(
+            letAnnotationType("let xs: null | null = null;"),
+            NullableType.class, "null | null");
+        NamedType nullInner = assertTypeInstance(
+            duplicated == null ? null : duplicated.innerType(), NamedType.class,
+            "null | null inner");
+        check(nullInner != null && nullInner.name().equals("null"),
+            "null | null keeps the null inner for the checker's E3005 arm");
+
+        // Function types reach the same suffixes through their parameter
+        // and return positions.
+        FunctionType functionType = assertTypeInstance(
+            letAnnotationType("let f: (xs: null[]) => null[][] = g;"),
+            FunctionType.class, "(xs: null[]) => null[][]");
+        if (functionType != null && !functionType.params().isEmpty()) {
+            checkNullElement(assertTypeInstance(functionType.params().get(0).type(),
+                ArrayType.class, "null[] function-type parameter"),
+                "null[] function-type parameter");
+        }
+        ArrayType functionReturn = assertTypeInstance(
+            functionType == null ? null : functionType.returnType(),
+            ArrayType.class, "null[][] function-type return");
+        checkNullElement(assertTypeInstance(
+            functionReturn == null ? null : functionReturn.elementType(),
+            ArrayType.class, "null[][] function-type return inner"),
+            "null[][] function-type return");
+
+        // Every annotation position reaches the same Array<null> node:
+        // class field, parameter, return type, and for-of loop variable.
+        String positions = "class Holder { xs: null[] = [null]; }\n"
+            + "function f(xs: null[]): null[] { return xs; }\n"
+            + "export function main(): null {\n"
+            + "  for (let row: null[] of [[null]]) { }\n"
+            + "  return null;\n"
+            + "}";
+        ParseResult atPositions = parse(positions);
+        assertNoParseErrors(atPositions,
+            "null[] in field, parameter, return, and for-of positions");
+        ClassDeclaration holder = assertInstance(
+            atPositions.program().statements().get(0), ClassDeclaration.class,
+            "null[] class");
+        if (holder != null && !holder.fields().isEmpty()) {
+            checkNullElement(assertTypeInstance(holder.fields().get(0).type(),
+                ArrayType.class, "null[] field"), "null[] field");
+        }
+        FunctionDeclaration f = assertInstance(
+            atPositions.program().statements().get(1), FunctionDeclaration.class,
+            "null[] function");
+        if (f != null && !f.params().isEmpty()) {
+            checkNullElement(assertTypeInstance(f.params().get(0).type(),
+                ArrayType.class, "null[] parameter"), "null[] parameter");
+        }
+        if (f != null) {
+            checkNullElement(assertTypeInstance(f.returnType(), ArrayType.class,
+                "null[] return type"), "null[] return type");
+        }
+        ExportDeclaration exported = assertInstance(
+            atPositions.program().statements().get(2), ExportDeclaration.class,
+            "null[] exported main");
+        FunctionDeclaration main = exported == null ? null : assertInstance(
+            exported.declaration(), FunctionDeclaration.class, "main declaration");
+        StatementNode first = main == null || main.body().statements().isEmpty()
+            ? null : main.body().statements().get(0);
+        ForOfStatement forOf = assertInstance(first, ForOfStatement.class,
+            "null[] for-of loop");
+        if (forOf != null) {
+            checkNullElement(assertTypeInstance(forOf.varType(), ArrayType.class,
+                "null[] loop variable"), "null[] loop variable");
+        }
+
+        // Rejected spellings keep their exact parse diagnostics.
+        ParseResult union = parse("let xs: null[] | int = null;");
+        CompilerDiagnostic e1030 = diagOf(union, "E1030");
+        check(e1030 != null, "null[] | int reports E1030, got "
+            + union.diagnostics());
+        if (e1030 != null) {
+            check(e1030.message().equals(
+                    "Expected 'null' after '|' in nullable type"),
+                "E1030 keeps its exact message, got: " + e1030.message());
+        }
+        ParseResult bracket = parse("let xs: null[ = null;");
+        CompilerDiagnostic e1031 = diagOf(bracket, "E1031");
+        check(e1031 != null, "null[ reports E1031, got " + bracket.diagnostics());
+        if (e1031 != null) {
+            check(e1031.message().equals("Expected ']' in array type"),
+                "E1031 keeps its exact message, got: " + e1031.message());
+        }
     }
 
     static void testExternCWrongFileKind() {

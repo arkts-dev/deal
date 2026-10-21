@@ -3294,6 +3294,26 @@ public class CheckerTest {
         System.out.println("-- Invalid Nullable --");
         CheckerOutput out = checkProgram("let x: int | null | null = 1;");
         assertError(out, "E3005", "invalid nullable (doubly nullable)");
+
+        // ISSUE-0879: the null array element type takes the same single
+        // '| null' wrapper. A repeated wrapper is still the duplicated
+        // nullable the spec forbids, never an admitted null array spelling.
+        CheckerOutput repeated = checkProgram("let x: null[] | null | null = null;");
+        assertError(repeated, "E3005", "doubly nullable null array");
+
+        // null is not itself nullable, with or without array suffixes.
+        CheckerOutput nullNull = checkProgram("let x: null | null = null;");
+        assertError(nullNull, "E3005", "null union null");
+
+        // The admitted spellings resolve cleanly instead.
+        for (String source : List.of("let x: null[] = [null];",
+                "let x: null[][] = [[null]];",
+                "let x: null[] | null = null;")) {
+            CheckerOutput admitted = checkProgram(source);
+            check(admitted.result.diagnostics().isEmpty(), source
+                + ": the null array annotation resolves: "
+                + admitted.result.diagnostics());
+        }
     }
 
     // F10: Reverse arity E5004
