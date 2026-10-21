@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared bytes | null binding read as a .length receiver is validated at that read: the bytes length read reports the typed-boundary tuple (E8001, expected bytes, actual null) at the receiver instead of a raw backend length read, and no length is read.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, bytes, runtime-errors
+
+export function main(): null {
+  let buffer: bytes | null = bytes(2);
+  let clear: () => null = function(): null {
+    buffer = null;
+    return null;
+  };
+  if (buffer !== null) {
+    clear();
+    let size: int = buffer.length;
+  }
+  return null;
+}

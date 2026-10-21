@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared T[] | null binding read as a .length receiver is validated at that read: the length read reports the typed-boundary tuple (E8001, expected array, actual null) at the receiver instead of a raw backend length read, and no length is read.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, arrays, runtime-errors
+
+export function main(): null {
+  let xs: int[] | null = [1];
+  let clear: () => null = function(): null {
+    xs = null;
+    return null;
+  };
+  if (xs !== null) {
+    clear();
+    let value: int = xs.length;
+  }
+  return null;
+}

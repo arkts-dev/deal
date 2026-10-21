@@ -2648,10 +2648,11 @@ public final class SemanticIrValidator {
                         + " violates the descriptor-kind rule");
             }
             case NARROWED_READ -> {
-                // The operand/condition/index/member-receiver position's
-                // refinement cell: the descriptor-kind policy of its own
-                // descriptor, and the input is one identifier read (a
-                // BINDING_LOAD result) — the refinement claim is about a
+                // The operand/condition/value-consumer position's refinement
+                // cell (an index receiver/key, a table member receiver or a
+                // .length receiver included): the descriptor-kind policy of
+                // its own descriptor, and the input is one identifier read
+                // (a BINDING_LOAD result) — the refinement claim is about a
                 // binding, never about an arbitrary value.
                 if (!matchesDescriptorKind(descriptor, policy)) {
                     return Optional.of(kind.name() + " boundary policy " + policy.name()

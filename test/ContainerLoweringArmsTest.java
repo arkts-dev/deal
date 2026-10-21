@@ -1225,6 +1225,101 @@ public class ContainerLoweringArmsTest {
         checkEmptyOperands("ARRAY_LENGTH", length);
     }
 
+    /**
+     * The {@code .length} receiver admission (ISSUE-0872): a
+     * null-narrowing-refined identifier read consumed as the
+     * {@code ARRAY_LENGTH} receiver lowers through the one operand
+     * admission, so the boundary publishes the admitted value and the length
+     * op consumes that value. The receiver still completes exactly once (one
+     * {@code BINDING_LOAD}), and the unadmitted read identity never reaches
+     * the length op — a captured-binding clear therefore fails at the
+     * boundary cell instead of at a raw backend length read.
+     */
+    static void testNarrowedArrayLengthReceiverAdmission() {
+        System.out.println("-- .length receiver: NARROWED_READ admission, consumed once --");
+        checkNarrowedLengthAdmission("""
+            function f(xs: int[] | null): null {
+              if (xs !== null) {
+                let value: int = xs.length;
+              }
+              return null;
+            }
+            """, "xs", new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE));
+        checkNarrowedLengthAdmission("""
+            function f(buffer: bytes | null): null {
+              if (buffer !== null) {
+                let size: int = buffer.length;
+              }
+              return null;
+            }
+            """, "buffer", RuntimeDescriptor.Bytes.INSTANCE);
+    }
+
+    private static void checkNarrowedLengthAdmission(String source, String receiver,
+            RuntimeDescriptor descriptor) {
+        CheckedSlice slice = checkSlice(source);
+        if (slice == null) {
+            return;
+        }
+        MemberAccessExpr access = first(slice.program(), MemberAccessExpr.class);
+        check(access != null && "length".equals(access.field()),
+            "the slice carries the refined receiver's .length member access");
+        if (access == null || !(access.object() instanceof IdentifierExpr identifier)) {
+            fail("the .length receiver is the refined identifier read");
+            return;
+        }
+        check(slice.checks().narrowedReads().contains(identifier),
+            "the checker publishes the refined receiver read '" + receiver + "'");
+        SemanticLowerer.ModuleLowerer lowerer = lowerer(slice.checks());
+        lowerer.openForEachScope(receiver);
+        ValueId lengthValue = lowerer.lowerExpression(access);
+        lowerer.closeForEachScope();
+        List<SemanticOp> ops = lowerer.ops();
+        check(ops.size() == 3,
+            ".length over the refined receiver produces the receiver load + NARROWED_READ + "
+                + "ARRAY_LENGTH = 3 ops; got " + ops.size());
+        if (ops.size() != 3) {
+            return;
+        }
+        SemanticOp load = ops.get(0);
+        check(load.kind() == SemanticOpKind.BINDING_LOAD,
+            "the receiver completes as one prior-step load (evaluated exactly once)");
+        SemanticOp admission = ops.get(1);
+        check(admission.kind() == SemanticOpKind.BOUNDARY, "op 1 is the admission BOUNDARY");
+        KindPayload.BoundaryPayload boundary =
+            (KindPayload.BoundaryPayload) admission.payload();
+        check(boundary.kind() == BoundaryKind.NARROWED_READ,
+            "the admission is the NARROWED_READ cell");
+        check(boundary.descriptor().equals(descriptor),
+            "the admission descriptor is the refined receiver's own descriptor; got "
+                + boundary.descriptor());
+        check(admission.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+            "the admission carries the descriptor-kind policy of its own descriptor");
+        check(boundary.input().equals(load.result()),
+            "the admission input is the one receiver load (never a re-evaluation)");
+        check(!admission.result().equals(load.result()),
+            "the admission publishes the admitted value as its own identity");
+        check(boundary.realization().equals(new BoundaryRealization.RuntimeValidation(
+                SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID)),
+            "the admission carries the pinned RuntimeValidation("
+                + SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID + ")");
+        checkOrigin("NARROWED_READ", admission, identifier.span(),
+            SourceOriginKind.USER, null);
+        SemanticOp length = ops.get(2);
+        check(length.kind() == SemanticOpKind.ARRAY_LENGTH, "op 2 is ARRAY_LENGTH");
+        KindPayload.ArrayLengthPayload lengthPayload =
+            (KindPayload.ArrayLengthPayload) length.payload();
+        check(lengthPayload.arrayValue().equals(admission.result()),
+            "ARRAY_LENGTH consumes the admitted receiver (the admission's result)");
+        check(!lengthPayload.arrayValue().equals(load.result()),
+            "ARRAY_LENGTH never reads the unadmitted receiver identity");
+        check(length.result().equals(lengthValue),
+            "ARRAY_LENGTH publishes its result ValueId");
+        check(length.failurePolicy() == FailurePolicyId.INT32_RESULT,
+            "ARRAY_LENGTH keeps its INT32_RESULT terminal policy");
+        checkEmptyOperands("ARRAY_LENGTH", length);
+    }
+
     // =========================================================================
     // 8. MEMBER_READ arm — checked contextual positions
     // =========================================================================
@@ -2384,6 +2479,7 @@ public class ContainerLoweringArmsTest {
         testStringPlusArm();
         testTemplateArms();
         testArrayLengthArm();
+        testNarrowedArrayLengthReceiverAdmission();
         CheckedSlice tableReads = checkSlice("""
             function booleanMemberRead(t: table): null {
               if (t.k) {}

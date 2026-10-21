@@ -50,17 +50,19 @@ public enum BoundaryKind {
     JSON_FROM_FIELD,
     JSON_TO_FIELD,
     /**
-     * The operand/condition/index/member-receiver position's validation
-     * of one identifier read whose checked type is a null-narrowing
-     * refinement of the binding's declared nullable type (declared
-     * {@code T | null}, read as {@code T}) — docs/spec-v1.3.md Nullable
-     * semantics: narrowing is optimistic across calls, so an indirect
-     * captured-binding mutation leaves the refined read's value invalid and
-     * the consuming operator, index chain or table member operation must
-     * report the typed-boundary projection instead of coercing it or
-     * letting a raw backend error escape. The op publishes the admitted
-     * value (its result is the consumer's operand/receiver) and carries the
-     * descriptor-kind policy of its own descriptor.
+     * The operand/condition/value-consumer position's validation of one
+     * identifier read whose checked type is a null-narrowing refinement of
+     * the binding's declared nullable type (declared {@code T | null}, read
+     * as {@code T}) — docs/spec-v1.3.md Nullable semantics: narrowing is
+     * optimistic across calls, so an indirect captured-binding mutation
+     * leaves the refined read's value invalid and the consuming operator,
+     * index chain, table member operation or {@code .length} read must
+     * report the typed-boundary projection instead of coercing it, letting
+     * a raw backend error escape, or reading a length from it. The op
+     * publishes the admitted value (its result is the consumer's operand,
+     * index chain child, table member receiver or {@code ARRAY_LENGTH}
+     * receiver) and carries the descriptor-kind policy of its own
+     * descriptor.
      */
     NARROWED_READ;
 

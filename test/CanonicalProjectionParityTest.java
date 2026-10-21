@@ -443,11 +443,13 @@ public class CanonicalProjectionParityTest {
         // backend error — and the array-element cell keeps the specified
         // E8003 arm. An index chain's receiver and key are the same kind of
         // consumer: the chain's admission publishes the read's own value and
-        // the length/normalize/commit children consume it. Each direct
-        // condition arm (if, while, the control-flow for and the let-headed
-        // for) has its own uncaught fixture, so the in-place condition
-        // admission's exact tuple is pinned per arm, not only through the
-        // logical branch's operand path.
+        // the length/normalize/commit children consume it. The .length
+        // receiver is the same consumer class: the admission publishes the
+        // read and the ARRAY_LENGTH op consumes that admitted value. Each
+        // direct condition arm (if, while, the control-flow for and the
+        // let-headed for) has its own uncaught fixture, so the in-place
+        // condition admission's exact tuple is pinned per arm, not only
+        // through the logical branch's operand path.
         mainEntry("types/narrowed-capture-arithmetic-e8001"),
         mainEntry("types/narrowed-capture-unary-e8001"),
         mainEntry("types/narrowed-capture-comparison-e8001"),
@@ -475,7 +477,18 @@ public class CanonicalProjectionParityTest {
         mainEntry("types/narrowed-capture-table-member-read-e8001"),
         mainEntry("types/narrowed-capture-table-member-write-e8001"),
         mainEntry("types/narrowed-capture-table-member-delete-e8001"),
-        mainEntry("types/narrowed-capture-table-member-chain-e8001"));
+        mainEntry("types/narrowed-capture-table-member-chain-e8001"),
+        // The .length receiver is the no-operand ARRAY_LENGTH consumer: the
+        // admission publishes the read's own value and the length op consumes
+        // it, so a cleared binding reports the typed-boundary tuple at the
+        // receiver on the oracle and both production artifacts instead of a
+        // raw length read, a coerced length or a reified host TypeError. The
+        // composed-expression fixture proves the same admission through an
+        // arithmetic operand, and the bytes fixture proves the shared cell at
+        // the bytes .length spelling.
+        mainEntry("types/narrowed-capture-array-length-e8001"),
+        mainEntry("types/narrowed-capture-array-length-composed-e8001"),
+        mainEntry("types/narrowed-capture-bytes-length-e8001"));
 
     /**
      * The runtime-ok class-identity controls with a corpus pin: the
@@ -503,7 +516,15 @@ public class CanonicalProjectionParityTest {
         // absent-versus-present-null key results, and a cleared binding
         // raises its own catchable E8001 at each member position with the
         // aliased table left unmutated.
-        mainEntry("types/narrowed-capture-member-controls"));
+        mainEntry("types/narrowed-capture-member-controls"),
+        // The .length controls: the valid non-null, empty-array and bytes
+        // receivers read their live length unchanged (the array identity,
+        // contents and append behavior included), a call preserves the
+        // refinement, a call receiver is evaluated exactly once, and every
+        // cleared-binding .length position — direct, arithmetic, comparison,
+        // loop condition and chain key — raises its own catchable canonical
+        // E8001 whose caught flag is asserted after the try.
+        mainEntry("types/narrowed-capture-length-controls"));
 
     /**
      * The lane-protocol runtime-ok corpus pins (ISSUE-0857;

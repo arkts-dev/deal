@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A cleared T[] | null binding consumed as a .length receiver inside an arithmetic operand is validated at that receiver: the composed expression reports the typed-boundary tuple (E8001, expected array, actual null) at the receiver instead of a raw backend length or arithmetic error, and the operand never completes.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, arrays, runtime-errors
+
+export function main(): null {
+  let xs: int[] | null = [1];
+  let clear: () => null = function(): null {
+    xs = null;
+    return null;
+  };
+  if (xs !== null) {
+    clear();
+    let total: int = 1 + xs.length;
+  }
+  return null;
+}

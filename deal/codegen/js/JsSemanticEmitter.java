@@ -1713,7 +1713,10 @@ public final class JsSemanticEmitter {
                 // cell): the admitted value is the consumer's operand, so
                 // the check publishes its own slot instead of rewriting
                 // the read's (an address chain's operand closure executes
-                // this op at its consuming child's position).
+                // this op at its consuming child's position, an index
+                // read's container/key, a table member operation's
+                // container child and a .length receiver name it
+                // directly).
                 emit(slot(valueId) + " = "
                     + boundaryCheckExpr(op, slot(payload.input())) + ";");
                 return;

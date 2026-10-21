@@ -14242,13 +14242,27 @@ public final class SemanticLowerer {
                 FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
-        /** {@code ARRAY_LENGTH} — the receiver is one prior step, never re-evaluated. */
+        /**
+         * {@code ARRAY_LENGTH} — the receiver is one prior step, never
+         * re-evaluated. The {@code .length} receiver is a value consumer
+         * like an operator operand or an index chain's receiver/key, so it
+         * lowers through the one operand admission
+         * ({@link #lowerOperand(ExpressionNode)}): a null-narrowing-refined
+         * identifier read ({@code T[] | null} read as {@code T[]}, or the
+         * bytes counterpart) is admitted against the {@code NARROWED_READ}
+         * cell, and the length read consumes the admitted value. A binding
+         * a capturing closure cleared between the refinement and this read
+         * therefore reports the typed-boundary tuple (E8001, expected
+         * array, actual null) at the receiver instead of a raw backend
+         * length read on the cleared value; the receiver's own evaluation
+         * (one binding load) is unchanged.
+         */
         private ValueId lowerArrayLength(MemberAccessExpr access) {
             return lowerArrayLength(access, null);
         }
 
         private ValueId lowerArrayLength(MemberAccessExpr access, ValueId slot) {
-            ValueId receiver = lowerExpression(access.object());
+            ValueId receiver = lowerOperand(access.object());
             return emitValueOp(SemanticOpKind.ARRAY_LENGTH,
                 new KindPayload.ArrayLengthPayload(receiver), access.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
@@ -14492,7 +14506,8 @@ public final class SemanticLowerer {
 
         /**
          * Lowers one operator operand, condition expression, index
-         * receiver/key expression, or table member receiver expression:
+         * receiver/key expression, table member receiver expression, or
+         * {@code .length} receiver expression:
          * the operand's completed value plus, for an identifier read whose
          * checked type is a null-narrowing refinement of the binding's
          * declared nullable type (declared {@code T | null}, read as
@@ -14521,7 +14536,10 @@ public final class SemanticLowerer {
          * {@code MEMBER_DELETE} operation dereferences the admitted value
          * (the chain's container child is the admission) and never the
          * unadmitted read — the receiver is a consumed value like any
-         * other, not a typed-boundary position. Every other position (a
+         * other, not a typed-boundary position. A {@code .length} receiver
+         * lowers through this helper too, so the {@code ARRAY_LENGTH} op
+         * (array or bytes) reads the admitted value and never the
+         * unadmitted read. Every other position (a
          * declaration, assignment, parameter, return, class/array
          * construction or element write) is a typed boundary owned by its
          * own cell, which keeps its recorded projection — the
