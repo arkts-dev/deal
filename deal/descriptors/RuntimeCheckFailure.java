@@ -22,7 +22,8 @@ import java.util.Set;
  *   <li>{@code E8003} — {@code array element {i} type mismatch} at the
  *       first failing index;</li>
  *   <li>{@code E8004} — {@code int out of safe range} (finite integral
- *       outside ±(2^53-1));</li>
+ *       outside the signed-32 {@code int} domain
+ *       {@code [-2147483648, 2147483647]});</li>
  *   <li>{@code E8010} — {@code function signature mismatch: expected
  *       {D}, got {actual}} on any carried-descriptor byte delta.</li>
  * </ul>

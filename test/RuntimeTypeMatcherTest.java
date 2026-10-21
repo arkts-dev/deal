@@ -169,7 +169,8 @@ public class RuntimeTypeMatcherTest {
         return result instanceof RuntimeCheckFailure f ? f : null;
     }
 
-    /** Asserts a passing check that returns the unchanged value instance. */
+    /** Asserts a passing check that returns the unchanged value instance
+     * (every row except the int row's negative-zero normalization). */
     private static void assertPass(String descriptor, Object value, String label) {
         Object result = MATCHER.check(descriptor, value, null);
         if (result != value) {
@@ -177,6 +178,19 @@ public class RuntimeTypeMatcherTest {
                 + " but got " + result);
         } else {
             check(true, label + ": passes and returns the unchanged value");
+        }
+    }
+
+    /** Asserts a passing int check that returns the normalized int {@code 0}
+     * (positive zero) for a negative-zero number payload. */
+    private static void assertPassNormalizedZero(String descriptor, double value, String label) {
+        Object result = MATCHER.check(descriptor, value, null);
+        if (!(result instanceof Double normalized)
+                || Double.doubleToRawLongBits(normalized) != Double.doubleToRawLongBits(0.0d)) {
+            fail(label, "expected the normalized int 0 for " + quote(descriptor)
+                + " but got " + result);
+        } else {
+            check(true, label + ": passes and returns the normalized int 0");
         }
     }
 
@@ -307,24 +321,34 @@ public class RuntimeTypeMatcherTest {
     }
 
     // =========================================================================
-    // int row: E8001 sub-cases and E8004 at ±(2^53-1) on both sides
+    // int row: E8001 sub-cases and E8004 at the signed-32 domain boundaries
     // =========================================================================
 
     static void testIntRow() {
         System.out.println("-- int row --");
 
-        double bound = RuntimeTypeMatcher.INT_SAFE_RANGE_BOUND;
-        check(bound == 9007199254740991.0d,
-            "pinned INT_SAFE_RANGE_BOUND equals 2^53 - 1");
+        // The one active v1.3 semantic profile: int is signed 32-bit
+        // (docs/spec-v1.3.md §Numeric overflow).
+        check(RuntimeTypeMatcher.INT32_MIN == -2147483648.0d
+                && RuntimeTypeMatcher.INT32_MAX == 2147483647.0d,
+            "pinned int domain is the signed-32 range [-2147483648, 2147483647]");
+
+        double min = RuntimeTypeMatcher.INT32_MIN;
+        double max = RuntimeTypeMatcher.INT32_MAX;
 
         assertPass("int", 0.0, "integral zero passes");
-        assertPass("int", -0.0, "negative zero passes (normalized internally)");
         assertPass("int", 42.0, "integral number passes");
         assertPass("int", -42.0, "negative integral number passes");
-        assertPass("int", bound, "upper boundary 2^53 - 1 passes");
-        assertPass("int", -bound, "lower boundary -(2^53 - 1) passes");
-        assertPass("int", bound - 1.0, "just inside the upper boundary passes");
-        assertPass("int", -bound + 1.0, "just inside the lower boundary passes");
+        assertPass("int", max, "upper boundary 2147483647 passes");
+        assertPass("int", min, "lower boundary -2147483648 passes");
+        assertPass("int", max - 1.0, "just inside the upper boundary passes");
+        assertPass("int", min + 1.0, "just inside the lower boundary passes");
+
+        // Negative zero does not exist in int: the admitted value is the
+        // normalized int 0 (spec §Numeric overflow), never -0.0.
+        assertPassNormalizedZero("int", -0.0, "negative zero is admitted as the normalized int 0");
+        assertPassNormalizedZero("?int", -0.0,
+            "the nullable int row normalizes negative zero too");
 
         assertFailure("int", Boolean.TRUE, "E8001", "expected int, got boolean",
             "int vs non-number boolean");
@@ -344,14 +368,32 @@ public class RuntimeTypeMatcherTest {
         assertFailure("int", -3.5, "E8001", "expected int, got non-integer number",
             "int vs negative non-integer");
 
-        assertFailure("int", bound + 1.0, "E8004", "int out of safe range",
-            "2^53 fails E8004");
-        assertFailure("int", -bound - 1.0, "E8004", "int out of safe range",
-            "-(2^53) fails E8004");
+        assertFailure("int", max + 1.0, "E8004", "int out of safe range",
+            "2147483648 fails E8004");
+        assertFailure("int", min - 1.0, "E8004", "int out of safe range",
+            "-2147483649 fails E8004");
+        assertFailure("int", 4294967296.0, "E8004", "int out of safe range",
+            "2^32 fails E8004");
+        assertFailure("int", -4294967296.0, "E8004", "int out of safe range",
+            "-2^32 fails E8004");
+        // The retired v1.2 ±(2^53-1) range is no longer an admitted domain:
+        // those integral values are out of the signed-32 range.
+        assertFailure("int", 9007199254740991.0, "E8004", "int out of safe range",
+            "the retired +2^53-1 upper bound fails E8004");
+        assertFailure("int", -9007199254740991.0, "E8004", "int out of safe range",
+            "the retired -(2^53-1) lower bound fails E8004");
+        assertFailure("int", 9007199254740992.0, "E8004", "int out of safe range",
+            "the retired 2^53 bound fails E8004");
         assertFailure("int", 1e308, "E8004", "int out of safe range",
             "finite integral far above the range fails E8004");
         assertFailure("int", -1e308, "E8004", "int out of safe range",
             "finite integral far below the range fails E8004");
+
+        // The pinned order is refinement first, range second: a fractional
+        // value beyond the signed-32 range keeps its E8001 refinement code.
+        assertFailure("int", 3000000000.5, "E8001",
+            "expected int, got non-integer number",
+            "refinement (non-integer) precedes the signed-32 range arm");
     }
 
     // =========================================================================
@@ -460,6 +502,15 @@ public class RuntimeTypeMatcherTest {
         Object result = MATCHER.check("[int]", array, null);
         check(result == array, "checked array returned as the unchanged value");
         check(Arrays.equals(before, array.elements), "array storage not mutated by the check");
+
+        // A negative-zero element is admitted by the int row's normalization,
+        // and the array's own storage keeps the element the caller supplied.
+        ArrayValue zeros = new ArrayValue(-0.0);
+        check(MATCHER.check("[int]", zeros, null) == zeros,
+            "an array holding a negative-zero element passes the int row");
+        check(Double.doubleToRawLongBits((Double) zeros.elements[0])
+                == Double.doubleToRawLongBits(-0.0d),
+            "the int row's negative-zero normalization never rewrites array storage");
     }
 
     // =========================================================================

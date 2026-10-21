@@ -38,7 +38,7 @@ public interface RuntimeValueModel {
      * The number scalar payload of a number carrier — called only when
      * {@link #isNumber(Object)} is true.  This is also the int row's
      * carrier payload: the matcher applies the finite/integral/-0
-     * normalization/safe-range gates to it, never the seam.
+     * normalization/signed-32 range gates to it, never the seam.
      */
     double numberPayload(Object value);
 
