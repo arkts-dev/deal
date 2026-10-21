@@ -1,0 +1,42 @@
+// @spec: Type system — Type grammar (ArrayType over BuiltinType null)
+// @description: 'null' is a BuiltinType, so the ArrayType suffixes apply to it in every annotation position the normative Type grammar reaches — variable, class field (defaulted and optional), parameter, return, for-of loop variable, function-type parameter and return — including repeated suffixes and the nullable prefix/suffix over a null array
+// @expected: compile-ok
+// @features: types, parser, nullable, arrays
+
+class Holder {
+  xs: null[] = [null];
+  maybe?: null[] | null;
+  grid: null[][] = [[null]];
+}
+
+function collect(xs: null[], grid: null[][]): null[] {
+  return xs;
+}
+
+function takeNulls(xs: null[]): null[] {
+  return xs;
+}
+
+function apply(f: (xs: null[]) => null[], xs: null[]): null[] {
+  return f(xs);
+}
+
+export function main(): null {
+  let local: null[] = [null];
+  let nested: null[][] = [local];
+  let parenthesized: (null)[] = [null];
+  let fromParameter: null[] = collect(local, nested);
+  let fn: (xs: null[]) => null[] = takeNulls;
+  let fromFunction: null[] = apply(fn, local);
+  let factory: () => null[][] = function(): null[][] { return nested; };
+  let built: null[][] = factory();
+  let maybe: null[] | null = local;
+  let left: null | null[] = local;
+  for (let element: null of local) {
+    let read: null = element;
+  }
+  for (let row: null[] of nested) {
+    let firstRow: null[] = row;
+  }
+  return null;
+}

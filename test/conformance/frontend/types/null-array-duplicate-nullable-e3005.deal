@@ -1,0 +1,9 @@
+// @spec: Type system — Nullable constraints
+// @description: A null array takes at most one '| null' wrapper; 'null[] | null | null' is the duplicated nullable the spec forbids for T and stays E3005
+// @expected: compile-error E3005
+// @features: types, parser, nullable, diagnostics
+
+export function main(): null {
+  let again: null[] | null | null = null;
+  return null;
+}
