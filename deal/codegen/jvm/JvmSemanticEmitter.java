@@ -4958,6 +4958,7 @@ public final class JvmSemanticEmitter {
         private void emitForEach(SemanticOp op, int indent) {
             KindPayload.ForEachPayload payload = (KindPayload.ForEachPayload) op.payload();
             emitStart(op, indent);
+            String suffix = Long.toString(op.opId().id());
             switch (payload.mode()) {
                 case ARRAY_VALUES -> {
                     // The selected array traversal (the shared compatibility
@@ -4973,14 +4974,14 @@ public final class JvmSemanticEmitter {
                     String iterable = slot(payload.iterable());
                     String cellName = cell(payload.binding(), payload.generation());
                     out.append(indent(indent)).append("{\n");
-                    out.append(indent(indent)).append("  JvmRuntime.Array __it = (JvmRuntime.Array) ")
+                    out.append(indent(indent)).append("  JvmRuntime.Array __it" + suffix + " = (JvmRuntime.Array) ")
                         .append(iterable).append(";\n");
                     out.append(indent(indent)).append("  FE").append(op.opId().id())
-                        .append(": for (int __i = 0; ; __i++) {\n");
-                    out.append(indent(indent)).append("    if (__i >= __it.length()) break;\n");
-                    out.append(indent(indent)).append("    Object __elem = __i < __it.elements.size()"
-                        + " ? __it.elements.get(__i) : JvmRuntime.MISSING;\n");
-                    out.append(indent(indent)).append("    if (__elem == JvmRuntime.MISSING) break;\n");
+                        .append(": for (int __i" + suffix + " = 0; ; __i" + suffix + "++) {\n");
+                    out.append(indent(indent)).append("    if (__i" + suffix + " >= __it" + suffix + ".length()) break;\n");
+                    out.append(indent(indent)).append("    Object __elem" + suffix + " = __i" + suffix + " < __it" + suffix + ".elements.size()"
+                        + " ? __it" + suffix + ".elements.get(__i" + suffix + ") : JvmRuntime.MISSING;\n");
+                    out.append(indent(indent)).append("    if (__elem" + suffix + " == JvmRuntime.MISSING) break;\n");
                     out.append(indent(indent)).append("    JvmRuntime.foreachCheck(")
                         .append(javaString(opKey(op.opId()))).append(", ")
                         .append(javaString(op.contract().canonicalDigest())).append(", ")
@@ -4990,10 +4991,10 @@ public final class JvmSemanticEmitter {
                         .append(containsFunction(elementDescriptorOf(op))
                             ? javaString(elementDescriptorOf(op).canonicalSpecText())
                             : "null")
-                        .append(", __elem, ").append(javaString(originOf(op)))
+                        .append(", __elem" + suffix + ", ").append(javaString(originOf(op)))
                         .append(");\n");
                     out.append(indent(indent)).append("    ").append(cellName)
-                        .append(" = new Object[]{__elem};\n");
+                        .append(" = new Object[]{__elem" + suffix + "};\n");
                     emitBlockOps(payload.body(), indent + 2);
                     out.append(indent(indent)).append("  }\n");
                     out.append(indent(indent)).append("}\n");
@@ -5002,13 +5003,13 @@ public final class JvmSemanticEmitter {
                     String iterable = slot(payload.iterable());
                     String cellName = cell(payload.binding(), payload.generation());
                     out.append(indent(indent)).append("{\n");
-                    out.append(indent(indent)).append("  String __it = (String) ")
+                    out.append(indent(indent)).append("  String __it" + suffix + " = (String) ")
                         .append(iterable).append(";\n");
-                    out.append(indent(indent)).append("  int[] __cps = __it.codePoints().toArray();\n");
+                    out.append(indent(indent)).append("  int[] __cps" + suffix + " = __it" + suffix + ".codePoints().toArray();\n");
                     out.append(indent(indent)).append("  FE").append(op.opId().id())
-                        .append(": for (int __cp : __cps) {\n");
+                        .append(": for (int __cp" + suffix + " : __cps" + suffix + ") {\n");
                     out.append(indent(indent)).append("    ").append(cellName)
-                        .append(" = new Object[]{new String(Character.toChars(__cp))};\n");
+                        .append(" = new Object[]{new String(Character.toChars(__cp" + suffix + "))};\n");
                     emitBlockOps(payload.body(), indent + 2);
                     out.append(indent(indent)).append("  }\n");
                     out.append(indent(indent)).append("}\n");
