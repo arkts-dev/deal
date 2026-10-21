@@ -6673,7 +6673,9 @@ public final class SemanticLowerer {
 
                     }
                 }
-                case BreakStatement _, ContinueStatement _, ImportDeclaration _ -> { }
+                case BreakStatement ignored -> { }
+                case ContinueStatement ignored -> { }
+                case ImportDeclaration ignored -> { }
             }
         }
 
