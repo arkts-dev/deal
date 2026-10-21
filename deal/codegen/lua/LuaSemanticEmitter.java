@@ -4626,6 +4626,27 @@ public final class LuaSemanticEmitter {
                 out.append("    end\n");
                 emitHostReturnCellRun(op, hostCell, "__atom");
             }
+            out.append("  elseif __dynS[__dealCarrierKeys.sid] ~= nil then\n");
+            // An adapted cataloged stdlib callable (a statically typed
+            // function value such as `json.parse`): the carrier's packed
+            // row invoker runs with this call's own context and the
+            // adapter's leading-M projection, exactly the dynamic HOST
+            // stdlib row, then the call's recorded HOST_TO_DEAL return cell
+            // admits the result. A dynamic table-produced value never
+            // carries the catalog row tag, so the exact signature check of
+            // the parameter cell remains the dynamic source's contract.
+            out.append("    __dynA = {").append(argTable).append("}\n");
+            out.append("    __okT, __resT = pcall(__dynS[__dealCarrierKeys.fn], ")
+                .append(luaString(op.kind().name())).append(", ")
+                .append(luaString(opKey(op.opId()))).append(", ")
+                .append(luaString(op.contract().canonicalDigest())).append(", ")
+                .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
+                .append(origin).append(", unpack(__dynA, 1, __dynC.__m))\n");
+            out.append("    if not __okT then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
+            out.append("      error(__resT, 0)\n");
+            out.append("    end\n");
+            emitHostReturnCellRun(op, hostCell, "__atom");
             out.append("  elseif __dynSK == \"HOST\" then\n");
             // An adapted host function value: the loaded surface entry's own
             // .f calling convention with the adapter's leading-M projection,
@@ -13001,7 +13022,16 @@ local function __adaptInvoke(w, origin, ...)
   if __originPushed then __callOrigins[#__callOrigins + 1] = origin end
   local __fnv = __unfn(src)
   local __okA, __vA
-  if type(__fnv) == "table" and type(__fnv.f) == "function" then
+  if type(src) == "table" and src[__dealCarrierKeys.sid] ~= nil then
+    -- A cataloged stdlib callable (a statically typed function value such
+    -- as `json.parse`) carries the packed row invoker: the D15 invocation
+    -- runs that row with the adapter's leading-M projection. The direct
+    -- form owns no DEAL call op (a host-facing bridge or an exported
+    -- callable), so the invocation context is the generic CALL label and
+    -- the absent project coordinates.
+    __okA, __vA = pcall(__fnv, "CALL", "-", "-", "-", origin or "-",
+      unpack(__cargs, 1, __count))
+  elseif type(__fnv) == "table" and type(__fnv.f) == "function" then
     -- A loaded host surface entry carries its calling convention under .f
     -- and takes the span triplet after its declared arguments (the
     -- converged host-boundary call shape); the adapter forwards only its

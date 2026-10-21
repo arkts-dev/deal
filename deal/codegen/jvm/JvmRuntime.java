@@ -1755,6 +1755,19 @@ public final class JvmRuntime {
             callOrigins.push(origin);
         }
         try {
+            // A cataloged stdlib callable carries the packed row-invoker
+            // calling convention (kind/opKey/digest/parent/origin plus the
+            // declared arguments), never a plain function-value invoker:
+            // the D15 invocation dispatches it through the same catalog
+            // entry the direct STDLIB_CALL and dynamic HOST arms use, with
+            // the adapter's leading-M projection. The call has no DEAL call
+            // op of its own (a host-facing bridge or an exported callable),
+            // so the invocation context is the generic CALL label and the
+            // absent project coordinates.
+            if (function instanceof StdlibFunctionValue callable) {
+                return invokeStdlibCallable(callable, "CALL", "-", "-", "-", origin,
+                    leading);
+            }
             return function.fn.invoke(leading);
         } finally {
             if (pushedOrigin) {

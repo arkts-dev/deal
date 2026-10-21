@@ -3914,6 +3914,39 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent + 2)).append(result).append(" = ")
                     .append(dynamicAdmitted).append(";\n");
             }
+            // A cataloged stdlib callable carries the packed row-invoker
+            // calling convention: the adapter dispatches it through the
+            // catalog entry with its leading-M projection, exactly the
+            // dynamic HOST stdlib row, then the call's recorded
+            // HOST_TO_DEAL return cell admits the result. The source is a
+            // statically typed function value (`std.parse`), so the
+            // position's adaptation is the arity extension, never a
+            // permissive runtime signature match.
+            out.append(indent(indent + 1)).append("} else if (__src").append(id)
+                .append(" instanceof JvmRuntime.StdlibFunctionValue) {\n");
+            out.append(indent(indent + 2)).append("try {\n");
+            out.append(indent(indent + 3)).append(result)
+                .append(" = JvmRuntime.invokeStdlibCallable((JvmRuntime."
+                    + "StdlibFunctionValue) __src").append(id).append(", ")
+                .append(javaString(op.kind().name())).append(", ")
+                .append(javaString(opKey(op.opId()))).append(", ")
+                .append(javaString(op.contract().canonicalDigest())).append(", ")
+                .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
+                .append(javaString(originOf(op))).append(", "
+                    + "java.util.Arrays.copyOfRange(new Object[]{ ")
+                .append(argList).append(" }, 0, __an").append(id)
+                .append("));\n");
+            out.append(indent(indent + 2)).append("} catch (JvmRuntime.DealError __se")
+                .append(id).append(") {\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "JvmRuntime.errtext(__se" + id + ")", indent + 3);
+            out.append(indent(indent + 3)).append("throw __se").append(id)
+                .append(";\n");
+            out.append(indent(indent + 2)).append("}\n");
+            String stdlibAdmitted = emitHostCellRun(op, hostCell, result,
+                indent + 2);
+            out.append(indent(indent + 2)).append(result).append(" = ")
+                .append(stdlibAdmitted).append(";\n");
             out.append(indent(indent + 1)).append("} else if (__src").append(id)
                 .append(" instanceof JvmRuntime.FunctionValue __hf").append(id)
                 .append(" && __hf").append(id).append(".fid == null) {\n");

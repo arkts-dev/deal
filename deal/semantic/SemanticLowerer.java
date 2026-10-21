@@ -5381,8 +5381,10 @@ public final class SemanticLowerer {
                     captureCollectors.size());
                 defaultContexts.push(context);
                 ValueId produced;
+                boolean adaptedDefault = positionAdapts(defaultExpr,
+                    defaultPlan.descriptor());
                 try {
-                    if (positionAdapts(defaultExpr, defaultPlan.descriptor())) {
+                    if (adaptedDefault) {
                         // A class field default is a statically typed
                         // function-value position: exactly one
                         // arity-extension adapter over the default
@@ -5392,7 +5394,12 @@ public final class SemanticLowerer {
                         // declared descriptor exactly and the instance
                         // stores the adapted value (docs/spec-v1.3.md
                         // Function type compatibility; Arity extension
-                        // adapter).
+                        // adapter). The CLASS_DEFAULT op is the position's
+                        // own publisher: the adapter is wired there, so the
+                        // declaring unit admits it even when this unit
+                        // contains no construction (the exported default
+                        // and a cross-module construction consume the
+                        // published result, never a construction-site cell).
                         produced = lowerPositionAdapter(defaultExpr,
                             (RuntimeDescriptor.Func) defaultPlan.descriptor(),
                             () -> lowerExpression(defaultExpr, slot));
@@ -5417,6 +5424,10 @@ public final class SemanticLowerer {
                     defaultContexts.pop();
                     popBlockParent();
                     popBlock();
+                }
+                if (adaptedDefault) {
+                    recordPositionAdapterAt(produced, opId,
+                        BoundaryKind.CLASS_DEFAULT_FIELD);
                 }
                 if (!field.optional()) {
                     classDefaultOpIds.add(opId);

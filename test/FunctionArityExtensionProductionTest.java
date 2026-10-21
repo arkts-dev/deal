@@ -68,6 +68,15 @@ public final class FunctionArityExtensionProductionTest {
     private static final String ASYNC_POSITIONS =
         "arity-extension-async-positions";
 
+    /**
+     * The boundary corpus: a later adapted RETURN than the function's first,
+     * a class default that adapts with no construction in the declaring unit,
+     * a supplied-only construction, a cross-module class default, and
+     * cataloged stdlib callable sources.
+     */
+    private static final String BOUNDARIES =
+        "arity-extension-boundaries";
+
     /** The dynamic-source rejection control (the sync terminal). */
     private static final String DYNAMIC_SOURCE =
         "arity-extension-dynamic-source-e8010";
@@ -107,6 +116,8 @@ public final class FunctionArityExtensionProductionTest {
         export function usePair(f: (x: int, y: int) => int): int;
 
         export function useTriple(f: (x: int, y: int, z: int) => int): int;
+
+        export function useParse(f: (text: string, extra: int) => table): table;
         """;
 
     /** The subject's LuaJIT host implementation. */
@@ -120,6 +131,9 @@ public final class FunctionArityExtensionProductionTest {
           end,
           useTriple = function(f)
             return f(5, 9, 13)
+          end,
+          useParse = function(f)
+            return f("{}", 9)
           end,
         }
         """;
@@ -138,6 +152,9 @@ public final class FunctionArityExtensionProductionTest {
           useTriple: function (f) {
             return f.$f(5, 9, 13);
           },
+          useParse: function (f) {
+            return f.$f("{}", 9);
+          },
         };
         """;
 
@@ -154,6 +171,10 @@ public final class FunctionArityExtensionProductionTest {
 
           public static Object useTriple($DealRt.Fn3_I_I_I_R_I f) {
             return Integer.valueOf(f.invoke(5, 9, 13));
+          }
+
+          public static Object useParse($DealRt.Fn2_S_I_R_$table f) {
+            return f.invoke("{}", 9);
           }
         }
         """;
@@ -210,6 +231,27 @@ public final class FunctionArityExtensionProductionTest {
           check(host.useTriple(pair) === 5,
             "an adapter-valued source adapts at a host parameter");
 
+          console.log("OK");
+          return null;
+        }
+        """;
+
+    /**
+     * The host-invoked cataloged stdlib callable: the host parameter carries
+     * the arity-extension adapter over {@code json.parse}, and the host
+     * calls the adapter through the declared function shape, so the D15
+     * invocation dispatches the stdlib row on LuaJIT and the JVM.
+     */
+    private static final String HOST_STDLIB_SOURCE = """
+        import * as console from "std/console";
+        import * as host from "host/arity_extension_host";
+        import * as json from "std/json";
+
+        export function main(): null {
+          let parsed: table = host.useParse(json.parse);
+          if (json.stringify(parsed) !== "{}") {
+            throw { code: "TEST_FAIL", message: "host stdlib adapter failed" };
+          }
           console.log("OK");
           return null;
         }
@@ -503,6 +545,16 @@ public final class FunctionArityExtensionProductionTest {
             expected);
     }
 
+    private static void testLuaJitBoundaries(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the LuaJIT boundary corpus and its real luajit run --");
+        Project project = writeProject(root, BOUNDARIES);
+        assertProductionEmission(productionCompile(project, Backend.LUAJIT),
+            "luajit:" + BOUNDARIES);
+        assertExecution("luajit", runProcess(
+            List.of("luajit", ENTRY_MODULE + ".lua"), project.out()), expected);
+    }
+
     private static void testLuaJitAsyncPositions(Path root) throws Exception {
         System.out.println("-- the LuaJIT async position corpus through the "
             + "production async-export invoker --");
@@ -613,6 +665,15 @@ public final class FunctionArityExtensionProductionTest {
             artifacts.className()), artifacts.project().out()), expected);
     }
 
+    private static void testJvmBoundaries(Path root, ExpectedExecution expected)
+            throws Exception {
+        System.out.println("-- the JVM boundary corpus under javac and java --");
+        JvmArtifacts artifacts = compileJvm(root, BOUNDARIES);
+        assertExecution("jvm", runProcess(List.of("java", "-cp",
+            artifacts.classes() + File.pathSeparator + absoluteClasspath(),
+            artifacts.className()), artifacts.project().out()), expected);
+    }
+
     private static void testJvmAsyncPositions(Path root) throws Exception {
         System.out.println("-- the JVM async position corpus through the "
             + "production async-export invoker --");
@@ -672,6 +733,16 @@ public final class FunctionArityExtensionProductionTest {
         assertExecution("js",
             runProcess(List.of("node", ENTRY_MODULE + ".js"), project.out()),
             expected);
+    }
+
+    private static void testJsBoundaries(Path root, ExpectedExecution expected)
+            throws Exception {
+        System.out.println("-- the JS boundary corpus under node --");
+        Project project = writeProject(root, BOUNDARIES);
+        assertProductionEmission(productionCompile(project, Backend.JS), "js:"
+            + BOUNDARIES);
+        assertExecution("js", runProcess(List.of("node", ENTRY_MODULE + ".js"),
+            project.out()), expected);
     }
 
     /**
@@ -815,6 +886,50 @@ public final class FunctionArityExtensionProductionTest {
         Project project = writeHostParameterProject(root);
         assertProductionEmission(productionCompile(project, Backend.JS,
             Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION)), "js:host-parameter");
+        writeFile(project.out(), "host/arity_extension_host.js",
+            HOST_JS_SOURCE);
+        assertExecution("js", runProcess(List.of("node", ENTRY_MODULE + ".js"),
+            project.out()), expected);
+    }
+
+    private static void testLuaJitHostStdlib(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the LuaJIT host-invoked cataloged stdlib adapter --");
+        Project project = writeProjectSource(root, HOST_STDLIB_SOURCE,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+        assertProductionEmission(productionCompile(project, Backend.LUAJIT,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION)),
+            "luajit:host-stdlib");
+        writeFile(project.out(), "host/arity_extension_host.lua",
+            HOST_LUA_SOURCE);
+        assertExecution("luajit", runProcess(
+            List.of("luajit", ENTRY_MODULE + ".lua"), project.out()), expected);
+    }
+
+    private static void testJvmHostStdlib(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the JVM host-invoked cataloged stdlib adapter --");
+        Project project = writeProjectSource(root, HOST_STDLIB_SOURCE,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+        Path hostSource = project.root().resolve("HostArity_extension_host.java");
+        writeFile(project.root(), "HostArity_extension_host.java",
+            HOST_JAVA_SOURCE);
+        JvmArtifacts artifacts = compileJvmProject(project,
+            "jvm:host-stdlib", List.of(hostSource),
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+        assertExecution("jvm", runProcess(List.of("java", "-cp",
+            artifacts.classes() + File.pathSeparator + absoluteClasspath(),
+            artifacts.className()), artifacts.project().out()), expected);
+    }
+
+    private static void testJsHostStdlib(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the JS host-invoked cataloged stdlib adapter --");
+        Project project = writeProjectSource(root, HOST_STDLIB_SOURCE,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION));
+        assertProductionEmission(productionCompile(project, Backend.JS,
+            Map.of(HOST_SPECIFIER, "bindings/" + HOST_DECLARATION)),
+            "js:host-stdlib");
         writeFile(project.out(), "host/arity_extension_host.js",
             HOST_JS_SOURCE);
         assertExecution("js", runProcess(List.of("node", ENTRY_MODULE + ".js"),
@@ -1106,6 +1221,8 @@ public final class FunctionArityExtensionProductionTest {
         Map<String, ExpectedExecution> positions = expectedByBackend(POSITIONS);
         Map<String, ExpectedExecution> asyncPositions =
             expectedByBackend(ASYNC_POSITIONS);
+        Map<String, ExpectedExecution> boundaries =
+            expectedByBackend(BOUNDARIES);
         Map<String, ExpectedExecution> dynamicSource =
             expectedByBackend(DYNAMIC_SOURCE);
         Map<String, ExpectedExecution> adapterValued =
@@ -1113,7 +1230,8 @@ public final class FunctionArityExtensionProductionTest {
         Map<String, ExpectedExecution> hostParameter = hostParameterExpected();
         expectedByBackend(DYNAMIC_SOURCE_ASYNC);
         for (Map<String, ExpectedExecution> expected : List.of(positions,
-                asyncPositions, dynamicSource, adapterValued, hostParameter)) {
+                asyncPositions, boundaries, dynamicSource, adapterValued,
+                hostParameter)) {
             for (ExpectedExecution execution : expected.values()) {
                 checkEq("", new String(execution.stderr(), StandardCharsets.UTF_8),
                     "every pinned lane carries an empty stderr");
@@ -1172,14 +1290,20 @@ public final class FunctionArityExtensionProductionTest {
         try {
             testLuaJitPositions(root.resolve("luajit-positions"),
                 positions.get("luajit"));
+            testLuaJitBoundaries(root.resolve("luajit-boundaries"),
+                boundaries.get("luajit"));
             testLuaJitAsyncPositions(root.resolve("luajit-async"));
             testLuaJitDynamicSource(root.resolve("luajit-dynamic"));
             testLuaJitDynamicSourceAsync(root.resolve("luajit-dynamic-async"));
             testJvmPositions(root.resolve("jvm-positions"), positions.get("jvm"));
+            testJvmBoundaries(root.resolve("jvm-boundaries"),
+                boundaries.get("jvm"));
             testJvmAsyncPositions(root.resolve("jvm-async"));
             testJvmDynamicSource(root.resolve("jvm-dynamic"));
             testJvmDynamicSourceAsync(root.resolve("jvm-dynamic-async"));
             testJsPositions(root.resolve("js-positions"), positions.get("js"));
+            testJsBoundaries(root.resolve("js-boundaries"),
+                boundaries.get("js"));
             testJsAsyncPositions(root.resolve("js-async"));
             testJsDynamicSource(root.resolve("js-dynamic"));
             testJsDynamicSourceAsync(root.resolve("js-dynamic-async"));
@@ -1194,6 +1318,12 @@ public final class FunctionArityExtensionProductionTest {
             testJvmHostParameter(root.resolve("jvm-host-parameter"),
                 hostParameter.get("jvm"));
             testJsHostParameter(root.resolve("js-host-parameter"),
+                hostParameter.get("js"));
+            testLuaJitHostStdlib(root.resolve("luajit-host-stdlib"),
+                hostParameter.get("luajit"));
+            testJvmHostStdlib(root.resolve("jvm-host-stdlib"),
+                hostParameter.get("jvm"));
+            testJsHostStdlib(root.resolve("js-host-stdlib"),
                 hostParameter.get("js"));
             testCallbackReturnPosition(root.resolve("callback-return"));
             testLuaJitHostDynamicSource(root.resolve("luajit-host-dynamic"));

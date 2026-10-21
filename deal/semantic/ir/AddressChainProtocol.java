@@ -25,12 +25,20 @@ import java.util.Optional;
  * {@code ARRAY_SLOT} write = {@code [containerOp, keyOp, valueOp,
  * lengthOp, normalizeOp(ARRAY_WRITE), boundaryOp, commitOp(INDEX_WRITE)]}
  * with the lengthOp an {@code ARRAY_LENGTH} read of the resolved
- * receiver; {@code BYTES_SLOT} write (K6 item 4) = the array shape's
+ * receiver, its eight-child adapted form {@code [containerOp, keyOp,
+ * rhsOp, FUNCTION_ADAPT adapterOp, lengthOp, normalizeOp, boundaryOp,
+ * commitOp]} (an arity-extension adapter over the materialized RHS
+ * value), and its seven-child binding-source form whose valueOp is the
+ * adapter itself (the adapter evaluates nothing at the position);
+ * {@code BYTES_SLOT} write (K6 item 4) = the array shape's
  * exact mirror with the lengthOp an {@code ARRAY_LENGTH} read of the
  * resolved byte receiver, the normalize mode {@code BYTES_WRITE}, and
  * the {@code BYTE_ELEMENT_ASSIGNMENT} + {@code BYTES_WRITE} boundary;
  * {@code CLASS_FIELD} write = {@code [containerOp, valueOp,
- * commitOp(FIELD_WRITE)]}. {@code DELETE}: {@code TABLE_SLOT} member =
+ * commitOp(FIELD_WRITE)]}, its four-child adapted form {@code
+ * [containerOp, rhsOp, FUNCTION_ADAPT adapterOp, commitOp(FIELD_WRITE)]},
+ * and its three-child binding-source form whose valueOp is the adapter
+ * itself. {@code DELETE}: {@code TABLE_SLOT} member =
  * {@code [containerOp, commitOp(MEMBER_DELETE)]}; {@code TABLE_SLOT}
  * index = {@code [containerOp, keyOp, normalizeOp(TABLE_WRITE),
  * commitOp(INDEX_DELETE)]}; {@code CLASS_FIELD} = {@code [containerOp,
@@ -44,7 +52,9 @@ import java.util.Optional;
  * <p><b>Boundary children (A-D4, closed).</b> The {@code ARRAY_SLOT}
  * write boundary must carry kind {@code ARRAY_ELEMENT_ASSIGNMENT} with
  * policy {@code ARRAY_WRITE_BOUNDS_THEN_ELEMENT} and input = the checked
- * RHS value ({@code valueOp}'s result); the {@code ARRAY_SLOT} delete
+ * committed RHS value ({@code valueOp}'s result, or the
+ * {@code FUNCTION_ADAPT} adapter child's result on an adapted chain);
+ * the {@code ARRAY_SLOT} delete
  * boundary must carry kind {@code ARRAY_ELEMENT_DELETE} with policy
  * {@code ARRAY_DELETE_BOUNDS} and input = the normalized index
  * ({@code normalizeOp}'s result); the {@code BYTES_SLOT} write boundary
@@ -59,8 +69,11 @@ import java.util.Optional;
  * (the chain-lowering task produces it from the checked target type
  * through the DescriptorService; this protocol produces no descriptors and
  * validates the closed kind/policy pairing over the declared descriptor
- * the boundary carries). {@code TABLE_SLOT} and {@code CLASS_FIELD}
- * chains carry zero write-check boundaries.</p>
+ * the boundary carries). A {@code CLASS_FIELD} write concatenates exactly
+ * the same closed adapter forms and its {@code FIELD_WRITE} commit stores
+ * the chain's committed value (the {@code valueOp} result, or the
+ * {@code FUNCTION_ADAPT} adapter child's result on an adapted chain).
+ * {@code TABLE_SLOT} chains carry zero write-check boundaries.</p>
  *
  * <p><b>Normalize and commit (A-D3/A-D5).</b> The normalize child is
  * {@code INDEX_NORMALIZE} with policy {@code NO_DEAL_FAILURE} (purity —

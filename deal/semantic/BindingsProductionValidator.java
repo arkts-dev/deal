@@ -2868,6 +2868,17 @@ public final class BindingsProductionValidator {
      *       published result, which is the adapter result.</li>
      * </ul>
      *
+     * <p>Two positions agree through their own records rather than a
+     * boundary op's single input: a class default is published by the
+     * declaring unit's {@code CLASS_DEFAULT} op (the position's own
+     * publisher), so a class with an adapting default is admitted even
+     * when that unit contains no construction — a same-unit omission, a
+     * cross-module shared-factory default and a supplied-only construction
+     * consume the published result; and each {@code RETURN} records its
+     * own returned value plus the function's single return boundary cell,
+     * so an adapted return that is not the source-first {@code RETURN} is
+     * still a position consumer.</p>
+     *
      * <p>An adapter result whose every boundary consumer is a typed
      * boundary of another kind — a host/external return or crossing, a
      * callback cell, an array/table element read or delete, a JSON field, a
@@ -2883,13 +2894,45 @@ public final class BindingsProductionValidator {
                     || !(op.result() instanceof ValueId adapterValue)) {
                 continue;
             }
+            if (classDefaultPublisher(model, adapterValue)) {
+                // The class-default position's own publisher: the
+                // CLASS_DEFAULT op result is the adapted value's published
+                // identity, so the declaring unit's admission never depends
+                // on a construction existing there. A same-unit omission
+                // construction's CLASS_DEFAULT_FIELD cell, a cross-module
+                // construction's shared-factory default and a supplied-only
+                // construction all consume the published value; none of
+                // them is the adapter's only wiring point.
+                continue;
+            }
             List<SemanticOp> consumers = new ArrayList<>();
+            Set<OpId> consumerIds = new LinkedHashSet<>();
             for (SemanticOp candidate : model.unit.ops()) {
                 if (candidate.kind() == SemanticOpKind.BOUNDARY
                         && candidate.payload()
                             instanceof KindPayload.BoundaryPayload boundary
-                        && adapterValue.equals(boundary.input())) {
+                        && adapterValue.equals(boundary.input())
+                        && consumerIds.add(candidate.opId())) {
                     consumers.add(candidate);
+                }
+            }
+            // A function's single return boundary cell is recorded once,
+            // while each RETURN owns its own returned value: an adapted
+            // RETURN after the first one is the cell's consumer through the
+            // RETURN payload (value + recorded return cell), not through the
+            // boundary op's first recorded input. Derive that agreement per
+            // RETURN so early-return functions adapt every return position.
+            for (SemanticOp candidate : model.unit.ops()) {
+                if (candidate.kind() != SemanticOpKind.RETURN
+                        || !(candidate.payload()
+                            instanceof KindPayload.ReturnPayload returned)
+                        || returned.returnBoundaryOpId() == null
+                        || !adapterValue.equals(returned.value())) {
+                    continue;
+                }
+                SemanticOp cell = model.opById.get(returned.returnBoundaryOpId());
+                if (cell != null && consumerIds.add(cell.opId())) {
+                    consumers.add(cell);
                 }
             }
             SemanticOp next = model.nextOpInBlock(op);
@@ -2940,6 +2983,26 @@ public final class BindingsProductionValidator {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * True exactly when the adapter result is the published value of a
+     * {@code CLASS_DEFAULT} op in the same unit: the class-default
+     * position's own publisher. The default expression's evaluation is
+     * owned by the declaring unit's declaration walk, so a class whose
+     * function-valued default adapts needs no construction in that unit
+     * (a same-unit omission, a cross-module construction and a
+     * supplied-only construction consume the published result).
+     */
+    private static boolean classDefaultPublisher(Model model, ValueId adapterValue) {
+        for (SemanticOp candidate : model.unit.ops()) {
+            if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT
+                    && candidate.payload() instanceof KindPayload.ClassDefaultPayload
+                    && adapterValue.equals(candidate.result())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
