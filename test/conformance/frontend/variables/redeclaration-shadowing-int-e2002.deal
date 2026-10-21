@@ -1,0 +1,12 @@
+// @spec: Variables — Redeclaration
+// @description: A lexical shadow of the int intrinsic is an ordinary binding: declaring it twice in the same block is the same-scope redeclaration error, so valid shadowing never weakens the redeclaration rule
+// @expected: compile-error E2002
+// @features: variables, redeclaration, name-resolution, shadowing
+
+function plus(x: int): int { return x + 1; }
+
+export function main(): null {
+  let int: (x: int) => int = plus;
+  let int: (x: int) => int = plus;
+  return null;
+}

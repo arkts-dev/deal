@@ -1,0 +1,247 @@
+// @spec: Variables — Scope
+// @description: A direct call of a lexically shadowed int/number/bytes name dispatches the local, parameter, enclosing-block or catch binding the position resolves, never the compiler intrinsic (v1.3 name resolution: locals, parameters and enclosing scopes precede module bindings and compiler intrinsics). Each case pins its exact expected value, the shadow's current-value dispatch, once-only callee/argument effects, the captured callee, and the genuinely unshadowed conversions and allocation beside the shadowed and intrinsic arity-adapted alias controls.
+// @expected: runtime-ok
+// @features: variables, name-resolution, shadowing, intrinsics, bytes, side-effects
+
+// The user callees the shadowed names hold. Each expected value below
+// is the callee's own result: a backend that dispatched the intrinsic
+// reports the conversion instead.
+
+function plus(x: int): int { return x + 1; }
+
+function plusTen(x: int): int { return x + 10; }
+
+function twice(x: number): number { return x + 2.0; }
+
+function allocate(x: int): int { return x + 5; }
+
+// 1. A local function-typed int shadow is the callee.
+function localShadow(): int {
+  let int: (x: int) => int = plus;
+  if (int(2) !== 3) {
+    throw { code: "TEST_FAIL", message: "local int shadow dispatched the conversion" };
+  }
+  return int(3);
+}
+
+// 2. A parameter shadow is the callee for the whole body.
+function parameterShadow(int: (x: int) => int): int {
+  if (int(2) !== 3) {
+    throw { code: "TEST_FAIL", message: "parameter int shadow dispatched the conversion" };
+  }
+  return int(4);
+}
+
+// 3. A local number shadow is the callee; the conversion is not invoked.
+function numberShadow(): number {
+  let number: (x: number) => number = twice;
+  if (number(1.0) !== 3.0) {
+    throw { code: "TEST_FAIL", message: "local number shadow dispatched the conversion" };
+  }
+  return number(1.5);
+}
+
+// 4. A local bytes shadow whose checked call type is int dispatches its
+// own callee: no allocation value reaches the int-typed call position.
+function bytesShadow(): int {
+  let bytes: (x: int) => int = allocate;
+  if (bytes(2) !== 7) {
+    throw { code: "TEST_FAIL", message: "local bytes shadow allocated a buffer" };
+  }
+  return bytes(3);
+}
+
+// 5. Block scopes: an enclosing shadow is the callee inside a nested
+// block, an inner shadow never leaks out, and the intrinsic is the
+// callee again once the shadowing block has ended.
+function nestedScopes(): int {
+  {
+    let int: (x: int) => int = plusTen;
+    {
+      if (int(1) !== 11) {
+        throw { code: "TEST_FAIL", message: "enclosing shadow ignored in a nested block" };
+      }
+    }
+  }
+  if (int(1.0) !== 1) {
+    throw { code: "TEST_FAIL", message: "block shadow leaked into the enclosing scope" };
+  }
+  {
+    let int: (x: int) => int = plus;
+    if (int(1) !== 2) {
+      throw { code: "TEST_FAIL", message: "sibling block shadow ignored" };
+    }
+  }
+  return int(5.0) + 1;
+}
+
+// 6. A catch-block local shadow is the callee inside the catch block.
+function catchShadow(): int {
+  let result: int = 0;
+  try {
+    throw { code: "CATCH_X", message: "catch payload" };
+  } catch (e) {
+    let int: (x: int) => int = plus;
+    if (e.code !== "CATCH_X") {
+      throw { code: "TEST_FAIL", message: "catch payload changed" };
+    }
+    if (int(5) !== 6) {
+      throw { code: "TEST_FAIL", message: "catch-block int shadow dispatched the conversion" };
+    }
+    result = int(6);
+  }
+  return result;
+}
+
+// 7. Declaration order: a let is not hoisted, so the earlier reference
+// in the shadowing block is the intrinsic and the later one is the shadow.
+function declarationOrder(): int {
+  let before: int = int(2.0);
+  let int: (x: int) => int = plus;
+  if (before !== 2) {
+    throw { code: "TEST_FAIL", message: "pre-declaration read missed the intrinsic" };
+  }
+  if (int(2) !== 3) {
+    throw { code: "TEST_FAIL", message: "declared shadow is not the callee" };
+  }
+  return before + int(2);
+}
+
+// 8. A for-head counter named int: its own initializer is the intrinsic
+// (the counter is not visible to it), the loop reads are the counter.
+function forHeadCounter(): int {
+  let total: int = 0;
+  for (let int: int = int(3.0); int > 0; int = int - 1) {
+    total = total + int;
+  }
+  return total;
+}
+
+// 9. A reassigned function-typed shadow dispatches its current value.
+function currentValueDispatch(): int {
+  let int: (x: int) => int = plus;
+  if (int(2) !== 3) {
+    throw { code: "TEST_FAIL", message: "initial shadow value ignored" };
+  }
+  int = plusTen;
+  if (int(2) !== 12) {
+    throw { code: "TEST_FAIL", message: "reassigned shadow value ignored" };
+  }
+  return int(3);
+}
+
+// 10. The callee and the argument each take effect exactly once per call,
+// through the captured counter both bodies write.
+function onceOnlyEffects(): int {
+  let events: int = 0;
+  let bump: () => int = function(): int { events = events + 1; return events; };
+  let int: (x: int) => int = function(x: int): int {
+    events = events + 1;
+    return x + events;
+  };
+  let first: int = int(bump());
+  if (events !== 2 || first !== 3) {
+    throw { code: "TEST_FAIL", message: "callee and argument effects are not once-only" };
+  }
+  let second: int = int(0);
+  if (events !== 3 || second !== 3) {
+    throw { code: "TEST_FAIL", message: "the second call skipped the callee" };
+  }
+  return events;
+}
+
+// 11. Alias control (shadowed): an arity-extended function value of the
+// shadowed binding is an adapter over the shadow, never over the intrinsic.
+function shadowedAlias(): int {
+  let int: (x: int) => int = plus;
+  let widened: (x: int, y: int) => int = int;
+  if (widened(2, 9) !== 3) {
+    throw { code: "TEST_FAIL", message: "shadowed alias adapted the intrinsic" };
+  }
+  return widened(1, 0);
+}
+
+// 12. Alias control (genuinely unshadowed): the same adaptation over the
+// intrinsic converts its argument.
+function intrinsicAlias(): int {
+  let conversion: (x: number, y: number) => int = int;
+  if (conversion(2.0, 9.0) !== 2) {
+    throw { code: "TEST_FAIL", message: "intrinsic alias did not convert" };
+  }
+  return conversion(1.0, 0.0);
+}
+
+// 13. The unshadowed intrinsic operations keep their checked result types.
+function intrinsicResults(): int {
+  let converted: int = int(2.0);
+  let widened: number = number(7);
+  let buffer: bytes = bytes(4);
+  if (converted !== 2) {
+    throw { code: "TEST_FAIL", message: "int(2.0) did not convert" };
+  }
+  if (widened !== 7.0) {
+    throw { code: "TEST_FAIL", message: "number(7) did not widen" };
+  }
+  if (buffer.length !== 4) {
+    throw { code: "TEST_FAIL", message: "bytes(4) allocated the wrong length" };
+  }
+  return converted;
+}
+
+// 14. A closure captures the shadowing binding: the captured callee is
+// the callee of the body's call, never the intrinsic.
+function makeShadowReader(): () => int {
+  let int: (x: int) => int = plus;
+  return function(): int { return int(3); };
+}
+
+function capturedShadow(): int {
+  let reader: () => int = makeShadowReader();
+  return reader();
+}
+
+export function main(): null {
+  if (localShadow() !== 4) {
+    throw { code: "TEST_FAIL", message: "local shadow result" };
+  }
+  if (parameterShadow(plus) !== 5) {
+    throw { code: "TEST_FAIL", message: "parameter shadow result" };
+  }
+  if (numberShadow() !== 3.5) {
+    throw { code: "TEST_FAIL", message: "number shadow result" };
+  }
+  if (bytesShadow() !== 8) {
+    throw { code: "TEST_FAIL", message: "bytes shadow result" };
+  }
+  if (nestedScopes() !== 6) {
+    throw { code: "TEST_FAIL", message: "nested scope result" };
+  }
+  if (catchShadow() !== 7) {
+    throw { code: "TEST_FAIL", message: "catch shadow result" };
+  }
+  if (declarationOrder() !== 5) {
+    throw { code: "TEST_FAIL", message: "declaration order result" };
+  }
+  if (forHeadCounter() !== 6) {
+    throw { code: "TEST_FAIL", message: "for-head counter result" };
+  }
+  if (currentValueDispatch() !== 13) {
+    throw { code: "TEST_FAIL", message: "current-value dispatch result" };
+  }
+  if (onceOnlyEffects() !== 3) {
+    throw { code: "TEST_FAIL", message: "once-only effects result" };
+  }
+  if (shadowedAlias() !== 2) {
+    throw { code: "TEST_FAIL", message: "shadowed alias result" };
+  }
+  if (intrinsicAlias() !== 1) {
+    throw { code: "TEST_FAIL", message: "intrinsic alias result" };
+  }
+  if (intrinsicResults() !== 2) {
+    throw { code: "TEST_FAIL", message: "intrinsic result" };
+  }
+  if (capturedShadow() !== 4) {
+    throw { code: "TEST_FAIL", message: "captured shadow result" };
+  }
+  return null;
+}

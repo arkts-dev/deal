@@ -1,0 +1,13 @@
+// @spec: Variables — Scope
+// @description: A module-level declaration named bytes shadows the allocation intrinsic (v1.3 name resolution: module-level declarations precede compiler intrinsics), so the module's bytes(...) call is the user function and never the zero-filled allocation.
+// @expected: runtime-ok
+// @features: variables, name-resolution, shadowing, intrinsics
+
+function bytes(n: int): int { return n + 100; }
+
+export function main(): null {
+  if (bytes(2) !== 102) {
+    throw { code: "TEST_FAIL", message: "module-level bytes declaration ignored" };
+  }
+  return null;
+}

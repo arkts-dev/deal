@@ -2774,6 +2774,22 @@ public final class SemanticLowerer {
          */
         private final Map<String, ValueId> intrinsicIdentities = new LinkedHashMap<>();
         /**
+         * The seeded intrinsic bindings by intrinsic name (B1): the
+         * module-init-top cells {@link #seedIntrinsicBindings} allocates
+         * for the module's unshadowed root
+         * {@code Symbol.IntrinsicSymbol} bindings. The map is the
+         * position-resolved classifier's identity fact
+         * ({@link #conversionIntrinsicKindAt}): a name is one of the
+         * conversion/allocation intrinsics at a position exactly when the
+         * walk's own binding environment resolves that name to the seeded
+         * cell — a lexically shadowing local, parameter, enclosing-block
+         * or nested declaration is a different cell, so the intrinsic is
+         * never selected by spelling or by the root binding. Empty in the
+         * modes that do not seed their intrinsic bindings; their
+         * classifier falls back to the checker's per-scope table.
+         */
+        private final Map<String, BindingId> seededIntrinsicBindings = new LinkedHashMap<>();
+        /**
          * The produced recursive groups' member facts in creation order
          * (group-core mode): the fact surface backing
          * {@link #groupFacts()}.
@@ -4195,6 +4211,7 @@ public final class SemanticLowerer {
                     INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
                     false, BindingProducer.BINDING_ALLOC, false);
                 registerBinding(name, binding, incarnation);
+                seededIntrinsicBindings.put(name, binding);
                 if (proofAnalysis) {
                     // B7: intrinsic bindings (int/number/bytes) always carry
                     // the proof — builtin, unassignable — regardless of
@@ -6355,8 +6372,8 @@ public final class SemanticLowerer {
             RuntimeDescriptor.Func targetSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(decl.initializer());
-            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeOf(
-                decl.initializer(), name -> checks.symbolTable().resolve(name));
+            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
+                decl.initializer(), this::isConversionIntrinsicNameAt);
             CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
             ThunkSource thunk = null;
             ValueId operand = null;
@@ -8925,8 +8942,8 @@ public final class SemanticLowerer {
             RuntimeDescriptor.Func targetSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(assignment.value());
-            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeOf(
-                assignment.value(), name -> checks.symbolTable().resolve(name));
+            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
+                assignment.value(), this::isConversionIntrinsicNameAt);
             CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
             // REEVALUATE_THUNK: the detached thunk walks before the
             // chain opens — the thunk ops execute only at invocation
@@ -14948,22 +14965,89 @@ public final class SemanticLowerer {
          * {@code number(...)}, and {@code bytes(...)} calls of the root
          * {@code Symbol.IntrinsicSymbol} bindings lower; every other call
          * shape — including {@code has(...)} call fallbacks and ordinary
-         * user calls — fails closed.
+         * user calls — fails closed. The callee is classified at its own
+         * position ({@link #conversionIntrinsicKindAt}): a call whose
+         * callee the position resolves to a lexically shadowing local,
+         * parameter, enclosing-block, nested or module-level binding is
+         * that user call, never the intrinsic
+         * (docs/spec-v1.3.md §Name resolution).
          */
         private IntrinsicKind intrinsicKindOf(CallExpr call) {
             if (call.args().size() == 1
                     && call.callee() instanceof IdentifierExpr identifier) {
-                Symbol symbol = checks.symbolTable().resolve(identifier.name());
-                if (symbol instanceof Symbol.IntrinsicSymbol intrinsic) {
-                    IntrinsicKind kind = conversionIntrinsicKind(intrinsic.name());
-                    if (kind != null) {
-                        return kind;
-                    }
+                IntrinsicKind kind = conversionIntrinsicKindAt(identifier.name());
+                if (kind != null) {
+                    return kind;
                 }
             }
             throw new ConstructUnlowered("call expression (only the int()/number() "
                 + "conversion and bytes() allocation intrinsic calls lower to "
                 + "INTRINSIC_CALL; the CALL machinery is the calls slice's)", call.span());
+        }
+
+        /**
+         * The conversion/allocation intrinsic kind one identifier
+         * position resolves to, or {@code null} when the position's
+         * binding is not that intrinsic — the position-resolved
+         * classifier the intrinsic-call arm and the adapted-source shape
+         * share. Resolution follows docs/spec-v1.3.md §Name resolution:
+         * the walk's own binding environment is the declaration-order
+         * exact per-position fact (a {@code let} is registered only after
+         * its own initializer, so an initializer reading the shadowed
+         * name still resolves the enclosing binding), and the checker's
+         * per-scope table supplies the fact for the modes that do not
+         * seed their intrinsic bindings (its parent chain reaches the
+         * module root, so a nested binding shadows the enclosing scopes
+         * and the root intrinsics exactly as the checker resolved the
+         * occurrence).
+         */
+        private IntrinsicKind conversionIntrinsicKindAt(String name) {
+            BindingId seeded = seededIntrinsicBindings.get(name);
+            if (seeded != null) {
+                FrameResolution resolution = resolveFrame(name);
+                if (resolution == null
+                        || !seeded.equals(resolution.entry().cell().id)) {
+                    return null;
+                }
+                return conversionIntrinsicKind(name);
+            }
+            if (siteCheckerScope().resolve(name)
+                    instanceof Symbol.IntrinsicSymbol intrinsic) {
+                return conversionIntrinsicKind(intrinsic.name());
+            }
+            return null;
+        }
+
+        /**
+         * True iff the identifier position's resolution is one of the
+         * conversion/allocation intrinsics — the shape map's
+         * position-resolved intrinsic predicate
+         * ({@link #conversionIntrinsicKindAt}).
+         */
+        private boolean isConversionIntrinsicNameAt(String name) {
+            return conversionIntrinsicKindAt(name) != null;
+        }
+
+        /**
+         * The innermost checker scope table of the current walk position:
+         * the per-scope table pass 1 recorded for the innermost enclosing
+         * scope-keyed node (a block, a function declaration or expression
+         * body, a for head, a try statement), walking out to the next
+         * scope-keyed node when the position's node records no table of
+         * its own, and the module root table at module level. The table's
+         * parent chain reaches the module root, so a nested binding
+         * shadows an enclosing binding, a module-level declaration and the
+         * root compiler intrinsics exactly as the checker resolved the
+         * occurrence.
+         */
+        private SymbolTable siteCheckerScope() {
+            for (StatementNode node : checkerScopeNodes) {
+                SymbolTable table = checks.scopeMap().get(node);
+                if (table != null) {
+                    return table;
+                }
+            }
+            return checks.symbolTable();
         }
 
         /**

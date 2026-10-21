@@ -91,4 +91,5 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running For-Of Binding Mutation Production Tests (ISSUE-0876) ===|java -ea -cp build deal.test.ForOfBindingMutationProductionTest'
   'fg|=== Running Declared-Body Carrier Production Tests (ISSUE-0757, ISSUE-0758) ===|java -ea -cp build deal.test.DeclaredBodyCarrierProductionTest'
   'fg|=== Running Fail-Closed Guard Retargeting Tests (ISSUE-0702) ===|java -ea -cp build deal.test.FailClosedGuardRetargetingTest'
+  'fg|=== Running Intrinsic Shadowing Production Tests (ISSUE-0878) ===|java -ea -cp build deal.test.IntrinsicShadowingProductionTest'
 )
