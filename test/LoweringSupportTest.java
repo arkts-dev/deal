@@ -1009,6 +1009,64 @@ public class LoweringSupportTest {
     // 7. constructCoverage: the closed 23-row detector table + the S1 copy
     // =========================================================================
 
+    /**
+     * A bare identifier write target is the {@code ASSIGNMENT} row's own
+     * cell commit ({@code BINDING_STORE} through the address chain): it
+     * produces no {@code BINDING_LOAD}, so the {@code IDENTIFIER} read row
+     * must not claim it. A module whose only identifier occurrence is an
+     * assignment target therefore records {@code ASSIGNMENT} without
+     * {@code IDENTIFIER}, and the production compile passes R-COVERAGE;
+     * an identifier read still records the row.
+     */
+    static void testIdentifierWriteTargetClaimsAssignmentOnly() throws Exception {
+        System.out.println("-- constructCoverage: a bare identifier write target "
+            + "claims ASSIGNMENT, never IDENTIFIER --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-write-target");
+        try {
+            RequirementManifestResult storeOnly = compileAndCompute(
+                tmp.resolve("store-only"), Map.of(
+                    "main.deal", """
+                        export function main(): null {
+                          let x: int = 0;
+                          x = 2;
+                          return null;
+                        }
+                        """), "main.deal");
+            SemanticRequirementManifest storeManifest = manifestOf(storeOnly, "main");
+            check(storeManifest != null,
+                "the write-only module produces a manifest");
+            if (storeManifest != null) {
+                check(storeManifest.constructCoverage()
+                        .containsKey(ConstructKind.ASSIGNMENT),
+                    "the write-only module records the ASSIGNMENT row");
+                check(!storeManifest.constructCoverage()
+                        .containsKey(ConstructKind.IDENTIFIER),
+                    "a bare identifier write target records no IDENTIFIER read row");
+            }
+
+            RequirementManifestResult readBack = compileAndCompute(
+                tmp.resolve("read-back"), Map.of(
+                    "main.deal", """
+                        export function main(): null {
+                          let x: int = 0;
+                          x = 2;
+                          let y: int = x;
+                          return null;
+                        }
+                        """), "main.deal");
+            SemanticRequirementManifest readManifest = manifestOf(readBack, "main");
+            check(readManifest != null, "the read-back module produces a manifest");
+            if (readManifest != null) {
+                check(readManifest.constructCoverage()
+                        .containsKey(ConstructKind.IDENTIFIER),
+                    "an identifier read records the IDENTIFIER row");
+            }
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
     static void testConstructCoverageRows() throws Exception {
         System.out.println("-- constructCoverage: every required-common-form row recorded verbatim --");
 
@@ -1794,6 +1852,7 @@ public class LoweringSupportTest {
         testSignedInt32LiteralClaims();
         testSignedInt32UnaryBinaryClaims();
         testIntrinsicConversionClaims();
+        testIdentifierWriteTargetClaimsAssignmentOnly();
         testConstructCoverageRows();
         testE6005InconsistentFacts();
         testRecordAndClosedSetInvariants();

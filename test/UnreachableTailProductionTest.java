@@ -1355,16 +1355,22 @@ public class UnreachableTailProductionTest {
         // scope: with the loop inside the try the label is only in scope at
         // the transfer site, so the arm re-raises the marker; with the loop
         // enclosing the try the arm takes the target loop's own jump.
-        String arm = "__tr.id == " + id + "L) {";
-        int armAt = text.indexOf(arm);
-        check(armAt >= 0, name + " [jvm]: the try's transfer dispatch carries "
-            + "the collected transfer's arm");
-        if (armAt >= 0) {
-            String armBody = text.substring(armAt + arm.length()).stripLeading();
+        // Every handler's transfer marker is named by its op's own id (a
+        // try/catch nested inside another handler's catch clause must not
+        // redeclare an in-scope local), so the arm is located by its shape
+        // and the marker name is read back from the emitted text.
+        java.util.regex.Matcher armMatcher = java.util.regex.Pattern.compile(
+            "(__tr\\d+)\\.id == " + id + "L\\) \\{").matcher(text);
+        boolean armFound = armMatcher.find();
+        check(armFound, name + " [jvm]: the try's transfer dispatch "
+            + "carries the collected transfer's arm");
+        if (armFound) {
+            String transferMarker = armMatcher.group(1);
+            String armBody = text.substring(armMatcher.end()).stripLeading();
             if (loopCase.directInTry()) {
-                check(armBody.startsWith("throw __tr;"), name + " [jvm]: the "
-                    + "dispatch arm re-raises the marker instead of jumping to "
-                    + "the out-of-scope label: "
+                check(armBody.startsWith("throw " + transferMarker + ";"), name
+                    + " [jvm]: the dispatch arm re-raises the marker instead of "
+                    + "jumping to the out-of-scope label: "
                     + armBody.lines().findFirst().orElse("<eof>"));
             } else {
                 check(armBody.startsWith(loopCase.jumpText() + id + ";"), name

@@ -44,6 +44,8 @@ import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.BindingCellKind;
+import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
@@ -58,6 +60,7 @@ import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.InitializationMode;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
@@ -187,6 +190,23 @@ public class ControlFlowLoweringTest {
 
     private static SemanticLowerer.LoweringResult lowerDetected(CheckedSlice slice) {
         return lower(slice, detectedCoverage(slice));
+    }
+
+    /**
+     * Lowers one slice through the full-program E7 walk (the production
+     * statement walk: the binding, closure, group and full-program arms
+     * with the E7 call machine, which is what makes a closure body's
+     * {@code RETURN} name its own function), with the foundation
+     * detector's own coverage rows, so the unit passes the R-COVERAGE
+     * gate exactly as the production arm requires.
+     */
+    private static SemanticLowerer.LoweringResult lowerFullProgram(CheckedSlice slice) {
+        SemanticLowerer.FullProgramE7Result result =
+            SemanticLowerer.lowerModuleFullProgramE7(moduleOf(slice),
+                SemanticProfile.DEAL_V1_3_INT32, detectedCoverage(slice),
+                INTERFACE_HASH, REGISTRY_HASH,
+                SemanticIdAllocator.over(List.of(MODULE)), Map.of(), Set.of());
+        return result == null ? null : result.lowering();
     }
 
     // =========================================================================
@@ -367,6 +387,11 @@ public class ControlFlowLoweringTest {
             what + " origin kind " + op.origin().kind() + " == " + kind);
         check(java.util.Objects.equals(op.origin().parentOpId(), parent),
             what + " origin parentOpId " + op.origin().parentOpId() + " == " + parent);
+    }
+
+    private static void checkEq(Object expected, Object actual, String message) {
+        check(java.util.Objects.equals(expected, actual),
+            message + " (expected " + expected + ", got " + actual + ")");
     }
 
     private static void checkNoResult(String what, SemanticOp op) {
@@ -1264,6 +1289,160 @@ public class ControlFlowLoweringTest {
         checkOrigin("TRY_CATCH", tryCatch, statement.span(), SourceOriginKind.USER, null);
         check(ops.indexOf(tryCatch) == 0,
             "the TRY_CATCH op precedes its child block ops in the unit list");
+    }
+
+    /**
+     * The catch variable is an ordinary mutable lexical binding of the
+     * full-program walk (docs/spec-v1.3.md §Closures and captured
+     * variables, §try / catch): its catch-block BINDING_ALLOC is the
+     * incarnation a direct assignment commits, a closure created in the
+     * catch block records the capture (the capture-driven cell kind makes
+     * the incarnation a shared cell), and a closure whose own parameter
+     * shadows the name captures nothing.
+     */
+    static void testCatchBindingLexicalMutable() {
+        System.out.println("-- catch binding: mutable lexical binding, "
+            + "assignment, capture, shadowing --");
+
+        CheckedSlice slice = checkSlice("""
+            function makeReader(seed: Error): () => Error {
+              let read: () => Error = function(): Error { return seed; };
+              try { throw seed; }
+              catch (e) {
+                read = function(): Error { return e; };
+                e = seed;
+              }
+              return read;
+            }
+            """);
+        if (slice == null) {
+            return;
+        }
+        SemanticLowerer.LoweringResult result = lowerFullProgram(slice);
+        check(result != null && !result.hasErrors(),
+            "the catch-capture slice lowers through the full-program walk: "
+                + (result == null ? "null" : result.diagnostics()));
+        if (result == null || result.hasErrors() || result.unit() == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.unit();
+        List<SemanticOp> ops = unit.ops();
+        List<SemanticOp> tryCatches = ofKind(ops, SemanticOpKind.TRY_CATCH);
+        check(tryCatches.size() == 1,
+            "exactly one TRY_CATCH op; got " + tryCatches.size());
+        if (tryCatches.size() != 1) {
+            return;
+        }
+        KindPayload.TryCatchPayload tryCatch =
+            (KindPayload.TryCatchPayload) tryCatches.get(0).payload();
+        BindingId catchBinding = tryCatch.catchBinding();
+
+        List<OpId> catchOps = new ArrayList<>(
+            result.table().blockOps().getOrDefault(tryCatch.catchBlock(), List.of()));
+        check(!catchOps.isEmpty(), "the catch block is a block of the produced table");
+        if (catchOps.isEmpty()) {
+            return;
+        }
+        SemanticOp alloc = opById(ops, catchOps.get(0));
+        KindPayload.BindingAllocPayload allocPayload =
+            (KindPayload.BindingAllocPayload) alloc.payload();
+        check(alloc.kind() == SemanticOpKind.BINDING_ALLOC
+                && allocPayload.binding().equals(catchBinding),
+            "the catch block's first op is the catch binding's producing ALLOC");
+        checkEq(BindingCellKind.SHARED_CELL, allocPayload.cellKind(),
+            "the captured catch binding's incarnation is a shared cell");
+        checkEq(SemanticLowerer.INITIAL_LOOP_GENERATION, allocPayload.generation(),
+            "the catch incarnation is generation 0");
+        check(allocPayload.scope().equals(tryCatch.catchBlock()),
+            "the catch incarnation's producing ALLOC sits in the catch block");
+
+        List<SemanticOp> stores = new ArrayList<>();
+        for (SemanticOp op : ops) {
+            if (op.kind() == SemanticOpKind.BINDING_STORE
+                    && op.payload() instanceof KindPayload.BindingStorePayload store
+                    && store.binding().equals(catchBinding)) {
+                stores.add(op);
+            }
+        }
+        checkEq(1, stores.size(), "the direct catch-variable assignment lowers to "
+            + "exactly one BINDING_STORE of the catch binding");
+        if (stores.size() == 1) {
+            checkEq(SemanticLowerer.INITIAL_LOOP_GENERATION,
+                ((KindPayload.BindingStorePayload) stores.get(0).payload()).generation(),
+                "the catch store commits the generation-0 incarnation");
+        }
+
+        BindingGeneration expectedCapture = new BindingGeneration(catchBinding,
+            SemanticLowerer.INITIAL_LOOP_GENERATION);
+        List<LoweredFunction> capturing = new ArrayList<>();
+        for (LoweredFunction function : unit.functions().values()) {
+            if (function.captures().contains(expectedCapture)) {
+                capturing.add(function);
+            }
+        }
+        checkEq(1, capturing.size(), "exactly one lowered function captures the "
+            + "catch binding");
+        if (capturing.size() == 1) {
+            List<SemanticOp> bodyOps = new ArrayList<>();
+            for (OpId opId : result.table().blockOps()
+                    .getOrDefault(capturing.get(0).body(), List.of())) {
+                bodyOps.add(opById(ops, opId));
+            }
+            boolean bodyLoads = bodyOps.stream().anyMatch(op ->
+                op.kind() == SemanticOpKind.BINDING_LOAD
+                    && op.payload() instanceof KindPayload.BindingLoadPayload load
+                    && load.binding().equals(catchBinding)
+                    && load.generation() == SemanticLowerer.INITIAL_LOOP_GENERATION);
+            check(bodyLoads, "the capturing body loads the catch binding's "
+                + "generation-0 cell");
+        }
+
+        // A closure whose own parameter shadows the name is no capture: the
+        // catch incarnation stays the closed DIRECT default.
+        CheckedSlice shadowSlice = checkSlice("""
+            function pick(seed: Error): (x: Error) => Error {
+              let read: (x: Error) => Error = function(x: Error): Error { return x; };
+              try { throw seed; }
+              catch (e) { read = function(e: Error): Error { return e; }; }
+              return read;
+            }
+            """);
+        if (shadowSlice == null) {
+            return;
+        }
+        SemanticLowerer.LoweringResult shadowResult = lowerFullProgram(shadowSlice);
+        check(shadowResult != null && !shadowResult.hasErrors(),
+            "the shadowing-parameter slice lowers: "
+                + (shadowResult == null ? "null" : shadowResult.diagnostics()));
+        if (shadowResult == null || shadowResult.hasErrors()
+                || shadowResult.unit() == null) {
+            return;
+        }
+        List<SemanticOp> shadowTryCatches = ofKind(shadowResult.unit().ops(),
+            SemanticOpKind.TRY_CATCH);
+        if (shadowTryCatches.size() != 1) {
+            check(false, "the shadowing slice carries one TRY_CATCH op");
+            return;
+        }
+        KindPayload.TryCatchPayload shadowTryCatch =
+            (KindPayload.TryCatchPayload) shadowTryCatches.get(0).payload();
+        List<OpId> shadowCatchOps = new ArrayList<>(shadowResult.table().blockOps()
+            .getOrDefault(shadowTryCatch.catchBlock(), List.of()));
+        if (shadowCatchOps.isEmpty()) {
+            check(false, "the shadowing slice's catch block is a block of the table");
+            return;
+        }
+        KindPayload.BindingAllocPayload shadowPayload =
+            (KindPayload.BindingAllocPayload) opById(shadowResult.unit().ops(),
+                shadowCatchOps.get(0)).payload();
+        checkEq(BindingCellKind.DIRECT, shadowPayload.cellKind(),
+            "a shadowing closure parameter captures nothing, so the catch "
+                + "incarnation stays a direct cell");
+        BindingGeneration shadowCapture = new BindingGeneration(
+            shadowTryCatch.catchBinding(), SemanticLowerer.INITIAL_LOOP_GENERATION);
+        boolean captured = shadowResult.unit().functions().values().stream()
+            .anyMatch(function -> function.captures().contains(shadowCapture));
+        check(!captured, "no lowered function captures the shadowed catch name");
     }
 
     // =========================================================================
@@ -2181,6 +2360,7 @@ public class ControlFlowLoweringTest {
         testNarrowedForOfIterableAdmission();
         testForEachArrayValuesArm();
         testTryCatchThrowArm();
+        testCatchBindingLexicalMutable();
         testBreakContinueTargets();
         testDiscardArm();
         testValidatorNegatives();

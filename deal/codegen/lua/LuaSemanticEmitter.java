@@ -5954,6 +5954,15 @@ public final class LuaSemanticEmitter {
             KindPayload.TryCatchPayload payload = (KindPayload.TryCatchPayload) op.payload();
             emitStart(op);
             String cellName = cell(payload.catchBinding(), 0);
+            // The catch entry is the catch binding's pinned initializing
+            // write. A captured catch binding is a shared cell (B2), so the
+            // entry publishes a fresh cell table per catch execution — a
+            // closure created in an earlier iteration's catch keeps its own
+            // live cell and the next catch never rebinds it — while an
+            // uncaptured catch binding stays the direct value cell. The
+            // binding's own BINDING_ALLOC never resets a live catch cell.
+            boolean sharedCatchCell = cellKindOf(payload.catchBinding(), 0)
+                == BindingCellKind.SHARED_CELL;
             // The caught failure's stable transport, captured beside the
             // catch binding: the catch block's own failure links it as its
             // cause when the failure is genuinely new, while a rethrow of
@@ -5995,7 +6004,8 @@ public final class LuaSemanticEmitter {
                 .append(" = {[__dealCarrierKeys.d] = true, code = __resT.code, m = __resT.m, ")
                 .append("o = __resT.o, e = __resT.e, a = __resT.a, ")
                 .append("f = __resT.f, cause = __resT.cause}\n");
-            out.append("    ").append(cellName).append(" = __resT\n");
+            out.append("    ").append(cellName).append(" = ")
+                .append(sharedCatchCell ? "{__resT}" : "__resT").append("\n");
             tryDepth++;
             out.append("    __okT, __terrT = pcall(function()\n");
             emitBlockOps(payload.catchBlock());

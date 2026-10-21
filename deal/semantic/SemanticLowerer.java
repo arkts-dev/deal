@@ -2653,10 +2653,14 @@ public final class SemanticLowerer {
         private final List<ForEachFrame> frames = new ArrayList<>();
         /**
          * The catch-binding frames (C-D6): the innermost enclosing
-         * {@code TRY_CATCH} catch variables. A {@code BINDING_LOAD} of a
-         * frame's name carries the frame's binding and the pinned
-         * initial generation; the try/catch arm pushes exactly one frame
-         * while lowering the catch block (binding init mechanics E6).
+         * {@code TRY_CATCH} catch variables. The try/catch arm pushes
+         * exactly one frame while lowering the catch block (binding init
+         * mechanics E6). The frame's binding is also the catch variable's
+         * {@code BINDING_ALLOC} incarnation of the walk's binding
+         * environment (its own scope frame), so a closure walk resolves —
+         * and captures — the catch variable exactly like every other
+         * declared binding; the E5 residual window (no binding
+         * environment) reads this frame directly.
          */
         private final List<CatchFrame> catchFrames = new ArrayList<>();
         /**
@@ -13495,12 +13499,24 @@ public final class SemanticLowerer {
             }
             catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding,
                 bindingScopes.size()));
+            // The catch variable is an ordinary mutable lexical binding of
+            // the catch block's scope (docs/spec-v1.3.md §try / catch): it
+            // enters the walk's binding environment in its own frame so a
+            // direct assignment resolves its cell and a closure created in
+            // the catch body registers it as a capture — the catch entry's
+            // BINDING_ALLOC is the incarnation a capture resolves to, and
+            // the capture-driven cell kind (B2) makes a captured catch
+            // binding a shared cell whose fresh per-entry cell is the
+            // TRY_CATCH arm's initializing write.
+            BindingCoreIncarnation catchIncarnation = new BindingCoreIncarnation(
+                INITIAL_LOOP_GENERATION, catchBlock, BindingCellKind.DIRECT,
+                true, BindingProducer.BINDING_ALLOC, false);
+            if (bindingCore) {
+                pushBindingFrame();
+                registerBinding(statement.catchVar(), catchBinding, catchIncarnation);
+            }
             pushBlock(catchBlock);
             try {
-
-                BindingCoreIncarnation catchIncarnation = new BindingCoreIncarnation(
-                    INITIAL_LOOP_GENERATION, catchBlock, BindingCellKind.DIRECT,
-                    true, BindingProducer.BINDING_ALLOC, false);
                 emitNullOp(SemanticOpKind.BINDING_ALLOC,
                     new KindPayload.BindingAllocPayload(catchBinding, catchBlock, true,
                         cellKinds.cellKindOf(catchIncarnation), INITIAL_LOOP_GENERATION),
@@ -13509,6 +13525,9 @@ public final class SemanticLowerer {
                 walkScopedBody(statement.catchBlock());
             } finally {
                 popBlock();
+                if (bindingCore) {
+                    popBindingFrame();
+                }
                 catchFrames.remove(0);
             }
             // The composite composition (D3): the enclosing block can
@@ -13670,25 +13689,34 @@ public final class SemanticLowerer {
                         ContainerPayloadDescriptors.resultDescriptorOf(type), slot);
                 }
             }
-            for (CatchFrame frame : catchFrames) {
-                if (frame.name().equals(identifier.name())) {
-                    FrameResolution catchResolution = resolveFrame(frame.name());
-                    int innerFrames = bindingScopes.size()
-                        - frame.outerFrameCount();
-                    if (catchResolution != null
-                            && catchResolution.frameIndex() < innerFrames
-                            && !catchResolution.entry().cell().id.equals(
-                                frame.binding())) {
-                        // A declaration inside the catch body shadows the
-                        // catch variable; an enclosing declaration does
-                        // not (the catch variable is the nearer scope).
-                        break;
+            // The catch-binding frames of the residual E5 window (a
+            // binding-core walk resolves the catch variable through its
+            // binding frame, and a closure walk registers it as a capture
+            // through the same frame): only the walk without a binding
+            // environment reads the frame directly. A closure walk's own
+            // resolution below owns the load, so the reference can become
+            // the detached body's capture entry.
+            if (!closureCore) {
+                for (CatchFrame frame : catchFrames) {
+                    if (frame.name().equals(identifier.name())) {
+                        FrameResolution catchResolution = resolveFrame(frame.name());
+                        int innerFrames = bindingScopes.size()
+                            - frame.outerFrameCount();
+                        if (catchResolution != null
+                                && catchResolution.frameIndex() < innerFrames
+                                && !catchResolution.entry().cell().id.equals(
+                                    frame.binding())) {
+                            // A declaration inside the catch body shadows the
+                            // catch variable; an enclosing declaration does
+                            // not (the catch variable is the nearer scope).
+                            break;
+                        }
+                        return emitDynamicAwareLoad(
+                            new KindPayload.BindingLoadPayload(frame.binding(),
+                                INITIAL_LOOP_GENERATION),
+                            identifier.span(),
+                            ContainerPayloadDescriptors.resultDescriptorOf(type), slot);
                     }
-                    return emitDynamicAwareLoad(
-                        new KindPayload.BindingLoadPayload(frame.binding(),
-                            INITIAL_LOOP_GENERATION),
-                        identifier.span(),
-                        ContainerPayloadDescriptors.resultDescriptorOf(type), slot);
                 }
             }
             if (!defaultContexts.isEmpty()) {

@@ -5829,6 +5829,15 @@ public final class JvmSemanticEmitter {
                 (KindPayload.TryCatchPayload) op.payload();
             emitStart(op, indent);
             String cellName = cell(payload.catchBinding(), 0);
+            // The catch entry is the catch binding's pinned initializing
+            // write. A captured catch binding is a shared cell (B2), so the
+            // entry publishes a fresh cell box per catch execution — a
+            // closure created in an earlier iteration's catch keeps its own
+            // live box and the next catch never rebinds it — while an
+            // uncaptured catch binding stays the direct value cell. The
+            // binding's own BINDING_ALLOC never resets a live catch cell.
+            boolean sharedCatchCell = cellKindOf(payload.catchBinding(), 0)
+                == BindingCellKind.SHARED_CELL;
             // The caught failure's identity, kept beside the catch binding
             // so the catch block's own failure can tell a rethrow of the
             // caught error (identity preserved, no invented cause) from a
@@ -5836,24 +5845,38 @@ public final class JvmSemanticEmitter {
             // failure). The per-op local survives a nested try/catch inside
             // the catch block.
             String caught = "__ct" + op.opId().id();
+            // Every emitted local of this arm carries the op's own id: a
+            // TRY_CATCH nested inside another arm's catch clause is legal
+            // source, and Java forbids redeclaring an in-scope local
+            // variable name — the per-op spellings keep a nested handler's
+            // caught failure, replacement failure and transfer marker
+            // distinct from every enclosing handler's.
+            String errorVar = "__te" + op.opId().id();
+            String replacementVar = "__ce" + op.opId().id();
+            String wrappedVar = "__cw" + op.opId().id();
+            String transferVar = "__tr" + op.opId().id();
             out.append(indent(indent)).append("try {\n");
             tryDepth++;
             try {
                 out.append(indent(indent)).append("  try {\n");
                 emitBlockOps(payload.tryBlock(), indent + 2);
                 out.append(indent(indent))
-                    .append("  } catch (JvmRuntime.DealError __terr) {\n");
+                    .append("  } catch (JvmRuntime.DealError ").append(errorVar)
+                    .append(") {\n");
                 // The caught failure reifies to its memoized Error value
                 // identity: catching the same rethrown failure again
                 // yields the identical Error value (saved === again).
                 out.append(indent(indent)).append("    ").append(cellName)
-                    .append(" = __terr.reify();\n");
+                    .append(sharedCatchCell
+                        ? " = new Object[]{" + errorVar + ".reify()};\n"
+                        : " = " + errorVar + ".reify();\n");
                 out.append(indent(indent)).append("    JvmRuntime.DealError ")
-                    .append(caught).append(" = __terr;\n");
+                    .append(caught).append(" = ").append(errorVar).append(";\n");
                 out.append(indent(indent)).append("    try {\n");
                 emitBlockOps(payload.catchBlock(), indent + 3);
                 out.append(indent(indent))
-                    .append("    } catch (JvmRuntime.DealError __cerr) {\n");
+                    .append("    } catch (JvmRuntime.DealError ")
+                    .append(replacementVar).append(") {\n");
                 // A transported rethrow propagates unchanged (identity
                 // preserved, no invented cause); a genuinely new failure
                 // raised while handling the caught one links the caught
@@ -5862,27 +5885,33 @@ public final class JvmSemanticEmitter {
                 // thrown inside the handler) — adopts that identity, so the
                 // enclosing catch binds the identical Error instance the
                 // program threw instead of a replacement.
-                out.append(indent(indent)).append("      if (__cerr.transported) {\n");
+                out.append(indent(indent)).append("      if (")
+                    .append(replacementVar).append(".transported) {\n");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "JvmRuntime.errtext(__cerr)", indent + 4);
-                out.append(indent(indent)).append("        throw __cerr;\n");
+                    "JvmRuntime.errtext(" + replacementVar + ")", indent + 4);
+                out.append(indent(indent)).append("        throw ")
+                    .append(replacementVar).append(";\n");
                 out.append(indent(indent)).append("      }\n");
                 out.append(indent(indent))
-                    .append("      JvmRuntime.DealError __wrapped = "
-                        + "JvmRuntime.wrap(__cerr, " + caught + ");\n");
+                    .append("      JvmRuntime.DealError ").append(wrappedVar)
+                    .append(" = JvmRuntime.wrap(").append(replacementVar)
+                    .append(", ").append(caught).append(");\n");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "JvmRuntime.errtext(__wrapped)", indent + 3);
-                out.append(indent(indent)).append("      throw __wrapped;\n");
+                    "JvmRuntime.errtext(" + wrappedVar + ")", indent + 3);
+                out.append(indent(indent)).append("      throw ")
+                    .append(wrappedVar).append(";\n");
                 out.append(indent(indent)).append("    }\n");
                 out.append(indent(indent)).append("  }\n");
             } finally {
                 tryDepth--;
             }
             out.append(indent(indent))
-                .append("} catch (JvmRuntime.Transfer __tr) {\n");
-            emitJvmTransferDispatch(op, payload.tryBlock(), indent + 1);
-            emitJvmTransferDispatch(op, payload.catchBlock(), indent + 1);
-            out.append(indent(indent)).append("  throw __tr;\n");
+                .append("} catch (JvmRuntime.Transfer ").append(transferVar)
+                .append(") {\n");
+            emitJvmTransferDispatch(op, payload.tryBlock(), indent + 1, transferVar);
+            emitJvmTransferDispatch(op, payload.catchBlock(), indent + 1, transferVar);
+            out.append(indent(indent)).append("  throw ").append(transferVar)
+                .append(";\n");
             out.append(indent(indent)).append("}\n");
             if (blockCompletesNormally(payload.tryBlock())
                     || blockCompletesNormally(payload.catchBlock())) {
@@ -5905,7 +5934,8 @@ public final class JvmSemanticEmitter {
          *  protected region as the re-raised marker (the next enclosing
          *  dispatch owns the jump) — no emitted jump references a label
          *  outside its scope. */
-        private void emitJvmTransferDispatch(SemanticOp tryOp, BlockId block, int indent) {
+        private void emitJvmTransferDispatch(SemanticOp tryOp, BlockId block, int indent,
+                                             String transferVar) {
             List<SemanticOp> transfers = new ArrayList<>();
             collectReachableTransfers(block, transfers);
             for (SemanticOp transfer : transfers) {
@@ -5915,8 +5945,10 @@ public final class JvmSemanticEmitter {
                             (KindPayload.BreakPayload) transfer.payload();
                         SemanticOp target = opsById.get(breakPayload.loopId());
                         boolean visible = transferTargetVisible(tryOp, target);
-                        out.append(indent(indent)).append("if (\"break\".equals(__tr.kind) ")
-                            .append("&& __tr.id == ").append(breakPayload.loopId().id())
+                        out.append(indent(indent)).append("if (\"break\".equals(")
+                            .append(transferVar).append(".kind) ")
+                            .append("&& ").append(transferVar).append(".id == ")
+                            .append(breakPayload.loopId().id())
                             .append("L) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
                         emitTransferClosures(tryOp, target, !visible, indent + 1);
@@ -5925,7 +5957,8 @@ public final class JvmSemanticEmitter {
                                 .append(breakJump(breakPayload.loopId(), target))
                                 .append("\n");
                         } else {
-                            out.append(indent(indent)).append("  throw __tr;\n");
+                            out.append(indent(indent)).append("  throw ")
+                                .append(transferVar).append(";\n");
                         }
                         out.append(indent(indent)).append("}\n");
                     }
@@ -5934,8 +5967,10 @@ public final class JvmSemanticEmitter {
                             (KindPayload.ContinuePayload) transfer.payload();
                         SemanticOp target = opsById.get(continuePayload.loopId());
                         boolean visible = transferTargetVisible(tryOp, target);
-                        out.append(indent(indent)).append("if (\"continue\".equals(__tr.kind) ")
-                            .append("&& __tr.id == ").append(continuePayload.loopId().id())
+                        out.append(indent(indent)).append("if (\"continue\".equals(")
+                            .append(transferVar).append(".kind) ")
+                            .append("&& ").append(transferVar).append(".id == ")
+                            .append(continuePayload.loopId().id())
                             .append("L) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
                         emitTransferClosures(tryOp, target, !visible, indent + 1);
@@ -5944,19 +5979,23 @@ public final class JvmSemanticEmitter {
                                 .append(continueJump(continuePayload.loopId(), target))
                                 .append("\n");
                         } else {
-                            out.append(indent(indent)).append("  throw __tr;\n");
+                            out.append(indent(indent)).append("  throw ")
+                                .append(transferVar).append(";\n");
                         }
                         out.append(indent(indent)).append("}\n");
                     }
                     case RETURN -> {
                         boolean visible = transferTargetVisible(tryOp, null);
-                        out.append(indent(indent)).append("if (\"return\".equals(__tr.kind)) {\n");
+                        out.append(indent(indent)).append("if (\"return\".equals(")
+                            .append(transferVar).append(".kind)) {\n");
                         emitPlainSuccess(tryOp, indent + 1);
                         emitTransferClosures(tryOp, null, !visible, indent + 1);
                         if (visible) {
-                            out.append(indent(indent)).append("  return __tr.value;\n");
+                            out.append(indent(indent)).append("  return ")
+                                .append(transferVar).append(".value;\n");
                         } else {
-                            out.append(indent(indent)).append("  throw __tr;\n");
+                            out.append(indent(indent)).append("  throw ")
+                                .append(transferVar).append(";\n");
                         }
                         out.append(indent(indent)).append("}\n");
                     }

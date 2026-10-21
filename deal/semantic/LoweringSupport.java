@@ -789,7 +789,12 @@ public final class LoweringSupport {
      * {@code MEMBER_ACCESS}/{@code INDEX_ACCESS} read rows. The target's
      * receiver and key sub-expressions are ordinary reads and record
      * their own rows ({@code INDEX_ACCESS} for a chained receiver, etc.).
-     * A non-member/index target (an identifier) walks normally.
+     * A bare identifier target is the same write position for a binding
+     * cell: it produces the chain's {@code BINDING_STORE} commit (named by
+     * the {@code ASSIGNMENT} row), never a {@code BINDING_LOAD}, so the
+     * {@code IDENTIFIER} read row must not claim it — a module whose only
+     * identifier occurrence is an assignment target has no identifier read
+     * to cover.
      */
     private static void walkWriteTarget(ExpressionNode target, CheckedModuleInput module,
                                         ModuleScan scan, SymbolTable checkerScope)
@@ -806,6 +811,10 @@ public final class LoweringSupport {
             case IndexExpr index -> {
                 walkExpression(index.array(), module, scan, checkerScope);
                 walkExpression(index.index(), module, scan, checkerScope);
+            }
+            case IdentifierExpr ignored -> {
+                // The ASSIGNMENT/DELETE row owns the identifier write
+                // position; no IDENTIFIER read row is produced for it.
             }
             default -> walkExpression(target, module, scan, checkerScope);
         }

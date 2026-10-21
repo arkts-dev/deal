@@ -1,0 +1,282 @@
+// @spec: Functions — Closures and captured variables; try/catch
+// @description: The catch variable is an ordinary mutable lexical binding: escaping, immediately invoked and nested-declaration closures capture it by binding, a direct catch-variable assignment commits its cell, writes are observed through every capture and through the direct name, the binding outlives the catch block and its function, repeated loop catches create fresh bindings, nested catches, block declarations and for-of iteration bindings shadow it, a shadowing closure parameter captures nothing, and the alias and ordinary-read controls keep their values
+// @expected: runtime-ok
+// @features: closures, catch, binding, mutation, loops, error-handling
+
+import * as console from "std/console";
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: what };
+  }
+  return null;
+}
+
+function testCaptureAfterExit(): null {
+  let f: () => Error = function(): Error { return {}; };
+  try { throw { code: "E_CAP", message: "x" }; }
+  catch (e) { f = function(): Error { return e; }; }
+  expectTrue("the escaping closure reads the catch binding's message", f().message === "x");
+  expectTrue("the escaping closure reads the catch binding's code", f().code === "E_CAP");
+  return null;
+}
+
+function testImmediateInvocation(): null {
+  try { throw { code: "E_IMM", message: "immediate" }; }
+  catch (e) {
+    let text: string = (function(): string { return e.message; })();
+    expectTrue("an immediately invoked closure reads the catch binding", text === "immediate");
+  }
+  return null;
+}
+
+function testNestedDeclaration(): null {
+  let read: () => string = function(): string { return ""; };
+  try { throw { code: "E_DECL", message: "declared" }; }
+  catch (e) {
+    function readCatch(): string { return e.message; }
+    read = readCatch;
+  }
+  expectTrue("a nested function declaration captures the catch binding", read() === "declared");
+  return null;
+}
+
+function testDirectAssignment(): null {
+  try { throw { code: "E_DIR", message: "before" }; }
+  catch (e) {
+    e = { code: "E_DIR2", message: "after" };
+    expectTrue("a direct catch-variable assignment commits its cell", e.message === "after");
+    expectTrue("the assigned value carries its own code", e.code === "E_DIR2");
+  }
+  return null;
+}
+
+function testAssignmentThenCapture(): null {
+  let read: () => string = function(): string { return ""; };
+  try { throw { code: "E_AC", message: "original" }; }
+  catch (e) {
+    e = { code: "E_AC2", message: "patched" };
+    read = function(): string { return e.message; };
+    expectTrue("the direct name reads the store before capture", e.message === "patched");
+  }
+  expectTrue("the escaping closure reads the stored value", read() === "patched");
+  return null;
+}
+
+function testClosureWriteShared(): null {
+  let store: () => null = function(): null { return null; };
+  let read: () => string = function(): string { return ""; };
+  try { throw { code: "E_SH", message: "shared" }; }
+  catch (e) {
+    store = function(): null { e = { code: "E_SH2", message: "rewritten" }; return null; };
+    read = function(): string { return e.message; };
+    expectTrue("the sibling capture reads the caught value", read() === "shared");
+  }
+  store();
+  expectTrue("a closure store is visible through the sibling capture", read() === "rewritten");
+  store();
+  expectTrue("the capture keeps the binding identity", read() === "rewritten");
+  return null;
+}
+
+function makeReader(): () => string {
+  try { throw { code: "E_LIFE", message: "returned" }; }
+  catch (e) {
+    let read: () => string = function(): string { return e.message; };
+    return read;
+  }
+  return function(): string { return ""; };
+}
+
+function testLifetimeAfterFunctionReturn(): null {
+  let read: () => string = makeReader();
+  expectTrue("the catch binding outlives its function", read() === "returned");
+  return null;
+}
+
+function testRepeatedLoopCatches(): null {
+  let messages: string[] = ["first", "second", "third"];
+  let readers: (() => string)[] = [];
+  let writers: (() => null)[] = [];
+  for (let i: int = 0; i < 3; i = i + 1) {
+    try { throw { code: "E_LOOP", message: messages[i] }; }
+    catch (e) {
+      readers[i] = function(): string { return e.message; };
+      writers[i] = function(): null { e = { code: "E_LOOP2", message: "rewritten" }; return null; };
+    }
+  }
+  expectTrue("first iteration binding", readers[0]() === "first");
+  expectTrue("second iteration binding", readers[1]() === "second");
+  expectTrue("third iteration binding", readers[2]() === "third");
+  writers[1]();
+  expectTrue("a later iteration's store reaches its own binding", readers[1]() === "rewritten");
+  expectTrue("one iteration's store leaves the first binding alone", readers[0]() === "first");
+  expectTrue("one iteration's store leaves the third binding alone", readers[2]() === "third");
+  return null;
+}
+
+function testWhileCatches(): null {
+  let readers: (() => string)[] = [];
+  let n: int = 0;
+  while (n < 2) {
+    let message: string = "zero";
+    if (n === 1) { message = "one"; }
+    try { throw { code: "E_WHILE", message: message }; }
+    catch (e) { readers[n] = function(): string { return e.message; }; }
+    n = n + 1;
+  }
+  expectTrue("while-loop catch binding at zero", readers[0]() === "zero");
+  expectTrue("while-loop catch binding at one", readers[1]() === "one");
+  return null;
+}
+
+function testNestedCatchShadowing(): null {
+  let outerRead: () => string = function(): string { return ""; };
+  let innerRead: () => string = function(): string { return ""; };
+  try { throw { code: "E_OUT", message: "outer" }; }
+  catch (e) {
+    try { throw { code: "E_IN", message: "inner" }; }
+    catch (e) {
+      innerRead = function(): string { return e.message; };
+    }
+    outerRead = function(): string { return e.message; };
+    expectTrue("the outer catch binding survives the inner catch", e.message === "outer");
+  }
+  expectTrue("the outer capture keeps the outer binding", outerRead() === "outer");
+  expectTrue("the inner capture keeps the inner binding", innerRead() === "inner");
+  return null;
+}
+
+function testBlockDeclarationShadowing(): null {
+  let read: () => string = function(): string { return ""; };
+  try { throw { code: "E_BLK", message: "caught" }; }
+  catch (e) {
+    read = function(): string { return e.message; };
+    {
+      let e: Error = { code: "E_BLK2", message: "shadow" };
+      expectTrue("the block declaration shadows the catch binding", e.message === "shadow");
+    }
+    expectTrue("the catch binding is intact after the shadowing block", e.message === "caught");
+  }
+  expectTrue("the capture reads the catch binding, never the block declaration", read() === "caught");
+  return null;
+}
+
+function testCatchInsideClosure(): null {
+  let make: () => () => string = function(): () => string {
+    try { throw { code: "E_NEST", message: "nested closure" }; }
+    catch (e) {
+      return function(): string { return e.message; };
+    }
+    return function(): string { return ""; };
+  };
+  let read: () => string = make();
+  expectTrue("a closure inside a closure body captures the inner catch binding", read() === "nested closure");
+  return null;
+}
+
+function testWriteThroughNestedClosure(): null {
+  let mutate: () => null = function(): null { return null; };
+  let read: () => string = function(): string { return ""; };
+  try { throw { code: "E_NW", message: "start" }; }
+  catch (e) {
+    mutate = function(): null {
+      let inner: () => null = function(): null {
+        e = { code: "E_NW2", message: "deep" };
+        return null;
+      };
+      inner();
+      return null;
+    };
+    read = function(): string { return e.message; };
+  }
+  mutate();
+  expectTrue("a store from a nested closure reaches the catch binding", read() === "deep");
+  return null;
+}
+
+function testClosureStoreThenDirectRead(): null {
+  let store: () => null = function(): null { return null; };
+  try { throw { code: "E_CS", message: "start" }; }
+  catch (e) {
+    store = function(): null { e = { code: "E_CS2", message: "via-closure" }; return null; };
+    store();
+    expectTrue("the direct name observes a closure store", e.message === "via-closure");
+    expectTrue("the direct name observes the closure store's code", e.code === "E_CS2");
+  }
+  return null;
+}
+
+function testParameterShadowing(): null {
+  let read: (x: Error) => string = function(x: Error): string { return x.message; };
+  let shadowed: (x: Error) => string = function(x: Error): string { return x.message; };
+  try { throw { code: "E_PS", message: "caught" }; }
+  catch (e) {
+    shadowed = function(e: Error): string { return e.message; };
+    expectTrue("the closure parameter shadows the catch binding",
+      shadowed({ code: "E_PS2", message: "param" }) === "param");
+    read = function(x: Error): string { return e.message; };
+  }
+  expectTrue("the capturing closure reads the catch binding, not its argument",
+    read({ code: "X", message: "arg" }) === "caught");
+  return null;
+}
+
+function testAliasControl(): null {
+  let read: () => string = function(): string { return ""; };
+  try { throw { code: "E_ALIAS", message: "alias" }; }
+  catch (e) {
+    let saved: Error = e;
+    read = function(): string { return saved.message; };
+  }
+  expectTrue("the alias control keeps its captured value", read() === "alias");
+  return null;
+}
+
+function testOrdinaryReadControl(): null {
+  try { throw { code: "E_READ", message: "plain" }; }
+  catch (e) {
+    expectTrue("an ordinary catch read keeps its message", e.message === "plain");
+    expectTrue("an ordinary catch read keeps its code", e.code === "E_READ");
+  }
+  return null;
+}
+
+function testForOfCatchShadowing(): null {
+  let readers: (() => string)[] = [];
+  let visits: int = 0;
+  for (let e: int of [1, 2]) {
+    try { throw { code: "E_FE", message: "for-of catch" }; }
+    catch (e) {
+      readers[visits] = function(): string { return e.message; };
+      visits = visits + 1;
+    }
+  }
+  expectTrue("the for-of traversal visits each element once", visits === 2);
+  expectTrue("the catch binding shadows the for-of iteration binding",
+    readers[0]() === "for-of catch");
+  return null;
+}
+
+export function main(): null {
+  testCaptureAfterExit();
+  testImmediateInvocation();
+  testNestedDeclaration();
+  testDirectAssignment();
+  testAssignmentThenCapture();
+  testClosureWriteShared();
+  testLifetimeAfterFunctionReturn();
+  testRepeatedLoopCatches();
+  testWhileCatches();
+  testNestedCatchShadowing();
+  testBlockDeclarationShadowing();
+  testCatchInsideClosure();
+  testWriteThroughNestedClosure();
+  testClosureStoreThenDirectRead();
+  testParameterShadowing();
+  testAliasControl();
+  testOrdinaryReadControl();
+  testForOfCatchShadowing();
+  console.log("OK");
+  return null;
+}
