@@ -5310,8 +5310,9 @@ public class FailureArmAuthorityTest {
      * language null is the JSON-shaped null leaf in table content (the
      * oracle's own admission: it spells {@code null}), while a null at a
      * declared non-nullable field keeps the failing walk position's null
-     * token and the flat-table control keeps the table spelling — the
-     * classification is by sentinel identity, not by table shape.
+     * token. The plain-table control at the same content position is the
+     * JSON-shaped empty object and serializes as {@code {}} — the sentinel
+     * classification is by identity, not by table shape.
      */
     static void testRuntimeNullSentinelAtWalk() throws Exception {
         System.out.println("-- the deployed runtime's language-null sentinel at the walk --");
@@ -5378,10 +5379,11 @@ public class FailureArmAuthorityTest {
                 + "\"tags\":[1]}|", rows.get(2),
             "the one runtime null in a host-returned table entry is the JSON-shaped "
                 + "null leaf and spells null");
-        checkEq(new Tuple("E8001",
-                "value at data.k is not JSON serializable: table", WALK_SPAN, null,
-                "table"), walkLuaTuple(rows.get(3)),
-            "the flat-table control at the same position keeps the table spelling");
+        checkEq("plain-table-entry-control|OK|"
+                + "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":{}},"
+                + "\"tags\":[1]}|", rows.get(3),
+            "the plain-table control at the same content position is the JSON-shaped "
+                + "empty object and serializes as an empty object");
         checkEq(new Tuple("E8001",
                 "value at name is not JSON serializable: null", WALK_SPAN, null,
                 "null"), walkLuaTuple(rows.get(4)),
@@ -5405,8 +5407,9 @@ public class FailureArmAuthorityTest {
      * runtime it requires, and the typed-boundary projection classifies
      * that sentinel as the absent marker at the walk's failing positions:
      * the message and the actual field both carry {@code nil}. The
-     * flat-table control at the same position keeps the table spelling, so
-     * the classification is by sentinel identity, not by table shape.
+     * plain-table control at the same content position is the JSON-shaped
+     * empty object and completes the walk — the classification is by
+     * sentinel identity, not by table shape.
      */
     static void testRuntimeMissingSentinelAtWalk() throws Exception {
         System.out.println("-- the deployed runtime's absent-marker sentinel at the walk --");
@@ -5443,13 +5446,16 @@ public class FailureArmAuthorityTest {
             + "  local c = cases[i]\n"
             + "  local ok, text, arm, params, actual = __jsonToClassOp("
             + quote(WALK_ID.text()) + ", c.root)\n"
-            + "  if ok then print(c.label .. \"|OK|\") return end\n"
-            + "  local value = __arm(arm, params, " + quote(WALK_SPAN)
+            + "  if ok then\n"
+            + "    print(c.label .. \"|OK|\")\n"
+            + "  else\n"
+            + "    local value = __arm(arm, params, " + quote(WALK_SPAN)
             + ", nil, actual)\n"
-            + "  print(c.label .. \"|\" .. value.code .. \"|\" .. "
+            + "    print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
             + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
             + "tostring(value.o))\n"
+            + "  end\n"
             + "end\n";
         List<String> rows = runProbe(lua, "arm-walk", body, "walk-runtime-missing", 4,
             true);
@@ -5461,10 +5467,9 @@ public class FailureArmAuthorityTest {
                 "nil"), walkLuaTuple(rows.get(1)),
             "the runtime absent marker in a host-returned table entry renders nil in "
                 + "the message and the actual field");
-        checkEq(new Tuple("E8001",
-                "value at data.k is not JSON serializable: table", WALK_SPAN, null,
-                "table"), walkLuaTuple(rows.get(2)),
-            "the flat-table control at the same position keeps the table spelling");
+        checkEq("plain-table-entry-control|OK|", rows.get(2),
+            "the plain-table control at the same content position is the JSON-shaped "
+                + "empty object and completes the walk");
         checkEq(new Tuple("E8001",
                 "value at name is not JSON serializable: nil", WALK_SPAN, null,
                 "nil"), walkLuaTuple(rows.get(3)),

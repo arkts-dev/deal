@@ -508,6 +508,11 @@ public class CanonicalProjectionParityTest {
         mainEntry("host-abi/host-carrier-async-arity"),
         mainEntry("host-abi/host-carrier-untyped-roundtrip"),
         mainEntry("host-abi/host-carrier-class-values"),
+        // The @jsonable class helper's plain-table content (ISSUE-0868): a
+        // host-returned table at a class table field, a plain table nested
+        // in a table carrier and in a table[] element, the host table's own
+        // nested object/array members, and the closed cycle arm.
+        mainEntry("host-abi/host-jsonable-table-content"),
         // The suppressed recursive class default (ISSUE-0865): a default
         // whose recursive construction no construction demands stays an
         // unexecuted plan, and the effectful default beside it still runs

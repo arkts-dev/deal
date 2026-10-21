@@ -1,0 +1,14 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+// Host fixture declaration for the three-lane @jsonable plain-table
+// content conformance test (ISSUE-0868): the declared table-typed returns
+// carry the JSON-shaped data a @jsonable class helper's toJson walk must
+// accept as a plain Lua table (LuaJIT), a runtime table (JVM), or a
+// runtime table Map (JS) — an object, a nested object with an array
+// member, and a self-referential table for the closed cycle arm.
+
+export function makeTable(): table;
+export function makeNested(): table;
+export function makeCycle(): table;

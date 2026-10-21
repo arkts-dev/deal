@@ -8090,7 +8090,11 @@ public final class LuaSemanticEmitter {
      * language null (the {@code JSON_FROM_NULL} projection); the
      * to-json walk returns the closed arm selection of its first
      * declaration-order failure ({@code armId, parameters, actual}) for
-     * the walk family's {@code JSON_TO_ERROR} arms.
+     * the walk family's {@code JSON_TO_ERROR} arms. A {@code table}
+     * position and the descriptor-free table content accept a produced
+     * carrier and a plain Lua table (the LuaJIT value mapping's table
+     * value, a host-returned table included) alike, classifying a plain
+     * table's own keys into the string-keyed object or dense array shape.
      */
     private static final String JSON_PRELUDE = """
 -- ==== shared JSON algorithm (E7/K-D8/K-D10 realization) ====
@@ -8100,7 +8104,9 @@ public final class LuaSemanticEmitter {
 -- (classId -> plan: declaration-order fields with descriptor,
 -- optionality, and the per-field CLASS_DEFAULT child metadata).
 -- Nested @jsonable class fields fail closed at emit time (a producer
--- defect naming the nested shape), never silently.
+-- defect naming the nested shape), never silently. A table position and
+-- the descriptor-free table content accept a produced carrier and a
+-- plain Lua table (the LuaJIT value mapping's table value) alike.
 -- Byte-exactness: no backslash escapes appear in this source; quote and
 -- backslash bytes are emitted through string.char.
 local __JSONSYNTAX = setmetatable({}, {__tostring = function() return "json-syntax" end})
@@ -8831,44 +8837,216 @@ local function __jsonToClassOp(planName, root)
   local encodeTableValue
   local encodeArrayValue
   local encodeClass
+  -- The JSON content classification of one toJson table value (ISSUE-0868):
+  -- a produced carrier's private marks select the array/object form, and a
+  -- plain Lua table (the LuaJIT value mapping's table value — a host-returned
+  -- table, or one composed outside TABLE_NEW) is classified by its own keys:
+  -- the dense 1..n integer form is an array and the string-keyed form an
+  -- object, exactly the JSON shape docs/spec-v1.3.md:728 admits. A value that
+  -- carries a private value-model carrier mark is never JSON-shaped content.
+  local function __jsonContentCarrier(v)
+    local kind = v[__dealCarrierKeys.kind]
+    if kind == "bytes" or kind == "function" or kind == "class"
+        or kind == "async" or kind == "nil" then
+      return true
+    end
+    return v[__dealCarrierKeys.c] ~= nil or v[__dealCarrierKeys.d] ~= nil
+      or v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.f] ~= nil
+      or v[__dealCarrierKeys.csig] ~= nil
+  end
+  local function __jsonContentForm(v)
+    if v[__dealCarrierKeys.a] then
+      local n = v[__dealCarrierKeys.n]
+      if type(n) ~= "number" then n = #v end
+      return true, n
+    end
+    if v[__dealCarrierKeys.t] or v[__dealCarrierKeys.keys] ~= nil
+        or v[__dealCarrierKeys.order] ~= nil then
+      return false
+    end
+    local maxIndex = 0
+    local objectKey = false
+    for k, _ in pairs(v) do
+      if type(k) == "number" then
+        if k < 1 or k % 1 ~= 0 then return nil end
+        if k > maxIndex then maxIndex = k end
+      elseif type(k) == "string" then
+        objectKey = true
+      else
+        return nil
+      end
+    end
+    if objectKey then
+      if maxIndex > 0 then return nil end
+      return false
+    end
+    if maxIndex > 0 then return true, maxIndex end
+    return false
+  end
+  -- The object member order of one content value: the recorded insertion
+  -- order first (the __order discipline every shared table consumer reads),
+  -- then the remaining string keys in deterministic sorted order. A plain
+  -- table has no recorded order, so its string keys keep that sorted spelling;
+  -- the private mark keys are table-valued and never member strings.
+  local function __jsonContentOrder(v)
+    local keys = {}
+    local seen = {}
+    local order = v[__dealCarrierKeys.order]
+    if type(order) == "table" then
+      for i = 1, #order do
+        local k = order[i]
+        if type(k) == "string" and not seen[k] then
+          keys[#keys + 1] = k
+          seen[k] = true
+        end
+      end
+    end
+    local rest = {}
+    for k, _ in pairs(v) do
+      if type(k) == "string" and not seen[k] then
+        rest[#rest + 1] = k
+        seen[k] = true
+      end
+    end
+    local presence = v[__dealCarrierKeys.keys]
+    if type(presence) == "table" then
+      for k, present in pairs(presence) do
+        if present == true and type(k) == "string" and not seen[k] then
+          rest[#rest + 1] = k
+          seen[k] = true
+        end
+      end
+    end
+    table.sort(rest)
+    for i = 1, #rest do keys[#keys + 1] = rest[i] end
+    return keys
+  end
+  local function __jsonContentMarks(v)
+    local marks = v[__dealCarrierKeys.nK]
+    if type(marks) ~= "table" then return nil end
+    return marks
+  end
   -- The stack-safe dynamic content walk: an explicit frame stack replaces
   -- the recursion, so a JSON-shaped table/array value of any finite depth
   -- has no Lua call-stack bound. The path-local visited set keeps the
   -- closed cycle arm (entered on open, removed on close); the first
   -- declaration-order failure wins unchanged.
-  encodeContent = function(root, rootPath, visited, rootIsArray)
+  encodeContent = function(root, rootPath, visited)
+    -- One content value: a leaf spells, a container opens a frame. The
+    -- container form accepts the produced carriers and plain Lua tables
+    -- alike (__jsonContentForm), while a produced value-model carrier
+    -- keeps the closed unsupported-member failure at its own position.
+    local function emitValue(element, elementPath, out, frames, marks, variant)
+      if element == nil or element == __NULL
+          or (__rtNull ~= nil and element == __rtNull) then
+        -- A language null is the JSON null leaf at a content position.
+        out[#out + 1] = "null"
+        return true
+      end
+      if type(element) == "boolean" then
+        out[#out + 1] = tostring(element)
+        return true
+      end
+      if type(element) == "number" then
+        -- The element's own recorded variant (the __nK mark): a
+        -- number-variant slot through the closed decimal spelling, an
+        -- int-variant slot through the integer spelling — exactly the
+        -- oracle's Value.Int/Value.Number split.
+        if variant then
+          local text = __jsonNumText(element)
+          if text == nil then return fail(elementPath, element) end
+          out[#out + 1] = text
+        else
+          out[#out + 1] = tostring(element)
+        end
+        return true
+      end
+      if type(element) == "table" and element[__dealCarrierKeys.jn] then
+        -- The read-side variant carrier (__readVar) keeps its value's
+        -- own recorded variant: an int carrier spells its integer text,
+        -- a number carrier the closed decimal spelling.
+        if element.k == "int" then
+          out[#out + 1] = tostring(element.d)
+        else
+          local text = __jsonNumText(element.d)
+          if text == nil then return fail(elementPath, element.d) end
+          out[#out + 1] = text
+        end
+        return true
+      end
+      if type(element) == "string" then
+        if not __jsonValidUtf8(element) then
+          return fail(elementPath, element)
+        end
+        out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
+        return true
+      end
+      if type(element) ~= "table" then
+        return fail(elementPath, element)
+      end
+      -- The absent-marker sentinels are not JSON-shaped content: the
+      -- runtime's own marker (kept by the host crossing) projects the
+      -- nil token exactly like the chunk's own.
+      if element == __MISSING
+          or (__rtMissing ~= nil and element == __rtMissing) then
+        return fail(elementPath, element)
+      end
+      if __jsonContentCarrier(element) then
+        return fail(elementPath, element)
+      end
+      local isArray, count = __jsonContentForm(element)
+      if isArray == nil then
+        return fail(elementPath, element)
+      end
+      if visited[element] then return cycle() end
+      visited[element] = true
+      if isArray then
+        out[#out + 1] = "["
+        frames[#frames + 1] = {array = true, value = element,
+          path = elementPath, index = 1, count = count,
+          marks = __jsonContentMarks(element)}
+      else
+        out[#out + 1] = "{"
+        frames[#frames + 1] = {array = false, value = element,
+          path = elementPath, index = 1,
+          order = __jsonContentOrder(element),
+          marks = __jsonContentMarks(element)}
+      end
+      return true
+    end
+    -- The stack-safe dynamic content walk: an explicit frame stack
+    -- replaces the recursion, so a JSON-shaped table/array value of any
+    -- finite depth has no Lua call-stack bound. The path-local visited set
+    -- keeps the closed cycle arm (entered on open, removed on close); the
+    -- first declaration-order failure wins unchanged. The root and every
+    -- nested value take the same form classification, so a plain Lua table
+    -- (the host-returned table value) walks exactly like a produced carrier.
+    -- The sentinels are not table content: a present language null, the
+    -- chunk's or the deployed runtime's absent marker, and a structural
+    -- sentinel value keep the closed typed-boundary tokens.
+    if root == nil or root == __NULL or root == __MISSING
+        or (__rtNull ~= nil and root == __rtNull)
+        or (__rtMissing ~= nil and root == __rtMissing) then
+      return fail(rootPath, root)
+    end
+    if __jsonContentCarrier(root) then return fail(rootPath, root) end
+    local isArray, count = __jsonContentForm(root)
+    if isArray == nil then return fail(rootPath, root) end
     if visited[root] then return cycle() end
     visited[root] = true
-    local out = {rootIsArray and "[" or "{"}
-    local frames = {{
-      array = rootIsArray,
-      value = root,
-      path = rootPath,
-      index = 1,
-      order = nil,
-      marks = nil,
-    }}
-    if not rootIsArray then
-      -- The carrier's first-insertion order (the __order discipline every
-      -- shared table consumer reads): an object spells its keys exactly as
-      -- they were inserted, never in sorted order. A hand-built carrier
-      -- without the shared order marks (no production path builds one)
-      -- keeps the deterministic sorted spelling.
-      local order = root[__dealCarrierKeys.order]
-      if type(order) ~= "table" then
-        order = {}
-        for k, _ in pairs(root[__dealCarrierKeys.keys]) do order[#order + 1] = k end
-        table.sort(order)
-      end
-      frames[1].order = order
+    local out = {isArray and "[" or "{"}
+    local frames
+    if isArray then
+      frames = {{array = true, value = root, path = rootPath, index = 1,
+        count = count, marks = __jsonContentMarks(root)}}
+    else
+      frames = {{array = false, value = root, path = rootPath, index = 1,
+        order = __jsonContentOrder(root), marks = __jsonContentMarks(root)}}
     end
-    local rootMarks = root[__dealCarrierKeys.nK]
-    if type(rootMarks) ~= "table" then rootMarks = nil end
-    frames[1].marks = rootMarks
     while #frames > 0 do
       local frame = frames[#frames]
       if frame.array then
-        if frame.index > frame.value[__dealCarrierKeys.n] then
+        if frame.index > frame.count then
           out[#out + 1] = "]"
           visited[frame.value] = nil
           frames[#frames] = nil
@@ -8889,61 +9067,9 @@ local function __jsonToClassOp(planName, root)
             return fail(elementPath, __MISSING)
           end
           if i > 1 then out[#out + 1] = "," end
-          if element == nil then out[#out + 1] = "null"
-          elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
-          elseif type(element) == "number" then
-            -- The element's own recorded variant (the __nK mark): a
-            -- number-variant slot through the closed decimal spelling, an
-            -- int-variant slot through the integer spelling — exactly the
-            -- oracle's Value.Int/Value.Number split.
-            if frame.marks ~= nil and frame.marks[i] == true then
-              local text = __jsonNumText(element)
-              if text == nil then return fail(elementPath, element) end
-              out[#out + 1] = text
-            else
-              out[#out + 1] = tostring(element)
-            end
-          elseif type(element) == "table" and element[__dealCarrierKeys.jn] then
-            if element.k == "int" then
-              out[#out + 1] = tostring(element.d)
-            else
-              local text = __jsonNumText(element.d)
-              if text == nil then return fail(elementPath, element.d) end
-              out[#out + 1] = text
-            end
-          elseif type(element) == "string" then
-            if not __jsonValidUtf8(element) then
-              return fail(elementPath, element)
-            end
-            out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
-          elseif type(element) == "table" then
-            if element[__dealCarrierKeys.a] then
-              if visited[element] then return cycle() end
-              visited[element] = true
-              out[#out + 1] = "["
-              local marks = element[__dealCarrierKeys.nK]
-              if type(marks) ~= "table" then marks = nil end
-              frames[#frames + 1] = {array = true, value = element,
-                path = elementPath, index = 1, marks = marks}
-            elseif element[__dealCarrierKeys.t] then
-              if visited[element] then return cycle() end
-              visited[element] = true
-              out[#out + 1] = "{"
-              local order = element[__dealCarrierKeys.order]
-              if type(order) ~= "table" then
-                order = {}
-                for k, _ in pairs(element[__dealCarrierKeys.keys]) do order[#order + 1] = k end
-                table.sort(order)
-              end
-              local marks = element[__dealCarrierKeys.nK]
-              if type(marks) ~= "table" then marks = nil end
-              frames[#frames + 1] = {array = false, value = element,
-                path = elementPath, index = 1, order = order, marks = marks}
-            else
-              return fail(elementPath, element)
-            end
-          else
-            return fail(elementPath, element)
+          if not emitValue(element, elementPath, out, frames, frame.marks,
+              frame.marks ~= nil and frame.marks[i] == true) then
+            return nil
           end
         end
       else
@@ -8959,68 +9085,15 @@ local function __jsonToClassOp(planName, root)
           local element = frame.value[key]
           if element == __NULL then element = nil end
           local elementPath = (frame.path == "") and key or (frame.path .. "." .. key)
+          -- The object key is a JSON string: an invalid scalar sequence
+          -- fails the walk at this member position like every other
+          -- invalid string carrier (the JVM/JS walks' closed result).
+          if not __jsonValidUtf8(key) then return fail(elementPath, key) end
           if i > 1 then out[#out + 1] = "," end
           out[#out + 1] = __QT .. __jsonEscapeString(key) .. __QT .. ":"
-          if element == nil then out[#out + 1] = "null"
-          elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
-          elseif type(element) == "number" then
-            -- The numeric leaf spells by its own recorded variant (the
-            -- shared write paths' and the JSON decode's __nK mark): a
-            -- number-variant slot through the closed decimal spelling, an
-            -- int-variant slot through the integer spelling — exactly the
-            -- oracle's Value.Int/Value.Number split, never the declared
-            -- descriptor's text.
-            if frame.marks ~= nil and frame.marks[key] == true then
-              local text = __jsonNumText(element)
-              if text == nil then return fail(elementPath, element) end
-              out[#out + 1] = text
-            else
-              out[#out + 1] = tostring(element)
-            end
-          elseif type(element) == "table" and element[__dealCarrierKeys.jn] then
-            -- The read-side variant carrier (__readVar) keeps its value's
-            -- own recorded variant: an int carrier spells its integer
-            -- text, a number carrier the closed decimal spelling.
-            if element.k == "int" then
-              out[#out + 1] = tostring(element.d)
-            else
-              local text = __jsonNumText(element.d)
-              if text == nil then return fail(elementPath, element.d) end
-              out[#out + 1] = text
-            end
-          elseif type(element) == "string" then
-            if not __jsonValidUtf8(element) then
-              return fail(elementPath, element)
-            end
-            out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
-          elseif type(element) == "table" then
-            if element[__dealCarrierKeys.a] then
-              if visited[element] then return cycle() end
-              visited[element] = true
-              out[#out + 1] = "["
-              local marks = element[__dealCarrierKeys.nK]
-              if type(marks) ~= "table" then marks = nil end
-              frames[#frames + 1] = {array = true, value = element,
-                path = elementPath, index = 1, marks = marks}
-            elseif element[__dealCarrierKeys.t] then
-              if visited[element] then return cycle() end
-              visited[element] = true
-              out[#out + 1] = "{"
-              local order = element[__dealCarrierKeys.order]
-              if type(order) ~= "table" then
-                order = {}
-                for k, _ in pairs(element[__dealCarrierKeys.keys]) do order[#order + 1] = k end
-                table.sort(order)
-              end
-              local marks = element[__dealCarrierKeys.nK]
-              if type(marks) ~= "table" then marks = nil end
-              frames[#frames + 1] = {array = false, value = element,
-                path = elementPath, index = 1, order = order, marks = marks}
-            else
-              return fail(elementPath, element)
-            end
-          else
-            return fail(elementPath, element)
+          if not emitValue(element, elementPath, out, frames, frame.marks,
+              frame.marks ~= nil and frame.marks[key] == true) then
+            return nil
           end
         end
       end
@@ -9028,11 +9101,11 @@ local function __jsonToClassOp(planName, root)
     return table.concat(out)
   end
   encodeTableValue = function(tv, tpath, visited)
-    return encodeContent(tv, tpath, visited, false)
+    return encodeContent(tv, tpath, visited)
   end
   encodeArrayValue = function(av, apath, visited, edesc)
     if edesc == nil then
-      return encodeContent(av, apath, visited, true)
+      return encodeContent(av, apath, visited)
     end
     if visited[av] then return cycle() end
     visited[av] = true
@@ -9184,7 +9257,12 @@ local function __jsonToClassOp(planName, root)
       if v == nil then return "null" end
       return encodeField(inner, v, path, visited)
     elseif kind == "table" then
-      if type(v) ~= "table" or v[__dealCarrierKeys.t] ~= true then return fail(path, v) end
+      -- A table position admits the produced table carrier and the plain
+      -- Lua table (the LuaJIT value mapping's table value) alike: the
+      -- content walk classifies the value's own form — a string-keyed
+      -- object or a dense array — so a host-returned JSON-shaped table
+      -- serializes instead of failing the closed walk arm.
+      if type(v) ~= "table" then return fail(path, v) end
       return encodeTableValue(v, path, visited)
     elseif kind == "array" then
       if type(v) ~= "table" or v[__dealCarrierKeys.a] ~= true then return fail(path, v) end

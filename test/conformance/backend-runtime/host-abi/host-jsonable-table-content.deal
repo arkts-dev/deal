@@ -1,0 +1,68 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: An @jsonable class helper's toJson accepts a host-returned plain Lua table at a table field, a plain table nested in a table carrier, the host table's own nested object and array members, and a table[] element holding a host table; the exact JSON text is identical on LuaJIT, JVM and JS, and a self-referential host table takes the closed cycle arm (v1.3)
+// @expected: runtime-ok
+// @features: classes, jsonable, toJson, tables, host-abi, v1.3
+
+import * as host from "host/jsonabletable";
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+// @jsonable
+export class TableField {
+  data: table = {};
+}
+
+// @jsonable
+export class TableElements {
+  rows: table[] = [];
+}
+
+export function test_host_table_field(): null {
+  let w: TableField = { data: host.makeTable() };
+  let text: string = TableField$toJson(w);
+  check(text === "{\"data\":{\"a\":1}}", "the host table field spells " + text);
+  return null;
+}
+
+export function test_host_table_nested_content(): null {
+  let carrier: TableField = { data: { inner: host.makeTable() } };
+  let carrierText: string = TableField$toJson(carrier);
+  check(carrierText === "{\"data\":{\"inner\":{\"a\":1}}}",
+    "the plain host table nested in a table carrier spells " + carrierText);
+  let nested: TableField = { data: host.makeNested() };
+  let nestedText: string = TableField$toJson(nested);
+  check(nestedText === "{\"data\":{\"inner\":{\"a\":1},\"xs\":[10,20]}}",
+    "the host table's nested object and array members spell " + nestedText);
+  return null;
+}
+
+export function test_host_table_array_elements(): null {
+  let w: TableElements = { rows: [host.makeTable(), host.makeNested()] };
+  let text: string = TableElements$toJson(w);
+  check(text === "{\"rows\":[{\"a\":1},{\"inner\":{\"a\":1},\"xs\":[10,20]}]}",
+    "a table[] element holding a host table spells " + text);
+  return null;
+}
+
+export function test_host_table_cycle(): null {
+  let w: TableField = { data: host.makeCycle() };
+  let closed: boolean = false;
+  try {
+    let text: string = TableField$toJson(w);
+    check(text === "", "a cyclic host table must not serialize");
+  } catch (e) {
+    closed = e.code === "E8001"
+      && e.message === "cyclic value cannot be encoded as JSON";
+  }
+  check(closed, "the host table cycle takes the closed cycle arm");
+  return null;
+}
+
+export function main(): null {
+  return null;
+}
