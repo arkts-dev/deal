@@ -1,0 +1,14 @@
+// @spec: Standard library declarations — std/math.d.deal
+// @description: math.sqrt rejects a negative operand through the closed SQRT_NEGATIVE arm: E8001 "sqrt of negative number", no expected field, actual the operand's canonical hex-float spelling (v1.3)
+// @expected: runtime-error E8001
+// @features: stdlib, math, runtime-errors, v1.3
+
+import * as math from "std/math";
+
+export function test_math_sqrt_negative(): number {
+  return math.sqrt(-1.0);
+}
+
+export function main(): null {
+  return null;
+}

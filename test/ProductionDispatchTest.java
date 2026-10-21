@@ -4862,6 +4862,235 @@ public class ProductionDispatchTest {
         }
     }
 
+    // =========================================================================
+    // The closed SQRT_NEGATIVE arm at math.sqrt(-1.0) (v1.3)
+    // =========================================================================
+
+    /**
+     * The closed {@code SQRT_NEGATIVE} arm at {@code math.sqrt(-1.0)} on
+     * the three production lanes: the fixture
+     * {@code backend-runtime/stdlib/math/sqrt-negative} is compiled through
+     * the release-owned production CLI for each backend and its published
+     * artifact is executed under the real toolchain (entry {@code main}
+     * once, then the fixture's own zero-arity export).
+     *
+     * <p>The fixture's Structured Expectation Sidecar is the pin: code,
+     * message, the failing call expression's own source coordinate and the
+     * canonical hex-float actual. The sidecar pins no {@code expected}
+     * member — the closed arm has none — so the drive additionally asserts
+     * that absence structurally (each probe prints a distinct
+     * {@code <absent>} marker for an absent field, never an empty text): a
+     * lane that re-introduces an expected token is a named failure on that
+     * lane. The JS realization of {@code std/math} and the LuaJIT
+     * realization of {@code std/math} publish the same tuple their compiled
+     * lanes do, so the three observations agree byte for byte.</p>
+     */
+    private static void testMathSqrtNegativeArmThreeLanes() throws Exception {
+        System.out.println("-- the closed SQRT_NEGATIVE arm at math.sqrt(-1.0)"
+            + " on LuaJIT, the JVM and the JS lane --");
+        String locator = "backend-runtime/stdlib/math/sqrt-negative.deal";
+        String export = "test_math_sqrt_negative";
+        Path fixture = REPO_ROOT.resolve("test/conformance").resolve(locator);
+        String raw = Files.readString(fixture);
+        String source = ConformanceHarnessMetadata.productionCorpusSource(
+            raw, locator);
+        int strippedHeaders = raw.split("\n", -1).length
+            - source.split("\n", -1).length;
+        deal.test.conformance.SidecarExpectations.StructuredExpectationSidecar
+            sidecar = deal.test.conformance.SidecarExpectations
+                .StructuredExpectationSidecar.parse(Files.readString(
+                    fixture.resolveSibling("sqrt-negative.expect.json")));
+        String entryRel = "conformance/" + locator + "/main.deal";
+        // The dotted module key of the materialized entry (the JVM
+        // class-name and export-surface identity); its '.' separators are
+        // also the published artifact's directory separators, so the
+        // corpus directory's own dot splits the artifact path exactly as
+        // the emitter splits the module identity
+        // ({@code boundaryCorpusArtifactPath}).
+        String moduleKey = entryRel.substring("conformance/".length(),
+            entryRel.length() - ".deal".length()).replace('/', '.');
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            deal.test.conformance.SidecarExpectations.RuntimeExpectation leg =
+                sidecar.expectationFor(backend);
+            check(leg instanceof deal.test.conformance.SidecarExpectations
+                .RuntimeExpectation.Executed, locator + " [" + backend
+                + "]: the sidecar pins an executed outcome");
+            if (!(leg instanceof deal.test.conformance.SidecarExpectations
+                    .RuntimeExpectation.Executed executed)) {
+                continue;
+            }
+            checkEq("runtime-error", executed.mode(), locator + " ["
+                + backend + "]: the pinned mode");
+            deal.test.conformance.SidecarExpectations.ErrorExpectation pin =
+                executed.error();
+            check(pin != null, locator + " [" + backend
+                + "]: the runtime-error pin carries its error");
+            if (pin == null) {
+                continue;
+            }
+            check(pin.expected().isEmpty(), locator + " [" + backend
+                + "]: the closed arm pins no expected field");
+            check(pin.actual().isPresent(), locator + " [" + backend
+                + "]: the closed arm pins its actual spelling");
+            Path project = Files.createTempDirectory(
+                "sqrt-negative-arm-" + backend + "-");
+            try {
+                write(project, entryRel, source);
+                // The fixture is materialized under the configured root
+                // {@code conformance} at the corpus-relative path the
+                // sidecar pins, so the artifact's own source coordinate and
+                // the class identity are the published fixture's.
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.3\","
+                    + "\n  \"moduleRoots\": [\"conformance\"],"
+                    + "\n  \"output\": \"out\","
+                    + "\n  \"backend\": \"" + backend + "\"\n}\n");
+                ProjectOutcome compile = productionCompile(project, entryRel,
+                    "out");
+                check(compile.exitCode() == 0, locator + " [" + backend
+                    + "]: the production compile succeeds: "
+                    + compile.stderr());
+                if (compile.exitCode() != 0) {
+                    continue;
+                }
+                String origin = project.resolve(entryRel).toAbsolutePath()
+                    .normalize().toString() + ":"
+                    + (pin.line() - strippedHeaders) + ":" + pin.column();
+                String expected = "sqrt|" + pin.code() + "|" + pin.message()
+                    + "|<absent>|" + pin.actual().orElse("") + "|" + origin
+                    + "\n";
+                BoundedProcess.BoundedResult run = sqrtArmRun(project,
+                    backend, project.resolve("out"), moduleKey, export);
+                checkEqualCapture(locator, backend, run, 1, expected);
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
+    /**
+     * One published sqrt-arm artifact under the real toolchain of its
+     * backend: entry {@code main} once, then the fixture's own zero-arity
+     * export, and the caught runtime error's tuple printed as
+     * {@code sqrt|code|message|expected|actual|origin}. An absent expected
+     * or actual prints the distinct {@code <absent>} marker, so the closed
+     * arm's missing member is asserted structurally rather than through an
+     * empty text.
+     */
+    private static BoundedProcess.BoundedResult sqrtArmRun(Path project,
+            String backend, Path out, String moduleKey, String export)
+            throws Exception {
+        if ("js".equals(backend)) {
+            write(out, "sqrt-tuple.js", """
+                "use strict";
+                const $rt = require(process.argv[2] + "/deal/runtime");
+                const $entry = require(process.argv[2] + "/" + process.argv[3]);
+                const $absent = ($v) => $v === $rt.undefined ? "<absent>" : String($v);
+                try {
+                  $entry.main.$f();
+                  $entry[process.argv[4]].$f();
+                } catch ($e) {
+                  const $err = $rt.reifyError($e);
+                  console.log("sqrt|" + $err.code + "|" + $err.message + "|"
+                    + $absent($err.expected) + "|" + $absent($err.actual) + "|"
+                    + $err.file + ":" + $err.line + ":" + $err.column);
+                  process.exitCode = 1;
+                }
+                """);
+            return runBounded(out, "node", "sqrt-tuple.js",
+                out.toAbsolutePath().toString(),
+                boundaryCorpusArtifactPath(moduleKey), export);
+        }
+        if ("luajit".equals(backend)) {
+            Path artifact = out.resolve(
+                boundaryCorpusArtifactPath(moduleKey) + ".lua");
+            check(Files.isRegularFile(artifact), "the production CLI stages"
+                + " the Lua artifact " + artifact);
+            if (!Files.isRegularFile(artifact)) {
+                return runBounded(project, "luajit", "-v");
+            }
+            Path probe = project.resolve("sqrt-tuple.lua");
+            Files.writeString(probe, """
+                local surface = dofile(arg[1])
+                local ok, err = __dealMain()
+                if not ok then error(err, 0) end
+                local okX, errX = pcall(surface[arg[2]].f)
+                if okX then
+                  print('sqrt|admitted|' .. tostring(errX))
+                else
+                  if type(errX) ~= 'table' or not errX[__dealCarrierKeys.d] then
+                    error(errX, 0)
+                  end
+                  print('sqrt|' .. errX.code .. '|' .. errX.m .. '|'
+                    .. (errX.e or '<absent>') .. '|' .. (errX.a or '<absent>')
+                    .. '|' .. tostring(errX.o))
+                  os.exit(1)
+                end
+                """);
+            // The deployed artifact set is the execution root, so the
+            // chunk resolves the published runtime next to it (the
+            // distribution's own deployment layout), never the checkout's.
+            return runBounded(out, "luajit",
+                probe.toAbsolutePath().toString(),
+                artifact.toAbsolutePath().toString(), export);
+        }
+        String className = deal.codegen.jvm.JvmNames.classNameFor(moduleKey);
+        Path artifact = out.resolve(className + ".java");
+        check(Files.isRegularFile(artifact), "the production CLI stages the"
+            + " JVM artifact " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return runBounded(project, "java", "-version");
+        }
+        String classpath = absoluteClasspath();
+        BoundedProcess.BoundedResult javac = compileBoundedJvm(project,
+            javacCommand(classpath, out, List.of(artifact.toString())));
+        check(javac.exitCode() == 0, "the emitted JVM sqrt-arm artifacts"
+            + " accept the probe: " + javac.stderr());
+        if (javac.exitCode() != 0) {
+            return javac;
+        }
+        return runBounded(project, "java", "-cp",
+            out + File.pathSeparator + classpath,
+            SqrtArmTupleChild.class.getName(), className, moduleKey, export);
+    }
+
+    /**
+     * The published artifact's path under one output root for a dotted
+     * module key: the module identity's '.' separators are the artifact's
+     * directory separators, so a corpus directory whose own name carries a
+     * dot (every fixture directory is named after its {@code .deal} file)
+     * splits exactly as the emitter split the identity.
+     */
+    private static String boundaryCorpusArtifactPath(String moduleKey) {
+        return moduleKey.replace('.', '/');
+    }
+
+    /**
+     * The JVM leg's probe of the closed {@code SQRT_NEGATIVE} tuple: entry
+     * {@code main} once, then the fixture's zero-arity export, printing the
+     * caught {@code DealError}'s tuple in the same
+     * {@code sqrt|code|message|expected|actual|origin} shape the node and
+     * luajit probes print (an absent field prints {@code <absent>}).
+     */
+    public static final class SqrtArmTupleChild {
+        public static void main(String[] args) throws Throwable {
+            try {
+                java.lang.invoke.MethodHandles.publicLookup().findStatic(
+                    Class.forName(args[0]), "dealMain",
+                    java.lang.invoke.MethodType.methodType(void.class))
+                    .invokeExact();
+                ((deal.codegen.jvm.JvmRuntime.FunctionValue)
+                    deal.codegen.jvm.JvmRuntime.exportSurface(args[1])
+                        .read(args[2])).fn.invoke(new Object[0]);
+            } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                System.out.println("sqrt|" + error.code + "|" + error.msg
+                    + "|" + (error.expected == null ? "<absent>" : error.expected)
+                    + "|" + (error.actual == null ? "<absent>" : error.actual)
+                    + "|" + error.origin);
+                System.exit(1);
+            }
+        }
+    }
+
     /**
      * The one-based line and column of the first occurrence of
      * {@code needle} in {@code source}: the drive's own derivation of the
@@ -7148,6 +7377,7 @@ public class ProductionDispatchTest {
         testV12SplitCaptureControls();
         testArrayReadV13ProductionDrive();
         testStdlibJsonCarrierBoundaryV13ProductionDrive();
+        testMathSqrtNegativeArmThreeLanes();
         testV12CornerCaseCorpusProductionDrive();
         testV13BoundaryCorpusProductionDrive();
         testRetainedDefaultCallWitnessBothTargets();

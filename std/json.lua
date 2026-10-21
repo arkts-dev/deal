@@ -110,16 +110,66 @@ local function utf8_encode(cp)
   end
 end
 
+-- The closed carrier-kind projection of one non-JSON value (the shared
+-- JSON_STRINGIFY_UNSUPPORTED arm's actual token, the emitted prelude's
+-- __stdJsonKind vocabulary): the absent marker is nil, the language-null
+-- sentinel keeps its Lua type() shape table, a function carrier — the
+-- runtime's function-kind wrapper and the emitted chunk's callable
+-- carriers — is function, the bytes carrier is bytes, and every other
+-- produced carrier (a class instance in either the runtime's class shape
+-- or the emitted chunk's class shape, the builtin Error instance, a
+-- decoded async handle) is table. A plain table — the JSON object/array
+-- shape, whatever string keys it carries — is table too, so the
+-- projection alone never selects.
+local function json_carrier_kind(v)
+  if v == __rt.__MISSING or v == nil then return 'nil' end
+  if v == __rt.__NULL then return 'table' end
+  local t = type(v)
+  if t == 'table' then
+    -- The numeric-variant carrier projects its recorded numeric kind, the
+    -- same token the emitted prelude's __stdJsonKind publishes.
+    if v[__K.jn] then return 'number' end
+    local kind = v[__K.kind]
+    if kind == 'bytes' then return 'bytes' end
+    -- A class or Error carrier is table even when it also carries the
+    -- function markers: an emitted class instance holds both the class
+    -- mark and its field map, and the emitted prelude's projection reads
+    -- the class mark first.
+    if v[__K.c] or v[__K.d] then return 'table' end
+    if v[__K.fn] ~= nil or v[__K.f] or v[__K.csig] ~= nil
+        or kind == 'function' then
+      return 'function'
+    end
+    return 'table'
+  end
+  return t
+end
+
+-- The closed unsupported-carrier rejection: the JSON_STRINGIFY_UNSUPPORTED
+-- arm's own text with the failing value's carrier-kind token. Every
+-- non-JSON carrier — the absent marker, the bytes carrier, a function
+-- wrapper, a class or Error instance, a decoded async handle, a raw
+-- function, and every other non-table value — renders this one
+-- projection, never a silent private-field encode.
+local function unsupported(v, file, line, column)
+  local actual = json_carrier_kind(v)
+  error(__rt._err("E8001", "unsupported type for JSON encoding: " .. actual,
+    file, line, column, "string, number, boolean, or table", actual))
+end
+
 -- Escape a string for JSON output.  Handles all ASCII control characters
 -- (U+0000–U+001F) as well as the required escapes for \", \\, and the
 -- common whitespace escapes.
 --
 -- RFC 8259 section 8.1/10: generated JSON text must be UTF-8 and strictly
--- conform, so strings that are not scalar-valid UTF-8 are rejected with
--- E8001 instead of being emitted as invalid bytes.
+-- conform, so strings that are not scalar-valid UTF-8 are not encoded: an
+-- invalid scalar sequence is still a string carrier and rejects through
+-- the closed JSON_STRINGIFY_UNSUPPORTED arm with the string token (the
+-- emitted chunk's, the JS runtime's and the JVM runtime's projection),
+-- never a private text composition.
 local function escape(s, file, line, column)
   if not __rt.utf8_valid(s) then
-    error(__rt._err("E8001", "cannot encode invalid UTF-8 as JSON", file, line, column, nil, nil))
+    unsupported(s, file, line, column)
   end
   return (string.gsub(s, '[%c\\"]', function(c)
     local byte = string.byte(c)
@@ -360,53 +410,6 @@ local function json_number_text(v)
   return text
 end
 
--- The closed carrier-kind projection of one non-JSON value (the shared
--- JSON_STRINGIFY_UNSUPPORTED arm's actual token, the emitted prelude's
--- __stdJsonKind vocabulary): the absent marker is nil, the language-null
--- sentinel keeps its Lua type() shape table, a function carrier — the
--- runtime's function-kind wrapper and the emitted chunk's callable
--- carriers — is function, the bytes carrier is bytes, and every other
--- produced carrier (a class instance in either the runtime's class shape
--- or the emitted chunk's class shape, the builtin Error instance, a
--- decoded async handle) is table. A plain table — the JSON object/array
--- shape, whatever string keys it carries — is table too, so the
--- projection alone never selects.
-local function json_carrier_kind(v)
-  if v == __rt.__MISSING or v == nil then return 'nil' end
-  if v == __rt.__NULL then return 'table' end
-  local t = type(v)
-  if t == 'table' then
-    -- The numeric-variant carrier projects its recorded numeric kind, the
-    -- same token the emitted prelude's __stdJsonKind publishes.
-    if v[__K.jn] then return 'number' end
-    local kind = v[__K.kind]
-    if kind == 'bytes' then return 'bytes' end
-    -- A class or Error carrier is table even when it also carries the
-    -- function markers: an emitted class instance holds both the class
-    -- mark and its field map, and the emitted prelude's projection reads
-    -- the class mark first.
-    if v[__K.c] or v[__K.d] then return 'table' end
-    if v[__K.fn] ~= nil or v[__K.f] or v[__K.csig] ~= nil
-        or kind == 'function' then
-      return 'function'
-    end
-    return 'table'
-  end
-  return t
-end
-
--- The closed unsupported-carrier rejection: the JSON_STRINGIFY_UNSUPPORTED
--- arm's own text with the failing value's carrier-kind token. Every
--- non-JSON carrier — the absent marker, the bytes carrier, a function
--- wrapper, a class or Error instance, a decoded async handle, a raw
--- function, and every other non-table value — renders this one
--- projection, never a silent private-field encode.
-local function unsupported(v, file, line, column)
-  local actual = json_carrier_kind(v)
-  error(__rt._err("E8001", "unsupported type for JSON encoding: " .. actual,
-    file, line, column, "string, number, boolean, or table", actual))
-end
-
 -- The decoded-array mark: every array the parser completes carries the
 -- private array carrier pair the emitted chunk and the LuaJIT host
 -- projection use — the array mark __K.a and the array's logical length
@@ -465,11 +468,15 @@ local function encode_value(v, file, line, column, path)
       out[#out + 1] = '"' .. escape(val, file, line, column) .. '"'
       return
     elseif t == 'number' then
+      -- A nonfinite number is not a JSON value: the closed
+      -- JSON_STRINGIFY_UNSUPPORTED arm's number token (the emitted
+      -- chunk's, the JS runtime's and the JVM runtime's projection),
+      -- never a private NaN/Infinity message.
       if val ~= val then
-        error(__rt._err("E8001", "cannot encode NaN as JSON", file, line, column, nil, nil))
+        unsupported(val, file, line, column)
       end
       if val == math.huge or val == -math.huge then
-        error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
+        unsupported(val, file, line, column)
       end
       -- A marked number-variant slot keeps the closed decimal spelling;
       -- an unmarked number keeps the module's existing %.17g encoding.
@@ -495,10 +502,10 @@ local function encode_value(v, file, line, column, path)
           unsupported(val, file, line, column)
         end
         if carried ~= carried then
-          error(__rt._err("E8001", "cannot encode NaN as JSON", file, line, column, nil, nil))
+          unsupported(carried, file, line, column)
         end
         if carried == math.huge or carried == -math.huge then
-          error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
+          unsupported(carried, file, line, column)
         end
         if val.k == 'int' then
           out[#out + 1] = tostring(carried)

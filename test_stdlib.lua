@@ -745,26 +745,33 @@ test("json.parse with non-string raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
--- NaN and Infinity rejection tests
+-- A nonfinite number is not JSON data: the shipped realization publishes the
+-- closed JSON_STRINGIFY_UNSUPPORTED arm's own tuple (E8001 "unsupported type
+-- for JSON encoding: number", expected "string, number, boolean, or table",
+-- actual "number") — exactly the tuple the emitted LuaJIT chunk, the JS
+-- realization and the JVM runtime publish for the same subject.
+local function assert_nonfinite_stringify_error(fn, label)
+  local err = assert_error_code(fn, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: number",
+    label .. ": message " .. tostring(err.message))
+  assert(err.expected == "string, number, boolean, or table",
+    label .. ": expected " .. tostring(err.expected))
+  assert(err.actual == "number", label .. ": actual " .. tostring(err.actual))
+end
+
 test("json.stringify rejects NaN with E8001", function()
-  local err = assert_error(function() json.stringify.f({ x = 0.0/0.0 }) end)
-  assert(type(err) == "table", "should get error table for NaN")
-  assert(err.code == "E8001", "error code should be E8001, got " .. tostring(err.code))
-  assert(string.find(err.message, "NaN") ~= nil, "error message should mention NaN")
+  assert_nonfinite_stringify_error(function() json.stringify.f({ x = 0.0/0.0 }) end,
+    "NaN member")
 end)
 
 test("json.stringify rejects Infinity with E8001", function()
-  local err = assert_error(function() json.stringify.f({ x = 1.0/0.0 }) end)
-  assert(type(err) == "table", "should get error table for Infinity")
-  assert(err.code == "E8001", "error code should be E8001, got " .. tostring(err.code))
-  assert(string.find(err.message, "Infinity") ~= nil, "error message should mention Infinity")
+  assert_nonfinite_stringify_error(function() json.stringify.f({ x = 1.0/0.0 }) end,
+    "Infinity member")
 end)
 
 test("json.stringify rejects negative Infinity with E8001", function()
-  local err = assert_error(function() json.stringify.f({ x = -1.0/0.0 }) end)
-  assert(type(err) == "table", "should get error table for negative Infinity")
-  assert(err.code == "E8001", "error code should be E8001, got " .. tostring(err.code))
-  assert(string.find(err.message, "Infinity") ~= nil, "error message should mention Infinity")
+  assert_nonfinite_stringify_error(function() json.stringify.f({ x = -1.0/0.0 }) end,
+    "negative Infinity member")
 end)
 
 test("json.stringify accepts finite numbers unchanged", function()
@@ -773,17 +780,13 @@ test("json.stringify accepts finite numbers unchanged", function()
 end)
 
 test("json.stringify rejects NaN in nested object", function()
-  local err = assert_error(function() json.stringify.f({ data = { val = 0.0/0.0 } }) end)
-  assert(type(err) == "table", "should get error table for nested NaN")
-  assert(err.code == "E8001", "error code should be E8001")
-  assert(string.find(err.message, "NaN") ~= nil, "error message should mention NaN")
+  assert_nonfinite_stringify_error(
+    function() json.stringify.f({ data = { val = 0.0/0.0 } }) end, "nested NaN")
 end)
 
 test("json.stringify rejects Infinity in array", function()
-  local err = assert_error(function() json.stringify.f({ 1, 2, 1.0/0.0 }) end)
-  assert(type(err) == "table", "should get error table for array Infinity")
-  assert(err.code == "E8001", "error code should be E8001")
-  assert(string.find(err.message, "Infinity") ~= nil, "error message should mention Infinity")
+  assert_nonfinite_stringify_error(function() json.stringify.f({ 1, 2, 1.0/0.0 }) end,
+    "array Infinity")
 end)
 
 -- ===========================================================================
@@ -1064,12 +1067,17 @@ test("json.stringify projects a numeric-variant carrier to its number (v1.3)", f
   assert(string.find(text, '"k"', 1, true) == nil
       and string.find(text, '"d"', 1, true) == nil,
     "the carrier's private k/d fields never surface, got: " .. text)
-  -- The existing non-finite rejection stays in force for a carried number.
+  -- A carried non-finite number keeps the closed JSON_STRINGIFY_UNSUPPORTED
+  -- rejection (the arm's own number tuple).
   local err = assert_error_code(function()
     json.stringify.f({ v = carrier("number", 0.0 / 0.0) })
   end, "E8001")
-  assert(string.find(err.message, "NaN", 1, true) ~= nil,
-    "a carried NaN keeps the NaN rejection, got: " .. tostring(err.message))
+  assert(err.message == "unsupported type for JSON encoding: number",
+    "a carried NaN keeps the closed arm, got: " .. tostring(err.message))
+  assert(err.expected == "string, number, boolean, or table",
+    "a carried NaN keeps the closed expected token, got: " .. tostring(err.expected))
+  assert(err.actual == "number",
+    "a carried NaN keeps the closed actual token, got: " .. tostring(err.actual))
 end)
 
 -- The chunk table carrier (ISSUE-0839): a DEAL table crossing from an
@@ -1274,6 +1282,20 @@ test("json supplementary stringify/parse round-trip is byte-identical", function
   assert(decoded.v == orig, "parse(stringify(s)) should be byte-identical")
 end)
 
+-- An invalid scalar sequence is still a string carrier: the closed
+-- JSON_STRINGIFY_UNSUPPORTED arm rejects it with the string token on the
+-- shipped LuaJIT realization exactly as the emitted chunk, the JS runtime and
+-- the JVM runtime do (the carrier-kind projection, never a private
+-- invalid-UTF-8 message).
+local function assert_invalid_scalar_stringify_error(fn, label)
+  local err = assert_error_code(fn, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: string",
+    label .. ": message " .. tostring(err.message))
+  assert(err.expected == "string, number, boolean, or table",
+    label .. ": expected " .. tostring(err.expected))
+  assert(err.actual == "string", label .. ": actual " .. tostring(err.actual))
+end
+
 test("json.stringify rejects invalid UTF-8 leaves with E8001", function()
   local invalid = {
     string.char(0xED, 0xA0, 0x80), -- UTF-16 surrogate encoded in UTF-8
@@ -1281,16 +1303,16 @@ test("json.stringify rejects invalid UTF-8 leaves with E8001", function()
     string.char(0xC3),             -- truncated 2-byte sequence
   }
   for _, s in ipairs(invalid) do
-    assert_json_error(function() json.stringify.f({ v = s }) end,
-      "cannot encode invalid UTF-8 as JSON")
+    assert_invalid_scalar_stringify_error(function() json.stringify.f({ v = s }) end,
+      "invalid scalar leaf")
   end
 end)
 
 test("json.stringify rejects invalid UTF-8 keys with E8001", function()
   local t = {}
   t[string.char(0xED, 0xA0, 0x80)] = "value"
-  assert_json_error(function() json.stringify.f(t) end,
-    "cannot encode invalid UTF-8 as JSON")
+  assert_invalid_scalar_stringify_error(function() json.stringify.f(t) end,
+    "invalid scalar key")
 end)
 
 test("json.parse rejects raw invalid UTF-8 input with E8001 (entry gate)", function()
@@ -1766,7 +1788,21 @@ test("math.sqrt of zero returns zero", function()
 end)
 
 test("math.sqrt of negative number errors with E8001", function()
+  -- The closed SQRT_NEGATIVE arm: no expected member, and the negative
+  -- operand's canonical hex-float spelling (Double.toHexString) as the
+  -- actual — the tuple the emitted LuaJIT chunk, the JVM runtime, the JS
+  -- realization and the shared oracle publish.
   local err = assert_error_code(function() mathlib.sqrt.f(-1.0) end, "E8001")
+  assert(err.message == "sqrt of negative number",
+    "sqrt message: " .. tostring(err.message))
+  assert(err.expected == nil, "the closed SQRT_NEGATIVE arm carries no expected field")
+  assert(err.actual == "-0x1.0p0", "sqrt actual: " .. tostring(err.actual))
+end)
+
+test("math.sqrt of a negative fraction keeps the canonical hex-float actual", function()
+  local err = assert_error_code(function() mathlib.sqrt.f(-0.5) end, "E8001")
+  assert(err.actual == "-0x1.0p-1", "sqrt actual: " .. tostring(err.actual))
+  assert(err.expected == nil, "the closed SQRT_NEGATIVE arm carries no expected field")
 end)
 
 test("math.sqrt with non-number raises error", function()

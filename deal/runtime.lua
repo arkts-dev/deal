@@ -87,6 +87,43 @@ function __rt._armErr(arm_id, values, code, message, file, line, column, expecte
   return e
 end
 
+--- The canonical hex-float spelling of one IEEE-754 double
+-- (Double.toHexString parity): NaN, both infinities and both zeros carry
+-- their Java spellings (never LuaJIT's "inf"/"-inf"), a subnormal its
+-- fixed-exponent denormal spelling, every other finite nonzero value its
+-- shortest exact "0x1.<digits>p<exp>" form. The one renderer of the
+-- closed-arm actuals that spell a number (SQRT_NEGATIVE), the same
+-- spelling the emitted prelude's __numHex, the JVM runtime's
+-- Double.toHexString and the shared CanonicalJson#numberHex publish.
+function __rt.number_hex(v)
+  if v ~= v then return "NaN" end
+  if v == math.huge then return "Infinity" end
+  if v == -math.huge then return "-Infinity" end
+  local neg = v < 0 or (v == 0 and 1 / v < 0)
+  if v == 0 then return neg and "-0x0.0p0" or "0x0.0p0" end
+  local magnitude = neg and -v or v
+  local sign = neg and "-" or ""
+  -- A subnormal (|v| < 2^-1022) keeps Java's fixed-exponent denormal
+  -- spelling: the fraction as 13 hex digits with its trailing zeros
+  -- stripped and the pinned -1022 exponent, never the normalized form.
+  -- The two exact scalings recover the subnormal's integer significand
+  -- (magnitude * 2^1074 — every intermediate is a normal power-of-two
+  -- scaling).
+  if magnitude < 2 ^ -1022 then
+    local scaled = magnitude * 2 ^ 537 * 2 ^ 537
+    local hex = string.format("%013x", scaled)
+    hex = string.gsub(hex, "0+$", "")
+    if hex == "" then hex = "0" end
+    return sign.."0x0."..hex.."p-1022"
+  end
+  local h = string.format("%a", magnitude)
+  h = string.gsub(h, "p(%+)(%d)", "p%2")
+  if not string.find(h, ".", 1, true) then
+    h = string.gsub(h, "^(0x[0-9a-f]+)p", "%1.0p")
+  end
+  return sign..h
+end
+
 --- Reify a thrown/caught error value as a tagged builtin-Error class
 -- instance. The trailing file/line/column arguments are optional: omitted
 -- arguments leave the corresponding fields absent (nil), matching _err's

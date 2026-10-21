@@ -242,12 +242,21 @@ test("math.floor rejects a non-number with E8001 and the forwarded span", functi
   assertSpan(err, "t7.deal", 13, 14);
 });
 
-test("math.sqrt of a negative number raises E8001 with the expected/actual pair", function() {
-  const err = assertErrorCode(function() { math.sqrt.$f(-1, "t8.deal", 15, 16); }, "E8001");
+test("math.sqrt of a negative number raises the closed SQRT_NEGATIVE tuple", function() {
+  // The closed arm: E8001 "sqrt of negative number", no expected member,
+  // and the negative operand's canonical hex-float spelling as the actual
+  // (the tuple the emitted LuaJIT chunk, the JVM runtime and the shared
+  // oracle publish for the same subject).
+  const err = assertErrorCode(function() { math.sqrt.$f(-1.0, "t8.deal", 15, 16); }, "E8001");
   assertEqual(err.message, "sqrt of negative number", "math.sqrt message");
-  assertEqual(err.expected, "non-negative number", "math.sqrt expected");
-  assertEqual(err.actual, "-1", "math.sqrt actual");
+  if (Object.prototype.hasOwnProperty.call(err, "expected")) {
+    throw new Error("the closed SQRT_NEGATIVE arm carries no expected field, got: "
+      + String(err.expected));
+  }
+  assertEqual(err.actual, "-0x1.0p0", "math.sqrt actual");
   assertSpan(err, "t8.deal", 15, 16);
+  const fraction = assertErrorCode(function() { math.sqrt.$f(-0.5, "t8.deal", 15, 16); }, "E8001");
+  assertEqual(fraction.actual, "-0x1.0p-1", "math.sqrt fraction actual");
 });
 
 test("valid calls return values that re-validate through the $rt checks", function() {
@@ -930,6 +939,26 @@ test("console.log/error are first-class wrapper values writing to the captured s
   assertEqual(consoleMod.error.$sig, "(string)->null", "error signature");
   assert(typeof consoleMod.error.$f === "function", "error $f is callable");
   assertEqual(consoleMod.error.$f("e", "f.js", 1, 1), null, "error returns DEAL null");
+});
+
+// ===========================================================================
+// The canonical hex-float spelling (Double.toHexString parity)
+// ===========================================================================
+
+test("numberHex publishes the canonical hex-float spellings", function() {
+  assertEqual(rt.numberHex(1.0), "0x1.0p0", "1.0");
+  assertEqual(rt.numberHex(-1.0), "-0x1.0p0", "-1.0");
+  assertEqual(rt.numberHex(0.5), "0x1.0p-1", "0.5");
+  assertEqual(rt.numberHex(-0.5), "-0x1.0p-1", "-0.5");
+  assertEqual(rt.numberHex(0.0), "0x0.0p0", "0.0");
+  assertEqual(rt.numberHex(-0.0), "-0x0.0p0", "-0.0");
+  assertEqual(rt.numberHex(3.0), "0x1.8p1", "3.0");
+  assertEqual(rt.numberHex(0.1), "0x1.999999999999ap-4", "0.1");
+  assertEqual(rt.numberHex(0.0 / 0.0), "NaN", "NaN");
+  assertEqual(rt.numberHex(1.0 / 0.0), "Infinity", "Infinity");
+  assertEqual(rt.numberHex(-1.0 / 0.0), "-Infinity", "-Infinity");
+  assertEqual(rt.numberHex(5e-324), "0x0.0000000000001p-1022", "MIN_VALUE");
+  assertEqual(rt.numberHex(-5e-324), "-0x0.0000000000001p-1022", "-MIN_VALUE");
 });
 
 // ===========================================================================
