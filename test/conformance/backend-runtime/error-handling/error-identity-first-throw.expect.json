@@ -4,7 +4,7 @@
   "expected": {
     "mode": "runtime-ok",
     "transcript": {
-      "stdout": "",
+      "stdout": "OK|first-throw\nOK|rethrow\nOK|nested-catch\nOK|crossing\n",
       "stderr": ""
     },
     "exitCode": 0

@@ -3,7 +3,6 @@ package deal.test;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmAsyncExportInvoker;
-import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.AsyncExportInvocationRequest;
 import deal.codegen.lua.LuaJitAsyncExportInvoker;
 import deal.module.CompilationOrchestrator;
@@ -15,6 +14,7 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
 import deal.test.conformance.JvmCompilation;
+import deal.test.conformance.SidecarExpectations;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -44,21 +44,44 @@ import java.util.stream.Stream;
  *
  * <p>Three regressions run the real production surface:</p>
  * <ul>
- *   <li>the emitted artifacts of all three backends (real {@code luajit},
- *       {@code java}, {@code node}) executing the identity, alias-mutation,
- *       rethrow, nested-catch, parameter/return-crossing postconditions,
- *       asserted from the exact stdout markers and exit code;</li>
+ *   <li>the corpus fixture {@code error-handling/error-identity-first-throw}
+ *       through the emitted artifacts of all three backends (real
+ *       {@code luajit}, {@code java}, {@code node}): its entry terminal
+ *       executes the identity, two-alias mutation, rethrow, nested-catch and
+ *       parameter/return-crossing postconditions and prints one marker per
+ *       group, and the exact transcript is the one the sidecar pins;</li>
+ *   <li>the fixture's declared {@code test_awaited_error_identity} export
+ *       through the production async-export invokers on LuaJIT and the JVM
+ *       and through the published JS artifact under {@code node}, so the
+ *       awaited error is the same instance on every lane;</li>
  *   <li>the canonical failure metadata of the identity-preserving paths on
  *       the semantic oracle and both shared artifacts: a mutated first-throw
  *       rethrow keeps the FIRST throw's origin with no invented cause, and a
  *       handler's replacement keeps its own origin and links the caught
- *       failure as its cause;</li>
- *   <li>the awaited error propagation through the production async-export
- *       invokers on LuaJIT and JVM and through the published JS artifact
- *       under {@code node}.</li>
+ *       failure as its cause, plus the JS artifact's byte-exact escaped
+ *       terminal.</li>
  * </ul>
  */
 public final class ErrorIdentityProductionTest {
+
+    private static final Path CORPUS = Path.of("test", "conformance",
+        "backend-runtime");
+
+    /** The fixture and its structured sidecar (the pinned three-backend oracle). */
+    private static final String FIXTURE = "error-handling/error-identity-first-throw";
+
+    private static final String ENTRY_MODULE = "main";
+
+    /** The awaiting lane's declared assertion export and completion. */
+    private static final String AWAITED_EXPORT = "test_awaited_error_identity";
+
+    private static final String AWAITED_DESCRIPTOR = "string";
+
+    private static final String AWAITED_VALUE_JSON = "\"awaited\"";
+
+    /** The fixture's deterministic per-group markers (proof each group ran). */
+    private static final String EXPECTED_STDOUT =
+        "OK|first-throw\nOK|rethrow\nOK|nested-catch\nOK|crossing\n";
 
     private static int passed = 0;
     private static int failed = 0;
@@ -83,147 +106,8 @@ public final class ErrorIdentityProductionTest {
     }
 
     // =========================================================================
-    // The fixtures
+    // The fixture, the sidecar, and the metadata fixtures
     // =========================================================================
-
-    /**
-     * The sync identity fixture of the emitted-artifact regression: every
-     * postcondition is asserted in DEAL source, so a backend that loses the
-     * thrown instance raises {@code TEST_FAIL} instead of reaching the
-     * {@code OK} markers. Two aliases, the first throw, the mutation through
-     * either alias, a rethrow from a callee's handler, a handler's
-     * replacement caught by the enclosing catch, and a parameter/return
-     * crossing are covered.
-     */
-    private static final String IDENTITY_SOURCE = """
-        import * as console from "std/console";
-
-        function mutateReturned(e: Error): Error {
-          e.message = "returned";
-          return e;
-        }
-
-        function rethrowCaught(e: Error): int {
-          try { throw e; } catch (caught) { throw caught; }
-          return 0;
-        }
-
-        export function main(): null {
-          let original: Error = { code: "X", message: "x" };
-          let alias: Error = original;
-          let caughtOnce: boolean = false;
-          try {
-            throw original;
-          } catch (e) {
-            caughtOnce = true;
-            if (e !== original || e !== alias) {
-              throw { code: "TEST_FAIL", message: "the first throw lost the identity" };
-            }
-            e.message = "changed";
-            if (original.message !== "changed" || alias.message !== "changed") {
-              throw { code: "TEST_FAIL", message: "the caught instance is not alias-visible" };
-            }
-          }
-          if (!caughtOnce) {
-            throw { code: "TEST_FAIL", message: "the first throw was not caught" };
-          }
-          if (original.message !== "changed" || alias.message !== "changed") {
-            throw { code: "TEST_FAIL", message: "the alias write is not visible after the catch" };
-          }
-          console.log("OK|first-throw");
-
-          let crossed: Error = { code: "R", message: "r" };
-          let again: boolean = false;
-          try {
-            let x: int = rethrowCaught(crossed);
-          } catch (recaught) {
-            again = true;
-            if (recaught !== crossed) {
-              throw { code: "TEST_FAIL", message: "the rethrow lost the identity" };
-            }
-          }
-          if (!again) {
-            throw { code: "TEST_FAIL", message: "the rethrow was not caught" };
-          }
-          console.log("OK|rethrow");
-
-          let outer: Error = { code: "OUTER", message: "outer" };
-          let handled: boolean = false;
-          try {
-            try {
-              throw { code: "INNER", message: "inner" };
-            } catch (inner) {
-              if (inner.code !== "INNER") {
-                throw { code: "TEST_FAIL", message: "the handled Error lost its code" };
-              }
-              throw outer;
-            }
-          } catch (o) {
-            handled = true;
-            if (o !== outer) {
-              throw { code: "TEST_FAIL", message: "the handler replacement lost the identity" };
-            }
-            o.code = "OUTER2";
-          }
-          if (!handled) {
-            throw { code: "TEST_FAIL", message: "the handler replacement was not caught" };
-          }
-          if (outer.code !== "OUTER2") {
-            throw { code: "TEST_FAIL", message: "the enclosing catch did not bind the instance" };
-          }
-          console.log("OK|nested-catch");
-
-          let passedOn: Error = { code: "P", message: "p" };
-          let returned: Error = mutateReturned(passedOn);
-          if (returned !== passedOn) {
-            throw { code: "TEST_FAIL", message: "the returned Error is a replacement" };
-          }
-          if (passedOn.message !== "returned") {
-            throw { code: "TEST_FAIL", message: "the callee write is not alias-visible" };
-          }
-          console.log("OK|crossing");
-
-          return null;
-        }
-        """;
-
-    /** The exact stdout of the identity fixture on every backend. */
-    private static final String IDENTITY_STDOUT =
-        "OK|first-throw\nOK|rethrow\nOK|nested-catch\nOK|crossing\n";
-
-    /** The awaited-propagation fixture (one zero-arity async export). */
-    private static final String AWAITED_SOURCE = """
-        export async function probe(): string {
-          let original: Error = { code: "A", message: "a" };
-          let alias: Error = original;
-
-          async function asyncThrow(): int {
-            throw original;
-          }
-
-          let caught: boolean = false;
-          try {
-            let x: int = await asyncThrow();
-          } catch (e) {
-            caught = true;
-            if (e !== original || e !== alias) {
-              throw { code: "TEST_FAIL", message: "the awaited error lost the identity" };
-            }
-            e.code = "A2";
-            if (original.code !== "A2" || alias.code !== "A2") {
-              throw { code: "TEST_FAIL", message: "the awaited instance is not alias-visible" };
-            }
-          }
-          if (!caught) {
-            throw { code: "TEST_FAIL", message: "the awaited error was not caught" };
-          }
-          return "awaited";
-        }
-
-        export function main(): null {
-          return null;
-        }
-        """;
 
     /**
      * The mutated-rethrow fixture: the first throw of a constructed Error
@@ -288,6 +172,55 @@ public final class ErrorIdentityProductionTest {
     // =========================================================================
 
     private record Project(Path root, Path src, Path entry, Path out) {
+    }
+
+    private static String fixtureSource() throws Exception {
+        String corpusPath = FIXTURE + ".deal";
+        return ConformanceHarnessMetadata.productionCorpusSource(
+            Files.readString(CORPUS.resolve(corpusPath), StandardCharsets.UTF_8),
+            corpusPath);
+    }
+
+    private static SidecarExpectations.StructuredExpectationSidecar sidecar()
+            throws Exception {
+        Path file = CORPUS.resolve(FIXTURE + ".expect.json");
+        check(Files.isRegularFile(file), "the fixture carries its structured "
+            + "expectation sidecar: " + file);
+        return SidecarExpectations.StructuredExpectationSidecar.parse(
+            Files.readString(file, StandardCharsets.UTF_8));
+    }
+
+    private record ExpectedExecution(byte[] stdout, byte[] stderr, int exitCode) {
+    }
+
+    private static Map<String, ExpectedExecution> expectedByBackend(
+            SidecarExpectations.StructuredExpectationSidecar sidecar) {
+        Map<String, ExpectedExecution> expected = new LinkedHashMap<>();
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            SidecarExpectations.RuntimeExpectation expectation =
+                sidecar.expectationFor(backend);
+            check(expectation instanceof
+                    SidecarExpectations.RuntimeExpectation.Executed,
+                "the sidecar pins the " + backend + " lane");
+            if (expectation instanceof
+                    SidecarExpectations.RuntimeExpectation.Executed executed) {
+                checkEq("runtime-ok", executed.mode(),
+                    "the sidecar's " + backend + " mode");
+                expected.put(backend, new ExpectedExecution(executed.stdout(),
+                    executed.stderr(), executed.exitCode()));
+            }
+        }
+        for (Map.Entry<String, ExpectedExecution> entry : expected.entrySet()) {
+            ExpectedExecution pin = entry.getValue();
+            checkEq(EXPECTED_STDOUT, new String(pin.stdout(), StandardCharsets.UTF_8),
+                "the sidecar pins the " + entry.getKey()
+                    + " fixture's per-group markers");
+            checkEq("", new String(pin.stderr(), StandardCharsets.UTF_8),
+                "the sidecar pins an empty " + entry.getKey() + " stderr");
+            checkEq(0, pin.exitCode(), "the sidecar pins the " + entry.getKey()
+                + " zero exit code");
+        }
+        return expected;
     }
 
     private static CompilerInvocation productionInvocation() {
@@ -379,34 +312,39 @@ public final class ErrorIdentityProductionTest {
         }
     }
 
+    private static void assertExecution(String backend, ProcessOutcome run,
+            ExpectedExecution expected) {
+        checkEq(expected.exitCode(), run.exitCode(), backend + ": the published "
+            + "artifact keeps the Error identity and exits with the pinned code: "
+            + run.output());
+        checkEq(new String(expected.stdout(), StandardCharsets.UTF_8), run.stdout(),
+            backend + ": the identity postcondition markers: " + run.output());
+        checkEq(new String(expected.stderr(), StandardCharsets.UTF_8), run.stderr(),
+            backend + ": the pinned stderr: " + run.output());
+    }
+
     // =========================================================================
     // Regression 1: the identity postconditions on the three emitted artifacts
     // =========================================================================
 
-    private static void assertArtifactRun(String backend, Path out,
-            List<String> command, Path workDir) throws Exception {
-        ProcessOutcome run = runProcess(command, workDir);
-        checkEq(0, run.exitCode(), backend + ": the published artifact keeps the "
-            + "Error identity and exits zero: " + run.output());
-        checkEq(IDENTITY_STDOUT, run.stdout(), backend + ": the identity "
-            + "postcondition markers: " + run.output());
-        checkEq("", run.stderr(), backend + ": no diagnostics on stderr: "
-            + run.output());
-    }
-
-    private static void testLuaJitIdentityArtifact(Path root) throws Exception {
-        System.out.println("-- the published LuaJIT chunk: identity postconditions"
-            + " under real luajit --");
-        Project project = writeProject(root, IDENTITY_SOURCE);
+    private static void testLuaJitIdentityArtifact(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the published LuaJIT chunk: the fixture's entry "
+            + "terminal under real luajit --");
+        Project project = writeProject(root, fixtureSource());
         productionCompile(project, Backend.LUAJIT);
-        assertArtifactRun("luajit", project.out(),
-            List.of("luajit", "main.lua"), project.out());
+        check(Files.isRegularFile(project.out().resolve("deal/runtime.lua")),
+            "luajit: the production compile deploys the runtime");
+        assertExecution("luajit",
+            runProcess(List.of("luajit", ENTRY_MODULE + ".lua"), project.out()),
+            expected);
     }
 
-    private static void testJvmIdentityArtifact(Path root) throws Exception {
-        System.out.println("-- the published JVM artifact: identity postconditions"
-            + " under javac and java --");
-        Project project = writeProject(root, IDENTITY_SOURCE);
+    private static void testJvmIdentityArtifact(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the published JVM artifact: the fixture's entry "
+            + "terminal under javac and java --");
+        Project project = writeProject(root, fixtureSource());
         productionCompile(project, Backend.JVM);
         Path classes = project.root().resolve("classes");
         Files.createDirectories(classes);
@@ -420,17 +358,22 @@ public final class ErrorIdentityProductionTest {
         if (javac.exitCode() != 0) {
             return;
         }
-        assertArtifactRun("jvm", classes, List.of("java", "-cp",
-            classes + File.pathSeparator + classpath, "Main"), project.out());
+        assertExecution("jvm", runProcess(List.of("java", "-cp",
+            classes + File.pathSeparator + classpath, "Main"), project.out()),
+            expected);
     }
 
-    private static void testJsIdentityArtifact(Path root) throws Exception {
-        System.out.println("-- the published JS artifact: identity postconditions"
-            + " under node --");
-        Project project = writeProject(root, IDENTITY_SOURCE);
+    private static void testJsIdentityArtifact(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the published JS artifact: the fixture's entry "
+            + "terminal under node --");
+        Project project = writeProject(root, fixtureSource());
         productionCompile(project, Backend.JS);
-        assertArtifactRun("js", project.out(),
-            List.of("node", "main.js"), project.out());
+        check(Files.isRegularFile(project.out().resolve("deal/runtime.js")),
+            "js: the production compile deploys the runtime");
+        assertExecution("js",
+            runProcess(List.of("node", ENTRY_MODULE + ".js"), project.out()),
+            expected);
     }
 
     // =========================================================================
@@ -634,13 +577,14 @@ public final class ErrorIdentityProductionTest {
             + "production async-export surface of all three backends --");
         for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM, Backend.JS)) {
             Path projectRoot = root.resolve(backend.name().toLowerCase());
-            Project project = writeProject(projectRoot, AWAITED_SOURCE);
+            Project project = writeProject(projectRoot, fixtureSource());
             productionCompile(project, backend);
             switch (backend) {
                 case LUAJIT -> {
                     Object result = new LuaJitAsyncExportInvoker().invoke(
                         new AsyncExportInvocationRequest(
-                            project.out().resolve("main.lua"), "probe", "string"));
+                            project.out().resolve(ENTRY_MODULE + ".lua"),
+                            AWAITED_EXPORT, AWAITED_DESCRIPTOR));
                     assertAwaitCompletion(backend.name(), result);
                 }
                 case JVM -> {
@@ -659,7 +603,8 @@ public final class ErrorIdentityProductionTest {
                     }
                     Object result = new JvmAsyncExportInvoker().invoke(
                         new AsyncExportInvocationRequest(
-                            classes.resolve("Main.class"), "probe", "string"));
+                            classes.resolve("Main.class"), AWAITED_EXPORT,
+                            AWAITED_DESCRIPTOR));
                     assertAwaitCompletion(backend.name(), result);
                 }
                 case JS -> {
@@ -668,8 +613,10 @@ public final class ErrorIdentityProductionTest {
                         project.out());
                     checkEq(0, run.exitCode(), "js: the awaited error keeps the "
                         + "Error instance: " + run.output());
-                    checkEq("OK|awaited|awaited\n", run.stdout(),
-                        "js: the awaited-error postcondition marker: " + run.output());
+                    checkEq(EXPECTED_STDOUT + "OK|awaited|awaited\n",
+                        run.stdout(), "js: the awaited-error postcondition "
+                        + "marker (the invoker runs the entry terminal exactly "
+                        + "once, then the export): " + run.output());
                     checkEq("", run.stderr(), "js: no diagnostics on stderr: "
                         + run.output());
                 }
@@ -689,7 +636,8 @@ public final class ErrorIdentityProductionTest {
         "use strict";
         const $rt = require("./deal/runtime");
         const $entry = require("./main.js");
-        $rt.invokeAsyncExport($entry, "probe", "string").then(($result) => {
+        $rt.invokeAsyncExport($entry, "test_awaited_error_identity", "string")
+          .then(($result) => {
           if ($result.$ok === true) {
             process.stdout.write("OK|awaited|" + $result.$value + "\\n");
             process.exitCode = 0;
@@ -708,29 +656,29 @@ public final class ErrorIdentityProductionTest {
     private static void assertAwaitCompletion(String backend, Object result) {
         switch (result) {
             case LuaJitAsyncExportInvoker.Result.Value value -> {
-                checkEq("string", value.returnDescriptor(), backend
+                checkEq(AWAITED_DESCRIPTOR, value.returnDescriptor(), backend
                     + ": the awaited completion descriptor");
-                checkEq("\"awaited\"", value.valueJson(), backend
-                    + ": the awaited error kept the Error instance (the probe's "
+                checkEq(AWAITED_VALUE_JSON, value.valueJson(), backend
+                    + ": the awaited error kept the Error instance (the export's "
                     + "postconditions passed)");
             }
             case LuaJitAsyncExportInvoker.Result.DealError error -> fail(backend
-                + ": the awaited probe escaped a DEAL failure instead of completing: "
-                + error);
+                + ": the awaited assertion escaped a DEAL failure instead of "
+                + "completing: " + error);
             case LuaJitAsyncExportInvoker.Result.HostFailure failure -> fail(backend
-                + ": the awaited probe was a host failure: " + failure);
+                + ": the awaited assertion was a host failure: " + failure);
             case JvmAsyncExportInvoker.Result.Value value -> {
-                checkEq("string", value.returnDescriptor(), backend
+                checkEq(AWAITED_DESCRIPTOR, value.returnDescriptor(), backend
                     + ": the awaited completion descriptor");
-                checkEq("\"awaited\"", value.valueJson(), backend
-                    + ": the awaited error kept the Error instance (the probe's "
+                checkEq(AWAITED_VALUE_JSON, value.valueJson(), backend
+                    + ": the awaited error kept the Error instance (the export's "
                     + "postconditions passed)");
             }
             case JvmAsyncExportInvoker.Result.DealError error -> fail(backend
-                + ": the awaited probe escaped a DEAL failure instead of completing: "
-                + error);
+                + ": the awaited assertion escaped a DEAL failure instead of "
+                + "completing: " + error);
             case JvmAsyncExportInvoker.Result.HostFailure failure -> fail(backend
-                + ": the awaited probe was a host failure: " + failure);
+                + ": the awaited assertion was a host failure: " + failure);
             default -> fail(backend + ": unexpected production invoker result "
                 + result);
         }
@@ -742,11 +690,19 @@ public final class ErrorIdentityProductionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Error Identity Production Test (ISSUE-0881) ===\n");
+        Map<String, ExpectedExecution> expected = expectedByBackend(sidecar());
         Path root = Files.createTempDirectory("deal-error-identity-");
         try {
-            testLuaJitIdentityArtifact(root.resolve("luajit"));
-            testJvmIdentityArtifact(root.resolve("jvm"));
-            testJsIdentityArtifact(root.resolve("js"));
+            if (expected.get("luajit") != null) {
+                testLuaJitIdentityArtifact(root.resolve("luajit"),
+                    expected.get("luajit"));
+            }
+            if (expected.get("jvm") != null) {
+                testJvmIdentityArtifact(root.resolve("jvm"), expected.get("jvm"));
+            }
+            if (expected.get("js") != null) {
+                testJsIdentityArtifact(root.resolve("js"), expected.get("js"));
+            }
             testMutatedRethrowMetadata(root.resolve("mutated"));
             testHandlerReplacementMetadata(root.resolve("wrapped"));
             testJsEscapedMetadata(root.resolve("js-metadata"));
