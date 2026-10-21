@@ -493,7 +493,16 @@ public class CanonicalProjectionParityTest {
         // the bytes .length spelling.
         mainEntry("types/narrowed-capture-array-length-e8001"),
         mainEntry("types/narrowed-capture-array-length-composed-e8001"),
-        mainEntry("types/narrowed-capture-bytes-length-e8001"));
+        mainEntry("types/narrowed-capture-bytes-length-e8001"),
+        // The has() receiver is the presence consumer (ISSUE-0880): the
+        // admission publishes the read and the HAS_FIELD presence op consumes
+        // that admitted value, so a cleared binding reports the refined class
+        // descriptor's nominal tuple (E8001, expected class instance, expected
+        // class, actual null) at the receiver on the oracle and both
+        // production artifacts instead of a raw nil index error (LuaJIT), a
+        // host null dereference (JVM) or a reified native TypeError whose code
+        // merely happened to be E8001 (JS).
+        mainEntry("types/narrowed-capture-has-field-e8001"));
 
     /**
      * The runtime-ok class-identity controls with a corpus pin: the
@@ -534,7 +543,19 @@ public class CanonicalProjectionParityTest {
         // cleared-binding .length position — direct, arithmetic, comparison,
         // loop condition and chain key — raises its own catchable canonical
         // E8001 whose caught flag is asserted after the try.
-        mainEntry("types/narrowed-capture-length-controls"));
+        mainEntry("types/narrowed-capture-length-controls"),
+        // The has() receiver controls (ISSUE-0880): the valid refinement keeps
+        // the absent / present-zero / present-false / present-null / present
+        // value / deleted presence states, a call preserves the refinement and
+        // a capturing closure that reassigns another valid object is observed
+        // by the presence read, the nested receiver chain keeps its presence
+        // results, and every cleared-binding consumer — the presence read, the
+        // nested chain and the ordinary class field read/delete controls —
+        // raises its own catchable canonical E8001 whose caught flag is
+        // asserted after the try. The table member receiver shares the same
+        // admission seam, so its valid and cleared positions are controlled
+        // here too.
+        mainEntry("types/narrowed-capture-has-controls"));
 
     /**
      * The lane-protocol runtime-ok corpus pins (ISSUE-0857;

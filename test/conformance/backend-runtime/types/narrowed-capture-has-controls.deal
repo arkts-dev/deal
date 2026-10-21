@@ -1,0 +1,224 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The has() receiver controls of the call-preserved narrowing refinement: a valid refinement distinguishes absent, present zero, present false, present null, present value and deleted optional fields unchanged, a call preserves the refinement and a capturing closure that reassigns another valid object is observed by the presence read, the nested receiver chain keeps its presence results, and after a capturing closure clears the binding the presence read raises its own catchable canonical E8001 (message "expected class instance") recorded and asserted outside the consumer, while the ordinary class field read/delete controls and the table member receiver that shares the same admission seam keep their own canonical failures and mutate nothing.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, classes, has, tables, runtime-errors
+
+class Box {
+  n?: int;
+  flag?: boolean;
+  nick?: string | null;
+}
+
+class Pair {
+  inner: Box = {};
+}
+
+function expectEqual(what: string, actual: int, expected: int): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+function expectCaught(what: string, e: Error, message: string): null {
+  if (e.code !== "E8001") {
+    throw { code: "CONTROL_FAIL", message: what + ": expected E8001, got " + e.code };
+  }
+  if (e.message !== message) {
+    throw {
+      code: "CONTROL_FAIL",
+      message: what + ": expected " + message + ", got " + e.message
+    };
+  }
+  return null;
+}
+
+function fail(what: string): null {
+  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+}
+
+export function main(): null {
+  // The presence three-state over a valid refinement: an absent optional
+  // field, a present zero, a present false, a present null, a present
+  // string and a deleted optional field stay distinguishable, and the
+  // admission republishes the read the presence op consumes.
+  let box: Box | null = {};
+  if (box !== null) {
+    expectTrue("absent optional field", !has(box.n));
+    box.n = 0;
+    expectTrue("present zero field", has(box.n));
+    box.flag = false;
+    expectTrue("present false field", has(box.flag));
+    box.nick = null;
+    expectTrue("present null field", has(box.nick));
+    delete box.nick;
+    expectTrue("deleted optional field", !has(box.nick));
+    box.nick = "ada";
+    expectTrue("reassigned optional field", has(box.nick));
+  }
+
+  // A call between the narrowing and the presence read does not
+  // invalidate the refinement, and the presence read observes the current
+  // binding: a capturing closure that reassigns another valid object is
+  // visible to the read.
+  let first: Box = {};
+  let second: Box = { n: 3, nick: null };
+  let current: Box | null = first;
+  let swap: () => null = function(): null {
+    current = second;
+    return null;
+  };
+  if (current !== null) {
+    expectTrue("the first object carries no field", !has(current.n));
+    swap();
+    expectTrue("the captured reassignment is observed", has(current.n));
+    expectTrue("the new object's present null field", has(current.nick));
+    let observed: int | null = current.n;
+    expectTrue("the ordinary read observes the new object", observed !== null);
+  }
+
+  // The nested receiver chain: the presence read of the inner instance's
+  // optional field is unchanged for a valid refinement.
+  let pair: Pair | null = { inner: { n: 4 } };
+  if (pair !== null) {
+    expectTrue("nested chain presence", has(pair.inner.n));
+    expectTrue("nested chain absent field", !has(pair.inner.nick));
+  }
+
+  // The nested chain's outer receiver is validated where it stands: after
+  // a capturing closure clears the binding the chain raises its own
+  // catchable E8001 before it dereferences the carrier.
+  let holder: Pair | null = { inner: { n: 5 } };
+  let drop: () => null = function(): null {
+    holder = null;
+    return null;
+  };
+  if (holder !== null) {
+    drop();
+    let caughtNested: boolean = false;
+    try {
+      let present: boolean = has(holder.inner.n);
+      fail("nested chain presence");
+    } catch (e) {
+      expectCaught("nested chain presence", e, "expected class instance");
+      caughtNested = true;
+    }
+    expectTrue("the nested chain raised its own typed-boundary error", caughtNested);
+  }
+
+  // The admitted presence read: after the capturing closure clears the
+  // binding the read raises the canonical typed-boundary error and the
+  // caught flag is asserted after the consumer.
+  let cleared: Box | null = { n: 1 };
+  let clear: () => null = function(): null {
+    cleared = null;
+    return null;
+  };
+  if (cleared !== null) {
+    clear();
+    let caughtPresence: int = 0;
+    try {
+      let present: boolean = has(cleared.n);
+      fail("presence read");
+    } catch (e) {
+      expectCaught("presence read", e, "expected class instance");
+      caughtPresence = caughtPresence + 1;
+    }
+    expectEqual("the presence read raised", caughtPresence, 1);
+  }
+
+  // The ordinary class field read and delete controls on the same cleared
+  // binding keep their own canonical failures, and the failed operations
+  // mutate nothing.
+  let keep: Box = { n: 5, nick: "x" };
+  let target: Box | null = keep;
+  let wipe: () => null = function(): null {
+    target = null;
+    return null;
+  };
+  if (target !== null) {
+    wipe();
+    let caughtFields: int = 0;
+    try {
+      let value: int | null = target.n;
+      fail("ordinary field read");
+    } catch (e) {
+      expectCaught("ordinary field read", e, "expected class instance");
+      caughtFields = caughtFields + 1;
+    }
+    expectEqual("the ordinary field read raised", caughtFields, 1);
+    try {
+      delete target.nick;
+      fail("ordinary field delete");
+    } catch (e) {
+      expectCaught("ordinary field delete", e, "expected class instance");
+      caughtFields = caughtFields + 1;
+    }
+    expectEqual("the ordinary field delete raised", caughtFields, 2);
+    expectTrue("the failed field operations mutate nothing", has(keep.nick));
+  }
+
+  // The receiver expression of a presence read completes exactly once, and
+  // its presence result follows the live instance (the non-refined
+  // receiver keeps its recorded projection).
+  let evaluations: int = 0;
+  let source: Box = { n: 2 };
+  let make: () => Box = function(): Box {
+    evaluations = evaluations + 1;
+    return source;
+  };
+  let presentValue: boolean = has(make().n);
+  expectTrue("call-valued receiver presence", presentValue);
+  expectEqual("the receiver completes exactly once", evaluations, 1);
+  delete source.n;
+  let absentValue: boolean = has(make().n);
+  expectTrue("call-valued receiver absent field", !absentValue);
+  expectEqual("one completion per presence read", evaluations, 2);
+
+  // The same admission seam over a table receiver (the table member read
+  // the presence helpers share): a valid refinement keeps the
+  // absent-versus-present-null member results after a call, and a cleared
+  // binding raises its own canonical table error instead of a raw backend
+  // index error, leaving the aliased table unmutated.
+  let slots: table | null = { present: null, value: 7 };
+  let noop: () => null = function(): null {
+    return null;
+  };
+  if (slots !== null) {
+    noop();
+    let presentNull: int | null = slots.present;
+    let absent: int | null = slots.missing;
+    expectTrue("table present null member", presentNull === null);
+    expectTrue("table absent member", absent === null);
+    let presentMember: int = slots.value;
+    expectEqual("table present member", presentMember, 7);
+  }
+  let editable: table = { value: 7 };
+  let held: table | null = editable;
+  let relinquish: () => null = function(): null {
+    held = null;
+    return null;
+  };
+  if (held !== null) {
+    relinquish();
+    let caughtTable: boolean = false;
+    try {
+      let value: int = held.value;
+      fail("table member read");
+    } catch (e) {
+      expectCaught("table member read", e, "expected table");
+      caughtTable = true;
+    }
+    expectTrue("the table member read raised its own typed-boundary error", caughtTable);
+    let kept: int = editable.value;
+    expectEqual("the failed table read mutates nothing", kept, 7);
+  }
+  return null;
+}

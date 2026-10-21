@@ -14265,8 +14265,26 @@ public final class SemanticLowerer {
             return result;
         }
 
+        /**
+         * {@code HAS_FIELD} — the presence boolean over the receiver's static
+         * key, the receiver evaluated exactly once. The receiver is a value
+         * consumer like an operator operand, an index chain's receiver/key, a
+         * table member receiver, a {@code .length} receiver or a for-of
+         * iterable, so it lowers through the one operand admission
+         * ({@link #lowerOperand(ExpressionNode)}): a null-narrowing-refined
+         * identifier read (declared {@code C | null}, read as {@code C}) is
+         * admitted against the {@code NARROWED_READ} cell with its refined
+         * class descriptor — the nominal receiver check — and the presence
+         * read consumes the admitted value. A binding a capturing closure
+         * cleared between the refinement and this read therefore reports the
+         * typed-boundary tuple (E8001, expected class, actual null) at the
+         * receiver instead of a raw backend presence read on the cleared
+         * value, while the absent / present-null / present-false presence
+         * semantics, the once-only receiver evaluation and the operand order
+         * are unchanged.
+         */
         private ValueId lowerHasField(HasExpr has, ValueId slot) {
-            ValueId receiver = lowerExpression(has.object());
+            ValueId receiver = lowerOperand(has.object());
             return emitValueOp(SemanticOpKind.HAS_FIELD,
                 new KindPayload.HasFieldPayload(receiver, has.field()),
                 has.span(),
@@ -14539,11 +14557,11 @@ public final class SemanticLowerer {
         /**
          * Lowers one operator operand, condition expression, index
          * receiver/key expression, table member receiver expression,
-         * {@code .length} receiver expression, or for-of iterable: the
-         * operand's completed value plus, for an identifier read whose
-         * checked type is a null-narrowing refinement of the binding's
-         * declared nullable type (declared {@code T | null}, read as
-         * {@code T}), the {@code NARROWED_READ} validation of that read.
+         * {@code .length} receiver expression, for-of iterable or {@code has}
+         * receiver: the operand's completed value plus, for an identifier
+         * read whose checked type is a null-narrowing refinement of the
+         * binding's declared nullable type (declared {@code T | null}, read
+         * as {@code T}), the {@code NARROWED_READ} validation of that read.
          *
          * <p>docs/spec-v1.3.md Nullable semantics keeps calls
          * non-invalidating on purpose, so a capturing closure call can
@@ -14576,11 +14594,14 @@ public final class SemanticLowerer {
          * consumes the admitted value, so a capturing closure that cleared
          * the binding reports the typed-boundary failure before the loop's
          * initialization dereferences the carrier and the iterable still
-         * completes exactly once. Every other position (a declaration,
-         * assignment, parameter, return, class/array construction or
-         * element write) is a typed boundary owned by its own cell, which
-         * keeps its recorded projection — the
-         * array-element E8003 arm included.</p>
+         * completes exactly once. A {@code has} receiver lowers through this
+         * helper too, so the {@code HAS_FIELD} presence read consumes the
+         * admitted value — the refined class descriptor's nominal check —
+         * instead of reading presence off the cleared binding. Every other
+         * position (a declaration, assignment, parameter, return, class/array
+         * construction or element write) is a typed boundary owned by its own
+         * cell, which keeps its recorded projection — the array-element E8003
+         * arm included.</p>
          */
         private ValueId lowerOperand(ExpressionNode expr) {
             return emitNarrowedReadCheck(expr, lowerExpression(expr));

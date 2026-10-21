@@ -49,6 +49,7 @@ import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.ValueId;
 
 import java.nio.file.Path;
@@ -698,6 +699,132 @@ public class FieldOpsLoweringTest {
                 + receivers.size());
     }
 
+    /**
+     * The {@code has} receiver admission (ISSUE-0880): a
+     * null-narrowing-refined identifier read consumed as the
+     * {@code HAS_FIELD} receiver lowers through the one operand admission,
+     * so the boundary publishes the admitted value — the refined class
+     * descriptor's nominal check — and the presence op consumes that value.
+     * The receiver still completes exactly once (one {@code BINDING_LOAD})
+     * and the unadmitted read identity never reaches the presence op, so a
+     * captured-binding clear fails at the boundary cell instead of at a raw
+     * backend presence read. The class walk lowers expressions only (a
+     * class declaration and control flow belong to different walks), so
+     * each checked {@code has} expression is lowered directly from the
+     * slice whose checker recorded the refined reads.
+     */
+    static void testNarrowedHasFieldReceiverAdmission() {
+        System.out.println("-- has() receiver: NARROWED_READ admission, consumed once --");
+        CheckedSlice slice = checkSlice("""
+            class Box { nick?: string | null; other?: int; }
+            function f(box: Box | null): null {
+              if (box !== null) {
+                let present: boolean = has(box.nick);
+                let absent: boolean = has(box.other);
+              }
+              return null;
+            }
+            """);
+        if (slice == null) {
+            return;
+        }
+        PipelineSlice pipeline = pipeline(slice);
+        if (pipeline == null) {
+            return;
+        }
+        List<deal.ast.HasExpr> presenceReads = new ArrayList<>();
+        for (deal.ast.ExpressionNode checked : slice.checks().typeMap().keySet()) {
+            if (checked instanceof deal.ast.HasExpr has) {
+                presenceReads.add(has);
+            }
+        }
+        presenceReads.sort(java.util.Comparator.comparingInt(
+            read -> read.span().startScalarOffset()));
+        check(presenceReads.size() == 2,
+            "the slice carries two checked has() expressions; got "
+                + presenceReads.size());
+        if (presenceReads.size() != 2) {
+            return;
+        }
+        ClassId boxId = new ClassId("main", "Box");
+        for (deal.ast.HasExpr has : presenceReads) {
+            String key = has.field();
+            SemanticLowerer.ModuleLowerer lowerer = new SemanticLowerer.ModuleLowerer(
+                MODULE, SOURCE_ID, slice.checks(),
+                SemanticIdAllocator.over(List.of(MODULE)), false, false, false, false,
+                false, false, slice.program().span(), false, true,
+                pipeline.ownInterface(), Map.of());
+            lowerer.openForEachScope("box");
+            ValueId presenceValue = lowerer.lowerExpression(has);
+            lowerer.closeForEachScope();
+            List<SemanticOp> ops = lowerer.ops();
+            check(ops.size() == 3,
+                "has(" + key + ") over the refined receiver produces the receiver load "
+                    + "+ NARROWED_READ + HAS_FIELD = 3 ops; got " + ops.size());
+            if (ops.size() != 3) {
+                continue;
+            }
+            SemanticOp load = ops.get(0);
+            check(load.kind() == SemanticOpKind.BINDING_LOAD,
+                "the receiver completes as one prior-step load (evaluated exactly once)");
+            SemanticOp admission = ops.get(1);
+            check(admission.kind() == SemanticOpKind.BOUNDARY,
+                "op 1 is the admission BOUNDARY");
+            KindPayload.BoundaryPayload boundary =
+                (KindPayload.BoundaryPayload) admission.payload();
+            check(boundary.kind() == BoundaryKind.NARROWED_READ,
+                "the admission is the NARROWED_READ cell");
+            check(boundary.descriptor().equals(new RuntimeDescriptor.Class(boxId)),
+                "the admission descriptor is the refined class descriptor (the "
+                    + "nominal receiver check); got "
+                    + boundary.descriptor().canonicalSpecText());
+            check(admission.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+                "the admission carries the descriptor-kind policy of its own "
+                    + "descriptor; got " + admission.failurePolicy());
+            check(boundary.realization().equals(new BoundaryRealization.RuntimeValidation(
+                    SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID)),
+                "the admission carries the pinned RuntimeValidation("
+                    + SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID + ")");
+            check(boundary.input().equals(load.result()),
+                "the admission input is the one receiver load (never a re-evaluation)");
+            check(!admission.result().equals(load.result()),
+                "the admission publishes the admitted value as its own identity");
+            check(narrowedReadSpan(slice, admission.origin().span()),
+                "the admission origin is the refined receiver read's own span");
+            check(admission.origin().kind() == SourceOriginKind.USER,
+                "the admission origin is USER");
+            SemanticOp presence = ops.get(2);
+            check(presence.kind() == SemanticOpKind.HAS_FIELD,
+                "op 2 is HAS_FIELD");
+            KindPayload.HasFieldPayload payload =
+                (KindPayload.HasFieldPayload) presence.payload();
+            check(payload.receiver().equals(admission.result()),
+                "HAS_FIELD consumes the admitted receiver (the admission's result)");
+            check(!payload.receiver().equals(load.result()),
+                "HAS_FIELD never reads the unadmitted receiver identity");
+            check(payload.key().equals(key),
+                "the presence op carries the static key '" + key + "'; got "
+                    + payload.key());
+            check(presence.result().equals(presenceValue),
+                "HAS_FIELD publishes its result ValueId");
+            check(presence.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+                "HAS_FIELD keeps its NO_DEAL_FAILURE policy");
+        }
+    }
+
+    /** Whether {@code span} is one of the slice's checked refined reads. */
+    private static boolean narrowedReadSpan(CheckedSlice slice, SourceSpan span) {
+        for (deal.ast.ExpressionNode read : slice.checks().narrowedReads()) {
+            if (read.span().startLine() == span.startLine()
+                    && read.span().startColumn() == span.startColumn()
+                    && read.span().endLine() == span.endLine()
+                    && read.span().endColumn() == span.endColumn()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // =========================================================================
     // (g) the combined T1+T2+T3 executor drive
     // =========================================================================
@@ -1150,6 +1277,7 @@ public class FieldOpsLoweringTest {
         testFieldWriteArm(fieldMutations);
         testFieldDeleteArm(fieldMutations);
         testHasFieldArm(fieldMutations);
+        testNarrowedHasFieldReceiverAdmission();
         testCombinedT1T2T3ExecutorDrive();
         testDeterminism();
 

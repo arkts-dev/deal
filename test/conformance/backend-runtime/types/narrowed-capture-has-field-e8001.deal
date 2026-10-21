@@ -1,0 +1,22 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A call-preserved narrowing refinement whose binding a capturing closure cleared is admitted at the has() receiver: the presence read reports the typed-boundary tuple (E8001, expected class instance, expected class, actual null) at the receiver read before it consumes the value — never a raw backend nil index error, a host null dereference or a reified native TypeError — and the presence result is never produced.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, classes, has, runtime-errors
+
+class Box {
+  nick?: string | null;
+}
+
+export function main(): null {
+  let box: Box | null = { nick: "ada" };
+  let clear: () => null = function(): null {
+    box = null;
+    return null;
+  };
+  if (box !== null) {
+    clear();
+    let present: boolean = has(box.nick);
+    throw { code: "TEST_FAIL", message: "the presence read must not return" };
+  }
+  return null;
+}
