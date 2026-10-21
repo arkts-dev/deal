@@ -198,7 +198,9 @@ public final class AdapterShapeMap {
         };
     }
 
-    /** The proof-admissibility guard: VALUE's proof exists only for a binding source. */
+    /**
+     * The proof-admissibility guard: VALUE's proof exists only for a binding source.
+     */
     private static void requireNoProof(Optional<BindingImmutabilityProof> proof,
                                        SourceShape shape) {
         if (proof.isPresent()) {
@@ -207,6 +209,31 @@ public final class AdapterShapeMap {
                 + shape + " (producer defect — the payload's proof is present iff "
                 + "VALUE's operand is a binding load)");
         }
+    }
+
+    /**
+     * The closed position-mode map (the shape map at a statically typed
+     * function-value position): exactly the {@link #selectMode} arms except
+     * the non-identifier arm, which is the materialized {@code VALUE}. A
+     * parameter, return, class field/default or array literal/write
+     * position is a value position: its expression is evaluated exactly
+     * once, at its source position, so the adapted source is that
+     * materialized value. A {@code REEVALUATE_THUNK} source there would
+     * re-execute the position's expression at every adapter invocation and
+     * break the once-only effect and evaluation-order contract those
+     * positions carry; the definition positions ({@code let} initializers
+     * and variable assignments) keep the thunk arm of {@link #selectMode}.
+     *
+     */
+    public static CaptureMode selectPositionMode(SourceShape shape,
+                                                  Optional<BindingImmutabilityProof> proof) {
+        Objects.requireNonNull(shape, "shape must not be null");
+        Objects.requireNonNull(proof, "proof must not be null");
+        if (shape == SourceShape.NON_IDENTIFIER_EXPRESSION) {
+            requireNoProof(proof, shape);
+            return CaptureMode.VALUE;
+        }
+        return selectMode(shape, proof);
     }
 
     /**

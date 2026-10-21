@@ -1,0 +1,68 @@
+// @spec: Functions — Function type compatibility; Arity extension adapter
+// @description: An async function value keeps its async marker through arity extension at a declaration, a zero-to-one declaration, an awaited call-result position and a return position inside an async function: every adapted async value is awaited to its completion, the ignored target parameters are never forwarded, and the sync control keeps its sync marker.
+// @expected: runtime-ok
+// @features: functions, arity-extension, async-await
+
+import * as console from "std/console";
+
+class Marker {
+  count: int = 0;
+}
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+function one(x: int): int { return x; }
+
+async function asyncOne(x: int): int { return x + 100; }
+
+async function asyncZero(): int { return 7; }
+
+async function widenAsync(): async (x: int, y: int) => int {
+  let source: async (x: int) => int = asyncOne;
+  return source;
+}
+
+function bumpMarker(marker: Marker): int {
+  marker.count = marker.count + 1;
+  return 1;
+}
+
+export async function test_arity_extension_async(): int {
+  let source: async (x: int) => int = asyncOne;
+  let widened: async (x: int, y: int) => int = source;
+  let first: int = await widened(1, 2);
+
+  let zeroSource: async () => int = asyncZero;
+  let oneWide: async (x: int) => int = zeroSource;
+  let second: int = await oneWide(5);
+
+  let returned: async (x: int, y: int) => int = await widenAsync();
+  let third: int = await returned(2, 3);
+
+  let syncShort: (x: int) => int = one;
+  let syncWide: (x: int, y: int) => int = syncShort;
+  let fourth: int = syncWide(4, 5);
+
+  let marker: Marker = {};
+  let markerWide: async (x: int, y: int) => int = source;
+  let fifth: int = await markerWide(6, bumpMarker(marker));
+  check(marker.count === 1, "the ignored async target argument evaluates exactly once");
+
+  check(first === 101, "a declaration adaptation keeps the async marker");
+  check(second === 7, "a zero-to-one async adaptation ignores its target parameter");
+  check(third === 102, "an awaited call-result position adapts an async value");
+  check(fourth === 4, "the sync control keeps its sync marker");
+  check(fifth === 106, "the async adaptation forwards its leading argument");
+
+  console.log("ASYNC OK");
+  return first + second + third + fourth + fifth;
+}
+
+export function main(): null {
+  return null;
+}

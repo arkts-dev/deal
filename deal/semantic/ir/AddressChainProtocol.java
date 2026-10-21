@@ -529,19 +529,38 @@ public final class AddressChainProtocol {
                                                                  SemanticOp chain,
                                                                  List<OpId> children,
                                                                  Map<OpId, SemanticOp> ops) {
-        if (children.size() != 7) {
+        // The closed shapes: [containerOp, keyOp, valueOp,
+        // lengthOp(ARRAY_LENGTH), normalizeOp(INDEX_NORMALIZE ARRAY_WRITE),
+        // boundaryOp(ARRAY_ELEMENT_ASSIGNMENT + ARRAY_WRITE_BOUNDS_THEN_ELEMENT),
+        // commitOp(INDEX_WRITE)], its eight-child form
+        // [containerOp, keyOp, rhsOp, FUNCTION_ADAPT adapterOp, lengthOp,
+        // normalizeOp, boundaryOp, commitOp] (an arity-extension adapter over
+        // the materialized RHS value), and the seven-child binding-source
+        // form whose valueOp is the adapter itself (the adapter evaluates
+        // nothing at the position).
+        if (children.size() != 7 && children.size() != 8) {
             return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
                 "no closed ASSIGN ARRAY_SLOT chain shape with " + children.size() + " children; "
-                    + "the closed shape is [containerOp, keyOp, valueOp, "
+                    + "the closed shapes are [containerOp, keyOp, valueOp, "
                     + "lengthOp(ARRAY_LENGTH), normalizeOp(INDEX_NORMALIZE ARRAY_WRITE), "
                     + "boundaryOp(ARRAY_ELEMENT_ASSIGNMENT + ARRAY_WRITE_BOUNDS_THEN_ELEMENT), "
-                    + "commitOp(INDEX_WRITE)]");
+                    + "commitOp(INDEX_WRITE)], [containerOp, keyOp, rhsOp, "
+                    + "FUNCTION_ADAPT adapterOp, lengthOp, normalizeOp, boundaryOp, "
+                    + "commitOp], and [containerOp, keyOp, FUNCTION_ADAPT adapterOp, "
+                    + "lengthOp, normalizeOp, boundaryOp, commitOp]");
         }
+        boolean adapter = children.size() == 8;
         CompilerDiagnostic[] childFailure = new CompilerDiagnostic[1];
         SemanticOp[] c = resolveChildren(unit, chain, children, ops, childFailure);
         if (childFailure[0] != null) {
             return Optional.of(childFailure[0]);
         }
+        int valuePos = 2;
+        int adapterPos = adapter ? 3 : -1;
+        int lengthPos = adapter ? 4 : 3;
+        int normalizePos = adapter ? 5 : 4;
+        int boundaryPos = adapter ? 6 : 5;
+        int commitPos = adapter ? 7 : 6;
         Optional<CompilerDiagnostic> failure;
         failure = requireParentage(unit, chain, c[0], 0);
         if (failure.isPresent()) {
@@ -564,66 +583,94 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireParentage(unit, chain, c[2], 2);
+        failure = requireParentage(unit, chain, c[valuePos], valuePos);
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireValueResult(unit, chain, c[2], 2, "value");
+        failure = requireValueResult(unit, chain, c[valuePos], valuePos, "value");
         if (failure.isPresent()) {
             return failure;
         }
-        failure = checkArrayLengthAndNormalize(unit, chain, c, 3, 4, 5);
+        ValueId committed = (ValueId) c[valuePos].result();
+        if (adapter) {
+            failure = requireParentage(unit, chain, c[adapterPos], adapterPos);
+            if (failure.isPresent()) {
+                return failure;
+            }
+            failure = requireKind(unit, chain, c[adapterPos], SemanticOpKind.FUNCTION_ADAPT,
+                adapterPos, "adapter");
+            if (failure.isPresent()) {
+                return failure;
+            }
+            failure = requireValueResult(unit, chain, c[adapterPos], adapterPos, "adapter");
+            if (failure.isPresent()) {
+                return failure;
+            }
+            committed = (ValueId) c[adapterPos].result();
+        } else if (c[valuePos].kind() == SemanticOpKind.FUNCTION_ADAPT) {
+            // The binding-source adapter form: the adapter is the chain's
+            // committed value (no materialized RHS child exists).
+            committed = (ValueId) c[valuePos].result();
+        }
+        failure = checkArrayLengthAndNormalize(unit, chain, c, lengthPos, normalizePos,
+            boundaryPos);
         if (failure.isPresent()) {
             return failure;
         }
         // boundaryOp — ARRAY_ELEMENT_ASSIGNMENT + ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
-        // input = the checked RHS value.
-        failure = requireParentage(unit, chain, c[5], 5);
+        // input = the committed (adapted) RHS value.
+        failure = requireParentage(unit, chain, c[boundaryPos], boundaryPos);
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireKind(unit, chain, c[5], SemanticOpKind.BOUNDARY, 5,
+        failure = requireKind(unit, chain, c[boundaryPos], SemanticOpKind.BOUNDARY, boundaryPos,
             "ARRAY_ELEMENT_ASSIGNMENT boundary");
         if (failure.isPresent()) {
             return failure;
         }
-        KindPayload.BoundaryPayload boundary = (KindPayload.BoundaryPayload) c[5].payload();
+        KindPayload.BoundaryPayload boundary =
+            (KindPayload.BoundaryPayload) c[boundaryPos].payload();
         if (boundary.kind() != BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[5],
-                "the ARRAY_SLOT write boundary at position 5 must carry kind "
-                    + "ARRAY_ELEMENT_ASSIGNMENT, got " + boundary.kind());
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[boundaryPos],
+                "the ARRAY_SLOT write boundary at position " + boundaryPos
+                    + " must carry kind ARRAY_ELEMENT_ASSIGNMENT, got " + boundary.kind());
         }
-        if (c[5].failurePolicy() != FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT) {
-            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[5],
-                "the ARRAY_ELEMENT_ASSIGNMENT boundary at position 5 must carry policy "
-                    + "ARRAY_WRITE_BOUNDS_THEN_ELEMENT, got " + c[5].failurePolicy().name());
+        if (c[boundaryPos].failurePolicy() != FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT) {
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[boundaryPos],
+                "the ARRAY_ELEMENT_ASSIGNMENT boundary at position " + boundaryPos
+                    + " must carry policy ARRAY_WRITE_BOUNDS_THEN_ELEMENT, got "
+                    + c[boundaryPos].failurePolicy().name());
         }
-        failure = requireEqual(unit, chain, c[5], boundary.input(), (ValueId) c[2].result(),
+        failure = requireEqual(unit, chain, c[boundaryPos], boundary.input(), committed,
             "the ARRAY_ELEMENT_ASSIGNMENT boundary's input (the checked RHS value)");
         if (failure.isPresent()) {
             return failure;
         }
         // commitOp — INDEX_WRITE, last.
-        failure = requireParentage(unit, chain, c[6], 6);
+        failure = requireParentage(unit, chain, c[commitPos], commitPos);
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireKind(unit, chain, c[6], SemanticOpKind.INDEX_WRITE, 6, "commit");
+        failure = requireKind(unit, chain, c[commitPos], SemanticOpKind.INDEX_WRITE, commitPos,
+            "commit");
         if (failure.isPresent()) {
             return failure;
         }
-        KindPayload.IndexWritePayload write = (KindPayload.IndexWritePayload) c[6].payload();
-        failure = requireEqual(unit, chain, c[6], write.container(), (ValueId) c[0].result(),
+        KindPayload.IndexWritePayload write =
+            (KindPayload.IndexWritePayload) c[commitPos].payload();
+        failure = requireEqual(unit, chain, c[commitPos], write.container(),
+            (ValueId) c[0].result(),
             "the INDEX_WRITE commit's resolved container reference");
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireEqual(unit, chain, c[6], write.slot(), (ValueId) c[4].result(),
+        failure = requireEqual(unit, chain, c[commitPos], write.slot(),
+            (ValueId) c[normalizePos].result(),
             "the INDEX_WRITE commit's resolved slot reference");
         if (failure.isPresent()) {
             return failure;
         }
-        return requireEqual(unit, chain, c[6], write.value(), (ValueId) c[2].result(),
+        return requireEqual(unit, chain, c[commitPos], write.value(), committed,
             "the INDEX_WRITE commit's stored value");
     }
 
@@ -840,17 +887,29 @@ public final class AddressChainProtocol {
                                                                       SemanticOp chain,
                                                                       List<OpId> children,
                                                                       Map<OpId, SemanticOp> ops) {
-        if (children.size() != 3) {
+        // The closed shapes: [containerOp, valueOp, FIELD_WRITE commitOp],
+        // its four-child form [containerOp, rhsOp, FUNCTION_ADAPT adapterOp,
+        // FIELD_WRITE commitOp] (an arity-extension adapter over the
+        // materialized RHS value), and the three-child binding-source form
+        // whose valueOp is the adapter itself (the adapter evaluates nothing
+        // at the position).
+        if (children.size() != 3 && children.size() != 4) {
             return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
                 "no closed ASSIGN CLASS_FIELD chain shape with " + children.size()
-                    + " children; the closed shape is [containerOp, valueOp, FIELD_WRITE "
-                    + "commitOp]");
+                    + " children; the closed shapes are [containerOp, valueOp, FIELD_WRITE "
+                    + "commitOp], [containerOp, rhsOp, FUNCTION_ADAPT adapterOp, "
+                    + "FIELD_WRITE commitOp], and [containerOp, FUNCTION_ADAPT adapterOp, "
+                    + "FIELD_WRITE commitOp]");
         }
+        boolean adapter = children.size() == 4;
         CompilerDiagnostic[] childFailure = new CompilerDiagnostic[1];
         SemanticOp[] c = resolveChildren(unit, chain, children, ops, childFailure);
         if (childFailure[0] != null) {
             return Optional.of(childFailure[0]);
         }
+        int valuePos = 1;
+        int adapterPos = adapter ? 2 : -1;
+        int commitPos = adapter ? 3 : 2;
         Optional<CompilerDiagnostic> failure;
         failure = requireParentage(unit, chain, c[0], 0);
         if (failure.isPresent()) {
@@ -860,29 +919,49 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireParentage(unit, chain, c[1], 1);
+        failure = requireParentage(unit, chain, c[valuePos], valuePos);
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireValueResult(unit, chain, c[1], 1, "value");
+        failure = requireValueResult(unit, chain, c[valuePos], valuePos, "value");
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireParentage(unit, chain, c[2], 2);
+        ValueId committed = (ValueId) c[valuePos].result();
+        if (adapter) {
+            failure = requireParentage(unit, chain, c[adapterPos], adapterPos);
+            if (failure.isPresent()) {
+                return failure;
+            }
+            failure = requireKind(unit, chain, c[adapterPos], SemanticOpKind.FUNCTION_ADAPT,
+                adapterPos, "adapter");
+            if (failure.isPresent()) {
+                return failure;
+            }
+            failure = requireValueResult(unit, chain, c[adapterPos], adapterPos, "adapter");
+            if (failure.isPresent()) {
+                return failure;
+            }
+            committed = (ValueId) c[adapterPos].result();
+        }
+        failure = requireParentage(unit, chain, c[commitPos], commitPos);
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireKind(unit, chain, c[2], SemanticOpKind.FIELD_WRITE, 2, "commit");
+        failure = requireKind(unit, chain, c[commitPos], SemanticOpKind.FIELD_WRITE, commitPos,
+            "commit");
         if (failure.isPresent()) {
             return failure;
         }
-        KindPayload.FieldWritePayload write = (KindPayload.FieldWritePayload) c[2].payload();
-        failure = requireEqual(unit, chain, c[2], write.classValue(), (ValueId) c[0].result(),
+        KindPayload.FieldWritePayload write =
+            (KindPayload.FieldWritePayload) c[commitPos].payload();
+        failure = requireEqual(unit, chain, c[commitPos], write.classValue(),
+            (ValueId) c[0].result(),
             "the FIELD_WRITE commit's resolved class value reference");
         if (failure.isPresent()) {
             return failure;
         }
-        return requireEqual(unit, chain, c[2], write.value(), (ValueId) c[1].result(),
+        return requireEqual(unit, chain, c[commitPos], write.value(), committed,
             "the FIELD_WRITE commit's stored value");
     }
 

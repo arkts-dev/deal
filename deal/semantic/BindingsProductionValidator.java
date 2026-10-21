@@ -2809,23 +2809,67 @@ public final class BindingsProductionValidator {
     // =========================================================================
 
     /**
-     * The creation-wiring rule (B9/B6): a constraint on the
+     * The closed boundary kinds an adapter result may be the direct input
+     * of: the adapted position's own cell at each statically typed
+     * function-value position — the variable declaration/assignment
+     * cells, the parameter cells, the return cell, the class
+     * construction/write cells, and the array literal/write cells
+     * ({@link AdapterCreationRule#admitsAdaptation}).
+     */
+    private static final Set<BoundaryKind> ADAPTER_POSITION_BOUNDARIES = Set.of(
+        BoundaryKind.VARIABLE_DECLARATION, BoundaryKind.VARIABLE_ASSIGNMENT,
+        BoundaryKind.FUNCTION_PARAMETER, BoundaryKind.EXTERNAL_PARAMETER,
+        BoundaryKind.STDLIB_PARAMETER, BoundaryKind.FUNCTION_RETURN,
+        BoundaryKind.CLASS_LITERAL_FIELD, BoundaryKind.CLASS_DEFAULT_FIELD,
+        BoundaryKind.ARRAY_LITERAL_ELEMENT, BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
+        BoundaryKind.CLASS_FIELD_ASSIGNMENT);
+
+    /**
+     * The creation-wiring rule (B9): a constraint on the
      * {@code FUNCTION_ADAPT} op's direct output, not an identity-flow
-     * restriction. The op immediately following the adapter in its own
-     * block must be exactly the adapted position's own boundary chain —
-     * a {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
-     * boundary whose input is the adapter result followed immediately by
-     * the chain's single commit (the declaration {@code BINDING_INIT} or
-     * the assignment {@code BINDING_STORE}), or the inferred
-     * declaration's {@code BINDING_INIT} committing the adapter result
-     * directly (no boundary op exists there). A {@code FUNCTION_ADAPT}
-     * result wired directly into the input of any other
-     * {@code BOUNDARY} op — parameter, return, host/external/callback,
-     * array/table/class element, JSON, and every other kind — is
-     * invalid IR. After the commit the adapter identity is an ordinary
-     * function value: loads/reads/passes/returns preserve it, so later
-     * consumers of the same identity are ordinary flows and are never
-     * this rule's concern.
+     * restriction. An adapter result is the direct input of the adapted
+     * position's own statically typed {@code BOUNDARY} cell — never of any
+     * typed boundary of another kind — and that position's own consumer
+     * observes the same identity:
+     *
+     * <ul>
+     *   <li>{@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}: the
+     *       op immediately following the adapter in its own block is the
+     *       position's own boundary, followed immediately by the chain's
+     *       single commit (the declaration {@code BINDING_INIT} or the
+     *       assignment {@code BINDING_STORE}); an inferred declaration's
+     *       {@code BINDING_INIT} commits the adapter result directly (no
+     *       boundary op exists there);</li>
+     *   <li>{@code FUNCTION_PARAMETER}/{@code EXTERNAL_PARAMETER}/
+     *       {@code STDLIB_PARAMETER}: the boundary is one of its
+     *       invocation's parameter cells and the invocation's projected
+     *       operand at that index is the adapter result;</li>
+     *   <li>{@code FUNCTION_RETURN}: the boundary is its {@code RETURN}'s
+     *       recorded return cell and the returned value is the adapter
+     *       result;</li>
+     *   <li>{@code ARRAY_ELEMENT_ASSIGNMENT}: the boundary is its
+     *       {@code ASSIGN ARRAY_SLOT} chain's element cell and the chain's
+     *       committed (adapted) value — the {@code INDEX_WRITE} stored
+     *       value — is the adapter result;</li>
+     *   <li>{@code CLASS_FIELD_ASSIGNMENT}: the boundary is the
+     *       {@code FIELD_WRITE} commit's declared-field cell and the
+     *       stored value is the adapter result;</li>
+     *   <li>{@code CLASS_LITERAL_FIELD}: the boundary is one of its
+     *       {@code CLASS_NEW}'s field cells and the supplied field's value
+     *       is the adapter result;</li>
+     *   <li>{@code CLASS_DEFAULT_FIELD}: the boundary is one of its
+     *       {@code CLASS_NEW}'s field cells and its input is the default's
+     *       published result, which is the adapter result.</li>
+     * </ul>
+     *
+     * <p>An adapter result whose every boundary consumer is a typed
+     * boundary of another kind — a host/external return or crossing, a
+     * callback cell, an array/table element read or delete, a JSON field, a
+     * refinement, and every other kind — is invalid IR. After the position's
+     * own cell the adapter identity is an ordinary function value:
+     * loads/reads/passes/returns preserve it, so a later load's boundary of
+     * any kind may legitimately name the same identity, and those ordinary
+     * flows are never this rule's concern.</p>
      */
     private static Optional<CompilerDiagnostic> checkNoAdapterAtBoundary(Model model) {
         for (SemanticOp op : model.unit.ops()) {
@@ -2833,60 +2877,268 @@ public final class BindingsProductionValidator {
                     || !(op.result() instanceof ValueId adapterValue)) {
                 continue;
             }
+            List<SemanticOp> consumers = new ArrayList<>();
+            for (SemanticOp candidate : model.unit.ops()) {
+                if (candidate.kind() == SemanticOpKind.BOUNDARY
+                        && candidate.payload()
+                            instanceof KindPayload.BoundaryPayload boundary
+                        && adapterValue.equals(boundary.input())) {
+                    consumers.add(candidate);
+                }
+            }
             SemanticOp next = model.nextOpInBlock(op);
-            if (next == null) {
+            if (consumers.isEmpty()) {
+                if (next != null && next.kind() == SemanticOpKind.BINDING_INIT
+                        && next.payload() instanceof KindPayload.BindingInitPayload init
+                        && adapterValue.equals(init.value())) {
+                    // An inferred declaration: the result feeds its
+                    // BINDING_INIT directly (no boundary op exists).
+                    continue;
+                }
                 return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
-                    + adapterValue + " of op " + op.opId() + " is the last op of its "
-                    + "block (the adapter result must wire into the adapted position's "
-                    + "own boundary chain immediately after the creation)");
+                    + adapterValue + " of op " + op.opId() + " is the direct input of no "
+                    + "boundary op and no immediately following BINDING_INIT commits it "
+                    + "(the adapter result must wire into the adapted position's own "
+                    + "boundary cell, or into the inferred declaration's BINDING_INIT)");
             }
-            if (next.kind() == SemanticOpKind.BINDING_INIT
-                    && next.payload() instanceof KindPayload.BindingInitPayload init
-                    && init.value() != null && init.value().equals(adapterValue)) {
-                // An inferred declaration: the result feeds its
-                // BINDING_INIT directly (no boundary op exists).
-                continue;
+            List<SemanticOp> positionCells = new ArrayList<>();
+            for (SemanticOp candidate : consumers) {
+                BoundaryKind kind =
+                    ((KindPayload.BoundaryPayload) candidate.payload()).kind();
+                if (ADAPTER_POSITION_BOUNDARIES.contains(kind)
+                        && AdapterCreationRule.admitsAdaptation(kind)) {
+                    positionCells.add(candidate);
+                }
             }
-            if (next.kind() != SemanticOpKind.BOUNDARY
-                    || !(next.payload() instanceof KindPayload.BoundaryPayload boundary)
-                    || !boundary.input().equals(adapterValue)) {
+            if (positionCells.isEmpty()) {
+                SemanticOp cell = consumers.get(0);
+                BoundaryKind kind = ((KindPayload.BoundaryPayload) cell.payload()).kind();
                 return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
-                    + adapterValue + " of op " + op.opId() + " is not the direct input "
-                    + "of the adapted position's own boundary chain (the op after the "
-                    + "creation must be exactly the position's own "
-                    + "VARIABLE_DECLARATION/VARIABLE_ASSIGNMENT boundary or the "
-                    + "inferred declaration's BINDING_INIT)");
+                    + adapterValue + " of op " + op.opId() + " is the direct input of "
+                    + consumers.size() + " typed-boundary op(s) only (" + kind
+                    + " among them) and of no adapted position's own cell (an adapter "
+                    + "result is created at a statically typed function-value position — "
+                    + "the variable declaration/assignment, parameter, return, class "
+                    + "field/default, class field write and array literal/write cells — "
+                    + "never at a host/external crossing, a runtime read, or any other "
+                    + "typed boundary)");
             }
-            if (boundary.kind() != BoundaryKind.VARIABLE_DECLARATION
-                    && boundary.kind() != BoundaryKind.VARIABLE_ASSIGNMENT) {
-                return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
-                    + adapterValue + " of op " + op.opId() + " wires directly into a "
-                    + boundary.kind() + " boundary op (an adapter result is the direct "
-                    + "input of exactly the adapted position's own "
-                    + "VARIABLE_DECLARATION/VARIABLE_ASSIGNMENT boundary chain)");
+            Optional<CompilerDiagnostic> failure =
+                checkAdapterVariableChain(model, op, adapterValue, next);
+            if (failure.isPresent()) {
+                return failure;
             }
-            SemanticOp commit = model.nextOpInBlock(next);
-            boolean committed = false;
-            if (commit != null && commit.kind() == SemanticOpKind.BINDING_INIT
-                    && commit.payload() instanceof KindPayload.BindingInitPayload init
-                    && init.value() != null && init.value().equals(adapterValue)) {
-                committed = true;
-            }
-            if (commit != null && commit.kind() == SemanticOpKind.BINDING_STORE
-                    && commit.payload() instanceof KindPayload.BindingStorePayload store
-                    && store.value() != null && store.value().equals(adapterValue)) {
-                committed = true;
-            }
-            if (!committed) {
-                return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
-                    + adapterValue + " of op " + op.opId() + " wires into the "
-                    + boundary.kind() + " boundary of op " + next.opId() + " but the "
-                    + "chain's single commit (the declaration BINDING_INIT or the "
-                    + "assignment BINDING_STORE) does not follow it immediately (the "
-                    + "adapter result is the direct input of exactly the adapted "
-                    + "position's own boundary chain)");
+            failure = checkAdapterPositionAgreement(model, op, adapterValue, positionCells);
+            if (failure.isPresent()) {
+                return failure;
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * The variable-position arm of the creation-wiring rule: when the op
+     * immediately following the adapter in its own block is the position's
+     * own {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT} boundary,
+     * the chain's single commit (the declaration {@code BINDING_INIT} or the
+     * assignment {@code BINDING_STORE}) must follow it immediately. An
+     * inferred declaration's {@code BINDING_INIT} commits the adapter
+     * directly (no boundary op exists there).
+     */
+    private static Optional<CompilerDiagnostic> checkAdapterVariableChain(
+            Model model, SemanticOp op, ValueId adapterValue, SemanticOp next) {
+        BoundaryKind nextKind = next != null && next.kind() == SemanticOpKind.BOUNDARY
+                && next.payload() instanceof KindPayload.BoundaryPayload payload
+            ? payload.kind() : null;
+        if (nextKind != BoundaryKind.VARIABLE_DECLARATION
+                && nextKind != BoundaryKind.VARIABLE_ASSIGNMENT) {
+            return Optional.empty();
+        }
+        SemanticOp commit = model.nextOpInBlock(next);
+        boolean committed = false;
+        if (commit != null && commit.kind() == SemanticOpKind.BINDING_INIT
+                && commit.payload() instanceof KindPayload.BindingInitPayload init
+                && adapterValue.equals(init.value())) {
+            committed = true;
+        }
+        if (commit != null && commit.kind() == SemanticOpKind.BINDING_STORE
+                && commit.payload() instanceof KindPayload.BindingStorePayload store
+                && adapterValue.equals(store.value())) {
+            committed = true;
+        }
+        if (!committed) {
+            return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
+                + adapterValue + " of op " + op.opId() + " wires into the " + nextKind
+                + " boundary of op " + next.opId() + " but the chain's single commit "
+                + "(the declaration BINDING_INIT or the assignment BINDING_STORE) does not "
+                + "follow it immediately (the adapter result is the direct input of "
+                + "exactly the adapted position's own boundary chain)");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The non-variable arm of the creation-wiring rule: at least one of the
+     * adapter's position cells carries the position's own consumer agreement
+     * — the invocation projects the adapter as that parameter, the
+     * {@code RETURN} returns it, the literal/construction stores it, or the
+     * chain's commit is it. The adapter identity is an ordinary function
+     * value after its position's commit, so loads, reads, passes and returns
+     * may publish the same identity to further boundaries; this rule asks
+     * that the position's own consumer is wired, not that later crossings of
+     * the identity are restricted.
+     */
+    private static Optional<CompilerDiagnostic> checkAdapterPositionAgreement(
+            Model model, SemanticOp op, ValueId adapterValue, List<SemanticOp> positionCells) {
+        Map<BoundaryKind, String> failures = new LinkedHashMap<>();
+        for (SemanticOp cell : positionCells) {
+            BoundaryKind kind = ((KindPayload.BoundaryPayload) cell.payload()).kind();
+            String failure = adapterPositionFailure(model, adapterValue, cell, kind);
+            if (failure == null) {
+                return Optional.empty();
+            }
+            failures.putIfAbsent(kind, failure);
+        }
+        String first = failures.values().iterator().next();
+        return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
+            + adapterValue + " of op " + op.opId() + " feeds a position cell whose "
+            + "consumer stores no such value: " + first);
+    }
+
+    /**
+     * The per-position wiring agreement of one position cell: {@code null}
+     * when the position's own consumer observes the adapter identity, else
+     * the violation text.
+     */
+    private static String adapterPositionFailure(Model model, ValueId adapterValue,
+                                                 SemanticOp cell, BoundaryKind kind) {
+        switch (kind) {
+            case VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT -> {
+                return null;
+            }
+            case FUNCTION_PARAMETER, EXTERNAL_PARAMETER, STDLIB_PARAMETER -> {
+                for (SemanticOp invocation : model.unit.ops()) {
+                    List<OpId> cells = switch (invocation.payload()) {
+                        case KindPayload.CallPayload call ->
+                            call.parameterBoundaryOpIds();
+                        case KindPayload.AsyncStartPayload start ->
+                            start.parameterBoundaryOpIds();
+                        case KindPayload.CallbackInvokePayload callback ->
+                            callback.parameterBoundaryOpIds();
+                        default -> List.of();
+                    };
+                    int index = cells.indexOf(cell.opId());
+                    if (index < 0) {
+                        continue;
+                    }
+                    if (index < invocation.operands().size()
+                            && adapterValue.equals(invocation.operands().get(index))) {
+                        return null;
+                    }
+                    return "the invocation " + invocation.opId() + " projects no adapted "
+                        + "operand at parameter " + (index + 1);
+                }
+                return "the parameter cell " + cell.opId() + " is no invocation's "
+                    + "parameter boundary";
+            }
+            case FUNCTION_RETURN -> {
+                for (SemanticOp candidate : model.unit.ops()) {
+                    if (candidate.kind() == SemanticOpKind.RETURN
+                            && candidate.payload() instanceof KindPayload.ReturnPayload
+                                returned
+                            && adapterValue.equals(returned.value())
+                            && cell.opId().equals(returned.returnBoundaryOpId())) {
+                        return null;
+                    }
+                }
+                return "no RETURN op returns the adapted value through the FUNCTION_RETURN "
+                    + "cell " + cell.opId();
+            }
+            case ARRAY_LITERAL_ELEMENT -> {
+                for (SemanticOp candidate : model.unit.ops()) {
+                    if (candidate.kind() == SemanticOpKind.ARRAY_NEW
+                            && candidate.payload() instanceof KindPayload.ArrayNewPayload
+                                literal
+                            && literal.elementBoundaryOpIds().contains(cell.opId())
+                            && literal.values().contains(adapterValue)) {
+                        return null;
+                    }
+                }
+                return "no ARRAY_NEW literal builds the adapted value through the "
+                    + "ARRAY_LITERAL_ELEMENT cell " + cell.opId();
+            }
+            case ARRAY_ELEMENT_ASSIGNMENT -> {
+                for (SemanticOp chain : model.unit.ops()) {
+                    if (chain.kind() != SemanticOpKind.ASSIGN
+                            || !(chain.payload() instanceof KindPayload.AssignPayload assign)
+                            || assign.targetKind()
+                                != deal.semantic.ir.AssignTargetKind.ARRAY_SLOT
+                            || !assign.childOps().contains(cell.opId())) {
+                        continue;
+                    }
+                    for (OpId childId : assign.childOps()) {
+                        SemanticOp child = model.opById.get(childId);
+                        if (child != null && child.kind() == SemanticOpKind.INDEX_WRITE
+                                && child.payload()
+                                    instanceof KindPayload.IndexWritePayload write
+                                && adapterValue.equals(write.value())) {
+                            return null;
+                        }
+                    }
+                }
+                return "no ASSIGN ARRAY_SLOT chain stores the adapted value through the "
+                    + "ARRAY_ELEMENT_ASSIGNMENT cell " + cell.opId();
+            }
+            case CLASS_FIELD_ASSIGNMENT -> {
+                SemanticOp commit = parentOpOf(model, cell);
+                if (commit != null && commit.kind() == SemanticOpKind.FIELD_WRITE
+                        && commit.payload() instanceof KindPayload.FieldWritePayload write
+                        && adapterValue.equals(write.value())) {
+                    return null;
+                }
+                return "no FIELD_WRITE commit stores the adapted value through the "
+                    + "CLASS_FIELD_ASSIGNMENT cell " + cell.opId();
+            }
+            case CLASS_LITERAL_FIELD -> {
+                for (SemanticOp candidate : model.unit.ops()) {
+                    if (candidate.kind() != SemanticOpKind.CLASS_NEW
+                            || !(candidate.payload() instanceof KindPayload.ClassNewPayload
+                                construction)
+                            || construction.fieldBoundaries().stream().noneMatch(
+                                field -> field.boundaryOpId().equals(cell.opId()))) {
+                        continue;
+                    }
+                    for (KindPayload.ProvidedField provided : construction.providedFields()) {
+                        if (adapterValue.equals(provided.valueOpId())) {
+                            return null;
+                        }
+                    }
+                }
+                return "no CLASS_NEW construction supplies the adapted value through the "
+                    + "CLASS_LITERAL_FIELD cell " + cell.opId();
+            }
+            case CLASS_DEFAULT_FIELD -> {
+                for (SemanticOp candidate : model.unit.ops()) {
+                    if (candidate.kind() == SemanticOpKind.CLASS_NEW
+                            && candidate.payload() instanceof KindPayload.ClassNewPayload
+                                construction
+                            && construction.fieldBoundaries().stream().anyMatch(
+                                field -> field.boundaryOpId().equals(cell.opId()))) {
+                        return null;
+                    }
+                }
+                return "no CLASS_NEW construction publishes the adapted default through the "
+                    + "CLASS_DEFAULT_FIELD cell " + cell.opId();
+            }
+            default -> {
+                return "the " + kind + " kind is no adaptation position";
+            }
+        }
+    }
+
+    /** The op naming the given op's {@code parentOpId}, or {@code null}. */
+    private static SemanticOp parentOpOf(Model model, SemanticOp op) {
+        OpId parent = op.origin().parentOpId();
+        return parent == null ? null : model.opById.get(parent);
     }
 }

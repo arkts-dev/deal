@@ -1,0 +1,13 @@
+// @spec: Functions — Function type compatibility
+// @description: A shorter call argument must match every leading target parameter type exactly — a mismatching prefix parameter type is rejected
+// @expected: compile-error E5001
+// @features: functions, arity-extension, diagnostics
+
+function takesNumber(x: number): int { return 1; }
+
+function needPair(f: (x: int, y: int) => int): int { return f(1, 2); }
+
+export function main(): null {
+  let r: int = needPair(takesNumber);
+  return null;
+}

@@ -1,0 +1,140 @@
+// @spec: Functions — Function type compatibility; Arity extension adapter
+// @description: A compatible shorter function value is adapted at every statically typed function-value position — call arguments (direct, indirect and class-field sources), return expressions, supplied and default class fields, class field writes, array literal elements and array writes — beside the variable declaration/assignment controls; the adapter drops the ignored target parameters, evaluates each source expression exactly once in source order, and keeps working through nested and function-expression sources.
+// @expected: runtime-ok
+// @features: functions, arity-extension, classes, arrays, closures
+
+import * as console from "std/console";
+import * as lib from "./arity-extension-positions-lib";
+
+class Marker {
+  count: int = 0;
+}
+
+class Dispatch {
+  pair: (x: int, y: int) => int = one;
+}
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+function one(x: int): int { return x; }
+
+function zero(): int { return 41; }
+
+function twice(x: int): int { return x * 2; }
+
+function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+
+function callOne(g: (x: int) => int, v: int): int { return g(v); }
+
+function returnPair(): (x: int, y: int) => int { return one; }
+
+function returnZero(): (x: int) => int { return zero; }
+
+function nextShort(marker: Marker): (x: int) => int {
+  marker.count = marker.count + 1;
+  return one;
+}
+
+function pickOne(): (x: int) => int { return one; }
+
+function makeAdder(base: int): (x: int) => int {
+  return function(x: int): int { return base + x; };
+}
+
+function bumpMarker(marker: Marker): int {
+  marker.count = marker.count + 1;
+  return 1;
+}
+
+export function main(): null {
+  // --- parameter positions -------------------------------------------------
+  check(needPair(one) === 3, "a direct call argument adapts one-to-two");
+  let short: (x: int) => int = one;
+  check(needPair(short) === 3, "a binding-reference argument adapts one-to-two");
+  let callee: (f: (x: int, y: int) => int) => int = needPair;
+  check(callee(one) === 3, "an indirect (dynamic) call argument adapts one-to-two");
+  check(callee(short) === 3, "an indirect call argument adapts a binding source");
+  check(callOne(zero, 9) === 41,
+    "a zero-to-one argument adaptation ignores its target parameter");
+  check(callOne(nextShort({}), 5) === 5,
+    "a call-result argument adaptation keeps the produced value");
+  let holder: Dispatch = { pair: one };
+  check(needPair(holder.pair) === 3, "a class-field argument keeps its adapted value");
+  check(lib.needPair(one) === 5,
+    "a cross-module parameter position adapts one-to-two");
+  check(needPair(lib.one) === 3,
+    "an imported shorter function value adapts at a local parameter position");
+
+  // --- return positions ----------------------------------------------------
+  check(returnPair()(5, 6) === 5, "a return position adapts one-to-two");
+  check(returnZero()(7) === 41, "a return position adapts zero-to-one");
+  check(returnPair()(1, 2) + returnZero()(3) === 42,
+    "two returned adapters are distinct working values");
+
+  // --- class field construction and write positions ------------------------
+  let supplied: Dispatch = { pair: one };
+  check(supplied.pair(7, 8) === 7, "a supplied class field adapts one-to-two");
+  let defaulted: Dispatch = {};
+  check(defaulted.pair(2, 3) === 2, "a default class field adapts one-to-two");
+  supplied.pair = twice;
+  check(supplied.pair(6, 7) === 12, "a class field write stores the adapted value");
+  check(supplied.pair(2, 3) === 4, "the written field keeps the adapted value");
+  let computedField: Dispatch = {};
+  computedField.pair = pickOne();
+  check(computedField.pair(4, 5) === 4,
+    "a class field write adapts a call-result value");
+
+  // --- array literal and array write positions -----------------------------
+  let literals: ((x: int) => int)[] = [zero];
+  check(literals[0](9) === 41, "an array literal element adapts zero-to-one");
+  check(literals.length === 1, "the adapted element keeps the array length");
+  let writes: ((x: int) => int)[] = [zero];
+  writes[0] = one;
+  check(writes[0](9) === 9, "an array element write stores the adapted value");
+  check(writes.length === 1, "the adapted write keeps the array length");
+  let computedWrites: ((x: int, y: int) => int)[] = [twice];
+  computedWrites[0] = pickOne();
+  check(computedWrites[0](3, 4) === 3,
+    "an array element write adapts a call-result value");
+  check(computedWrites.length === 1, "the call-result write keeps the array length");
+
+  // --- nested and function-expression sources ------------------------------
+  let nested: ((x: int, y: int) => int)[] = [one];
+  check(nested[0](8, 9) === 8, "a nested function-typed element adapts");
+  let literalSource: (x: int, y: int) => int = function(x: int): int { return x + 1; };
+  check(literalSource(4, 5) === 5, "a function-expression source adapts");
+  check(needPair(function(x: int): int { return x * 3; }) === 9,
+    "a function-expression argument adapts");
+  check(needPair(makeAdder(10)) === 13,
+    "a closure-capturing call-result argument keeps its capture through the adapter");
+
+  // --- variable declaration and assignment controls ------------------------
+  let declared: (x: int, y: int) => int = one;
+  check(declared(11, 12) === 11, "a declaration control adapts one-to-two");
+  let assigned: (x: int, y: int) => int = one;
+  assigned = twice;
+  check(assigned(5, 6) === 10, "an assignment control adapts one-to-two");
+  let exact: (x: int) => int = one;
+  check(exact(13) === 13, "an exact-signature declaration stores directly");
+  let nullableExact: ((x: int) => int) | null = exact;
+  check(nullableExact !== null, "an exact nullable function position keeps its value");
+
+  // --- evaluation order and once-only effects ------------------------------
+  let order: Marker = {};
+  check(needPair(nextShort(order)) === 3, "the argument's adapted value is invoked");
+  check(order.count === 1, "the argument's source expression evaluates exactly once");
+  let extraMarker: Marker = {};
+  let extras: (x: int) => int = one;
+  let widenedCall: (x: int, y: int) => int = extras;
+  check(widenedCall(1, bumpMarker(extraMarker)) === 1,
+    "the ignored target argument is evaluated and never forwarded");
+  check(extraMarker.count === 1, "the ignored target argument evaluates exactly once");
+
+  console.log("OK");
+  return null;
+}

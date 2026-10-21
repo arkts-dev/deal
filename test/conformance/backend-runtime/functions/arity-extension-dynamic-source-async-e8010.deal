@@ -1,0 +1,17 @@
+// @spec: Functions — Arity extension adapter
+// @description: The exact typed-boundary check on a table-produced function value through the async-export lane: the carried shorter signature raises E8010 with the pinned message, expected/actual signature texts and declared-parameter origin, never a silent adaptation.
+// @expected: runtime-error E8010
+// @features: functions, arity-extension, async-await, descriptors, runtime-errors
+
+function one(x: int): int { return x; }
+
+function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+
+export async function test_arity_extension_dynamic_source_async_e8010(): int {
+  let holder: table = { f: one };
+  return needPair(holder.f);
+}
+
+export function main(): null {
+  return null;
+}

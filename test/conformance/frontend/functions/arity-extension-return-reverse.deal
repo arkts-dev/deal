@@ -1,0 +1,12 @@
+// @spec: Functions — Function type compatibility
+// @description: A return expression with more parameters than the declared return type is rejected — the reverse arity direction stays always rejected at a return position
+// @expected: compile-error E5003
+// @features: functions, arity-extension, diagnostics
+
+function two(a: int, b: int): int { return a + b; }
+
+function makeOne(): (x: int) => int { return two; }
+
+export function main(): null {
+  return null;
+}
