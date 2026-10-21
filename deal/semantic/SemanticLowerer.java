@@ -14521,9 +14521,9 @@ public final class SemanticLowerer {
 
         /**
          * Lowers one operator operand, condition expression, index
-         * receiver/key expression, table member receiver expression, or
-         * {@code .length} receiver expression:
-         * the operand's completed value plus, for an identifier read whose
+         * receiver/key expression, table member receiver expression,
+         * {@code .length} receiver expression, or for-of iterable: the
+         * operand's completed value plus, for an identifier read whose
          * checked type is a null-narrowing refinement of the binding's
          * declared nullable type (declared {@code T | null}, read as
          * {@code T}), the {@code NARROWED_READ} validation of that read.
@@ -14554,10 +14554,15 @@ public final class SemanticLowerer {
          * other, not a typed-boundary position. A {@code .length} receiver
          * lowers through this helper too, so the {@code ARRAY_LENGTH} op
          * (array or bytes) reads the admitted value and never the
-         * unadmitted read. Every other position (a
-         * declaration, assignment, parameter, return, class/array
-         * construction or element write) is a typed boundary owned by its
-         * own cell, which keeps its recorded projection — the
+         * unadmitted read. A for-of iterable lowers through this helper
+         * too, in both the array and the string arm: the {@code FOR_EACH}
+         * consumes the admitted value, so a capturing closure that cleared
+         * the binding reports the typed-boundary failure before the loop's
+         * initialization dereferences the carrier and the iterable still
+         * completes exactly once. Every other position (a declaration,
+         * assignment, parameter, return, class/array construction or
+         * element write) is a typed boundary owned by its own cell, which
+         * keeps its recorded projection — the
          * array-element E8003 arm included.</p>
          */
         private ValueId lowerOperand(ExpressionNode expr) {

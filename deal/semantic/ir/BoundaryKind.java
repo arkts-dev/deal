@@ -56,13 +56,15 @@ public enum BoundaryKind {
      * as {@code T}) — docs/spec-v1.3.md Nullable semantics: narrowing is
      * optimistic across calls, so an indirect captured-binding mutation
      * leaves the refined read's value invalid and the consuming operator,
-     * index chain, table member operation or {@code .length} read must
-     * report the typed-boundary projection instead of coercing it, letting
-     * a raw backend error escape, or reading a length from it. The op
-     * publishes the admitted value (its result is the consumer's operand,
-     * index chain child, table member receiver or {@code ARRAY_LENGTH}
-     * receiver) and carries the descriptor-kind policy of its own
-     * descriptor.
+     * index chain, table member operation, {@code .length} read or for-of
+     * loop must report the typed-boundary projection instead of coercing
+     * it, letting a raw backend error escape, reading a length from it, or
+     * dereferencing the loop's iterable carrier (the loop's initialization
+     * dereferences that carrier before any iteration, so the admission
+     * precedes it). The op publishes the admitted value (its result is the
+     * consumer's operand, index chain child, table member receiver,
+     * {@code ARRAY_LENGTH} receiver or the loop's iterable) and carries
+     * the descriptor-kind policy of its own descriptor.
      */
     NARROWED_READ;
 
