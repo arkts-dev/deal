@@ -4356,18 +4356,22 @@ const $rt = {
   },
 
   // throwValue: the recorded THROW transport. A tagged Error value that
-  // carries no location is a constructed Error being thrown: the failure is
-  // synthesized at the THROW site's own origin (code/message preserved,
-  // expected/actual/cause absent — absence stays absence, never null). An
-  // already-transported value — a caught error, or one that crossed a
-  // return/parameter boundary — is rethrown unchanged, so its origin,
-  // expected/actual, frames and recursive cause survive catch/rethrow.
+  // carries no location is a constructed Error being thrown: the THROW
+  // site's own origin materializes ON THE IDENTICAL ERROR VALUE (the spec's
+  // reference-identical class instance, so the catch binding and every
+  // alias are one object and a later field mutation is visible through all
+  // of them), with code/message preserved and expected/actual/cause left
+  // absent — absence stays absence, never null. An already-transported
+  // value — a caught error, or one that crossed a return/parameter boundary
+  // — is rethrown unchanged, so its origin, expected/actual, frames and
+  // recursive cause survive catch/rethrow.
   throwValue: function $throwValue(v, file, line, column) {
     if (v !== null && typeof v === "object" && v.$kind === "class"
         && v.$classname === "Error" && v.file === $undefined
         && v.line === $undefined && v.column === $undefined) {
-      return $rt.errorValue(v.code, v.message, file, line, column,
-        v.expected, v.actual, v.frames, v.cause);
+      $rt.setProp(v, "file", file);
+      $rt.setProp(v, "line", line);
+      $rt.setProp(v, "column", column);
     }
     return v;
   },

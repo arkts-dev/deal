@@ -6008,16 +6008,26 @@ public final class LuaSemanticEmitter {
             // only this handler's caught one) keeps its own identity and
             // gains no cause; a new failure raised in the catch block is
             // the replacement failure and links the caught failure as its
-            // cause (frames/code/message/origin unchanged). The wrapper
-            // keeps the escaping failure's own carrier provenance: a
-            // generated failure arm raised inside the catch body still
-            // carries its compiler-generated descriptor content (its
-            // message and expected/actual fields are copied here), so the
-            // wrapper passes the carrier mark through instead of claiming
-            // generated content of its own; an authored raise (a host
-            // long-form error, a user-thrown value) stays authored.
+            // cause (frames/code/message/origin unchanged). The link is
+            // committed ON THE FAILING CARRIER ITSELF whenever that carrier
+            // is an Error-transport table — a user-thrown constructed Error
+            // keeps the spec's reference-identical class instance (the
+            // enclosing catch binding and every alias observe one object),
+            // and a generated failure arm keeps its own carrier provenance
+            // marks (its message and expected/actual fields are the
+            // compiler-generated descriptor content, never a claimed copy).
+            // Only a foreign carrier (a raw non-Error table raised by a
+            // host) takes the copied wrapper, whose mark-free shape keeps
+            // the authored raise authored.
             out.append("      if type(__terrT) == \"table\" and __terrT.__re"
                 + " then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "__errtext(__terrT)");
+            out.append("        error(__terrT, 0)\n");
+            out.append("      elseif type(__terrT) == \"table\" and "
+                + "__terrT[__dealCarrierKeys.d] then\n");
+            out.append("        __terrT.cause = ").append(caughtIdentity)
+                .append("\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
                 "__errtext(__terrT)");
             out.append("        error(__terrT, 0)\n");
@@ -6130,9 +6140,13 @@ public final class LuaSemanticEmitter {
             // that already crossed a return/parameter): the identical value
             // is re-raised, so code/message, origin, expected/actual, frames
             // and any cause are preserved unchanged and no cause is
-            // invented. A constructed Error carries no origin: the failure
-            // is synthesized at the THROW origin with no expected/actual and
-            // no cause (absent fields stay absent), frames active.
+            // invented. A constructed Error carries no origin: the THROW
+            // origin, the active frames and the absent expected/actual/cause
+            // materialize ON THE IDENTICAL Error value (the spec's
+            // reference-identical class instance, so the catch binding and
+            // every alias observe one object and a field write stays
+            // visible through all of them), never on a replacement carrier
+            // and never with an invented value for an absent field.
             String value = slot(payload.errorValue());
             out.append("if type(").append(value).append(") == \"table\" and ")
                 .append(value).append(".__re then\n");
@@ -6140,12 +6154,15 @@ public final class LuaSemanticEmitter {
                 "__errtext(" + value + ")");
             out.append("  error(").append(value).append(", 0)\n");
             out.append("else\n");
-            String synthesized = "{[__dealCarrierKeys.d] = true, code = " + value + ".code, m = "
-                + value + ".m, o = " + luaString(originOf(op))
-                + ", e = nil, a = nil, f = __framesText(), cause = nil}";
+            out.append("  ").append(value).append(".o = ")
+                .append(luaString(originOf(op))).append("\n");
+            out.append("  ").append(value).append(".e = nil\n");
+            out.append("  ").append(value).append(".a = nil\n");
+            out.append("  ").append(value).append(".f = __framesText()\n");
+            out.append("  ").append(value).append(".cause = nil\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
-                "__errtext(" + synthesized + ")");
-            out.append("  error(").append(synthesized).append(", 0)\n");
+                "__errtext(" + value + ")");
+            out.append("  error(").append(value).append(", 0)\n");
             out.append("end\n");
         }
 
