@@ -3059,12 +3059,21 @@ public final class JsSemanticEmitter {
                     + index + ");");
                 emit("if (" + element + " === $rt.undefined) { break " + label
                     + "; }");
-                emit("const " + cellName + " = " + element + ";");
+                // The iteration binding is a mutable `let` cell declared
+                // once per iteration (the spec's fresh iteration binding
+                // captured by binding): a body assignment or a capture's
+                // store commits this cell, and a closure created here
+                // captures this iteration's own incarnation.
+                emit("let " + cellName + " = " + element + ";");
                 emitBlockContent(unit, payload.body());
                 indent--;
                 emit("}");
             } else {
-                emit(label + ": for (const " + cellName + " of $rt.scalars("
+                // A `for (let x of ...)` binds a fresh mutable cell per
+                // iteration: the scalar loop binding is assignable in the
+                // body and through a captured closure, and the binding is
+                // re-created for the next scalar.
+                emit(label + ": for (let " + cellName + " of $rt.scalars("
                     + iterable + ")) {");
                 indent++;
                 emitBlockContent(unit, payload.body());

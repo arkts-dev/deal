@@ -1,0 +1,260 @@
+// @spec: Control flow — For-of — mutable iteration binding
+// @description: A for-of let binding is one live cell per iteration: the body, a captured closure and a sibling capture observe the same assignment, every iteration keeps its own binding, and the traversal still evaluates the iterable once, follows its live length and contents, and never redirects on a reassignment of the iterable variable
+// @expected: runtime-ok
+// @features: for-of, closure, binding, break, continue
+
+function freshArray(counter: int[]): int[] {
+  counter[0] = counter[0] + 1;
+  return [1, 2];
+}
+
+function freshText(counter: int[]): string {
+  counter[0] = counter[0] + 1;
+  return "ab";
+}
+
+function testArrayDirectMutation(): null {
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of [1, 2, 3]) {
+    n = n + 10;
+    total = total + n;
+    visits = visits + 1;
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of array body skipped or repeated" };
+  }
+  if (total !== 36) {
+    throw { code: "TEST_FAIL", message: "for-of array direct mutation lost" };
+  }
+  return;
+}
+
+function testArrayClosureReadsMutation(): null {
+  let readers: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
+  let visits: int = 0;
+  for (let n: int of [1, 2, 3]) {
+    n = n + 10;
+    readers[visits] = function(): int { return n; };
+    visits = visits + 1;
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of closure body skipped or repeated" };
+  }
+  let r0: int = readers[0]();
+  let r1: int = readers[1]();
+  let r2: int = readers[2]();
+  if (r0 !== 11) {
+    throw { code: "TEST_FAIL", message: "for-of first closure reader mismatch" };
+  }
+  if (r1 !== 12) {
+    throw { code: "TEST_FAIL", message: "for-of second closure reader mismatch" };
+  }
+  if (r2 !== 13) {
+    throw { code: "TEST_FAIL", message: "for-of third closure reader mismatch" };
+  }
+  return;
+}
+
+function testArrayClosureWritesMutation(): null {
+  let bump: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }];
+  let read: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }];
+  let visits: int = 0;
+  for (let n: int of [1, 2]) {
+    bump[visits] = function(): int { n = n + 10; return n; };
+    read[visits] = function(): int { return n; };
+    visits = visits + 1;
+  }
+  if (visits !== 2) {
+    throw { code: "TEST_FAIL", message: "for-of closure write body skipped or repeated" };
+  }
+  if (bump[0]() !== 11) {
+    throw { code: "TEST_FAIL", message: "for-of closure write did not reach the binding" };
+  }
+  if (read[0]() !== 11) {
+    throw { code: "TEST_FAIL", message: "for-of closure write is not visible to a sibling capture" };
+  }
+  if (read[1]() !== 2) {
+    throw { code: "TEST_FAIL", message: "for-of iterations share one binding cell" };
+  }
+  if (bump[0]() !== 21) {
+    throw { code: "TEST_FAIL", message: "the first iteration binding is not a live cell" };
+  }
+  return;
+}
+
+function testStringDirectMutation(): null {
+  let visits: int = 0;
+  let joined: string = "";
+  for (let c: string of "abc") {
+    c = c + "!";
+    joined = joined + c;
+    visits = visits + 1;
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of string body skipped or repeated" };
+  }
+  if (joined !== "a!b!c!") {
+    throw { code: "TEST_FAIL", message: "for-of string direct mutation lost" };
+  }
+  return;
+}
+
+function testStringClosureReadsMutation(): null {
+  let readers: (() => string)[] = [function(): string { return "-1"; }, function(): string { return "-1"; }, function(): string { return "-1"; }];
+  let visits: int = 0;
+  for (let c: string of "xyz") {
+    c = c + "?";
+    readers[visits] = function(): string { return c; };
+    visits = visits + 1;
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of string closure body skipped or repeated" };
+  }
+  if (readers[0]() !== "x?") {
+    throw { code: "TEST_FAIL", message: "for-of string first closure reader mismatch" };
+  }
+  if (readers[1]() !== "y?") {
+    throw { code: "TEST_FAIL", message: "for-of string second closure reader mismatch" };
+  }
+  if (readers[2]() !== "z?") {
+    throw { code: "TEST_FAIL", message: "for-of string third closure reader mismatch" };
+  }
+  return;
+}
+
+function testBreakAndContinueAfterMutation(): null {
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of [1, 2, 3, 4]) {
+    n = n * 10;
+    visits = visits + 1;
+    if (n === 20) { continue; }
+    if (n === 40) { break; }
+    total = total + n;
+  }
+  if (visits !== 4) {
+    throw { code: "TEST_FAIL", message: "for-of break/continue visit count mismatch" };
+  }
+  if (total !== 40) {
+    throw { code: "TEST_FAIL", message: "for-of break/continue after mutation mismatch" };
+  }
+  return;
+}
+
+function testIterableReassignmentDoesNotRedirect(): null {
+  let xs: int[] = [1, 2, 3];
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of xs) {
+    xs = [100];
+    total = total + n;
+    visits = visits + 1;
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of iterable reassignment shortened the traversal" };
+  }
+  if (total !== 6) {
+    throw { code: "TEST_FAIL", message: "for-of iterable reassignment redirected the traversal" };
+  }
+  return;
+}
+
+function testArrayIterableEvaluatedOnce(): null {
+  let counter: int[] = [0];
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of freshArray(counter)) {
+    visits = visits + 1;
+    total = total + n;
+  }
+  if (visits !== 2) {
+    throw { code: "TEST_FAIL", message: "iterable-once array visits mismatch" };
+  }
+  if (total !== 3) {
+    throw { code: "TEST_FAIL", message: "iterable-once array total mismatch" };
+  }
+  if (counter[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "the array iterable expression was evaluated more than once" };
+  }
+  return;
+}
+
+function testStringIterableEvaluatedOnce(): null {
+  let counter: int[] = [0];
+  let visits: int = 0;
+  let joined: string = "";
+  for (let c: string of freshText(counter)) {
+    c = c + "!";
+    joined = joined + c;
+    visits = visits + 1;
+  }
+  if (visits !== 2) {
+    throw { code: "TEST_FAIL", message: "iterable-once string visits mismatch" };
+  }
+  if (joined !== "a!b!") {
+    throw { code: "TEST_FAIL", message: "iterable-once string joined mismatch" };
+  }
+  if (counter[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "the string iterable expression was evaluated more than once" };
+  }
+  return;
+}
+
+function testUnvisitedReplacementIsObserved(): null {
+  let xs: int[] = [1, 2, 3];
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of xs) {
+    visits = visits + 1;
+    total = total + n;
+    if (visits === 1) {
+      xs[2] = 30;
+    }
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of live replacement visits mismatch" };
+  }
+  if (total !== 33) {
+    throw { code: "TEST_FAIL", message: "for-of unvisited replacement was not observed" };
+  }
+  if (xs.length !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of traversal changed the iterable's length" };
+  }
+  return;
+}
+
+function testAppendIsObserved(): null {
+  let xs: int[] = [1, 2];
+  let visits: int = 0;
+  let total: int = 0;
+  for (let n: int of xs) {
+    visits = visits + 1;
+    total = total + n;
+    if (visits === 1) {
+      xs[xs.length] = 3;
+    }
+  }
+  if (visits !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of live append was not observed" };
+  }
+  if (total !== 6) {
+    throw { code: "TEST_FAIL", message: "for-of live contents mismatch" };
+  }
+  return;
+}
+
+export function main(): null {
+  testArrayDirectMutation();
+  testArrayClosureReadsMutation();
+  testArrayClosureWritesMutation();
+  testStringDirectMutation();
+  testStringClosureReadsMutation();
+  testBreakAndContinueAfterMutation();
+  testIterableReassignmentDoesNotRedirect();
+  testArrayIterableEvaluatedOnce();
+  testStringIterableEvaluatedOnce();
+  testUnvisitedReplacementIsObserved();
+  testAppendIsObserved();
+  return null;
+}
