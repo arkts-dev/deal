@@ -1989,8 +1989,7 @@ cause (if applicable)
 
 ### Source maps and debugging
 
-- The backend emits source comments before generated statement groups.
-- Compiler emits source map sidecars mapping generated positions to original `.deal` files, lines and columns across modules.
+- Source-emitting backends provide statement-group source comments and source-map sidecars; native backends provide debug metadata. Mappings preserve original files, lines and columns across modules.
 - Runtime errors report original `.deal` locations: one-based lines and Unicode-scalar columns; tabs count one column; CRLF counts one line break.
 - Stack traces include generated and original function names.
 
