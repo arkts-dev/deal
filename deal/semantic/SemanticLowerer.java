@@ -8240,12 +8240,18 @@ public final class SemanticLowerer {
          */
         private OpId producerOpId(ValueId value) {
             List<SemanticOp> target = emitTarget();
+            SemanticOp producer = null;
             for (int i = target.size() - 1; i >= 0; i--) {
                 SemanticOp op = target.get(i);
                 if (value.equals(op.result())) {
-                    return op.opId();
+                    if (producer == null) { producer = op; }
+                    // The branch owns its selected operand's shared result
+                    // cell. A chain must execute the branch, not its last
+                    // conditional writer as an unconditional RHS child.
+                    if (op.kind() == SemanticOpKind.BRANCH) { producer = op; }
                 }
             }
+            if (producer != null) { return producer.opId(); }
             throw new IllegalStateException("no produced op publishes value " + value
                 + " (producer defect)");
         }

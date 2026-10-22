@@ -88,6 +88,7 @@ public class JsBackendTest {
             "the JS production-artifact drives");
         tmpDir = Files.createTempDirectory("js_backend_test_");
         try {
+            testLogicalAssignmentSelectedBlock();
             testBackendNamesJs();
             testDealConfigBackendJs();
             testCliBackendFlagJsDefaultOutput();
@@ -6114,6 +6115,29 @@ public class JsBackendTest {
                 + "extra-key rejection, the three-state "
                 + "roundtrip, wide-number admission, the zero-defaults "
                 + "phase order, and the toJson E8001 arms: " + run.output());
+    }
+
+    private static void testLogicalAssignmentSelectedBlock() throws Exception {
+        if (!nodeAvailable) { skipNode("logical assignment selected block"); return; }
+        NodeResult run = runDealNode("""
+            class State { busy: boolean = false; other: boolean = false; }
+            export function test(): int {
+                let state: State = {};
+                let props: boolean[] = [];
+                for (let i: int = 0; i < 2; i = i + 1) {
+                    state.busy = i === 1;
+                    props[props.length] = !state.busy && !state.other;
+                    props[props.length] = state.busy || state.other;
+                }
+                if (!props[0]) { return 2; }
+                if (props[1]) { return 3; }
+                if (props[2]) { return 4; }
+                if (!props[3]) { return 5; }
+                return 1;
+            }
+            """, "logical-assignment-selected-block");
+        check(run.exitCode() == 0 && run.output().trim().equals("1"),
+            "logical assignment must not hoist right operand from its selected block: " + run.output());
     }
 
     private static void testIntrinsicFunctionValues() throws Exception {

@@ -186,6 +186,10 @@ public final class ChainOperandCompletion {
                 if (order.get(history.get(mid).opId()) < before) low = mid + 1;
                 else high = mid;
             }
+            // Logical branches own their shared result cell ahead of selected-arm writers.
+            for (int i = 0; i < low; i++) {
+                if (history.get(i).kind() == SemanticOpKind.BRANCH) return history.get(i);
+            }
             return low == 0 ? null : history.get(low - 1);
         }
 
