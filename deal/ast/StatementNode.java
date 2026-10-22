@@ -13,7 +13,7 @@ public sealed interface StatementNode
             ReturnStatement,
             IfStatement,
             WhileStatement,
-            ForStatement,
+
             ForOfStatement,
             BreakStatement,
             ContinueStatement,

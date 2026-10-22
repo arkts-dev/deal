@@ -79,7 +79,7 @@ public final class IntrinsicShadowingProductionTest {
         new IntrinsicSite("INT_CONVERT", 62, 7),     // nestedScopes: int(1.0)
         new IntrinsicSite("INT_CONVERT", 71, 10),    // nestedScopes: int(5.0)
         new IntrinsicSite("INT_CONVERT", 95, 21),    // declarationOrder: int(2.0)
-        new IntrinsicSite("INT_CONVERT", 110, 23),   // forHeadCounter: int(3.0)
+        new IntrinsicSite("INT_CONVERT", 110, 25),   // forHeadCounter: int(3.0)
         new IntrinsicSite("INT_CONVERT", 172, 24),   // intrinsicResults: int(2.0)
         new IntrinsicSite("NUMBER_CONVERT", 173, 25), // intrinsicResults: number(7)
         new IntrinsicSite("BYTES_NEW", 174, 23));     // intrinsicResults: bytes(4)

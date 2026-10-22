@@ -16,9 +16,7 @@ import deal.ast.Either;
 import deal.ast.ExportDeclaration;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.FunctionType;
@@ -1140,49 +1138,7 @@ final class DefaultIrRecorder {
                             evaluatorScope)),
                     null, null, null, ws, ws.span().range());
             }
-            case ForStatement fs -> {
-                List<DefaultIrNode> children = new ArrayList<>();
-                fs.init().ifPresent(init -> {
-                    switch (init) {
-                        case ForInit.VarDecl vd -> {
-                            // The loop-head let is not visible to its own
-                            // initializer (docs/spec-v1.3.md §Name resolution —
-                            // Declaration order): a self reference there names the
-                            // enclosing binding, exactly like the
-                            // checker's loop-head pending frame.
-                            SymbolTable loopScope = scopeMap.get(fs);
-                            boolean tracked = loopScope != null;
-                            if (tracked) {
-                                pushPendingScope(List.of(vd.decl()),
-                                    loopScope);
-                            }
-                            try {
-                                children.add(walkStatement(vd.decl(),
-                                    effectiveScope, evaluatorScope));
-                            } finally {
-                                if (tracked) {
-                                    pendingScopes.pop();
-                                }
-                            }
-                        }
-                        case ForInit.AssignExpr ae ->
-                            children.add(recordExpression(ae.expr(),
-                                effectiveScope, List.of(),
-                                evaluatorScope));
-                    }
-                });
-                fs.condition().ifPresent(cond -> children.add(
-                    recordExpression(cond, effectiveScope, List.of(),
-                        evaluatorScope)));
-                fs.update().ifPresent(update -> children.add(
-                    recordExpression(update, effectiveScope, List.of(),
-                        evaluatorScope)));
-                children.add(walkStatement(fs.body(), effectiveScope,
-                    evaluatorScope));
-                return node(DefaultIrNode.NodeKind.FOR, null, null,
-                    List.of(), children, null, null, null, fs,
-                    fs.span().range());
-            }
+
             case ForOfStatement fos -> {
                 return node(DefaultIrNode.NodeKind.FOR_OF, null, null,
                     List.of(),

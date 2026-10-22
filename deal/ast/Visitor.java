@@ -20,7 +20,6 @@ public interface Visitor<T> {
     default T visit(ReturnStatement node) { return null; }
     default T visit(IfStatement node) { return null; }
     default T visit(WhileStatement node) { return null; }
-    default T visit(ForStatement node) { return null; }
     default T visit(ForOfStatement node) { return null; }
     default T visit(BreakStatement node) { return null; }
     default T visit(ContinueStatement node) { return null; }

@@ -6,7 +6,7 @@
 export function test_nested_loop_mix(): int {
   let values: int[] = [1, 2, 3];
   let total: int = 0;
-  for (let i: int = 0; i < 2; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {
     let j: int = 0;
     while (j < 2) {
       for (let v: int of values) {
@@ -14,7 +14,7 @@ export function test_nested_loop_mix(): int {
       }
       j = j + 1;
     }
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (total !== 24) { throw { code: "TEST_FAIL", message: "nested loop mix failed" }; }
   return total;
 }

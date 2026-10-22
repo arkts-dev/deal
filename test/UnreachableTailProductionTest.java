@@ -143,36 +143,7 @@ public class UnreachableTailProductionTest {
      * {@code break}/{@code continue}, at the pinned source lines the
      * assertions read back from the ops' origins.
      */
-    private static final String TAIL_BATTERY_SOURCE = """
-        function returnsTail(): null {
-          return null;
-          let returnTail: int = 2;
-          returnTail = 3;
-        }
-        function throwsTail(): null {
-          try {
-            "boom";
-          } catch (err) {
-            throw err;
-            let throwTail: int = 4;
-          }
-          return null;
-        }
-        function breaksTail(): null {
-          for (;;) {
-            break;
-            let breakTail: int = 5;
-          }
-          return null;
-        }
-        function continuesTail(): null {
-          for (;;) {
-            continue;
-            let continueTail: int = 6;
-          }
-          return null;
-        }
-        """;
+    private static final String TAIL_BATTERY_SOURCE = "function returnsTail(): null {\n  return null;\n  let returnTail: int = 2;\n  returnTail = 3;\n}\nfunction throwsTail(): null {\n  try {\n    \"boom\";\n  } catch (err) {\n    throw err;\n    let throwTail: int = 4;\n  }\n  return null;\n}\nfunction breaksTail(): null {\n  {  while (true) { {\n    break;\n    let breakTail: int = 5;\n  }  } }\n  return null;\n}\nfunction continuesTail(): null {\n  {  while (true) { {\n    {  continue; }\n    let continueTail: int = 6;\n  }  } }\n  return null;\n}\n";
 
     private record CheckedSlice(ProgramNode program, SymbolTable symbols,
                                 CheckResult checks) {
@@ -1025,7 +996,7 @@ public class UnreachableTailProductionTest {
             export function main(): null {
               try {
                 throw { code: "EXPECTED", message: "expected" };
-                for (;;) { %s; }
+                while (true) { %s; }
               } catch (e) { }
               return null;
             }
@@ -1182,35 +1153,9 @@ public class UnreachableTailProductionTest {
                                  boolean directInTry) {
     }
 
-    private static final String IN_TRY_BREAK_SOURCE = """
-        export function main(): null {
-          try {
-            for (;;) {
-              break;
-              "loopBreakTail";
-              let breakTail: int = 1;
-            }
-          } catch (e) {
-          }
-          return null;
-        }
-        """;
+    private static final String IN_TRY_BREAK_SOURCE = "export function main(): null {\n  try {\n    {  while (true) { {\n      break;\n      \"loopBreakTail\";\n      let breakTail: int = 1;\n    }  } }\n  } catch (e) {\n  }\n  return null;\n}\n";
 
-    private static final String IN_TRY_CONTINUE_SOURCE = """
-        export function main(): null {
-          try {
-            for (let i: int = 0; i < 2; i = i + 1) {
-              if (i === 0) {
-                continue;
-                "loopContinueTail";
-                let continueTail: int = 2;
-              }
-            }
-          } catch (e) {
-          }
-          return null;
-        }
-        """;
+    private static final String IN_TRY_CONTINUE_SOURCE = "export function main(): null {\n  try {\n    { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {\n      if (i === 0) {\n        { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; }\n        \"loopContinueTail\";\n        let continueTail: int = 2;\n      }\n    } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  } catch (e) {\n  }\n  return null;\n}\n";
 
     private static final String FOR_EACH_BREAK_TAIL_SOURCE = """
         export function main(): null {
@@ -1254,7 +1199,7 @@ public class UnreachableTailProductionTest {
         new InTryLoopCase("in-try-break-loop", IN_TRY_BREAK_SOURCE,
             "loopBreakTail", SemanticOpKind.BREAK, "break LOOP", true),
         new InTryLoopCase("in-try-continue-loop", IN_TRY_CONTINUE_SOURCE,
-            "loopContinueTail", SemanticOpKind.CONTINUE, "continue CONT", true),
+            "loopContinueTail", SemanticOpKind.CONTINUE, "continue LOOP", true),
         new InTryLoopCase("foreach-break-tail", FOR_EACH_BREAK_TAIL_SOURCE,
             "foreachBreakTail", SemanticOpKind.BREAK, "break FE", false),
         new InTryLoopCase("foreach-continue-tail", FOR_EACH_CONTINUE_TAIL_SOURCE,
@@ -1542,134 +1487,6 @@ public class UnreachableTailProductionTest {
         "for-update-if-break-tail", "for-update-if-continue-tail",
         "for-update-try-continue-tail");
 
-    private static void testForUpdateReachability() throws Exception {
-        System.out.println("-- The updated FOR inside TRY_CATCH: real-javac update "
-            + "reachability regression --");
-        for (ForUpdateCase forCase : FOR_UPDATE_CASES) {
-            testForUpdateCase(forCase);
-        }
-    }
-
-    private static void testForUpdateCase(ForUpdateCase forCase) throws Exception {
-        Path project = Files.createTempDirectory("deal-unreachable-tail-"
-            + forCase.name() + "-");
-        try {
-            Path entry = projectEntry(project, forCase.source());
-
-            LoweredProject lowered = lowerProgram(forCase.name(), entry,
-                new CliOverrides("jvm", project.resolve("out-oracle").toString()));
-            if (lowered == null) {
-                return;
-            }
-            LoweredModuleUnit unit = lowered.project().modules().get(lowered.entry());
-            Map<OpId, SemanticOp> byId = new LinkedHashMap<>();
-            for (SemanticOp op : unit.ops()) {
-                byId.put(op.opId(), op);
-            }
-            SemanticOp loop = unit.ops().stream()
-                .filter(op -> op.kind() == SemanticOpKind.LOOP)
-                .filter(op -> ((KindPayload.LoopPayload) op.payload()).selector()
-                    == ControlSelector.FOR)
-                .findFirst().orElse(null);
-            check(loop != null, forCase.name() + ": the updated FOR loop op is "
-                + "represented in the lowered unit");
-            if (loop == null) {
-                return;
-            }
-            KindPayload.LoopPayload payload =
-                (KindPayload.LoopPayload) loop.payload();
-            List<OpId> updateMembers = payload.updateBlock() == null ? null
-                : lowered.entryTable().blockOps().get(payload.updateBlock());
-            check(updateMembers != null && !updateMembers.isEmpty(), forCase.name()
-                + ": the update block keeps its ops in the lowered unit");
-            if (updateMembers == null || updateMembers.isEmpty()) {
-                return;
-            }
-            for (OpId updateOp : updateMembers) {
-                check(byId.containsKey(updateOp), forCase.name() + ": the update op "
-                    + updateOp + " is represented in the lowered unit");
-            }
-            SemanticOp marker = opWithString(unit.ops(), forCase.tailMarker());
-            check(marker != null, forCase.name() + ": the tail statement '"
-                + forCase.tailMarker() + "' is represented in the lowered unit");
-            if (marker == null) {
-                return;
-            }
-
-            // The oracle executes the loop, takes the transfer (or the
-            // continue path), and never executes the represented tail.
-            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(
-                lowered.project(), lowered.tables(),
-                new SemanticOracle.HostResponder() {
-                });
-            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                forCase.name() + ": the oracle completes main: " + run.terminal());
-            check(run.trace().stream().noneMatch(
-                    event -> event.op().equals(marker.opId())),
-                forCase.name() + ": the oracle emits no event for the tail op "
-                    + marker.opId());
-
-            if (forCase.traceCompared()
-                    && FOR_UPDATE_MATRIX_CASES.contains(forCase.name())) {
-                compareTailTraces(forCase.name(), lowered, List.of(marker.opId()),
-                    project.resolve("matrix"));
-            }
-
-            forUpdateJvmDrive(forCase, loop, updateMembers, marker, lowered.production());
-        } finally {
-            deleteRecursively(project);
-        }
-    }
-
-    private static void forUpdateJvmDrive(ForUpdateCase forCase, SemanticOp loop,
-                                          List<OpId> updateMembers, SemanticOp marker,
-                                          PreparedProduction production) throws Exception {
-        String name = forCase.name();
-        String text = productionText(name, "jvm", production);
-        if (text == null) {
-            return;
-        }
-        long id = loop.opId().id();
-        String doOpen = "CONT" + id + ": do {";
-        int doOpenAt = text.indexOf(doOpen);
-        check(doOpenAt >= 0, name + " [jvm]: the artifact carries the loop's "
-            + "CONT do statement (" + doOpen + ")");
-        int doCloseAt = doOpenAt < 0 ? -1
-            : text.indexOf("} while (false);", doOpenAt);
-        check(doCloseAt >= 0, name + " [jvm]: the artifact closes the CONT do "
-            + "statement");
-        if (doCloseAt >= 0) {
-            String afterDo = text
-                .substring(doCloseAt + "} while (false);".length()).stripLeading();
-            if (forCase.updateSkipped()) {
-                check(afterDo.startsWith("// unreachable:"), name + " [jvm]: the "
-                    + "update of the non-completing CONT do statement is replaced "
-                    + "by the JLS \u00a714.21 skip marker: "
-                    + afterDo.lines().findFirst().orElse("<eof>"));
-                for (OpId updateOp : updateMembers) {
-                    check(!text.contains(quotedOpId(updateOp)), name + " [jvm]: the "
-                        + "skipped update op " + updateOp + " is not emitted");
-                }
-            } else {
-                check(!afterDo.startsWith("// unreachable:"), name + " [jvm]: the "
-                    + "reachable update of the CONT do statement is emitted");
-                check(updateMembers.stream().anyMatch(
-                        updateOp -> text.contains(quotedOpId(updateOp))),
-                    name + " [jvm]: the emitted update carries its lowered ops");
-                check(text.contains("continue CONT" + id + ";"), name + " [jvm]: "
-                    + "the reachable continue jumps to the CONT label");
-            }
-        }
-        check(text.contains("// unreachable: the preceding statement cannot"
-                + " complete normally"), name + " [jvm]: the artifact keeps the "
-            + "JLS \u00a714.21 reachability skip marker");
-        check(!text.contains(forCase.tailMarker()), name + " [jvm]: the tail "
-            + "statement is skipped from the emitted Java");
-        check(!text.contains(originOf(marker)), name + " [jvm]: the tail op origin "
-            + originOf(marker) + " is absent from the emitted Java");
-
-        runJvmMain(name, production);
-    }
 
     // =========================================================================
     // Main
@@ -1684,7 +1501,6 @@ public class UnreachableTailProductionTest {
         testCompositeBlockTails();
         testUnreachableLoopTransferDispatch();
         testInTryLoopTransferDispatch();
-        testForUpdateReachability();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);

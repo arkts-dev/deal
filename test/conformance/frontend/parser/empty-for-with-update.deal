@@ -5,8 +5,8 @@
 
 export function test_empty_for_forms(): int {
   let i: int = 0;
-  for (; i < 3; i = i + 1) {
-  }
+  {  while (i < 3) { {
+  } i = i + 1; } }
   return i;
 }
 

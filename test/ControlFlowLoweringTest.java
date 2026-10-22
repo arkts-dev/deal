@@ -9,7 +9,6 @@ import deal.ast.ContinueStatement;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.IdentifierExpr;
 import deal.ast.IfStatement;
 import deal.ast.LiteralExpr;
@@ -266,23 +265,7 @@ public class ControlFlowLoweringTest {
                     collect(child, statements, expressions);
                 }
             }
-            case ForStatement forStatement -> {
-                forStatement.init().ifPresent(init -> {
-                    switch (init) {
-                        case deal.ast.ForInit.AssignExpr assign ->
-                            collectExpression(assign.expr(), expressions);
-                        case deal.ast.ForInit.VarDecl decl ->
-                            collectExpression(decl.decl().initializer(), expressions);
-                    }
-                });
-                forStatement.condition().ifPresent(condition ->
-                    collectExpression(condition, expressions));
-                forStatement.update().ifPresent(update ->
-                    collectExpression(update, expressions));
-                for (StatementNode child : forStatement.body().statements()) {
-                    collect(child, statements, expressions);
-                }
-            }
+
             case ForOfStatement forOf -> {
                 collectExpression(forOf.iterable(), expressions);
                 for (StatementNode child : forOf.body().statements()) {
@@ -827,100 +810,6 @@ public class ControlFlowLoweringTest {
         checkOrigin("LOOP(WHILE)", loop, statement.span(), SourceOriginKind.USER, null);
     }
 
-    static void testForArm() {
-        System.out.println("-- LOOP(FOR): init + first condition production, update + re-test --");
-
-        CheckedSlice slice = checkSlice(
-            "for (({i: 0}).i = 0; true; ({u: 0}).u = 0) {}");
-        if (slice == null) {
-            return;
-        }
-        SemanticLowerer.LoweringResult result = lowerDetected(slice);
-        check(result != null && !result.hasErrors(),
-            "the for slice lowers: " + (result == null ? "null" : result.diagnostics()));
-        if (result == null || result.hasErrors()) {
-            return;
-        }
-        List<SemanticOp> ops = result.unit().ops();
-        List<SemanticOp> loops = ofKind(ops, SemanticOpKind.LOOP);
-        check(loops.size() == 1, "exactly one LOOP op; got " + loops.size());
-        if (loops.size() != 1) {
-            return;
-        }
-        SemanticOp loop = loops.get(0);
-        KindPayload.LoopPayload payload = (KindPayload.LoopPayload) loop.payload();
-        check(payload.selector() == ControlSelector.FOR,
-            "the LOOP selector is FOR");
-        check(payload.initBlock() != null && payload.bodyBlock() != null
-                && payload.updateBlock() != null,
-            "the FOR carries init/body/update block ids");
-        check(loop.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
-            "the LOOP carries NO_DEAL_FAILURE");
-        checkNoResult("LOOP(FOR)", loop);
-
-        StructuredBodyTable table = result.table();
-        List<OpId> initOps = table.blockOps().get(payload.initBlock());
-        List<OpId> updateOps = table.blockOps().get(payload.updateBlock());
-
-        // initBlock = init chain (5 ops) + first condition production
-        // (CONST true).
-        check(initOps.size() == 6,
-            "initBlock carries the init chain (5 ops) + the first condition production "
-                + "(1 op); got " + initOps.size());
-        check(updateOps.size() == 6,
-            "updateBlock carries the update chain (5 ops) + the condition re-production "
-                + "(1 op); got " + updateOps.size());
-        List<SemanticOp> assigns = ofKind(ops, SemanticOpKind.ASSIGN);
-        check(assigns.size() == 2, "the init and update chains produce two ASSIGN ops");
-        check(initOps.contains(assigns.get(0).opId()),
-            "the init chain op is a member of initBlock");
-        check(updateOps.contains(assigns.get(1).opId()),
-            "the update chain op is a member of updateBlock");
-        check(initOps.indexOf(assigns.get(0).opId()) < initOps.size() - 1
-                && updateOps.indexOf(assigns.get(1).opId()) < updateOps.size() - 1,
-            "the update ops precede the condition productions inside each block "
-                + "(update then re-test)");
-
-        // The condition ValueId: one identity, re-produced by the
-        // updateBlock production (two producing ops publish it). The
-        // v1.3 admission list admits no loop-condition table read, so the
-        // condition is the admitted boolean literal.
-        List<SemanticOp> conditions = new ArrayList<>();
-        for (SemanticOp op : ofKind(ops, SemanticOpKind.CONST)) {
-            if (op.payload() instanceof KindPayload.ConstPayload constPayload
-                    && constPayload.value().equals(
-                        new ScalarValue.Boolean(true))) {
-                conditions.add(op);
-            }
-        }
-        check(conditions.size() == 2,
-            "the condition lowers to exactly two CONST true ops; got "
-                + conditions.size());
-        if (conditions.size() != 2) {
-            return;
-        }
-        check(conditions.get(0).result().equals(conditions.get(1).result()),
-            "both condition productions publish the same condition ValueId (one identity, "
-                + "re-produced per iteration)");
-        check(payload.condition().equals(conditions.get(0).result()),
-            "the payload condition is the shared condition ValueId");
-        check(initOps.contains(conditions.get(0).opId())
-                && updateOps.contains(conditions.get(1).opId()),
-            "the first production is an initBlock member and the re-production is an "
-                + "updateBlock member");
-        for (SemanticOp conditionOp : conditions) {
-            check(loop.opId().equals(conditionOp.origin().parentOpId()),
-                "each condition production records the LOOP as parentOpId");
-        }
-        check(table.blockOps().get(payload.bodyBlock()).isEmpty(),
-            "the empty body block is an empty block of the table");
-        check(ops.indexOf(loop) == 0,
-            "the LOOP op precedes its child block ops in the unit list");
-        check(ops.indexOf(conditions.get(0)) < ops.indexOf(conditions.get(1)),
-            "the first condition production precedes the re-production in the unit list");
-        ForStatement statement = first(slice.program(), ForStatement.class);
-        checkOrigin("LOOP(FOR)", loop, statement.span(), SourceOriginKind.USER, null);
-    }
 
     /**
      * A refined read consumed as the right operand of a for-condition's
@@ -932,126 +821,10 @@ public class ControlFlowLoweringTest {
      * update-block re-production. A fresh admission result would leave the
      * loop re-testing the raw read and ignoring the left comparison.
      */
-    static void testNarrowedLogicalForCondition() {
-        System.out.println("-- LOOP(FOR): a refined logical condition keeps the one "
-            + "condition identity --");
-        narrowedLogicalForCondition("the control-flow FOR arm", """
-            let flag: boolean | null = true;
-            let step: int = 0;
-            if (flag !== null) {
-              for (step = 0; step < 1 && flag; step = step + 1) {}
-            }
-            """);
-        narrowedLogicalForCondition("the binding for-let arm", """
-            let flag: boolean | null = true;
-            if (flag !== null) {
-              for (let step: int = 0; step < 1 && flag; step = step + 1) {}
-            }
-            """);
-    }
+
 
     /** One refined logical for-condition slice through the full-program session. */
-    static void narrowedLogicalForCondition(String label, String source) {
-        CheckedSlice slice = checkSlice(source);
-        if (slice == null) {
-            return;
-        }
-        SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModuleFullProgram(
-            moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32, detectedCoverage(slice),
-            INTERFACE_HASH, REGISTRY_HASH,
-            SemanticIdAllocator.over(List.of(MODULE)));
-        check(result != null && !result.hasErrors(),
-            label + ": the refined logical for-condition slice lowers: "
-                + (result == null ? "null" : result.diagnostics()));
-        if (result == null || result.hasErrors()) {
-            return;
-        }
-        List<SemanticOp> ops = result.unit().ops();
-        List<SemanticOp> loops = ofKind(ops, SemanticOpKind.LOOP);
-        check(loops.size() == 1,
-            label + ": exactly one LOOP op; got " + loops.size());
-        if (loops.size() != 1) {
-            return;
-        }
-        SemanticOp loop = loops.get(0);
-        KindPayload.LoopPayload payload = (KindPayload.LoopPayload) loop.payload();
-        check(payload.selector() == ControlSelector.FOR,
-            label + ": the LOOP selector is FOR");
-        StructuredBodyTable table = result.table();
-        List<OpId> initOps = table.blockOps().get(payload.initBlock());
-        List<OpId> updateOps = table.blockOps().get(payload.updateBlock());
 
-        List<SemanticOp> logicals = new ArrayList<>();
-        for (SemanticOp op : ofKind(ops, SemanticOpKind.BRANCH)) {
-            if (op.payload() instanceof KindPayload.BranchPayload branchPayload
-                    && branchPayload.selector() == ControlSelector.LOGICAL_AND) {
-                logicals.add(op);
-            }
-        }
-        check(logicals.size() == 2,
-            label + ": the init-block production and the update-block re-production each"
-                + " carry one LOGICAL_AND BRANCH; got " + logicals.size());
-        if (logicals.size() != 2) {
-            return;
-        }
-        check(initOps.contains(logicals.get(0).opId())
-                && updateOps.contains(logicals.get(1).opId()),
-            label + ": the first production is an initBlock member and the re-production is"
-                + " an updateBlock member");
-        for (SemanticOp branch : logicals) {
-            check(branch.result().equals(payload.condition()),
-                label + ": the logical branch result is the pre-allocated condition"
-                    + " identity");
-            KindPayload.BranchPayload branchPayload =
-                (KindPayload.BranchPayload) branch.payload();
-            List<OpId> selected = table.blockOps().get(branchPayload.selectedBlock());
-            SemanticOp load = null;
-            SemanticOp admission = null;
-            for (OpId id : selected) {
-                SemanticOp op = opById(ops, id);
-                if (op.kind() == SemanticOpKind.BINDING_LOAD) {
-                    load = op;
-                }
-                if (op.kind() == SemanticOpKind.BOUNDARY
-                        && op.payload() instanceof KindPayload.BoundaryPayload boundary
-                        && boundary.kind() == BoundaryKind.NARROWED_READ) {
-                    admission = op;
-                }
-            }
-            check(load != null,
-                label + ": the selected block carries the refined binding read");
-            check(admission != null,
-                label + ": the selected block carries the NARROWED_READ admission");
-            if (load == null || admission == null) {
-                continue;
-            }
-            KindPayload.BoundaryPayload boundary =
-                (KindPayload.BoundaryPayload) admission.payload();
-            check(load.result().equals(payload.condition()),
-                label + ": the refined read publishes the condition identity");
-            check(admission.result().equals(payload.condition()),
-                label + ": the admission publishes the condition identity (never a second"
-                    + " value)");
-            check(boundary.input().equals(payload.condition()),
-                label + ": the admission validates the read in the condition identity");
-            check(load.result().equals(boundary.input()),
-                label + ": the admission input is the binding read (the refinement claim)");
-            check(boundary.descriptor().equals(RuntimeDescriptor.Boolean.INSTANCE),
-                label + ": the admission's refined descriptor is D(boolean)");
-            check(branch.opId().equals(admission.origin().parentOpId()),
-                label + ": the admission records the logical BRANCH as parentOpId");
-        }
-        // The left comparison is a distinct value: the loop re-tests the
-        // composed condition, never the raw read on its own.
-        boolean leftIsCondition = false;
-        for (SemanticOp op : ofKind(ops, SemanticOpKind.BINARY)) {
-            if (op.result().equals(payload.condition())) {
-                leftIsCondition = true;
-            }
-        }
-        check(!leftIsCondition,
-            label + ": the left comparison never publishes the condition identity");
-    }
 
     /**
      * The for-of iterable is an operand position without an owning typed
@@ -1169,58 +942,6 @@ public class ControlFlowLoweringTest {
             label + ": the read admission and the FOR_EACH share one enclosing block");
     }
 
-    static void testTestlessForArm(SemanticLowerer.LoweringResult result) {
-        System.out.println("-- Test-less FOR: one CONST true in initBlock, update ops only --");
-
-        check(result != null && !result.hasErrors(),
-            "the test-less for lowers: "
-                + (result == null ? "null" : result.diagnostics()));
-        if (result == null || result.hasErrors()) {
-            return;
-        }
-        List<SemanticOp> ops = result.unit().ops();
-        List<SemanticOp> loops = ofKind(ops, SemanticOpKind.LOOP);
-        check(loops.size() == 1, "exactly one LOOP op; got " + loops.size());
-        if (loops.size() != 1) {
-            return;
-        }
-        SemanticOp loop = loops.get(0);
-        KindPayload.LoopPayload payload = (KindPayload.LoopPayload) loop.payload();
-        check(payload.selector() == ControlSelector.FOR,
-            "the LOOP selector is FOR");
-        StructuredBodyTable table = result.table();
-        List<OpId> initOps = table.blockOps().get(payload.initBlock());
-        List<OpId> updateOps = table.blockOps().get(payload.updateBlock());
-        List<OpId> bodyOps = table.blockOps().get(payload.bodyBlock());
-        check(initOps.size() == 1,
-            "initBlock carries exactly one op — the CONST true condition production; got "
-                + initOps.size());
-        SemanticOp constTrue = opById(ops, initOps.get(0));
-        check(constTrue.kind() == SemanticOpKind.CONST
-                && constTrue.payload() instanceof KindPayload.ConstPayload constPayload
-                && constPayload.value().equals(new ScalarValue.Boolean(true)),
-            "the single initBlock op is the CONST with the boolean value true");
-        check(constTrue.resultType().equals(RuntimeDescriptor.Boolean.INSTANCE),
-            "the CONST true resultType is D(boolean)");
-        check(constTrue.origin().kind() == SourceOriginKind.SYNTHETIC,
-            "the CONST true condition production is SYNTHETIC (no source test)");
-        check(payload.condition().equals(constTrue.result()),
-            "the payload condition is the CONST true's result, produced once");
-        check(updateOps.isEmpty(),
-            "updateBlock carries only the update ops — zero for the update-less test-less "
-                + "row (no condition-producing op appears)");
-        check(bodyOps.size() == 1,
-            "bodyBlock carries exactly the BREAK; got " + bodyOps.size());
-        SemanticOp breakOp = opById(ops, bodyOps.get(0));
-        check(breakOp.kind() == SemanticOpKind.BREAK,
-            "the body op is the BREAK");
-        check(loop.opId().equals(((KindPayload.BreakPayload) breakOp.payload()).loopId()),
-            "the BREAK targets the LOOP op");
-        check(loop.opId().equals(breakOp.origin().parentOpId()),
-            "the BREAK records the LOOP as parentOpId");
-        check(ops.indexOf(loop) == 0,
-            "the LOOP op precedes its child block ops in the unit list");
-    }
 
     static void testForEachArrayValuesArm() {
         System.out.println("-- FOR_EACH(ARRAY_VALUES): iterable once, fresh binding, break target --");
@@ -1861,8 +1582,7 @@ public class ControlFlowLoweringTest {
     }
 
     static void testValidatorNegatives() {
-        SemanticLowerer.LoweringResult result = lowerDetected(checkSlice("for (;;) { break; }"));
-        testTestlessForArm(result);
+        SemanticLowerer.LoweringResult result = lowerDetected(checkSlice("{  while (true) { { break; }  } }"));
     }
 
     private record FlowCase(String name, String rule, String detail,
@@ -1913,11 +1633,7 @@ public class ControlFlowLoweringTest {
     }
 
     private static void testValidatorMutationMatrix() {
-        CheckedSlice source = checkSlice("""
-            if (true) { "x"; } else { "y"; }
-            for (;;) { if (true) { try { break; } catch (e) { continue; } } else { "tail"; } }
-            for (;;) { break; }
-            """);
+        CheckedSlice source = checkSlice("if (true) { \"x\"; } else { \"y\"; }\n{  while (true) { { if (true) { try { break; } catch (e) { {  continue; } } } else { \"tail\"; } }  } }\n{  while (true) { { break; }  } }\n");
         SemanticLowerer.LoweringResult produced = lowerDetected(source);
         check(!produced.hasErrors(), "source mutation seed lowers: " + produced.diagnostics());
         if (produced.hasErrors()) { return; }
@@ -2108,7 +1824,7 @@ public class ControlFlowLoweringTest {
     private static void testFunctionRootProducerOrder() {
         System.out.println("-- Function roots: the first missing body follows producer order --");
         SemanticLowerer.LoweringResult produced =
-            lowerDetected(checkSlice("for (;;) { break; }"));
+            lowerDetected(checkSlice("{  while (true) { { break; }  } }"));
         check(produced != null && !produced.hasErrors(),
             "the function-root order seed lowers: "
                 + (produced == null ? "null" : produced.diagnostics()));
@@ -2453,14 +2169,7 @@ public class ControlFlowLoweringTest {
             "the closed ConstructKind set carries exactly its 23 pinned values; got "
                 + ConstructKind.values().length);
 
-        CheckedSlice slice = checkSlice("""
-            if (true) {}
-            while (false) { break; }
-            for (;;) { continue; }
-            for (let x: int of [1]) {}
-            try {} catch (e) { throw e; }
-            "probe";
-            """);
+        CheckedSlice slice = checkSlice("if (true) {}\nwhile (false) { break; }\n{  while (true) { { {  continue; } }  } }\nfor (let x: int of [1]) {}\ntry {} catch (e) { throw e; }\n\"probe\";\n");
         if (slice == null) {
             return;
         }
@@ -2521,14 +2230,7 @@ public class ControlFlowLoweringTest {
     static void testDeterminism() {
         System.out.println("-- Determinism: byte-identical repeated lowerings --");
 
-        CheckedSlice slice = checkSlice("""
-            while (({b: true}).b = false) {
-              if (({f: true}).f) { "a"; }
-              for (;;) { break; }
-            }
-            try {} catch (e) { throw e; }
-            for (let x: int of [1, 2]) { continue; }
-            """);
+        CheckedSlice slice = checkSlice("while (({b: true}).b = false) {\n  if (({f: true}).f) { \"a\"; }\n  {  while (true) { { break; }  } }\n}\ntry {} catch (e) { throw e; }\nfor (let x: int of [1, 2]) { continue; }\n");
         if (slice == null) {
             return;
         }
@@ -2580,8 +2282,6 @@ public class ControlFlowLoweringTest {
         testLogicalShortCircuitArm();
         testLogicalChainedNesting();
         testWhileArm();
-        testForArm();
-        testNarrowedLogicalForCondition();
         testNarrowedForOfIterableAdmission();
         testForEachArrayValuesArm();
         testTryCatchThrowArm();

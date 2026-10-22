@@ -105,10 +105,10 @@ export function main(): null {
       conditionHits = conditionHits + 1;
       break;
     }
-    for (; flag; ) {
+    {  while (flag) { {
       conditionHits = conditionHits + 1;
       break;
-    }
+    }  } }
     expectEqual("boolean condition positions", conditionHits, 3);
     if (false || flag) {
       conditionHits = conditionHits + 1;
@@ -120,20 +120,20 @@ export function main(): null {
     // loop here would be a re-produced condition that ignores the
     // comparison).
     let rightSteps: int = 0;
-    for (let step: int = 0; step < 1 && flag; step = step + 1) {
+    { let v14Loop0: int = 0; while (v14Loop0 < 1 && flag) { let step: int = v14Loop0; {
       rightSteps = rightSteps + 1;
       if (rightSteps > 3) {
         break;
       }
-    }
+    } v14Loop0 = step; v14Loop0 = v14Loop0 + 1; } }
     expectEqual("logical for condition (read on the right)", rightSteps, 1);
     let leftSteps: int = 0;
-    for (let step: int = 0; flag && step < 1; step = step + 1) {
+    { let v14Loop1: int = 0; while (flag && v14Loop1 < 1) { let step: int = v14Loop1; {
       leftSteps = leftSteps + 1;
       if (leftSteps > 3) {
         break;
       }
-    }
+    } v14Loop1 = step; v14Loop1 = v14Loop1 + 1; } }
     expectEqual("logical for condition (read on the left)", leftSteps, 1);
   }
   let name: string | null = "Ada";
@@ -265,27 +265,27 @@ export function main(): null {
     }
     expectEqual("boolean while condition raised", caught, 2);
     try {
-      for (; flag; ) {
+      {  while (flag) { {
         expectNoError("boolean for condition");
-      }
+      }  } }
     } catch (e) {
       expectCaught(e, "boolean for condition", "E8001");
       caught = caught + 1;
     }
     expectEqual("boolean for condition raised", caught, 3);
     try {
-      for (let step: int = 0; step < 1 && flag; step = step + 1) {
+      { let v14Loop2: int = 0; while (v14Loop2 < 1 && flag) { let step: int = v14Loop2; {
         expectNoError("logical for condition (read on the right)");
-      }
+      } v14Loop2 = step; v14Loop2 = v14Loop2 + 1; } }
     } catch (e) {
       expectCaught(e, "logical for condition (read on the right)", "E8001");
       caught = caught + 1;
     }
     expectEqual("logical for condition (read on the right) raised", caught, 4);
     try {
-      for (let step: int = 0; flag && step < 1; step = step + 1) {
+      { let v14Loop3: int = 0; while (flag && v14Loop3 < 1) { let step: int = v14Loop3; {
         expectNoError("logical for condition (read on the left)");
-      }
+      } v14Loop3 = step; v14Loop3 = v14Loop3 + 1; } }
     } catch (e) {
       expectCaught(e, "logical for condition (read on the left)", "E8001");
       caught = caught + 1;

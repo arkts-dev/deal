@@ -16,9 +16,7 @@ import deal.ast.Either;
 import deal.ast.ExportDeclaration;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.HasExpr;
@@ -160,14 +158,6 @@ public final class SemanticLowerer {
 
     public static final long INITIAL_LOOP_GENERATION = 0L;
 
-    /**
-     * The generation of a for-let loop's per-iteration incarnation (B1):
-     * the body block's {@code BINDING_ALLOC}, the cell a body store writes
-     * and a body closure captures. The iteration's final value reaches the
-     * loop-carried counter ({@link #INITIAL_LOOP_GENERATION}) through the
-     * update block's carry transfer before the update and the next test.
-     */
-    public static final long PER_ITERATION_GENERATION = 1L;
 
     public static final String CLASS_DEFAULT_CAPTURE = "CLASS_DEFAULT_CAPTURE";
 
@@ -189,21 +179,7 @@ public final class SemanticLowerer {
         RECURSIVE_GROUP_INIT
     }
 
-    /**
-     * One incarnation fact of the binding-core walk: the static
-     * per-binding generation ordinal (assigned in lowering order starting
-     * at 0), the block the incarnation's producing allocation sits in,
-     * the default cell kind ({@code DIRECT} everywhere except the pinned
-     * special cases — for-let per-iteration incarnations and
-     * {@code FOR_EACH} iteration bindings are {@code SHARED_CELL}), the
-     * reassignability fact recorded independently of the cell kind, the
-     * producing-allocation kind, and the pinned-shared-cell marker of the
-     * closed special cases. The <em>final</em> cell kind of an incarnation
-     * is derived by {@link CellKindDerivation} over the union of the
-     * pinned special cases and the registered capture references — every
-     * {@code BINDING_ALLOC} payload and every facts-surface cell kind
-     * flows through that one derivation.
-     */
+
     public record BindingCoreIncarnation(long generation, BlockId scope,
                                          BindingCellKind cellKind, boolean mutable,
                                          BindingProducer producer,
@@ -3395,18 +3371,7 @@ public final class SemanticLowerer {
         private final ArrayDeque<List<SemanticOp>> emitTargets = new ArrayDeque<>();
 
         private BindingSiteResolver bindingSiteResolver;
-        /**
-         * The binding environment's scope frames (binding-core mode),
-         * innermost first: each frame maps a declared name to the
-         * incarnation dominant <em>within that frame</em> — the frame
-         * entry snapshots the dominant incarnation of the name at frame
-         * entry, a registration during the frame replaces the entry, and
-         * resolution walks the frames innermost-first. This keeps the
-         * for-let's update block resolving the generation-0 counter after
-         * the body frame (whose entry names generation 1) is popped.
-         * Every cell ever registered stays recorded in
-         * {@link #bindingCells}.
-         */
+
         private final List<Map<String, FrameEntry>> bindingScopes = new ArrayList<>();
         /**
          * The checker's per-scoped-statement symbol tables, innermost
@@ -3421,11 +3386,7 @@ public final class SemanticLowerer {
          * mode): the fact surface backing {@link #bindingFacts()}.
          */
         private final List<BindingCell> bindingCells = new ArrayList<>();
-        /**
-         * The registered binding cells by {@link BindingId}: a binding's
-         * multiple incarnations (the for-let counter and its per-iteration
-         * incarnation share one identity) append to exactly one cell.
-         */
+
         private final Map<BindingId, BindingCell> cellsById = new LinkedHashMap<>();
         /**
          * The current structured-region block identities of the binding
@@ -3939,14 +3900,7 @@ public final class SemanticLowerer {
                 left.transfers() || right.transfers());
         }
 
-        /**
-         * Whether one expression is the literal boolean {@code true} —
-         * the source {@code while (true)} and {@code for (; true; …)}
-         * condition of the closed terminator analysis. A test-less
-         * {@code for (;;)} carries no condition expression; its synthetic
-         * {@code CONST true} production makes it literal-true by
-         * construction (see {@link #lowerForStatement}).
-         */
+
         private static boolean isLiteralTrue(ExpressionNode expression) {
             return expression instanceof LiteralExpr literal
                 && literal.value() instanceof LiteralValue.BooleanLiteral bool
@@ -5136,19 +5090,11 @@ public final class SemanticLowerer {
             return true;
         }
 
-        /**
-         * The binding walk's non-function statement arms (shared by the
-         * binding/closure walk and the group walk): let declarations,
-         * the two-incarnation for-let shape, for-of iteration bindings,
-         * try/catch bindings, import aliases (hoisted — no position
-         * ops), nested blocks, and assignment expression statements.
-         * Every other statement is a foreign construct in this child's
-         * window ({@link ConstructUnlowered}).
-         */
+
         private void lowerBindingStatement(StatementNode statement) {
             switch (statement) {
                 case VariableDeclaration decl -> lowerBindingVarDecl(decl);
-                case ForStatement forStatement -> lowerBindingForLet(forStatement);
+
                 case ForOfStatement forOf -> lowerBindingForOf(forOf);
                 case TryStatement tryStatement -> lowerBindingTry(tryStatement);
                 case ImportDeclaration ignored -> {
@@ -5185,14 +5131,7 @@ public final class SemanticLowerer {
             }
         }
 
-        /**
-         * The binding walk's expression-statement arm: exactly assignment
-         * statements lower (the variable-assignment {@code BINDING_STORE}
-         * commit naming the dominant incarnation is this child's op; the
-         * chain's committed-value result is dropped exactly like the
-         * for-let update block's — no {@code DISCARD}, which is E5's).
-         * Every other expression statement is a foreign construct.
-         */
+
         private void lowerBindingExprStatement(
                 deal.ast.ExpressionStatement statement) {
             if (!(statement.expr() instanceof AssignmentExpr)) {
@@ -6268,18 +6207,7 @@ public final class SemanticLowerer {
             lowerDeclaredInitializer(decl, binding, incarnation);
         }
 
-        /**
-         * The shared declaration-initializer production behind every
-         * {@code let} position this walk lowers — the statement walk's
-         * declaration arm and the for-let counter's loop-head
-         * declaration (the counter is a {@code let} of the for-head
-         * scope, and the grammar imposes no initializer-type
-         * restriction on it): the initializer's value ops (the adapted
-         * production at an assignable-but-not-exact function position),
-         * the declaration boundary of an annotated declaration, the
-         * incarnation's tracked function identity, and exactly one
-         * generation-0 {@code BINDING_INIT}.
-         */
+
         private void lowerDeclaredInitializer(VariableDeclaration decl, BindingId binding,
                                               BindingCoreIncarnation incarnation) {
             if ((shapeMapAnalysis || e7Calls) && declaredTypeOf(decl) instanceof Type.Func) {
@@ -6425,45 +6353,7 @@ public final class SemanticLowerer {
                 resolution.entry().incarnation().generation());
         }
 
-        /**
-         * The shape-map child's adapted {@code let} declaration production
-         * (B6-B9), shared by the statement walk's declaration arm and the
-         * for-let counter's loop-head declaration (the position's
-         * {@code BINDING_ALLOC} is the caller's):
-         * the closed mode map selects exactly one mode from checker
-         * facts (B7), the per-mode payload is built from birth (B8),
-         * and exactly one {@code FUNCTION_ADAPT} op is emitted before
-         * the position's boundary — its result wired as the direct
-         * input of exactly the position's own
-         * {@code VARIABLE_DECLARATION} boundary chain (the boundary
-         * observes an exact-signature adapter value and passes), or as
-         * the {@code BINDING_INIT} operand of an inferred declaration
-         * (no boundary op exists there). The adapter emits zero
-         * {@code BOUNDARY} ops of its own; its fresh allocation
-         * identity registers exactly one {@code AdapterBinding}
-         * through the registry child's seam; the cell's tracked
-         * function identity becomes the adapter identity (loads/reads/
-         * passes/returns preserve it).
-         *
-         * <p><b>Per-mode creation (B8, exactly).</b> VALUE completes its
-         * single operand at creation — the {@code CLOSURE_NEW} result,
-         * the intrinsic function-value identity, or the single proved
-         * {@code BINDING_LOAD} at the proof's generation — and retains
-         * that identity; the payload's {@code proof} is present iff the
-         * operand is a binding load. SHARED_CELL evaluates nothing and
-         * records {@code SharedCell {binding, generation}} naming the
-         * dominant incarnation at the position; the incarnation joins
-         * the B2 cell-kind derivation's capture-reference union (the
-         * shape-map child's SHARED_CELL arm). REEVALUATE_THUNK
-         * evaluates nothing at the creation site: the source
-         * expression's already-lowered ops live only inside a fresh
-         * detached thunk block whose {@code capturedBindings} pin the
-         * thunk's free bindings, generation-pinned, ordered by first
-         * reference (the thunk builder's production; the captures join
-         * the B2 derivation through the walk's registration surface —
-         * the shape-map child's thunk arm).</p>
-         *
-         */
+
         private void lowerAdaptedDeclInitializer(VariableDeclaration decl, BindingId binding,
                                                  BindingCoreIncarnation incarnation) {
             Type.Func sourceType = (Type.Func) producedType(decl.initializer());
@@ -7530,259 +7420,6 @@ public final class SemanticLowerer {
                 + "producer defect)", function.span());
         }
 
-        private void lowerBindingForLet(ForStatement statement) {
-            if (statement.init().isEmpty()
-                    || !(statement.init().get() instanceof ForInit.VarDecl varDecl)) {
-                throw new ConstructUnlowered("for statement without a let initializer "
-                    + "(the binding-core child lowers exactly the for-let shape; a "
-                    + "non-let for is the control-flow epic's)", statement.span());
-            }
-            if (statement.update().isPresent()
-                    && !(statement.update().get() instanceof AssignmentExpr)) {
-                ExpressionNode update = statement.update().get();
-                throw new ConstructUnlowered("for-let update expression "
-                    + update.getClass().getSimpleName()
-                    + " (the pinned shape is the assignment chain in the update block; "
-                    + "another update shape is outside this child's window)", update.span());
-            }
-            VariableDeclaration decl = varDecl.decl();
-            BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);
-            Type counterType = counterTypeOf(statement, decl);
-            // The counter's own result descriptor (D2): the declared type
-            // annotation when the counter declares one, the counter
-            // declaration itself for an inferred type. The function-typed
-            // row is an ordinary declaration descriptor — the grammar
-            // imposes no initializer-type restriction on a for-head `let`
-            // (docs/spec-v1.3.md §For, C-style: `ForInit ::= 'let'
-            // Identifier TypeAnnotation? '=' Expression`), so the counter
-            // cell, its carry loads and the calls through it carry the
-            // exact checked signature.
-            RuntimeDescriptor counterResultDescriptor = counterDescriptor(counterType, decl);
-            boolean functionCounter = closureCore
-                && counterResultDescriptor instanceof RuntimeDescriptor.Func;
-            BlockId initBlock = allocateBlock();
-            BlockId bodyBlock = allocateBlock();
-            BlockId updateBlock = allocateBlock();
-            ValueId conditionSlot = null;
-            OpId forLetLoopOpId = null;
-            if (fullProgram) {
-                // The LOOP op lives in the ENCLOSING block (the validator's
-                // block tree admits no self-reference) and the condition
-                // value slot is allocated upfront: both the init-block
-                // first production and the update-block re-production
-                // publish this one slot (C-D4).
-                conditionSlot = ids.nextValueId(module, nextOrdinal++, 0);
-                AnchorId loopAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-                forLetLoopOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                SourceOrigin loopOrigin = new SourceOrigin(sourceId,
-                    toSourceSpan(statement.span()), SourceOriginKind.USER, loopAnchor,
-                    currentParent());
-                emit(buildOp(forLetLoopOpId, SemanticOpKind.LOOP,
-                    new KindPayload.LoopPayload(ControlSelector.FOR, initBlock,
-                        conditionSlot, bodyBlock, updateBlock),
-                    null, null, FailurePolicyId.NO_DEAL_FAILURE, loopOrigin));
-                pushLoopTarget(forLetLoopOpId);
-            }
-            checkerScopeNodes.push(statement);
-            pushBindingFrame();
-            blockStack.push(initBlock);
-            BindingCoreIncarnation counterIncarnation = new BindingCoreIncarnation(
-                INITIAL_LOOP_GENERATION, initBlock, BindingCellKind.DIRECT,
-                true, BindingProducer.BINDING_ALLOC, false);
-            // Init block: the counter ALLOC, the initializer value ops,
-            // the counter INIT, then the first condition production
-            // (init-block members — C-D4). The loop-head let is not
-            // visible to its own initializer (docs/spec-v1.3.md
-            // §Name resolution — Declaration order): the counter registers after the
-            // initializer, so a same-named enclosing binding is read
-            // through exactly as the checker resolved it.
-            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
-                new KindPayload.BindingAllocPayload(counter, initBlock, true,
-                    cellKinds.cellKindOf(counterIncarnation), INITIAL_LOOP_GENERATION),
-                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            if (functionCounter) {
-                // A function-typed counter is a `let` declaration of the
-                // loop-head scope: the shared declaration-initializer
-                // production stores a value of the declared signature at
-                // the position (the adapted production at an
-                // assignable-but-not-exact initializer, the annotated
-                // declaration boundary and the tracked function identity)
-                // and registers the counter after its own initializer.
-                lowerDeclaredInitializer(decl, counter, counterIncarnation);
-            } else {
-                ValueId initializer = lowerExpression(decl.initializer());
-                registerBinding(decl.name(), counter, counterIncarnation);
-                emitUserNullOp(SemanticOpKind.BINDING_INIT,
-                    new KindPayload.BindingInitPayload(counter, INITIAL_LOOP_GENERATION,
-                        initializer),
-                    decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            }
-            ValueId condition;
-            if (statement.condition().isPresent()) {
-                condition = fullProgram
-                    ? emitNarrowedConditionCheck(statement.condition().get(),
-                        lowerExpression(statement.condition().get(), conditionSlot))
-                    : emitNarrowedConditionCheck(statement.condition().get(),
-                        lowerExpression(statement.condition().get()));
-            } else {
-                // The test-less FOR row of the for-let arm: exactly one
-                // CONST true in the init block as the condition production
-                // (SYNTHETIC, the statement span), publishing the one
-                // condition slot under the full-program session — a
-                // constant needs no per-iteration re-production.
-                condition = emitValueOpWith(SemanticOpKind.CONST,
-                    new KindPayload.ConstPayload(new ScalarValue.Boolean(true)),
-                    statement.span(),
-                    ContainerPayloadDescriptors.resultDescriptorOf(
-                        Type.Boolean.INSTANCE),
-                    FailurePolicyId.NO_DEAL_FAILURE, conditionSlot,
-                    SourceOriginKind.SYNTHETIC);
-            }
-
-            blockStack.pop();
-            if (!fullProgram) {
-                emitUserNullOp(SemanticOpKind.LOOP,
-                    new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
-                        bodyBlock, updateBlock),
-                    statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            }
-            // Body block: the per-iteration incarnation (generation 1,
-            // SHARED_CELL) at the body top, INIT from the generation-0
-            // load, then the body statements (dominant generation 1).
-            blockStack.push(bodyBlock);
-            checkerScopeNodes.push(statement.body());
-            pushBindingFrame();
-            BindingCoreIncarnation perIteration = new BindingCoreIncarnation(
-                PER_ITERATION_GENERATION, bodyBlock, BindingCellKind.SHARED_CELL, true,
-                BindingProducer.BINDING_ALLOC, true);
-            registerBinding(decl.name(), counter, perIteration);
-            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
-                new KindPayload.BindingAllocPayload(counter, bodyBlock, true,
-                    cellKinds.cellKindOf(perIteration), PER_ITERATION_GENERATION),
-                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId carry = emitForLetCounterLoad(counter, decl.name(),
-                INITIAL_LOOP_GENERATION, decl.span(), counterResultDescriptor);
-            emitUserNullOp(SemanticOpKind.BINDING_INIT,
-                new KindPayload.BindingInitPayload(counter, PER_ITERATION_GENERATION,
-                    carry),
-                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            if (functionCounter) {
-                // The per-iteration cell's function identity is the value
-                // the carry load published: the cell's INIT commits it, so
-                // a body read (and a call through it) resolves the same
-                // identity — identity preservation, exactly like the
-                // declaration arm. A body store updates this entry through
-                // the assignment chain, and an assigned counter's reads
-                // never consult it ({@link #assignedFunctionBinding}).
-                functionIdentity.put(perIteration, carry);
-            }
-            statementWalk.walk(statement.body().statements(), false);
-            // The composite marking of the for-let loop arm (D3): a
-            // literal-true condition whose body exits only by
-            // return/throw makes the loop non-completing, exactly like the
-            // plain for/while arms (the body block's state is read before
-            // the pops; the enclosing block is marked after).
-            BlockExitState forLetBodyExit = exitStateOf(bodyBlock);
-            boolean forLetLiteralTrue = statement.condition().isEmpty()
-                || isLiteralTrue(statement.condition().get());
-            if (forLetLoopOpId != null) {
-                popLoopTarget();
-            }
-            popBindingFrame();
-            checkerScopeNodes.pop();
-            blockStack.pop();
-            if (forLetLiteralTrue
-                    && forLetBodyExit == BlockExitState.RETURN_OR_THROW) {
-                markExit(currentBlock(), BlockExitState.RETURN_OR_THROW);
-            }
-            // Update block: the per-iteration carry transfer, then the
-            // update's assignment chain, then the condition re-production
-            // (update-block members — C-D4; the update and the re-test
-            // reference the generation-0 counter).
-            //
-            // The carry transfer is the for→while desugaring's last step
-            // of one iteration: the value the body leaves in the
-            // per-iteration incarnation (generation 1) becomes the
-            // loop-carried counter's value (generation 0) before the
-            // update and the next test run, exactly like the spec's
-            // `for (let i = …; test; update) body` desugaring whose
-            // fresh iteration binding copies the finished iteration's
-            // value before the increment. A body store — a plain
-            // assignment, a store issued by a closure the body created, or
-            // a store on a `continue` path — therefore feeds the
-            // iteration's update and the subsequent condition instead of
-            // being dropped when the iteration ends. The copy reads the
-            // body cell's current value and writes the counter cell; the
-            // body's own incarnation keeps its identity, so a closure
-            // created in an earlier iteration still observes that
-            // iteration's value (binding capture, never a by-value
-            // snapshot). Return and throw leave the body without reaching
-            // this block (no update runs), and a `break` jumps past it.
-            blockStack.push(updateBlock);
-            ValueId carriedBodyValue = emitForLetCounterLoad(counter, decl.name(),
-                PER_ITERATION_GENERATION, decl.span(), counterResultDescriptor);
-            emitUserNullOp(SemanticOpKind.BINDING_STORE,
-                new KindPayload.BindingStorePayload(counter, INITIAL_LOOP_GENERATION,
-                    carriedBodyValue),
-                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            if (statement.update().isPresent()) {
-                lowerExpression(statement.update().get());
-            }
-            if (statement.condition().isPresent() && fullProgram) {
-                // The update-block condition re-production publishes the
-                // one condition slot (C-D4; the test-less row's synthetic
-                // constant needs no re-production) — the refinement
-                // validation included, so every iteration's condition
-                // value is admitted.
-                emitNarrowedConditionCheck(statement.condition().get(),
-                    lowerExpression(statement.condition().get(), conditionSlot));
-            } else if (statement.condition().isPresent()) {
-                emitNarrowedConditionCheck(statement.condition().get(),
-                    lowerExpression(statement.condition().get()));
-            }
-            blockStack.pop();
-            popBindingFrame();
-            checkerScopeNodes.pop();
-        }
-
-        /**
-         * One synthetic for-let counter carry load (the body-top
-         * generation-0 read and the update block's generation-1 read) with
-         * the shared function-typed resolution every function-typed cell
-         * read uses: a function-typed counter the declaring function body
-         * assigns anywhere — the loop's own update included — carries no
-         * statically tracked allocation identity, so the load publishes the
-         * producer rule's dynamic materialization keyed by its own identity
-         * (M2 item 2's typed-binding-load arm: the current-binding read the
-         * calls resolve at execution), while a never-assigned
-         * function-typed counter republishes the tracked allocation identity
-         * (identity preservation; R-FUNCTION-BINDING holds by construction).
-         * A non-function counter keeps the plain synthetic load: no
-         * registration, a fresh value identity.
-         */
-        private ValueId emitForLetCounterLoad(BindingId counter, String name,
-                                              long generation, Span span,
-                                              RuntimeDescriptor descriptor) {
-            ValueId value = descriptor instanceof RuntimeDescriptor.Func
-                    && !assignedBinding(counter, name)
-                ? identityOfIncarnation(counter, generation) : null;
-            boolean trackedIdentity = value != null;
-            if (!trackedIdentity) {
-                value = ids.nextValueId(module, nextOrdinal++, 0);
-            }
-            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
-                SourceOriginKind.SYNTHETIC, anchor, null);
-            emit(buildOp(opId, SemanticOpKind.BINDING_LOAD,
-                new KindPayload.BindingLoadPayload(counter, generation), value,
-                descriptor, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE,
-                origin));
-            if (!trackedIdentity) {
-                registerDynamicMaterialization(value, opId, descriptor);
-            }
-            return value;
-        }
 
         private void lowerBindingForOf(ForOfStatement statement) {
             Type iterableType = checkedType(statement.iterable());
@@ -8062,38 +7699,7 @@ public final class SemanticLowerer {
                     walkReferenceExpr(whileStatement.condition(), bound, references);
                     walkReferenceBlock(whileStatement.body(), bound, references);
                 }
-                case ForStatement forStatement -> {
-                    // The loop-head let is visible only after its
-                    // declaration: the initializer is a free reference
-                    // resolved in the enclosing scope (the checker's
-                    // declaration-order rule), and the loop variable
-                    // binds for the condition, the update, and the body.
-                    if (forStatement.init().isPresent()) {
-                        ForInit init = forStatement.init().get();
-                        switch (init) {
-                            case ForInit.VarDecl varDecl ->
-                                walkReferenceExpr(varDecl.decl().initializer(), bound,
-                                    references);
-                            case ForInit.AssignExpr assignExpr ->
-                                walkReferenceExpr(assignExpr.expr(), bound, references);
-                        }
-                    }
-                    Set<String> loopBound = bound;
-                    if (forStatement.init().isPresent()
-                            && forStatement.init().get() instanceof ForInit.VarDecl varDecl) {
-                        loopBound = new HashSet<>(bound);
-                        loopBound.add(varDecl.decl().name());
-                    }
-                    if (forStatement.condition().isPresent()) {
-                        walkReferenceExpr(forStatement.condition().get(), loopBound,
-                            references);
-                    }
-                    if (forStatement.update().isPresent()) {
-                        walkReferenceExpr(forStatement.update().get(), loopBound,
-                            references);
-                    }
-                    walkReferenceBlock(forStatement.body(), loopBound, references);
-                }
+
                 case ForOfStatement forOf -> {
                     // The iterable resolves in the parent scope; the loop
                     // variable binds only inside the body's scope chain.
@@ -8235,24 +7841,7 @@ public final class SemanticLowerer {
                     collectAssignedNames(whileStatement.condition(), assigned);
                     collectAssignedNames(whileStatement.body().statements(), assigned);
                 }
-                case ForStatement forStatement -> {
-                    if (forStatement.init().isPresent()) {
-                        switch (forStatement.init().get()) {
-                            case ForInit.VarDecl varDecl ->
-                                collectAssignedNames(varDecl.decl().initializer(),
-                                    assigned);
-                            case ForInit.AssignExpr assignExpr ->
-                                collectAssignedNames(assignExpr.expr(), assigned);
-                        }
-                    }
-                    if (forStatement.condition().isPresent()) {
-                        collectAssignedNames(forStatement.condition().get(), assigned);
-                    }
-                    if (forStatement.update().isPresent()) {
-                        collectAssignedNames(forStatement.update().get(), assigned);
-                    }
-                    collectAssignedNames(forStatement.body().statements(), assigned);
-                }
+
                 case ForOfStatement forOf -> {
                     collectAssignedNames(forOf.iterable(), assigned);
                     collectAssignedNames(forOf.body().statements(), assigned);
@@ -8358,41 +7947,6 @@ public final class SemanticLowerer {
             return checkedType(decl.initializer());
         }
 
-        /**
-         * The for-let counter's declared type: resolved from the
-         * checker's for-scope symbol table (the counter symbol, inferred
-         * type included), falling back to the initializer's checked type.
-         */
-        private Type counterTypeOf(ForStatement statement, VariableDeclaration decl) {
-            Map<StatementNode, SymbolTable> scopeMap = checks.scopeMap();
-            SymbolTable scope = scopeMap.get(statement);
-            if (scope != null) {
-                Symbol symbol = scope.resolveLocal(decl.name());
-                if (symbol instanceof Symbol.VariableSymbol variable
-                        && variable.type() != null) {
-                    return variable.type();
-                }
-            }
-            return checkedType(decl.initializer());
-        }
-
-        /**
-         * The for-let counter's own result descriptor (D2): the shared
-         * container-payload derivation with the counter's owning range
-         * attached — the declared type annotation when the counter
-         * declares one, the counter declaration itself for an inferred
-         * type. An already attached (inner) range always wins.
-         */
-        private RuntimeDescriptor counterDescriptor(Type counterType,
-                VariableDeclaration decl) {
-            try {
-                return ContainerPayloadDescriptors.resultDescriptorOf(counterType);
-            } catch (ContainerPayloadDescriptors.Defect defect) {
-                Span ownerSpan = decl.typeAnnotation().isPresent()
-                    ? decl.typeAnnotation().get().span() : decl.span();
-                throw defect.withRange(ownerSpan.range());
-            }
-        }
 
         /**
          * The innermost checker scope for declared-type resolution: the
@@ -8441,12 +7995,7 @@ public final class SemanticLowerer {
             return assignedBinding(entry.cell().id, entry.cell().name);
         }
 
-        /**
-         * True iff the named binding of this identity is assigned anywhere
-         * in its declaring function body (the {@link #assignedFunctionBinding}
-         * fact, addressed by cell identity and name — the form the
-         * for-let counter's synthetic carry loads resolve).
-         */
+
         private boolean assignedBinding(BindingId binding, String name) {
             Set<String> assigned = assignedNamesOfBinding.get(binding);
             return assigned != null && assigned.contains(name);
@@ -8466,14 +8015,7 @@ public final class SemanticLowerer {
             bindingScopes.remove(0);
         }
 
-        /**
-         * Registers one incarnation of a declared name: the first
-         * registration of a {@link BindingId} allocates its cell; later
-         * incarnations of the same identity (the for-let counter's
-         * per-iteration incarnation) append to the same cell, and a
-         * shadowing redeclaration (a new {@link BindingId}) creates a new
-         * cell and replaces the innermost frame entry.
-         */
+
         private void registerBinding(String name, BindingId binding,
                                      BindingCoreIncarnation incarnation) {
             BindingCell cell = cellsById.get(binding);
@@ -8744,20 +8286,7 @@ public final class SemanticLowerer {
             return lowerExpression(expr, null);
         }
 
-        /**
-         * Lowers one checked expression through the D1 shape map with an
-         * explicit result slot: the expression's final producing op
-         * publishes {@code slot} instead of a fresh {@link ValueId}
-         * ({@code null} allocates one). The pinned use is the
-         * {@code LOOP(FOR)} condition re-production — the
-         * {@code updateBlock} condition production re-publishes the
-         * {@code initBlock} production's condition {@code ValueId} (one
-         * value identity, the most recently produced value of the
-         * condition {@code ValueId} wins at execution). Only the final
-         * producing op takes the slot; every intermediate op allocates
-         * its own value.
-         *
-         */
+
         public ValueId lowerExpression(ExpressionNode expr, ValueId slot) {
             Objects.requireNonNull(expr, "expr must not be null");
             try {
@@ -13247,15 +12776,7 @@ public final class SemanticLowerer {
                     lowerWhileStatement(whileStatement);
                     continue;
                 }
-                if (statement instanceof ForStatement forStatement) {
-                    if (forStatement.init().isPresent()
-                            && forStatement.init().get() instanceof ForInit.VarDecl) {
-                        lowerBindingForLet(forStatement);
-                    } else {
-                        lowerForStatement(forStatement);
-                    }
-                    continue;
-                }
+
                 if (statement instanceof TryStatement tryStatement) {
                     lowerTryCatch(tryStatement);
                     continue;
@@ -13742,10 +13263,7 @@ public final class SemanticLowerer {
                     lowerWhileStatement(whileStatement);
                     continue;
                 }
-                if (statement instanceof ForStatement forStatement) {
-                    lowerForStatement(forStatement);
-                    continue;
-                }
+
                 if (statement instanceof TryStatement tryStatement) {
                     lowerTryCatch(tryStatement);
                     continue;
@@ -13917,107 +13435,6 @@ public final class SemanticLowerer {
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
         }
 
-        /**
-         * {@code LOOP(FOR)} — the for-statement arm (C-D4): the
-         * one-time {@code initBlock} carries the init ops (an
-         * assignment-expression initializer lowers through the address
-         * chain; a {@code let}-declared initializer is E6's
-         * {@code BINDING_ALLOC} and fails closed) and the first
-         * condition production; {@code updateBlock} carries the update
-         * ops then the condition-producing ops (the condition
-         * {@code ValueId} is produced once in {@code initBlock} and
-         * re-produced by the {@code updateBlock} production — one value
-         * identity, the most recently produced value wins at
-         * execution). Execution: {@code initBlock} once; repeat {
-         * condition; body; updateBlock }. A test-less {@code for (;;)}
-         * produces exactly one {@code CONST} op with the boolean value
-         * {@code true} in {@code initBlock} as the condition production
-         * ({@code SYNTHETIC}, the for-statement span) and
-         * {@code updateBlock} carries only the update ops — a constant
-         * needs no per-iteration re-production. The {@code LOOP} op
-         * precedes its child block ops in the unit list (payload order:
-         * init, body, update). Block ops record the {@code LOOP} as
-         * {@code parentOpId}.
-         */
-        private void lowerForStatement(ForStatement statement) {
-            BlockId initBlock = allocateBlock();
-            BlockId bodyBlock = allocateBlock();
-            BlockId updateBlock = allocateBlock();
-            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            ValueId condition = statement.condition().isPresent()
-                ? ids.nextValueId(module, nextOrdinal++, 0) : null;
-            int mark = emitTarget().size();
-            pushBlockParent(opId);
-            pushBlock(initBlock);
-            try {
-                statement.init().ifPresent(init -> {
-                    switch (init) {
-                        case ForInit.AssignExpr assign -> {
-                            lowerExpression(assign.expr());
-                        }
-                        case ForInit.VarDecl decl -> throw new ConstructUnlowered(
-                            "for-loop let-declared initializer (BINDING_ALLOC is E6's, "
-                                + "ISSUE-0235)", statement.span());
-                    }
-                });
-                if (statement.condition().isPresent()) {
-                    emitNarrowedConditionCheck(statement.condition().get(),
-                        lowerExpression(statement.condition().get(), condition));
-                } else {
-                    // The test-less FOR row: exactly one CONST true in
-                    // initBlock as the condition production.
-                    condition = emitValueOpWith(SemanticOpKind.CONST,
-                        new KindPayload.ConstPayload(new ScalarValue.Boolean(true)),
-                        statement.span(),
-                        ContainerPayloadDescriptors.resultDescriptorOf(
-                            Type.Boolean.INSTANCE),
-                        FailurePolicyId.NO_DEAL_FAILURE, null, SourceOriginKind.SYNTHETIC);
-                }
-            } finally {
-                popBlock();
-            }
-            pushBlock(bodyBlock);
-            pushLoopTarget(opId);
-            try {
-                walkScopedBody(statement.body());
-            } finally {
-                popLoopTarget();
-                popBlock();
-            }
-            // The composite marking (D3): a literal-true loop (a source
-            // `true` condition or the test-less row's synthetic CONST
-            // true) whose body exits only by return/throw cannot complete
-            // normally; a TRANSFER body (a break path) leaves the loop
-            // able to exit normally, so the enclosing block stays OPEN.
-            if ((statement.condition().isEmpty()
-                    || isLiteralTrue(statement.condition().get()))
-                    && exitStateOf(bodyBlock) == BlockExitState.RETURN_OR_THROW) {
-                markExit(currentBlock(), BlockExitState.RETURN_OR_THROW);
-            }
-            pushBlock(updateBlock);
-            try {
-                statement.update().ifPresent(update -> lowerExpression(update));
-                if (statement.condition().isPresent()) {
-                    // The per-iteration condition re-production: the same
-                    // condition ValueId, re-produced by the updateBlock
-                    // production (most recently produced value wins) — the
-                    // refinement validation included, so every iteration's
-                    // condition value is admitted.
-                    emitNarrowedConditionCheck(statement.condition().get(),
-                        lowerExpression(statement.condition().get(), condition));
-                }
-            } finally {
-                popBlock();
-            }
-            popBlockParent();
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
-                SourceOriginKind.USER, anchor, currentParent());
-            emitAt(mark, buildOp(opId, SemanticOpKind.LOOP,
-                new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
-                    bodyBlock, updateBlock),
-                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
-        }
 
         private void lowerTryCatch(TryStatement statement) {
             BlockId tryBlock = allocateBlock();
@@ -15208,30 +14625,12 @@ public final class SemanticLowerer {
             return emitNarrowedReadCheck(expr, lowerExpression(expr));
         }
 
-        /**
-         * The slot-threading variant of {@link #lowerOperand(ExpressionNode)}
-         * (the logical short-circuit arm's right operand publishes the
-         * enclosing slot): the read completes into the given slot and the
-         * refinement validation republishes its admitted value into that
-         * one identity, so the enclosing consumer keeps the pre-allocated
-         * value it named — a {@code LOOP(FOR)} condition stays one
-         * identity across the init-block production and the per-iteration
-         * update-block re-production, and the logical branch's result is
-         * that same condition value.
-         */
+
         private ValueId lowerOperand(ExpressionNode expr, ValueId slot) {
             return emitNarrowedReadCheck(expr, lowerExpression(expr, slot), slot);
         }
 
-        /**
-         * Admits one lowered condition value in place against the
-         * {@code NARROWED_READ} cell when the condition expression is a
-         * null-narrowing-refined identifier read: the read's own value
-         * identity is validated where it stands (the consuming
-         * {@code BRANCH}/{@code LOOP} carries that identity), so the
-         * per-iteration {@code LOOP(FOR)} condition re-production keeps
-         * publishing the one condition identity.
-         */
+
         private ValueId emitNarrowedConditionCheck(ExpressionNode expr, ValueId value) {
             if (!checks.narrowedReads().contains(expr)) {
                 return value;
@@ -15258,15 +14657,7 @@ public final class SemanticLowerer {
             return emitNarrowedReadCheck(expr, value, null);
         }
 
-        /**
-         * Admits one lowered operand value against the {@code NARROWED_READ}
-         * cell, publishing the admitted value into the caller's slot when
-         * one is given ({@code null} allocates a fresh result identity): a
-         * slot-threading consumer pre-allocated the value it consumes, so
-         * the validation must republish that one identity instead of a
-         * second one — the logical short-circuit arm's result and the
-         * {@code LOOP(FOR)} condition would otherwise diverge.
-         */
+
         private ValueId emitNarrowedReadCheck(ExpressionNode expr, ValueId value,
                                               ValueId slot) {
             if (!checks.narrowedReads().contains(expr)) {
@@ -15821,11 +15212,7 @@ public final class SemanticLowerer {
             return opId;
         }
 
-        /**
-         * Emits one value-producing SYNTHETIC op without operands (the
-         * for-let body-top generation-0 carry load — a synthetic step
-         * with no source expression of its own) and returns its value id.
-         */
+
         private ValueId emitSyntheticValueOp(SemanticOpKind kind, KindPayload payload,
                                              Span span, RuntimeDescriptor resultType,
                                              FailurePolicyId policy) {
@@ -15872,13 +15259,7 @@ public final class SemanticLowerer {
                 policy, null);
         }
 
-        /**
-         * Emits one value-producing USER op with the given result slot:
-         * the op publishes {@code slot} instead of a fresh value
-         * ({@code null} allocates one) — the pinned mechanism of the
-         * {@code LOOP(FOR)} condition re-production (one condition value
-         * identity, re-produced by each block execution).
-         */
+
         private ValueId emitOperandOp(SemanticOpKind kind, KindPayload payload,
                                       List<ValueId> operands,
                                       List<RuntimeDescriptor> operandTypes, Span span,
@@ -16033,8 +15414,7 @@ public final class SemanticLowerer {
                     "if statement (BRANCH(IF) is the E5 control-flow arm)";
                 case deal.ast.WhileStatement ignored ->
                     "while statement (LOOP(WHILE) is the E5 control-flow arm)";
-                case deal.ast.ForStatement ignored ->
-                    "for statement (LOOP(FOR) is the E5 control-flow arm)";
+
                 case deal.ast.ExpressionStatement ignored ->
                     "expression statement (DISCARD is the E5 control-flow arm)";
                 case deal.ast.ImportDeclaration ignored ->

@@ -5,10 +5,10 @@
 
 export function test_continue(): int {
   let sum: int = 0;
-  for (let i: int = 0; i < 5; i = i + 1) {
-    if (i === 2) { continue; }
+  { let v14Loop0: int = 0; while (v14Loop0 < 5) { let i: int = v14Loop0; {
+    if (i === 2) { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } }
     sum = sum + i;
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   // 0+1+3+4 = 8
   if (sum !== 8) {
     throw { code: "TEST_FAIL", message: "continue did not skip iteration i === 2" };

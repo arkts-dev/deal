@@ -4,7 +4,7 @@
 // @features: parser, semicolon, continue, loop
 
 export function main(): null {
-  for (let i: int = 0; i < 1; i = i + 1) {
+  while (true) {
     continue
   }
   return null;

@@ -5,12 +5,12 @@
 
 export function test_empty_for(): null {
   let count: int = 0;
-  for (;;) {
+  {  while (true) { {
     count = count + 1;
     if (count >= 3) {
       break;
     }
-  }
+  }  } }
   return null;
 }
 

@@ -3,4 +3,4 @@
 // @expected: compile-error E3007
 // @features: v1.2, frontend, reject
 
-export function f(): null {for(let i:int=0; 1; i=i+1) {break;} return null;}
+export function f(): null {{ let v14Loop0: int = 0; while (1) { let i: int = v14Loop0; {break;} v14Loop0 = i; v14Loop0=v14Loop0+1; } } return null;}

@@ -1128,60 +1128,7 @@ public class LoweringSupportTest {
                       return 1;
                     }
                     """,
-                "main.deal", """
-                    import * as time from "std/time";
-                    import * as helper from "./helper";
-
-                    export class Point {
-                      x: int = 1;
-                      y?: int;
-                    }
-
-                    async function asyncOne(): int { return 1; }
-
-                    export async function compute(a: int[]): int {
-                      let sum: int = 0;
-                      let n: number = 1.5;
-                      let s: string = "a" + "b";
-                      let t: string = `v${s}`;
-                      let neg: int = -sum;
-                      let eq: boolean = sum === 0 && n > 1.0;
-                      let arr: int[] = [1, 2];
-                      let obj: table = { k: 1 };
-                      let p: Point = { x: 2, y: 4 };
-                      p.y = 3;
-                      delete obj.k;
-                      if (has(p.y)) { sum = 1; } else { sum = 2; }
-                      let i: int = 0;
-                      while (i < a.length) {
-                        if (i > 5) { break; }
-                        sum = sum + a[i];
-                        i = i + 1;
-                      }
-                      for (let j: int = 0; j < 2; j = j + 1) {
-                        if (j === 1) { continue; }
-                        sum = sum + j;
-                      }
-                      for (let v: int of a) { sum = sum + v; }
-                      let f: () => int = function(): int { return 1; };
-                      let g: () => int = f;
-                      g();
-                      sum = sum + g();
-                      sum = sum + await asyncOne();
-                      sum = sum + helper.helperFn();
-                      let now: number = time.nowMillis();
-                      try {
-                        if (now < 0.0) { throw { code: "E", message: "x" }; }
-                      } catch (e) {
-                        sum = 9;
-                      }
-                      return sum;
-                    }
-
-                    export function main(): null {
-                      return null;
-                    }
-                    """), "main.deal");
+                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: int = 1;\n  y?: int;\n}\n\nasync function asyncOne(): int { return 1; }\n\nexport async function compute(a: int[]): int {\n  let sum: int = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: int = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: int[] = [1, 2];\n  let obj: table = { k: 1 };\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (has(p.y)) { sum = 1; } else { sum = 2; }\n  let i: int = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let j: int = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v: int of a) { sum = sum + v; }\n  let f: () => int = function(): int { return 1; };\n  let g: () => int = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
             if (result == null) {
                 return;
             }

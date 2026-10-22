@@ -11,9 +11,9 @@ export function test_loops_inside_try(): int {
       total = total + i;
       i = i + 1;
     }
-    for (let j: int = 0; j < 3; j = j + 1) {
+    { let v14Loop0: int = 0; while (v14Loop0 < 3) { let j: int = v14Loop0; {
       total = total + j;
-    }
+    } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }
   } catch (e) {
     throw { code: "TEST_FAIL", message: "unexpected catch" };
   }

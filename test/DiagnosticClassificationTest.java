@@ -171,7 +171,7 @@ public class DiagnosticClassificationTest {
         triggers.put("E1045",
             "// @jsonable:foo\nexport class A { x: int = 0; }\n");
         triggers.put("E1046",
-            "// @deal-version 1.1\nclass A { x: int = 0; }\n");
+            "function f(): null {\n// @extern-c\nreturn null;\n}\n");
         triggers.put("E7002",
             "// @extern-c\nexport class A { x: int = 0; }\n");
         triggers.put("E5003",

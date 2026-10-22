@@ -6861,42 +6861,7 @@ public final class SemanticOracle {
                     }
                     return null;
                 }
-                case FOR -> {
-                    runBlock(payload.initBlock());
-                    while (true) {
-                        if (!((Value.BoolValue) valueOf(payload.condition())).value()) {
-                            break;
-                        }
-                        boolean broken = false;
-                        try {
-                            runBlock(payload.bodyBlock());
-                        } catch (LoopSignal signal) {
-                            if (!signal.target.equals(op.opId())) {
-                                throw signal;
-                            }
-                            if (!signal.isContinue) {
-                                break;
-                            }
-                            // FOR continue → update, then re-test.
-                        }
-                        if (broken) {
-                            break;
-                        }
-                        if (payload.updateBlock() != null) {
-                            try {
-                                runBlock(payload.updateBlock());
-                            } catch (LoopSignal signal) {
-                                if (!signal.target.equals(op.opId())) {
-                                    throw signal;
-                                }
-                                if (!signal.isContinue) {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    return null;
-                }
+
                 default -> throw new IllegalStateException("LOOP selector " + payload.selector());
             }
         }

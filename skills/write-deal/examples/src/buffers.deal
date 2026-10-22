@@ -28,9 +28,9 @@ function boundsWriteRejected(buffer: bytes): boolean {
 
 function copyBytes(source: bytes): bytes {
   let copy: bytes = bytes(source.length);
-  for (let i: int = 0; i < source.length; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < source.length) { let i: int = v14Loop0; {
     copy[i] = source[i];
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   return copy;
 }
 

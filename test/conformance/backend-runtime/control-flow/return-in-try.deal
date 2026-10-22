@@ -7,14 +7,14 @@ export function test_return_in_try_loop(): int {
   let catchRan: boolean = false;
   function findFive(): int {
     let found: int = 0;
-    for (let i: int = 0; i < 10; i = i + 1) {
+    { let v14Loop0: int = 0; while (v14Loop0 < 10) { let i: int = v14Loop0; {
       try {
         if (i === 5) { return i; }
       } catch (e) {
         catchRan = true;
       }
       found = i;
-    }
+    } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
     return found;
   }
   let got: int = findFive();

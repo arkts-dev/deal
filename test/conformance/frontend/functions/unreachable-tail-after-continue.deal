@@ -4,9 +4,9 @@
 // @features: control-flow, continue, reachability, v1.2
 
 export function main(): null {
-  for (let i: int = 0; i < 1; i = i + 1) {
-    continue;
+  { let v14Loop0: int = 0; while (v14Loop0 < 1) { let i: int = v14Loop0; {
+    { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; }
     let unreachable: int = 1;
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   return null;
 }

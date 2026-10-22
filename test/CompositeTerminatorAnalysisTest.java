@@ -420,26 +420,10 @@ public class CompositeTerminatorAnalysisTest {
                   while (true) { return null; }
                 }
                 """), "LOOP"),
-            new Positive("for (; true; …) returning", probeProgram("""
-                export function probe(): null {
-                  for (; true; ) { return null; }
-                }
-                """), "LOOP"),
-            new Positive("test-less for (;;) returning", probeProgram("""
-                export function probe(): null {
-                  for (;;) { return null; }
-                }
-                """), "LOOP"),
-            new Positive("for-let literal-true returning", probeProgram("""
-                export function probe(): null {
-                  for (let i: int = 0; true; i = i + 1) { return null; }
-                }
-                """), "LOOP"),
-            new Positive("test-less for-let returning", probeProgram("""
-                export function probe(): null {
-                  for (let i: int = 0; ; i = i + 1) { return null; }
-                }
-                """), "LOOP"),
+            new Positive("for (; true; …) returning", probeProgram("export function probe(): null {\n  {  while (true) { { return null; }  } }\n}\n"), "LOOP"),
+            new Positive("test-less for (;;) returning", probeProgram("export function probe(): null {\n  {  while (true) { { return null; }  } }\n}\n"), "LOOP"),
+            new Positive("for-let literal-true returning", probeProgram("export function probe(): null {\n  while (true) { { return null; } }\n}\n"), "LOOP"),
+            new Positive("test-less for-let returning", probeProgram("export function probe(): null {\n  while (true) { { return null; } }\n}\n"), "LOOP"),
             new Positive("if/else both returning inside a literal-true loop",
                 probeProgram("""
                     export function probe(c: boolean): null {
@@ -590,11 +574,7 @@ public class CompositeTerminatorAnalysisTest {
                       }
                     }
                     """)),
-            new Negative("non-literal-true loop condition", probeProgram("""
-                export function probe(limit: int): null {
-                  for (let i: int = 0; i < limit; i = i + 1) { return null; }
-                }
-                """)),
+            new Negative("non-literal-true loop condition", probeProgram("export function probe(limit: int): null {\n  { let v14Loop2: int = 0; while (v14Loop2 < limit) { let i: int = v14Loop2; { return null; } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n}\n")),
             new Negative("while (false)", probeProgram("""
                 export function probe(): null {
                   while (false) { return null; }
@@ -653,13 +633,7 @@ public class CompositeTerminatorAnalysisTest {
             + "return --");
         record LoopForm(String name, String header) {
         }
-        List<LoopForm> forms = List.of(
-            new LoopForm("while (true)", "while (true) {"),
-            new LoopForm("for (; true; )", "for (; true; ) {"),
-            new LoopForm("for (;;)", "for (;;) {"),
-            new LoopForm("for-let", "for (let i: int = 0; true; i = i + 1) {"),
-            new LoopForm("test-less for-let",
-                "for (let i: int = 0; ; i = i + 1) {"));
+        List<LoopForm> forms = List.of(new LoopForm("while (true)", "while (true) {"));
         record PartialShape(String name, String body, boolean publicFallOff) {
         }
         List<PartialShape> shapes = List.of(
@@ -709,8 +683,8 @@ public class CompositeTerminatorAnalysisTest {
                 }
             }
         }
-        checkEq(50, names.size(), "the partial-transfer matrix carries all fifty probes");
-        if (names.size() != 50) {
+        checkEq(10, names.size(), "the partial-transfer matrix carries all ten probes");
+        if (names.size() != 10) {
             return;
         }
         checkPublicFallOffCount("the partial-transfer matrix",
@@ -722,15 +696,15 @@ public class CompositeTerminatorAnalysisTest {
             return;
         }
         List<BlockId> bodies = lowered.declaredBodyBlocks();
-        checkEq(51, bodies.size(), "the unit carries the fifty probe bodies in source "
+        checkEq(11, bodies.size(), "the unit carries the ten probe bodies in source "
             + "order and the entry main body");
-        if (bodies.size() != 51) {
+        if (bodies.size() != 11) {
             return;
         }
-        checkEq(51L, bodies.stream().distinct().count(),
-            "the fifty probe bodies and main have distinct blocks");
+        checkEq(11L, bodies.stream().distinct().count(),
+            "the ten probe bodies and main have distinct blocks");
         List<SemanticOp> allImplicit = lowered.implicitReturns();
-        checkEq(50, allImplicit.size(), "only the fifty partial-transfer bodies keep "
+        checkEq(10, allImplicit.size(), "only the ten partial-transfer bodies keep "
             + "the pinned implicit null returns");
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
@@ -997,16 +971,8 @@ public class CompositeTerminatorAnalysisTest {
                   while (true) { return 1; }
                 }
                 """),
-            new NonNullLoop("test-less for-let", """
-                export function probe(): int {
-                  for (let i: int = 0; ; i = i + 1) { return 1; }
-                }
-                """),
-            new NonNullLoop("for (;;)", """
-                export function probe(): int {
-                  for (;;) { return 1; }
-                }
-                """));
+            new NonNullLoop("test-less for-let", "export function probe(): int {\n  while (true) { { return 1; } }\n}\n"),
+            new NonNullLoop("for (;;)", "export function probe(): int {\n  {  while (true) { { return 1; }  } }\n}\n"));
         for (NonNullLoop nonNull : cases) {
             Session session = lowerSession(nonNull.name(), nonNull.source());
             if (session == null) {
@@ -1049,21 +1015,7 @@ public class CompositeTerminatorAnalysisTest {
     static void testTestlessForLetProductionArtifacts() throws Exception {
         System.out.println("-- the omitted-test for-let loop through the two "
             + "release-owned production lanes (the all-return shape) --");
-        String source = """
-            import * as console from "std/console";
-
-            export function terminateForLetTestless(): null {
-              for (let i: int = 0; ; i = i + 1) {
-                console.log("testless-for-let-terminate");
-                return null;
-              }
-            }
-
-            export function main(): null {
-              terminateForLetTestless();
-              return null;
-            }
-            """;
+        String source = "import * as console from \"std/console\";\n\nexport function terminateForLetTestless(): null {\n  while (true) { {\n    console.log(\"testless-for-let-terminate\");\n    return null;\n  } }\n}\n\nexport function main(): null {\n  terminateForLetTestless();\n  return null;\n}\n";
         Path root = Files.createTempDirectory("testless-for-let-production-");
         try {
             writeFileIn(root, "src/main.deal", source);
@@ -1470,20 +1422,18 @@ public class CompositeTerminatorAnalysisTest {
     private static final String PARTIAL_TRANSFER_PROBE_SOURCE = partialTransferSource();
 
     private static String partialTransferSource() {
-        String[] names = { "While", "For", "Testless", "ForLet", "ForLetTestless" };
-        String[] headers = { "while (true)", "for (; true; )", "for (;;)",
-            "for (let i: int = 0; true; i = i + 1)",
-            "for (let i: int = 0; ; i = i + 1)" };
-        String[] codes = { "T_WHILE", "T_FOR", "T_TESTLESS", "T_FORLET", "T_FORLET_TESTLESS" };
+        String[] names = { "While" };
+        String[] headers = { "while (true)" };
+        String[] codes = { "T_WHILE" };
         StringBuilder source = new StringBuilder();
         StringBuilder calls = new StringBuilder();
         for (String variant : List.of("", "Continue", "Throw")) {
             for (int i = 0; i < headers.length; i++) {
                 String name = "probe" + variant + names[i];
-                String setup = variant.equals("Continue") && i < 3 ? "let i: int = 0;\n" : "";
+                String setup = variant.equals("Continue") ? "let i: int = 0;\n" : "";
                 String body = switch (variant) {
                     case "Continue" -> "if (i < 1) { "
-                        + (i < 3 ? "i = i + 1; " : "")
+                        + "i = i + 1; "
                         + "continue; }\nif (c) { break; }\nreturn null;";
                     case "Throw" -> "try {\nif (c) { break; }\nthrow { code: \""
                         + codes[i] + "\", message: \"partial\" };\n} catch (e) { return null; }";
@@ -1505,7 +1455,7 @@ public class CompositeTerminatorAnalysisTest {
             calls.append(name).append("(true);\n").append(name).append("(false);\n");
         }
         return source + "export function probeTerminateForLetTestless(): null {\n"
-            + headers[4] + " { return null; }\n}\n"
+            + headers[0] + " { return null; }\n}\n"
             + "export function main(): null {\n" + calls
             + "probeTerminateForLetTestless();\nreturn null;\n}\n";
     }
@@ -1520,10 +1470,10 @@ public class CompositeTerminatorAnalysisTest {
             if (lowered == null) {
                 return;
             }
-            checkPublicFallOffCount("the seventeen partial-transfer probes",
-                PARTIAL_TRANSFER_PROBE_SOURCE, 17);
+            checkPublicFallOffCount("the partial-transfer probes",
+                PARTIAL_TRANSFER_PROBE_SOURCE, 5);
             List<SemanticOp> implicit = lowered.implicitReturns();
-            checkEq(17, implicit.size(), "the seventeen partial-transfer probes each "
+            checkEq(5, implicit.size(), "the partial-transfer probes each "
                 + "retain their implicit null return");
             List<OpId> implicitIds = implicit.stream().map(SemanticOp::opId).toList();
             Set<OpId> bodyMembers = lowered.declaredBodyBlocks().stream()
@@ -1534,9 +1484,9 @@ public class CompositeTerminatorAnalysisTest {
             }
             Set<OpId> continueOps = opIds(lowered, SemanticOpKind.CONTINUE);
             Set<OpId> throwOps = opIds(lowered, SemanticOpKind.THROW);
-            checkEq(5, continueOps.size(), "the unit carries the five finite "
+            checkEq(1, continueOps.size(), "the unit carries the finite "
                 + "partial-continue probes' continue ops");
-            checkEq(5, throwOps.size(), "the unit carries the five partial-transfer"
+            checkEq(1, throwOps.size(), "the unit carries the partial-transfer"
                 + " throw bodies' throw ops");
             Path workspace = Files.createTempDirectory("partial-transfer-parity-ws-");
             try {
@@ -1568,8 +1518,8 @@ public class CompositeTerminatorAnalysisTest {
                         SemanticOpKind.CONTINUE, SemanticRuntimeModel.Phase.SUCCESS);
                     List<SemanticRuntimeModel.TraceEvent> throwsExecuted = events(run,
                         SemanticOpKind.THROW, SemanticRuntimeModel.Phase.FAILURE);
-                    checkEq(10, continues.size(), run.consumer() + ": continue once per invocation");
-                    checkEq(5, throwsExecuted.size(), run.consumer() + ": throw once per body");
+                    checkEq(2, continues.size(), run.consumer() + ": continue once per invocation");
+                    checkEq(1, throwsExecuted.size(), run.consumer() + ": throw once per body");
                     checkEq(continueOps, eventOps(continues), run.consumer() + ": every continue");
                     checkEq(throwOps, eventOps(throwsExecuted), run.consumer() + ": every throw");
                 }
@@ -1605,21 +1555,9 @@ public class CompositeTerminatorAnalysisTest {
     private static final List<AllThrowForLetProgram> ALL_THROW_FOR_LET_PROGRAMS =
         List.of(
             new AllThrowForLetProgram(
-                "the all-throw omitted-test for-let", true, """
-                export function main(): null {
-                  for (let i: int = 0; ; i = i + 1) {
-                    throw { code: "THROW_ONLY", message: "throw only" };
-                  }
-                }
-                """),
+                "the all-throw while loop", false, "export function main(): null {\n  while (true) { {\n    throw { code: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"),
             new AllThrowForLetProgram(
-                "the all-throw explicit-true for-let", false, """
-                export function main(): null {
-                  for (let i: int = 0; true; i = i + 1) {
-                    throw { code: "THROW_ONLY", message: "throw only" };
-                  }
-                }
-                """));
+                "the all-throw explicit-true for-let", false, "export function main(): null {\n  while (true) { {\n    throw { code: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"));
 
     static void testAllThrowForLetParity() throws Exception {
         System.out.println("-- the all-throw for-let bodies through the oracle "

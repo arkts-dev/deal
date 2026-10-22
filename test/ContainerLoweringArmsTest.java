@@ -16,9 +16,7 @@ import deal.ast.Either;
 import deal.ast.ExportDeclaration;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.HasExpr;
@@ -235,18 +233,7 @@ public class ContainerLoweringArmsTest {
                 collectExpressions(ws.condition(), outExpressions);
                 collectStatements(ws.body(), outStatements, outExpressions);
             }
-            case ForStatement fs -> {
-                fs.init().ifPresent(init -> {
-                    if (init instanceof ForInit.VarDecl decl) {
-                        collectExpressions(decl.decl().initializer(), outExpressions);
-                    } else if (init instanceof ForInit.AssignExpr assign) {
-                        collectExpressions(assign.expr(), outExpressions);
-                    }
-                });
-                fs.condition().ifPresent(c -> collectExpressions(c, outExpressions));
-                fs.update().ifPresent(u -> collectExpressions(u, outExpressions));
-                collectStatements(fs.body(), outStatements, outExpressions);
-            }
+
             case ForOfStatement fos -> {
                 collectExpressions(fos.iterable(), outExpressions);
                 collectStatements(fos.body(), outStatements, outExpressions);

@@ -660,19 +660,7 @@ public class JsSemanticEmitterTest {
         String supplementary = "\uD83D\uDE00";
         Path root = Files.createTempDirectory(tmpRoot, "sidecars-" + supplementary);
         Path sourceDir = root.resolve(supplementary + "src");
-        String appSource = """
-            import * as util from "./util";
-            import * as empty from "./empty";
-
-            export function main(): null {
-              let total: int = 0;
-              for (let i: int = 0; i < 3; i = i + 1) { total = total + i; }
-              let y: int = util.addOne(total);
-              if (y !== 4) { throw { code: "TEST_FAIL", message: "cross" }; }
-              while (total > 0) { total = total - 1; }
-              return null;
-            }
-            """;
+        String appSource = "import * as util from \"./util\";\nimport * as empty from \"./empty\";\n\nexport function main(): null {\n  let total: int = 0;\n  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; { total = total + i; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let y: int = util.addOne(total);\n  if (y !== 4) { throw { code: \"TEST_FAIL\", message: \"cross\" }; }\n  while (total > 0) { total = total - 1; }\n  return null;\n}\n";
         Map<String, String> extraSources = Map.of(
             supplementary + "src/util.deal", """
                 export function addOne(x: int): int {
@@ -1595,77 +1583,7 @@ public class JsSemanticEmitterTest {
         System.out.println("-- live captures, fresh cells, recursion,"
             + " adapters and scalar iteration under Node --");
         Path root = Files.createTempDirectory(tmpRoot, "cells");
-        Fixture fixture = compileFixture(root, """
-            function even(n: int): boolean {
-              if (n === 0) { return true; }
-              return odd(n - 1);
-            }
-
-            function odd(n: int): boolean {
-              if (n === 0) { return false; }
-              return even(n - 1);
-            }
-
-            function compute(): int {
-              let total: int = 0;
-              for (let i: int = 0; i < 3; i = i + 1) {
-                let f: () => int = function(): int { return i; };
-                total = total + f();
-              }
-              let j: int = 0;
-              let seen: int = 0;
-              while (j < 2) {
-                let k: int = j;
-                let g: () => int = function(): int { return k; };
-                seen = seen + g();
-                j = j + 1;
-              }
-              return total + seen;
-            }
-
-            function loops(): int {
-              let acc: int = 0;
-              for (let i: int = 0; i < 10; i = i + 1) {
-                if (i === 3) { continue; }
-                if (i === 6) { break; }
-                acc = acc + i;
-              }
-              if (acc !== 12) { throw { code: "TEST_FAIL", message: "fl" }; }
-              let found: int = 0;
-              for (let i: int = 0; i < 3; i = i + 1) {
-                for (let j: int = 0; j < 3; j = j + 1) {
-                  if (j === 1) { break; }
-                  found = found + 1;
-                }
-              }
-              return found;
-            }
-
-            function run(): int {
-              let f: () => int = function(): int { return 7; };
-              let g: (x: int) => int = f;
-              f = function(): int { return 9; };
-              let adapted: int = g(5);
-              if (!even(4)) { throw { code: "TEST_FAIL", message: "even" }; }
-              if (odd(4)) { throw { code: "TEST_FAIL", message: "odd" }; }
-              return compute() + adapted + loops();
-            }
-
-            export function main(): null {
-              let r: int = run();
-              if (r !== 16) { throw { code: "TEST_FAIL", message: "cells" }; }
-              let s: string = "a😀b";
-              let count: int = 0;
-              let collected: string = "";
-              for (let ch: string of s) {
-                count = count + 1;
-                collected = collected + ch;
-              }
-              if (count !== 3) { throw { code: "TEST_FAIL", message: "scalars" }; }
-              if (collected !== s) { throw { code: "TEST_FAIL", message: "rebuild" }; }
-              return null;
-            }
-            """);
+        Fixture fixture = compileFixture(root, "function even(n: int): boolean {\n  if (n === 0) { return true; }\n  return odd(n - 1);\n}\n\nfunction odd(n: int): boolean {\n  if (n === 0) { return false; }\n  return even(n - 1);\n}\n\nfunction compute(): int {\n  let total: int = 0;\n  { let v14Loop1: int = 0; while (v14Loop1 < 3) { let i: int = v14Loop1; {\n    let f: () => int = function(): int { return i; };\n    total = total + f();\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  let j: int = 0;\n  let seen: int = 0;\n  while (j < 2) {\n    let k: int = j;\n    let g: () => int = function(): int { return k; };\n    seen = seen + g();\n    j = j + 1;\n  }\n  return total + seen;\n}\n\nfunction loops(): int {\n  let acc: int = 0;\n  { let v14Loop2: int = 0; while (v14Loop2 < 10) { let i: int = v14Loop2; {\n    if (i === 3) { { v14Loop2 = i; v14Loop2 = v14Loop2 + 1; continue; } }\n    if (i === 6) { break; }\n    acc = acc + i;\n  } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  if (acc !== 12) { throw { code: \"TEST_FAIL\", message: \"fl\" }; }\n  let found: int = 0;\n  { let v14Loop3: int = 0; while (v14Loop3 < 3) { let i: int = v14Loop3; {\n    { let v14Loop4: int = 0; while (v14Loop4 < 3) { let j: int = v14Loop4; {\n      if (j === 1) { break; }\n      found = found + 1;\n    } v14Loop4 = j; v14Loop4 = v14Loop4 + 1; } }\n  } v14Loop3 = i; v14Loop3 = v14Loop3 + 1; } }\n  return found;\n}\n\nfunction run(): int {\n  let f: () => int = function(): int { return 7; };\n  let g: (x: int) => int = f;\n  f = function(): int { return 9; };\n  let adapted: int = g(5);\n  if (!even(4)) { throw { code: \"TEST_FAIL\", message: \"even\" }; }\n  if (odd(4)) { throw { code: \"TEST_FAIL\", message: \"odd\" }; }\n  return compute() + adapted + loops();\n}\n\nexport function main(): null {\n  let r: int = run();\n  if (r !== 16) { throw { code: \"TEST_FAIL\", message: \"cells\" }; }\n  let s: string = \"a😀b\";\n  let count: int = 0;\n  let collected: string = \"\";\n  for (let ch: string of s) {\n    count = count + 1;\n    collected = collected + ch;\n  }\n  if (count !== 3) { throw { code: \"TEST_FAIL\", message: \"scalars\" }; }\n  if (collected !== s) { throw { code: \"TEST_FAIL\", message: \"rebuild\" }; }\n  return null;\n}\n");
         Path out = stage(fixture, "cells", false);
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the cells/closures program exits 0: "
@@ -3143,53 +3061,7 @@ public class JsSemanticEmitterTest {
         System.out.println("-- native async start/await, the async adapter and"
             + " the cross-module stored async value under Node --");
         Path root = Files.createTempDirectory(tmpRoot, "async-calls");
-        Fixture fixture = compileFixture(root, """
-            import * as lib from "./lib";
-
-            async function inner(x: int): int {
-              return x + 1;
-            }
-
-            async function fail(): int {
-              throw { code: "E9001", message: "async-boom" };
-            }
-
-            export async function run(): int {
-              let a: int = await inner(1);
-              let g: async (x: int, y: int) => int = inner;
-              let b: int = await g(a, 9);
-              let stored: async (x: int) => int = lib.fetch;
-              let d: int = await stored(10);
-              let total: int = 0;
-              for (let i: int = 0; i < 3; i = i + 1) {
-                total = total + (await inner(i));
-              }
-              if (a !== 2 || b !== 3 || d !== 21 || total !== 6) {
-                throw { code: "TEST_FAIL", message: "async" };
-              }
-              return a + b + d + total;
-            }
-
-            export async function swallowed(): int {
-              try {
-                let c: int = await fail();
-                return c;
-              } catch (e) {
-                return 0;
-              }
-            }
-
-            export async function rethrown(): int {
-              try {
-                let c: int = await fail();
-                return c;
-              } catch (e) {
-                throw e;
-              }
-            }
-
-            export function main(): null { return null; }
-            """, Map.of("src/lib.deal", """
+        Fixture fixture = compileFixture(root, "import * as lib from \"./lib\";\n\nasync function inner(x: int): int {\n  return x + 1;\n}\n\nasync function fail(): int {\n  throw { code: \"E9001\", message: \"async-boom\" };\n}\n\nexport async function run(): int {\n  let a: int = await inner(1);\n  let g: async (x: int, y: int) => int = inner;\n  let b: int = await g(a, 9);\n  let stored: async (x: int) => int = lib.fetch;\n  let d: int = await stored(10);\n  let total: int = 0;\n  { let v14Loop5: int = 0; while (v14Loop5 < 3) { let i: int = v14Loop5; {\n    total = total + (await inner(i));\n  } v14Loop5 = i; v14Loop5 = v14Loop5 + 1; } }\n  if (a !== 2 || b !== 3 || d !== 21 || total !== 6) {\n    throw { code: \"TEST_FAIL\", message: \"async\" };\n  }\n  return a + b + d + total;\n}\n\nexport async function swallowed(): int {\n  try {\n    let c: int = await fail();\n    return c;\n  } catch (e) {\n    return 0;\n  }\n}\n\nexport async function rethrown(): int {\n  try {\n    let c: int = await fail();\n    return c;\n  } catch (e) {\n    throw e;\n  }\n}\n\nexport function main(): null { return null; }\n", Map.of("src/lib.deal", """
                 export async function fetch(n: int): int {
                   return n + 11;
                 }

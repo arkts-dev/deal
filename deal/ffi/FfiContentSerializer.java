@@ -13,9 +13,7 @@ import deal.ast.DeleteStatement;
 import deal.ast.Either;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionExpr;
 import deal.ast.HasExpr;
 import deal.ast.IdentifierExpr;
@@ -290,26 +288,7 @@ public final class FfiContentSerializer {
             case WhileStatement ws -> node("while", ws.span(),
                 CanonicalJson.e("condition", expression(ws.condition())),
                 CanonicalJson.e("body", statement(ws.body())));
-            case ForStatement fs -> {
-                CanonicalJson.Value initValue;
-                if (fs.init().isEmpty()) {
-                    initValue = CanonicalJson.nullValue();
-                } else if (fs.init().get() instanceof ForInit.VarDecl vd) {
-                    initValue = statement(vd.decl());
-                } else {
-                    initValue = expression(
-                        ((ForInit.AssignExpr) fs.init().get()).expr());
-                }
-                yield node("for", fs.span(),
-                    CanonicalJson.e("init", initValue),
-                    CanonicalJson.e("condition", fs.condition().isPresent()
-                        ? expression(fs.condition().get())
-                        : CanonicalJson.nullValue()),
-                    CanonicalJson.e("update", fs.update().isPresent()
-                        ? expression(fs.update().get())
-                        : CanonicalJson.nullValue()),
-                    CanonicalJson.e("body", statement(fs.body())));
-            }
+
             case ForOfStatement fos -> node("for-of", fos.span(),
                 CanonicalJson.e("variable", CanonicalJson.str(fos.varName())),
                 CanonicalJson.e("varType", typeNode(fos.varType())),

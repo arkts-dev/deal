@@ -3013,41 +3013,7 @@ public final class JsSemanticEmitter {
                     indent--;
                     emit("}");
                 }
-                case FOR -> {
-                    emit("{");
-                    indent++;
-                    declareBlockBindings(unit, payload.initBlock());
-                    emitOps(unit, payload.initBlock());
-                    emit(label + ": while (true) {");
-                    indent++;
-                    emit("if (!" + condition + ") { break " + label + "; }");
-                    // The body block's block-scoped cells and the update
-                    // block share one per-iteration scope: the recorded
-                    // update block reads the incarnation the body leaves
-                    // (a for-let counter's per-iteration generation-1
-                    // cell, which its carry transfer copies into the
-                    // loop-carried generation-0 cell before the update and
-                    // the next test). A JavaScript `let` inside the
-                    // per-iteration braces is a fresh live cell per
-                    // iteration, so the body's closure captures stay
-                    // per-iteration while the update still sees this
-                    // iteration's cell. A `continue` re-runs the recorded
-                    // update block at its own transfer site, inside this
-                    // same scope.
-                    emit("{");
-                    indent++;
-                    declareBlockBindings(unit, payload.bodyBlock());
-                    emitOps(unit, payload.bodyBlock());
-                    if (payload.updateBlock() != null) {
-                        emitScopedBlock(unit, payload.updateBlock());
-                    }
-                    indent--;
-                    emit("}");
-                    indent--;
-                    emit("}");
-                    indent--;
-                    emit("}");
-                }
+
                 default -> throw unsupported(op, "the LOOP selector "
                     + payload.selector() + " is not a loop shape");
             }
@@ -3149,19 +3115,7 @@ public final class JsSemanticEmitter {
             OpId loopId = isBreak
                 ? ((KindPayload.BreakPayload) op.payload()).loopId()
                 : ((KindPayload.ContinuePayload) op.payload()).loopId();
-            if (!isBreak) {
-                SemanticOp loop = opsById.get(loopId);
-                if (loop != null
-                        && loop.payload() instanceof KindPayload.LoopPayload
-                            loopPayload
-                        && loopPayload.selector() == ControlSelector.FOR
-                        && loopPayload.updateBlock() != null) {
-                    // A continue of a for-loop runs the recorded update
-                    // before the condition re-check.
-                    emitScopedBlock(units.get(opModule.get(loopId)),
-                        loopPayload.updateBlock());
-                }
-            }
+
             emit((isBreak ? "break " : "continue ") + loopLabel(loopId) + ";");
         }
 

@@ -2,9 +2,7 @@ package deal.module;
 
 import deal.ast.Block;
 import deal.ast.ClassDeclaration;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.LiteralValue;
@@ -1030,81 +1028,7 @@ public final class DefaultSemanticSerializer {
                         return null;
                     }
                 }
-                case FOR -> {
-                    if (!(statementAst instanceof ForStatement fs)) {
-                        fail("FOR IR node carries no for-statement AST"
-                            + " (broken IR)", node.span());
-                        return null;
-                    }
-                    // The recorder's fixed role order:
-                    // [init?, condition?, update?, body]; the AST
-                    // presence flags select the exact roles.
-                    int index = 0;
-                    if (fs.init().isPresent()) {
-                        ForInit init = fs.init().get();
-                        if (index >= node.children().size()) {
-                            fail("FOR IR node is missing its init"
-                                + " child", node.span());
-                            return null;
-                        }
-                        DefaultIrNode initNode =
-                            node.children().get(index++);
-                        if (init instanceof ForInit.VarDecl) {
-                            children.add(serializeStatement(initNode,
-                                input, siteSet, occurrenceIdentities,
-                                effectiveScope));
-                        } else if (init instanceof ForInit.AssignExpr) {
-                            children.add(serializeNode(initNode, input,
-                                siteSet, occurrenceIdentities, false,
-                                effectiveScope));
-                        } else {
-                            fail("FOR init has an unsupported shape",
-                                node.span());
-                            return null;
-                        }
-                        if (failed) {
-                            return null;
-                        }
-                    }
-                    if (fs.condition().isPresent()) {
-                        if (index >= node.children().size()) {
-                            fail("FOR IR node is missing its condition"
-                                + " child", node.span());
-                            return null;
-                        }
-                        condition = serializeNode(
-                            node.children().get(index++), input, siteSet,
-                            occurrenceIdentities, false, effectiveScope);
-                        if (failed) {
-                            return null;
-                        }
-                    }
-                    if (fs.update().isPresent()) {
-                        if (index >= node.children().size()) {
-                            fail("FOR IR node is missing its update"
-                                + " child", node.span());
-                            return null;
-                        }
-                        children.add(serializeNode(
-                            node.children().get(index++), input, siteSet,
-                            occurrenceIdentities, false, effectiveScope));
-                        if (failed) {
-                            return null;
-                        }
-                    }
-                    if (index + 1 != node.children().size()) {
-                        fail("FOR IR node has an inconsistent child"
-                            + " shape (" + node.children().size()
-                            + " children)", node.span());
-                        return null;
-                    }
-                    children.add(serializeStatement(
-                        node.children().get(index), input, siteSet,
-                        occurrenceIdentities, effectiveScope));
-                    if (failed) {
-                        return null;
-                    }
-                }
+
                 case FOR_OF -> {
                     if (node.children().size() != 2) {
                         fail("FOR_OF IR node carries " + node.children()
@@ -1947,7 +1871,7 @@ public final class DefaultSemanticSerializer {
             }
             return switch (stmt) {
                 case Block ignored -> enterScope(inherited);
-                case ForStatement ignored -> enterScope(inherited);
+
                 default -> inherited;
             };
         }

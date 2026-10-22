@@ -209,15 +209,7 @@ public final class ModuleShapeValidator {
                 checkExpression(ws.condition(), diagnostics, isDeclarationFile);
                 checkNested(ws.body(), diagnostics, isDeclarationFile);
             }
-            case ForStatement fs -> {
-                fs.init().ifPresent(
-                    init -> checkForInit(init, diagnostics, isDeclarationFile));
-                fs.condition().ifPresent(
-                    c -> checkExpression(c, diagnostics, isDeclarationFile));
-                fs.update().ifPresent(
-                    u -> checkExpression(u, diagnostics, isDeclarationFile));
-                checkNested(fs.body(), diagnostics, isDeclarationFile);
-            }
+
             case ForOfStatement fos -> {
                 checkExpression(fos.iterable(), diagnostics, isDeclarationFile);
                 checkNested(fos.body(), diagnostics, isDeclarationFile);
@@ -232,16 +224,7 @@ public final class ModuleShapeValidator {
     }
 
     /** Walks the two for-init alternatives ({@code let} vs assignment). */
-    private static void checkForInit(ForInit init,
-                                     List<CompilerDiagnostic> diagnostics,
-                                     boolean isDeclarationFile) {
-        switch (init) {
-            case ForInit.VarDecl vd ->
-                checkNested(vd.decl(), diagnostics, isDeclarationFile);
-            case ForInit.AssignExpr ae ->
-                checkExpression(ae.expr(), diagnostics, isDeclarationFile);
-        }
-    }
+
 
     /**
      * Walks an expression and every sub-expression.  When a function

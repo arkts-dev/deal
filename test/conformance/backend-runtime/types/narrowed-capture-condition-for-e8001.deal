@@ -11,8 +11,8 @@ export function main(): null {
   };
   if (flag !== null) {
     clear();
-    for (; flag; ) {
-    }
+    {  while (flag) { {
+    }  } }
   }
   return null;
 }

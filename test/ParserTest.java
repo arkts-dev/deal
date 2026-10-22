@@ -566,50 +566,15 @@ public class ParserTest {
     }
 
     static void testForStatementVarDecl() {
-        System.out.println("-- ForStatement VarDecl --");
-
-        ParseResult r = parse("for (let i: int = 0; i < 10; i = i + 1) { }");
-        assertNoParseErrors(r, "for var decl");
-        ForStatement fs = assertInstance(r.program().statements().get(0),
-                ForStatement.class, "for stmt");
-        if (fs != null) {
-            check(fs.init().isPresent(), "has init");
-            ForInit init = fs.init().get();
-            check(init instanceof ForInit.VarDecl, "init is VarDecl");
-            if (init instanceof ForInit.VarDecl vd) {
-                check(vd.decl().name().equals("i"), "loop var name");
-            }
-            check(fs.condition().isPresent(), "has condition");
-            check(fs.update().isPresent(), "has update");
-        }
+        assertParseError(parse("for (let i: int = 0; i < 3; i = i + 1) {}"), "E1013", "C-style for rejected");
     }
 
     static void testForStatementAssign() {
-        System.out.println("-- ForStatement AssignExpr --");
-
-        ParseResult r = parse("for (i = 0; i < 10; i = i + 1) { }");
-        assertNoParseErrors(r, "for assign");
-        ForStatement fs = assertInstance(r.program().statements().get(0),
-                ForStatement.class, "for assign stmt");
-        if (fs != null) {
-            check(fs.init().isPresent(), "has init");
-            ForInit init = fs.init().get();
-            check(init instanceof ForInit.AssignExpr, "init is AssignExpr");
-        }
+        assertParseError(parse("for (i = 0; i < 3; i = i + 1) {}"), "E1013", "C-style for rejected");
     }
 
     static void testForStatementEmpty() {
-        System.out.println("-- ForStatement empty parts --");
-
-        ParseResult r = parse("for (;;) { }");
-        assertNoParseErrors(r, "for empty");
-        ForStatement fs = assertInstance(r.program().statements().get(0),
-                ForStatement.class, "for empty stmt");
-        if (fs != null) {
-            check(fs.init().isEmpty(), "no init");
-            check(fs.condition().isEmpty(), "no condition");
-            check(fs.update().isEmpty(), "no update");
-        }
+        assertParseError(parse("for (;;) {}"), "E1007", "C-style for rejected");
     }
 
     static void testBreakContinue() {
@@ -1040,16 +1005,7 @@ public class ParserTest {
 
         // Explicit terminators compile clean, and block-ending forms need
         // no added ';'.
-        ParseResult ok = parse("export function main(): null {\n"
-            + "  let n: int = 1;\n"
-            + "  if (n === 1) { n = 2; } else { n = 3; }\n"
-            + "  while (n < 10) { n = n + 1; }\n"
-            + "  for (let i: int = 0; i < 1; i = i + 1) { n = n + 1; }\n"
-            + "  try { n = 4; } catch (e) { n = 5; }\n"
-            + "  return null;\n"
-            + "}\n"
-            + "class C { x: int = 0; }\n"
-            + "function g(): null { return null; }\n");
+        ParseResult ok = parse("export function main(): null {\n  let n: int = 1;\n  if (n === 1) { n = 2; } else { n = 3; }\n  while (n < 10) { n = n + 1; }\n  { let v14Loop1: int = 0; while (v14Loop1 < 1) { let i: int = v14Loop1; { n = n + 1; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  try { n = 4; } catch (e) { n = 5; }\n  return null;\n}\nclass C { x: int = 0; }\nfunction g(): null { return null; }\n");
         assertNoParseErrors(ok, "explicit terminators and block endings");
     }
 
@@ -1398,7 +1354,7 @@ public class ParserTest {
     static void testNestedLoops() {
         System.out.println("-- Nested Loops --");
 
-        ParseResult r = parse("while (a) { for (;;) { break; } }");
+        ParseResult r = parse("while (a) { {  while (true) { { break; }  } } }");
         assertNoParseErrors(r, "nested loops");
     }
 

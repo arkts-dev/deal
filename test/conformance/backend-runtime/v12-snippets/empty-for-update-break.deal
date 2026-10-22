@@ -7,7 +7,7 @@ import * as c from "std/console";
 export function main(): null {
  let i:int=0; let updates:int=0;
  function update(x:int): int {updates=updates+1; return x+1;}
- for(; ; i=update(i)) {if(i===2) {break;} continue;}
+ {  while (true) { {if(i===2) {break;} { i=update(i); continue; }} i=update(i); } }
  if(i!==2 || updates!==2) {throw {message:"omitted test/update order"};}
  c.log("empty-for-update-break"); return null;
 }

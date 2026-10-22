@@ -7,10 +7,10 @@ export function test_nested_continue(): int {
   let sum: int = 0;
   let innerCatchRan: boolean = false;
   let outerCatchRan: boolean = false;
-  for (let i: int = 0; i < 5; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < 5) { let i: int = v14Loop0; {
     try {
       try {
-        if (i === 2) { continue; }
+        if (i === 2) { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } }
       } catch (e2) {
         innerCatchRan = true;
       }
@@ -18,7 +18,7 @@ export function test_nested_continue(): int {
     } catch (e1) {
       outerCatchRan = true;
     }
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (sum !== 8 || innerCatchRan || outerCatchRan) {
     throw { code: "TEST_FAIL", message: "nested-continue-in-try sum or forbidden catch path mismatch" };
   }

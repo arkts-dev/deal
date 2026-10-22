@@ -69,14 +69,14 @@ export async function testAsyncCaptureAcrossOuterAwait(): int {
 export async function testAsyncLoopCatches(): int {
   let messages: string[] = ["first", "second"];
   let readers: (() => string)[] = [];
-  for (let i: int = 0; i < 2; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {
     try { throw { code: "E_AL", message: messages[i] }; }
     catch (e) {
       let echoed: string = await identityText(messages[i]);
       expectTrue("the loop catch's awaited resumption completes", echoed === messages[i]);
       readers[i] = function(): string { return e.message; };
     }
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   expectTrue("the first iteration binding", readers[0]() === "first");
   expectTrue("the second iteration binding", readers[1]() === "second");
   return 55;

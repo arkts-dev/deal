@@ -15,9 +15,7 @@ import deal.ast.Either;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
 import deal.ast.ExportDeclaration;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.HasExpr;
@@ -170,23 +168,7 @@ public final class NullReturnFallOff {
                 walkExpression(whileStatement.condition(), out);
                 walkStatements(whileStatement.body().statements(), out, nested);
             }
-            case ForStatement forStatement -> {
-                if (forStatement.init().isPresent()) {
-                    switch (forStatement.init().get()) {
-                        case ForInit.VarDecl varDecl ->
-                            walkExpression(varDecl.decl().initializer(), out);
-                        case ForInit.AssignExpr assign ->
-                            walkExpression(assign.expr(), out);
-                    }
-                }
-                if (forStatement.condition().isPresent()) {
-                    walkExpression(forStatement.condition().get(), out);
-                }
-                if (forStatement.update().isPresent()) {
-                    walkExpression(forStatement.update().get(), out);
-                }
-                walkStatements(forStatement.body().statements(), out, nested);
-            }
+
             case ForOfStatement forOf -> {
                 walkExpression(forOf.iterable(), out);
                 walkStatements(forOf.body().statements(), out, nested);
@@ -415,32 +397,7 @@ public final class NullReturnFallOff {
                 walkReferenceExpr(whileStatement.condition(), bound, references);
                 walkReferenceBlock(whileStatement.body(), bound, references);
             }
-            case ForStatement forStatement -> {
-                if (forStatement.init().isPresent()) {
-                    ForInit init = forStatement.init().get();
-                    switch (init) {
-                        case ForInit.VarDecl varDecl ->
-                            walkReferenceExpr(varDecl.decl().initializer(), bound,
-                                references);
-                        case ForInit.AssignExpr assignExpr ->
-                            walkReferenceExpr(assignExpr.expr(), bound, references);
-                    }
-                }
-                Set<String> loopBound = bound;
-                if (forStatement.init().isPresent()
-                        && forStatement.init().get() instanceof ForInit.VarDecl varDecl) {
-                    loopBound = new HashSet<>(bound);
-                    loopBound.add(varDecl.decl().name());
-                }
-                if (forStatement.condition().isPresent()) {
-                    walkReferenceExpr(forStatement.condition().get(), loopBound,
-                        references);
-                }
-                if (forStatement.update().isPresent()) {
-                    walkReferenceExpr(forStatement.update().get(), loopBound, references);
-                }
-                walkReferenceBlock(forStatement.body(), loopBound, references);
-            }
+
             case ForOfStatement forOf -> {
                 walkReferenceExpr(forOf.iterable(), bound, references);
                 Set<String> loopBound = new HashSet<>(bound);

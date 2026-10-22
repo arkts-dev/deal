@@ -5,9 +5,9 @@
 
 export function test_for_closure_array(): int {
   let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
-  for (let i: int = 0; i < 3; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
     fs[i] = function(): int { return i; };
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (fs.length !== 3) {
     throw { code: "TEST_FAIL", message: "for-loop closure array length mismatch" };
   }

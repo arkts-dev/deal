@@ -282,7 +282,7 @@ public class DefaultSemanticSerializerTest {
 
     private static final List<String> FOURTEEN_STATEMENT_KINDS = List.of(
         "BLOCK", "BREAK", "CONTINUE", "DELETE",
-        "EXPRESSION_STATEMENT", "FOR", "FOR_OF", "FUNCTION_DECLARATION",
+        "EXPRESSION_STATEMENT", "FOR_OF", "FUNCTION_DECLARATION",
         "IF", "RETURN", "THROW", "TRY", "VARIABLE_DECLARATION", "WHILE");
 
     public static void main(String[] args) throws Exception {
@@ -454,48 +454,7 @@ public class DefaultSemanticSerializerTest {
                   return null;
                 }
                 """,
-            "src/lib.deal", """
-                export function allStatements(n: int, arr: int[]): int {
-                  let total: int = 0;
-                  total = total + 1;
-                  if (n > 0) {
-                    total = total + 1;
-                  } else {
-                    total = total - 1;
-                  }
-                  let i = 0;
-                  while (i < 2) {
-                    i = i + 1;
-                    if (i === 1) { continue; }
-                    break;
-                  }
-                  for (let j: int = 0; j < 2; j = j + 1) {
-                    total = total + j;
-                  }
-                  for (let s: int of arr) {
-                    total = total + s;
-                  }
-                  let t: table = { k: 1 };
-                  delete t.k;
-                  try {
-                    if (total < 0) { throw { message: "bad" }; }
-                  } catch (e) {
-                    total = 0;
-                  }
-                  function innerFn(v: int): int {
-                    return v + 1;
-                  }
-                  total = total + innerFn(1);
-                  class LocalBox {
-                    n: int = 1;
-                  }
-                  return total;
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """), "src/main.deal");
+            "src/lib.deal", "export function allStatements(n: int, arr: int[]): int {\n  let total: int = 0;\n  total = total + 1;\n  if (n > 0) {\n    total = total + 1;\n  } else {\n    total = total - 1;\n  }\n  let i = 0;\n  while (i < 2) {\n    i = i + 1;\n    if (i === 1) { continue; }\n    break;\n  }\n  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let j: int = v14Loop0; {\n    total = total + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let s: int of arr) {\n    total = total + s;\n  }\n  let t: table = { k: 1 };\n  delete t.k;\n  try {\n    if (total < 0) { throw { message: \"bad\" }; }\n  } catch (e) {\n    total = 0;\n  }\n  function innerFn(v: int): int {\n    return v + 1;\n  }\n  total = total + innerFn(1);\n  class LocalBox {\n    n: int = 1;\n  }\n  return total;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "src/main.deal");
         try {
             check(!compile.success, "original local-class subject rejects at admission");
             check(compile.diagnostics.stream().anyMatch(d -> "E1057".equals(d.code())),
@@ -638,46 +597,7 @@ public class DefaultSemanticSerializerTest {
                   return null;
                 }
                 """,
-            "src/lib.deal", """
-                class LocalBox { n: int = 1; }
-                export function allStatements(n: int, arr: int[]): int {
-                  let total: int = 0;
-                  total = total + 1;
-                  if (n > 0) {
-                    total = total + 1;
-                  } else {
-                    total = total - 1;
-                  }
-                  let i = 0;
-                  while (i < 2) {
-                    i = i + 1;
-                    if (i === 1) { continue; }
-                    break;
-                  }
-                  for (let j: int = 0; j < 2; j = j + 1) {
-                    total = total + j;
-                  }
-                  for (let s: int of arr) {
-                    total = total + s;
-                  }
-                  let t: table = { k: 1 };
-                  delete t.k;
-                  try {
-                    if (total < 0) { throw { message: "bad" }; }
-                  } catch (e) {
-                    total = 0;
-                  }
-                  function innerFn(v: int): int {
-                    return v + 1;
-                  }
-                  total = total + innerFn(1);
-                  return total;
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """), "src/main.deal");
+            "src/lib.deal", "class LocalBox { n: int = 1; }\nexport function allStatements(n: int, arr: int[]): int {\n  let total: int = 0;\n  total = total + 1;\n  if (n > 0) {\n    total = total + 1;\n  } else {\n    total = total - 1;\n  }\n  let i = 0;\n  while (i < 2) {\n    i = i + 1;\n    if (i === 1) { continue; }\n    break;\n  }\n  { let v14Loop1: int = 0; while (v14Loop1 < 2) { let j: int = v14Loop1; {\n    total = total + j;\n  } v14Loop1 = j; v14Loop1 = v14Loop1 + 1; } }\n  for (let s: int of arr) {\n    total = total + s;\n  }\n  let t: table = { k: 1 };\n  delete t.k;\n  try {\n    if (total < 0) { throw { message: \"bad\" }; }\n  } catch (e) {\n    total = 0;\n  }\n  function innerFn(v: int): int {\n    return v + 1;\n  }\n  total = total + innerFn(1);\n  return total;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "src/main.deal");
         try {
             check(compile.success,
                 "the statement-grammar fixture compiles: "

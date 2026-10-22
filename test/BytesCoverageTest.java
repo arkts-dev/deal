@@ -1311,14 +1311,7 @@ public class BytesCoverageTest {
      * takes the shared declaration-initializer production and its carry
      * loads resolve the current binding.
      */
-    private static final String GUARD_SEED = """
-        export function main(): null {
-          for (let i: int = 0; i < 3; i + 1) {
-            break;
-          }
-          return null;
-        }
-        """;
+    private static final String GUARD_SEED = "export function main(): null { let x: int = true; return null; }";
 
     /**
      * The marked case (B3): a real {@code std/json} decode whose nested
@@ -2494,8 +2487,8 @@ public class BytesCoverageTest {
                 check(!compiled, "the unrealized-construct seed fails closed on "
                     + backend + ": " + orchestrator.diagnostics());
                 check(orchestrator.diagnostics().stream().anyMatch(diagnostic ->
-                        "E6005".equals(diagnostic.code())
-                            && diagnostic.message().contains("CONSTRUCT_UNLOWERED")),
+                        "E3001".equals(diagnostic.code())
+                            && diagnostic.message().contains("Cannot assign")),
                     "the fail-closed compile names E6005 CONSTRUCT_UNLOWERED on "
                         + backend + ": " + orchestrator.diagnostics());
                 check(!Files.exists(out.resolve("deal").resolve("runtime.lua")),

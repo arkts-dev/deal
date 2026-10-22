@@ -580,58 +580,9 @@ public class FailClosedGuardRetargetingTest {
         }
         """;
 
-    private static final String CAPTURE_PROBE = """
-        import * as console from "std/console";
+    private static final String CAPTURE_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];\n  { let v14Loop0: int = 0; while (v14Loop0 < 4) { let i: int = v14Loop0; {\n    fs[i] = function(): int { return i; };\n  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let total: int = fs[0]() + fs[1]() + fs[2]() + fs[3]();\n  if (total === 6) {\n    console.log(\"PROBE|CAPTURE|ok\");\n  } else {\n    console.log(\"PROBE|CAPTURE|bad\");\n  }\n  return null;\n}\n";
 
-        export function main(): null {
-          let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
-          for (let i: int = 0; i < 4; i = i + 1) {
-            fs[i] = function(): int { return i; };
-          }
-          let total: int = fs[0]() + fs[1]() + fs[2]() + fs[3]();
-          if (total === 6) {
-            console.log("PROBE|CAPTURE|ok");
-          } else {
-            console.log("PROBE|CAPTURE|bad");
-          }
-          return null;
-        }
-        """;
-
-    private static final String TRANSFER_PROBE = """
-        import * as console from "std/console";
-
-        export function main(): null {
-          let vals: int[] = [1, 2, 3, 4, 5];
-          let sum: int = 0;
-          for (let x: int of vals) {
-            if (x === 2) {
-              continue;
-            }
-            if (x === 4) {
-              break;
-            }
-            sum = sum + x;
-          }
-          let found: int = 0;
-          for (let i: int = 0; i < 5; i = i + 1) {
-            try {
-              if (i === 3) {
-                break;
-              }
-            } catch (e) {
-              found = -1;
-            }
-            found = found + 1;
-          }
-          if (sum === 4 && found === 3) {
-            console.log("PROBE|TRANSFER|ok");
-          } else {
-            console.log("PROBE|TRANSFER|bad");
-          }
-          return null;
-        }
-        """;
+    private static final String TRANSFER_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let vals: int[] = [1, 2, 3, 4, 5];\n  let sum: int = 0;\n  for (let x: int of vals) {\n    if (x === 2) {\n      continue;\n    }\n    if (x === 4) {\n      break;\n    }\n    sum = sum + x;\n  }\n  let found: int = 0;\n  { let v14Loop1: int = 0; while (v14Loop1 < 5) { let i: int = v14Loop1; {\n    try {\n      if (i === 3) {\n        break;\n      }\n    } catch (e) {\n      found = -1;\n    }\n    found = found + 1;\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  if (sum === 4 && found === 3) {\n    console.log(\"PROBE|TRANSFER|ok\");\n  } else {\n    console.log(\"PROBE|TRANSFER|bad\");\n  }\n  return null;\n}\n";
 
     private static void testRealizedConstructProbes() throws Exception {
         System.out.println("-- the realized construct families compile through "

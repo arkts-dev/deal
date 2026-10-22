@@ -4,7 +4,7 @@
 // @features: functions, return, loops, v1.2
 
 function value(): int {
-  for (;;) { return 7; }
+  {  while (true) { { return 7; }  } }
 }
 
 export function main(): null {

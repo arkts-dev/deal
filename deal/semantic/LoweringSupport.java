@@ -16,9 +16,7 @@ import deal.ast.Either;
 import deal.ast.ExportDeclaration;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.HasExpr;
@@ -426,21 +424,7 @@ public final class LoweringSupport {
                 walkExpression(whileStatement.condition(), module, scan, checkerScope);
                 walkStatement(whileStatement.body(), module, scan, checkerScope);
             }
-            case ForStatement forStatement -> {
-                scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
-                if (forStatement.init().isPresent()) {
-                    walkForInit(forStatement.init().get(), module, scan, checkerScope);
-                }
-                if (forStatement.condition().isPresent()) {
-                    walkExpression(forStatement.condition().get(), module, scan,
-                        checkerScope);
-                }
-                if (forStatement.update().isPresent()) {
-                    walkExpression(forStatement.update().get(), module, scan,
-                        checkerScope);
-                }
-                walkStatement(forStatement.body(), module, scan, checkerScope);
-            }
+
             case ForOfStatement forOfStatement -> {
                 scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
                 Type iterableType = checkedType(module, forOfStatement.iterable());
@@ -493,16 +477,6 @@ public final class LoweringSupport {
         }
     }
 
-    private static void walkForInit(ForInit init, CheckedModuleInput module,
-                                    ModuleScan scan, SymbolTable checkerScope)
-            throws FactDefect {
-        switch (init) {
-            case ForInit.VarDecl varDecl ->
-                walkStatement(varDecl.decl(), module, scan, checkerScope);
-            case ForInit.AssignExpr assignExpr ->
-                walkExpression(assignExpr.expr(), module, scan, checkerScope);
-        }
-    }
 
     private static void walkExpression(ExpressionNode expression, CheckedModuleInput module,
                                        ModuleScan scan, SymbolTable checkerScope)

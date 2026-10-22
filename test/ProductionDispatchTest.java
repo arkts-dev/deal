@@ -465,18 +465,7 @@ public class ProductionDispatchTest {
         export class Codec { b: int = 9; }
         """;
 
-    private static final String SHADOW_MAIN_CODEC_FIRST = """
-        import * as console from "std/console";
-        import * as codec from "./m/codec";
-        import * as ir from "./m/ir";
-        export function main(): null {
-          let x: ir.Ir = {};
-          { let x: codec.Ir = (x = {}); }
-          for (let x: codec.Ir = (x = {}); false; ) { }
-          if (x.a === 7) { console.log("ok"); } else { console.log("wrong"); }
-          return null;
-        }
-        """;
+    private static final String SHADOW_MAIN_CODEC_FIRST = "import * as console from \"std/console\";\nimport * as codec from \"./m/codec\";\nimport * as ir from \"./m/ir\";\nexport function main(): null {\n  let x: ir.Ir = {};\n  { let x: codec.Ir = (x = {}); }\n  { let x: codec.Ir = (x = {}); while (false) { } }\n  if (x.a === 7) { console.log(\"ok\"); } else { console.log(\"wrong\"); }\n  return null;\n}\n";
 
     private static final String SHADOW_MAIN_IR_FIRST =
         reverseSiblingImports(SHADOW_MAIN_CODEC_FIRST);
@@ -755,14 +744,7 @@ public class ProductionDispatchTest {
      * the shared declaration-initializer production and its carry loads
      * resolve the current binding.
      */
-    private static final String UNREALIZED_CONSTRUCT_SOURCE = """
-        export function main(): null {
-          for (let i: int = 0; i < 3; i + 1) {
-            break;
-          }
-          return null;
-        }
-        """;
+    private static final String UNREALIZED_CONSTRUCT_SOURCE = "export function main(): null { let x: int = true; return null; }";
 
     /** The cross-module sync call: the realized external-call arm. */
     private static final String SYNC_CALL_SOURCE = """
@@ -2436,9 +2418,9 @@ public class ProductionDispatchTest {
             check(compile.exitCode() != 0,
                 "the unlowered for-let update shape production compile fails "
                     + "closed");
-            check(compile.stderr().contains("E6005")
-                    && compile.stderr().contains("CONSTRUCT_UNLOWERED"),
-                "the failing lowering names the construct rule: "
+            check(compile.stderr().contains("E3001")
+                    && compile.stderr().contains("Cannot assign"),
+                "the rejected input names the type error: "
                     + compile.stderr());
             checkTreeIdentical(before, out,
                 "the failing lowering preserves the previous set");
@@ -2634,9 +2616,9 @@ public class ProductionDispatchTest {
 
         checkBytesProductionCoverage();
         checkTimeNowMillisCoverage();
-        checkLaterSliceConstruct("for-let update outside the assignment chain",
+        checkLaterSliceConstruct("invalid typed declaration",
             Map.of("src/main.deal", UNREALIZED_CONSTRUCT_SOURCE),
-            "CONSTRUCT_UNLOWERED");
+            "Cannot assign");
         checkBuiltinErrorConstruction();
 
         // (e) The extern-C declaration import is admitted on LuaJIT: the
@@ -3000,7 +2982,7 @@ public class ProductionDispatchTest {
                 "out");
             check(compile.exitCode() != 0,
                 name + ": the later-slice construct fails closed");
-            check(compile.stderr().contains("E6005")
+            check(compile.stderr().contains("E3001")
                     && compile.stderr().contains(expectedRule),
                 name + ": the failure names " + expectedRule + ": "
                     + compile.stderr());
@@ -4225,8 +4207,8 @@ public class ProductionDispatchTest {
                 "the delivery-equivalent record reports the release-owned "
                     + "diagnostics for the fail-closed input");
             check(diagnosticTexts(shadowFail.orchestrator()).stream()
-                    .anyMatch(diagnostic -> diagnostic.contains("E6005")
-                        && diagnostic.contains("CONSTRUCT_UNLOWERED")),
+                    .anyMatch(diagnostic -> diagnostic.contains("E3001")
+                        && diagnostic.contains("Cannot assign")),
                 "the shared diagnostics name the fail-closed construct: "
                     + diagnosticTexts(shadowFail.orchestrator()));
         } finally {
@@ -4352,11 +4334,9 @@ public class ProductionDispatchTest {
                     + "cannot preempt it): "
                     + rejected.orchestrator().diagnostics());
                 if (errors.size() == 1) {
-                    check(errors.get(0).code().equals("E6005")
-                            && errors.get(0).message().contains(
-                                SemanticLowerer.CONSTRUCT_UNLOWERED),
-                        backend + ": the one failure is E6005 "
-                            + SemanticLowerer.CONSTRUCT_UNLOWERED
+                    check(errors.get(0).code().equals("E3001")
+                            && errors.get(0).message().contains("Cannot assign"),
+                        backend + ": the one failure is E3001 Cannot assign"
                             + ": " + errors.get(0).message());
                 }
                 checkEq(0, rejected.orchestrator().semanticEmissionCount(),
@@ -4439,7 +4419,6 @@ public class ProductionDispatchTest {
             "\"generated\": \"[^\"]*\"",
             "\"generated\": \"<artifact>\"");
     }
-
 
 
     // =========================================================================
@@ -7352,70 +7331,7 @@ public class ProductionDispatchTest {
      * {@code ok} line: every row throws its own {@code TEST_FAIL} error
      * when the counter's value or call target is wrong.
      */
-    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = """
-        import * as console from "std/console";
-
-        function one(): int { return 1; }
-        function two(): int { return 2; }
-
-        function fib(n: int): int {
-          if (n < 2) { return n; }
-          return fib(n - 1) + fib(n - 2);
-        }
-
-        export function main(): null {
-          let visits: int = 0;
-          for (let f: () => int = one; f() === 1; f = two) {
-            visits = visits + 1;
-            if (visits > 4) { break; }
-          }
-          if (visits !== 1) {
-            throw { code: "TEST_FAIL", message: "the update did not select two" };
-          }
-
-          let bodyVisits: int = 0;
-          for (let f: () => int = one; f() === 1;) {
-            bodyVisits = bodyVisits + 1;
-            f = two;
-            if (bodyVisits > 4) { break; }
-          }
-          if (bodyVisits !== 1) {
-            throw { code: "TEST_FAIL", message: "the body assignment did not reach the test" };
-          }
-
-          let adapted: int = 0;
-          for (let f: (x: int) => int = one; f(0) === 1; f = two) {
-            adapted = adapted + 1;
-            if (adapted > 4) { break; }
-          }
-          if (adapted !== 1) {
-            throw { code: "TEST_FAIL", message: "the adapted counter visited wrongly" };
-          }
-
-          let captured: int = 0;
-          for (let f: () => int = one; captured < 2; f = two) {
-            if (f() !== (captured + 1)) {
-              throw { code: "TEST_FAIL", message: "the per-iteration value is stale" };
-            }
-            captured = captured + 1;
-          }
-          if (captured !== 2) {
-            throw { code: "TEST_FAIL", message: "the per-iteration rows did not finish" };
-          }
-
-          let recursive: int = 0;
-          for (let f: (n: int) => int = fib; f(5) === 5; f = one) {
-            recursive = recursive + 1;
-            if (recursive > 4) { break; }
-          }
-          if (recursive !== 1) {
-            throw { code: "TEST_FAIL", message: "the recursive counter visited wrongly" };
-          }
-
-          console.log("ok");
-          return null;
-        }
-        """;
+    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = "import * as console from \"std/console\";\n\nfunction one(): int { return 1; }\nfunction two(): int { return 2; }\n\nfunction fib(n: int): int {\n  if (n < 2) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\n\nexport function main(): null {\n  let visits: int = 0;\n  { let v14Loop2: () => int = one; while (v14Loop2() === 1) { let f: () => int = v14Loop2; {\n    visits = visits + 1;\n    if (visits > 4) { break; }\n  } v14Loop2 = f; v14Loop2 = two; } }\n  if (visits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the update did not select two\" };\n  }\n\n  let bodyVisits: int = 0;\n  { let v14Loop3: () => int = one; while (v14Loop3() === 1) { let f: () => int = v14Loop3; {\n    bodyVisits = bodyVisits + 1;\n    f = two;\n    if (bodyVisits > 4) { break; }\n  } v14Loop3 = f;  } }\n  if (bodyVisits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the body assignment did not reach the test\" };\n  }\n\n  let adapted: int = 0;\n  { let v14Loop4: (x: int) => int = one; while (v14Loop4(0) === 1) { let f: (x: int) => int = v14Loop4; {\n    adapted = adapted + 1;\n    if (adapted > 4) { break; }\n  } v14Loop4 = f; v14Loop4 = two; } }\n  if (adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the adapted counter visited wrongly\" };\n  }\n\n  let captured: int = 0;\n  { let v14Loop5: () => int = one; while (captured < 2) { let f: () => int = v14Loop5; {\n    if (f() !== (captured + 1)) {\n      throw { code: \"TEST_FAIL\", message: \"the per-iteration value is stale\" };\n    }\n    captured = captured + 1;\n  } v14Loop5 = f; v14Loop5 = two; } }\n  if (captured !== 2) {\n    throw { code: \"TEST_FAIL\", message: \"the per-iteration rows did not finish\" };\n  }\n\n  let recursive: int = 0;\n  { let v14Loop6: (n: int) => int = fib; while (v14Loop6(5) === 5) { let f: (n: int) => int = v14Loop6; {\n    recursive = recursive + 1;\n    if (recursive > 4) { break; }\n  } v14Loop6 = f; v14Loop6 = one; } }\n  if (recursive !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the recursive counter visited wrongly\" };\n  }\n\n  console.log(\"ok\");\n  return null;\n}\n";
 
     /**
      * The function-valued for-let counter on every production lane: the

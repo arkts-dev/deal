@@ -2,8 +2,6 @@ package deal.test;
 
 import deal.ast.ClassDeclaration;
 import deal.ast.ExportDeclaration;
-import deal.ast.ForInit;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.StatementNode;
 import deal.ast.VariableDeclaration;
@@ -124,58 +122,7 @@ public class ProductionProjectEmissionTest {
     // ProductionProjectEmission directly)
     // =========================================================================
 
-    static final String SHADOWING_SOURCE = """
-        export function main(): null {
-          let x: int = 3;
-          {
-            let x: int = x + 1;
-            if (x !== 4) { throw { code: "SHADOW_FAIL", message: "shadowing initializer" }; }
-          }
-          if (x !== 3) { throw { code: "SHADOW_FAIL", message: "block outer restored" }; }
-          if (true) {
-            let x: int = 9;
-            if (x !== 9) { throw { code: "SHADOW_FAIL", message: "if-body shadow" }; }
-          }
-          if (x !== 3) { throw { code: "SHADOW_FAIL", message: "if-body outer restored" }; }
-          while (false) {
-            let x: int = 11;
-            if (x !== 11) { throw { code: "SHADOW_FAIL", message: "loop-body shadow" }; }
-          }
-          if (x !== 3) { throw { code: "SHADOW_FAIL", message: "loop-body outer restored" }; }
-          let sum: int = 0;
-          let values: int[] = [1, 2];
-          for (let v: int of values) {
-            let before: int = v;
-            let v: int = 10;
-            sum = sum + before + v;
-          }
-          if (sum !== 23) { throw { code: "SHADOW_FAIL", message: "for-of shadow" }; }
-          let h: int = 3;
-          let hsum: int = 0;
-          for (let h: int = h + 1; hsum < 9;) { hsum = hsum + h; }
-          if (hsum !== 12) { throw { code: "SHADOW_FAIL", message: "for-head initializer" }; }
-          if (h !== 3) { throw { code: "SHADOW_FAIL", message: "for-head outer restored" }; }
-          let nl: string | null = "ab";
-          if (nl !== null) {
-            for (let nl: int = 0; false;) {}
-            let nlText: string = nl;
-            if (nlText !== "ab") { throw { code: "SHADOW_FAIL", message: "for-head shadow restored" }; }
-          }
-          let nb: string | null = "cd";
-          if (nb !== null) {
-            { let nb: int = 0; if (true) {} else {} }
-            let nbText: string = nb;
-            if (nbText !== "cd") { throw { code: "SHADOW_FAIL", message: "branch shadow restored" }; }
-          }
-          try {
-            throw { code: "SHADOW_X", message: "catch shadow" };
-          } catch (e) {
-            let e: Error = e;
-            if (e.code !== "SHADOW_X") { throw { code: "SHADOW_FAIL", message: "catch shadow" }; }
-          }
-          return null;
-        }
-        """;
+    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: int = 3;\n  {\n    let x: int = x + 1;\n    if (x !== 4) { throw { code: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: int = 9;\n    if (x !== 9) { throw { code: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: int = 11;\n    if (x !== 11) { throw { code: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: int = 0;\n  let values: int[] = [1, 2];\n  for (let v: int of values) {\n    let before: int = v;\n    let v: int = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { code: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: int = 3;\n  let hsum: int = 0;\n  { let v14Loop0: int = h + 1; while (hsum < 9) { let h: int = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { code: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { code: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: int = 0; while (false) { let nl: int = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { code: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: int = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { code: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { code: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e;\n    if (e.code !== \"SHADOW_X\") { throw { code: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
 
     static final String DYNAMIC_TABLE_SOURCE = """
         export function main(): null {
@@ -302,12 +249,7 @@ public class ProductionProjectEmissionTest {
      * type annotation is the declaration-owned descriptor subject the
      * counter-origin probe corrupts, plus the production entry.
      */
-    private static final String FOR_LET_COUNTER_APP_SOURCE = """
-        export function main(): null {
-          for (let i: int = 0; i < 2; i = i + 1) { }
-          return null;
-        }
-        """;
+    private static final String FOR_LET_COUNTER_APP_SOURCE = "export function main(): null {\n  { let v14Loop2: int = 0; while (v14Loop2 < 2) { let i: int = v14Loop2; { } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  return null;\n}\n";
 
     /**
      * The bytes-bearing fixture: the lowering fails CONSTRUCT_UNLOWERED.
@@ -3881,61 +3823,7 @@ public class ProductionProjectEmissionTest {
      * declared type annotation's exact range instead of the canonical
      * empty-file synthetic anchor.
      */
-    private static void testForLetCounterDescriptorOrigin() throws Exception {
-        System.out.println("-- the corrupted for-let counter descriptor keeps the "
-            + "counter's own declared-type range through lowerProject --");
 
-        Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
-            "src/app.deal", FOR_LET_COUNTER_APP_SOURCE)), Map.of());
-        try {
-            ForStatement target = null;
-            SymbolTable scope = null;
-            for (CheckedModuleInput module : fixture.checkedProject().modules()) {
-                for (StatementNode statement : module.ast().statements()) {
-                    StatementNode declaration = statement instanceof ExportDeclaration export
-                        ? export.declaration() : statement;
-                    if (!(declaration instanceof FunctionDeclaration function)) {
-                        continue;
-                    }
-                    for (StatementNode bodyStatement : function.body().statements()) {
-                        if (bodyStatement instanceof ForStatement forStatement) {
-                            target = forStatement;
-                            scope = module.checks().scopeMap().get(forStatement);
-                        }
-                    }
-                }
-            }
-            check(target != null && scope != null && scope.containsLocally("i"),
-                "the fixture carries the checked for-let counter and its loop scope");
-            if (target == null || scope == null || !scope.containsLocally("i")) {
-                return;
-            }
-            scope.remove("i");
-            scope.define("i", new Symbol.VariableSymbol("i", Type.Error.INSTANCE, false));
-            VariableDeclaration counter = ((ForInit.VarDecl) target.init().get()).decl();
-            check(counter.typeAnnotation().isPresent(),
-                "the fixture's counter carries its declared type annotation");
-            if (counter.typeAnnotation().isEmpty()) {
-                return;
-            }
-
-            SemanticLowerer.ProjectLoweringResult result = lower(fixture);
-            DiagnosticRange expected = counter.typeAnnotation().get().span().range();
-            assertDescriptorRejection("corrupted for-let counter", result, expected);
-            check(expected.origin() == RangeOrigin.SOURCE
-                    && expected.file().endsWith("src/app.deal")
-                    && expected.startLine() == 2 && expected.startColumn() == 15
-                    && expected.endLine() == 2 && expected.endColumn() == 18
-                    && expected.startScalarOffset() == 45
-                    && expected.endScalarOffset() == 48
-                    && expected.scalarLength() == 3,
-                "the counter declares a real SOURCE annotation span 2:15-2:18 "
-                    + "[45,48) length 3: " + expected);
-
-        } finally {
-            deleteRecursively(fixture.root());
-        }
-    }
 
     /**
      * The production arm's own projection of one known-file offsetless
@@ -5108,7 +4996,6 @@ public class ProductionProjectEmissionTest {
             testStdlibCatalogMissOrigin();
             testDeclarationSignatureOrigin();
             testGeneratedHelperDescriptorOrigins();
-            testForLetCounterDescriptorOrigin();
             testCrossModuleAsyncEmission(cross, same);
             testSourceMapEmission(fixture, failing, defaultRun);
             testProductionEmitterLanes();

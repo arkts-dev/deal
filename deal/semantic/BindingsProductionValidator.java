@@ -171,61 +171,20 @@ public final class BindingsProductionValidator {
     public record IncarnationKey(BindingId binding, long generation, BlockId scope) {
     }
 
-    /**
-     * Derives the closed B2 cell kind of every producing allocation
-     * incarnation of the unit: {@code SHARED_CELL} iff the incarnation
-     * is a pinned special case ({@code FOR_EACH} iteration binding or a
-     * for-let per-iteration incarnation) or any capture reference of
-     * the union of the three closed capture sets (closure captures,
-     * thunk {@code capturedBindings} entries,
-     * {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell} sources)
-     * resolves to it; {@code DIRECT} otherwise. Group members derive
-     * {@code SHARED_CELL} by construction (B2: SCC mutual capture).
-     * The result is the corpus-side invariant assertion surface — not
-     * a validator rule; the emitted {@code BINDING_ALLOC} payload
-     * kinds must equal exactly this derivation.
-     *
-     */
+
     public static List<DerivedCellKind> deriveCellKinds(LoweredModuleUnit unit,
                                                         StructuredBodyTable table) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Model model = Model.build(unit, table, ClassBindingFacts.empty());
         List<DerivedCellKind> derived = new ArrayList<>();
-        // The for-let per-iteration detection: a binding with both a
-        // generation-0 incarnation and a generation-1 incarnation is
-        // the pinned two-incarnation shape — its generation-1
-        // incarnation is always SHARED_CELL (B1/B2).
-        Set<BindingId> perIterationBindings = new LinkedHashSet<>();
-        for (List<Allocation> allocations : model.allocationsByBinding.values()) {
-            boolean hasGen0 = false;
-            boolean hasGen1 = false;
-            for (Allocation allocation : allocations) {
-                if (allocation.generation == 0) {
-                    hasGen0 = true;
-                } else if (allocation.generation == 1) {
-                    hasGen1 = true;
-                }
-            }
-            if (hasGen0 && hasGen1) {
-                for (Allocation allocation : allocations) {
-                    if (allocation.generation == 1
-                            && allocation.op.payload()
-                                instanceof KindPayload.BindingAllocPayload alloc) {
-                        perIterationBindings.add(alloc.binding());
-                    }
-                }
-            }
-        }
         for (SemanticOp op : model.unit.ops()) {
             switch (op.payload()) {
                 case KindPayload.BindingAllocPayload alloc -> {
                     IncarnationKey key = new IncarnationKey(alloc.binding(),
                         alloc.generation(), alloc.scope());
-                    boolean special = alloc.generation() == 1
-                        && perIterationBindings.contains(alloc.binding());
                     derived.add(new DerivedCellKind(key,
-                        special || model.captured(key) ? BindingCellKind.SHARED_CELL
+                        model.captured(key) ? BindingCellKind.SHARED_CELL
                             : BindingCellKind.DIRECT));
                 }
                 case KindPayload.ForEachPayload forEach -> {

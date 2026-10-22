@@ -211,11 +211,11 @@ public class IrDumperTest {
 
     static void testForStatement() {
         System.out.print("  testForStatement... ");
-        String source = "function f(): null { for (let i: int = 0; i < 10; i = i + 1) { continue; } }";
+        String source = "function f(): null { { let v14Loop0: int = 0; while (v14Loop0 < 10) { let i: int = v14Loop0; { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
-        assertContains(ir, "for", "for statement");
+        assertContains(ir, "while", "migrated loop statement");
         assertContains(ir, "continue", "continue statement");
         System.out.println("OK");
     }

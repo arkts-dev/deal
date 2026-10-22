@@ -94,15 +94,7 @@ public abstract class EmitterSessionBase {
     /** Each op id to its single membership block (the transfer-closure source). */
     protected final Map<OpId, BlockId> opBlock = new LinkedHashMap<>();
     protected final Map<OpId, SemanticOp> opsById = new HashMap<>();
-    /**
-     * The derived cell kind of every binding incarnation, keyed by
-     * {@code {binding, generation}} (B2: the final kind is a property
-     * of the <em>incarnation</em> — a for-let counter's generation-0
-     * cell stays {@code DIRECT} while its captured per-iteration
-     * generation-1 cell is {@code SHARED_CELL}; keying by binding
-     * alone let the first ALLOC's kind shadow every later
-     * incarnation). A missing entry is {@code DIRECT}.
-     */
+
     protected final Map<BindingId, Map<Long, BindingCellKind>> cellKinds =
         new HashMap<>();
     /**
@@ -155,14 +147,7 @@ public abstract class EmitterSessionBase {
             : cell(binding, generation);
     }
 
-    /**
-     * One {@code CLOSURE_NEW}/group-member/general-invocation capture
-     * argument: the enclosing factory's capture parameter when the
-     * creating body captured the binding (the cell travels the chain),
-     * otherwise the creation-site incarnation's cell (never a hard-coded
-     * generation 0 — a for-let capture names the per-iteration
-     * incarnation).
-     */
+
     protected final String captureArg(BindingGeneration capture) {
         return cellSource(capture.binding(), capture.generation());
     }

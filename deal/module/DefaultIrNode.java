@@ -60,7 +60,6 @@ public record DefaultIrNode(
         CONTINUE,
         DELETE,
         EXPRESSION_STATEMENT,
-        FOR,
         FOR_OF,
         FUNCTION_DECLARATION,
         IF,

@@ -2315,11 +2315,10 @@ public final class SemanticIrValidator {
             case LOOP -> {
                 ControlSelector selector = enumByName(ControlSelector.class,
                     optionalString(op.payload(), "selector"));
-                if (selector != null && selector != ControlSelector.WHILE
-                        && selector != ControlSelector.FOR) {
+                if (selector != null && selector != ControlSelector.WHILE) {
                     yield fail(op, unit, facts, R_POLICY_KIND, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_POLICY_KIND, "ControlSelector " + selector.name()
-                            + " not allowed for LOOP (WHILE|FOR only)"));
+                            + " not allowed for LOOP (WHILE only)"));
                 }
                 yield requirePolicy(unit, facts, op, policy, FailurePolicyId.NO_DEAL_FAILURE,
                     "LOOP");

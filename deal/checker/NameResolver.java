@@ -27,7 +27,7 @@ import deal.diagnostics.DiagnosticCode;
  * </ol>
  *
  * <p>Also produces a {@code scopeMap} mapping each scoped statement
- * (Block, FunctionDeclaration, ForStatement, TryStatement, and
+ * (Block, FunctionDeclaration, ForOfStatement, TryStatement, and
  * FunctionExpr) to its {@link SymbolTable} scope, used by the TypeChecker
  * for scope-aware name resolution.</p>
  *
@@ -553,7 +553,7 @@ public final class NameResolver {
             case Block b                 -> walkBlock(b);
             case IfStatement is          -> walkIf(is);
             case WhileStatement ws       -> walkWhile(ws);
-            case ForStatement fs         -> walkFor(fs);
+
             case ForOfStatement fos      -> walkForOf(fos);
             case TryStatement ts         -> walkTry(ts);
             case ImportDeclaration id    -> { /* already processed */ }
@@ -824,46 +824,6 @@ public final class NameResolver {
         loopDepth--;
     }
 
-    private void walkFor(ForStatement fs) {
-        SymbolTable saved = currentScope;
-        currentScope = currentScope.enterScope();
-        scopeMap.put(fs, currentScope);
-
-        fs.init().ifPresent(init -> {
-            if (init instanceof ForInit.VarDecl vd) {
-                VariableDeclaration decl = vd.decl();
-                String name = decl.name();
-
-                // Check for $ in for-loop variable name (E2008)
-                checkNoDollar(name, decl.span());
-
-                Type type = decl.typeAnnotation().map(this::resolveTypeNode).orElse(null);
-                Symbol.ClassSymbol declaredClass = decl.typeAnnotation()
-                    .map(this::declaredClassSymbolOf).orElse(null);
-                // The loop-head let is visible only after its declaration
-                // (docs/spec-v1.3.md §Name resolution — Declaration order):
-                // its initializer is walked before the loop variable is defined, so the
-                // initializer resolves to an enclosing binding of the
-                // same name (the C-style for desugars to block-local
-                // scope plus a while loop).
-                walkExpression(decl.initializer());
-                currentScope.define(name,
-                    new Symbol.VariableSymbol(name, type, false, declaredClass,
-                        decl.typeAnnotation().orElse(null)));
-            } else if (init instanceof ForInit.AssignExpr ae) {
-                walkExpression(ae.expr());
-            }
-        });
-
-        // F1: Walk condition and update expressions
-        fs.condition().ifPresent(this::walkExpression);
-        fs.update().ifPresent(this::walkExpression);
-
-        loopDepth++;
-        walkBlock(fs.body());
-        loopDepth--;
-        currentScope = saved;
-    }
 
     /**
      * D13: Walk a for-of statement.

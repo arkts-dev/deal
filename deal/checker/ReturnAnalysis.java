@@ -103,13 +103,7 @@ public final class ReturnAnalysis {
                 && returnsOnAllPaths(ws.body())
                 && !containsBreak(ws.body());
         }
-        if (stmt instanceof ForStatement fs) {
-            boolean infinite = fs.condition().isEmpty()
-                || isLiteralTrue(fs.condition().get());
-            return infinite
-                && returnsOnAllPaths(fs.body())
-                && !containsBreak(fs.body());
-        }
+
         // All other statements cannot complete normally only through the
         // transfer statements handled above.
         return false;
@@ -194,10 +188,7 @@ public final class ReturnAnalysis {
             collectTryCatchFallthroughs(ws.body().statements(), out);
             return;
         }
-        if (stmt instanceof ForStatement fs) {
-            collectTryCatchFallthroughs(fs.body().statements(), out);
-            return;
-        }
+
         if (stmt instanceof ForOfStatement fos) {
             collectTryCatchFallthroughs(fos.body().statements(), out);
         }
@@ -236,13 +227,7 @@ public final class ReturnAnalysis {
                 && returnsOnAllPathsViaReturn(ws.body())
                 && !containsBreak(ws.body());
         }
-        if (stmt instanceof ForStatement fs) {
-            boolean infinite = fs.condition().isEmpty()
-                || isLiteralTrue(fs.condition().get());
-            return infinite
-                && returnsOnAllPathsViaReturn(fs.body())
-                && !containsBreak(fs.body());
-        }
+
         return false;
     }
 
@@ -292,13 +277,7 @@ public final class ReturnAnalysis {
                 && cannotCompleteNormally(ws.body())
                 && !containsBreak(ws.body());
         }
-        if (stmt instanceof ForStatement fs) {
-            boolean infinite = fs.condition().isEmpty()
-                || isLiteralTrue(fs.condition().get());
-            return infinite
-                && cannotCompleteNormally(fs.body())
-                && !containsBreak(fs.body());
-        }
+
         return false;
     }
 

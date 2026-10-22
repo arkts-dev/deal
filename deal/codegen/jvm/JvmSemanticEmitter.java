@@ -1397,9 +1397,7 @@ public final class JvmSemanticEmitter {
          * never reaches the update, so its emitted update statements would
          * be unreachable Java (JLS &sect;14.21).
          */
-        private boolean forUpdateReachable(BlockId bodyBlock, OpId loopId) {
-            return blockReachesForUpdate(bodyBlock, loopId, true);
-        }
+
 
         /**
          * Whether a block's emitted reachable prefix reaches the update:
@@ -1416,33 +1414,7 @@ public final class JvmSemanticEmitter {
          * so a later unconditional transfer still makes the update
          * unreachable.
          */
-        private boolean blockReachesForUpdate(BlockId block, OpId loopId,
-                                              boolean fallsThrough) {
-            StructuredBodyTable ownerTable = blockTableOf.get(block);
-            if (ownerTable == null) {
-                ownerTable = table;
-            }
-            List<OpId> ops = ownerTable.blockOps().get(block);
-            if (ops == null) {
-                return fallsThrough;
-            }
-            for (OpId opId : ops) {
-                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
-                    continue;
-                }
-                SemanticOp op = opsById.get(opId);
-                if (op == null) {
-                    continue;
-                }
-                if (reachesForUpdate(op, loopId)) {
-                    return true;
-                }
-                if (!completesNormally(op)) {
-                    return false;
-                }
-            }
-            return fallsThrough;
-        }
+
 
         /**
          * Whether some emitted path of one op reaches the update block: a
@@ -1455,27 +1427,7 @@ public final class JvmSemanticEmitter {
          * reports the update unreachable only at the first non-completing
          * statement after it.
          */
-        private boolean reachesForUpdate(SemanticOp op, OpId loopId) {
-            return switch (op.kind()) {
-                case CONTINUE -> ((KindPayload.ContinuePayload) op.payload())
-                    .loopId().equals(loopId);
-                case TRY_CATCH -> {
-                    KindPayload.TryCatchPayload payload =
-                        (KindPayload.TryCatchPayload) op.payload();
-                    yield blockReachesForUpdate(payload.tryBlock(), loopId, false)
-                        || blockReachesForUpdate(payload.catchBlock(), loopId, false);
-                }
-                case BRANCH -> {
-                    KindPayload.BranchPayload payload =
-                        (KindPayload.BranchPayload) op.payload();
-                    yield blockReachesForUpdate(payload.selectedBlock(), loopId, false)
-                        || (payload.alternateBlock() != null
-                            && blockReachesForUpdate(payload.alternateBlock(),
-                                loopId, false));
-                }
-                default -> false;
-            };
-        }
+
 
         /**
          * Whether the emission walk of one block emits at least one
@@ -1837,11 +1789,7 @@ public final class JvmSemanticEmitter {
             if (target != null && target.kind() == SemanticOpKind.FOR_EACH) {
                 return "continue FE" + loopId.id() + ";";
             }
-            if (target != null && target.kind() == SemanticOpKind.LOOP
-                    && ((KindPayload.LoopPayload) target.payload()).selector()
-                        == deal.semantic.ir.ControlSelector.FOR) {
-                return "continue CONT" + loopId.id() + ";";
-            }
+
             return "continue " + loopLabel(loopId) + ";";
         }
 
@@ -5851,36 +5799,7 @@ public final class JvmSemanticEmitter {
                     emitBlockOps(payload.bodyBlock(), indent + 1);
                     out.append(indent(indent)).append("}\n");
                 }
-                case FOR -> {
-                    emitBlockOps(payload.initBlock(), indent);
-                    out.append(indent(indent)).append(loopLabel(op.opId()))
-                        .append(": while (true) {\n");
-                    out.append(indent(indent)).append("  if (!((Boolean) ").append(condition)
-                        .append(").booleanValue()) break ").append(loopLabel(op.opId()))
-                        .append(";\n");
-                    out.append(indent(indent)).append("  CONT").append(op.opId().id())
-                        .append(": do {\n");
-                    emitBlockOps(payload.bodyBlock(), indent + 2);
-                    out.append(indent(indent)).append("  } while (false);\n");
-                    if (payload.updateBlock() != null) {
-                        if (forUpdateReachable(payload.bodyBlock(), op.opId())) {
-                            emitBlockOps(payload.updateBlock(), indent + 1);
-                        } else if (blockHasEmittedOps(payload.updateBlock())) {
-                            // JLS §14.21: the emitted CONT do statement
-                            // cannot complete normally (every path of the
-                            // emitted body leaves by break/return/throw and
-                            // no reachable continue targets this loop), so
-                            // the update statements would be unreachable
-                            // Java — javac rejects them, and the oracle's
-                            // loop walk stops on the same non-completing
-                            // path. Emit the skip marker instead; the update
-                            // ops stay in the lowered unit.
-                            out.append(indent(indent)).append("  // unreachable: the"
-                                + " preceding statement cannot complete normally\n");
-                        }
-                    }
-                    out.append(indent(indent)).append("}\n");
-                }
+
                 default -> throw rejectedOp(op, "LOOP selector "
                     + payload.selector());
             }

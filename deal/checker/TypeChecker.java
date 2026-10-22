@@ -264,15 +264,9 @@ public final class TypeChecker {
     }
 
     private void walkStatement(StatementNode stmt) {
-        // A block introduces a lexical scope: narrowing entries removed by
-        // block-local declarations are restored when the block exits. A
-        // C-style for head is a block-local scope too (docs/spec-v1.3.md
-        // §Statement/expression separation: the loop desugars to a
-        // block-local scope plus a while loop), so its loop-head let
-        // shadows and restores like a block-local declaration.
+        // Block-local declarations restore outer narrowing when the block exits.
         boolean blockScope = stmt instanceof Block;
-        boolean shadowScope = blockScope
-            || (stmt instanceof ForStatement && scopeMap.get(stmt) != null);
+        boolean shadowScope = blockScope;
         if (shadowScope) narrowing.pushShadowFrame();
 
         // Check for scope change
@@ -292,7 +286,7 @@ public final class TypeChecker {
             case ReturnStatement rs      -> checkReturnStatement(rs);
             case IfStatement is          -> checkIfStatement(is);
             case WhileStatement ws       -> checkWhileStatement(ws);
-            case ForStatement fs         -> checkForStatement(fs);
+
             case ForOfStatement fos      -> checkForOfStatement(fos);
             case BreakStatement bs       -> checkBreak(bs);
             case ContinueStatement cs    -> checkContinue(cs);
@@ -1277,67 +1271,6 @@ public final class TypeChecker {
     // For statement
     // =======================================================================
 
-    private void checkForStatement(ForStatement fs) {
-        // The loop-head let declaration is not visible to its own
-        // initializer (docs/spec-v1.3.md §Name resolution — Declaration order):
-        // while the initializer is checked, the loop-head scope keeps the name
-        // pending, so a self reference resolves to the enclosing scopes
-        // (an unresolved self reference is E2001) and a same-named
-        // enclosing binding is read through. The name is exposed to the
-        // condition, the update, and the body.
-        boolean loopHeadPending = false;
-        if (fs.init().isPresent()
-                && fs.init().get() instanceof ForInit.VarDecl vd) {
-            SymbolTable loopScope = scopeMap.get(fs);
-            if (loopScope != null) {
-                Set<String> names = new LinkedHashSet<>();
-                names.add(vd.decl().name());
-                pendingScopes.push(new PendingScope(loopScope, names));
-                loopHeadPending = true;
-            }
-        }
-        try {
-            fs.init().ifPresent(init -> {
-                switch (init) {
-                    case ForInit.VarDecl vd -> checkVariableDeclaration(vd.decl());
-                    case ForInit.AssignExpr ae -> checkExpression(ae.expr());
-                }
-            });
-        } finally {
-            if (loopHeadPending) {
-                pendingScopes.pop();
-            }
-        }
-
-        // F6: Like the while condition, the for condition checks with no
-        // expected type: the boolean loop requirement admits no
-        // contextual table read.
-        fs.condition().ifPresent(cond -> {
-            Type savedExpected = expectedType;
-            expectedType = null;
-            Type condType = checkExpression(cond);
-            expectedType = savedExpected;
-
-            if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
-                error(DiagnosticCode.E3007, "For condition must be boolean, got " + typeName(condType),
-                    cond.span());
-            }
-        });
-
-        fs.update().ifPresent(this::checkExpression);
-
-        NullNarrowing savedNarrowing = narrowing;
-        loopSavedNarrowing.push(savedNarrowing);
-        narrowing = new NullNarrowing();
-        loopDepth++;
-        loopAssignments.push(newBindingAssignmentSet());
-        walkStatement(fs.body());
-        Set<Symbol> assigned = loopAssignments.pop();
-        loopDepth--;
-        loopSavedNarrowing.pop();
-        closeLoopAssignments(assigned, savedNarrowing);
-        narrowing = savedNarrowing;
-    }
 
     /**
      * The fresh binding-identity assignment set of one loop body or one
@@ -1406,7 +1339,7 @@ public final class TypeChecker {
         loopDepth--;
         loopSavedNarrowing.pop();
         // The for-of back-edge invalidates every binding assigned in the
-        // body exactly like while and C-style for (v1.2 narrowing does
+        // body exactly like while (call-preserved narrowing does
         // not cross loop back-edges): the recorded bindings propagate to
         // an enclosing loop and the still-visible ones lose their entry.
         closeLoopAssignments(assigned, savedNarrowing);

@@ -7,7 +7,7 @@ export function test_nested_break(): int {
   let found: int = 0;
   let innerCatchRan: boolean = false;
   let outerCatchRan: boolean = false;
-  for (let i: int = 0; i < 10; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < 10) { let i: int = v14Loop0; {
     try {
       try {
         if (i === 5) { break; }
@@ -18,7 +18,7 @@ export function test_nested_break(): int {
     } catch (e1) {
       outerCatchRan = true;
     }
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (found !== 4 || innerCatchRan || outerCatchRan) {
     throw { code: "TEST_FAIL", message: "nested-break-in-try terminal result or forbidden catch path mismatch" };
   }

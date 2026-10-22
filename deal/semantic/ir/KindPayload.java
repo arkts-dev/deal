@@ -794,12 +794,7 @@ public sealed interface KindPayload
         }
     }
 
-    /**
-     * {@code LOOP} — {@code WHILE|FOR} (the admissible selector subset is a
-     * validator check), init/condition/body/update blocks; no speculative
-     * body/update execution and matching exits only. {@code initBlock} and
-     * {@code updateBlock} may be {@code null} ({@code WHILE} shapes).
-     */
+
     record LoopPayload(ControlSelector selector, BlockId initBlock, ValueId condition,
                        BlockId bodyBlock, BlockId updateBlock) implements KindPayload {
 

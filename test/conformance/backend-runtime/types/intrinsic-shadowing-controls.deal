@@ -111,9 +111,9 @@ function declarationOrder(): int {
 // (the counter is not visible to it), the loop reads are the counter.
 function forHeadCounter(): int {
   let total: int = 0;
-  for (let int: int = int(3.0); int > 0; int = int - 1) {
+  { let v14Loop0: int = int(3.0); while (v14Loop0 > 0) { let int: int = v14Loop0; {
     total = total + int;
-  }
+  } v14Loop0 = int; v14Loop0 = v14Loop0 - 1; } }
   return total;
 }
 

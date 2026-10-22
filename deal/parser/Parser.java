@@ -413,7 +413,7 @@ public final class Parser {
             case RETURN    -> parseReturnStatement();
             case IF        -> parseIfStatement();
             case WHILE     -> parseWhileStatement();
-            case FOR       -> parseForStatement();
+            case FOR       -> parseForOfStatement();
             case BREAK     -> parseBreakStatement();
             case CONTINUE  -> parseContinueStatement();
             case IMPORT    -> parseImportDeclaration();
@@ -682,87 +682,28 @@ public final class Parser {
         return new WhileStatement(sp, condition, body);
     }
 
-    // -- ForStatement --
-    private StatementNode parseForStatement() {
+    // -- For-of --
+    private StatementNode parseForOfStatement() {
         Token forToken = advance();
         expect(TokenType.LPAREN, DiagnosticCode.E1014, "Expected '(' after 'for'");
-
-        // --- Init ---
-        Optional<ForInit> init = Optional.empty();
-        if (peek().type() == TokenType.LET) {
-            Token letToken = advance();
-            Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007,
-                    "Expected loop variable name after 'let'");
-            if (nameToken == null) { synchronize(); return null; }
-
-            Optional<TypeNode> typeAnnotation = Optional.empty();
-            if (match(TokenType.COLON)) {
-                typeAnnotation = Optional.ofNullable(parseType());
-            }
-
-            // D6: For-of detection — after optional type annotation
-            if (typeAnnotation.isPresent() && match(TokenType.OF)) {
-                ExpressionNode iterable = parseExpression();
-                // D20: Null guard — matches established parser pattern
-                if (iterable == null) { synchronize(); return null; }
-                expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after for-of iterable");
-                Block body = parseBlock();
-                Span sp = spanBetween(forToken, previousOrCurrent());
-                return new ForOfStatement(sp, nameToken.lexeme(),
-                    typeAnnotation.get(), iterable, body);
-            }
-
-            if (!match(TokenType.EQ_SIGN)) {
-                error(DiagnosticCode.E1013, "Expected '=' initializer in for-loop variable", peek());
-                synchronize(); return null;
-            }
-
-            ExpressionNode initExpr = parseExpression();
-            if (initExpr == null) { synchronize(); return null; }
-
-            Span varSpan = spanBetween(letToken, previousOrCurrent());
-            VariableDeclaration varDecl = new VariableDeclaration(varSpan,
-                    nameToken.lexeme(), typeAnnotation, initExpr);
-            init = Optional.of(new ForInit.VarDecl(varDecl));
-
-        } else if (peek().type() != TokenType.SEMICOLON) {
-            ExpressionNode expr = parseExpression();
-            if (expr instanceof AssignmentExpr assign) {
-                init = Optional.of(new ForInit.AssignExpr(assign));
-            } else if (expr != null) {
-                error(DiagnosticCode.E1017,
-                    "For-loop initializer must be a variable declaration or assignment",
-                    expr);
-                // Wrap in a synthetic assignment for recovery
-                init = Optional.of(new ForInit.AssignExpr(
-                        new AssignmentExpr(expr.span(), expr,
-                                new LiteralExpr(expr.span(),
-                                        new LiteralValue.NullLiteral()))));
-            }
+        expect(TokenType.LET, DiagnosticCode.E1007, "Expected 'let' in for-of loop");
+        Token name = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007,
+            "Expected iteration variable name");
+        if (name == null) { synchronize(); return null; }
+        expect(TokenType.COLON, DiagnosticCode.E1013,
+            "Expected iteration variable type in for-of loop");
+        TypeNode type = parseType();
+        if (type == null) { synchronize(); return null; }
+        if (!match(TokenType.OF)) {
+            error(DiagnosticCode.E1013, "Expected 'of'; C-style for loops are not supported", peek());
+            synchronize(); return null;
         }
-
-        expect(TokenType.SEMICOLON, DiagnosticCode.E1018, "Expected ';' after for-loop initializer");
-
-        // --- Condition ---
-        Optional<ExpressionNode> condition = Optional.empty();
-        if (peek().type() != TokenType.SEMICOLON) {
-            ExpressionNode cond = parseExpression();
-            if (cond != null) condition = Optional.of(cond);
-        }
-        expect(TokenType.SEMICOLON, DiagnosticCode.E1018, "Expected ';' after for-loop condition");
-
-        // --- Update ---
-        Optional<ExpressionNode> update = Optional.empty();
-        if (peek().type() != TokenType.RPAREN) {
-            ExpressionNode upd = parseExpression();
-            if (upd != null) update = Optional.of(upd);
-        }
-        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after for-loop update");
-
+        ExpressionNode iterable = parseExpression();
+        if (iterable == null) { synchronize(); return null; }
+        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after for-of iterable");
         Block body = parseBlock();
-
-        Span sp = spanBetween(forToken, previousOrCurrent());
-        return new ForStatement(sp, init, condition, update, body);
+        return new ForOfStatement(spanBetween(forToken, previousOrCurrent()),
+            name.lexeme(), type, iterable, body);
     }
 
     // -- Break / Continue --

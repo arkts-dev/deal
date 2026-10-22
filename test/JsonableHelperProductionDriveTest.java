@@ -2475,9 +2475,9 @@ public class JsonableHelperProductionDriveTest {
         StringBuilder body = new StringBuilder();
         body.append("  let w: Wrapper = { child: { data: {} } };\n");
         body.append("  let cur: table = w.child.data;\n");
-        body.append("  for (let i: int = 0; i < ").append(links)
-            .append("; i = i + 1) {\n");
-        body.append("    cur = linkAppend(cur);\n  }\n");
+        body.append("  let i: int = 0; while (i < ").append(links)
+            .append(") {\n");
+        body.append("    cur = linkAppend(cur); i = i + 1;\n  }\n");
         if (expectedText != null) {
             body.append("  let json: string = Wrapper$toJson(w);\n");
             body.append("  let expected: string = ")

@@ -1443,14 +1443,12 @@ public class CheckerTest {
     static void testForConditionContextualTyping() {
         System.out.println("-- F6: For condition contextual typing --");
         CheckerOutput read = checkProgram(
-            "let t: table = { flag: true };\n" +
-            "for (let i: int = 0; i < 10 && t.flag; i = i + 1) { break; }"
+            "let t: table = { flag: true };\n{ let v14Loop0: int = 0; while (v14Loop0 < 10 && t.flag) { let i: int = v14Loop0; { break; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }"
         );
         assertError(read, "E3003",
             "for condition table read rejects E3003");
         CheckerOutput booleanRequirement = checkProgram(
-            "let t: table = { flag: true };\n" +
-            "for (let i: int = 0; t; i = i + 1) { break; }"
+            "let t: table = { flag: true };\n{ let v14Loop1: int = 0; while (t) { let i: int = v14Loop1; { break; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }"
         );
         assertError(booleanRequirement, "E3007",
             "for condition still requires boolean");
@@ -2082,18 +2080,7 @@ public class CheckerTest {
                 + "refinements; the loop exit must not restore them");
 
         CheckerOutput forAwait = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
-            "  let x: string | null = \"ok\";\n" +
-            "  if (x !== null) {\n" +
-            "    {\n" +
-            "      let x: int = 0;\n" +
-            "      for (let n: int = 0; false; n = n + 1) { await tick(); }\n" +
-            "    }\n" +
-            "    let s: string = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
+            "async function tick(): null { return null; }\nexport async function run(): null {\n  let x: string | null = \"ok\";\n  if (x !== null) {\n    {\n      let x: int = 0;\n      { let v14Loop2: int = 0; while (false) { let n: int = v14Loop2; { await tick(); } v14Loop2 = n; v14Loop2 = v14Loop2 + 1; } }\n    }\n    let s: string = x;\n  }\n  return null;\n}"
         );
         assertError(forAwait, "E3001",
             "an await inside a C-style for body invalidates the enclosing "
@@ -2630,33 +2617,19 @@ public class CheckerTest {
         System.out.println("-- the C-style for loop-head let is not visible "
             + "to its own initializer --");
         CheckerOutput self = checkProgram(
-            "export function main(): null {\n" +
-            "  for (let x: int = x; false;) {}\n" +
-            "  return null;\n" +
-            "}"
+            "export function main(): null {\n  { let v14Loop3: int = x; while (false) { let x: int = v14Loop3; {} v14Loop3 = x;  } }\n  return null;\n}"
         );
         assertError(self, "E2001",
             "a loop-head self reference has no enclosing declaration");
 
         CheckerOutput shadow = checkProgram(
-            "export function main(): null {\n" +
-            "  let x: int = 1;\n" +
-            "  for (let x: number = number(x); false;) {}\n" +
-            "  return null;\n" +
-            "}"
+            "export function main(): null {\n  let x: int = 1;\n  { let v14Loop4: number = number(x); while (false) { let x: number = v14Loop4; {} v14Loop4 = x;  } }\n  return null;\n}"
         );
         assertNoErrors(shadow,
             "the initializer reads the enclosing int binding");
 
         CheckerOutput restored = checkProgram(
-            "export function main(): null {\n" +
-            "  let x: string | null = \"a\";\n" +
-            "  if (x !== null) {\n" +
-            "    for (let x: int = 0; false;) {}\n" +
-            "    let y: string = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
+            "export function main(): null {\n  let x: string | null = \"a\";\n  if (x !== null) {\n    { let v14Loop5: int = 0; while (false) { let x: int = v14Loop5; {} v14Loop5 = x;  } }\n    let y: string = x;\n  }\n  return null;\n}"
         );
         assertNoErrors(restored,
             "the loop-head shadow ends with the loop and restores the "
@@ -4321,10 +4294,7 @@ public class CheckerTest {
         System.out.println("-- ISSUE-0041: dollar in for-loop variable (E2008) --");
 
         CheckerOutput out = checkProgram(
-            "function f(): null {\n" +
-            "  for (let i$: int = 0; i$ < 10; i$ = i$ + 1) { }\n" +
-            "  return null;\n" +
-            "}"
+            "function f(): null {\n  { let v14Loop6: int = 0; while (v14Loop6 < 10) { let i$: int = v14Loop6; { } v14Loop6 = i$; v14Loop6 = v14Loop6 + 1; } }\n  return null;\n}"
         );
         assertError(out, "E2008", "dollar in for-loop variable name produces E2008");
     }

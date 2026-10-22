@@ -55,16 +55,7 @@ final class DeclarationReferences {
                 });
             }
             case WhileStatement n -> { expression(n.condition(), scope); statement(n.body(), scope); }
-            case ForStatement n -> {
-                var local = new HashSet<>(scope);
-                n.init().ifPresent(i -> {
-                    if (i instanceof ForInit.VarDecl v) statement(v.decl(), local);
-                    if (i instanceof ForInit.AssignExpr a) expression(a.expr(), local);
-                });
-                n.condition().ifPresent(e -> expression(e, local));
-                n.update().ifPresent(e -> expression(e, local));
-                statement(n.body(), local);
-            }
+
             case ForOfStatement n -> {
                 type(n.varType()); expression(n.iterable(), scope);
                 var local = new HashSet<>(scope); local.add(n.varName()); statement(n.body(), local);

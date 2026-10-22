@@ -266,7 +266,7 @@ public final class IrDumper implements Visitor<String> {
             case ReturnStatement rs         -> visit(rs);
             case IfStatement is             -> visit(is);
             case WhileStatement ws          -> visit(ws);
-            case ForStatement fs            -> visit(fs);
+
             case BreakStatement bs          -> visit(bs);
             case ContinueStatement cs       -> visit(cs);
             case ExpressionStatement es     -> visit(es);
@@ -532,29 +532,6 @@ public final class IrDumper implements Visitor<String> {
         return sb.toString();
     }
 
-    @Override
-    public String visit(ForStatement node) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(indent()).append("for ").append(spanStr(node.span())).append("\n");
-        pushIndent();
-        if (node.init().isPresent()) {
-            ForInit init = node.init().get();
-            if (init instanceof ForInit.VarDecl vd) {
-                sb.append(dispatchStatement(vd.decl()));
-            } else if (init instanceof ForInit.AssignExpr ie) {
-                sb.append(dispatchExpr(ie.expr()));
-            }
-        }
-        if (node.condition().isPresent()) {
-            sb.append(dispatchExpr(node.condition().get()));
-        }
-        if (node.update().isPresent()) {
-            sb.append(dispatchExpr(node.update().get()));
-        }
-        sb.append(dispatchStatement(node.body()));
-        popIndent();
-        return sb.toString();
-    }
 
     @Override
     public String visit(ForOfStatement node) {

@@ -984,44 +984,7 @@ public final class FfiDeclarationValidator {
                         classes, functionsByName, importTargets,
                         descriptorEncoder);
             }
-            case deal.ast.ForStatement fs -> {
-                if (fs.init().isPresent()) {
-                    ObjectLiteralExpr init = switch (fs.init().get()) {
-                        case deal.ast.ForInit.VarDecl vd ->
-                            findPointerConstructionInStatement(vd.decl(),
-                                expectedReturnDescriptor, classes,
-                                functionsByName, importTargets,
-                                descriptorEncoder);
-                        case deal.ast.ForInit.AssignExpr ae ->
-                            findPointerConstruction(ae.expr(), null, classes,
-                                functionsByName, importTargets,
-                                descriptorEncoder);
-                    };
-                    if (init != null) {
-                        return init;
-                    }
-                }
-                if (fs.condition().isPresent()) {
-                    ObjectLiteralExpr hit = findPointerConstruction(
-                        fs.condition().get(), null, classes,
-                        functionsByName, importTargets, descriptorEncoder);
-                    if (hit != null) {
-                        return hit;
-                    }
-                }
-                if (fs.update().isPresent()) {
-                    ObjectLiteralExpr hit = findPointerConstruction(
-                        fs.update().get(), null, classes, functionsByName,
-                        importTargets, descriptorEncoder);
-                    if (hit != null) {
-                        return hit;
-                    }
-                }
-                return findPointerConstructionInStatements(
-                    fs.body().statements(), expectedReturnDescriptor,
-                    classes, functionsByName, importTargets,
-                    descriptorEncoder);
-            }
+
             case deal.ast.ForOfStatement fos -> {
                 ObjectLiteralExpr hit = findPointerConstruction(
                     fos.iterable(), null, classes, functionsByName,

@@ -16,14 +16,14 @@ export function test_empty_nullable_array(): int {
 export function test_parenthesized_nullable_array(): int {
   let a: (int | null)[] = [1, null, 3];
   let count: int = 0;
-  for (let i: int = 0; i < a.length; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < a.length) { let i: int = v14Loop0; {
     let v: int | null = a[i];
     if (v === null) {
       count = count + 1;
     } else {
       count = count + v;
     }
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (count !== 5) { throw {code: "TEST_FAIL", message: "nullable element sum"}; }
   return count;
 }

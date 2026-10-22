@@ -5926,19 +5926,7 @@ public final class LuaSemanticEmitter {
                     out.append("goto ").append(cont).append("\n");
                     out.append("::").append(exit).append("::\n");
                 }
-                case FOR -> {
-                    emitLabeledBlock(payload.initBlock());
-                    out.append("::").append(cont).append("T::\n");
-                    out.append("if not ").append(condition).append(" then goto ")
-                        .append(exit).append(" end\n");
-                    emitLabeledBlock(payload.bodyBlock());
-                    out.append("::").append(cont).append("::\n");
-                    if (payload.updateBlock() != null) {
-                        emitLabeledBlock(payload.updateBlock());
-                    }
-                    out.append("goto ").append(cont).append("T\n");
-                    out.append("::").append(exit).append("::\n");
-                }
+
                 default -> throw rejectedOp(op, "LOOP selector "
                     + payload.selector());
             }

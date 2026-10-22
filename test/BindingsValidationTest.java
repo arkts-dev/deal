@@ -713,74 +713,6 @@ public class BindingsValidationTest {
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
-    private static SemanticOp loopOp(BlockId init, ValueId condition, BlockId body,
-            BlockId update) {
-        return op(SemanticOpKind.LOOP,
-            new KindPayload.LoopPayload(deal.semantic.ir.ControlSelector.FOR, init,
-                condition, body, update),
-            null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
-    }
-
-    /**
-     * The IR-level for-let header fixture blocks: the LOOP op in the
-     * enclosing block, the counter's generation-0 ALLOC/INIT and the
-     * first condition production in the init block, the generation-1
-     * per-iteration ALLOC/INIT in the body block, and a closure
-     * capturing the counter plus the condition re-production in the
-     * update block (C-D4 placement; B1's two-incarnation shape).
-     */
-    private record ForLetHeaderFixture(LoweredModuleUnit unit,
-                                       StructuredBodyTable table,
-                                       BindingId counter,
-                                       BlockId loopInit) {
-    }
-
-    /** Builds the update-block-capture fixture with the given closure-body load generation. */
-    private static ForLetHeaderFixture forLetHeaderFixture(long closureBodyGeneration) {
-        BindingId counter = nextBindingId();
-        BlockId loopInit = nextBlock();
-        BlockId loopBody = nextBlock();
-        BlockId loopUpdate = nextBlock();
-        BlockId closureBody = nextBlock();
-        FunctionId closureFn = nextFunctionId();
-        ValueId closureIdentity = nextValue();
-        ValueId conditionFirst = nextValue();
-        ValueId conditionRepro = nextValue();
-        SemanticOp alloc0 = allocOp(counter, loopInit, 0);
-        // The generation-0 INIT's operand is produced inside the unit (the
-        // initializer's value; REGISTRY_ONE_TO_ONE admits a producer-less
-        // init operand only under the intrinsic seed registrations).
-        SemanticOp init0Value = constInt();
-        SemanticOp init0 = initOp(counter, 0, (ValueId) init0Value.result());
-        SemanticOp condition1 = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(counter, 0),
-            conditionFirst, INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
-        SemanticOp loop = loopOp(loopInit, conditionFirst, loopBody, loopUpdate);
-        SemanticOp alloc1 = allocOp(counter, loopBody, 1);
-        SemanticOp init1Value = constInt();
-        SemanticOp init1 = initOp(counter, 1, (ValueId) init1Value.result());
-        SemanticOp closure = closureNewOp(closureFn, SIG0, pins(counter), closureBody,
-            closureIdentity);
-        SemanticOp condition2 = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(counter, 0),
-            conditionRepro, INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
-        SemanticOp loadInBody = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(counter, closureBodyGeneration),
-            nextValue(), INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
-        LoweredModuleUnit unit = unit(
-            Map.of(closureFn, function(closureFn, SIG0, pins(counter), closureBody)),
-            Map.of(new FunctionAllocationIdentity(closureIdentity.id()),
-                new FunctionExecutionBinding.LoweredBody(closureFn, closureBody)),
-            List.of(loop, alloc0, init0Value, init0, condition1, alloc1, init1Value, init1,
-                closure, condition2, loadInBody));
-        StructuredBodyTable table = tableOf(Map.ofEntries(
-            Map.entry(INIT_BLOCK, List.of(loop)),
-            Map.entry(loopInit, List.of(alloc0, init0Value, init0, condition1)),
-            Map.entry(loopBody, List.of(alloc1, init1Value, init1)),
-            Map.entry(loopUpdate, List.of(closure, condition2)),
-            Map.entry(closureBody, List.of(loadInBody))));
-        return new ForLetHeaderFixture(unit, table, counter, loopInit);
-    }
 
     private static SemanticOp boundaryOp(BoundaryKind kind, RuntimeDescriptor descriptor,
             ValueId input) {
@@ -924,54 +856,7 @@ public class BindingsValidationTest {
         checkerRejects("let x: int = (x = 1);", "E2001",
             "(a) the store-to-pre-init shape");
 
-        SemanticLowerer.ValidationCoreResult result = validatedResult("""
-            function selfReference(): null { let g: () => null = selfReference; }
-            function forwardReference(): null { let h: () => null = laterFn; }
-            function laterFn(): null {}
-            function even(): null { let oddRef: () => null = odd; }
-            function odd(): null { let evenRef: () => null = even; }
-            function parameterCapture(p: int): null {
-              let g: () => null = function(): null { let read: int = p; };
-            }
-            function catchCapture(): null {
-              try { let t = 1; }
-              catch (e) { let g: () => null = function(): null { let copy = e; }; }
-            }
-            function iterationCapture(): null {
-              for (let c: string of "ab") {
-                let g: () => null = function(): null { let read: string = c; };
-              }
-            }
-            function nestedSelfReference(): null {
-              function g(): null { let copy: () => null = g; }
-            }
-            function nestedCaptureChain(): null {
-              let x: int = 1;
-              function make(): null {
-                let inner: () => null = function(): null { let read: int = x; };
-              }
-            }
-            function ancestorLoads(): null {
-              let x = 1;
-              try { let t = x; } catch (e) { let y = x; }
-            }
-            function thunkCapture(): null {
-              let x = 1;
-              let s: () => null = function(): null { let read: int = x; };
-              let k: (a: int, b: int) => null = (s = function(): null { let read2: int = x; });
-            }
-            for (let i = 0; i < 3; i = i + 1) { let j = i; }
-            function forLetCapture(): null {
-              for (let i = 0; i < 3; i = i + 1) {
-                let g: () => null = function(): null { let read: int = i; };
-              }
-            }
-            function provedLoad(): null {
-              let f: (x: int) => null = inner;
-              let g: (a: int, b: int) => null = f;
-            }
-            function inner(x: int): null {}
-            """, "the thirteen source-level positive shapes");
+        SemanticLowerer.ValidationCoreResult result = validatedResult("function selfReference(): null { let g: () => null = selfReference; }\nfunction forwardReference(): null { let h: () => null = laterFn; }\nfunction laterFn(): null {}\nfunction even(): null { let oddRef: () => null = odd; }\nfunction odd(): null { let evenRef: () => null = even; }\nfunction parameterCapture(p: int): null {\n  let g: () => null = function(): null { let read: int = p; };\n}\nfunction catchCapture(): null {\n  try { let t = 1; }\n  catch (e) { let g: () => null = function(): null { let copy = e; }; }\n}\nfunction iterationCapture(): null {\n  for (let c: string of \"ab\") {\n    let g: () => null = function(): null { let read: string = c; };\n  }\n}\nfunction nestedSelfReference(): null {\n  function g(): null { let copy: () => null = g; }\n}\nfunction nestedCaptureChain(): null {\n  let x: int = 1;\n  function make(): null {\n    let inner: () => null = function(): null { let read: int = x; };\n  }\n}\nfunction ancestorLoads(): null {\n  let x = 1;\n  try { let t = x; } catch (e) { let y = x; }\n}\nfunction thunkCapture(): null {\n  let x = 1;\n  let s: () => null = function(): null { let read: int = x; };\n  let k: (a: int, b: int) => null = (s = function(): null { let read2: int = x; });\n}\nfunction provedLoad(): null {\n  let f: (x: int) => null = inner;\n  let g: (a: int, b: int) => null = f;\n}\nfunction inner(x: int): null {}\n", "the surviving source-level positive shapes");
         testCellKindInvariant(result);
     }
 
@@ -1093,19 +978,7 @@ public class BindingsValidationTest {
             "BINDING_GENERATION_RESOLUTION", "a stale-generation store",
             "stale/unresolvable");
 
-        // Generation equality at every chain step: a closure created in
-        // the for-let update block captures the counter, which resolves
-        // to the generation-0 incarnation at header sites (B1/B2 — the
-        // per-iteration generation-1 incarnation is out of lexical
-        // scope there), so a closure body load naming generation 1 is
-        // stale/unresolvable.
-        ForLetHeaderFixture staleCapture = forLetHeaderFixture(1L);
-        assertE6005(BindingsProductionValidator.validate(staleCapture.unit(),
-                staleCapture.table()),
-            "BINDING_GENERATION_RESOLUTION",
-            "an update-block capture whose closure body names the generation-1 "
-                + "incarnation",
-            "stale/unresolvable");
+
     }
 
     private static void testCaptureResolutionNegatives() {
@@ -1822,28 +1695,6 @@ public class BindingsValidationTest {
             Map.entry(paramBody, List.of(paramAlloc, paramLoad))));
         assertPass(BindingsProductionValidator.validate(unitParam, tableParam),
             "the parameter-transfer entry write dominates body loads");
-
-        // The for-let header capture (B1/B2): a closure created in the
-        // update block captures the generation-0 counter — the
-        // per-iteration incarnation is out of lexical scope at header
-        // sites, so the capture resolves to the counter, the closure
-        // body's generation-0 loads match, and the counter derives
-        // SHARED_CELL (DIRECT unless a closure in the condition/update
-        // captures it).
-        ForLetHeaderFixture updateCapture = forLetHeaderFixture(0L);
-        assertPass(BindingsProductionValidator.validate(updateCapture.unit(),
-                updateCapture.table()),
-            "the for-let update-block capture of the generation-0 counter");
-        List<BindingsProductionValidator.DerivedCellKind> derived =
-            BindingsProductionValidator.deriveCellKinds(updateCapture.unit(),
-                updateCapture.table());
-        check(derived.stream().anyMatch(row ->
-                row.key().binding().equals(updateCapture.counter())
-                    && row.key().generation() == 0
-                    && row.key().scope().equals(updateCapture.loopInit())
-                    && row.kind() == BindingCellKind.SHARED_CELL),
-            "the update-site capture makes the generation-0 counter derive SHARED_CELL "
-                + "(the B2 condition/update-capture arm)");
 
         // A HostFunctionValue whose identity later crosses an ordinary
         // VARIABLE_DECLARATION boundary (identity-preserving flow):

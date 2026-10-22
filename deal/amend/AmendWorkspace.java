@@ -6,7 +6,6 @@ import deal.ast.ClassDeclaration;
 import deal.ast.Either;
 import deal.ast.ExportDeclaration;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.IfStatement;
 import deal.ast.NamedType;
@@ -1399,7 +1398,7 @@ public final class AmendWorkspace {
                 });
             }
             case WhileStatement value -> collectBlocks(owner, value.body(), path + "/while", sourceDigest, index, targets, nodes, false);
-            case ForStatement value -> collectBlocks(owner, value.body(), path + "/for", sourceDigest, index, targets, nodes, false);
+
             case ForOfStatement value -> collectBlocks(owner, value.body(), path + "/for-of", sourceDigest, index, targets, nodes, false);
             case TryStatement value -> {
                 collectBlocks(owner, value.tryBlock(), path + "/try", sourceDigest, index, targets, nodes, false);

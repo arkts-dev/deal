@@ -28,11 +28,11 @@ export function test_let_shadowing_initializer(): null {
     }
   }
   let total: int = 0;
-  for (let i: int = 0; i < 2; i = i + 1) {
+  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {
     let before: int = i;
     let i: int = 50;
     total = total + before + i;
-  }
+  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (total !== 101) {
     throw { code: "TEST_FAIL", message: "for-head shadow missed the loop binding" };
   }
