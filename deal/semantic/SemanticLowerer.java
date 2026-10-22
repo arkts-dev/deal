@@ -6725,7 +6725,14 @@ public final class SemanticLowerer {
          * exactly once at its source position), and the adapter's result is
          * the value the position's own boundary validates and the consumer
          * observes. The adapter projects its leading M arguments, so the
-         * ignored target parameters are never forwarded.
+         * ignored target parameters are never forwarded. The source shape is
+         * the position's own classification: a lexically shadowing local,
+         * parameter, enclosing-block or module-level binding precedes the
+         * compiler intrinsics (docs/spec-v1.3.md §Name resolution), so the
+         * adapted operand is the position's own value — the shadowing binding
+         * for a shadowed {@code int}/{@code number}/{@code bytes} name, the
+         * seeded intrinsic identity only for a genuinely unshadowed intrinsic
+         * at this position.
          */
         private ValueId lowerPositionAdapter(ExpressionNode value,
                                              RuntimeDescriptor.Func targetSignature,
@@ -6734,8 +6741,8 @@ public final class SemanticLowerer {
             RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(value);
-            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeOf(
-                value, name -> checks.symbolTable().resolve(name));
+            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
+                value, this::isConversionIntrinsicNameAt);
             CaptureMode mode = AdapterShapeMap.selectPositionMode(shape, proof);
             AdaptSourceRef sourceRef;
             List<ValueId> operands;

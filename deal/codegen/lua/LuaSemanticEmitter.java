@@ -79,8 +79,8 @@ public final class LuaSemanticEmitter {
             + "__okD, __chkD, "
             + "__instT, __fT, __eT, __jokT, __jresT, __jarmT, __jcparT, __jfactT, "
             + "__hbT, "
-            + "__dynC, __dynK, __dynM, __dynS, __dynSK, __dynA, __dynE, "
-            + "__tA, __okH, __errH, __oA";
+            + "__dynC, __dynK, __dynM, __dynN, __dynS, __dynSK, __dynA, "
+            + "__dynE, __tA, __okH, __errH, __oA";
 
     /**
      * The chunk's one factory store: every function factory

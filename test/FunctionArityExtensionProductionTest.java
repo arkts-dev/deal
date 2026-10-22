@@ -105,6 +105,23 @@ public final class FunctionArityExtensionProductionTest {
     private static final String ADAPTER_VALUED_SOURCE =
         "arity-extension-adapter-valued-source";
 
+    /**
+     * The conversion-shadow corpus: a function-typed {@code int},
+     * {@code number} or {@code bytes} shadow is the adapted operand at the
+     * parameter, return, class supplied-field, class field-write, array
+     * literal and array write positions — never the compiler intrinsic the
+     * module root also binds (docs/spec-v1.3.md §Name resolution).
+     */
+    private static final String CONVERSION_SHADOW =
+        "arity-extension-conversion-shadow";
+
+    /**
+     * The three conversion shadows' position count: three names across the
+     * parameter, return, class supplied-field, class field-write, array
+     * literal and array write positions.
+     */
+    private static final int CONVERSION_SHADOW_ADAPTERS = 18;
+
     /** The host declaration's external specifier. */
     private static final String HOST_SPECIFIER = "host/arity_extension_host";
 
@@ -796,9 +813,34 @@ public final class FunctionArityExtensionProductionTest {
         if (!Files.isRegularFile(artifact)) {
             return;
         }
+        assertAsyncTemporariesAreBodyLocals(
+            Files.readString(artifact, StandardCharsets.UTF_8));
         assertAsyncCompletion("luajit", new LuaJitAsyncExportInvoker().invoke(
             new AsyncExportInvocationRequest(artifact,
                 "test_arity_extension_async", "int")));
+    }
+
+    /**
+     * The async adapter arm's temporaries are body locals: the chunk declares
+     * every hoisted scratch temp and every emitted body re-declares the same
+     * names, so the arm's projection count belongs to the activation's own
+     * body and never to the chunk's shared global table (a {@code __dynN}
+     * assigned as a global would leak one activation's count into another
+     * chunk's coroutine).
+     */
+    private static void assertAsyncTemporariesAreBodyLocals(String chunk) {
+        int declarations = 0;
+        for (String line : chunk.split("\n", -1)) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("local __chk, __rvT, ")) {
+                continue;
+            }
+            declarations++;
+            check(trimmed.contains(", __dynN,"), "luajit: the async adapter "
+                + "arm's projection temp is a body local: " + trimmed);
+        }
+        check(declarations > 1, "luajit: the async corpus declares the hoisted "
+            + "scratch temps in the chunk and in its bodies; got " + declarations);
     }
 
     private static void assertAsyncCompletion(String lane,
@@ -1078,6 +1120,89 @@ public final class FunctionArityExtensionProductionTest {
             + ADAPTER_VALUED_SOURCE);
         assertExecution("js", runProcess(List.of("node", ENTRY_MODULE + ".js"),
             project.out()), expected);
+    }
+
+    /**
+     * The LuaJIT conversion-shadow corpus: every position's adapter is built
+     * over the shadowing binding the position resolves, so no adapter of the
+     * corpus carries the seeded intrinsic identity, and the run's own exact
+     * values prove the shadow — never the conversion — ran at each position.
+     */
+    private static void testLuaJitConversionShadow(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the LuaJIT conversion-shadow corpus and its real "
+            + "luajit run --");
+        Project project = writeProject(root, CONVERSION_SHADOW);
+        assertProductionEmission(productionCompile(project, Backend.LUAJIT),
+            "luajit:" + CONVERSION_SHADOW);
+        Path artifact = project.out().resolve(ENTRY_MODULE + ".lua");
+        check(Files.isRegularFile(artifact), "luajit: the conversion-shadow "
+            + "compile stages the entry chunk " + artifact);
+        if (Files.isRegularFile(artifact)) {
+            String chunk = Files.readString(artifact, StandardCharsets.UTF_8);
+            checkEq(CONVERSION_SHADOW_ADAPTERS,
+                countOccurrences(chunk, "[__dealCarrierKeys.mode] = "),
+                "luajit: the corpus emits one adapter per shadowed position");
+            check(!chunk.contains(", __value = __intrinsicFn("), "luajit: no "
+                + "conversion-shadow adapter is built over the seeded intrinsic "
+                + "identity");
+        }
+        assertExecution("luajit", runProcess(
+            List.of("luajit", ENTRY_MODULE + ".lua"), project.out()), expected);
+    }
+
+    /**
+     * The JVM conversion-shadow corpus: the emitted artifact's adapters take
+     * the shadowing binding's carrier (never {@code JvmRuntime.intrinsic}),
+     * and the run's exact values prove the shadow ran at each position.
+     */
+    private static void testJvmConversionShadow(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the JVM conversion-shadow corpus --");
+        JvmArtifacts artifacts = compileJvm(root, CONVERSION_SHADOW);
+        Path emitted = artifacts.project().out().resolve(
+            artifacts.className() + ".java");
+        if (Files.isRegularFile(emitted)) {
+            String source = Files.readString(emitted, StandardCharsets.UTF_8);
+            String intrinsicOperand = null;
+            for (String line : source.split("\n", -1)) {
+                if (line.contains("__iav_") && line.contains(" = JvmRuntime.intrinsic(")) {
+                    intrinsicOperand = line.trim();
+                    break;
+                }
+            }
+            check(intrinsicOperand == null, "jvm: no conversion-shadow adapter is "
+                + "built over the seeded intrinsic identity: " + intrinsicOperand);
+        }
+        assertExecution("jvm", runProcess(List.of("java", "-cp",
+            artifacts.classes() + File.pathSeparator + absoluteClasspath(),
+            artifacts.className()), artifacts.project().out()), expected);
+    }
+
+    /**
+     * The JS conversion-shadow corpus: the emitted wrapper's source is the
+     * position's own binding value, and the run's exact values prove the
+     * shadow ran at each position.
+     */
+    private static void testJsConversionShadow(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the JS conversion-shadow corpus --");
+        Project project = writeProject(root, CONVERSION_SHADOW);
+        assertProductionEmission(productionCompile(project, Backend.JS),
+            "js:" + CONVERSION_SHADOW);
+        assertExecution("js", runProcess(List.of("node", ENTRY_MODULE + ".js"),
+            project.out()), expected);
+    }
+
+    /** The occurrences of one fixed text in an emitted artifact. */
+    private static int countOccurrences(String text, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
     }
 
     private static void testLuaJitHostParameter(Path root,
@@ -1403,6 +1528,85 @@ public final class FunctionArityExtensionProductionTest {
         }
     }
 
+    /**
+     * The one project lowering over an already-written corpus project: the
+     * production frontend admits it and the one project lowering produces
+     * the executable closure the consumers run.
+     */
+    private static SemanticLowerer.ProjectLoweringResult lowerCorpusProject(
+            Project project) throws Exception {
+        CompilationOrchestrator orchestrator = productionCompile(project,
+            Backend.LUAJIT);
+        CheckedProjectBuildResult built = orchestrator.checkedProject();
+        RequirementManifestResult manifests = orchestrator.requirementManifests();
+        check(built != null && !built.hasErrors() && built.input() != null
+                && built.index() != null, "the parity project's frontend admits "
+                + "it: " + (built == null ? "null" : built.diagnostics()));
+        if (built == null || built.hasErrors() || built.input() == null
+                || built.index() == null || manifests == null
+                || manifests.hasErrors() || manifests.manifests() == null) {
+            return null;
+        }
+        return SemanticLowerer.lowerProject(productionInvocation(), built.input(),
+            built.index(), manifests.manifests(),
+            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
+            BuiltinErrorDeclaration.synthesized(
+                built.input().modules().get(0).ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), java.util.Set.of());
+    }
+
+    /**
+     * The adapter-valued-source chain on the oracle-driven parity case: the
+     * corpus fixture is checked valid at every position, so the semantic
+     * oracle must execute it exactly as the emitted artifacts do — no
+     * "outside the statically-resolved slice" rejection, the same
+     * event-for-event trace and the same success terminal. The oracle
+     * descends each nested adapter level's own published source with its own
+     * leading-M projection, admits the invoked value's target parameters and
+     * reads the cell each adapter captured at creation (the escaping
+     * parameter cell included), exactly as the emitted protocols do.
+     */
+    private static void testNestedAdapterOracleParity(Path root) throws Exception {
+        System.out.println("-- the adapter-valued-source corpus on the "
+            + "oracle-driven parity case --");
+        Project project = writeProject(root, ADAPTER_VALUED_SOURCE);
+        SemanticLowerer.ProjectLoweringResult lowering =
+            lowerCorpusProject(project);
+        check(lowering != null && !lowering.hasErrors()
+            && lowering.project() != null, "nested adapter: the corpus lowers "
+            + "with zero diagnostics: "
+            + (lowering == null ? "null" : lowering.diagnostics()));
+        if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
+            return;
+        }
+        Path workspace = Files.createTempDirectory(root.getFileName().toString());
+        try {
+            deal.test.SemanticDifferentialHarness.Verdict verdict =
+                deal.test.SemanticDifferentialHarness.runProject(
+                    lowering.project(), lowering.tables(), lowering.registries(),
+                    deal.test.SemanticDifferentialHarness.Expectation.success(
+                        "the adapter-valued-source corpus",
+                        List.of("OK"), "null"),
+                    workspace);
+            checkEq(3, verdict.runs().size(), "nested adapter: the parity case "
+                + "produces the three consumers: " + verdict.failures());
+            check(verdict.pass(), "nested adapter: the oracle and both shared "
+                + "artifacts agree event-for-event: " + verdict.failures()
+                + "\n" + verdict.report());
+            for (deal.semantic.SemanticRuntimeModel.ConsumerRun run
+                    : verdict.runs()) {
+                check(run.terminal() instanceof
+                        deal.semantic.SemanticRuntimeModel.Terminal.Success success
+                        && "null".equals(success.resultAtom()),
+                    run.consumer() + ": the chain completes the entry export "
+                        + "with null: " + run.terminal());
+            }
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
     // =========================================================================
     // The shared failure tuple
     // =========================================================================
@@ -1455,11 +1659,13 @@ public final class FunctionArityExtensionProductionTest {
             expectedByBackend(DYNAMIC_SOURCE);
         Map<String, ExpectedExecution> adapterValued =
             expectedByBackend(ADAPTER_VALUED_SOURCE);
+        Map<String, ExpectedExecution> conversionShadow =
+            expectedByBackend(CONVERSION_SHADOW);
         Map<String, ExpectedExecution> hostParameter = hostParameterExpected();
         expectedByBackend(DYNAMIC_SOURCE_ASYNC);
         for (Map<String, ExpectedExecution> expected : List.of(positions,
                 asyncPositions, boundaries, dynamicSource, adapterValued,
-                hostParameter)) {
+                conversionShadow, hostParameter)) {
             for (ExpectedExecution execution : expected.values()) {
                 checkEq("", new String(execution.stderr(), StandardCharsets.UTF_8),
                     "every pinned lane carries an empty stderr");
@@ -1541,6 +1747,12 @@ public final class FunctionArityExtensionProductionTest {
                 adapterValued.get("jvm"));
             testJsAdapterValuedSource(root.resolve("js-adapter-valued"),
                 adapterValued.get("js"));
+            testLuaJitConversionShadow(root.resolve("luajit-conversion-shadow"),
+                conversionShadow.get("luajit"));
+            testJvmConversionShadow(root.resolve("jvm-conversion-shadow"),
+                conversionShadow.get("jvm"));
+            testJsConversionShadow(root.resolve("js-conversion-shadow"),
+                conversionShadow.get("js"));
             testLuaJitHostParameter(root.resolve("luajit-host-parameter"),
                 hostParameter.get("luajit"));
             testJvmHostParameter(root.resolve("jvm-host-parameter"),
@@ -1558,6 +1770,7 @@ public final class FunctionArityExtensionProductionTest {
             testJsHostTargetParameter(root.resolve("js-host-target-parameter"));
             testHostParameterEmissionFact(root.resolve("host-parameter-facts"));
             testCallbackReturnPosition(root.resolve("callback-return"));
+            testNestedAdapterOracleParity(root.resolve("nested-adapter-parity"));
             testLuaJitHostDynamicSource(root.resolve("luajit-host-dynamic"));
             testJvmHostDynamicSource(root.resolve("jvm-host-dynamic"));
             testJsHostDynamicSource(root.resolve("js-host-dynamic"));
