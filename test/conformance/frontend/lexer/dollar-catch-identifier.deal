@@ -1,0 +1,9 @@
+// @spec: Lexical elements — identifier restrictions
+// @description: Catch identifiers containing $ are user declarations and are rejected (E2008, first-position $)
+// @expected: compile-error E2008
+// @features: error-handling, catch, dollar-prohibition, diagnostics
+
+export function main(): null {
+  try { throw {}; } catch (bad$name) {}
+  return null;
+}

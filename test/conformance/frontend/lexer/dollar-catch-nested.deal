@@ -1,0 +1,9 @@
+// @spec: Error handling — try/catch
+// @description: A nested catch identifier containing $ is rejected in its own catch scope (E2008)
+// @expected: compile-error E2008
+// @features: error-handling, catch, nested-scope, dollar-prohibition, diagnostics
+
+export function main(): null {
+  try { try {} catch (inner$e) {} } catch (outer) {}
+  return null;
+}

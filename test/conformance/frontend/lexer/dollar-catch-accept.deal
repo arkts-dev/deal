@@ -1,0 +1,15 @@
+// @spec: Error handling — try/catch
+// @description: Catch bindings without $ stay legal, including nested catch scopes and the Error surface
+// @expected: compile-ok
+// @features: error-handling, catch, dollar-prohibition, accept-control
+
+export function main(): null {
+  try {
+    try { throw {}; } catch (inner) {
+      let innerMessage: string = inner.message;
+    }
+  } catch (outer) {
+    let outerCode: string = outer.code;
+  }
+  return null;
+}

@@ -108,6 +108,7 @@ public class DiagnosticRangeTest {
         testPeekPseudoEof();
         testTemplateInterpolationRebasing();
         testCheckerProducerRanges();
+        testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
         testV13CorpusFrontendGate();
@@ -1356,6 +1357,58 @@ public class DiagnosticRangeTest {
                 "C8: E2000 starts at 2:2 with scalar offset 17 (tab = one scalar): "
                     + r8);
             checkFormattedStructuredAgree(e2000tab, "C8");
+        }
+    }
+
+    /**
+     * ISSUE-0884: the catch identifier is a local Error declaration, so its
+     * $ rejection anchors on the identifier's own token span — first,
+     * middle, and last $ positions included — never on the whole try
+     * statement. The formatted and structured surfaces agree with the
+     * carrier range.
+     */
+    private static void testCatchVariableIdentifierRange() {
+        System.out.println("-- Catch-variable identifier range (ISSUE-0884) --");
+
+        String[] catchVars = { "bad$name", "b$ad", "bad$" };
+        for (String catchVar : catchVars) {
+            String src = "export function main(): null {\n"
+                + "  try { throw {}; } catch (" + catchVar + ") {}\n"
+                + "  return null;\n"
+                + "}\n";
+            List<CompilerDiagnostic> diags = checkerDiagnostics(src,
+                "catch.deal");
+            CompilerDiagnostic e2008 = checkerDiag(diags, "E2008");
+            check(e2008 != null, "catch '" + catchVar + "': E2008 present, got "
+                + diags);
+            check(e2008 != null && ("Identifier '" + catchVar
+                    + "' must not contain '$'").equals(e2008.message()),
+                "catch '" + catchVar + "': canonical E2008 wording, got "
+                    + e2008);
+            checkNeedleRange(e2008, src, "catch.deal", catchVar,
+                "catch '" + catchVar + "'");
+            checkFormattedStructuredAgree(e2008, "catch '" + catchVar + "'");
+        }
+
+        // Nested catch scope: each identifier's range is its own token,
+        // not the nested try statement and not the sibling catch.
+        String nested = "export function main(): null {\n"
+            + "  try { try {} catch (inner$e) {} } catch (outer$e) {}\n"
+            + "  return null;\n"
+            + "}\n";
+        List<CompilerDiagnostic> nestedDiags = checkerDiagnostics(nested,
+            "nested.deal");
+        for (String name : List.of("inner$e", "outer$e")) {
+            CompilerDiagnostic nestedE2008 = nestedDiags.stream()
+                .filter(d -> d.code().equals("E2008"))
+                .filter(d -> d.message().contains("'" + name + "'"))
+                .findFirst().orElse(null);
+            check(nestedE2008 != null, "nested catch '" + name
+                + "': E2008 present, got " + nestedDiags);
+            checkNeedleRange(nestedE2008, nested, "nested.deal", name,
+                "nested catch '" + name + "'");
+            checkFormattedStructuredAgree(nestedE2008,
+                "nested catch '" + name + "'");
         }
     }
 

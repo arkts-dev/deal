@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E2008",
+    "line": 7,
+    "column": 23,
+    "message": "Identifier 'inner$e' must not contain '$'"
+  }
+}

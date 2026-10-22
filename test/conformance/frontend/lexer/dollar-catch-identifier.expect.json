@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E2008",
+    "line": 7,
+    "column": 28,
+    "message": "Identifier 'bad$name' must not contain '$'"
+  }
+}

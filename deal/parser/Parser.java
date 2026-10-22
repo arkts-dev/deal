@@ -871,7 +871,8 @@ public final class Parser {
         Block catchBlock = parseBlock();
 
         Span sp = spanBetween(tryToken, previousOrCurrent());
-        return new TryStatement(sp, tryBlock, catchVarToken.lexeme(), catchBlock);
+        return new TryStatement(sp, tryBlock, catchVarToken.lexeme(),
+            spanOf(catchVarToken), catchBlock);
     }
 
     // -- Throw --
