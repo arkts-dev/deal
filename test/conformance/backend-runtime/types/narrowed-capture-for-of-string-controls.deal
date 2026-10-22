@@ -1,0 +1,224 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The narrowed string for-of iterable admission controls: the read's current value is admitted once before the loop setup, so a cleared binding raises catchable canonical E8001 ("expected string") with zero body visits, while a valid refinement keeps the once-admitted value through a later replacement or body clear, an empty string visits nothing, astral and combining scalars iterate one per visit, each iteration captures its own fresh binding, break/continue still target the loop, and an awaited resumption continues the traversal.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, control-flow, for-of, strings, unicode, closure, async-await, runtime-errors
+
+function fail(what: string): null {
+  throw { code: "CONTROL_FAIL", message: what };
+}
+
+async function echoText(value: string): string {
+  return value;
+}
+
+function checkClearedIterable(): null {
+  let s: string | null = "x";
+  let clear: () => null = function(): null { s = null; return null; };
+  if (s !== null) {
+    clear();
+    let visits: int = 0;
+    let caught: int = 0;
+    try {
+      for (let c: string of s) {
+        visits = visits + 1;
+      }
+    } catch (e) {
+      if (e.code !== "E8001") {
+        fail("the cleared string iterable did not raise E8001");
+      }
+      if (e.message !== "expected string") {
+        fail("the cleared string iterable did not raise the canonical message");
+      }
+      caught = caught + 1;
+    }
+    if (caught !== 1) {
+      fail("the cleared string iterable was not caught exactly once");
+    }
+    if (visits !== 0) {
+      fail("the cleared string iterable visited the body");
+    }
+  }
+  return null;
+}
+
+function checkClearedParameter(s: string | null): null {
+  let clear: () => null = function(): null { s = null; return null; };
+  if (s !== null) {
+    clear();
+    let visits: int = 0;
+    let caught: int = 0;
+    try {
+      for (let c: string of s) {
+        visits = visits + 1;
+      }
+    } catch (e) {
+      if (e.code !== "E8001" || e.message !== "expected string") {
+        fail("the cleared string parameter did not raise the canonical E8001");
+      }
+      caught = caught + 1;
+    }
+    if (caught !== 1 || visits !== 0) {
+      fail("the cleared string parameter was not admitted before the loop");
+    }
+  }
+  return null;
+}
+
+function checkOnceAdmittedAndEmpty(): null {
+  let s: string | null = "abc";
+  if (s !== null) {
+    let replace: () => null = function(): null { s = "xy"; return null; };
+    replace();
+    let visits: int = 0;
+    let seen: string = "";
+    for (let c: string of s) {
+      s = null;
+      seen = seen + c;
+      visits = visits + 1;
+    }
+    if (visits !== 2 || seen !== "xy") {
+      fail("the loop did not consume the once-admitted current value");
+    }
+  }
+  let empty: string | null = "";
+  if (empty !== null) {
+    let visits: int = 0;
+    for (let c: string of empty) {
+      visits = visits + 1;
+    }
+    if (visits !== 0) {
+      fail("the empty narrowed string visited the body");
+    }
+  }
+  return null;
+}
+
+function checkUnicodeScalars(): null {
+  let astral: string | null = "aé中😀b";
+  if (astral !== null) {
+    let scalars: int = 0;
+    let seen: string = "";
+    for (let c: string of astral) {
+      scalars = scalars + 1;
+      seen = seen + c;
+    }
+    if (scalars !== 5 || seen !== "aé中😀b") {
+      fail("the astral string iterable lost a Unicode scalar");
+    }
+  }
+  let combining: string | null = "éx";
+  if (combining !== null) {
+    let scalars: int = 0;
+    let seen: string = "";
+    for (let c: string of combining) {
+      scalars = scalars + 1;
+      seen = seen + c;
+    }
+    if (scalars !== 3 || seen !== "éx") {
+      fail("the combining string iterable did not visit separate scalars");
+    }
+  }
+  return null;
+}
+
+function checkFreshCapturedBindings(): null {
+  let source: string | null = "abc";
+  if (source !== null) {
+    let captured: (() => string)[] = [
+      function(): string { return ""; },
+      function(): string { return ""; },
+      function(): string { return ""; }
+    ];
+    let index: int = 0;
+    for (let c: string of source) {
+      captured[index] = function(): string { return c; };
+      index = index + 1;
+    }
+    if (captured[0]() !== "a") {
+      fail("the first string iteration binding was not fresh");
+    }
+    if (captured[1]() !== "b") {
+      fail("the second string iteration binding was not fresh");
+    }
+    if (captured[2]() !== "c") {
+      fail("the third string iteration binding was not fresh");
+    }
+  }
+  return null;
+}
+
+function checkBreakContinue(): null {
+  let s: string | null = "abcde";
+  if (s !== null) {
+    let broken: string = "";
+    for (let c: string of s) {
+      if (c === "c") { break; }
+      broken = broken + c;
+    }
+    if (broken !== "ab") {
+      fail("break did not target the string for-of");
+    }
+    let continued: string = "";
+    for (let c: string of s) {
+      if (c === "c") { continue; }
+      continued = continued + c;
+    }
+    if (continued !== "abde") {
+      fail("continue did not target the string for-of");
+    }
+  }
+  return null;
+}
+
+async function checkAsyncAdmission(s: string | null): null {
+  let clear: () => null = function(): null { s = null; return null; };
+  if (s !== null) {
+    clear();
+    let visits: int = 0;
+    let caught: int = 0;
+    try {
+      for (let c: string of s) {
+        visits = visits + 1;
+      }
+    } catch (e) {
+      if (e.code !== "E8001" || e.message !== "expected string") {
+        fail("the async string iterable did not raise the canonical E8001");
+      }
+      caught = caught + 1;
+    }
+    if (caught !== 1 || visits !== 0) {
+      fail("the async string iterable was not admitted before the loop");
+    }
+  }
+  return null;
+}
+
+export async function test_async_string_iterable_admission(): null {
+  await checkAsyncAdmission("x");
+  let s: string | null = "abcde";
+  let seen: string = "";
+  let visits: int = 0;
+  if (s !== null) {
+    for (let c: string of s) {
+      let echoed: string = await echoText(c);
+      if (echoed === "c") { continue; }
+      if (echoed === "e") { break; }
+      seen = seen + echoed;
+      visits = visits + 1;
+    }
+  }
+  if (seen !== "abd" || visits !== 3) {
+    fail("the awaited resumption did not continue the scalar traversal");
+  }
+  return null;
+}
+
+export function main(): null {
+  checkClearedIterable();
+  checkClearedParameter("x");
+  checkOnceAdmittedAndEmpty();
+  checkUnicodeScalars();
+  checkFreshCapturedBindings();
+  checkBreakContinue();
+  return null;
+}
