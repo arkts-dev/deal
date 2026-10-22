@@ -2648,10 +2648,11 @@ public final class SemanticIrValidator {
                         + " violates the descriptor-kind rule");
             }
             case NARROWED_READ -> {
-                // The operand/condition/value-consumer position's refinement
-                // cell (an index receiver/key, a table member receiver, a
-                // .length receiver, a for-of iterable or a has receiver
-                // included): the descriptor-kind policy of its own
+                // The operand/condition/value-consumer/throw-transfer
+                // position's refinement cell (an index receiver/key, a table
+                // member receiver, a .length receiver, a for-of iterable, a
+                // has receiver or a throw operand included): the
+                // descriptor-kind policy of its own
                 // descriptor, and the input is one identifier read (a
                 // BINDING_LOAD result) — the refinement claim is about a
                 // binding, never about an arbitrary value.

@@ -14602,11 +14602,12 @@ public final class SemanticLowerer {
         /**
          * Lowers one operator operand, condition expression, index
          * receiver/key expression, table member receiver expression,
-         * {@code .length} receiver expression, for-of iterable or {@code has}
-         * receiver: the operand's completed value plus, for an identifier
-         * read whose checked type is a null-narrowing refinement of the
-         * binding's declared nullable type (declared {@code T | null}, read
-         * as {@code T}), the {@code NARROWED_READ} validation of that read.
+         * {@code .length} receiver expression, for-of iterable, {@code has}
+         * receiver or {@code throw} operand: the operand's completed value
+         * plus, for an identifier read whose checked type is a
+         * null-narrowing refinement of the binding's declared nullable type
+         * (declared {@code T | null}, read as {@code T}), the
+         * {@code NARROWED_READ} validation of that read.
          *
          * <p>docs/spec-v1.3.md Nullable semantics keeps calls
          * non-invalidating on purpose, so a capturing closure call can
@@ -14642,11 +14643,18 @@ public final class SemanticLowerer {
          * completes exactly once. A {@code has} receiver lowers through this
          * helper too, so the {@code HAS_FIELD} presence read consumes the
          * admitted value — the refined class descriptor's nominal check —
-         * instead of reading presence off the cleared binding. Every other
-         * position (a declaration, assignment, parameter, return, class/array
-         * construction or element write) is a typed boundary owned by its own
-         * cell, which keeps its recorded projection — the array-element E8003
-         * arm included.</p>
+         * instead of reading presence off the cleared binding. A
+         * {@code throw} operand lowers through this helper too, so the
+         * {@code THROW} op consumes the admitted {@code Error} value and the
+         * throw machinery never dereferences a cleared value's transport (a
+         * native nil index error on LuaJIT, a host null dereference on the
+         * JVM) inside the enclosing DEAL {@code try}: the read's own origin
+         * publishes the canonical catchable E8001 with the class descriptor's
+         * expected/actual tuple, and a live operand keeps its reference
+         * identity. Every other position (a declaration, assignment,
+         * parameter, return, class/array construction or element write) is
+         * a typed boundary owned by its own cell, which keeps its recorded
+         * projection — the array-element E8003 arm included.</p>
          */
         private ValueId lowerOperand(ExpressionNode expr) {
             return emitNarrowedReadCheck(expr, lowerExpression(expr));

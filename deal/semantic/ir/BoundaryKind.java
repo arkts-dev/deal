@@ -50,23 +50,25 @@ public enum BoundaryKind {
     JSON_FROM_FIELD,
     JSON_TO_FIELD,
     /**
-     * The operand/condition/value-consumer position's validation of one
-     * identifier read whose checked type is a null-narrowing refinement of
-     * the binding's declared nullable type (declared {@code T | null}, read
-     * as {@code T}) — docs/spec-v1.3.md Nullable semantics: narrowing is
-     * optimistic across calls, so an indirect captured-binding mutation
-     * leaves the refined read's value invalid and the consuming operator,
-     * index chain, table member operation, {@code .length} read, for-of
-     * loop or {@code has} presence read must report the typed-boundary
-     * projection instead of coercing it, letting a raw backend error escape,
-     * reading a length from it, dereferencing the loop's iterable carrier
-     * (the loop's initialization dereferences that carrier before any
-     * iteration, so the admission precedes it), or reading presence off it.
-     * The op publishes the admitted value (its result is the consumer's
-     * operand, index chain child, table member receiver, {@code ARRAY_LENGTH}
-     * receiver, the loop's iterable or the presence read's receiver — the
-     * refined class descriptor's nominal check) and carries the
-     * descriptor-kind policy of its own descriptor.
+     * The operand/condition/value-consumer/throw-transfer position's
+     * validation of one identifier read whose checked type is a
+     * null-narrowing refinement of the binding's declared nullable type
+     * (declared {@code T | null}, read as {@code T}) — docs/spec-v1.3.md
+     * Nullable semantics: narrowing is optimistic across calls, so an
+     * indirect captured-binding mutation leaves the refined read's value
+     * invalid and the consuming operator, index chain, table member
+     * operation, {@code .length} read, for-of loop, {@code has} presence
+     * read or throw transfer must report the typed-boundary projection
+     * instead of coercing it, letting a raw backend error escape, reading a
+     * length from it, dereferencing the loop's iterable carrier (the loop's
+     * initialization dereferences that carrier before any iteration, so the
+     * admission precedes it), reading presence off it, or dereferencing the
+     * value's transport in the throw machinery. The op publishes the
+     * admitted value (its result is the consumer's operand, index chain
+     * child, table member receiver, {@code ARRAY_LENGTH} receiver, the
+     * loop's iterable, the throw op's operand or the presence read's
+     * receiver — the refined class descriptor's nominal check) and carries
+     * the descriptor-kind policy of its own descriptor.
      */
     NARROWED_READ;
 
