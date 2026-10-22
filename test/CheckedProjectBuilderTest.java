@@ -1266,7 +1266,7 @@ public class CheckedProjectBuilderTest {
             imports.put("t" + i, new DefaultPlanImport(target,
                 target.substring("/probe/".length()),
                 new ProgramNode(null, List.of()),
-                witnessProbeLocation(target), Map.of(), null, true, false));
+                witnessProbeLocation(target), Map.of(), null, true));
         }
         return new ModuleDependencyGraph.ModuleInput(sourcePath,
             sourcePath.substring("/probe/".length()),

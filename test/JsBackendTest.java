@@ -2673,7 +2673,7 @@ public class JsBackendTest {
     // =========================================================================
 
     private static void testUnsupportedConstructsRejected() {
-        System.out.println("-- Unsupported constructs → E6006 --");
+        System.out.println("-- Unsupported constructs → E1044 --");
 
         String externDetailText = "JavaScript backend: @extern-c imports "
             + "are not supported (FFI_UNSUPPORTED_BACKEND, "
@@ -2691,11 +2691,11 @@ public class JsBackendTest {
                 """));
         check(!externCompiled.success(), "@extern-c import rejected");
         check(externCompiled.diagnostics().stream().anyMatch(d ->
-                "E6006".equals(d.code())
+                "E1044".equals(d.code())
                     && "error".equals(d.severity())
-                    && externDetailText.equals(d.message())
+                    && "Unrecognized compiler directive".equals(d.message())
                     && d.range().startLine() == 1),
-            "@extern-c rejection is E6006 with the exact current detail "
+            "@extern-c rejection is E1044 with the exact current detail "
                 + "text at the import statement: " + externCompiled.diagnostics());
         check(!externCompiled.artifacts().containsKey("Main.js"),
             "the rejected extern-C compile publishes no artifact");
@@ -6882,8 +6882,8 @@ public class JsBackendTest {
         writeFile("rej_proj/deal.json",
             "{\"languageVersion\": \"1.3\", \"backend\": \"js\","
                 + " \"moduleRoots\": [\"src\"], \"externals\": {"
-                + " \"ffi\": {\"declaration\": \"src/ffi.d.deal\","
-                + " \"nativeLibrary\": \"libhost\"}}}");
+                + " \"ffi\": {\"declaration\": \"src/ffi.d.deal\""
+                + "}}}");
         writeFile("rej_proj/src/ffi.d.deal", """
             // @extern-c
             export function cFn(x: int): int;
@@ -6921,8 +6921,8 @@ public class JsBackendTest {
         boolean success = orchestrator.compile();
         check(!success, "the @extern-c project fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
-                "E6006".equals(d.code())),
-            "the orchestrator reports E6006: " + orchestrator.diagnostics());
+                "E1044".equals(d.code())),
+            "the orchestrator reports E1044: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("lib.js")),
             "the rejected module writes no artifact");
         // Transactional publication (whole-project-artifact-publication
@@ -7272,7 +7272,7 @@ public class JsBackendTest {
                 "{\n  \"languageVersion\": \"1.3\",\n  \"backend\": \"js\",\n"
                     + "  \"moduleRoots\": [\".\"],\n"
                     + "  \"externals\": {\"ffi\": {\"declaration\":"
-                    + " \"ffi.d.deal\", \"nativeLibrary\": \"libhost\"}}\n}\n",
+                    + " \"ffi.d.deal\"}}\n}\n",
                 StandardCharsets.UTF_8);
 
             Files.writeString(projectDir.resolve("ffi.d.deal"),
@@ -7308,8 +7308,8 @@ public class JsBackendTest {
             boolean ok = orchestrator.compile();
             check(!ok, "an @extern-c import fails the JS compilation");
             check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E6006".equals(d.code())),
-                "the rejection is E6006: " + orchestrator.diagnostics());
+                    .anyMatch(d -> "E1044".equals(d.code())),
+                "the rejection is E1044: " + orchestrator.diagnostics());
             check(!Files.exists(outputRoot.resolve("main.js")),
                 "no entry artifact is written for the rejected module");
             check(!Files.exists(outputRoot.resolve("ffi.js")),

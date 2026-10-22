@@ -2621,97 +2621,24 @@ public class ProductionDispatchTest {
             "Cannot assign");
         checkBuiltinErrorConstruction();
 
-        // (e) The extern-C declaration import is admitted on LuaJIT: the
-        // production compile emits the load_ffi prelude at the import's
-        // MODULE_IMPORT, and the artifact's init fails at the import with
-        // FFI_LIBRARY_LOAD (the wiring names an unbuilt library); the JVM
-        // target keeps its phase-3.9 E6006 rejection.
-        Path externC = Files.createTempDirectory("production-dispatch-ffi-");
+        Path removed = Files.createTempDirectory("production-dispatch-native-rejected-");
         try {
-            write(externC, "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "moduleRoots": ["src"],
-                  "output": "out",
-                  "backend": "luajit",
-                  "externals": {
-                    "native/math": {
-                      "declaration": "native.d.deal",
-                      "nativeLibrary": "libs/libnative.so"
-                    }
-                  }
-                }
-                """);
-            write(externC, "native.d.deal", """
-                // @extern-c
-                export function add(a: int, b: int): int;
-                """);
-            write(externC, "src/main.deal", """
-                import * as math from "native/math";
-
-                export function main(): null {
-                  return null;
-                }
-                """);
-            ProjectOutcome compile = productionCompile(externC,
-                "src/main.deal", "out");
-            check(compile.exitCode() == 0,
-                "the extern-C declaration import is admitted on LuaJIT: "
-                    + compile.stderr());
-            if (compile.exitCode() == 0) {
-                String artifact = Files.readString(externC.resolve("out/main.lua"),
-                    StandardCharsets.UTF_8);
-                check(artifact.contains("__exportSurfaces[\"native.math\"] = "
-                        + "__exportSurfaces[\"native.math\"] or __rt.load_ffi("
-                        + "\"ffi:@$external/native/math\", "),
-                    "the artifact publishes the loaded table through the "
-                        + "load_ffi call at the import's MODULE_IMPORT: " + artifact);
-                check(artifact.contains("nativeLibrary = { kind = "
-                        + "\"MANIFEST_RELATIVE_PATH\", loaderText = \""),
-                    "the bundle carries the manifest-relative loader text");
-                check(artifact.contains(", \"" + externC.resolve("src/main.deal")
-                        .toAbsolutePath() + "\", 1, 1)"),
-                    "the load carries the import statement's span triplet");
-                check(!artifact.contains("ffi.C") && !artifact.contains("cdef("),
-                    "the artifact carries no ffi.C/cdef text");
-
-                write(externC, "out/probe.lua", """
-                    package.path = "./?.lua;./std/?.lua;" .. package.path
-                    local ok, err = pcall(dofile, "main.lua")
-                    if ok then
-                      print("PROBE-FAIL|the init succeeded")
-                      os.exit(1)
-                    end
-                    if type(err) ~= "table" or err.code == nil then
-                      print("PROBE-FAIL|not a runtime error: " .. tostring(err))
-                      os.exit(1)
-                    end
-                    print("ERR|" .. tostring(err.code) .. "|" .. tostring(err.message)
-                      .. "|" .. tostring(err.file) .. "|" .. tostring(err.line)
-                      .. "|" .. tostring(err.column))
-                    """);
-                ProcessOutcome run = runProcess(externC.resolve("out"),
-                    "luajit", "probe.lua");
-                check(run.exitCode() == 0
-                        && run.output().startsWith("ERR|FFI_LIBRARY_LOAD|")
-                        && run.output().contains("src/main.deal|1|1"),
-                    "the emitted artifact fails at the import with "
-                        + "FFI_LIBRARY_LOAD at the import origin: exit="
-                        + run.exitCode() + " output=" + run.output());
+            write(removed, "deal.json", "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
+            write(removed, "src/main.deal", "// @extern-c\nexport function main(): null { return null; }\n");
+            for (String backend : List.of("js", "luajit", "jvm")) {
+                ProjectOutcome rejected = runProductionCli("compile",
+                    removed.resolve("src/main.deal").toAbsolutePath().toString(),
+                    "--backend", backend, "--output",
+                    removed.resolve("out-" + backend).toAbsolutePath().toString());
+                check(rejected.exitCode() != 0 && rejected.stderr().contains("E1044"),
+                    backend + ": removed directive rejects at the frontend: " + rejected.stderr());
+                check(!Files.exists(removed.resolve("out-" + backend)),
+                    backend + ": removed directive publishes no artifact");
             }
-
-            // The JVM target keeps the phase-3.9 E6006 rejection.
-            ProjectOutcome jvmCompile = runProductionCli("compile",
-                externC.resolve("src/main.deal").toAbsolutePath().toString(),
-                "--backend", "jvm", "--output",
-                externC.resolve("out-jvm").toAbsolutePath().toString());
-            check(jvmCompile.exitCode() != 0
-                    && jvmCompile.stderr().contains("E6006"),
-                "the JVM extern-C case keeps the phase-3.9 E6006: "
-                    + jvmCompile.stderr());
         } finally {
-            deleteRecursively(externC);
+            deleteRecursively(removed);
         }
+
     }
 
     /**

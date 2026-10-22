@@ -885,8 +885,7 @@ public final class ProjectLocatorTest {
             "{\n  \"languageVersion\": \"1.3\",\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\n"
-                + "      \"declaration\": \"decl.d.deal\",\n"
-                + "      \"nativeLibrary\": \"libs/libhost.so\"\n"
+                + "      \"declaration\": \"decl.d.deal\"\n"
                 + "    }\n"
                 + "  }\n}\n");
         ProjectContext context = locateOk(dir.resolve("main.deal"));
@@ -903,11 +902,7 @@ public final class ProjectLocatorTest {
                     "declaration path is fully symlink-resolved");
                 check(entry.declarationPath().sourceRange() != null,
                     "declaration path carries its value range");
-                check(entry.nativeLibrary() != null
-                        && entry.nativeLibrary().kind()
-                            == NativeLibraryRef.Kind.MANIFEST_RELATIVE_PATH
-                        && entry.nativeLibrary().loaderText().equals("libs/libhost.so"),
-                    "manifest-relative nativeLibrary classification preserved");
+
                 check(entry.sourceRange() != null, "entry carries its value range");
             }
         }
@@ -1004,23 +999,16 @@ public final class ProjectLocatorTest {
                 "externals map preserves member order");
         }
 
-        // The completed entry preserves an absolute nativeLibrary too.
-        Path absDir = fixture("externals-abs-native");
+        // Removed nativeLibrary is a closed-schema error, even with a valid declaration.
+        Path absDir = fixture("externals-native-rejected");
         writeEntry(absDir, "main.deal");
         writeText(absDir.resolve("d.d.deal"), "export function d(): null\n");
         writeText(absDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.3\",\n"
-                + "  \"externals\": {\n"
-                + "    \"host\": {\"declaration\": \"d.d.deal\","
-                + " \"nativeLibrary\": \"/abs/lib.so\"}\n"
-                + "  }\n}\n");
-        ProjectContext absContext = locateOk(absDir.resolve("main.deal"));
-        if (absContext != null) {
-            ExternalEntry entry = absContext.externals().get("host");
-            check(entry != null && entry.nativeLibrary() != null
-                    && entry.nativeLibrary().kind() == NativeLibraryRef.Kind.ABSOLUTE_PATH,
-                "absolute nativeLibrary classification preserved");
-        }
+            "{\"languageVersion\":\"1.3\",\"externals\":{\"host\":{"
+                + "\"declaration\":\"d.d.deal\",\"nativeLibrary\":\"/abs/lib.so\"}}}");
+        CompilerDiagnostic rejected = locateE2010(absDir.resolve("main.deal"));
+        check(rejected != null, "nativeLibrary rejects before publication");
+
     }
 
     private static void testExternalsDuplicateDeclarations() throws Exception {
@@ -1685,8 +1673,7 @@ public final class ProjectLocatorTest {
                 + "  \"stdlib\": \"1.3\",\n"
                 + "  \"dependencies\": {\"dep\": {\"x\": 1}},\n"
                 + "  \"externals\": {\n"
-                + "    \"host\": {\"declaration\": \"decl.d.deal\","
-                + " \"nativeLibrary\": \"libs/libhost.so\"}\n"
+                + "    \"host\": {\"declaration\": \"decl.d.deal\"}\n"
                 + "  }\n"
                 + "}\n");
 
@@ -1731,11 +1718,7 @@ public final class ProjectLocatorTest {
             check(entry.declarationPath().absoluteNormalizedPath().equals(
                     projectReal.resolve("decl.d.deal").toRealPath().toString()),
                 "externals declaration resolved");
-            check(entry.nativeLibrary() != null
-                    && entry.nativeLibrary().kind()
-                        == NativeLibraryRef.Kind.MANIFEST_RELATIVE_PATH
-                    && entry.nativeLibrary().loaderText().equals("libs/libhost.so"),
-                "externals nativeLibrary classified");
+
             check(entry.sourceRange() != null, "externals entry range present");
         }
         check(context.stdlibVersion().equals("1.3"), "stdlibVersion 1.3");
@@ -1771,8 +1754,7 @@ public final class ProjectLocatorTest {
             + "  \"stdlib\": \"1.3\",\n"
             + "  \"dependencies\": {\"dep\": {\"x\": 1}},\n"
             + "  \"externals\": {\n"
-            + "    \"host\": {\"declaration\": \"decl.d.deal\","
-            + " \"nativeLibrary\": \"libs/libhost.so\"}\n"
+            + "    \"host\": {\"declaration\": \"decl.d.deal\"}\n"
             + "  }\n"
             + "}\n";
         writeBytes(manifestFile, mutated.getBytes(StandardCharsets.UTF_8));

@@ -212,9 +212,7 @@ public final class DistributionHome {
 
     /**
      * The manifest-directory text this resolver was constructed with:
-     * the base of the manifest-relative deployment-copy resolution (and
-     * the same text a compile's FFI emission input carries for a
-     * manifest-relative native-library loader text).
+     * the base of the manifest-relative deployment-copy resolution.
      */
     public String manifestDirectoryText() {
         return manifestDirectoryText;

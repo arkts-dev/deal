@@ -281,14 +281,6 @@ let f: number = math.floor(3.14);
 // export main with the non-async signature (): null.
 // export function main(): null { return null; }
 
-// C FFI declaration files (v1.3) start with // @extern-c and may mark
-// exported classes with // @c-struct or // @c-pointer. Only the LuaJIT
-// backend binds C FFI; the JVM and JS backends reject it before
-// producing artifacts:
-// // @extern-c
-// // @c-struct
-// export class Vec2 { x: number = 0.0; y: number = 0.0; }
-
 // -----------------------------------------------------
 // 7. Error handling.
 // -----------------------------------------------------

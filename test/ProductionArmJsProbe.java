@@ -74,13 +74,11 @@ public final class ProductionArmJsProbe {
             ProductionProjectEmission.Result result =
                 ProductionProjectEmission.run(productionInvocation(),
                     built.input(), built.index(), manifests.manifests(),
-                    fixture.hostDeclarationSurface(), Map.of(), Map.of(),
-                    projectRoot.toString(),
-                    BuiltinErrorDeclaration.synthesized(
+                    fixture.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                         built.input().modules().get(0).ast().span()),
                     List.of(IntrinsicKind.INT_CONVERT,
                         IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
-                    Set.of(), Backend.JS, false,
+                    java.util.Set.of(), Backend.JS, false,
                     DistributionHome.forManifestDirectory(projectRoot.toString()),
                     stager);
             System.out.println("RESULT "

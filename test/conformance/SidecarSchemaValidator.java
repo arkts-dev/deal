@@ -19,15 +19,6 @@ public final class SidecarSchemaValidator {
 
     /** The only schema version this validator accepts. */
     public static final int SIDECAR_SCHEMA_VERSION = 1;
-
-    /**
-     * The only diagnostic code a divergent {@code compile-reject} may
-     * pin: {@code E6006} {@code FFI_UNSUPPORTED_BACKEND} (corpus C6 —
-     * the sanctioned C FFI rejection; the backend epics register it in
-     * {@code deal/diagnostics/DiagnosticCode.java}).
-     */
-    public static final String FFI_UNSUPPORTED_BACKEND_CODE = "E6006";
-
     /** The three backends of the differential gate, in canonical order. */
     public static final List<String> BACKEND_NAMES = List.of("luajit", "jvm", "js");
 
@@ -78,20 +69,7 @@ public final class SidecarSchemaValidator {
                 corpusModuleIndex == null ? Set.of() : Set.copyOf(corpusModuleIndex);
         }
 
-        /**
-         * True iff any module of the compilation set carries the C6
-         * rejection trigger: an {@code @extern-c} import directive
-         * (detected with the real lexer — the directive attaches to the
-         * {@code import} token, never to an ordinary string occurrence).
-         */
-        public boolean compilationSetHasExternCImport() {
-            for (CompilationModule module : compilationSet) {
-                if (containsExternCImport(module.source())) {
-                    return true;
-                }
-            }
-            return false;
-        }
+
     }
 
     /**
@@ -207,35 +185,6 @@ public final class SidecarSchemaValidator {
             return validateCompileSidecar(context, rootFields);
         }
         return validateRuntimeSidecar(context, rootFields);
-    }
-
-    /**
-     * True iff the DEAL source text carries an {@code @extern-c} file
-     * directive — the C6 rejection trigger (re-keyed onto the structured
-     * directive events by fixed-name-directive-events D9: {@code @extern-c}
-     * is a file directive that never anchors to a token). The real lexer
-     * recognizes the directive only as a directive-shaped comment, so a
-     * mere {@code @extern-c} occurrence inside a string literal is never
-     * a trigger. A source that fails to lex yields {@code false} (fail
-     * closed: a divergent form is then rejected as lacking the trigger).
-     *
-     * @param source the DEAL module source text (non-null)
-     * @return true iff an {@code @extern-c} directive event exists
-     */
-    public static boolean containsExternCImport(String source) {
-        Objects.requireNonNull(source, "source must not be null");
-        try {
-            Lexer lexer = new Lexer(source, "<sidecar-schema-compilation-module>");
-            for (CompilerDirective event : lexer.tokenize().directiveEvents()) {
-                if (event.name() == DirectiveName.EXTERN_C) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (RuntimeException e) {
-            // Fail closed: an unlexable module cannot prove the trigger.
-            return false;
-        }
     }
 
     // =========================================================================
@@ -402,199 +351,10 @@ public final class SidecarSchemaValidator {
         }
         return Optional.empty();
     }
-
-    /** Divergent form: per-backend entries plus the sanctioned C6 split. */
+    /** Reject backend-specific expectations: all targets share one language contract. */
     private static Optional<ClassificationFailure> validateDivergentSidecar(
-        ValidationContext context, CanonicalJson.Obj backends) {
-        Map<String, CanonicalJson.Value> entries = fieldsOf(backends);
-        for (String key : entries.keySet()) {
-            if (!BACKEND_NAMES.contains(key)) {
-                return failure(context, "backends." + key, "unknown backend "
-                    + "\"" + key + "\" (a divergent sidecar names exactly "
-                    + "luajit, jvm, js)");
-            }
-        }
-        if (entries.size() != BACKEND_NAMES.size()) {
-            List<String> missing = new ArrayList<>();
-            for (String backend : BACKEND_NAMES) {
-                if (!entries.containsKey(backend)) {
-                    missing.add(backend);
-                }
-            }
-            return failure(context, "backends",
-                "a divergent sidecar must name exactly the three backends "
-                    + "luajit, jvm, js (missing " + String.join(", ", missing) + ")");
-        }
-        // Per-entry shape validation in canonical backend order.
-        for (String backend : BACKEND_NAMES) {
-            CanonicalJson.Value entryValue = entries.get(backend);
-            if (!(entryValue instanceof CanonicalJson.Obj entry)) {
-                return failure(context, "backends." + backend,
-                    "the backend expectation must be a JSON object");
-            }
-            Optional<ClassificationFailure> entryFail =
-                checkDivergentEntry(context, "backends." + backend, entry);
-            if (entryFail.isPresent()) {
-                return entryFail;
-            }
-        }
-        Optional<ClassificationFailure> splitFail =
-            checkSanctionedSplit(context, entries);
-        if (splitFail.isPresent()) {
-            return splitFail;
-        }
-        if (!context.compilationSetHasExternCImport()) {
-            return failure(context, "backends",
-                "a divergent form is valid only for the C6 rejection: the "
-                    + "fixture's compilation set contains no @extern-c import "
-                    + "directive (the C FFI rejection trigger), so no "
-                    + "per-backend divergence is sanctioned");
-        }
-        return Optional.empty();
-    }
-
-    /** One divergent entry: mode-closed field set plus per-mode shape rules. */
-    private static Optional<ClassificationFailure> checkDivergentEntry(
-        ValidationContext context, String prefix, CanonicalJson.Obj entry) {
-        Map<String, CanonicalJson.Value> fields = fieldsOf(entry);
-        CanonicalJson.Value modeValue = fields.get("mode");
-        if (!(modeValue instanceof CanonicalJson.Str mode)) {
-            return failure(context, prefix + ".mode", modeValue == null
-                ? "missing mandatory mode field"
-                : "mode must be a string");
-        }
-        switch (mode.value()) {
-            case "runtime-ok", "runtime-error", "compile-reject" -> { }
-            default -> {
-                return failure(context, prefix + ".mode", "unknown variant "
-                    + describe(modeValue) + " (supported: runtime-ok, "
-                    + "runtime-error, compile-reject)");
-            }
-        }
-        if ("compile-reject".equals(mode.value())) {
-            for (String key : fields.keySet()) {
-                if (!key.equals("mode") && !key.equals("diagnostic")) {
-                    return failure(context, prefix + "." + key,
-                        "unknown field in a compile-reject backend expectation "
-                            + "(a compile-reject entry carries exactly mode and "
-                            + "diagnostic — no transcript, exitCode, or error)");
-                }
-            }
-            CanonicalJson.Value diagnosticValue = fields.get("diagnostic");
-            if (!(diagnosticValue instanceof CanonicalJson.Obj diagnostic)) {
-                return failure(context, prefix + ".diagnostic",
-                    diagnosticValue == null
-                        ? "missing mandatory diagnostic object"
-                        : "diagnostic must be a JSON object");
-            }
-            return checkRejectDiagnostic(context, prefix + ".diagnostic", diagnostic);
-        }
-        // Runtime entry: mode + transcript + exitCode + error only; a
-        // diagnostic field on a runtime entry is an unknown field.
-        for (String key : fields.keySet()) {
-            if (!RUNTIME_EXPECTATION_FIELDS.contains(key)) {
-                return failure(context, prefix + "." + key,
-                    "unknown field in a runtime backend expectation");
-            }
-        }
-        return checkRuntimeExpectation(context, prefix, entry);
-    }
-
-    /** The compile-reject diagnostic object: code mandatory, line/column optional. */
-    private static Optional<ClassificationFailure> checkRejectDiagnostic(
-        ValidationContext context, String prefix, CanonicalJson.Obj diagnostic) {
-        Map<String, CanonicalJson.Value> fields = fieldsOf(diagnostic);
-        for (String key : fields.keySet()) {
-            if (!REJECT_DIAGNOSTIC_FIELDS.contains(key)) {
-                return failure(context, prefix + "." + key,
-                    "unknown field in the compile-reject diagnostic object "
-                        + "(pinnable: code, line, column — message is "
-                        + "compile-sidecar-only)");
-            }
-        }
-        CanonicalJson.Value codeValue = fields.get("code");
-        if (!(codeValue instanceof CanonicalJson.Str code)) {
-            return failure(context, prefix + ".code", codeValue == null
-                ? "missing mandatory code field"
-                : "code must be a string");
-        }
-        for (String key : List.of("line", "column")) {
-            Optional<ClassificationFailure> intFail =
-                checkOptionalIntField(context, prefix + "." + key, fields.get(key));
-            if (intFail.isPresent()) {
-                return intFail;
-            }
-        }
-        return Optional.empty();
-    }
-
-    /**
-     * The sanctioned C6 split (corpus Verification 7; gate Verification 6):
-     * exactly luajit → runtime expectation, jvm → compile-reject E6006,
-     * js → compile-reject E6006. Every other combination fails naming the
-     * offending backend entry.
-     */
-    private static Optional<ClassificationFailure> checkSanctionedSplit(
-        ValidationContext context, Map<String, CanonicalJson.Value> entries) {
-        String luajitMode = entryMode(entries.get("luajit"));
-        if ("compile-reject".equals(luajitMode)) {
-            return failure(context, "backends.luajit.mode",
-                "compile-reject on the luajit leg is never valid — the "
-                    + "sanctioned C6 split requires a runtime expectation on "
-                    + "luajit (LuaJIT supports the C FFI contract)");
-        }
-        String jvmMode = entryMode(entries.get("jvm"));
-        if (!"compile-reject".equals(jvmMode)) {
-            return failure(context, "backends.jvm.mode",
-                "the sanctioned C6 split requires a compile-reject "
-                    + "expectation on the jvm leg, got " + describe(jvmMode));
-        }
-        Optional<ClassificationFailure> jvmCodeFail =
-            checkRejectCode(context, "backends.jvm.diagnostic.code",
-                entries.get("jvm"));
-        if (jvmCodeFail.isPresent()) {
-            return jvmCodeFail;
-        }
-        String jsMode = entryMode(entries.get("js"));
-        if (!"compile-reject".equals(jsMode)) {
-            return failure(context, "backends.js.mode",
-                "the sanctioned C6 split requires a compile-reject "
-                    + "expectation on the js leg, got " + describe(jsMode));
-        }
-        return checkRejectCode(context, "backends.js.diagnostic.code",
-            entries.get("js"));
-    }
-
-    private static Optional<ClassificationFailure> checkRejectCode(
-        ValidationContext context, String field, CanonicalJson.Value entryValue) {
-        if (!(entryValue instanceof CanonicalJson.Obj entry)) {
-            return Optional.empty(); // per-entry shape validation already failed
-        }
-        CanonicalJson.Value diagnosticValue = fieldsOf(entry).get("diagnostic");
-        if (!(diagnosticValue instanceof CanonicalJson.Obj diagnostic)) {
-            return Optional.empty(); // per-entry shape validation already failed
-        }
-        CanonicalJson.Value codeValue = fieldsOf(diagnostic).get("code");
-        if (!(codeValue instanceof CanonicalJson.Str code)) {
-            return Optional.empty(); // per-entry shape validation already failed
-        }
-        if (!FFI_UNSUPPORTED_BACKEND_CODE.equals(code.value())) {
-            return failure(context, field,
-                "the sanctioned C6 divergence pins the exact diagnostic code "
-                    + FFI_UNSUPPORTED_BACKEND_CODE + " (FFI_UNSUPPORTED_BACKEND), "
-                    + "got " + code.value());
-        }
-        return Optional.empty();
-    }
-
-    private static String entryMode(CanonicalJson.Value entryValue) {
-        if (!(entryValue instanceof CanonicalJson.Obj entry)) {
-            return "<invalid entry>";
-        }
-        CanonicalJson.Value modeValue = fieldsOf(entry).get("mode");
-        return modeValue instanceof CanonicalJson.Str mode
-            ? mode.value()
-            : "<missing mode>";
+            ValidationContext context, CanonicalJson.Obj backends) {
+        return failure(context, "backends", "per-backend divergence is not supported");
     }
 
     // =========================================================================

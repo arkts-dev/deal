@@ -24,71 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * The strict, total, duplicate-safe, closed v1.3 manifest parser (design
- * source {@code strict-project-context-resolution-identity} D2).
- *
- * <p>Input contract: the parser receives <b>strictly UTF-8-decoded text
- * only</b> — the byte-level REPORT-mode decode is ProjectLocator's D1 step
- * 3. It consumes the {@code deal.source.JsonRangeLexer} token/fault
- * substrate and performs <b>no filesystem access and no byte-level
- * decoding</b>: the {@code manifestPath} argument is embedded in
- * diagnostic ranges only, and no {@code java.io} or {@code java.nio.file}
- * type appears on this parser's surface.
- *
- * <p>The strict pass walks the lexer result once in scan order and rejects
- * the first defect in scan order, fail-fast:
- * <ul>
- *   <li>strict structural faults — {@code NON_STRICT_WHITESPACE} (only
- *       SP/HT/LF/CR between tokens), {@code RAW_CONTROL_IN_STRING},
- *       {@code UNPAIRED_SURROGATE}, {@code EXPECTED_END},
- *       {@code EXPECTED_COMMA_OR_END}, {@code EXPECTED_KEY},
- *       {@code EXPECTED_COLON}, {@code EXPECTED_VALUE},
- *       {@code UNEXPECTED_CHARACTER}, {@code TRAILING_CONTENT}; the
- *       substrate's {@code INVALID_ESCAPE} records are never used as
- *       strict errors;</li>
- *   <li>strict literal re-validation from each token's own source slice —
- *       numbers match {@code -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?}
- *       (so {@code 01}, {@code 1.}, {@code -.5} fail and {@code 1e5} is
- *       valid), booleans/null are exactly {@code true}/{@code false}/
- *       {@code null};</li>
- *   <li>strict per-token string re-scan of every KEY/STRING token from
- *       its own original source slice (re-derived through the
- *       {@code ScalarSourceCursor} scalar→UTF-16 index mapping) with the
- *       pinned escape set <code>" \ / b f n r t uXXXX</code> and true
- *       Unicode decoding: {@code \u005cuXXXX} requires four hex digits and
- *       decodes to the actual Unicode scalar; two consecutive
- *       surrogate-range escapes decode as one supplementary scalar; a
- *       high surrogate not followed by a low-surrogate escape, or a
- *       standalone low-surrogate escape, fails at the escape's range;
- *       any other escape (including a trailing backslash) fails from the
- *       backslash through the offending scalar or the token end;</li>
- *   <li>duplicate members rejected recursively at any depth via the
- *       open-object stack — a KEY whose strictly decoded key repeats a
- *       key of the same enclosing object fails at the second key's range
- *       (top level, every externals entry, every object inside
- *       {@code dependencies} at any depth; sibling objects under an array
- *       never collide);</li>
- *   <li>closed member sets — top-level members are exactly
- *       {@code languageVersion}, {@code moduleRoots}, {@code output},
- *       {@code backend}, {@code stdlib}, {@code dependencies},
- *       {@code externals}; externals entry members are exactly
- *       {@code declaration}, {@code nativeLibrary}; unknown members
- *       (including legacy {@code permissions}/{@code limits}) fail at the
- *       key range.</li>
- * </ul>
- *
- * <p>Only on a clean walk, {@link ProjectConfigValidator}'s post-walk
- * validations run in pinned canonical order independent of member
- * document order: {@code languageVersion} → {@code backend} →
- * {@code moduleRoots} → {@code output} → {@code stdlib} →
- * {@code dependencies} → {@code externals} entries (member order). Every
- * failure is exactly one E2010 {@link CompilerDiagnostic} with a complete
- * SOURCE {@link DiagnosticRange}; no start-only producer exists.
- *
- * <p>Determinism: identical decoded text parses to byte-identical
- * results — no timestamps, ordinals, or process state enter the parse.
- */
+
 public final class StrictManifestParser {
 
     private StrictManifestParser() {
@@ -105,8 +41,7 @@ public final class StrictManifestParser {
 
     /** The exact closed externals-entry member set (D2). */
     private static final Set<String> EXTERNALS_ENTRY_MEMBERS = Set.of(
-        "declaration", "nativeLibrary");
-
+        "declaration");
     /**
      * The sole parser result channel: exactly one of {@code manifest} and
      * {@code failure} is non-null. A failed parse publishes no manifest,

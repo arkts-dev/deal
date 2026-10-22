@@ -40,7 +40,6 @@ import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
 import deal.source.SourceScalarRange;
 import deal.test.conformance.CorpusDiscovery;
-import deal.test.conformance.CorpusFfi;
 import deal.test.conformance.SidecarExpectations;
 import deal.test.conformance.SidecarSchemaValidator;
 import deal.types.Type;
@@ -2136,8 +2135,7 @@ public class DiagnosticRangeTest {
         @Override
         public Map<String, Type> resolveModule(String modulePath,
                 String importingModule, Set<String> modulesInProgress)
-                throws ModuleNotFoundException,
-                    CffiImportWithoutNativeLibraryException {
+                throws ModuleNotFoundException {
             if (stdlibExports.containsKey(modulePath)) {
                 return stdlibExports.get(modulePath);
             }
@@ -2147,35 +2145,13 @@ public class DiagnosticRangeTest {
                     "Module not found: '" + modulePath
                     + "' is not a spec-listed stdlib module");
             }
-            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
-                CorpusFfi.Module ffiModule = CorpusFfi.module(conformanceRoot,
-                    modulePath);
-                for (CompilerDiagnostic diagnostic
-                        : ffiModule.validationDiagnostics()) {
-                    if ("error".equals(diagnostic.severity())) {
-                        ffiDiagnostics.add(diagnostic);
-                    }
-                }
-                return ffiModule.exports();
-            }
+
             String resolved = CorpusDiscovery.resolveRelativeImport(
                 fixtureCorpusPath, modulePath, conformanceRoot);
             CorpusDiscovery.Fixture dependency = resolved == null
                 ? null : corpusByPath.get(resolved);
             if (dependency != null) {
                 ProgramNode dependencyProgram = parse(dependency).program();
-                // The C FFI policy (docs/spec-v1.3.md §Package manifest):
-                // a C FFI declaration file — a .d.deal file whose effective @extern-c holds — may
-                // only be imported through a deal.json externals entry
-                // specifying nativeLibrary. The corpus frontend drive has
-                // no manifest, so such an import is an invalid project
-                // configuration: the named CffiImportWithoutNativeLibrary
-                // exception the checker maps to E2010 at the import span.
-                if (resolved.endsWith(".d.deal")
-                        && dependencyProgram.fileDirectives().externC()) {
-                    throw new CffiImportWithoutNativeLibraryException(
-                        modulePath);
-                }
                 ExportExtractor extractor = new ExportExtractor(resolved,
                     resolved.endsWith(".d.deal"));
                 return extractor.extract(dependencyProgram);
@@ -2191,10 +2167,7 @@ public class DiagnosticRangeTest {
             if (modulePath == null || modulePath.isEmpty()) {
                 return null;
             }
-            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
-                return CorpusFfi.module(conformanceRoot, modulePath)
-                    .classSymbols().get(className);
-            }
+
             CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
             if (dependency == null) {
                 return null;
@@ -2229,10 +2202,7 @@ public class DiagnosticRangeTest {
         public boolean isFunctionExportedFromModule(
                 CanonicalModuleIdentity declaringModule, String functionName,
                 String importingModule) throws ModuleNotFoundException {
-            if (CorpusFfi.declaresFunction(conformanceRoot, declaringModule,
-                    functionName)) {
-                return true;
-            }
+
             for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
                 if (declaringModule.equals(
                         IdentityTestFixtures.moduleIdentityOf(
@@ -2259,11 +2229,7 @@ public class DiagnosticRangeTest {
             if (modulePath == null || modulePath.isEmpty()) {
                 return null;
             }
-            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
-                return CorpusFfi.resolveTypeNode(typeNode,
-                    CorpusFfi.module(conformanceRoot, modulePath)
-                        .classSymbols());
-            }
+
             CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
             if (dependency == null) {
                 return null;

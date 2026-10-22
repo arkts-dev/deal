@@ -170,10 +170,6 @@ public class DiagnosticClassificationTest {
             "// @not-a-directive\nclass A { x: int = 0; }\n");
         triggers.put("E1045",
             "// @jsonable:foo\nexport class A { x: int = 0; }\n");
-        triggers.put("E1046",
-            "function f(): null {\n// @extern-c\nreturn null;\n}\n");
-        triggers.put("E7002",
-            "// @extern-c\nexport class A { x: int = 0; }\n");
         triggers.put("E5003",
             "function f(): int { return \"hi\"; }");
 
@@ -181,11 +177,7 @@ public class DiagnosticClassificationTest {
         for (var entry : triggers.entrySet()) {
             String expectedCode = entry.getKey();
             String source = entry.getValue();
-            // E7002's extern-C marker validation requires a declaration
-            // (.d.deal) file — the wrong-file-kind rule keys on the path.
-            String triggerFile = "E7002".equals(expectedCode)
-                ? "trigger_E7002.d.deal"
-                : "trigger_" + expectedCode + ".deal";
+            String triggerFile = "trigger_" + expectedCode + ".deal";
             List<CompilerDiagnostic> diags = compileAndGetDiagnostics(source,
                 triggerFile);
 

@@ -217,7 +217,7 @@ public final class ClassConstructionValidator {
      * <ul>
      *   <li>a registration's key names its contained layout — one class
      *       identity per registration — and carries a declaration owner
-     *       ({@link DefaultOwner#HOST_DEFAULTS}/{@link DefaultOwner#FFI_PLAN});</li>
+     *       ({@link DefaultOwner#HOST_DEFAULTS});</li>
      *   <li>a carried builtin {@code Error} registration is exactly the
      *       compiler-owned layout under the builtin owner (an absent entry is
      *       not by itself a contradiction: the {@code /2} seed collection
@@ -317,12 +317,10 @@ public final class ClassConstructionValidator {
                     + "; a registration's key and its contained layout name one "
                     + "class identity");
             }
-            if (registration.owner() != DefaultOwner.HOST_DEFAULTS
-                    && registration.owner() != DefaultOwner.FFI_PLAN) {
+            if (registration.owner() != DefaultOwner.HOST_DEFAULTS) {
                 return Optional.of("the " + key + " registration carries owner "
                     + registration.owner() + "; a declaration class registration is"
-                    + " owned by " + DefaultOwner.HOST_DEFAULTS + " or "
-                    + DefaultOwner.FFI_PLAN);
+                    + " owned by " + DefaultOwner.HOST_DEFAULTS);
             }
             LocatedDeclaredClass declared = locateDeclaredClass(index, key);
             if (declared == null) {
@@ -372,7 +370,7 @@ public final class ClassConstructionValidator {
      * The project-level seed/module join of the transported class facts:
      * every carried construction of a declaration class — a
      * {@code CLASS_NEW} whose {@code defaultOwner} is a declaration owner
-     * ({@link DefaultOwner#HOST_DEFAULTS} or {@link DefaultOwner#FFI_PLAN})
+     * ({@link DefaultOwner#HOST_DEFAULTS})
      * — refers to exactly one carried class registration seed, and that
      * registration repeats the referring operation's owner and contained
      * layout. The transport carries the seeds and the modules as separate
@@ -420,8 +418,7 @@ public final class ClassConstructionValidator {
                     continue;
                 }
                 String owner = stringPayloadField(op.payload(), "defaultOwner");
-                if (!DefaultOwner.HOST_DEFAULTS.name().equals(owner)
-                        && !DefaultOwner.FFI_PLAN.name().equals(owner)) {
+                if (!DefaultOwner.HOST_DEFAULTS.name().equals(owner)) {
                     continue;
                 }
                 ClassId classId = classIdPayloadField(op.payload(), "classId");
@@ -1614,62 +1611,7 @@ public final class ClassConstructionValidator {
                         }
                     }
                 }
-                case FFI_PLAN -> {
 
-                    ClassRegistrationSeeds.ClassRegistration registration =
-                        declarationClasses.get(payload.classId());
-                    if (registration == null
-                            || registration.owner() != DefaultOwner.FFI_PLAN) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " carries defaultOwner FFI_PLAN for class "
-                            + payload.classId() + ": the plan owner is"
-                            + " admissible only for a declared extern-C C-struct"
-                            + " class of the compilation's class registration"
-                            + " seeds — an unregistered class under FFI_PLAN is a"
-                            + " fail-closed producer defect", op);
-                    }
-                    if (own) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " of same-module class " + payload.classId()
-                            + " carries defaultOwner FFI_PLAN: a same-module"
-                            + " class never carries a declaration-class owner", op);
-                    }
-                    if (!registration.layout().equals(payload.layout())) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " carries a layout that differs from the registered"
-                            + " extern-C declaration layout of " + payload.classId()
-                            + " (the validated plan's ordered fields in class"
-                            + " source order): a foreign layout is a fail-closed"
-                            + " producer defect", op);
-                    }
-                    if (payload.classFactoryRef() != null) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " carries classFactoryRef " + payload.classFactoryRef()
-                            + " under FFI_PLAN: the C-struct construction carries"
-                            + " a null factory ref (the loaded plan is the single"
-                            + " default authority, never a factory transfer)", op);
-                    }
-                    if (!payload.classDefaultOpIds().isEmpty()) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " (FFI_PLAN) lists " + payload.classDefaultOpIds()
-                            + ": the C-struct construction carries an empty child"
-                            + " list (the omitted fields' evaluators are the"
-                            + " loaded {@code <C>_plan} entry's — no in-project"
-                            + " default expression is evaluated)", op);
-                    }
-                    for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
-                        if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
-                            return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW "
-                                + op.opId() + " field-boundary entry for '"
-                                + entry.field() + "' carries kind " + entry.kind()
-                                + ", not CLASS_LITERAL_FIELD: the C-struct"
-                                + " construction carries exactly one"
-                                + " CLASS_LITERAL_FIELD boundary per provided"
-                                + " field and no CLASS_DEFAULT_FIELD (the omitted"
-                                + " fields are the loaded plan's defaults)", op);
-                        }
-                    }
-                }
                 case BUILTIN_DEFAULTS -> {
 
                     if (!ClassId.ERROR.equals(payload.classId())) {

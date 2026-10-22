@@ -646,7 +646,7 @@ public final class SemanticIrValidator {
      *       (the resolved {@code EXTERNAL_ENTRY} op is the missing
      *       fact);</li>
      *   <li>a {@code CLASS_NEW} under {@code SHARED_FACTORY} (the owner's
-     *       factory facts), {@code HOST_DEFAULTS} or {@code FFI_PLAN}
+     *       factory facts), {@code HOST_DEFAULTS}
      *       (the declaration class registration seeds).</li>
      * </ul>
      *
@@ -696,7 +696,7 @@ public final class SemanticIrValidator {
             String owner = stringPayloadField(op.payload(), "defaultOwner");
             if (!DefaultOwner.SHARED_FACTORY.name().equals(owner)
                     && !DefaultOwner.HOST_DEFAULTS.name().equals(owner)
-                    && !DefaultOwner.FFI_PLAN.name().equals(owner)) {
+) {
                 continue;
             }
             ClassId classId = classIdPayloadField(op.payload(), "classId");

@@ -312,11 +312,11 @@ public final class StrictManifestParserTest {
             + "\"output\":\"build/out\",\"backend\":\"jvm\",\"stdlib\":\"1.3\","
             + "\"dependencies\":{\"a\":1,\"sub\":{\"x\":\"y\\n\"},\"arr\":[true,false,null]},"
             + "\"externals\":{"
-            + "\"host/a\":{\"declaration\":\"bindings/a.d.deal\",\"nativeLibrary\":\"liba.so\"},"
-            + "\"host/b\":{\"declaration\":\"/abs/b.d.deal\",\"nativeLibrary\":\"libs/libb.so\"},"
-            + "\"host/c\":{\"declaration\":\"../c.d.deal\",\"nativeLibrary\":\"/usr/lib/libc.so\"},"
+            + "\"host/a\":{\"declaration\":\"bindings/a.d.deal\"},"
+            + "\"host/b\":{\"declaration\":\"/abs/b.d.deal\"},"
+            + "\"host/c\":{\"declaration\":\"../c.d.deal\"},"
             + "\"host/d\":{\"declaration\":\"bindings/d.d.deal\"},"
-            + "\"host/e\":{\"declaration\":\"bindings/e.d.deal\",\"nativeLibrary\":\"lib\\\\e.so\"}}}";
+            + "\"host/e\":{\"declaration\":\"bindings/e.d.deal\"}}}";
         ProjectManifest manifest = checkSuccess(json);
         if (manifest == null) {
             return;
@@ -353,28 +353,12 @@ public final class StrictManifestParserTest {
         check(manifest.externals().size() == 5, "five externals entries");
         ExternalEntrySpec a = manifest.externals().get("host/a");
         check(a != null && a.rawImportSpecifier().equals("host/a")
-                && a.declaration().value().equals("bindings/a.d.deal")
-                && a.nativeLibrary() != null
-                && a.nativeLibrary().kind() == NativeLibraryRef.Kind.BARE_NAME
-                && a.nativeLibrary().loaderText().equals("liba.so"),
-            "externals bare loader name");
-        ExternalEntrySpec b = manifest.externals().get("host/b");
-        check(b != null && b.declaration().value().equals("/abs/b.d.deal")
-                && b.nativeLibrary() != null
-                && b.nativeLibrary().kind() == NativeLibraryRef.Kind.MANIFEST_RELATIVE_PATH,
-            "externals manifest-relative library");
-        ExternalEntrySpec c = manifest.externals().get("host/c");
-        check(c != null && c.declaration().value().equals("../c.d.deal")
-                && c.nativeLibrary() != null
-                && c.nativeLibrary().kind() == NativeLibraryRef.Kind.ABSOLUTE_PATH,
-            "externals absolute library path");
-        ExternalEntrySpec d = manifest.externals().get("host/d");
-        check(d != null && d.nativeLibrary() == null, "externals entry without nativeLibrary");
-        ExternalEntrySpec e = manifest.externals().get("host/e");
-        check(e != null && e.nativeLibrary() != null
-                && e.nativeLibrary().kind() == NativeLibraryRef.Kind.BARE_NAME
-                && e.nativeLibrary().loaderText().equals("lib\\e.so"),
-            "backslash is an ordinary filename character");
+                && a.declaration().value().equals("bindings/a.d.deal"),
+            "external declaration and raw specifier preserved");
+        check(manifest.externals().get("host/b").declaration().value().equals("/abs/b.d.deal"),
+            "external absolute declaration path preserved");
+        check(manifest.externals().get("host/c").declaration().value().equals("../c.d.deal"),
+            "external relative declaration path preserved");
         checkManifestRange("declaration range", json,
             manifest.externals().get("host/a").declaration().sourceRange(),
             "\"bindings/a.d.deal\"", 0);
@@ -726,10 +710,10 @@ public final class StrictManifestParserTest {
             "must be a host declaration file (.d.deal)", "\"a.deal\"", 0);
         checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"a.d.deal\",\"nativeLibrary\":1}}}",
-            "'nativeLibrary' must be a string", "1", 1);
+            "unknown member 'nativeLibrary'", "\"nativeLibrary\"", 0);
         checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"a.d.deal\",\"nativeLibrary\":\"\"}}}",
-            "must be a non-empty string", "\"\"", 0);
+            "unknown member 'nativeLibrary'", "\"nativeLibrary\"", 0);
         ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.3\","
             + "\"externals\":{\"m\":{\"declaration\":\"bindings/a.d.deal\"}}}");
         check(manifest != null && manifest.externals().size() == 1
@@ -816,8 +800,8 @@ public final class StrictManifestParserTest {
         // directory does not exist either. A successful parse proves the
         // parser performs no filesystem access.
         String json = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"missing/root\"],"
-            + "\"externals\":{\"host/x\":{\"declaration\":\"/no/such/file.d.deal\","
-            + "\"nativeLibrary\":\"missing-lib.so\"}},\"output\":\"build/out\"}";
+            + "\"externals\":{\"host/x\":{\"declaration\":\"/no/such/file.d.deal\""
+            + "}},\"output\":\"build/out\"}";
         StrictManifestParser.StrictManifestParseResult first = parse(json);
         check(first.failure() == null && first.manifest() != null,
             "content whose referenced files do not exist still parses");

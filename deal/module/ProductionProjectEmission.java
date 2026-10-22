@@ -17,13 +17,11 @@ import deal.codegen.js.RuntimeDeclarationProjection;
 import deal.codegen.js.RuntimeDeclarationSurface;
 import deal.codegen.jvm.JvmNames;
 import deal.codegen.jvm.JvmSemanticEmitter;
-import deal.codegen.lua.FfiEmissionInput;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticRange;
 import deal.distribution.DistributionHome;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.publication.PublicationStager;
 import deal.semantic.CheckedModuleInput;
@@ -61,36 +59,11 @@ public final class ProductionProjectEmission {
     public static final String SHARED_EMITTER_COVERAGE = "SHARED_EMITTER_COVERAGE";
 
     public static final String HOST_MODULE_IMPORT = "HOST_MODULE_IMPORT";
-
-    /**
-     * The stable detail token of the FFI provider-gap outcome (the
-     * extern-C load emission's binding step; design source
-     * {@code plan-evaluator-provider-binding-surface} P4 and the
-     * provider-gap fail-closed contract): a wrapper-incapable provider or
-     * an import alias naming two provider modules fails the compile closed
-     * with one E6005 {@code SHARED_EMITTER_COVERAGE} whose detail names the
-     * consuming module, the extern-C import statement's origin, the
-     * import's raw specifier, the resolved declaration module, and the
-     * offending provider alias and module path.
-     */
-    public static final String FFI_PROVIDER_GAP = "FFI_PROVIDER_GAP";
-
     /** The unchanged LuaJIT runtime deployment copy source name. */
     private static final String RUNTIME_LUA = "deal/runtime.lua";
 
     /** The unchanged JavaScript runtime deployment copy source name. */
     private static final String RUNTIME_JS = "deal/runtime.js";
-
-    /**
-     * The exact registered text of the JavaScript extern-C rejection (the
-     * preserved {@code FFI_UNSUPPORTED_BACKEND} arm): the frontend admits the
-     * declaration, and the JavaScript production arm rejects the importing
-     * declaration before any lowering or emission with this one message at
-     * the import statement.
-     */
-    public static final String JS_EXTERN_C_REJECTION =
-        "JavaScript backend: @extern-c imports are not supported"
-            + " (FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)";
 
     private ProductionProjectEmission() {
         // Static production entry only; no instances.
@@ -148,28 +121,7 @@ public final class ProductionProjectEmission {
         }
     }
 
-    /**
-     * Runs the production arm for one release-owned production compile:
-     * the closure guard's whole-closure step (both HOST-kind declaration
-     * kinds admitted and realized) over the closure's resolved import
-     * facts, the JavaScript extern-C rejection, the one project lowering,
-     * the one emission (with the one source-map recorder: the project's
-     * source comments and per-module {@code .deal.map.json} sidecars are
-     * the v1.3 default and the accepted {@code sourceMap} spelling selects
-     * nothing) — the one staged project artifact set with its per-module
-     * sidecars, and the complete LuaJIT/JavaScript deployment copies. The
-     * caller (the phase-4 dispatch) owns the arm selection, the emission
-     * record, and the publication transaction; this unit stages artifacts
-     * only.
-     *
-     * <p>The arm is selected by {@link Backend} only: LuaJIT and JVM render
-     * the one project artifact of their target, and JavaScript renders one
-     * CommonJS artifact per implementation unit through the single
-     * {@link JsSemanticEmitter#emitProductionProject} invocation over the
-     * one lowered project. No invocation purpose selects an alternate
-     * emitter, and no arm re-lowers or re-emits after a failure.</p>
-     *
-     */
+
     public static Result run(
             CompilerInvocation invocation,
             CheckedProjectInput checkedProject,
@@ -177,8 +129,6 @@ public final class ProductionProjectEmission {
             List<SemanticRequirementManifest> requirementManifests,
             HostDeclarationSurface declarationSurface,
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
-            Map<ModuleId, FfiGeneratedModule> externCModules,
-            String manifestDirectory,
             BuiltinErrorDeclaration builtinError,
             List<IntrinsicKind> conversionIntrinsics,
             Set<String> callbackExports,
@@ -195,9 +145,6 @@ public final class ProductionProjectEmission {
             "declarationSurface must not be null");
         Objects.requireNonNull(declarationModuleIdentities,
             "declarationModuleIdentities must not be null");
-        Objects.requireNonNull(externCModules, "externCModules must not be null");
-        Objects.requireNonNull(manifestDirectory,
-            "manifestDirectory must not be null");
         Objects.requireNonNull(builtinError, "builtinError must not be null");
         Objects.requireNonNull(conversionIntrinsics,
             "conversionIntrinsics must not be null");
@@ -217,26 +164,14 @@ public final class ProductionProjectEmission {
         if (hostImport.isPresent()) {
             return new Result(Outcome.FAILED, List.of(hostImport.get()), null, null);
         }
-        if (backend == Backend.JS) {
-            // The preserved FFI_UNSUPPORTED_BACKEND arm: the frontend admits
-            // the extern-C declaration and validates its native metadata, and
-            // the JavaScript arm rejects the importing declaration before any
-            // lowering or emission, at the import statement. No output or map
-            // is published.
-            Optional<CompilerDiagnostic> externCImport =
-                externCImportGuard(checkedProject, declarationSurface);
-            if (externCImport.isPresent()) {
-                return new Result(Outcome.FAILED, List.of(externCImport.get()),
-                    null, null);
-            }
-        }
+
 
         // (3) The one project lowering over the compile's declared inputs.
         // A failure returns the lowering's first E6005 and stages nothing;
         // no retry and no fallback exist.
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
             invocation, checkedProject, interfaceIndex, requirementManifests,
-            declarationSurface, declarationModuleIdentities, externCModules,
+            declarationSurface, declarationModuleIdentities,
             builtinError, conversionIntrinsics, callbackExports);
         if (lowering.hasErrors()) {
             return new Result(Outcome.FAILED, lowering.diagnostics(), null, null);
@@ -282,7 +217,6 @@ public final class ProductionProjectEmission {
                 source = LuaSemanticEmitter.emitProductionProject(project,
                     lowering.tables(), lowering.registries(),
                     declarationSurface,
-                    new FfiEmissionInput(externCModules, manifestDirectory),
                     sourceMapRecorder);
             } catch (IllegalStateException emitterGap) {
                 return new Result(Outcome.FAILED,
@@ -561,44 +495,6 @@ public final class ProductionProjectEmission {
         }
         return Optional.empty();
     }
-
-    /**
-     * The preserved JavaScript {@code FFI_UNSUPPORTED_BACKEND} arm: over the
-     * closure's resolved import facts and the shared declaration kinds, the
-     * first resolved extern-C declaration import of the project rejects with
-     * the exact E6006 text at the importing declaration's own statement
-     * range. The guard runs before the one project lowering and before any
-     * emission, so no artifact and no source map is ever published for an
-     * extern-C-importing JavaScript project; JS stays exempt from the native
-     * metadata validation the other arms run.
-     *
-     */
-    private static Optional<CompilerDiagnostic> externCImportGuard(
-            CheckedProjectInput checkedProject,
-            HostDeclarationSurface declarationSurface) {
-        for (CheckedModuleInput module : checkedProject.modules()) {
-            if (module.kind() != CheckedModuleKind.IMPLEMENTATION) {
-                continue;
-            }
-            for (ResolvedImport importFact : module.imports()) {
-                if (importFact.kind() == ExternalModuleKind.IMPLEMENTATION) {
-                    continue;
-                }
-                HostDeclarationSurface.DeclarationFacts facts =
-                    declarationSurface.modules().get(
-                        importFact.resolvedModuleId());
-                if (facts == null || facts.kind()
-                        != HostDeclarationSurface.DeclarationKind.EXTERN_C) {
-                    continue;
-                }
-                return Optional.of(CompilerDiagnostic.error(
-                    DiagnosticCode.E6006, JS_EXTERN_C_REJECTION,
-                    importStatementRange(module, importFact)));
-            }
-        }
-        return Optional.empty();
-    }
-
     /**
      * The importing declaration's own statement range: the module's recorded
      * import declaration whose alias and raw specifier are the resolved
@@ -642,18 +538,7 @@ public final class ProductionProjectEmission {
         // synthetic range.
         DiagnosticRange carried = gap instanceof DiagnosticOriginCarrier carrier
             ? carrier.diagnosticRange() : null;
-        if (gap instanceof LuaSemanticEmitter.FfiProviderGap providerGap) {
-            // The specialized provider gap keeps its consuming-module detail
-            // and its extern-C import statement's own origin.
-            LoweringFailureDetail detail = new LoweringFailureDetail(
-                providerGap.consumingModulePath(), SemanticCapability.MODULES,
-                SHARED_EMITTER_COVERAGE, invocation.semanticProfile(),
-                LoweredModuleUnit.FORMAT_VERSION,
-                "ProductionProjectEmission " + SHARED_EMITTER_COVERAGE + " "
-                    + FFI_PROVIDER_GAP + " (" + providerGap.getMessage()
-                    + ")");
-            return FailureContractRegistry.e6005(detail, carried);
-        }
+
         return FailureContractRegistry.e6005(new LoweringFailureDetail(
             entryModulePath, SemanticCapability.MODULES, SHARED_EMITTER_COVERAGE,
             invocation.semanticProfile(), LoweredModuleUnit.FORMAT_VERSION,

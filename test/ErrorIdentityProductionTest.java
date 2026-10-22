@@ -401,8 +401,7 @@ public final class ErrorIdentityProductionTest {
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            new LinkedHashMap<>(), new LinkedHashMap<>(),
-            BuiltinErrorDeclaration.synthesized(
+            new LinkedHashMap<>(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(deal.semantic.ir.IntrinsicKind.INT_CONVERT,
                 deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT,

@@ -151,7 +151,7 @@ public final class ModuleIdentityResolverTest {
     private static ExternalEntry externalEntry(String rawImportSpecifier,
                                                String declarationPath) {
         return new ExternalEntry(rawImportSpecifier,
-            new NormalizedDeclarationPath(declarationPath, null), null, null);
+            new NormalizedDeclarationPath(declarationPath, null), null);
     }
 
     /** The file: URI text of an absolute path (no filesystem access). */
@@ -632,7 +632,7 @@ public final class ModuleIdentityResolverTest {
         Map<String, ExternalEntry> nullDeclaration = new LinkedHashMap<>();
         nullDeclaration.put("host/x",
             new ExternalEntry("host/x",
-                new NormalizedDeclarationPath(null, null), null, null));
+                new NormalizedDeclarationPath(null, null), null));
         checkNone(classify(
                 fabricatedContext(List.of(), nullDeclaration, null),
                 uriOf("/p/x.d.deal")),

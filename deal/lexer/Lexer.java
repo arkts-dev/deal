@@ -81,10 +81,7 @@ public final class Lexer {
      * complete literal match after {@code @} is the name.
      */
     private static final List<DirectiveName> FIXED_NAMES = List.of(
-        DirectiveName.JSONABLE,
-        DirectiveName.EXTERN_C,
-        DirectiveName.C_STRUCT,
-        DirectiveName.C_POINTER
+        DirectiveName.JSONABLE
     );
 
     private final String source;

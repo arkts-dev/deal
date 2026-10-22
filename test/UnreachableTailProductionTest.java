@@ -432,8 +432,7 @@ public class UnreachableTailProductionTest {
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),

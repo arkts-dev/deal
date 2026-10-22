@@ -456,11 +456,10 @@ public class JsonableHelperProductionDriveTest {
             ProductionProjectEmission.Result result = ProductionProjectEmission.run(
                 productionInvocation(), built.input(), built.index(),
                 preparation.manifests().manifests(), preparation.surface(), Map.of(),
-                Map.of(), project.root().toString(), BuiltinErrorDeclaration.synthesized(
+                BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                    IntrinsicKind.BYTES_NEW), Set.of(),
-                target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
+                    IntrinsicKind.BYTES_NEW), java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
                 DistributionHome.forManifestDirectory(project.root().toString()), stager);
             if (result.emitted()) {
                 stager.publish();
@@ -1096,8 +1095,7 @@ public class JsonableHelperProductionDriveTest {
         }
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), built.input(), built.index(),
-            manifests.manifests(), surface, Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            manifests.manifests(), surface, Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
@@ -1781,13 +1779,11 @@ public class JsonableHelperProductionDriveTest {
                 try {
                     result = ProductionProjectEmission.run(productionInvocation(),
                         missingExport, built.index(), manifests.manifests(), surface,
-                        Map.of(), Map.of(), project.root().toString(),
-                        BuiltinErrorDeclaration.synthesized(
+                        Map.of(), BuiltinErrorDeclaration.synthesized(
                             built.input().modules().get(0).ast().span()),
                         List.of(IntrinsicKind.INT_CONVERT,
                             IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
-                        Set.of(),
-                        target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
+                        java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
                         DistributionHome.forManifestDirectory(
                             project.root().toString()), stager);
                     staged = new ArrayList<>(stager.stagedSet().relativePaths());

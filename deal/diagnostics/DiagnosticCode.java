@@ -118,10 +118,6 @@ public enum DiagnosticCode {
 
     /** Invalid compiler directive argument. */
     E1045(Phase.FRONTEND, "Invalid compiler directive argument"),
-
-    /** Invalid compiler directive placement or version. */
-    E1046(Phase.FRONTEND, "Invalid compiler directive placement or version"),
-
     /** Rest parameters are not supported. */
     E1047(Phase.FRONTEND, "Rest parameters are not supported"),
 
@@ -337,17 +333,12 @@ public enum DiagnosticCode {
 
     E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),
 
-    E6006(Phase.BACKEND_LOWERING, "C FFI (@extern-c) is not supported by this backend"),
-
     // =========================================================================
     // E7xxx — declaration-file errors (FRONTEND)
     // =========================================================================
 
     /** Declaration file cannot contain executable statement. */
     E7001(Phase.FRONTEND, "Declaration file cannot contain executable statement"),
-
-    /** Invalid C FFI declaration. */
-    E7002(Phase.FRONTEND, "Invalid C FFI declaration"),
 
     // =========================================================================
     // E8xxx — runtime errors (RUNTIME) — emitted from runtime.lua

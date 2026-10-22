@@ -1185,8 +1185,7 @@ public class FailureArmAuthorityTest {
         }
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
             invocation, built.input(), built.index(), manifests.manifests(),
-            lua.hostDeclarationSurface(), identities, new LinkedHashMap<>(),
-            BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
+            lua.hostDeclarationSurface(), identities, BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
             Set.of());
@@ -1227,11 +1226,10 @@ public class FailureArmAuthorityTest {
         try {
             jvm = deal.module.ProductionProjectEmission.run(invocation, built.input(),
                 built.index(), manifests.manifests(), lua.hostDeclarationSurface(),
-                identities, Map.of(), src.toString(),
-                BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
+                identities, BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                     IntrinsicKind.BYTES_NEW),
-                Set.of(), Backend.JVM, false,
+                java.util.Set.of(), Backend.JVM, false,
                 deal.distribution.DistributionHome.forManifestDirectory(src.toString()),
                 stager);
             if (jvm.emitted()) {

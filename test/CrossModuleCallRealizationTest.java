@@ -10,7 +10,6 @@ import deal.distribution.DistributionHome;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -158,7 +157,6 @@ public class CrossModuleCallRealizationTest {
         ProjectInterfaceIndex index,
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
-        Map<ModuleId, FfiGeneratedModule> externCModules,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
         DistributionHome distributionHome,
         String entryModule) {
@@ -210,7 +208,7 @@ public class CrossModuleCallRealizationTest {
         }
         return new Fixture(root, moduleRoot, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            new LinkedHashMap<>(), new LinkedHashMap<>(),
+            new LinkedHashMap<>(),
             DistributionHome.forManifestDirectory(moduleRoot.toString()),
             fixtureName);
     }
@@ -272,7 +270,7 @@ public class CrossModuleCallRealizationTest {
         }
         return new Fixture(root, moduleRoot, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            new LinkedHashMap<>(), new LinkedHashMap<>(),
+            new LinkedHashMap<>(),
             DistributionHome.forManifestDirectory(moduleRoot.toString()), "app");
     }
 
@@ -312,7 +310,7 @@ public class CrossModuleCallRealizationTest {
         }
         return new Fixture(root, moduleRoot, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            new LinkedHashMap<>(), new LinkedHashMap<>(),
+            new LinkedHashMap<>(),
             DistributionHome.forManifestDirectory(moduleRoot.toString()), "app");
     }
 
@@ -321,7 +319,6 @@ public class CrossModuleCallRealizationTest {
         return SemanticLowerer.lowerProject(productionInvocation(),
             fixture.checkedProject(), fixture.index(), fixture.manifests(),
             fixture.surface(), fixture.declarationIdentities(),
-            fixture.externCModules(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
@@ -335,8 +332,6 @@ public class CrossModuleCallRealizationTest {
         return ProductionProjectEmission.run(productionInvocation(),
             fixture.checkedProject(), fixture.index(), fixture.manifests(),
             fixture.surface(), fixture.declarationIdentities(),
-            fixture.externCModules(),
-            fixture.distributionHome().manifestDirectoryText(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,

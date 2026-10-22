@@ -8,7 +8,7 @@ package deal.identity;
  * <p>One immutable index per compilation, published by the
  * module-identity layer (E2's {@code ModuleIdentityResolver} in
  * {@code deal.module}) and consumed read-only by descriptor encoding,
- * planners, metadata, and later FFI seams. {@code deal.identity} pins
+ * planners, metadata, and host boundaries. {@code deal.identity} pins
  * the accessor contract only; it performs no lookup, resolution,
  * classification, or descriptor-text projection.</p>
  *

@@ -1825,15 +1825,12 @@ public class ClassConstructionValidatorTest {
         new ClassId(HOST_FACADE.path(), "Endpoint");
     private static final ClassId FACADE_OTHER_DECLARED =
         new ClassId(HOST_FACADE.path(), "Other");
-    private static final ModuleId NATIVE_MATH = new ModuleId("native.math");
-    private static final ClassId VEC2 =
-        new ClassId(EXTERNAL_PREFIX + "native/math", "Vec2");
+
 
     /**
      * The transported declaration facts of a host declaration module: two
      * exported classes with every declared-type form (scalars, optional,
-     * nullable, array, function, same-module class, Error) and one extern-C
-     * style declaration module, plus an implementation module class the
+     * nullable, array, function, same-module class, Error) and a declaration module, plus an implementation module class the
      * seeds never cover.
      */
     private static ProjectInterfaceIndex facadeInterfaceIndex() {
@@ -1860,12 +1857,6 @@ public class ClassConstructionValidatorTest {
                 new ClassInterface(FACADE_OTHER_DECLARED,
                     List.of(new FieldInterface("count", "int", false, false, true)),
                     new ClassFactoryId(4))),
-            InitializationMode.ONCE_AFTER_DEPENDENCIES));
-        modules.put(NATIVE_MATH, new ExternalModuleInterface(NATIVE_MATH,
-            ExternalModuleKind.HOST, List.of(), List.of(),
-            List.of(new ClassInterface(new ClassId(NATIVE_MATH.path(), "Vec2"),
-                List.of(new FieldInterface("x", "number", false, false, true)),
-                new ClassFactoryId(5))),
             InitializationMode.ONCE_AFTER_DEPENDENCIES));
         modules.put(MODULE, new ExternalModuleInterface(MODULE,
             ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
@@ -1915,12 +1906,6 @@ public class ClassConstructionValidatorTest {
                 new ClassLayout(FACADE_OTHER,
                     List.of(seedField("count", RuntimeDescriptor.Int.INSTANCE, true))),
                 DefaultOwner.HOST_DEFAULTS));
-        registrations.put(VEC2,
-            new ClassRegistrationSeeds.ClassRegistration(
-                new ClassLayout(VEC2,
-                    List.of(seedField("x", RuntimeDescriptor.Number.INSTANCE, true,
-                        DefaultOwner.FFI_PLAN))),
-                DefaultOwner.FFI_PLAN));
         return new ClassRegistrationSeeds(registrations);
     }
 
@@ -2236,7 +2221,6 @@ public class ClassConstructionValidatorTest {
         ClassRegistrationSeeds seeds = facadeSeeds();
         ClassRegistrationSeeds.ClassRegistration endpoint =
             seeds.registrationFor(FACADE_ENDPOINT);
-        ClassRegistrationSeeds.ClassRegistration vec2 = seeds.registrationFor(VEC2);
 
         // Positive: the referring CLASS_NEW repeats its registration exactly,
         // under either declaration owner, and an unrelated unit is unaffected.
@@ -2244,10 +2228,6 @@ public class ClassConstructionValidatorTest {
                 List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
                     endpoint.layout()))).isEmpty(),
             "a CLASS_NEW repeating its HOST_DEFAULTS registration passes the join");
-        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
-                List.of(unitWithClassNew(VEC2, DefaultOwner.FFI_PLAN, vec2.layout())))
-                .isEmpty(),
-            "a CLASS_NEW repeating its FFI_PLAN registration passes the join");
         check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
                 List.of(unitWithOps(List.of()))).isEmpty(),
             "a unit without declaration-class constructions passes the join");
@@ -2262,12 +2242,20 @@ public class ClassConstructionValidatorTest {
         // owner the index/seed rule accepts) contradicts the referring
         // operation, and so do a missing registration and a foreign layout.
         Optional<ClassConstructionValidator.SeedModuleViolation> owner =
-            ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
-                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.FFI_PLAN,
+            ClassConstructionValidator.checkProjectSeedModuleCoherence(
+                new ClassRegistrationSeeds(Map.of(FACADE_ENDPOINT,
+                    new ClassRegistrationSeeds.ClassRegistration(
+                        new ClassLayout(endpoint.layout().classId(),
+                            endpoint.layout().fields().stream().map(field ->
+                                new ClassLayout.FieldLayout(field.name(),
+                                    field.descriptor(), field.required(),
+                                    DefaultOwner.BUILTIN_DEFAULTS)).toList()),
+                        DefaultOwner.BUILTIN_DEFAULTS))),
+                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
                     endpoint.layout())));
         check(owner.isPresent() && owner.get().detail().contains("defaultOwner")
                 && owner.get().detail().contains("HOST_DEFAULTS")
-                && owner.get().detail().contains("FFI_PLAN"),
+                && owner.get().detail().contains("BUILTIN_DEFAULTS"),
             "a CLASS_NEW whose default owner disagrees with its seed rejects: " + owner);
         check(owner.isPresent() && owner.get().reason().contains(MODULE.path())
                 && owner.get().detail().contains("CLASS_NEW")

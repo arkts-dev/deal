@@ -14,8 +14,7 @@ public record DefaultPlanImport(
     SourceModuleLocation location,
     Map<String, Type> exports,
     SymbolTable symbolTable,
-    boolean isDeclarationFile,
-    boolean isExternC
+    boolean isDeclarationFile
 ) {
 
     public DefaultPlanImport {
@@ -26,14 +25,8 @@ public record DefaultPlanImport(
         exports = Map.copyOf(Objects.requireNonNull(exports, "exports"));
     }
 
-    /**
-     * True when the provider module is plan-bearing for class-default
-     * references: implementation modules and extern-C declaration
-     * modules publish class default plans; host-declared classes
-     * produce no plan ({@code provider-versioned-default-plans} D2 —
-     * the host supplies {@code <C>_defaults} at load).
-     */
+
     public boolean publishesClassPlans() {
-        return !isDeclarationFile || isExternC;
+        return !isDeclarationFile;
     }
 }

@@ -21,8 +21,7 @@ public interface ModuleResolver {
      */
     Map<String, Type> resolveModule(String modulePath, String importingModule,
                                      Set<String> modulesInProgress)
-        throws ModuleNotFoundException, CffiImportWithoutNativeLibraryException;
-
+        throws ModuleNotFoundException;
     /**
      * Resolves the imported module's declared class symbols by the raw
      * import specifier (the exact declaring occurrence route): the
@@ -35,8 +34,7 @@ public interface ModuleResolver {
     default Map<String, Symbol.ClassSymbol> resolveModuleClassSymbols(
             String modulePath, String importingModule,
             Set<String> modulesInProgress)
-            throws ModuleNotFoundException,
-                CffiImportWithoutNativeLibraryException {
+            throws ModuleNotFoundException {
         return Map.of();
     }
 
@@ -53,8 +51,7 @@ public interface ModuleResolver {
     default Map<String, Symbol.FunctionSymbol> resolveModuleFunctionSymbols(
             String modulePath, String importingModule,
             Set<String> modulesInProgress)
-            throws ModuleNotFoundException,
-                CffiImportWithoutNativeLibraryException {
+            throws ModuleNotFoundException {
         return Map.of();
     }
 
@@ -145,32 +142,4 @@ public interface ModuleResolver {
         }
     }
 
-    /**
-     * Exception thrown when a module import violates the C FFI
-     * manifest policy: the imported module is a C FFI declaration file
-     * (a {@code .d.deal} file carrying {@code // @extern-c}) that no
-     * externals entry declares with {@code nativeLibrary}. The checker
-     * maps this rejection to E2010 at the import span
-     * (docs/spec-v1.3.md §Package manifest — "A C FFI entry must include
-     * nativeLibrary").
-     */
-    final class CffiImportWithoutNativeLibraryException extends Exception {
-        private static final long serialVersionUID = 1L;
-
-        private final String modulePath;
-
-        public CffiImportWithoutNativeLibraryException(String modulePath) {
-            super("C FFI declaration file '" + modulePath
-                + "' imported without an externals entry specifying "
-                + "nativeLibrary");
-            java.util.Objects.requireNonNull(modulePath,
-                "modulePath must not be null");
-            this.modulePath = modulePath;
-        }
-
-        /** The import path of the C FFI declaration file. */
-        public String modulePath() {
-            return modulePath;
-        }
-    }
 }

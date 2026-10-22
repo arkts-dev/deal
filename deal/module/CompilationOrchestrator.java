@@ -13,7 +13,6 @@ import deal.project.OutputConfigResolver;
 import deal.project.ProjectContext;
 import deal.project.ProjectDeploymentIdentity;
 import deal.project.ProjectLocator;
-import deal.project.NativeLibraryRef;
 import deal.project.ProtectedPathOps;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
@@ -22,9 +21,6 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.distribution.DistributionHome;
-import deal.ffi.FfiDeclarationValidator;
-import deal.ffi.FfiGeneratedModule;
-import deal.ffi.LuaFfiBindingGenerator;
 import deal.identity.CanonicalClassIdentity;
 import deal.publication.PublicationStager;
 import deal.parser.*;
@@ -100,24 +96,6 @@ public final class CompilationOrchestrator {
      * are gone.
      */
     private final ProjectContext context;
-
-    /**
-     * True when the compilation's context was authored from a
-     * {@code deal.json} manifest (the production
-     * {@link ProjectContext}-taking constructor — CLI, the production
-     * orchestrator path, and project-level conformance); false for the
-     * test-only isolated-phase constructors whose context is
-     * synthesized from the harness's own declarations map (parent D10:
-     * those APIs may omit {@code ProjectContext}, and their externals
-     * map cannot carry {@code nativeLibrary}). The C FFI manifest
-     * policy's {@code nativeLibrary} authoring rule
-     * (docs/spec-v1.3.md §Package manifest — "A C FFI entry must include
-     * nativeLibrary") is enforced exactly on manifest-authored
-     * contexts; the synthesized test-only entries are the harness's
-     * authority channel and count as manifest-backed.
-     */
-    private final boolean manifestAuthoredContext;
-
     /**
      * The T6 source resolver over {@link #context}: every import — and
      * the entry file via {@link SourceModuleResolver#resolveEntryFile} —
@@ -172,8 +150,6 @@ public final class CompilationOrchestrator {
 
     private List<String> dependencyOrder = List.of();
 
-    private final Map<String, FfiGeneratedModule> ffiGenerations =
-        new LinkedHashMap<>();
 
     private HostDeclarationSurface hostDeclarationSurface;
 
@@ -277,7 +253,6 @@ public final class CompilationOrchestrator {
         this.invocation = java.util.Objects.requireNonNull(invocation,
             "invocation must not be null");
         this.context = java.util.Objects.requireNonNull(context, "context");
-        this.manifestAuthoredContext = true;
         this.backend = backendOf(context.backend());
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = Path.of(context.outputPath().absoluteNormalizedPath());
@@ -381,7 +356,6 @@ public final class CompilationOrchestrator {
             "invocation must not be null");
         this.context = synthesizeContext(entryFile, outputRoot, backend,
             externalsDeclarations, moduleRoots, stdlibDir);
-        this.manifestAuthoredContext = false;
         this.backend = backend;
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
@@ -463,7 +437,7 @@ public final class CompilationOrchestrator {
                 externals.put(entry.getKey(), new ExternalEntry(entry.getKey(),
                     new NormalizedDeclarationPath(
                         declaration.normalize().toString(), null),
-                    null, null));
+                    null));
             }
         }
 
@@ -767,10 +741,6 @@ public final class CompilationOrchestrator {
         if (hasErrors) { printDiagnostics(); return false; }
         enrichCheckedProjectProviders();
 
-        log("Phase 3.9: C FFI declaration validation and metadata");
-        validateCffiDeclarations();
-        if (hasErrors) { printDiagnostics(); return false; }
-
         log("Phase 4: Code generation");
 
         hostDeclarationSurface = produceHostDeclarationSurface();
@@ -912,7 +882,7 @@ public final class CompilationOrchestrator {
             // source, a rooted non-externals .d.deal, or a non-spec
             // .d.deal inside the std directory — is E2010 at the class
             // name span unconditionally at the declaration, before any
-            // class/export/default/FFI metadata or artifact is
+            // class/export/default metadata or artifact is
             // published. Run only for a cleanly parsed module so partial
             // ASTs never fabricate gates.
             if (!parseResult.hasErrors() && parseResult.program() != null) {
@@ -1402,18 +1372,6 @@ public final class CompilationOrchestrator {
         }
     }
 
-    /**
-     * The read-only view of the validated extern-C metadata: dotted
-     * module path &rarr; generated module inputs (descriptor, cdef
-     * bundle, retained plans, forward bindings). Populated only for the
-     * LuaJIT backend after successful validation; empty for JVM/JS and
-     * on any validation failure.
-     *
-     */
-    public Map<String, FfiGeneratedModule> ffiGenerations() {
-        return Collections.unmodifiableMap(ffiGenerations);
-    }
-
     private void planDefaultClasses() {
         // The planning epics require public class identity for every
         // plan-bearing class and the canonical descriptor encoder
@@ -1462,27 +1420,6 @@ public final class CompilationOrchestrator {
             Map<String, DefaultPlanImport> imports =
                 defaultPlanImportsOf(info);
             if (info.isDeclarationFile) {
-                if (!isExternCModuleInfo(info)) {
-                    // Host-declared classes are exempt from the plan
-                    // gates and produce no plan (the host supplies
-                    // <C>_defaults at load).
-                    continue;
-                }
-                DefaultDeclarationModuleInput input =
-                    new DefaultDeclarationModuleInput(
-                        info.sourcePath, info.modulePath, info.rawAst,
-                        info.location, imports, descriptors,
-                        moduleResolver, classification);
-                DeclarationSemanticAnalyzer.Result result =
-                    DeclarationSemanticAnalyzer.analyze(input,
-                        identityAssembly, projectProviders);
-                diagnostics.addAll(result.diagnostics());
-                if (result.hasErrors()) {
-                    hasErrors = true;
-                } else {
-                    plannedDefaultClasses.put(info.sourcePath,
-                        result.plannedClasses());
-                }
                 continue;
             }
             if (info.checkResult == null || info.nameResolver == null) {
@@ -1523,19 +1460,12 @@ public final class CompilationOrchestrator {
                 info.sourcePath, info.modulePath, info.rawAst,
                 info.location,
                 info.exports != null ? info.exports : Map.of(),
-                info.symbolTable, info.isDeclarationFile,
-                isExternCModuleInfo(info)));
+                info.symbolTable, info.isDeclarationFile));
         }
         return providers;
     }
 
-    /**
-     * The import surface of one module: import alias &rarr; the
-     * provider's read-only planning snapshot (source path, dotted
-     * module path, parsed program, resolved location, extracted export
-     * map, symbol table when available, and the declaration/extern-C
-     * flags), insertion-ordered by the module's import declarations.
-     */
+
     private Map<String, DefaultPlanImport> defaultPlanImportsOf(
             ModuleInfo info) {
         Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
@@ -1560,8 +1490,7 @@ public final class CompilationOrchestrator {
                 imported.sourcePath, imported.modulePath, imported.rawAst,
                 imported.location,
                 imported.exports != null ? imported.exports : Map.of(),
-                imported.symbolTable, imported.isDeclarationFile,
-                isExternCModuleInfo(imported)));
+                imported.symbolTable, imported.isDeclarationFile));
         }
         return imports;
     }
@@ -1627,7 +1556,7 @@ public final class CompilationOrchestrator {
                 info.exports != null ? info.exports : Map.of(),
                 descriptors, classification,
                 info.isDeclarationFile ? moduleResolver : null,
-                info.isDeclarationFile, isExternCModuleInfo(info)));
+                info.isDeclarationFile));
         }
         return Collections.unmodifiableMap(inputs);
     }
@@ -1688,7 +1617,7 @@ public final class CompilationOrchestrator {
         if (free.failed()) {
             // E2005: a cyclic import component (defensive — the phase-2
             // complete-graph admission already rejects every cyclic
-            // component before checking) publishes no plan, no FFI
+            // component before checking) publishes no plan, no
             // metadata, and no artifact; the provisional plans are
             // discarded.
             diagnostics.addAll(free.diagnostics());
@@ -1755,141 +1684,6 @@ public final class CompilationOrchestrator {
             + " dependency edge(s); initialization order "
             + dependencyOrder.size() + " module(s)");
     }
-
-    private void validateCffiDeclarations() {
-        if (backend == Backend.JS) {
-            return;
-        }
-        // The validator keys graph-order lookups by dotted module path
-        // (the import-surface key space), while {@code dependencyOrder}
-        // is the phase-2 check order of absolute source paths: translate
-        // the order into the validator's key space so every imported
-        // reference receives its real dependency-order position instead
-        // of a degenerate constant.
-        List<String> ffiDependencyOrder = dependencyOrder.stream()
-            .map(modules::get)
-            .filter(Objects::nonNull)
-            .map(info -> info.modulePath)
-            .toList();
-        CanonicalRuntimeTypeDescriptor descriptorEncoder =
-            new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
-        for (ModuleInfo info : modules.values()) {
-            if (!isExternCModuleInfo(info)) {
-                continue;
-            }
-            String canonicalExternalIdentity = canonicalExternalIdentityOf(info);
-            if (canonicalExternalIdentity == null) {
-
-                continue;
-            }
-            NativeLibraryRef nativeLibrary = nativeLibraryOf(info);
-            FfiDeclarationValidator.Result result =
-                FfiDeclarationValidator.validate(
-                    info.rawAst, info.modulePath, info.location,
-                    canonicalExternalIdentity, identityAssembly,
-                    descriptorEncoder,
-                    nativeLibrary == null ? null
-                        : nativeLibrary.kind().name(),
-                    nativeLibrary == null ? null
-                        : nativeLibrary.loaderText(),
-                    ffiDependencyOrder, importTargetsOf(info));
-            diagnostics.addAll(result.diagnostics());
-            if (result.hasErrors()) {
-                hasErrors = true;
-                continue;
-            }
-            if (backend == Backend.JVM) {
-                // Backend capability rejection (D8): after semantic/
-                // declaration validation, before any artifact write.
-                deal.diagnostics.DiagnosticRange externCRange =
-                    info.rawAst.fileDirectives().externCRange();
-                diagnostics.add(CompilerDiagnostic.error(
-                    DiagnosticCode.E6006,
-                    "JVM backend: C FFI (@extern-c) declarations are not"
-                        + " supported (FFI_UNSUPPORTED_BACKEND)",
-                    externCRange != null ? externCRange
-                        : deal.diagnostics.DiagnosticRange.synthetic(
-                            info.sourcePath)));
-                hasErrors = true;
-                continue;
-            }
-            // LuaJIT: the validated descriptor is accepted for later
-            // runtime loading; the generator produces the loader inputs
-            // (cells before any plan content; imported references in
-            // graph order; no evaluator ever invoked).
-            LuaFfiBindingGenerator.GeneratedBindings generated =
-                LuaFfiBindingGenerator.generate(result.descriptor(),
-                    result.importedFunctions(), result.importedClassPlans());
-            ffiGenerations.put(info.modulePath, new FfiGeneratedModule(
-                info.modulePath, result.descriptor(),
-                generated.cdefBundle(), generated.plans(),
-                generated.bindings()));
-        }
-    }
-
-    /** True for a parsed extern-C declaration module. */
-    private static boolean isExternCModuleInfo(ModuleInfo info) {
-        return info.isDeclarationFile && info.rawAst != null
-            && info.rawAst.fileDirectives().externC();
-    }
-
-    /**
-     * The canonical external module identity text of an externals-listed
-     * module ({@code @$external/&lt;rawImportSpecifier&gt;}), or null
-     * when the module has no external classification.
-     */
-    private String canonicalExternalIdentityOf(ModuleInfo info) {
-        CanonicalModuleIdentity identity = classifyModuleIdentity(info);
-        if (identity instanceof CanonicalModuleIdentity.ExternalModule ext) {
-            return "@$external/" + ext.rawImportSpecifier();
-        }
-        return null;
-    }
-
-    /** The externals entry's classified native library, or null. */
-    private NativeLibraryRef nativeLibraryOf(ModuleInfo info) {
-        CanonicalModuleIdentity identity = classifyModuleIdentity(info);
-        if (identity instanceof CanonicalModuleIdentity.ExternalModule ext) {
-            ExternalEntry entry = context.externals().get(
-                ext.rawImportSpecifier());
-            return entry == null ? null : entry.nativeLibrary();
-        }
-        return null;
-    }
-
-    /**
-     * The resolved import surface of one module: import alias &rarr;
-     * the provider's dotted module path and extracted export map (the
-     * extern-C metadata phase resolves default-expression provider
-     * references through it).
-     */
-    private Map<String, FfiDeclarationValidator.ImportTarget> importTargetsOf(
-            ModuleInfo info) {
-        Map<String, FfiDeclarationValidator.ImportTarget> targets =
-            new LinkedHashMap<>();
-        if (info.rawAst == null) {
-            return targets;
-        }
-        for (StatementNode stmt : info.rawAst.statements()) {
-            if (!(stmt instanceof ImportDeclaration imp)) {
-                continue;
-            }
-            String resolvedSource = resolveImportPath(imp.modulePath(),
-                Path.of(info.sourcePath), imp.span());
-            if (resolvedSource == null) {
-                continue;
-            }
-            ModuleInfo imported = modules.get(resolvedSource);
-            if (imported == null) {
-                continue;
-            }
-            targets.put(imp.alias(), new FfiDeclarationValidator.ImportTarget(
-                imported.modulePath,
-                imported.exports != null ? imported.exports : Map.of()));
-        }
-        return targets;
-    }
-
     /**
      * Packages one orchestrator module's read-only facts for the builder:
      * the resolved imports in source order re-run through the same import
@@ -2149,12 +1943,11 @@ public final class CompilationOrchestrator {
         ProductionProjectEmission.Result result = ProductionProjectEmission.run(
             invocation, checked.input(), checked.index(),
             requirementManifests.manifests(), hostDeclarationSurface,
-            declarationModuleIdentities(), externCGeneratedModules(),
-            context.manifestDirectory(),
+            declarationModuleIdentities(),
             builtinErrorDeclaration(checked.input()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
-            Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
+            java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;
             recordProducedProject(result.producedProject());
@@ -2213,22 +2006,6 @@ public final class CompilationOrchestrator {
         }
         return identities;
     }
-
-    /**
-     * The validated extern-C generated modules of this compile keyed by
-     * module identity (the one project lowering's FFI registration-seed
-     * input; empty when the compile imports no extern-C declaration).
-     */
-    private Map<ModuleId, FfiGeneratedModule> externCGeneratedModules() {
-        Map<ModuleId, FfiGeneratedModule> generatedModules = new LinkedHashMap<>();
-        for (Map.Entry<String, FfiGeneratedModule> generated
-                : ffiGenerations.entrySet()) {
-            generatedModules.put(new ModuleId(generated.getKey()),
-                generated.getValue());
-        }
-        return generatedModules;
-    }
-
     /**
      * The compiler-owned builtin {@code Error} declaration of this
      * compile: the entry module's synthesized declaration — the same
@@ -2302,16 +2079,7 @@ public final class CompilationOrchestrator {
         return hostDeclarationSurface;
     }
 
-    /**
-     * Produces the declaration surface over every host and extern-C
-     * declaration module of the compilation (the spec stdlib declaration
-     * modules keep their {@code BuiltinModule} classification and are not
-     * host declarations). A producer defect — the first declared class
-     * field whose resolved declared type has no runtime representation —
-     * merges its E6005 into the compile's diagnostics and yields no
-     * surface.
-     *
-     */
+
     private HostDeclarationSurface produceHostDeclarationSurface() {
         List<HostDeclarationSurface.DeclarationFacts> facts =
             new ArrayList<>();
@@ -2334,18 +2102,7 @@ public final class CompilationOrchestrator {
         return production.surface();
     }
 
-    /**
-     * The declaration facts of one declaration module: the declared
-     * export map (the phase-1 {@link ExportExtractor} output for a
-     * declaration file, in declaration order), the per-class field
-     * records in declaration order with their resolved declared types,
-     * and the declaration kind ({@code EXTERN_C} for a module the
-     * metadata phase classifies extern-C, {@code HOST} otherwise). The
-     * field types resolve in the declaring module's own context through
-     * an {@link ExportExtractor} seeded with the compilation's
-     * module-path classification and the declaration's resolved import
-     * aliases — the exact resolution the retained host consumers read.
-     */
+
     private HostDeclarationSurface.DeclarationFacts declarationFactsOf(
             ModuleInfo imported) {
         Map<String, String> importAliasMap = new HashMap<>();
@@ -2369,9 +2126,7 @@ public final class CompilationOrchestrator {
         extractor.extract(imported.rawAst);
         Map<String, HostDeclarationSurface.DeclaredClass> classes =
             new LinkedHashMap<>();
-        HostDeclarationSurface.DeclarationKind kind = isExternCModuleInfo(imported)
-            ? HostDeclarationSurface.DeclarationKind.EXTERN_C
-            : HostDeclarationSurface.DeclarationKind.HOST;
+        HostDeclarationSurface.DeclarationKind kind = HostDeclarationSurface.DeclarationKind.HOST;
         for (StatementNode stmt : imported.rawAst.statements()) {
             ClassDeclaration cd = AstDeclarations.classDeclarationOf(stmt);
             if (cd == null) {
@@ -2585,10 +2340,9 @@ public final class CompilationOrchestrator {
         public Map<String, Type> resolveModule(String modulePath,
                                                 String importingModule,
                                                 Set<String> modulesInProgress)
-                throws ModuleNotFoundException,
-                    CffiImportWithoutNativeLibraryException {
-            return cffiManifestCheckedExports(
-                targetModule(modulePath, importingModule), modulePath);
+                throws ModuleNotFoundException {
+            ModuleInfo target = targetModule(modulePath, importingModule);
+            return target.exports != null ? target.exports : Map.of();
         }
 
         /**
@@ -2605,8 +2359,7 @@ public final class CompilationOrchestrator {
         public Map<String, Symbol.ClassSymbol> resolveModuleClassSymbols(
                 String modulePath, String importingModule,
                 Set<String> modulesInProgress)
-                throws ModuleNotFoundException,
-                    CffiImportWithoutNativeLibraryException {
+                throws ModuleNotFoundException {
             ModuleInfo target = targetModule(modulePath, importingModule);
             if (target.symbolTable == null) {
                 return Map.of();
@@ -2634,8 +2387,7 @@ public final class CompilationOrchestrator {
         public Map<String, Symbol.FunctionSymbol> resolveModuleFunctionSymbols(
                 String modulePath, String importingModule,
                 Set<String> modulesInProgress)
-                throws ModuleNotFoundException,
-                    CffiImportWithoutNativeLibraryException {
+                throws ModuleNotFoundException {
             ModuleInfo target = targetModule(modulePath, importingModule);
             if (target.symbolTable == null) {
                 return Map.of();
@@ -2686,74 +2438,6 @@ public final class CompilationOrchestrator {
             }
             throw new ModuleNotFoundException("Module not found: " + modulePath);
         }
-
-        /**
-         * The C FFI manifest policy (docs/spec-v1.3.md §Package manifest): a C
-         * FFI declaration file — a {@code .d.deal} file whose effective
-         * {@link FileDirectives#externC()} holds — may only be imported
-         * through a {@code deal.json} externals entry that declares the
-         * file with a classified {@code nativeLibrary}. The resolved
-         * target's module classification is
-         * {@code ExternalModule(rawImportSpecifier)} exactly when an
-         * externals entry declares the file (file-keyed,
-         * {@code ModuleIdentityResolver} D6 rule (2)); no entry at all
-         * is always the invalid-manifest-policy rejection, and a
-         * manifest-authored entry without {@code nativeLibrary} is the
-         * rejection too (the test-only isolated-phase constructors
-         * synthesize their entries from the harness's declarations map,
-         * which cannot carry {@code nativeLibrary}, and their entries
-         * count as backed — see {@link #cffiManifestBacked(ModuleInfo)}).
-         * The checker maps the exception to E2010 at the import span
-         * ({@code deal/checker/NameResolver.java},
-         * {@code processImport}) — the production emission site behind
-         * the promoted conformance pin.
-         */
-        private Map<String, Type> cffiManifestCheckedExports(
-                ModuleInfo target, String importSpecifier)
-                throws CffiImportWithoutNativeLibraryException {
-            if (target.isDeclarationFile && target.rawAst != null
-                    && target.rawAst.fileDirectives().externC()
-                    && !cffiManifestBacked(target)) {
-                throw new CffiImportWithoutNativeLibraryException(
-                    importSpecifier);
-            }
-            return target.exports != null ? target.exports : Map.of();
-        }
-
-        /**
-         * True when the externals entry that declares the target
-         * (file-keyed classification) satisfies the C FFI manifest
-         * policy; false when no entry declares the file, or when a
-         * manifest-authored entry omits {@code nativeLibrary}.
-         *
-         * <p>The {@code nativeLibrary} authoring rule
-         * (docs/spec-v1.3.md §Package manifest — "A C FFI entry must include
-         * nativeLibrary") applies to manifest-authored contexts: the
-         * production locator path parses the entry's classified
-         * {@code nativeLibrary}, and an entry that omits it is the
-         * E2010 invalid-manifest-policy rejection. The test-only
-         * isolated-phase constructors synthesize their externals
-         * entries from the harness's declarations map, which cannot
-         * carry {@code nativeLibrary}; there the harness's explicit
-         * entry is the authority channel and counts as backed.</p>
-         */
-        private boolean cffiManifestBacked(ModuleInfo target) {
-            CanonicalModuleIdentity classification = target.location == null
-                ? null : target.location.moduleClassification();
-            if (!(classification
-                    instanceof CanonicalModuleIdentity.ExternalModule ext)) {
-                return false;
-            }
-            ExternalEntry entry = context.externals().get(
-                ext.rawImportSpecifier());
-            if (entry == null) {
-                return false;
-            }
-            return manifestAuthoredContext
-                ? entry.nativeLibrary() != null
-                : true;
-        }
-
         /**
          * The source path of the module whose internal dotted name is
          * {@code internalName}, or null.

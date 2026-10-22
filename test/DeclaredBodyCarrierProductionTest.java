@@ -1516,8 +1516,7 @@ public class DeclaredBodyCarrierProductionTest {
             return null;
         }
         var result = SemanticLowerer.lowerProject(compiler.invocation(), built.input(), built.index(),
-            manifests.manifests(), compiler.hostDeclarationSurface(), Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(built.input().modules().stream()
+            manifests.manifests(), compiler.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(built.input().modules().stream()
                 .filter(module -> module.moduleId().equals(built.input().entryModule()))
                 .findFirst().orElseThrow().ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),

@@ -396,6 +396,7 @@ public final class SemanticOracle {
         }
     }
 
+
     /**
      * The deterministic host seam of the E7 call machine: a closed
      * responder supplies every host terminal — sync returns/throws,
@@ -403,8 +404,7 @@ public final class SemanticOracle {
      * the host returned in its place, or its absent result), async
      * completions, the loaded host surface entries
      * ({@link #loadedExport}), the loaded host class defaults
-     * ({@link #loadedClassDefaults}), and the loaded extern-C C-struct
-     * plan projection ({@link #planProjection}). The oracle records one
+     * ({@link #loadedClassDefaults}). The oracle records one
      * ordered
      * {@code HOST_CALL}/{@code HOST_RETURN}/{@code HOST_THROW}/
      * {@code ASYNC_START_OP}/{@code ASYNC_COMPLETE_*} effect per
@@ -538,19 +538,6 @@ public final class SemanticOracle {
             return null;
         }
 
-        default List<PlanEntry> planProjection(ModuleId module, String className,
-                                               RuntimeDescriptor.Class declaredClass) {
-            return null;
-        }
-
-        record PlanEntry(String name, RuntimeDescriptor descriptor, boolean optional,
-                         Supplier<Value> defaultEvaluator) {
-
-            public PlanEntry {
-                Objects.requireNonNull(name, "name must not be null");
-                Objects.requireNonNull(descriptor, "descriptor must not be null");
-            }
-        }
     }
 
     public static DealFailure evaluatorFailure(String code, String message,
@@ -1014,6 +1001,7 @@ public final class SemanticOracle {
         /** The heap function value → resolved execution binding index. */
         final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
             new IdentityHashMap<>();
+
         /**
          * The SHARED_CELL source cell one adapter value captured at its
          * creation: the emitters' adapters hold the cell object itself (a
@@ -1052,9 +1040,8 @@ public final class SemanticOracle {
          * published value per {@code (module, name)} of the run, written
          * exactly once by the owning module's {@code EXPORT_PUBLISH} — the
          * oracle's mirror of the artifacts' program-scoped export-surface
-         * registry. A HOST/FFI module's surface is its loaded module table
-         * (the entry the host-load surface and the FFI child's
-         * {@code load_ffi} surface record under the module identity), of
+         * registry. A HOST module's surface is its loaded module table
+         * (the entry the host-load surface surface records under the module identity), of
          * which a read resolves the named entry. An absent surface or entry
          * is the absent-slot projection ({@link Value.MissingValue}); the
          * registry is never written by a read.
@@ -1067,6 +1054,7 @@ public final class SemanticOracle {
          */
         final Map<ModuleId, LinkedHashMap<String, Value>> exportSurfaces =
             new LinkedHashMap<>();
+
         /**
          * The per-run module namespace values (K15 items 1/3/5): one
          * {@link Value.TableValue} per imported module of the run, created
@@ -1076,18 +1064,19 @@ public final class SemanticOracle {
          * map ({@link #exportSurfaces}): a COMPILED module's entries are
          * its {@code EXPORT_PUBLISH} writes in declaration order, a
          * STDLIB module's are its cataloged callables (populated at the
-         * completion), and a HOST/FFI module's are the loaded entries the
+         * completion), and a HOST module's are the loaded entries the
          * seam and the export reads record — the oracle's mirror of the
          * loaded module table.
          */
         final Map<ModuleId, Value.TableValue> namespaceValues =
             new LinkedHashMap<>();
+
         /**
          * The module identity of one namespace value (K15 item 5): the
          * per-run association the member-read resolution consumes. A
          * namespace value's entries are the module's surface map, so a
          * member read resolves an entry the surface has not recorded yet
-         * through the module's own import kind — a HOST/FFI module's
+         * through the module's own import kind — a HOST module's
          * loaded table entry comes from the seamed loaded surface (the
          * oracle runs no host code). Keyed by value identity: two
          * namespace tables with equal entry maps are still two modules.
@@ -2363,7 +2352,7 @@ public final class SemanticOracle {
                 // The module-namespace member read (K15 item 3; the
                 // module-namespace contract): a read through one module's
                 // namespace value resolves the module's own surface entry —
-                // for a HOST/FFI module the loaded module table's entry,
+                // for a HOST module the loaded module table's entry,
                 // supplied by the seamed load exactly like the direct
                 // EXPORT_READ's loaded entry (the oracle runs no host
                 // code). The resolved entry is memoized into the module's
@@ -2405,9 +2394,10 @@ public final class SemanticOracle {
             return entry;
         }
 
+
         /**
          * The value-keyed execution class of one namespace member read's
-         * entry (K15 item 3): a loaded HOST/FFI surface entry read through
+         * entry (K15 item 3): a loaded HOST surface entry read through
          * the module's namespace is the module's declared export, so a
          * later dynamic dispatch of the read value resolves the identical
          * HOST class the direct {@code EXPORT_READ} of that export
@@ -2887,59 +2877,7 @@ public final class SemanticOracle {
                         priorValues, boundaryOps, classLayouts,
                         checkRunner(op, payload, boundaryOps, null), defaults);
                 }
-                case FFI_PLAN -> {
 
-                    ClassLayout declaredLayout = classLayouts.get(payload.classId());
-                    if (declaredLayout == null) {
-                        throw new IllegalStateException("CLASS_NEW " + op.opId()
-                            + " classId " + payload.classId()
-                            + " does not resolve in the layout-resolution"
-                            + " context: an extern-C C-struct class resolves"
-                            + " through the project's registered declaration"
-                            + " layouts (producer defect)");
-                    }
-                    if (responder == null) {
-                        throw new IllegalStateException("CLASS_NEW " + op.opId()
-                            + " carries defaultOwner FFI_PLAN without the host"
-                            + " responder: the closed plan-projection terminal"
-                            + " supplies the loaded <C>_plan entries (the oracle"
-                            + " runs no generated evaluator content and no native"
-                            + " code — producer defect)");
-                    }
-                    ModuleId declarationModule = ffiDeclarationModuleOf(payload.classId());
-                    List<HostResponder.PlanEntry> projected = responder.planProjection(
-                        declarationModule, payload.classId().name(),
-                        new RuntimeDescriptor.Class(payload.classId()));
-                    if (projected == null) {
-                        throw new IllegalStateException("CLASS_NEW " + op.opId()
-                            + " classId " + payload.classId() + " reaches the"
-                            + " C-struct construction without the loaded plan"
-                            + " projection: the closed plan-projection terminal"
-                            + " supplies the loaded <exportName>_plan entries —"
-                            + " an absent projection is a fail-closed producer"
-                            + " defect, never an invented empty plan");
-                    }
-                    List<ClassOpsExecutor.FfiPlanEntry> plan = new ArrayList<>(
-                        projected.size());
-                    for (HostResponder.PlanEntry entry : projected) {
-                        Supplier<ClassOpsExecutor.Value> evaluator =
-                            entry.defaultEvaluator() == null ? null : () -> {
-                                Value supplied = entry.defaultEvaluator().get();
-                                return supplied == null ? null
-                                    : executorValueOf(supplied);
-                            };
-                        plan.add(new ClassOpsExecutor.FfiPlanEntry(entry.name(),
-                            entry.descriptor(), entry.optional(), evaluator));
-                    }
-                    ClassOpsExecutor.BoundaryCheckRunner boundaryRunner =
-                        checkRunner(op, payload, boundaryOps, null);
-                    ClassOpsExecutor.FfiPlanCheckRunner ffiCheck =
-                        (boundary, descriptor, input) -> boundary != null
-                            ? boundaryRunner.run(boundary, input)
-                            : rawDescriptorCheck(descriptor, input);
-                    outcome = ClassOpsExecutor.executeClassNewFfiPlan(op, priorValues,
-                        boundaryOps, classLayouts, plan, ffiCheck);
-                }
                 case BUILTIN_DEFAULTS -> {
                     if (!ClassId.ERROR.equals(payload.classId())) {
                         throw new IllegalStateException("CLASS_NEW " + op.opId()
@@ -3035,62 +2973,6 @@ public final class SemanticOracle {
                 }
             };
         }
-
-        private ClassOpsExecutor.BoundaryResult rawDescriptorCheck(
-                RuntimeDescriptor descriptor, ClassOpsExecutor.Value input) {
-            Value oracleInput = oracleValueOf(input);
-            FailurePolicyId policy = descriptor instanceof RuntimeDescriptor.Func
-                ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
-            BoundaryOutcome outcome;
-            try {
-                outcome = BoundaryExecutor.check(policy, descriptor,
-                    viewOfValue(oracleInput), BoundaryContext.none());
-            } catch (BoundaryExecutor.Defect defect) {
-                throw new IllegalStateException("the C-struct field check of "
-                    + descriptor.canonicalSpecText() + " has no executor"
-                    + " projection: " + defect.getMessage() + " (producer defect)");
-            }
-            return switch (outcome) {
-                case BoundaryOutcome.Pass pass -> new ClassOpsExecutor.BoundaryResult.Pass(
-                    executorValueOf(valueOfView(pass.value(), oracleInput)));
-                case BoundaryOutcome.Fail fail ->
-                    new ClassOpsExecutor.BoundaryResult.Fail(fail.failure());
-            };
-        }
-
-        private ModuleId ffiDeclarationModuleOf(ClassId classId) {
-            ModuleId resolved = null;
-            for (UnitState candidate : units.values()) {
-                for (SemanticOp op : candidate.unit.ops()) {
-                    if (op.kind() != SemanticOpKind.MODULE_IMPORT
-                            || !(op.payload()
-                                instanceof KindPayload.ModuleImportPayload payload)
-                            || payload.kind() != ModuleImportKind.HOST) {
-                        continue;
-                    }
-                    if (!("$external/" + payload.rawSpecifier())
-                            .equals(classId.modulePath())) {
-                        continue;
-                    }
-                    if (resolved != null
-                            && !resolved.equals(payload.resolvedModule())) {
-                        throw new IllegalStateException("the extern-C class "
-                            + classId + " resolves two different declaring modules "
-                            + resolved + " and " + payload.resolvedModule()
-                            + " among the closure's HOST imports (producer defect)");
-                    }
-                    resolved = payload.resolvedModule();
-                }
-            }
-            if (resolved == null) {
-                throw new IllegalStateException("the extern-C class " + classId
-                    + " resolves no HOST MODULE_IMPORT in the closure: the"
-                    + " declaring module's loaded surface is the plan projection's"
-                    + " source (producer defect)");
-            }
-            return resolved;
-        }
-
         /** The present value of one named declaration-order field of a class instance. */
         private Value classFieldOf(SemanticOp op, Value.ClassValue instance,
                                    String fieldName) {
@@ -7255,7 +7137,7 @@ public final class SemanticOracle {
             namespaceValues.put(payload.resolvedModule(), namespace);
             namespaceModules.put(namespace, payload.resolvedModule());
             if (payload.kind() == ModuleImportKind.HOST && responder != null) {
-                // The loaded module table is the HOST/FFI namespace value
+                // The loaded module table is the HOST namespace value
                 // (K15 items 1/5): the seamed load supplies the whole table
                 // the artifact publishes, so the completion's namespace value
                 // carries the loaded entries before any read — a member read

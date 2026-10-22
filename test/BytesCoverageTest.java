@@ -6,7 +6,6 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
@@ -49,7 +48,6 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
-import deal.test.conformance.CorpusFfi;
 import deal.test.conformance.ErrorSnapshot;
 import deal.test.conformance.JvmCompilation;
 import deal.test.conformance.SidecarExpectations;
@@ -518,8 +516,7 @@ public class BytesCoverageTest {
     private static Drive lower(Compiled compiled, BytesFixture fixture) {
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), compiled.checkedProject(), compiled.index(),
-            compiled.manifests(), compiled.surface(), compiled.identities(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            compiled.manifests(), compiled.surface(), compiled.identities(), BuiltinErrorDeclaration.synthesized(
                 compiled.checkedProject().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
@@ -790,8 +787,7 @@ public class BytesCoverageTest {
         RequirementManifestResult manifests = orchestrator.requirementManifests();
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            orchestrator.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
@@ -2368,8 +2364,7 @@ public class BytesCoverageTest {
     private static Drive lowerFocused(Compiled compiled, BytesFixture spec) {
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), compiled.checkedProject(), compiled.index(),
-            compiled.manifests(), compiled.surface(), compiled.identities(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            compiled.manifests(), compiled.surface(), compiled.identities(), BuiltinErrorDeclaration.synthesized(
                 compiled.checkedProject().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
@@ -2553,8 +2548,7 @@ public class BytesCoverageTest {
         RequirementManifestResult manifests = orchestrator.requirementManifests();
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            orchestrator.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
@@ -3479,29 +3473,11 @@ public class BytesCoverageTest {
 
     // =========================================================================
     // 9. The manifest-authored production acceptance: the std/json bytes
-    //    companions and ffi/016 through the release-owned invocation
+    //    companions through the release-owned invocation
     // =========================================================================
 
-    private static final String FFI_CORPUS = "backend-runtime/ffi";
-    private static final String FFI_BYTES_FIXTURE = "016-ffi-bytes-pointer-length";
-    private static final String FFI_NATIVE_SOURCE = FFI_CORPUS + "/support/native.c";
-    private static final String FFI_NATIVE_LIBRARY = "libcandidate_native.so";
-    /** The externals key of the corpus FFI wiring (the declaration identity). */
-    private static final String FFI_SPECIFIER = "candidate/native";
-
-    /** The pinned phase-3.9 JVM extern-C rejection message. */
-    private static final String JVM_FFI_REJECTION_MESSAGE =
-        "JVM backend: C FFI (@extern-c) declarations are not supported"
-            + " (FFI_UNSUPPORTED_BACKEND)";
-
-    /**
-     * One manifest-authored corpus project materialized under a temp root.
-     * The {@code ffiDeclaration} is the materialized extern-C declaration
-     * companion of an FFI project (null otherwise).
-     */
     private record ManifestProject(Path root, Path entry, Path out, String corpusRel,
-                                   int strippedHeaderLines, String modulePath,
-                                   Path ffiDeclaration) {
+                                   int strippedHeaderLines, String modulePath) {
     }
 
     /** One manifest-authored compile: the orchestrator and its outcome. */
@@ -3509,46 +3485,21 @@ public class BytesCoverageTest {
                                    CompilationOrchestrator orchestrator,
                                    boolean success) {
     }
-
-    /**
-     * Materializes one corpus fixture as the manifest entry of a temp
-     * project: the header-stripped fixture keeps its corpus-relative path,
-     * and the manifest names the target backend (plus the corpus FFI wiring
-     * when the fixture imports the extern-C declaration). The FFI wiring
-     * carries the caller-owned native library (never the checkout's shared
-     * build output), materialized alongside the declaration companion.
-     */
+    /** Materializes a corpus fixture as a manifest-authored project. */
     private static ManifestProject materializeCorpusProject(String corpusRel,
-            CorpusSource source, String backend, String ffiDeclaration,
-            Path nativeLibrary) throws Exception {
+            CorpusSource source, String backend) throws Exception {
         Path root = Files.createTempDirectory("bytes-manifest-");
         Path entry = root.resolve(corpusRel);
         Files.createDirectories(entry.getParent());
         Files.writeString(entry, source.stripped(), StandardCharsets.UTF_8);
-        String externals = "";
-        Path declaration = null;
-        if (ffiDeclaration != null) {
-            if (nativeLibrary == null) {
-                throw new IllegalStateException("the FFI project requires a "
-                    + "caller-owned native library");
-            }
-            declaration = root.resolve("support").resolve("native.d.deal");
-            Files.createDirectories(declaration.getParent());
-            Files.writeString(declaration, ffiDeclaration, StandardCharsets.UTF_8);
-            externals = ",\n  \"externals\": { \"candidate/native\": { "
-                + "\"declaration\": \"support/native.d.deal\", \"nativeLibrary\": \""
-                + nativeLibrary.toAbsolutePath().normalize().toString()
-                    .replace("\\", "\\\\")
-                + "\" } }";
-        }
         Files.writeString(root.resolve("deal.json"),
             "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\".\"],\n"
                 + "  \"output\": \"out\",\n  \"backend\": \"" + backend + "\""
-                + externals + "\n}\n", StandardCharsets.UTF_8);
+                + "\n}\n", StandardCharsets.UTF_8);
         String modulePath = corpusRel.substring(0,
             corpusRel.length() - ".deal".length()).replace('/', '.');
         return new ManifestProject(root, entry, root.resolve("out"), corpusRel,
-            source.strippedHeaderLines(), modulePath, declaration);
+            source.strippedHeaderLines(), modulePath);
     }
 
     private record CorpusSource(String stripped, int strippedHeaderLines) {
@@ -3633,7 +3584,7 @@ public class BytesCoverageTest {
                             + "\"output\":\"out\",\"backend\":\"" + backend + "\"}",
                         StandardCharsets.UTF_8);
                     ManifestProject project = new ManifestProject(root, entry,
-                        root.resolve("out"), "src/main.deal", 0, "main", null);
+                        root.resolve("out"), "src/main.deal", 0, "main");
                     ManifestCompile compiled = compileManifest(project, backend);
                     check(compiled.success(), "first-class bytes (" + backend
                         + "): the manifest compile succeeds: " + diagnosticsOf(compiled));
@@ -3665,7 +3616,7 @@ public class BytesCoverageTest {
                 ? "test_json_stringify_nested_bytes_error" : "test_json_stringify_bytes_error";
             for (String backend : List.of("luajit", "jvm")) {
                 ManifestProject project = materializeCorpusProject(corpusRel, source,
-                    backend, null, null);
+                    backend);
                 try {
                     ManifestCompile compiled = compileManifest(project, backend);
                     check(compiled.success(), fixture + " (" + backend
@@ -3715,7 +3666,7 @@ public class BytesCoverageTest {
     private static void checkManifestOracle(ManifestCompile compiled, String export,
             boolean failure, String expected) {
         SemanticLowerer.ProjectLoweringResult result = lowerManifestOracle(
-            compiled.orchestrator(), Map.of(), Map.of());
+            compiled.orchestrator(), Map.of());
         if (result.project() == null) {
             return;
         }
@@ -3788,292 +3739,6 @@ public class BytesCoverageTest {
         return compile.orchestrator() == null ? "no context"
             : String.valueOf(compile.orchestrator().diagnostics());
     }
-
-    /**
-     * ffi/016 through the manifest-authored production invocation: the
-     * LuaJIT staged artifact executes the native pointer-plus-length fold
-     * (width, sign, order, length) to its pinned runtime-ok outcome, the
-     * materialized project's oracle leg computes the same fold from the
-     * actual bytes argument through the deterministic host responder seam
-     * and agrees with the native artifact and the sidecar, and both JVM
-     * runs are rejected before publication with the sidecar-pinned E6006 —
-     * exactly one error, the pinned FFI_UNSUPPORTED_BACKEND message at the
-     * materialized declaration's {@code @extern-c} range, no FFI metadata,
-     * stages nothing — and the previous artifact set stays byte-identical.
-     * The native library is compiled into a private temp directory through
-     * the bounded subprocess contract and deleted after all artifact
-     * executions finish.
-     */
-    private static void driveFfiBytesPointerLength() throws Exception {
-        String corpusRel = FFI_CORPUS + "/" + FFI_BYTES_FIXTURE + ".deal";
-        String raw = Files.readString(CORPUS.resolve(corpusRel),
-            StandardCharsets.UTF_8);
-        SidecarExpectations.StructuredExpectationSidecar sidecar =
-            SidecarExpectations.StructuredExpectationSidecar.parse(Files.readString(
-                CORPUS.resolve(FFI_CORPUS).resolve(FFI_BYTES_FIXTURE
-                    + ".expect.json"), StandardCharsets.UTF_8));
-
-        CorpusSource source = prepareCorpusSource(raw, corpusRel);
-        CorpusFfi.Wiring wiring = CorpusFfi.wiring(CORPUS).get(FFI_SPECIFIER);
-        if (wiring == null) {
-            throw new IllegalStateException("the corpus FFI wiring carries no "
-                + "'candidate/native' entry");
-        }
-        String declaration = ConformanceHarnessMetadata.stripClassificationHeaders(
-            Files.readString(CORPUS.resolve(FFI_CORPUS).resolve(
-                wiring.declarationCorpusPath()), StandardCharsets.UTF_8));
-        Path nativeDir = Files.createTempDirectory("bytes-ffi-native-");
-        try {
-            Path nativeLibrary = compileCorpusNativeLibrary(nativeDir);
-            ManifestProject luaProject = materializeCorpusProject(corpusRel, source,
-                "luajit", declaration, nativeLibrary);
-            try {
-                ManifestCompile lua = compileManifest(luaProject, "luajit");
-                check(lua.success(), "ffi/016: the LuaJIT production compile succeeds: "
-                    + diagnosticsOf(lua));
-                if (lua.success()) {
-                    Path artifact = luaProject.out().resolve(
-                        luaProject.modulePath().replace('.', '/') + ".lua");
-                    check(Files.isRegularFile(artifact), "ffi/016: the staged LuaJIT "
-                        + "artifact exists: " + artifact);
-                    if (Files.isRegularFile(artifact)) {
-                        BoundedRun run = runBounded(List.of("luajit",
-                            artifact.toAbsolutePath().toString()), luaProject.out(), Map.of());
-                        assertPinnedRuntimeOk("ffi/016 (luajit staged artifact)",
-                            sidecar, "luajit", run);
-                        // The fixture-level oracle agreement: the materialized
-                        // project lowers with the production extern-C metadata and
-                        // executes through the deterministic host responder seam,
-                        // whose ffi_bytes_sum folds the actual bytes argument.
-                        SemanticLowerer.ProjectLoweringResult lowering =
-                            lowerManifestOracle(lua.orchestrator(),
-                                ffiOracleDeclarationIdentities(lua.orchestrator()),
-                                ffiOracleGeneratedModules(lua.orchestrator()));
-                        if (lowering.project() != null) {
-                            int[] calls = {0};
-                            int[] fold = {-1};
-                            SemanticRuntimeModel.ConsumerRun oracle =
-                                SemanticOracle.executeProjectInits(lowering.project(),
-                                    lowering.tables(), lowering.registries(),
-                                    ffiBytesSumResponder(calls, fold));
-                            checkEq(1, calls[0], "ffi/016 (oracle): the host responder "
-                                + "serves the single declared ffi_bytes_sum call");
-                            checkEq(59443587, fold[0], "ffi/016 (oracle): the responder "
-                                + "folds the actual bytes argument (width, sign, "
-                                + "order, length) to the pinned native sum");
-                            assertPinnedRuntimeOkAgreement("ffi/016 (oracle)", sidecar,
-                                "luajit", run, oracle);
-                        }
-                    }
-                }
-            } finally {
-                deleteRecursively(luaProject.root());
-            }
-
-            ManifestProject preserved = materializeCorpusProject(corpusRel, source,
-                "jvm", declaration, nativeLibrary);
-            try {
-                Files.createDirectories(preserved.out());
-                Files.writeString(preserved.out().resolve("previous-artifact.java"),
-                    "previous\n", StandardCharsets.UTF_8);
-                Map<String, byte[]> before = snapshotTree(preserved.out());
-                ManifestCompile jvm = compileManifest(preserved, "jvm");
-                assertPinnedJvmFfiRejection("ffi/016 (preserved output root)",
-                    sidecar, jvm);
-                checkTreeIdentical(before, preserved.out(), "ffi/016: the JVM rejection "
-                    + "stages nothing and preserves the previous artifact set "
-                    + "byte-identical");
-            } finally {
-                deleteRecursively(preserved.root());
-            }
-
-            ManifestProject fresh = materializeCorpusProject(corpusRel, source,
-                "jvm", declaration, nativeLibrary);
-            try {
-                ManifestCompile jvm = compileManifest(fresh, "jvm");
-                assertPinnedJvmFfiRejection("ffi/016 (fresh output root)", sidecar, jvm);
-                check(!Files.exists(fresh.out()), "ffi/016: a rejected JVM compile stages "
-                    + "no output root");
-            } finally {
-                deleteRecursively(fresh.root());
-            }
-        } finally {
-            deleteRecursively(nativeDir);
-        }
-    }
-
-    /**
-     * Compiles the committed FFI C fixture ({@code ffi/support/native.c})
-     * into the caller-owned temporary directory through the bounded
-     * subprocess contract: the drive never writes the checkout's shared
-     * {@code build/} output, the GCC compile is deadline- and
-     * capture-bounded, and a missing source, an unclean or failed compile,
-     * or a missing library fails closed (never a skip). The caller deletes
-     * the directory after all artifact executions finish.
-     */
-    private static Path compileCorpusNativeLibrary(Path nativeDir) throws Exception {
-        Path source = CORPUS.resolve(FFI_NATIVE_SOURCE).toAbsolutePath().normalize();
-        check(Files.isRegularFile(source),
-            "ffi/016: the committed FFI C fixture exists: " + source);
-        Path library = nativeDir.resolve(FFI_NATIVE_LIBRARY);
-        if (!Files.isRegularFile(source)) {
-            return library;
-        }
-        BoundedRun compile = runBounded(List.of("gcc", "-shared", "-fPIC", "-O2",
-            "-o", library.toString(), source.toString()), nativeDir, Map.of());
-        check(compile.captureClean(), "ffi/016: the private native-library "
-            + "compile is capture-clean");
-        checkEq(0, compile.exitCode(), "ffi/016: the private native-library "
-            + "compile succeeds: " + compile.stdout() + compile.stderr());
-        check(Files.isRegularFile(library), "ffi/016: the private native library "
-            + "exists: " + library);
-        return library;
-    }
-
-    /**
-     * The oracle's declaration-module identities of the materialized ffi/016
-     * project: each declaration-surface extern-C module's identity is the
-     * externals key exactly as written — the same shape the production
-     * compile's declaration classification carries into the class
-     * registration seeds.
-     */
-    private static Map<ModuleId, CanonicalModuleIdentity> ffiOracleDeclarationIdentities(
-            CompilationOrchestrator orchestrator) {
-        HostDeclarationSurface surface = orchestrator.hostDeclarationSurface();
-        Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
-        for (ModuleId declarationModule : surface.moduleIds()) {
-            if (surface.require(declarationModule).kind()
-                    == HostDeclarationSurface.DeclarationKind.EXTERN_C) {
-                identities.put(declarationModule,
-                    new CanonicalModuleIdentity.ExternalModule(FFI_SPECIFIER));
-            }
-        }
-        return identities;
-    }
-
-    /**
-     * The oracle's extern-C generated modules of the materialized ffi/016
-     * project: the manifest compile's own FFIGEN output keyed by module
-     * identity (the production emission's own lowering input), so the oracle
-     * lowers the metadata the production compile generates, never a second
-     * generation path.
-     */
-    private static Map<ModuleId, FfiGeneratedModule> ffiOracleGeneratedModules(
-            CompilationOrchestrator orchestrator) {
-        Map<ModuleId, FfiGeneratedModule> generated = new LinkedHashMap<>();
-        for (Map.Entry<String, FfiGeneratedModule> entry
-                : orchestrator.ffiGenerations().entrySet()) {
-            generated.put(new ModuleId(entry.getKey()), entry.getValue());
-        }
-        check(!generated.isEmpty(), "ffi/016: the manifest compile generated the "
-            + "extern-C module metadata");
-        return generated;
-    }
-
-    /**
-     * The deterministic host responder of the ffi/016 oracle leg: the single
-     * declared {@code ffi_bytes_sum(value: bytes): int} call computes the
-     * pointer-plus-length fold ({@code sum = length}, then
-     * {@code sum = sum * 257 + byte}) from the actual bytes argument the seam
-     * receives — never a canned result — so a wrong buffer, length, order, or
-     * signedness diverges from the native artifact's pinned sum.
-     */
-    private static SemanticOracle.HostResponder ffiBytesSumResponder(int[] calls,
-            int[] fold) {
-        return new SemanticOracle.HostResponder() {
-            @Override
-            public SyncOutcome call(ModuleId module, String export,
-                    RuntimeDescriptor.Func descriptor,
-                    List<SemanticOracle.Value> args) {
-                if (!FFI_SPECIFIER.replace('/', '.').equals(module.path())
-                        || !"ffi_bytes_sum".equals(export)) {
-                    return new SyncOutcome.Thrown("E9001", "unexpected host call "
-                        + module.path() + "#" + export);
-                }
-                calls[0]++;
-                SemanticOracle.Value argument = args.size() == 1 ? args.get(0) : null;
-                if (!(argument instanceof SemanticOracle.Value.BytesValue bytes)) {
-                    throw new IllegalStateException("ffi_bytes_sum received " + argument
-                        + " instead of its declared bytes argument");
-                }
-                int sum = bytes.length();
-                for (int i = 0; i < bytes.length(); i++) {
-                    sum = sum * 257 + bytes.read(i);
-                }
-                fold[0] = sum;
-                return new SyncOutcome.Returned(
-                    new SemanticOracle.Value.IntValue(sum));
-            }
-        };
-    }
-
-    /**
-     * The exact JVM pre-publication rejection of one ffi/016 compile: the
-     * sidecar's compile-reject leg is the mode/code authority, the
-     * orchestrator reports exactly one error — the pinned phase-3.9
-     * {@code FFI_UNSUPPORTED_BACKEND} message at the materialized
-     * declaration's {@code @extern-c} directive range — and no FFI metadata
-     * is generated (the rejection precedes the lowering).
-     */
-    private static void assertPinnedJvmFfiRejection(String label,
-            SidecarExpectations.StructuredExpectationSidecar sidecar,
-            ManifestCompile compile) throws Exception {
-        check(!compile.success(), label + ": the JVM production compile is rejected");
-        SidecarExpectations.RuntimeExpectation leg = sidecar.expectationFor("jvm");
-        check(leg instanceof SidecarExpectations.RuntimeExpectation.Rejected rejected
-                && "compile-reject".equals(rejected.mode()),
-            label + ": the sidecar pins the JVM compile-reject mode");
-        if (!(leg instanceof SidecarExpectations.RuntimeExpectation.Rejected rejected)) {
-            return;
-        }
-        Path declaration = compile.project().ffiDeclaration();
-        check(declaration != null && Files.isRegularFile(declaration),
-            label + ": the materialized extern-C declaration exists: " + declaration);
-        if (declaration == null || !Files.isRegularFile(declaration)) {
-            return;
-        }
-        List<CompilerDiagnostic> errors = compile.orchestrator() == null
-            ? List.of()
-            : compile.orchestrator().diagnostics().stream()
-                .filter(diagnostic -> "error".equals(diagnostic.severity())).toList();
-        checkEq(1, errors.size(), label + ": exactly one error diagnostic: "
-            + diagnosticsOf(compile));
-        if (errors.size() != 1) {
-            return;
-        }
-        CompilerDiagnostic rejection = errors.get(0);
-        checkEq(rejected.code(), rejection.code(),
-            label + ": the sidecar-pinned rejection code");
-        checkEq(JVM_FFI_REJECTION_MESSAGE, rejection.message(),
-            label + ": the pinned FFI_UNSUPPORTED_BACKEND message");
-        String text = Files.readString(declaration, StandardCharsets.UTF_8);
-        int directive = text.indexOf("// @extern-c");
-        check(directive >= 0, label + ": the materialized declaration carries the "
-            + "@extern-c directive");
-        if (directive < 0) {
-            return;
-        }
-        int lineStart = text.lastIndexOf('\n', directive) + 1;
-        int line = text.substring(0, lineStart).split("\n", -1).length;
-        int lineEnd = directive;
-        while (lineEnd < text.length() && text.charAt(lineEnd) != '\n'
-                && text.charAt(lineEnd) != '\r') {
-            lineEnd++;
-        }
-        checkEq(line, rejection.range().startLine(),
-            label + ": the E6006 range starts at the materialized @extern-c line");
-        checkEq(directive - lineStart + 1, rejection.range().startColumn(),
-            label + ": the E6006 range starts at the materialized @extern-c column");
-        checkEq(line, rejection.range().endLine(),
-            label + ": the E6006 range ends on the materialized @extern-c line");
-        checkEq(lineEnd - lineStart + 1, rejection.range().endColumn(),
-            label + ": the E6006 range covers the materialized @extern-c comment");
-        checkEq(declaration.toRealPath().toString(), rejection.range().file(),
-            label + ": the E6006 range names the materialized declaration");
-        check(compile.orchestrator().ffiGenerations().isEmpty(), label + ": the JVM "
-            + "rejection publishes no FFI metadata");
-    }
-
     /** The pinned runtime-ok leg of one staged-artifact run. */
     private static void assertPinnedRuntimeOk(String label,
             SidecarExpectations.StructuredExpectationSidecar sidecar, String backend,
@@ -4152,26 +3817,16 @@ public class BytesCoverageTest {
                 message + " (" + entry.getKey() + ")");
         }
     }
-
-    /**
-     * The oracle's lowering of one manifest-authored compile: the release
-     * production invocation over the orchestrator's checked project,
-     * manifests, and declaration surface with the caller-supplied
-     * declaration-module identities and extern-C generated modules (empty
-     * for a compile without an extern-C import — the production emission's
-     * own lowering inputs). A lowering that produces no project is reported
-     * and the caller skips its oracle leg, never a silent pass.
-     */
+    /** Lowers the manifest project through its production invocation. */
     private static SemanticLowerer.ProjectLoweringResult lowerManifestOracle(
             CompilationOrchestrator orchestrator,
-            Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
-            Map<ModuleId, FfiGeneratedModule> externCModules) {
+            Map<ModuleId, CanonicalModuleIdentity> declarationIdentities) {
         CheckedProjectBuildResult checked = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             productionInvocation(), checked.input(), checked.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            declarationIdentities, externCModules, BuiltinErrorDeclaration.synthesized(
+            declarationIdentities, BuiltinErrorDeclaration.synthesized(
                 checked.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
@@ -4199,7 +3854,7 @@ public class BytesCoverageTest {
         testFocusedRunnerContract();
         testOracleRealization();
         testManifestBytesContracts();
-        driveFfiBytesPointerLength();
+
         System.out.println();
         System.out.println("BytesCoverageTest: " + passed + " passed, " + failed
             + " failed");

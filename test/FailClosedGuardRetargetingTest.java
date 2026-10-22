@@ -3,10 +3,6 @@ package deal.test;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.distribution.DistributionHome;
-import deal.ffi.FfiBindingState;
-import deal.ffi.FfiForwardBindings;
-import deal.ffi.FfiGeneratedModule;
-import deal.ffi.FfiImportedFunctionReference;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -74,7 +70,7 @@ public class FailClosedGuardRetargetingTest {
     // Fixtures
     // =========================================================================
 
-    private static final ModuleId NATIVE_PROBE = new ModuleId("native.probe");
+
     private static final ModuleId HOST_HELPER = new ModuleId("host.helper");
 
     /**
@@ -121,38 +117,13 @@ public class FailClosedGuardRetargetingTest {
         }
         """;
 
-    /**
-     * The extern-C declaration whose {@code @c-struct} class default names
-     * the host provider {@code h.ping()} (the corrupted-fact seed's
-     * baseline).
-     */
-    private static final String EXTERN_C_DECLARATION = """
-        import * as h from "host/helper";
-
-        // @extern-c
-
-        // @c-struct
-        export class Pair {
-          left: int = h.ping();
-        }
-
-        export function probe(): int;
-        """;
 
     /** The extern-C provider's host declaration. */
     private static final String HOST_PROVIDER_DECLARATION = """
         export function ping(): int;
         """;
 
-    /** The extern-C consumer: the declaration import is never called. */
-    private static final String EXTERN_C_APP_SOURCE = """
-        import * as h from "host/helper";
-        import * as native from "native/probe";
 
-        export function main(): null {
-          return null;
-        }
-        """;
 
     private record Fixture(
         Path root,
@@ -161,7 +132,6 @@ public class FailClosedGuardRetargetingTest {
         ProjectInterfaceIndex index,
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
-        Map<ModuleId, FfiGeneratedModule> externCModules,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
         DistributionHome distributionHome) {
     }
@@ -213,11 +183,7 @@ public class FailClosedGuardRetargetingTest {
             throw new IllegalStateException("the guard fixture did not build: "
                 + detail + " / " + orchestrator.diagnostics());
         }
-        Map<ModuleId, FfiGeneratedModule> externCModules = new LinkedHashMap<>();
-        for (Map.Entry<String, FfiGeneratedModule> generated
-                : orchestrator.ffiGenerations().entrySet()) {
-            externCModules.put(new ModuleId(generated.getKey()), generated.getValue());
-        }
+
         Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
         for (ModuleId declarationModule
                 : orchestrator.hostDeclarationSurface().moduleIds()) {
@@ -234,7 +200,7 @@ public class FailClosedGuardRetargetingTest {
         }
         return new Fixture(root, src, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            externCModules, identities,
+            identities,
             DistributionHome.forManifestDirectory(src.toString()));
     }
 
@@ -250,16 +216,6 @@ public class FailClosedGuardRetargetingTest {
                 "src/main.deal", CROSS_MODULE_CALL_SOURCE)), Map.of());
     }
 
-    private static Fixture externCProviderFixture() throws Exception {
-        return compileFixture(new LinkedHashMap<>(Map.of(
-                "src/probe.d.deal", EXTERN_C_DECLARATION,
-                "src/helper.d.deal", HOST_PROVIDER_DECLARATION,
-                "src/main.deal", EXTERN_C_APP_SOURCE)),
-            new LinkedHashMap<>(Map.of(
-                "native/probe", "src/probe.d.deal",
-                "host/helper", "src/helper.d.deal")));
-    }
-
     // =========================================================================
     // The unit driver
     // =========================================================================
@@ -267,16 +223,14 @@ public class FailClosedGuardRetargetingTest {
     private static ProductionProjectEmission.Result emit(Fixture fixture,
             CheckedProjectInput project, ProjectInterfaceIndex index,
             List<SemanticRequirementManifest> manifests,
-            Map<ModuleId, FfiGeneratedModule> externCModules,
             PublicationStager stager, Backend backend) throws Exception {
         return ProductionProjectEmission.run(productionInvocation(), project,
             index, manifests, fixture.surface(), fixture.declarationIdentities(),
-            externCModules, fixture.distributionHome().manifestDirectoryText(),
             BuiltinErrorDeclaration.synthesized(
                 project.modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
-            Set.of(), backend, false, fixture.distributionHome(), stager);
+            java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
     }
 
     /** The two production targets the non-FFI negative seeds cover. */
@@ -345,7 +299,7 @@ public class FailClosedGuardRetargetingTest {
                 try {
                     ProductionProjectEmission.Result intact = emit(fixture,
                         fixture.checkedProject(), fixture.index(),
-                        fixture.manifests(), fixture.externCModules(),
+                        fixture.manifests(),
                         intactStager, backend);
                     check(intact.emitted(),
                         target + ": the intact cross-module call emits (the "
@@ -359,7 +313,7 @@ public class FailClosedGuardRetargetingTest {
                 ProductionProjectEmission.Result result;
                 try {
                     result = emit(fixture, stripped.project(), stripped.index(),
-                        stripped.manifests(), fixture.externCModules(), stager,
+                        stripped.manifests(),  stager,
                         backend);
                     check(stager.stagedSet().relativePaths().isEmpty(),
                         target + ": the undeclared-external-entry seed stages "
@@ -411,7 +365,7 @@ public class FailClosedGuardRetargetingTest {
                 try {
                     ProductionProjectEmission.Result intact = emit(fixture,
                         fixture.checkedProject(), fixture.index(),
-                        fixture.manifests(), fixture.externCModules(),
+                        fixture.manifests(),
                         intactStager, backend);
                     check(intact.emitted(),
                         target + ": the intact imported-class literal emits "
@@ -425,7 +379,7 @@ public class FailClosedGuardRetargetingTest {
                 ProductionProjectEmission.Result result;
                 try {
                     result = emit(fixture, stripped.project(), stripped.index(),
-                        stripped.manifests(), fixture.externCModules(), stager,
+                        stripped.manifests(),  stager,
                         backend);
                     check(stager.stagedSet().relativePaths().isEmpty(),
                         target + ": the RETAINED_ABI_DEFERRED seed stages "
@@ -447,92 +401,6 @@ public class FailClosedGuardRetargetingTest {
                     target + ": the failing lowering leaves the previous "
                         + "artifact set byte-identical");
             }
-        } finally {
-            deleteRecursively(fixture.root());
-        }
-    }
-
-    private static void testSharedEmitterCoverageSeed() throws Exception {
-        System.out.println("-- R8(c): a corrupted extern-C fact (one alias bound "
-            + "to two provider modules) fails "
-            + "SHARED_EMITTER_COVERAGE/FFI_PROVIDER_GAP, stages nothing, and "
-            + "preserves the previous artifact set (the LuaJIT extern-C "
-            + "emission; the JVM extern-C rejection is its own sanctioned "
-            + "E6006 contract and is not substituted here) --");
-        Fixture fixture = externCProviderFixture();
-        try {
-            check(fixture.externCModules().containsKey(NATIVE_PROBE)
-                    && fixture.surface().moduleIds().contains(HOST_HELPER),
-                "the fixture publishes the extern-C metadata and the host "
-                    + "provider declaration");
-            FfiGeneratedModule original = fixture.externCModules().get(NATIVE_PROBE);
-            check(original != null && !original.bindings().importedFunctions().isEmpty(),
-                "the generated metadata carries the provider reference");
-            if (original == null || original.bindings().importedFunctions().isEmpty()) {
-                return;
-            }
-            FfiImportedFunctionReference first =
-                original.bindings().importedFunctions().get(0);
-            // The corruption: the same alias is bound to a second provider
-            // module (one alias resolves exactly one provider).
-            FfiImportedFunctionReference conflicting =
-                new FfiImportedFunctionReference(first.importAlias(),
-                    first.exportName(), "other.provider",
-                    first.canonicalDescriptor(), first.providerContractDigest(),
-                    first.graphOrder(), first.sourceRange());
-            FfiForwardBindings doctoredBindings = new FfiForwardBindings(
-                original.bindings().moduleKey(), FfiBindingState.UNBOUND,
-                original.bindings().cells(), List.of(first, conflicting), List.of());
-            FfiGeneratedModule doctored = new FfiGeneratedModule(
-                original.modulePath(), original.descriptor(),
-                original.cdefBundle(), original.plans(), doctoredBindings);
-            Map<ModuleId, FfiGeneratedModule> corrupted = new LinkedHashMap<>();
-            corrupted.put(NATIVE_PROBE, doctored);
-
-            // The control: the intact extern-C fact emits, so the corrupted
-            // alias binding is the seed's cause.
-            PublicationStager intactStager = PublicationStager.forRoot(
-                fixture.root().resolve("out-intact"));
-            try {
-                ProductionProjectEmission.Result intact = emit(fixture,
-                    fixture.checkedProject(), fixture.index(),
-                    fixture.manifests(), fixture.externCModules(), intactStager,
-                    Backend.LUAJIT);
-                check(intact.emitted(),
-                    "the intact extern-C fact emits (the seed's control): "
-                        + intact.diagnostics());
-            } finally {
-                intactStager.discard();
-            }
-
-            Path out = fixture.root().resolve("out-arm");
-            Map<String, String> before = seedPreviousArtifactSet(out);
-            PublicationStager stager = PublicationStager.forRoot(out);
-            ProductionProjectEmission.Result result;
-            try {
-                result = emit(fixture, fixture.checkedProject(), fixture.index(),
-                    fixture.manifests(), corrupted, stager, Backend.LUAJIT);
-                check(stager.stagedSet().relativePaths().isEmpty(),
-                    "the SHARED_EMITTER_COVERAGE seed stages nothing");
-            } finally {
-                stager.discard();
-            }
-            check(!result.emitted(),
-                "the SHARED_EMITTER_COVERAGE seed fails closed");
-            checkEq(1, result.diagnostics().size(),
-                "exactly one diagnostic: " + result.diagnostics());
-            String message = result.firstDiagnostic() == null ? ""
-                : result.firstDiagnostic().message();
-            check("E6005".equals(result.firstDiagnostic() == null ? ""
-                    : result.firstDiagnostic().code())
-                    && message.contains("validatorRule SHARED_EMITTER_COVERAGE")
-                    && message.contains(ProductionProjectEmission.FFI_PROVIDER_GAP)
-                    && message.contains("other.provider"),
-                "the seed names the provider-gap projection: "
-                    + result.diagnostics());
-            checkEq(before, snapshotTree(out),
-                "the failing emission leaves the previous artifact set "
-                    + "byte-identical");
         } finally {
             deleteRecursively(fixture.root());
         }
@@ -782,8 +650,7 @@ public class FailClosedGuardRetargetingTest {
         }
         SemanticLowerer.ProjectLoweringResult lowered = SemanticLowerer.lowerProject(
             productionInvocation(), built.input(), built.index(),
-            manifests.manifests(), surface, Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            manifests.manifests(), surface, Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
@@ -1540,7 +1407,7 @@ public class FailClosedGuardRetargetingTest {
             + "(ISSUE-0702) ===\n");
         testConstructUnloweredSeed();
         testRetainedAbiDeferredSeed();
-        testSharedEmitterCoverageSeed();
+
         testRealizedConstructProbes();
         testBoundedProcessContract();
         testJvmCompilationContract();

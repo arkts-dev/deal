@@ -2,9 +2,6 @@ package deal.semantic;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.ffi.FfiClassDescriptor;
-import deal.ffi.FfiCompilerClassDefaultPlan;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalModuleIdentity;
 import deal.semantic.ir.ClassId;
@@ -37,16 +34,6 @@ public record ClassRegistrationSeeds(
      */
     public static final String DECLARATION_CLASS_IDENTITY_UNRESOLVED =
         "DECLARATION_CLASS_IDENTITY_UNRESOLVED";
-
-    /**
-     * An extern-C plan/class cross-check failure: a declared class
-     * without a generated class row or plan entry, a generated class row
-     * or plan entry without a declared class, a field name, order, or
-     * canonical-descriptor mismatch, an optional struct field, or a
-     * missing generated metadata record.
-     */
-    public static final String FFI_PLAN_MISMATCH = "FFI_PLAN_MISMATCH";
-
     /** Two declared classes resolving to one {@link ClassId}. */
     public static final String DUPLICATE_CLASS_ID = "DUPLICATE_CLASS_ID";
 
@@ -171,13 +158,10 @@ public record ClassRegistrationSeeds(
     public static Production produce(
             HostDeclarationSurface surface,
             Map<ModuleId, CanonicalModuleIdentity> moduleClassification,
-            Map<ModuleId, FfiGeneratedModule> externCModules,
             BuiltinErrorDeclaration builtinError) {
         Objects.requireNonNull(surface, "surface must not be null");
         Objects.requireNonNull(moduleClassification,
             "moduleClassification must not be null");
-        Objects.requireNonNull(externCModules,
-            "externCModules must not be null");
         Objects.requireNonNull(builtinError, "builtinError must not be null");
 
         Map<ClassId, ClassRegistration> registrations = new LinkedHashMap<>();
@@ -230,11 +214,7 @@ public record ClassRegistrationSeeds(
                         + " public canonical module identity (a declaration"
                         + " class there can never be registered)");
             }
-            Production outcome = facts.kind()
-                    == HostDeclarationSurface.DeclarationKind.EXTERN_C
-                ? externCRegistrations(facts, identity,
-                    externCModules.get(moduleId), registrations)
-                : hostRegistrations(facts, identity, registrations);
+            Production outcome = hostRegistrations(facts, identity, registrations);
             if (outcome != null) {
                 return outcome;
             }
@@ -282,180 +262,6 @@ public record ClassRegistrationSeeds(
         }
         return null;
     }
-
-    /**
-     * The extern-C declaration classes of one module: fields in
-     * declaration order from the validated plan's ordered entries with the
-     * plan's canonical descriptors and {@code required = true}, cross-
-     * checked against the declaration surface's resolution, with the owner
-     * member {@link DefaultOwner#FFI_PLAN}.
-     *
-     */
-    private static Production externCRegistrations(
-            HostDeclarationSurface.DeclarationFacts facts,
-            CanonicalModuleIdentity identity,
-            FfiGeneratedModule generated,
-            Map<ClassId, ClassRegistration> registrations) {
-        ModuleId moduleId = facts.moduleId();
-        if (generated == null) {
-            return failure(FFI_PLAN_MISMATCH, moduleId,
-                "extern-C declaration module '" + moduleId.path()
-                    + "' carries no validated generated metadata: every"
-                    + " declared class's plan entry comes from the phase-3.9"
-                    + " generated module");
-        }
-        Map<String, FfiClassDescriptor> rowsByIdentity = new LinkedHashMap<>();
-        for (FfiClassDescriptor row : generated.descriptor().classes()) {
-            FfiClassDescriptor prior =
-                rowsByIdentity.putIfAbsent(row.canonicalClassIdentity(), row);
-            if (prior != null) {
-                return failure(FFI_PLAN_MISMATCH, moduleId,
-                    "two generated class rows carry the canonical identity '"
-                        + row.canonicalClassIdentity() + "' ('" + prior.name()
-                        + "' and '" + row.name() + "')");
-            }
-        }
-        Map<String, FfiCompilerClassDefaultPlan> plans = generated.plans();
-        // The plan/row bijection: every plan entry belongs to a C_STRUCT
-        // class row (a plan without a class is a producer defect).
-        for (Map.Entry<String, FfiCompilerClassDefaultPlan> entry
-                : plans.entrySet()) {
-            FfiClassDescriptor row = rowsByIdentity.get(entry.getKey());
-            if (row == null) {
-                return failure(FFI_PLAN_MISMATCH, moduleId,
-                    "the validated plan entry '" + entry.getKey()
-                        + "' has no generated class row: a plan entry without"
-                        + " a class is a producer defect");
-            }
-            if (row.kind() != FfiClassDescriptor.ClassKind.C_STRUCT) {
-                return failure(FFI_PLAN_MISMATCH, moduleId,
-                    "the validated plan entry '" + entry.getKey()
-                        + "' belongs to a " + row.kind()
-                        + " class row: only a C_STRUCT class carries a plan");
-            }
-        }
-        Set<String> declaredIdentities = new LinkedHashSet<>();
-        for (HostDeclarationSurface.DeclaredClass declaredClass
-                : facts.classes().values()) {
-            ClassId classId = classIdOf(identity, declaredClass.name());
-            declaredIdentities.add(classId.text());
-            FfiClassDescriptor row = rowsByIdentity.get(classId.text());
-            if (row == null) {
-                return failure(FFI_PLAN_MISMATCH, moduleId,
-                    "declared class '" + declaredClass.name() + "' ("
-                        + classId.text() + ") has no plan entry: the validated"
-                        + " extern-C metadata carries no generated class row"
-                        + " for it");
-            }
-            List<ClassLayout.FieldLayout> fields = new ArrayList<>();
-            switch (row.kind()) {
-                case C_STRUCT -> {
-                    FfiCompilerClassDefaultPlan plan = plans.get(classId.text());
-                    if (plan == null) {
-                        return failure(FFI_PLAN_MISMATCH, moduleId,
-                            "the C_STRUCT class row '" + classId.text()
-                                + "' has no validated plan entry");
-                    }
-                    if (declaredClass.fields().size()
-                            != plan.entries().size()) {
-                        return failure(FFI_PLAN_MISMATCH, moduleId,
-                            "declared class '" + declaredClass.name()
-                                + "' declares " + declaredClass.fields().size()
-                                + " field(s) but its validated plan carries "
-                                + plan.entries().size() + " entr(ies)");
-                    }
-                    for (int i = 0; i < plan.entries().size(); i++) {
-                        FfiCompilerClassDefaultPlan.Entry entry =
-                            plan.entries().get(i);
-                        HostDeclarationSurface.DeclaredField surfaceField =
-                            declaredClass.fields().get(i);
-                        if (!entry.name().equals(
-                                surfaceField.declaration().name())) {
-                            return failure(FFI_PLAN_MISMATCH, moduleId,
-                                "plan entry " + i + " of '" + classId.text()
-                                    + "' names '" + entry.name()
-                                    + "', not the declaration surface's '"
-                                    + surfaceField.declaration().name()
-                                    + "' (declaration order)");
-                        }
-                        if (entry.optional()) {
-                            return failure(FFI_PLAN_MISMATCH, moduleId,
-                                "the plan entry '" + entry.name()
-                                    + "' of '" + classId.text()
-                                    + "' is optional: extern-C struct fields"
-                                    + " are never optional (optional fields"
-                                    + " are E7002) and a seed field is always"
-                                    + " required-present");
-                        }
-                        RuntimeDescriptor declared;
-                        try {
-                            declared = DescriptorService.describe(
-                                surfaceField.type());
-                        } catch (DescriptorService.Defect defect) {
-                            return descriptorFailure(moduleId, declaredClass,
-                                surfaceField, defect);
-                        }
-                        if (!declared.canonicalSpecText()
-                                .equals(entry.canonicalDescriptor())) {
-                            return failure(FFI_PLAN_MISMATCH, moduleId,
-                                "the plan entry '" + entry.name() + "' of '"
-                                    + classId.text()
-                                    + "' carries canonical descriptor '"
-                                    + entry.canonicalDescriptor()
-                                    + "', not the declaration surface's"
-                                    + " resolution '"
-                                    + declared.canonicalSpecText() + "'");
-                        }
-                        RuntimeDescriptor descriptor;
-                        try {
-                            descriptor = RuntimeDescriptor.parseCanonicalText(
-                                entry.canonicalDescriptor());
-                        } catch (SemanticIrTextDecodeException decode) {
-                            return failure(FFI_PLAN_MISMATCH, moduleId,
-                                "the plan entry '" + entry.name() + "' of '"
-                                    + classId.text() + "' carries a"
-                                    + " non-canonical descriptor text '"
-                                    + entry.canonicalDescriptor() + "': "
-                                    + decode.getMessage());
-                        }
-                        fields.add(new ClassLayout.FieldLayout(entry.name(),
-                            descriptor, true, DefaultOwner.FFI_PLAN));
-                    }
-                }
-                case C_POINTER -> {
-                    // An opaque pointer token: no fields, no plan.
-                    if (!declaredClass.fields().isEmpty()) {
-                        return failure(FFI_PLAN_MISMATCH, moduleId,
-                            "the C_POINTER class row '" + classId.text()
-                                + "' carries no fields but the declaration"
-                                + " surface declares "
-                                + declaredClass.fields().size() + " field(s)");
-                    }
-                }
-            }
-            Production duplicate = register(registrations, classId,
-                new ClassRegistration(new ClassLayout(classId, fields),
-                    DefaultOwner.FFI_PLAN),
-                moduleId, declaredClass.name());
-            if (duplicate != null) {
-                return duplicate;
-            }
-        }
-        // The converse direction: every generated class row names exactly
-        // one declared class of the declaration surface.
-        for (FfiClassDescriptor row : rowsByIdentity.values()) {
-            if (!declaredIdentities.contains(row.canonicalClassIdentity())) {
-                return failure(FFI_PLAN_MISMATCH, moduleId,
-                    "the generated class row '"
-                        + row.canonicalClassIdentity()
-                        + "' has no declared class in the declaration"
-                        + " surface: a plan entry without a class is a"
-                        + " producer defect");
-            }
-        }
-        return null;
-    }
-
     /** Registers one class, failing closed on a duplicated identity. */
     private static Production register(
             Map<ClassId, ClassRegistration> registrations,

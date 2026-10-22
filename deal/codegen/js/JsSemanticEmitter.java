@@ -232,7 +232,7 @@ public final class JsSemanticEmitter {
          */
         private final Map<ClassId, ModuleId> jsonPlanOwners =
             new LinkedHashMap<>();
-        /** Declaration-module registration layouts (HOST/extern-C/builtin). */
+        /** Declaration-module and builtin registration layouts. */
         private final Map<ClassId, ClassLayout> seedLayouts =
             new LinkedHashMap<>();
         /**
@@ -3436,15 +3436,7 @@ public final class JsSemanticEmitter {
                     + " carry (the projection covers every declaration module"
                     + " of the compilation — producer defect)");
             }
-            if (declared.kind()
-                    != RuntimeDeclarationSurface.DeclarationKind.HOST) {
-                throw rejected(op, "the HOST MODULE_IMPORT " + op.opId()
-                    + " resolves the " + declared.kind() + " declaration"
-                    + " module '" + module.path() + "': a host import never"
-                    + " resolves an extern-C declaration (the JavaScript"
-                    + " backend rejects @extern-c imports with E6006 before"
-                    + " lowering — producer defect)");
-            }
+
             StringBuilder map = new StringBuilder("{");
             boolean first = true;
             for (Map.Entry<String, RuntimeDescriptor> export
@@ -4067,6 +4059,7 @@ public final class JsSemanticEmitter {
 
         // ----- Construction -----
 
+
         /**
          * One {@code CLASS_NEW}: the shared construction phases over the
          * resolved module-level layout and default owner. {@code LOCAL}
@@ -4074,8 +4067,7 @@ public final class JsSemanticEmitter {
          * module's defaults first, {@code HOST_DEFAULTS} runs the host
          * occurrence's synthesized full construction over the loaded
          * defaults, and the builtin {@code Error} keeps its
-         * compiler-constant defaults. An extern-C owner fails closed: the
-         * JavaScript backend rejects @extern-c before lowering (E6006).
+         * compiler-constant defaults.
          */
         private void emitClassNew(SemanticOp op) {
             KindPayload.ClassNewPayload payload =
@@ -4085,11 +4077,7 @@ public final class JsSemanticEmitter {
                 case SHARED_FACTORY -> emitClassNewSharedFactory(op, payload);
                 case BUILTIN_DEFAULTS -> emitBuiltinErrorConstruction(op);
                 case HOST_DEFAULTS -> emitClassNewHostDefaults(op, payload);
-                case FFI_PLAN -> throw unsupported(op, "the CLASS_NEW "
-                    + op.opId() + " carries the extern-C C-struct default owner"
-                    + " of " + payload.classId() + ": the JavaScript backend"
-                    + " rejects @extern-c before lowering (E6006), so a C-struct"
-                    + " construction reaching this renderer is a producer defect");
+
             }
         }
 
@@ -4180,8 +4168,7 @@ public final class JsSemanticEmitter {
                     : hostOccurrences.entrySet()) {
                 RuntimeDeclarationSurface.RuntimeDeclarationModule declared =
                     input.declarations().modules().get(occurrence.getKey());
-                if (declared == null || declared.kind()
-                        != RuntimeDeclarationSurface.DeclarationKind.HOST) {
+                if (declared == null) {
                     continue;
                 }
                 for (Map.Entry<String,

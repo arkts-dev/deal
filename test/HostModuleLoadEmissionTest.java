@@ -5,7 +5,6 @@ import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.semantic.CheckedProjectBuildResult;
@@ -480,20 +479,11 @@ public class HostModuleLoadEmissionTest {
 
         export function baseOnly(x: string, y: string, z: string): boolean;
         """;
-
-    /**
-     * The host-carrier metadata project's extern-C declaration: one
-     * {@code @c-struct} class whose fields are the declared
-     * {@code ClassLayout} (the corpus FFI drive additionally covers a
-     * field-less {@code @c-pointer} class).
-     */
+    /** A second typed host declaration with a scalar field layout. */
     private static final String CARRIER_NATIVE_DECLARATION_SOURCE = """
-        // @extern-c
-
-        // @c-struct
         export class Pair {
-          left: int = 0;
-          right: number = 0.0;
+          left: int;
+          right: number;
         }
 
         export function probe(): int;
@@ -514,7 +504,7 @@ public class HostModuleLoadEmissionTest {
     /**
      * The host-carrier metadata project's application: a DEAL class with a
      * function-typed field, a chunk-created function value, an imported
-     * function value, literals of the declared host, extern-C, and DEAL
+     * function value, literals of the declared host, host, and DEAL
      * classes, and an imported stdlib module whose catalog rows are
      * surface-populated but never read (finding 2's shape).
      */
@@ -567,8 +557,7 @@ public class HostModuleLoadEmissionTest {
          "externals": {
            "host/carrier": {"declaration": "bindings/carrier.d.deal"},
            "host/base": {"declaration": "bindings/base.d.deal"},
-           "native/sample": {"declaration": "bindings/sample.d.deal",
-                             "nativeLibrary": "libs/sample.so"}}}
+           "native/sample": {"declaration": "bindings/sample.d.deal"}}}
         """;
 
     private record Fixture(
@@ -577,7 +566,6 @@ public class HostModuleLoadEmissionTest {
         ProjectInterfaceIndex index,
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
-        Map<ModuleId, FfiGeneratedModule> externCModules,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
         Map<String, String> externals) {
     }
@@ -652,11 +640,7 @@ public class HostModuleLoadEmissionTest {
                 + detail + " / " + orchestrator.diagnostics());
         }
         HostDeclarationSurface surface = orchestrator.hostDeclarationSurface();
-        Map<ModuleId, FfiGeneratedModule> externCModules = new LinkedHashMap<>();
-        for (Map.Entry<String, FfiGeneratedModule> generated
-                : orchestrator.ffiGenerations().entrySet()) {
-            externCModules.put(new ModuleId(generated.getKey()), generated.getValue());
-        }
+
         Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
         for (ModuleId declarationModule : surface.moduleIds()) {
             String specifier = null;
@@ -672,7 +656,7 @@ public class HostModuleLoadEmissionTest {
                 : new CanonicalModuleIdentity.ExternalModule(specifier));
         }
         return new Fixture(root, built.input(), built.index(), manifests.manifests(),
-            surface, externCModules, identities, externals);
+            surface, identities, externals);
     }
 
     private static Fixture abiFixture(String appSource) throws Exception {
@@ -810,7 +794,6 @@ public class HostModuleLoadEmissionTest {
         return SemanticLowerer.lowerProject(productionInvocation(),
             fixture.checkedProject(), fixture.index(), fixture.manifests(),
             fixture.surface(), fixture.declarationIdentities(),
-            fixture.externCModules(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
@@ -1146,7 +1129,7 @@ public class HostModuleLoadEmissionTest {
      * import, compiled through the public {@code deal compile}) carries
      * exactly three fields of its one factory store, once per chunk — the
      * canonical class field-descriptor map for every HOST-kind declared
-     * class, every extern-C declared class, and every DEAL class of the
+     * class, every DEAL class of the
      * compile (declaration order, the builtin {@code Error} identity never a
      * key), the class-kind map for exactly those identities, and the
      * canonical function-signature shape map with the declared
@@ -1178,7 +1161,7 @@ public class HostModuleLoadEmissionTest {
             "the chunk emits exactly one function-shape map");
 
         // The class field map: declaration order, HOST classes from the
-        // declaration surface, extern-C from the declared ClassLayout, DEAL
+        // declaration surface, host from the declared ClassLayout, DEAL
         // classes from the compile's class layouts. The field descriptors
         // are the canonical texts (a nested class field is the class
         // identity, an optional array is [?], an optional nullable is ?).
@@ -1210,7 +1193,7 @@ public class HostModuleLoadEmissionTest {
             + "[\"@$external/host/carrier/Endpoint\"] = \"host\", "
             + "[\"@$external/host/carrier/ServerConfig\"] = \"host\", "
             + "[\"@$external/host/carrier/Bundle\"] = \"host\", "
-            + "[\"@$external/native/sample/Pair\"] = \"extc\", "
+            + "[\"@$external/native/sample/Pair\"] = \"host\", "
             + "[\"@$external/host/base/Base\"] = \"host\", "
             + "[\"@src/util.deal/Point\"] = \"deal\", "
             + "[\"@src/app.deal/Widget\"] = \"deal\"}";
@@ -1588,7 +1571,7 @@ public class HostModuleLoadEmissionTest {
       [K.classname] = "@$external/native/sample/Pair", left = 7, right = 1.5}
     local pairIn = __factories.__hostCarrierIn(nil, hostPair, {})
     say("in.pair.chunk-tag", pairIn[K.c])
-    say("in.pair.field-left", pairIn[K.f].left)
+    say("in.pair.field-left", pairIn.left)
 
     local hostUnknown = {[K.kind] = "class",
       [K.classname] = "@$external/host/other/Thing", v = 1}
@@ -1690,7 +1673,7 @@ public class HostModuleLoadEmissionTest {
     /**
      * The exact row transcript of the host-carrier bridge probe: both
      * directions of the pair (class identity and top-level fields, the
-     * DEAL/extern-C carrier path, the Error mapping, the shared and copied
+     * DEAL carrier path, the Error mapping, the shared and copied
      * array/table carriers with their marks, the dense/sparse inbound
      * arrays, the alias memo, idempotency, cycle termination, and the
      * null/absent/numeric-variant rules) plus the projected function
@@ -1857,7 +1840,7 @@ public class HostModuleLoadEmissionTest {
      * adapter they compose and before every crossing site, and then driven
      * directly under real {@code luajit}. The probe rows pin both directions
      * of the pair: the class identity and top-level fields, the DEAL and
-     * extern-C carrier path, the builtin {@code Error} mapping, the shared
+     * host carrier path, the builtin {@code Error} mapping, the shared
      * and copied array/table carriers with their marks, the dense and
      * sparse inbound arrays, the per-crossing alias memo, idempotency,
      * cycle termination, the null/absent/numeric-variant rules, the

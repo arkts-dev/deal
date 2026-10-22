@@ -13,7 +13,6 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -345,8 +344,7 @@ public class DynamicProducerRuleTest {
     /** The one project lowering entry over the fixture. */
     private static SemanticLowerer.ProjectLoweringResult lower(Fixture fixture) {
         return SemanticLowerer.lowerProject(invocation(), fixture.input(), fixture.index(),
-            fixture.manifests(), new HostDeclarationSurface(Map.of()), Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(fixture.module().ast().span()),
+            fixture.manifests(), new HostDeclarationSurface(Map.of()), Map.of(), BuiltinErrorDeclaration.synthesized(fixture.module().ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
     }
@@ -961,17 +959,13 @@ public class DynamicProducerRuleTest {
             throw new IllegalStateException("the probe project did not build: "
                 + detail + " / " + orchestrator.diagnostics());
         }
-        Map<ModuleId, FfiGeneratedModule> externCModules = new LinkedHashMap<>();
-        for (Map.Entry<String, FfiGeneratedModule> generated
-                : orchestrator.ffiGenerations().entrySet()) {
-            externCModules.put(new ModuleId(generated.getKey()), generated.getValue());
-        }
+
         BuiltinErrorDeclaration builtinError = BuiltinErrorDeclaration.synthesized(
             built.input().modules().get(0).ast().span());
         SemanticLowerer.ProjectLoweringResult lowered = SemanticLowerer.lowerProject(
             invocation(), built.input(), built.index(), manifests.manifests(),
             orchestrator.hostDeclarationSurface(),
-            Map.<ModuleId, CanonicalModuleIdentity>of(), externCModules, builtinError,
+            Map.<ModuleId, CanonicalModuleIdentity>of(), builtinError,
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());
         deleteRecursively(root);

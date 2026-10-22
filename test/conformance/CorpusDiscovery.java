@@ -151,7 +151,6 @@ public final class CorpusDiscovery {
         "Error handling",
         "Async/Await",
         "Modules, declarations, standard library, and host ABI",
-        "C FFI declaration files",
         "Runtime execution model",
         "Standard library declarations",
         "Test suite basis",
@@ -362,56 +361,8 @@ public final class CorpusDiscovery {
             }
         }
 
-        for (String importPath : ffiImportPaths(source)) {
-            CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(conformanceRoot,
-                importPath);
-            if (wiring == null) {
-                continue;
-            }
-            Path absoluteRoot = conformanceRoot.toAbsolutePath()
-                .normalize();
-            String declarationPath = CorpusDiscovery.slash(
-                absoluteRoot.relativize(
-                    absoluteRoot.resolve(CorpusFfi.FFI_DIR)
-                        .resolve(wiring.declarationCorpusPath())
-                        .toAbsolutePath().normalize()));
-            Fixture dependency = corpusByPath.get(declarationPath);
-            if (dependency != null) {
-                collectCompilationModules(dependency.corpusPath(),
-                    dependency.source(), corpusByPath, conformanceRoot, set,
-                    inProgress);
-            }
-        }
-    }
 
-    /**
-     * Every corpus FFI externals import path of the source (a
-     * non-relative import keyed in the corpus FFI wiring), via the real
-     * lexer/parser. A source that fails to lex or parse yields no paths
-     * (fail closed).
-     */
-    public static List<String> ffiImportPaths(String source) {
-        List<String> paths = new ArrayList<>();
-        LexResult lex = new Lexer(source,
-            "<corpus-ffi-import-resolution>").tokenize();
-        if (lex.hasErrors()) {
-            return paths;
-        }
-        ParseResult result = new Parser(lex.tokens(),
-            "<corpus-ffi-import-resolution>", lex.directiveEvents()).parse();
-        if (result.hasErrors()) {
-            return paths;
-        }
-        for (StatementNode statement : result.program().statements()) {
-            if (statement instanceof ImportDeclaration decl
-                    && !decl.modulePath().startsWith("./")
-                    && !decl.modulePath().startsWith("../")) {
-                paths.add(decl.modulePath());
-            }
-        }
-        return paths;
     }
-
     /**
      * Every relative-import module path of the source, via the real
      * lexer/parser. A source that fails to lex or parse yields no paths

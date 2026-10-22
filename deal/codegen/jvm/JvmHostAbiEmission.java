@@ -145,14 +145,7 @@ final class JvmHostAbiEmission {
                 }
                 HostDeclarationSurface.DeclarationFacts facts =
                     declarationFactsOf(op, surface, payload.resolvedModule());
-                if (facts.kind()
-                        != HostDeclarationSurface.DeclarationKind.HOST) {
-                    throw rejectedOp(op, "the declaration module '"
-                        + payload.resolvedModule().path() + "' of MODULE_IMPORT "
-                        + op.opId() + " is kind " + facts.kind()
-                        + ": the extern-C declaration load is the FFI child's"
-                        + " (fail-closed remnant)");
-                }
+
                 modules.putIfAbsent(payload.resolvedModule().path(),
                     new HostModule(payload.resolvedModule().path(),
                         payload.rawSpecifier(), facts));

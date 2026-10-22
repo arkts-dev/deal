@@ -189,8 +189,7 @@ public class ErrorRethrowTransportProductionTest {
         return SemanticLowerer.lowerProject(invocation(), fixture.built().input(),
             fixture.built().index(), fixture.manifests().manifests(),
             fixture.orchestrator().hostDeclarationSurface(),
-            new LinkedHashMap<>(), new LinkedHashMap<>(),
-            BuiltinErrorDeclaration.synthesized(
+            new LinkedHashMap<>(), BuiltinErrorDeclaration.synthesized(
                 fixture.built().input().modules().get(0).ast().span()),
             List.of(deal.semantic.ir.IntrinsicKind.INT_CONVERT,
                 deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT,

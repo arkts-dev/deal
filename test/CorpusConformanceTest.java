@@ -226,7 +226,7 @@ public class CorpusConformanceTest {
             // wrong-shaped implementation is a harness failure, never a
             // pass).
             validateHostHarness();
-            for (String tool : List.of("luajit", "javac", "gcc")) {
+            for (String tool : List.of("luajit", "javac")) {
                 var check = BoundedProcess.runCaptured(List.of(tool, tool.equals("luajit") ? "-v" : "--version"));
                 if (check.exitCode() != 0) throw new HarnessFailure("TOOL_MISSING: " + tool);
             }
@@ -574,24 +574,7 @@ public class CorpusConformanceTest {
                     stack.push(normalized);
                 }
 
-                for (String importPath : ffiImports(List.of(current))) {
-                    deal.test.conformance.CorpusFfi.Wiring wiring =
-                        deal.test.conformance.CorpusFfi.wiringFor(
-                            conformanceRoot, importPath);
-                    if (wiring == null) {
-                        continue;
-                    }
-                    String declarationCorpus =
-                        deal.test.conformance.CorpusFfi.FFI_DIR + "/"
-                            + wiring.declarationCorpusPath();
-                    TestFile target = byPath.get(
-                        conformanceRoot.resolve(declarationCorpus)
-                            .toAbsolutePath().normalize().toString());
-                    if (target != null
-                            && target.expected().equals("companion")) {
-                        result.add(target.relativePath());
-                    }
-                }
+
             } catch (IOException ignored) {
                 // Unreadable file: the importer's run reports the failure.
             }
@@ -753,16 +736,7 @@ public class CorpusConformanceTest {
             all.addAll(deal.checker.NullReturnFallOff.diagnostics(
                 parseResult.program()));
 
-            for (StatementNode stmt
-                    : parseResult.program().statements()) {
-                if (stmt instanceof ImportDeclaration imp
-                        && deal.test.conformance.CorpusFfi.isFfiImport(
-                            conformanceRoot, imp.modulePath())) {
-                    all.addAll(deal.test.conformance.CorpusFfi.module(
-                        conformanceRoot, imp.modulePath())
-                        .validationDiagnostics());
-                }
-            }
+
             return all;
         } catch (IOException e) {
             String filename = file.toString();
@@ -803,11 +777,7 @@ public class CorpusConformanceTest {
                     + "' is not a spec-listed stdlib module");
             }
 
-            if (deal.test.conformance.CorpusFfi.isFfiImport(
-                    conformanceRoot, modulePath)) {
-                return deal.test.conformance.CorpusFfi.module(
-                    conformanceRoot, modulePath).exports();
-            }
+
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
                 try {
@@ -1071,38 +1041,13 @@ public class CorpusConformanceTest {
             // host-fixtures declaration (the JvmConformanceTest
             // externals-wiring pattern).
             Set<String> hostNames = hostImports(written.values());
-            Set<String> ffiNames = ffiImports(written.values());
             Map<String, String> externals =
-                writeProjectManifest(projectRoot, hostNames, ffiNames);
+                writeProjectManifest(projectRoot, hostNames);
 
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
                 outputRoot, externals);
             if (!run.success()) {
 
-                deal.test.conformance.SidecarExpectations
-                        .StructuredExpectationSidecar sidecar =
-                    sidecarOf(test.path());
-                List<CompilerDiagnostic> errors = run.diagnostics().stream().filter(d -> "error".equals(d.severity())).toList();
-                if (sidecar != null
-                        && sidecar.expectationFor(backend())
-                            instanceof deal.test.conformance
-                                .SidecarExpectations.RuntimeExpectation
-                                .Rejected rejected
-                        && errors.size() == 1
-                        && rejected.code().equals(errors.getFirst().code())
-                        && (!rejected.line().isPresent() || rejected.line().getAsInt() == errors.getFirst().line())
-                        && (!rejected.column().isPresent() || rejected.column().getAsInt() == errors.getFirst().column())
-                        && !Files.exists(outputRoot.resolve(entryModulePath + ".js"))
-                        && !Files.exists(outputRoot.resolve(entryModulePath + ".lua"))
-                        && !Files.exists(outputRoot.resolve(deal.codegen.jvm.JvmNames.classNameFor(
-                            (corpusRelOf(test.path()) + "/main").replace('/', '.')) + ".java"))) {
-                        applicablePassed.incrementAndGet();
-                    log("  [" + test.relativePath()
-                        + "] OK (compile-reject E6006 "
-                        + "FFI_UNSUPPORTED_BACKEND)");
-                    return new Outcome(test, classified, true,
-                        "compile-reject E6006 FFI_UNSUPPORTED_BACKEND");
-                }
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] FAIL (orchestrator compile failed): "
@@ -1354,16 +1299,11 @@ public class CorpusConformanceTest {
                 System.setErr(new PrintStream(captured, true,
                     StandardCharsets.UTF_8));
                 CompilationOrchestrator orchestrator;
-                if (externalsDeclarations.keySet().stream().anyMatch(k -> deal.test.conformance.CorpusFfi.isFfiImport(conformanceRoot, k))) {
-                    var located = deal.project.ProjectLocator.locate(entryFile.toAbsolutePath().toString(), null);
-                    if (located.context() == null) throw new HarnessFailure("invalid corpus project: " + located.e2010());
-                    orchestrator = new CompilationOrchestrator(located.context(), entryFile.toAbsolutePath().normalize(),
-                        false, false, false, false, null, LANE_INVOCATION);
-                } else {
+
                     orchestrator = new CompilationOrchestrator(entryFile.toAbsolutePath().normalize(),
                         outputRoot.toAbsolutePath().normalize(), false, false, false, false, TARGET.get(),
                         externalsDeclarations, List.of(projectRoot.toAbsolutePath().normalize()), REPO_ROOT, null, LANE_INVOCATION);
-                }
+
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success,
                     orchestrator.diagnostics(),
@@ -1391,7 +1331,7 @@ public class CorpusConformanceTest {
      */
 
     private static Map<String, String> writeProjectManifest(
-            Path projectRoot, Set<String> hostNames, Set<String> ffiImports)
+            Path projectRoot, Set<String> hostNames)
             throws IOException {
         StringBuilder dealJson = new StringBuilder();
         dealJson.append("{\n  \"languageVersion\": \"1.3\",\n");
@@ -1400,38 +1340,8 @@ public class CorpusConformanceTest {
         dealJson.append("  \"backend\": \"").append(backend()).append("\"");
         Map<String, String> externals = new LinkedHashMap<>();
 
-        for (String raw : ffiImports) {
-            deal.test.conformance.CorpusFfi.Wiring wiring =
-                deal.test.conformance.CorpusFfi.wiringFor(
-                    conformanceRoot, raw);
-            if (wiring == null) {
-                throw new HarnessFailure(
-                    "no corpus FFI wiring for " + raw + " — the corpus driver "
-                        + "cannot wire the externals entry");
-            }
-            Path declaration = conformanceRoot.resolve(
-                    deal.test.conformance.CorpusFfi.FFI_DIR)
-                .resolve(wiring.declarationCorpusPath());
-            if (!Files.isRegularFile(declaration)) {
-                throw new HarnessFailure(
-                    "the corpus FFI declaration is missing: "
-                        + declaration);
-            }
-            String declRel = "bindings/ffi/" + raw.replace('/', '_')
-                + ".d.deal";
-            Path declTarget = projectRoot.resolve(declRel);
-            if (declTarget.getParent() != null) {
-                Files.createDirectories(declTarget.getParent());
-            }
-            Files.writeString(declTarget,
-                sourceSnapshot(declaration).stripped());
-            externals.put(raw,
-                declTarget.toAbsolutePath().normalize().toString());
-            materializedCorpusFiles.add(
-                deal.test.conformance.CorpusFfi.FFI_DIR + "/"
-                    + wiring.declarationCorpusPath());
-        }
-        if (!hostNames.isEmpty() || !ffiImports.isEmpty()) {
+
+        if (!hostNames.isEmpty()) {
             dealJson.append(",\n  \"externals\": {\n");
             boolean first = true;
             for (String hostName : hostNames) {
@@ -1460,19 +1370,7 @@ public class CorpusConformanceTest {
                 externals.put("host." + hostName, declPath);
                 externals.put("host/" + hostName, declPath);
             }
-            for (String raw : ffiImports) {
-                if (!first) {
-                    dealJson.append(",\n");
-                }
-                first = false;
-                dealJson.append("    \"").append(raw)
-                    .append("\": { \"declaration\": \"conformance/bindings/ffi/")
-                    .append(raw.replace('/', '_')).append(".d.deal\"");
-                dealJson.append(", \"nativeLibrary\": ")
-                    .append(jsStringLiteral(deal.test.conformance.CorpusFfi.loaderTextFor(conformanceRoot,
-                        deal.test.conformance.CorpusFfi.wiringFor(conformanceRoot, raw))));
-                dealJson.append(" }");
-            }
+
             dealJson.append("\n  }");
         }
         dealJson.append("\n}\n");
@@ -1647,33 +1545,6 @@ public class CorpusConformanceTest {
         }
         return hosts;
     }
-
-    /** Corpus FFI externals import specifiers ({@code candidate/*})
-     * appearing in any of the materialized files' sources, in order
-     * (drives deal.json externals generation through the corpus-owned
-     * FFI wiring). */
-    private static Set<String> ffiImports(Collection<Path> files)
-            throws IOException {
-        Set<String> ffi = new LinkedHashSet<>();
-        for (Path file : files) {
-            String source = rawSource(file);
-            for (String line : source.split("\n")) {
-                String trimmed = line.trim();
-                if (!trimmed.startsWith("import ")) continue;
-                int from = trimmed.indexOf(" from \"");
-                if (from < 0) continue;
-                int end = trimmed.indexOf('"', from + 7);
-                if (end < 0) continue;
-                String path = trimmed.substring(from + 7, end);
-                if (deal.test.conformance.CorpusFfi.isFfiImport(
-                        conformanceRoot, path)) {
-                    ffi.add(path);
-                }
-            }
-        }
-        return ffi;
-    }
-
     /**
      * The parsed Structured Expectation Sidecar of one fixture, or
      * null when the fixture carries no sidecar (the compile-reject

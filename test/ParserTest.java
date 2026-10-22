@@ -231,10 +231,6 @@ public class ParserTest {
         // @deal-version file directive value validation (DEAL v1.3)
         testDealVersionDirectives();
 
-        testExternCWrongFileKind();
-        testExternCDuplicateAndPlacement();
-        testCMarkerOutsideExternC();
-        testCMarkerCardinality();
         testDeclarationFileJsonableNoEffect();
         testTemplateEmbeddedDirectives();
 
@@ -2643,150 +2639,6 @@ public class ParserTest {
         }
     }
 
-    static void testExternCWrongFileKind() {
-        System.out.println("-- @extern-c wrong file kind -> E1046 --");
-
-        // @extern-c in an implementation (.deal) file: E1046 at the
-        // directive's complete comment range and no extern-C state.
-        ParseResult r = parse("// @extern-c\nexport class A { x: int = 0; }");
-        assertParseError(r, "E1046", "@extern-c in a .deal file rejected");
-        check(!r.program().fileDirectives().externC(),
-            "no extern-C state after wrong-file-kind rejection");
-        CompilerDiagnostic d = diagOf(r, "E1046");
-        if (d != null) {
-            check(d.range().startScalarOffset() == 0
-                    && d.range().endScalarOffset() == 12
-                    && d.range().scalarLength() == 12,
-                "E1046 at the complete comment (0,12), got ("
-                    + d.range().startScalarOffset() + ","
-                    + d.range().endScalarOffset() + ")");
-        }
-    }
-
-    static void testExternCDuplicateAndPlacement() {
-        System.out.println("-- @extern-c duplicate/placement -> E1046 --");
-
-        // Duplicate @extern-c in a .d.deal file: E1046 at the duplicate.
-        ParseResult r = parseFile(
-            "// @extern-c\n// @extern-c\nexport class A { x: int = 0; }",
-            "mod.d.deal");
-        assertParseError(r, "E1046", "duplicate @extern-c rejected");
-        check(r.program().fileDirectives().externC(),
-            "the first valid event keeps extern-C effective");
-        CompilerDiagnostic dup = r.diagnostics().stream()
-                .filter(d -> d.code().equals("E1046")
-                        && d.range().startLine() == 2)
-                .findFirst().orElse(null);
-        check(dup != null, "duplicate E1046 at the second comment");
-
-        // @extern-c after a declaration: E1046 and no effective extern-C.
-        r = parseFile(
-            "export class A { x: int = 0; }\n// @extern-c",
-            "mod.d.deal");
-        assertParseError(r, "E1046",
-            "@extern-c after a declaration rejected");
-        check(!r.program().fileDirectives().externC(),
-            "placement violation drops effective extern-C");
-
-        // @extern-c before declarations but with a later import: E1046.
-        r = parseFile(
-            "// @extern-c\nimport * as m from \"./m\";\nexport class A { x: int = 0; }",
-            "mod.d.deal");
-        assertParseError(r, "E1046",
-            "@extern-c followed by an import rejected");
-        check(!r.program().fileDirectives().externC(),
-            "later import drops effective extern-C");
-
-        // Valid placement: imports first, then @extern-c, then classes.
-        r = parseFile(
-            "import * as m from \"./m\";\n// @extern-c\n// @c-struct\nexport class A { x: int = 0; }",
-            "mod.d.deal");
-        assertNoParseErrors(r, "@extern-c after imports accepted");
-        check(r.program().fileDirectives().externC(),
-            "effective extern-C in the valid placement fixture");
-        check(r.program().fileDirectives().externCRange() != null
-                && r.program().fileDirectives().externCRange()
-                    .startScalarOffset() == 26,
-            "externCRange = the first event's complete comment range (26)");
-    }
-
-    static void testCMarkerOutsideExternC() {
-        System.out.println("-- C markers outside extern-C -> E1046 --");
-
-        ParseResult r = parse("// @c-struct\nexport class A { x: int = 0; }");
-        assertParseError(r, "E1046", "@c-struct without @extern-c rejected");
-        CompilerDiagnostic d = diagOf(r, "E1046");
-        if (d != null) {
-            check(d.range().startScalarOffset() == 0
-                    && d.range().endScalarOffset() == 12
-                    && d.range().scalarLength() == 12,
-                "E1046 at the directive range (0,12), got ("
-                    + d.range().startScalarOffset() + ","
-                    + d.range().endScalarOffset() + ")");
-        }
-
-        // The marker was recorded on the class; no JSONABLE metadata.
-        ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
-        ClassDeclaration cd = (ClassDeclaration) ed.declaration();
-        check(cd.directives().contains(DeclarationDirective.C_STRUCT),
-            "C marker recorded on the export-wrapped class");
-        check(!cd.isJsonable(), "no jsonable metadata");
-    }
-
-    static void testCMarkerCardinality() {
-        System.out.println("-- C-marker cardinality -> E7002 --");
-
-        // Zero markers: E7002 at the class span.
-        ParseResult r = parseFile("// @extern-c\nexport class A { x: int = 0; }",
-            "mod.d.deal");
-        assertParseError(r, "E7002", "zero C markers rejected in extern-C file");
-        check(r.program().fileDirectives().externC(), "extern-C effective");
-        CompilerDiagnostic zero = diagOf(r, "E7002");
-        if (zero != null) {
-            check(zero.range().startLine() == 2,
-                "zero-marker E7002 anchors at the class span (line 2), got "
-                    + zero.range().startLine());
-        }
-
-        // Exactly one marker: valid.
-        r = parseFile(
-            "// @extern-c\n// @c-struct\nexport class A { x: int = 0; }",
-            "mod.d.deal");
-        assertNoParseErrors(r, "exactly one C marker accepted");
-        ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
-        ClassDeclaration cd = (ClassDeclaration) ed.declaration();
-        check(cd.directives().contains(DeclarationDirective.C_STRUCT)
-                && !cd.directives().contains(DeclarationDirective.JSONABLE),
-            "the class records C_STRUCT only");
-
-        // Two markers: E7002 at the class span.
-        r = parseFile(
-            "// @extern-c\n// @c-struct\n// @c-pointer\nexport class A { x: int = 0; }",
-            "mod.d.deal");
-        assertParseError(r, "E7002", "two C markers rejected in extern-C file");
-        CompilerDiagnostic two = diagOf(r, "E7002");
-        if (two != null) {
-            check(two.range().startLine() == 4,
-                "two-marker E7002 anchors at the class span (line 4), got "
-                    + two.range().startLine());
-        }
-
-        // A C marker on a non-class declaration in an extern-C file:
-        // E7002 at the declaration node span.
-        r = parseFile(
-            "// @extern-c\n// @c-struct\nexport function f(): int { return 0; }",
-            "mod.d.deal");
-        assertParseError(r, "E7002",
-            "C marker on an exported function rejected in extern-C file");
-        CompilerDirective mark = null;
-        // (range pinned: the export declaration span starts on line 3)
-        CompilerDiagnostic fn = r.diagnostics().stream()
-                .filter(d -> d.code().equals("E7002")
-                        && d.range().startLine() == 3)
-                .findFirst().orElse(null);
-        check(fn != null, "function-marker E7002 anchors at the declaration (line 3)");
-    }
-
     static void testDeclarationFileJsonableNoEffect() {
         System.out.println("-- declaration-file @jsonable no-effect (D4) --");
 
@@ -2909,16 +2761,16 @@ public class ParserTest {
             "embedded @deal-version produces E1044 placement, got "
                 + r3.diagnostics());
 
-        // A C marker inside an interpolation: E1046 (no extern-C context).
+        // A C marker inside an interpolation: E1044 (no extern-C context).
         String src4 = "let s = `${ // @c-struct\n x}`;";
         ParseResult r4 = parse(src4);
-        CompilerDiagnostic e1046c = diagOf(r4, "E1046");
+        CompilerDiagnostic e1046c = diagOf(r4, "E1044");
         check(e1046c != null,
-            "embedded C marker produces E1046, got " + r4.diagnostics());
+            "embedded C marker produces E1044, got " + r4.diagnostics());
         if (e1046c != null) {
-            check(e1046c.range().startScalarOffset() == 12
+            check(e1046c.range().startScalarOffset() == 16
                     && e1046c.range().endScalarOffset() == 24,
-                "embedded C-marker E1046 at the rebased directive range (12,24)");
+                "embedded C-marker E1044 at the rebased directive range (12,24)");
         }
     }
 

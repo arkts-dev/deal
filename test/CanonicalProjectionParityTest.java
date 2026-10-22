@@ -664,7 +664,6 @@ public class CanonicalProjectionParityTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> identities,
-        Map<ModuleId, deal.ffi.FfiGeneratedModule> externCModules,
         Map<String, Integer> strippedByCorpusPath,
         ExecutableLoweredProject project,
         Map<ModuleId, StructuredBodyTable> tables,
@@ -896,15 +895,10 @@ public class CanonicalProjectionParityTest {
             identities.put(declaration, new CanonicalModuleIdentity.ExternalModule(
                 declaration.path().replace('/', '.')));
         }
-        Map<ModuleId, deal.ffi.FfiGeneratedModule> externC = new LinkedHashMap<>();
-        for (Map.Entry<String, deal.ffi.FfiGeneratedModule> generated
-                : orchestrator.ffiGenerations().entrySet()) {
-            externC.put(new ModuleId(generated.getKey()), generated.getValue());
-        }
+
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
             invocation, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), identities, externC,
-            BuiltinErrorDeclaration.synthesized(
+            orchestrator.hostDeclarationSurface(), identities, BuiltinErrorDeclaration.synthesized(
                 built.input().modules().stream()
                     .filter(module -> module.moduleId()
                         .equals(built.input().entryModule()))
@@ -918,7 +912,7 @@ public class CanonicalProjectionParityTest {
         }
         return new Compiled(root, mirror, spec, invocation, built.input(),
             built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), identities, externC, stripped,
+            orchestrator.hostDeclarationSurface(), identities, stripped,
             lowering.project(), lowering.tables(), lowering.registries(), hostStems,
             modulePathToCorpus, moduleDirToCorpus, new JvmPreparation());
     }
@@ -6270,7 +6264,7 @@ public class CanonicalProjectionParityTest {
         }
         return SemanticLowerer.lowerProject(invocation, built.input(), built.index(),
             manifests.manifests(), new HostDeclarationSurface(Map.of()), Map.of(),
-            Map.of(), BuiltinErrorDeclaration.synthesized(program.span()),
+            BuiltinErrorDeclaration.synthesized(program.span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
             Set.of());
@@ -6324,7 +6318,7 @@ public class CanonicalProjectionParityTest {
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
             invocation, seed.built().input(), seed.built().index(),
             seed.manifests().manifests(), new HostDeclarationSurface(Map.of()),
-            Map.of(), Map.of(), BuiltinErrorDeclaration.synthesized(
+            Map.of(), BuiltinErrorDeclaration.synthesized(
                 seed.input().ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
@@ -7110,16 +7104,14 @@ public class CanonicalProjectionParityTest {
         try {
             result = ProductionProjectEmission.run(compiled.invocation(),
                 compiled.checkedProject(), compiled.index(), compiled.manifests(),
-                compiled.surface(), compiled.identities(), compiled.externCModules(),
-                compiled.mirror().toString(),
-                BuiltinErrorDeclaration.synthesized(
+                compiled.surface(), compiled.identities(), BuiltinErrorDeclaration.synthesized(
                     compiled.checkedProject().modules().stream()
                         .filter(module -> module.moduleId()
                             .equals(compiled.checkedProject().entryModule()))
                         .findFirst().orElseThrow().ast().span()),
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
-                Set.of(), backend, false,
+                java.util.Set.of(), backend, false,
                 deal.distribution.DistributionHome.forManifestDirectory(
                     compiled.mirror().toString()), stager);
             if (result.emitted()) {
@@ -9377,8 +9369,7 @@ public class CanonicalProjectionParityTest {
         }
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
             invocation, built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
-            BuiltinErrorDeclaration.synthesized(
+            orchestrator.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().stream()
                     .filter(module -> module.moduleId()
                         .equals(built.input().entryModule()))
@@ -9396,7 +9387,7 @@ public class CanonicalProjectionParityTest {
         return new Compiled(root, moduleRoot, new Case(what, "main", Entry.MAIN,
             List.of(), null, null), invocation, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
-            Map.of(), Map.of(), Map.of("app.deal", 0, "lib.deal", 0),
+            Map.of(), Map.of("app.deal", 0, "lib.deal", 0),
             lowering.project(), lowering.tables(), lowering.registries(), Set.of(),
             Map.of("app", "app.deal", "lib", "lib.deal"), Map.of(),
             new JvmPreparation());

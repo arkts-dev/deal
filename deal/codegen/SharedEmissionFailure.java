@@ -15,9 +15,7 @@ import deal.semantic.ir.DiagnosticOriginCarrier;
  * own copied origin, and the arm projects it through the range-aware
  * registry surface. A genuinely originless emitter failure stays an
  * ordinary {@link IllegalStateException} and keeps the canonical
- * synthetic projection. Specialized signals (for example the LuaJIT
- * extern-C provider gap) extend this class, keep their specialized
- * fields, and carry the same range contract.</p>
+ * synthetic projection. Source-bearing signals retain the same range contract.</p>
  *
  */
 public class SharedEmissionFailure extends IllegalStateException

@@ -1698,9 +1698,7 @@ public final class DefaultSemanticSerializer {
          * {@code C$toJson}): the resolved export signature — the
          * exact Func type {@code input.exports()} carries — plus the
          * declaration's semantic resource identity digest, mirroring
-         * the declared-wrapper rule of D5 (the generated binding/FFI
-         * plan semantics join the domain once binding generation
-         * lands). Identities participate through digests only, never
+         * the declared-wrapper rule of D5 (the generated helper semantics share the provider domain). Identities participate through digests only, never
          * raw URIs.
          */
         private String syntheticJsonableExportContent(

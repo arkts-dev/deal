@@ -19,15 +19,11 @@ import deal.codegen.js.JsSourceFile;
 import deal.codegen.js.RuntimeDeclarationProjection;
 import deal.codegen.js.RuntimeDeclarationSurface;
 import deal.codegen.jvm.JvmSemanticEmitter;
-import deal.codegen.lua.FfiEmissionInput;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.distribution.DistributionHome;
-import deal.ffi.FfiForwardBindings;
-import deal.ffi.FfiGeneratedModule;
-import deal.ffi.FfiImportedFunctionReference;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -160,9 +156,8 @@ public class ProductionProjectEmissionTest {
     private static final ModuleId HOST_CFG = new ModuleId("host.cfg");
     private static final String HOST_CFG_SPECIFIER = "host/cfg";
 
-    /** The extern-C declaration module of the admission probe. */
-    private static final ModuleId NATIVE_MATH = new ModuleId("native.math");
-    private static final String EXTERN_C_SPECIFIER = "native/math";
+
+
 
     private static final String LIB_SOURCE = """
         export function add(a: int, b: int): int {
@@ -301,20 +296,8 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
-    /** The extern-C declaration: the narrowed guard's remaining shape. */
-    private static final String EXTERN_C_DECLARATION = """
-        // @extern-c
-        export function nativeAdd(a: int, b: int): int;
-        """;
 
-    /** The extern-C import fixture: the import is never called. */
-    private static final String EXTERN_C_APP_SOURCE = """
-        import * as native from "native/math";
 
-        export function main(): null {
-            return null;
-        }
-        """;
 
     /** The async library of the cross-module async fixture. */
     private static final String ASYNC_LIB_SOURCE = """
@@ -365,7 +348,6 @@ public class ProductionProjectEmissionTest {
         ProjectInterfaceIndex index,
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
-        Map<ModuleId, FfiGeneratedModule> externCModules,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
         DistributionHome distributionHome) implements AutoCloseable {
         public void close() { deleteRecursively(root); }
@@ -432,11 +414,7 @@ public class ProductionProjectEmissionTest {
                 + " / " + orchestrator.diagnostics());
         }
         HostDeclarationSurface surface = orchestrator.hostDeclarationSurface();
-        Map<ModuleId, FfiGeneratedModule> externCModules = new LinkedHashMap<>();
-        for (Map.Entry<String, FfiGeneratedModule> generated
-                : orchestrator.ffiGenerations().entrySet()) {
-            externCModules.put(new ModuleId(generated.getKey()), generated.getValue());
-        }
+
         Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
         for (ModuleId declarationModule : surface.moduleIds()) {
             String specifier = null;
@@ -451,7 +429,7 @@ public class ProductionProjectEmissionTest {
                 : new CanonicalModuleIdentity.ExternalModule(specifier));
         }
         return new Fixture(root, built.input(), built.index(), manifests.manifests(),
-            surface, externCModules, identities,
+            surface, identities,
             DistributionHome.forManifestDirectory(src.toString()));
     }
 
@@ -492,7 +470,7 @@ public class ProductionProjectEmissionTest {
         CheckedProjectInput checked = fixture.checkedProject();
         return new Fixture(fixture.root(), new CheckedProjectInput(checked.invocation(),
             checked.entryModule(), modules, checked.releaseStateHash()), fixture.index(),
-            fixture.manifests(), fixture.surface(), fixture.externCModules(),
+            fixture.manifests(), fixture.surface(),
             fixture.declarationIdentities(), fixture.distributionHome());
     }
 
@@ -667,15 +645,6 @@ public class ProductionProjectEmissionTest {
         return compileProject(sources,
             Map.of(HOST_CFG_SPECIFIER, "src/cfg.d.deal"));
     }
-
-    private static Fixture externCFixture() throws Exception {
-        Map<String, String> sources = new LinkedHashMap<>();
-        sources.put("src/native.d.deal", EXTERN_C_DECLARATION);
-        sources.put("src/app.deal", EXTERN_C_APP_SOURCE);
-        return compileProject(sources,
-            Map.of(EXTERN_C_SPECIFIER, "src/native.d.deal"));
-    }
-
     /**
      * The JavaScript production drive's class/HOST/call/async/stdlib
      * fixture: one host declaration module carrying a declared class and two
@@ -1011,8 +980,7 @@ public class ProductionProjectEmissionTest {
             throws Exception {
         return SemanticLowerer.lowerProject(productionInvocation(),
             fixture.checkedProject(), fixture.index(), fixture.manifests(),
-            fixture.surface(), fixture.declarationIdentities(), fixture.externCModules(),
-            BuiltinErrorDeclaration.synthesized(
+            fixture.surface(), fixture.declarationIdentities(), BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
@@ -1025,13 +993,11 @@ public class ProductionProjectEmissionTest {
         return ProductionProjectEmission.run(productionInvocation(),
             fixture.checkedProject(), fixture.index(), fixture.manifests(),
             fixture.surface(), fixture.declarationIdentities(),
-            fixture.externCModules(),
-            fixture.distributionHome().manifestDirectoryText(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW),
-            Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
+            java.util.Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
     }
 
     private record Emission(ProductionProjectEmission.Result result, String stderr) {
@@ -2184,57 +2150,6 @@ public class ProductionProjectEmissionTest {
         }
         return snapshot;
     }
-
-    /**
-     * The preserved {@code FFI_UNSUPPORTED_BACKEND} arm of the JS production
-     * unit: a resolved extern-C declaration import rejects before the one
-     * project lowering and before any emission, with exactly the unchanged
-     * E6006 text at the importing declaration's own statement range, and
-     * nothing is staged or published.
-     */
-    private static void testJsExternCRejection(Fixture externC) throws Exception {
-        System.out.println("-- the JS arm rejects a resolved extern-C import"
-            + " before lowering with the exact E6006 and publishes nothing --");
-        Path out = externC.root().resolve("js-extern-out");
-        writeFileIn(out, "app.js", "// previous artifact\n");
-        writeFileIn(out, "deal/runtime.js", "// previous runtime\n");
-        Map<String, String> before = snapshotTree(out);
-        PublicationStager stager = PublicationStager.forRoot(out);
-        ProductionProjectEmission.Result result;
-        try {
-            result = emit(externC, Backend.JS, stager, false);
-            check(!result.emitted(),
-                "the extern-C import fails the JS production arm");
-            checkEq(1, result.diagnostics().size(),
-                "the rejection is one diagnostic: " + result.diagnostics());
-            CompilerDiagnostic rejection = result.firstDiagnostic();
-            checkEq("E6006", rejection == null ? null : rejection.code(),
-                "the rejection keeps the E6006 FFI_UNSUPPORTED_BACKEND code");
-            checkEq(ProductionProjectEmission.JS_EXTERN_C_REJECTION,
-                rejection == null ? null : rejection.message(),
-                "the rejection keeps the exact preserved text");
-            checkEq("JavaScript backend: @extern-c imports are not supported"
-                    + " (FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)",
-                rejection == null ? null : rejection.message(),
-                "the exact E6006 message text");
-            check(rejection != null && rejection.range().startLine() == 1
-                    && rejection.range().startColumn() == 1
-                    && rejection.range().file().endsWith("/src/app.deal"),
-                "the rejection sits at the import statement's own range, got "
-                    + (rejection == null ? "none" : rejection.range()));
-            checkEq(1L, result.diagnostics().stream()
-                    .filter(d -> "error".equals(d.severity())).count(),
-                "nothing but the one rejection is produced");
-            check(stager.stagedSet().relativePaths().isEmpty(),
-                "the rejection stages no artifact and no map: "
-                    + stager.stagedSet().relativePaths());
-        } finally {
-            stager.discard();
-        }
-        checkEq(before, snapshotTree(out),
-            "the rejection leaves the previous published set byte-identical");
-    }
-
     /**
      * The JS arm's fail-closed contract: the structural declaration
      * projection and the renderer share the one E6005
@@ -2329,13 +2244,11 @@ public class ProductionProjectEmissionTest {
             result = ProductionProjectEmission.run(productionInvocation(),
                 fixture.checkedProject(), fixture.index(), fixture.manifests(),
                 fixture.surface(), Map.of(),
-                fixture.externCModules(),
-                fixture.distributionHome().manifestDirectoryText(),
                 BuiltinErrorDeclaration.synthesized(
                     fixture.checkedProject().modules().get(0).ast().span()),
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                     IntrinsicKind.BYTES_NEW),
-                Set.of(), Backend.JS, false, fixture.distributionHome(), stager);
+                java.util.Set.of(), Backend.JS, false, fixture.distributionHome(), stager);
             check(!result.emitted(),
                 "the incomplete structural companion fails the JS arm closed");
             checkEq(1, result.diagnostics().size(),
@@ -2456,7 +2369,7 @@ public class ProductionProjectEmissionTest {
                 // would be that first operation and would abort the compile
                 // before the backend rejection. Deferring the dump makes the
                 // first staging operation a phase-4 deployment copy, so the
-                // E6006 rejection is already recorded when the fault fires.
+                // E1044 rejection is already recorded when the fault fires.
                 PublicationStager.installPublishFault(step -> {
                     if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(
                             step)) {
@@ -2477,11 +2390,11 @@ public class ProductionProjectEmissionTest {
                 rejected.diagnostics().stream()
                     .filter(d -> "error".equals(d.severity())).toList();
             checkEq(1, rejectedErrors.size(),
-                "the rejection is the one E6006 (the dump never staged ahead"
+                "the rejection is the one E1044 (the dump never staged ahead"
                     + " of it): " + rejected.diagnostics());
-            checkEq("E6006",
+            checkEq("E1044",
                 rejectedErrors.isEmpty() ? null : rejectedErrors.get(0).code(),
-                "the dump-deferral rejection keeps the E6006 backend"
+                "the dump-deferral rejection keeps the E1044 backend"
                     + " rejection");
             checkEq("previous dump\n",
                 Files.readString(out.resolve("app.ir.txt"),
@@ -2851,11 +2764,10 @@ public class ProductionProjectEmissionTest {
     // 5. The pre-emission closure guard
     // =========================================================================
 
-    private static void testHostImportGuard(Fixture fixture, Fixture externC)
+    private static void testHostImportGuard(Fixture fixture)
             throws Exception {
         System.out.println("-- the HOST-declaration import emits its declared-map "
-            + "load and stages; the extern-C declaration import emits its "
-            + "load_ffi prelude --");
+            + "load and stages --");
 
         // The HOST-declaration-kind import: realized by the host load of
         // the module init walk (H1), so the production run stages its one
@@ -2884,130 +2796,8 @@ public class ProductionProjectEmissionTest {
                 "the emitted chunk carries no guard token");
         }
 
-        Path externCOut = externC.root().resolve("out-arm");
-        {
-            checkEq(HostDeclarationSurface.DeclarationKind.EXTERN_C,
-                externC.surface().require(NATIVE_MATH).kind(),
-                "the probe's declaration module is EXTERN_C-kind");
-            String chunk = stagedLua(externC, externCOut, "extern-C declaration import");
-            check(chunk.contains("__exportSurfaces[\"" + NATIVE_MATH.path()
-                    + "\"] = __exportSurfaces[\"" + NATIVE_MATH.path()
-                    + "\"] or __rt.load_ffi(\"ffi:@$external/"
-                    + EXTERN_C_SPECIFIER + "\", "),
-                "the emitted artifact carries the load_ffi prelude with the "
-                    + "metadata-provided module key: " + chunk);
-            check(chunk.contains(", \""
-                    + externC.root().resolve("src/app.deal").toAbsolutePath()
-                    + "\", 1, 1)"),
-                "the load carries the import statement's span triplet: "
-                    + chunk);
-            check(!chunk.contains(ProductionProjectEmission.HOST_MODULE_IMPORT),
-                "the emitted chunk carries no guard token");
-            check(!chunk.contains("ffi.C") && !chunk.contains("cdef("),
-                "the emitted chunk carries no ffi.C/cdef text");
-        }
+
     }
-
-    /**
-     * The preserved emission origin (ISSUE-0750): an extern-C declaration
-     * whose carried forward bindings name a provider module the artifact
-     * does not publish fails the emission closed with one E6005
-     * {@code SHARED_EMITTER_COVERAGE} {@code FFI_PROVIDER_GAP} whose range
-     * is the extern-C import statement's own SOURCE span — the identifiable
-     * offending origin of the emission failure, never the empty-file
-     * synthetic anchor — and stages nothing.
-     */
-    private static void testFfiProviderGapOrigin(Fixture externC) throws Exception {
-        System.out.println("-- the emission provider gap carries the "
-            + "extern-C import statement's own origin --");
-
-        {
-            FfiGeneratedModule original =
-                externC.externCModules().get(NATIVE_MATH);
-            check(original != null,
-                "the extern-C fixture carries its generated module");
-            if (original == null) {
-                return;
-            }
-            FfiForwardBindings bindings = original.bindings();
-            FfiImportedFunctionReference gap = new FfiImportedFunctionReference(
-                "gap", "gapExport", "gap.provider", "() -> int",
-                "gap-digest", bindings.importedFunctions().size(),
-                DiagnosticRange.synthetic("gap.provider.d.deal"));
-            FfiForwardBindings doctoredBindings = new FfiForwardBindings(
-                bindings.moduleKey(), bindings.state(), bindings.cells(),
-                java.util.stream.Stream.concat(
-                        bindings.importedFunctions().stream(),
-                        java.util.stream.Stream.of(gap)).toList(),
-                bindings.importedClassPlans());
-            FfiGeneratedModule doctored = new FfiGeneratedModule(
-                original.modulePath(), original.descriptor(),
-                original.cdefBundle(), original.plans(), doctoredBindings);
-            Map<ModuleId, FfiGeneratedModule> doctoredModules =
-                new LinkedHashMap<>(externC.externCModules());
-            doctoredModules.put(NATIVE_MATH, doctored);
-            Fixture doctoredFixture = new Fixture(externC.root(),
-                externC.checkedProject(), externC.index(), externC.manifests(),
-                externC.surface(), doctoredModules,
-                externC.declarationIdentities(), externC.distributionHome());
-
-            Path out = externC.root().resolve("out-provider-gap");
-            PublicationStager stager = PublicationStager.forRoot(out);
-            try {
-                ProductionProjectEmission.Result result =
-                    emit(doctoredFixture, Backend.LUAJIT, stager, false);
-                check(!result.emitted(),
-                    "the provider gap fails the emission closed");
-                checkEq(1, result.diagnostics().size(),
-                    "exactly one E6005 diagnostic: " + result.diagnostics());
-                if (result.diagnostics().size() == 1) {
-                    CompilerDiagnostic diagnostic = result.firstDiagnostic();
-                    checkEq("E6005", diagnostic.code(),
-                        "the provider gap is E6005");
-                    check(diagnostic.message().contains(
-                            ProductionProjectEmission.SHARED_EMITTER_COVERAGE)
-                            && diagnostic.message().contains(
-                                ProductionProjectEmission.FFI_PROVIDER_GAP)
-                            && diagnostic.message().contains(
-                                "'" + EXTERN_C_SPECIFIER + "'")
-                            && diagnostic.message().contains(
-                                "gap.provider"),
-                        "the E6005 message is the unchanged provider-gap text: "
-                            + diagnostic.message());
-                    check(diagnostic.range().origin() == RangeOrigin.SOURCE,
-                        "the E6005 range is SOURCE, got "
-                            + diagnostic.range().origin());
-                    String entry = externC.root().resolve("src/app.deal")
-                        .toAbsolutePath().normalize().toString();
-                    checkEq(entry, diagnostic.range().file(),
-                        "the E6005 range names the consuming entry file");
-                    checkEq(1, diagnostic.range().startLine(),
-                        "the E6005 range starts at the import statement's line");
-                    checkEq(1, diagnostic.range().startColumn(),
-                        "the E6005 range starts at the import statement's "
-                            + "column");
-                    // The frontend's import-declaration span runs to the
-                    // token after the statement (the import carries no
-                    // trailing semicolon); the range preserves that
-                    // recorded span exactly.
-                    checkEq(3, diagnostic.range().endLine(),
-                        "the E6005 range ends at the recorded import span end");
-                    checkEq(7, diagnostic.range().endColumn(),
-                        "the E6005 range ends at the recorded import span end "
-                            + "column");
-                    checkEq(46, diagnostic.range().scalarLength(),
-                        "the E6005 range covers the recorded import span, got "
-                            + diagnostic.range());
-                }
-                check(stager.stagedSet().relativePaths().isEmpty(),
-                    "the provider gap stages nothing: "
-                        + stager.stagedSet().relativePaths());
-            } finally {
-                stager.discard();
-            }
-        }
-    }
-
     /**
      * The rejected-op emission origins (ISSUE-0750 D4): both shared
      * production emitters refuse an explicitly rejected op and a detached
@@ -3313,68 +3103,7 @@ public class ProductionProjectEmissionTest {
             }
         }
 
-        // (e) The JVM declaration-kind mismatch: the entry's HOST import is
-        // described by a declaration surface of the extern-C kind.
-        {
-            SemanticLowerer.ProjectLoweringResult result = hostLowering;
-            check(!result.hasErrors(),
-                "the host-import fixture lowers: " + result.diagnostics());
-            if (!result.hasErrors()) {
-                LoweredModuleUnit entry = result.project()
-                    .modules().get(result.project().entryModule());
-                SemanticOp hostImport = null;
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() == SemanticOpKind.MODULE_IMPORT
-                            && op.payload()
-                                instanceof KindPayload.ModuleImportPayload payload
-                            && payload.resolvedModule().equals(HOST_CFG)) {
-                        hostImport = op;
-                    }
-                }
-                check(hostImport != null,
-                    "the host fixture lowers the HOST MODULE_IMPORT");
-                if (hostImport != null) {
-                    HostDeclarationSurface.DeclarationFacts facts =
-                        host.surface().require(HOST_CFG);
-                    Map<ModuleId, HostDeclarationSurface.DeclarationFacts> modules =
-                        new LinkedHashMap<>(host.surface().modules());
-                    modules.put(HOST_CFG,
-                        new HostDeclarationSurface.DeclarationFacts(HOST_CFG,
-                            HostDeclarationSurface.DeclarationKind.EXTERN_C,
-                            facts.exports(), facts.classes()));
-                    HostDeclarationSurface doctored =
-                        new HostDeclarationSurface(modules);
-                    DiagnosticRange expected = hostImport.origin().span().range();
-                    check(expected.origin() == RangeOrigin.SOURCE
-                            && expected.scalarLength() > 0,
-                        "the HOST MODULE_IMPORT carries a real SOURCE span: "
-                            + expected);
-                    try {
-                        JvmSemanticEmitter.emitProductionProject(result.project(),
-                            result.tables(), result.registries(), "FixtureProbe",
-                            doctored);
-                        fail("the JVM emitter rejects the declaration-kind "
-                            + "mismatch");
-                    } catch (SharedEmissionFailure rejection) {
-                        checkEq("the declaration module '" + HOST_CFG.path()
-                                + "' of MODULE_IMPORT " + hostImport.opId()
-                                + " is kind "
-                                + HostDeclarationSurface.DeclarationKind.EXTERN_C
-                                + ": the extern-C declaration load is the FFI"
-                                + " child's (fail-closed remnant)",
-                            rejection.getMessage(),
-                            "the declaration-kind rejection message is the"
-                                + " unchanged text");
-                        checkEq(expected, rejection.diagnosticRange(),
-                            "the declaration-kind rejection carries the HOST"
-                                + " MODULE_IMPORT's own exact range");
-                    } catch (IllegalStateException other) {
-                        fail("the declaration-kind rejection is the"
-                            + " source-bearing signal: " + other);
-                    }
-                }
-            }
-        }
+
     }
 
     @FunctionalInterface
@@ -3393,8 +3122,7 @@ public class ProductionProjectEmissionTest {
      * refusal keeps the canonical synthetic projection.
      */
     private static void testAbsentDeclarationSurfaceEntries(Fixture host,
-            SemanticLowerer.ProjectLoweringResult hostLowering, Fixture externC,
-            SemanticLowerer.ProjectLoweringResult externLowering) throws Exception {
+            SemanticLowerer.ProjectLoweringResult hostLowering) throws Exception {
         System.out.println("-- an absent declaration-surface entry carries the "
             + "identifying MODULE_IMPORT's own exact range on both targets --");
 
@@ -3425,7 +3153,7 @@ public class ProductionProjectEmissionTest {
                     String expectedMessage =
                         "declaration module '" + HOST_CFG.path()
                             + "' has no declaration-surface entry: the surface covers"
-                            + " every host and extern-C declaration module of the"
+                            + " every host declaration module of the"
                             + " compilation (producer defect)";
                     HostDeclarationSurface empty = new HostDeclarationSurface(Map.of());
 
@@ -3449,53 +3177,7 @@ public class ProductionProjectEmissionTest {
             }
         }
 
-        // The FFI emission input's absent generated-module entry: the same
-        // import boundary identifies the extern-C MODULE_IMPORT whose own
-        // range must survive the fail-closed lookup.
-        {
-            SemanticLowerer.ProjectLoweringResult result = externLowering;
-            check(!result.hasErrors(),
-                "the extern-C fixture lowers: " + result.diagnostics());
-            if (!result.hasErrors()) {
-                LoweredModuleUnit entry = result.project()
-                    .modules().get(result.project().entryModule());
-                SemanticOp nativeImport = null;
-                for (SemanticOp op : entry.ops()) {
-                    if (op.kind() == SemanticOpKind.MODULE_IMPORT
-                            && op.payload()
-                                instanceof KindPayload.ModuleImportPayload payload
-                            && payload.resolvedModule().equals(NATIVE_MATH)) {
-                        nativeImport = op;
-                    }
-                }
-                check(nativeImport != null,
-                    "the extern-C fixture lowers the extern-C MODULE_IMPORT");
-                if (nativeImport != null) {
-                    DiagnosticRange expected = nativeImport.origin().span().range();
-                    check(expected.origin() == RangeOrigin.SOURCE
-                            && expected.scalarLength() > 0,
-                        "the extern-C MODULE_IMPORT carries a real SOURCE span: "
-                            + expected);
-                    String expectedMessage =
-                        "the extern-C declaration module '" + NATIVE_MATH.path()
-                            + "' carries no generated-module entry in the FFI"
-                            + " emission input: the input covers exactly the"
-                            + " compile's validated extern-C metadata (a producer"
-                            + " defect, never a silently omitted load)";
-                    SharedEmissionFailure rejection = assertAbsentEntryRejection(
-                        "LuaJIT", "the absent FFI generated-module entry", expected,
-                        expectedMessage, () ->
-                            LuaSemanticEmitter.emitProductionProject(result.project(),
-                                result.tables(), result.registries(),
-                                externC.surface(), new FfiEmissionInput(Map.of(),
-                                    "manifests")));
-                    if (rejection != null) {
-                        assertProjectedEmitterOrigin("the absent FFI generated-module "
-                            + "entry", expected, expectedMessage, result, rejection);
-                    }
-                }
-            }
-        }
+
     }
 
     /**
@@ -4621,15 +4303,15 @@ public class ProductionProjectEmissionTest {
         try (PublishedEmitter fixture = publishedEmitter(Backend.LUAJIT, EMITTER_LIB, growth.toString())) {
             assertEmitterRun("201-export chunk loads", runPublished(fixture, null), 0, "");
         }
-        for (boolean ffi : List.of(false, true)) {
+        for (boolean sourceMapping : List.of(false, true)) {
             try {
-                if (ffi) {
+                if (sourceMapping) {
                     LuaSemanticEmitter.emitProductionProject(null, Map.of(), Map.of(), new HostDeclarationSurface(Map.of()),
-                        new FfiEmissionInput(Map.of(), ""));
+                        null);
                 } else {
                     LuaSemanticEmitter.emitProductionProject(null, Map.of(), Map.of(), new HostDeclarationSurface(Map.of()));
                 }
-                fail("null project rejected by Lua production API, FFI=" + ffi);
+                fail("null project rejected by Lua production API, sourceMapping=" + sourceMapping);
             } catch (NullPointerException expected) {
                 passed++;
             }
@@ -4648,7 +4330,7 @@ public class ProductionProjectEmissionTest {
             "App", fixture.fixture().surface(), productionMapRecorder(fixture)).source()
             : LuaSemanticEmitter.emitProductionProject(project,
                 result.tables(), result.registries(), fixture.fixture().surface(),
-                (FfiEmissionInput) null, productionMapRecorder(fixture));
+                productionMapRecorder(fixture));
         checkEq(source, repeated, "production API repeats published artifact byte-identically");
         int walks = source.indexOf(jvm ? "    MODULE = \"lib\";" : "__dealMain = function()");
         int libWalk = source.indexOf(jvm ? "    MODULE = \"lib\";" : "__module = \"lib\"", walks);
@@ -4967,7 +4649,6 @@ public class ProductionProjectEmissionTest {
                 Fixture adapter = adapterSourceFixture();
                 Fixture forward = forwardClassFixture();
                 Fixture host = hostFixture();
-                Fixture externC = externCFixture();
                 Fixture cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
                 Fixture same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE)) {
             testJsProjectEmission(js);
@@ -4986,20 +4667,19 @@ public class ProductionProjectEmissionTest {
             testJsCallResultAdapter(adapter);
             testJsForwardClassLiteral(forward);
             SemanticLowerer.ProjectLoweringResult hostLowering = lower(host);
-            SemanticLowerer.ProjectLoweringResult externLowering = lower(externC);
             SemanticLowerer.ProjectLoweringResult asyncLowering = lower(cross);
-            testHostImportGuard(host, externC);
-            testFfiProviderGapOrigin(externC);
+            testHostImportGuard(host);
+
             testRejectedOpEmissionOrigins();
             testIdentifiedSharedGuardOrigins(cross, asyncLowering, host, hostLowering);
-            testAbsentDeclarationSurfaceEntries(host, hostLowering, externC, externLowering);
+            testAbsentDeclarationSurfaceEntries(host, hostLowering);
             testStdlibCatalogMissOrigin();
             testDeclarationSignatureOrigin();
             testGeneratedHelperDescriptorOrigins();
             testCrossModuleAsyncEmission(cross, same);
             testSourceMapEmission(fixture, failing, defaultRun);
             testProductionEmitterLanes();
-            testJsExternCRejection(externC);
+
             testJsFailClosedSeam(js);
             testJsDumpDeferral();
             testJsRuntimeMissing();

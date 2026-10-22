@@ -293,10 +293,7 @@ public final class JvmSemanticEmitter {
             }
         }
 
-        /**
-         * Whether the closure's op walk carries a HOST-kind import (a host or
-         * extern-C declaration module).
-         */
+
         private static boolean closureHasHostImports(ExecutableLoweredProject project) {
             for (LoweredModuleUnit moduleUnit : project.modules().values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
@@ -4961,12 +4958,7 @@ public final class JvmSemanticEmitter {
                 case HOST_DEFAULTS -> {
 
                 }
-                case FFI_PLAN ->
-                    throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                        + " carries defaultOwner " + payload.defaultOwner()
-                        + ": the extern-C C-struct construction is the FFI"
-                        + " child's and is not emitted here — a fail-closed"
-                        + " producer defect, never emitted");
+
                 case BUILTIN_DEFAULTS -> {
                     // The builtin Error construction (K13 items 2-4): the
                     // builtin defaults are compiler constants, so no default
@@ -7444,15 +7436,7 @@ public final class JvmSemanticEmitter {
             emitPlainSuccess(op, indent);
         }
 
-        /**
-         * The {@code MODULE_IMPORT} completion write (K15 item 2): every
-         * alias cell named by the payload receives the module's namespace
-         * value — the module-identity-keyed surface through the one
-         * {@code exportSurface} accessor, the one surface object the
-         * module's publication or its single load created — in the cell's
-         * own publication discipline. The write runs after the
-         * kind-specific load, so a HOST/FFI alias holds the loaded table.
-         */
+
         private void emitAliasCellCompletion(KindPayload.ModuleImportPayload payload,
                                              int indent) {
             if (payload.aliasCells().isEmpty()) {

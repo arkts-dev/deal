@@ -152,7 +152,7 @@ public final class ModuleIdentityAssembly {
      * {@code .d.deal} source, or a non-spec-listed {@code .d.deal} inside
      * the std directory — this fires E2010 at the class-name span
      * <b>unconditionally at the declaration</b>, before any
-     * class/export/default/FFI metadata or artifact is published (rule
+     * class/export/default metadata or artifact is published (rule
      * (d); no deferred-to-first-use behavior). For every other
      * classification the gate admits the declaration: public identity is
      * demanded only when a consumer requires it (rules (a)–(c)), so
@@ -191,7 +191,7 @@ public final class ModuleIdentityAssembly {
 
     /**
      * The required-identity gate: a consumer that requires public class
-     * identity (descriptor emission, FFI metadata, default plans, export
+     * identity (descriptor emission, default plans, export
      * metadata) obtains the {@link CanonicalClassIdentity} exclusively
      * through this call. The identity is assembled from the published
      * classification, validated against the pinned representability

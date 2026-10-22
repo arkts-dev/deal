@@ -434,8 +434,7 @@ public final class ClassOpsExecutor {
         // execution is executeClassNewSharedFactory's; the host
         // declaration class construction is
         // executeClassNewHostDefaults's; the builtin Error construction is
-        // executeClassNewBuiltinDefaults's; RETAINED_ABI is E10's and the
-        // extern-C FFI_PLAN owner is executeClassNewFfiPlan's — all fail
+        // executeClassNewBuiltinDefaults's; RETAINED_ABI is E10's — all fail
         // closed here, never silently executed as LOCAL.
         if (payload.defaultOwner() != DefaultOwner.LOCAL) {
             throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
@@ -443,9 +442,7 @@ public final class ClassOpsExecutor {
                 + "execution — SHARED_FACTORY transfer is "
                 + "executeClassNewSharedFactory's, RETAINED_ABI transfer is E10's, "
                 + "the host construction is executeClassNewHostDefaults's, the "
-                + "builtin Error construction is executeClassNewBuiltinDefaults's, "
-                + "and the extern-C FFI_PLAN construction is "
-                + "executeClassNewFfiPlan's; "
+                + "builtin Error construction is executeClassNewBuiltinDefaults's; "
                 + "a non-LOCAL owner reaching executeClassNewLocal is a producer "
                 + "defect, never executed");
         }
@@ -570,8 +567,7 @@ public final class ClassOpsExecutor {
 
         // This child's surface: BUILTIN_DEFAULTS execution only. The host
         // declaration class construction (HOST_DEFAULTS) is
-        // executeClassNewHostDefaults's and the extern-C FFI_PLAN
-        // construction is executeClassNewFfiPlan's; a foreign owner
+        // executeClassNewHostDefaults's; a foreign owner
         // reaching this surface is a producer defect, never silently
         // executed.
         if (payload.defaultOwner() != DefaultOwner.BUILTIN_DEFAULTS) {
@@ -581,8 +577,7 @@ public final class ClassOpsExecutor {
                 + " executeClassNewLocal's, SHARED_FACTORY transfer is"
                 + " executeClassNewSharedFactory's, the host declaration class"
                 + " construction is executeClassNewHostDefaults's, RETAINED_ABI"
-                + " transfer is E10's, and the extern-C FFI_PLAN construction is"
-                + " executeClassNewFfiPlan's; a foreign owner reaching"
+                + " transfer is E10's; a foreign owner reaching"
                 + " executeClassNewBuiltinDefaults"
                 + " is a producer defect, never executed");
         }
@@ -682,8 +677,7 @@ public final class ClassOpsExecutor {
                 + " declaration class construction (HOST_DEFAULTS) — LOCAL is"
                 + " executeClassNewLocal's, SHARED_FACTORY transfer is"
                 + " executeClassNewSharedFactory's, the builtin Error construction is"
-                + " executeClassNewBuiltinDefaults's, RETAINED_ABI transfer is E10's,"
-                + " and the extern-C FFI_PLAN construction is executeClassNewFfiPlan's;"
+                + " executeClassNewBuiltinDefaults's, RETAINED_ABI transfer is E10's;"
                 + " a foreign owner reaching executeClassNewHostDefaults is a producer"
                 + " defect,"
                 + " never executed");
@@ -783,259 +777,6 @@ public final class ClassOpsExecutor {
             new Value.Class(payload.classId(), List.copyOf(states)));
     }
 
-    public record FfiPlanEntry(String name, RuntimeDescriptor descriptor,
-                               boolean optional, Supplier<Value> defaultEvaluator) {
-
-        public FfiPlanEntry {
-            Objects.requireNonNull(name, "name must not be null");
-            Objects.requireNonNull(descriptor, "descriptor must not be null");
-        }
-    }
-
-    @FunctionalInterface
-    public interface FfiPlanCheckRunner {
-
-        /**
-         * Runs one field check of the C-struct construction.
-         *
-         */
-        BoundaryResult run(KindPayload.BoundaryPayload boundary,
-                           RuntimeDescriptor descriptor, Value input);
-    }
-
-    public static Outcome<Value> executeClassNewFfiPlan(
-            SemanticOp op,
-            Map<ValueId, Value> priorValues,
-            Map<OpId, SemanticOp> boundaryOps,
-            Map<ClassId, ClassLayout> layouts,
-            List<FfiPlanEntry> projection,
-            FfiPlanCheckRunner checkRunner) {
-        requireOp(op, SemanticOpKind.CLASS_NEW, FailurePolicyId.CLASS_CONSTRUCTION);
-        Objects.requireNonNull(priorValues, "priorValues must not be null");
-        Objects.requireNonNull(boundaryOps, "boundaryOps must not be null");
-        Objects.requireNonNull(layouts, "layouts must not be null");
-        Objects.requireNonNull(checkRunner, "checkRunner must not be null");
-        KindPayload.ClassNewPayload payload = (KindPayload.ClassNewPayload) op.payload();
-
-        if (payload.defaultOwner() != DefaultOwner.FFI_PLAN) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
-                + payload.defaultOwner() + ": this executor surface is the extern-C"
-                + " C-struct construction (FFI_PLAN) — LOCAL is"
-                + " executeClassNewLocal's, SHARED_FACTORY transfer is"
-                + " executeClassNewSharedFactory's, the host declaration class"
-                + " construction is executeClassNewHostDefaults's, the builtin Error"
-                + " construction is executeClassNewBuiltinDefaults's, and RETAINED_ABI"
-                + " transfer is E10's; a foreign owner reaching"
-                + " executeClassNewFfiPlan is a producer defect, never executed");
-        }
-        if (payload.classFactoryRef() != null) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries a non-null"
-                + " classFactoryRef " + payload.classFactoryRef() + " under FFI_PLAN:"
-                + " the C-struct construction carries a null factory ref (the loaded"
-                + " plan is the single default authority, never a factory transfer) —"
-                + " a producer defect, never executed");
-        }
-        if (!payload.classDefaultOpIds().isEmpty()) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries "
-                + payload.classDefaultOpIds() + " under FFI_PLAN: the C-struct"
-                + " construction carries an empty default-op list (the omitted"
-                + " fields' evaluators are the loaded plan's — no in-project default"
-                + " expression is evaluated) — a producer defect, never executed");
-        }
-        if (projection == null) {
-            throw new Defect("CLASS_NEW " + op.opId() + " classId " + payload.classId()
-                + " reaches the C-struct construction without the loaded plan"
-                + " projection: the closed plan-projection terminal supplies the"
-                + " loaded <exportName>_plan entries — an absent projection is a"
-                + " fail-closed producer defect, never an invented empty plan");
-        }
-
-        ClassLayout layout = layouts.get(payload.classId());
-        if (layout == null) {
-            throw new Defect("CLASS_NEW " + op.opId() + " classId " + payload.classId()
-                + " does not resolve in the layout-resolution context: an extern-C"
-                + " C-struct class resolves through the project's registered"
-                + " declaration layouts — an unresolvable layout is a producer"
-                + " defect, never executed");
-        }
-        if (!layout.equals(payload.layout())) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries a layout that"
-                + " differs from the resolution context's layout of "
-                + payload.classId() + ": the payload's layout must be exactly the"
-                + " registered C-struct layout — a mismatch is a producer defect,"
-                + " never executed");
-        }
-
-        // The projection agreement (struct-plan F4): the loaded plan's
-        // entries must equal the class's seed layout in order, names, and
-        // descriptors — a producer defect raised before any phase runs.
-        if (projection.size() != layout.fields().size()) {
-            throw new Defect("CLASS_NEW " + op.opId() + " projects "
-                + projection.size() + " plan entries for the seed layout of "
-                + payload.classId() + " with " + layout.fields().size() + " fields:"
-                + " the loaded plan's ordered entries must equal the"
-                + " compiler-validated seed layout — a fail-closed producer defect,"
-                + " raised before any phase");
-        }
-        for (int i = 0; i < projection.size(); i++) {
-            FfiPlanEntry entry = projection.get(i);
-            ClassLayout.FieldLayout field = layout.fields().get(i);
-            if (!entry.name().equals(field.name())
-                    || !entry.descriptor().equals(field.descriptor())) {
-                throw new Defect("CLASS_NEW " + op.opId() + " plan entry " + i
-                    + " ('" + entry.name() + "': "
-                    + entry.descriptor().canonicalSpecText() + ") differs from the"
-                    + " seed layout's field '" + field.name() + "': "
-                    + field.descriptor().canonicalSpecText() + " — the loaded plan's"
-                    + " order, names, and descriptors must equal the class's seed"
-                    + " layout (a fail-closed producer defect, raised before any"
-                    + " phase)");
-            }
-        }
-
-        // Phase 1: the provided values resolve in literal order (they
-        // completed before the op) and each provided field's
-        // CLASS_LITERAL_FIELD boundary child runs in declaration order; the
-        // checked value is the construction's provided copy.
-        LinkedHashMap<String, Value> providedValues = new LinkedHashMap<>();
-        LinkedHashMap<String, ValueId> providedValueIds = new LinkedHashMap<>();
-        resolveProvidedFields(op, payload, priorValues, null, providedValues,
-            providedValueIds);
-        LinkedHashMap<String, Value> checkedValues = new LinkedHashMap<>();
-        for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
-            Value provided = providedValues.get(entry.field());
-            ValueId providedId = providedValueIds.get(entry.field());
-            if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD || provided == null
-                    || providedId == null) {
-                throw new Defect("CLASS_NEW " + op.opId() + " carries boundary entry"
-                    + " for field '" + entry.field() + "' of kind " + entry.kind()
-                    + ": the C-struct construction carries exactly one"
-                    + " CLASS_LITERAL_FIELD boundary per provided field and no"
-                    + " CLASS_DEFAULT_FIELD — a shape deviation is a producer defect,"
-                    + " never executed");
-            }
-            ClassLayout.FieldLayout fieldLayout = fieldOf(layout, entry.field());
-            if (fieldLayout == null) {
-                throw new Defect("CLASS_NEW " + op.opId() + " field-boundary entry"
-                    + " names field '" + entry.field() + "' which is not a declared"
-                    + " field of " + payload.classId() + " — a producer defect, never"
-                    + " executed");
-            }
-            SemanticOp child = requireBoundaryChild(boundaryOps, entry.boundaryOpId(), op,
-                entry.kind());
-            KindPayload.BoundaryPayload boundaryPayload =
-                (KindPayload.BoundaryPayload) child.payload();
-            if (!boundaryPayload.descriptor().equals(fieldLayout.descriptor())) {
-                throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
-                    + child.opId() + " carries descriptor "
-                    + boundaryPayload.descriptor().canonicalSpecText() + ": the pinned"
-                    + " child descriptor is the field's declared descriptor "
-                    + fieldLayout.descriptor().canonicalSpecText() + " — a mismatch"
-                    + " is a producer defect, never executed");
-            }
-            requireDescriptorKindPolicy(child, boundaryPayload.descriptor());
-            if (!boundaryPayload.input().equals(providedId)) {
-                throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
-                    + child.opId() + " carries input " + boundaryPayload.input()
-                    + ": the pinned CLASS_LITERAL_FIELD input is the field's provided"
-                    + " value op " + providedId + " (K-D4 input wiring) — a mismatch"
-                    + " is a producer defect, never executed");
-            }
-            BoundaryResult result = checkRunner.run(boundaryPayload,
-                boundaryPayload.descriptor(), provided);
-            if (result instanceof BoundaryResult.Fail fail) {
-                return new Outcome.Failure<Value>(new OpFailure(fail.failure(),
-                    op.origin()));
-            }
-            checkedValues.put(entry.field(), ((BoundaryResult.Pass) result).value());
-        }
-
-        // Phase 1b: the extra-key guard in provided-source order — a
-        // provided name absent from the projection raises E8007 at the
-        // literal origin before any default runs (the artifact's
-        // deterministic authority; the runtime entry's phase-1 pairs()
-        // iteration is order-free).
-        Outcome.Failure<Value> extraKeyFailure =
-            undeclaredProvidedFieldFailure(op, payload, layout);
-        if (extraKeyFailure != null) {
-            return extraKeyFailure;
-        }
-        // After the guard admits every provided name: every provided field
-        // carries exactly one boundary child (a declared provided field
-        // without one is a producer defect).
-        if (payload.fieldBoundaries().size() != payload.providedFields().size()) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries "
-                + payload.fieldBoundaries().size() + " field-boundary entries for "
-                + payload.providedFields().size() + " provided fields: the C-struct"
-                + " construction carries exactly one CLASS_LITERAL_FIELD boundary per"
-                + " provided field — a child-count mismatch is a producer defect,"
-                + " never executed");
-        }
-
-        // Phase 2: omitted required-present defaults invoke their deferred
-        // evaluator exactly once per attempt in class source order; optional
-        // omissions stay absent.
-        LinkedHashMap<String, Value> slots = new LinkedHashMap<>(checkedValues);
-        for (FfiPlanEntry entry : projection) {
-            if (slots.containsKey(entry.name()) || entry.optional()) {
-                continue;
-            }
-            if (entry.defaultEvaluator() == null) {
-                throw new Defect("CLASS_NEW " + op.opId() + " plan entry '"
-                    + entry.name() + "' is required-present without a deferred"
-                    + " default: an extern-C struct field is declared required with a"
-                    + " default (the loaded plan's evaluator is the only default"
-                    + " authority) — a supplier-less required entry is a producer"
-                    + " defect, never an absent field");
-            }
-            Value supplied = entry.defaultEvaluator().get();
-            if (supplied == null || supplied instanceof Value.Missing) {
-                throw new Defect("CLASS_NEW " + op.opId() + " plan entry '"
-                    + entry.name() + "' deferred default produced the absent value:"
-                    + " a required-present extern-C struct field's evaluator returns"
-                    + " a present value — a producer defect, never an absent field");
-            }
-            slots.put(entry.name(), supplied);
-        }
-
-        // Phase 3: every present field validates against its plan entry's
-        // descriptor in class source order (the same E8001/E8004/E8010
-        // projections, at the literal origin). A provided field's phase-1
-        // boundary child already ran; the entry-descriptor check re-runs
-        // event-free — the runtime's canonical matcher validates every
-        // present field.
-        for (FfiPlanEntry entry : projection) {
-            Value present = slots.get(entry.name());
-            if (present == null) {
-                continue;
-            }
-            BoundaryResult result = checkRunner.run(null, entry.descriptor(), present);
-            if (result instanceof BoundaryResult.Fail fail) {
-                return new Outcome.Failure<Value>(new OpFailure(fail.failure(),
-                    op.origin()));
-            }
-            slots.put(entry.name(), ((BoundaryResult.Pass) result).value());
-        }
-
-        // Phase 4: the declaration-order field states; every declared field
-        // of the C-struct is present (the seed layout's required-present
-        // rule).
-        List<FieldState> states = new ArrayList<>(layout.fields().size());
-        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            Value present = slots.get(fieldLayout.name());
-            if (present == null) {
-                throw new Defect("CLASS_NEW " + op.opId() + " publishes an absent"
-                    + " field '" + fieldLayout.name() + "' of " + payload.classId()
-                    + ": every declared extern-C C-struct field is required-present"
-                    + " (the seed layout) — an absent field at publication is a"
-                    + " producer defect, never a partial instance");
-            }
-            states.add(new FieldState.Present(present));
-        }
-        return new Outcome.Success<Value>(
-            new Value.Class(payload.classId(), List.copyOf(states)));
-    }
-
     public static Outcome<Value> executeClassFactory(
             SemanticOp op,
             SemanticOp triggeringCaller,
@@ -1123,9 +864,7 @@ public final class ClassOpsExecutor {
         // is {@link #executeClassNewLocal}'s; the host declaration class
         // construction is {@link #executeClassNewHostDefaults}'s; the
         // builtin Error construction is
-        // {@link #executeClassNewBuiltinDefaults}'s; RETAINED_ABI is E10's
-        // and the extern-C FFI_PLAN construction is
-        // {@link #executeClassNewFfiPlan}'s — a
+        // {@link #executeClassNewBuiltinDefaults}'s; RETAINED_ABI is E10's — a
         // non-SHARED_FACTORY owner reaching this surface is a producer
         // defect, never silently executed as a transfer.
         if (payload.defaultOwner() != DefaultOwner.SHARED_FACTORY) {
@@ -1134,8 +873,7 @@ public final class ClassOpsExecutor {
                 + "SHARED_FACTORY transfer (executeClassNewLocal is the LOCAL surface, "
                 + "executeClassNewHostDefaults is the host declaration class surface, "
                 + "executeClassNewBuiltinDefaults is the builtin Error surface, "
-                + "RETAINED_ABI transfer is E10's, and the extern-C FFI_PLAN"
-                + " construction is executeClassNewFfiPlan's) — a"
+                + "RETAINED_ABI transfer is E10's) — a"
                 + " non-SHARED_FACTORY owner reaching "
                 + "executeClassNewSharedFactory is a producer defect, never executed");
         }

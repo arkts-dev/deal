@@ -23,8 +23,7 @@ public record DefaultSerializerModuleInput(
     CanonicalRuntimeTypeDescriptor descriptors,
     Map<String, CanonicalModuleIdentity> classification,
     ModuleResolver moduleResolver,
-    boolean isDeclarationFile,
-    boolean isExternC
+    boolean isDeclarationFile
 ) {
 
     public DefaultSerializerModuleInput {

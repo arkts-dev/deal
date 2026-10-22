@@ -13,7 +13,6 @@ public enum DefaultOwner {
 
     HOST_DEFAULTS,
 
-    FFI_PLAN,
 
     BUILTIN_DEFAULTS
 }

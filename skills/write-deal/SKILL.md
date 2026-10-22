@@ -21,6 +21,5 @@ Read the relevant rules and example before writing:
 | String processing | [stdlib](references/language.md#standard-library-declarations) | [strings](examples/src/strings.deal) |
 | Project wiring | [modules](references/language.md#modules) | [manifest](examples/deal.json), [entry](examples/src/main.deal) |
 | Async host calls | [async](references/language.md#asyncawait), [host ABI](references/language.md#host-abi-and-interoperability) | [host binding](examples/host/store.d.deal), [client](examples/host/client.deal) |
-| Native calls | [C FFI](references/language.md#c-ffi-declaration-files) | Inspect the actual C header |
 
 Adapt the example; do not duplicate it into documentation. Implement requested behavior without invented APIs or placeholder success. Keep edits local. [Compile and execute](references/validation.md) through the project's execution workflow.

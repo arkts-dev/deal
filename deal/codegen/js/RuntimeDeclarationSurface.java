@@ -19,7 +19,7 @@ import java.util.Objects;
  * <pre>{@code
  * RuntimeDeclarationSurface { modules: ordered Map<ModuleId, RuntimeDeclarationModule> }
  * RuntimeDeclarationModule {
- *   kind: HOST | EXTERN_C,
+ *   kind: HOST,
  *   exports: ordered Map<String, RuntimeDescriptor>,   // ascending Java String order
  *   classes: ordered Map<String, RuntimeDeclaredClass>
  * }
@@ -67,16 +67,11 @@ public record RuntimeDeclarationSurface(
     public enum DeclarationKind {
 
         /** A host declaration module. */
-        HOST,
-
-        /** An extern-C declaration module. */
-        EXTERN_C;
-
+        HOST;
         /** The projection of one shared declaration-surface kind. */
         static DeclarationKind of(HostDeclarationSurface.DeclarationKind kind) {
             Objects.requireNonNull(kind, "kind must not be null");
-            return kind == HostDeclarationSurface.DeclarationKind.HOST
-                ? HOST : EXTERN_C;
+            return HOST;
         }
     }
 

@@ -164,7 +164,7 @@ public class DefaultSemanticPlannerTest {
     public static void main(String[] args) throws Exception {
         testPlanShapeAndResolutionThroughOrchestrator();
         testE4001ImplementationClass();
-        testE4001CStructClass();
+
         testHostDeclaredExemption();
         testE3020EvaluatorScopeAwaitInAsyncBody();
         testE3020AwaitInsideAsyncFunctionExpressionCompiles();
@@ -448,67 +448,6 @@ public class DefaultSemanticPlannerTest {
     // E4001: C-struct class declaration shape (declaration analyzer)
     // =========================================================================
 
-    private static void testE4001CStructClass() throws Exception {
-        System.out.println("-- E4001 at the field declaration range"
-            + " (C-struct class) --");
-        Compile compile = new Compile(Map.of(
-            "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "moduleRoots": ["src"],
-                  "backend": "luajit",
-                  "output": "build",
-                  "externals": {
-                    "native/math": {
-                      "declaration": "bindings/ffi.d.deal",
-                      "nativeLibrary": "libm.so"
-                    }
-                  }
-                }
-                """,
-            "src/main.deal", """
-                import * as M from "native/math";
-
-                export function main(): null {
-                  return null;
-                }
-                """,
-            "bindings/ffi.d.deal", """
-                // @extern-c
-
-                // @c-struct
-                export class Vec2 {
-                  x: number = 0.0;
-                  y: number;
-                }
-
-                export function length(v: Vec2): number;
-                """), "src/main.deal");
-        try {
-            check(!compile.success, "the missing-default C-struct class"
-                + " fails the compile");
-            CompilerDiagnostic e4001 = compile.errorOf("E4001");
-            check(e4001 != null,
-                "E4001 fired for the C-struct class, got "
-                    + compile.diagnostics);
-            if (e4001 != null) {
-                check(e4001.range().startLine() == 6
-                        && e4001.range().startColumn() == 3,
-                    "E4001 anchors the field declaration range (line 6"
-                        + " column 3), got " + e4001.range().startLine()
-                        + ":" + e4001.range().startColumn());
-            }
-            check(compile.errorOf("E7002") == null,
-                "the FFI missing-default E7002 never fires (the planner"
-                    + " gate precedes the FFI phase)");
-            check(compile.orchestrator.plannedDefaultClasses().values()
-                    .stream().allMatch(List::isEmpty),
-                "failure publishes no plan");
-        } finally {
-            deleteRecursively(compile.root);
-        }
-    }
-
     // =========================================================================
     // Host-declared classes: exempt from the plan gates, no plan
     // =========================================================================
@@ -695,62 +634,7 @@ public class DefaultSemanticPlannerTest {
             deleteRecursively(implementation.root);
         }
 
-        Compile declaration = new Compile(Map.of(
-            "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "moduleRoots": ["src"],
-                  "backend": "luajit",
-                  "output": "build",
-                  "externals": {
-                    "native/math": {
-                      "declaration": "bindings/ffi.d.deal",
-                      "nativeLibrary": "libm.so"
-                    }
-                  }
-                }
-                """,
-            "src/main.deal", """
-                import * as M from "native/math";
 
-                export function main(): null {
-                  return null;
-                }
-                """,
-            "bindings/ffi.d.deal", """
-                // @extern-c
-
-                // @c-struct
-                export class Vec2 {
-                  x: number = "oops";
-                }
-
-                export function length(v: Vec2): number;
-                """), "src/main.deal");
-        try {
-            check(!declaration.success,
-                "the mismatched C-struct default fails the compile");
-            CompilerDiagnostic e3001 = declaration.errorOf("E3001");
-            check(e3001 != null,
-                "E3001 fired for the C-struct default (the declaration"
-                    + " analyzer's checker), got " + declaration.diagnostics);
-            if (e3001 != null) {
-                check(e3001.range().startLine() == 5
-                        && e3001.range().startColumn() == 15,
-                    "E3001 anchors the default expression range (line 5"
-                        + " column 15), got " + e3001.range().startLine()
-                        + ":" + e3001.range().startColumn());
-                check(e3001.message().contains(
-                        "Default value type mismatch for field 'x'"),
-                    "E3001 keeps the checker message identity, got "
-                        + e3001.message());
-            }
-            check(declaration.orchestrator.plannedDefaultClasses().values()
-                    .stream().allMatch(List::isEmpty),
-                "failure publishes no plan");
-        } finally {
-            deleteRecursively(declaration.root);
-        }
     }
 
     // =========================================================================

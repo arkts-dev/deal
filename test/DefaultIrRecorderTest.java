@@ -152,7 +152,7 @@ public final class DefaultIrRecorderTest {
                     providerProgram, PROVIDER_LOCATION,
                     Map.of("Rec", REC_TYPE, "getTag",
                         Types.func(List.of(REC_TYPE), Type.Int.INSTANCE)),
-                    new SymbolTable(), false, false));
+                    new SymbolTable(), false));
             // The declaration scope: the import alias L and the
             // intrinsic int conversion.
             SymbolTable scope = new SymbolTable();
@@ -471,7 +471,7 @@ public final class DefaultIrRecorderTest {
                     new SemanticModuleIdentity(DEPLOYMENT,
                         "file://" + sourcePath),
                     "m" + alias, projectIdentity(), identity),
-                exports, new SymbolTable(), false, false);
+                exports, new SymbolTable(), false);
         }
 
         private deal.identity.ProjectModuleIdentity projectIdentity() {

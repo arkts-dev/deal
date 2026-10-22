@@ -300,7 +300,7 @@ public class DefaultSemanticSerializerTest {
         testFunctionProviderContent();
         testDeclaredWrapperAndHostClassSeams();
         testSyntheticJsonableExportProvider();
-        testDeclarationModuleCStructPlan();
+
         testOutOfRootProvider();
         testReentrantGuardFailsClosed();
         testBrokenOccurrenceFailsClosed();
@@ -2215,92 +2215,6 @@ public class DefaultSemanticSerializerTest {
     // analyzer's resolution surface)
     // =========================================================================
 
-    private static void testDeclarationModuleCStructPlan()
-            throws Exception {
-        System.out.println("-- Declaration-module C-struct class plans"
-            + " (declaration root scope) --");
-        Compile compile = new Compile(Map.of(
-            "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "moduleRoots": ["src"],
-                  "backend": "luajit",
-                  "output": "build",
-                  "externals": {
-                    "native/math": {
-                      "declaration": "bindings/ffi.d.deal",
-                      "nativeLibrary": "libm.so"
-                    }
-                  }
-                }
-                """,
-            "src/main.deal", """
-                import * as M from "native/math";
-
-                class Uses {
-                  v: M.Vec2 = {};
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """,
-            "bindings/ffi.d.deal", """
-                // @extern-c
-
-                // @c-struct
-                export class Vec2 {
-                  x: number = 1.5;
-                  y: number = 2.5;
-                }
-
-                export function length(v: Vec2): number;
-                """), "src/main.deal");
-        try {
-            check(compile.success,
-                "the C-struct declaration fixture compiles: "
-                    + compile.diagnostics);
-            DefaultSemanticSerializer.Result result = compile.serializationSnapshot();
-            check(!result.hasErrors(),
-                "the serializer serializes the C-struct class plan"
-                    + " through the declaration module's root scope: "
-                    + result.diagnostics());
-            DefaultSemanticSerializer.SerializedDefaultClass vec2 =
-                compile.serializedOf("ffi.d.deal", "Vec2");
-            check(vec2 != null, "Vec2 has a serialized plan");
-            if (vec2 == null) {
-                return;
-            }
-            check(vec2.canonicalPlanContent().indexOf(
-                    "\"name\":\"x\"")
-                    < vec2.canonicalPlanContent().indexOf(
-                        "\"name\":\"y\""),
-                "the C-struct plan keeps class source order (x before"
-                    + " y)");
-            check(vec2.completedPlan().orderedFields().get(0)
-                    .defaultExpression().canonicalSemanticContent()
-                    .contains("\"literalValue\":0x1.8p0"),
-                "the C-struct default serializes its exact IEEE-754"
-                    + " literal (1.5 as the unique hex float)");
-            DefaultSemanticSerializer.SerializedDefaultClass uses =
-                compile.serializedOf("main.deal", "Uses");
-            check(uses != null, "Uses has a serialized plan");
-            if (uses == null) {
-                return;
-            }
-            ResolvedDefaultExpression v = uses.completedPlan()
-                .orderedFields().get(0).defaultExpression();
-            check(v.runtimeResources().size() == 1
-                    && v.runtimeResources().iterator().next()
-                        .providerContractDigest()
-                        .equals(vec2.planDigest()),
-                "the imported C-struct class literal completes with the"
-                    + " declaration-module plan digest");
-        } finally {
-            deleteRecursively(compile.root);
-        }
-    }
-
     // =========================================================================
     // Out-of-root class-free provider (leaf verification with E2 output)
     // =========================================================================
@@ -2558,14 +2472,14 @@ public class DefaultSemanticSerializerTest {
                 checkResultFor(cdA),
                 new NameResolver("src.main", new StubModuleResolver()),
                 Map.of(), Map.of(), descriptors, classification, null,
-                false, false);
+                false);
         DefaultSerializerModuleInput inputB =
             new DefaultSerializerModuleInput(
                 "/proj/src/lib.deal", "src.lib", programB, LOCATION_B,
                 checkResultFor(cdB),
                 new NameResolver("src.lib", new StubModuleResolver()),
                 Map.of(), Map.of(), descriptors, classification, null,
-                false, false);
+                false);
 
         Map<String, List<PlannedDefaultClass>> planned = Map.of(
             "/proj/src/main.deal", List.of(plannedA),
@@ -2821,8 +2735,7 @@ public class DefaultSemanticSerializerTest {
                 "/proj/src/main.deal", "src.main", program, LOCATION_A,
                 checkResultFor(cd),
                 new NameResolver("src.main", new StubModuleResolver()),
-                Map.of(), Map.of(), descriptors, Map.of(), null, false,
-                false);
+                Map.of(), Map.of(), descriptors, Map.of(), null, false);
         DefaultSemanticSerializer.Result result =
             DefaultSemanticSerializer.serialize(
                 Map.of("/proj/src/main.deal", input),

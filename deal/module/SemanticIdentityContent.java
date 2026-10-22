@@ -24,13 +24,7 @@ final class SemanticIdentityContent {
         return digestOf(canonical);
     }
 
-    /**
-     * SHA-256 (64 lowercase hex chars) over the canonical
-     * NUL-separated serialization of one private semantic resource
-     * identity (module deployment identity, canonical source URI,
-     * declaration kind/name/path/range) — the exact component set of
-     * the FFI-domain derivation.
-     */
+
     static String resourceIdentityDigest(
             SemanticResourceIdentity identity) {
         Objects.requireNonNull(identity, "identity");

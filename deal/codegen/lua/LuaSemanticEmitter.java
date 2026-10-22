@@ -4,10 +4,6 @@ import deal.codegen.EmitterSessionBase;
 import deal.codegen.SourceMapRecorder;
 import deal.codegen.SharedEmissionFailure;
 import deal.diagnostics.DiagnosticRange;
-import deal.ffi.FfiGeneratedModule;
-import deal.ffi.FfiFunctionDescriptor;
-import deal.ffi.FfiImportedClassPlanReference;
-import deal.ffi.FfiImportedFunctionReference;
 import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.DescriptorService;
 import deal.semantic.HostDeclarationSurface;
@@ -163,16 +159,6 @@ public final class LuaSemanticEmitter {
         return emitProductionProject(project, tables, registries,
             declarationSurface, null);
     }
-
-    public static String emitProductionProject(ExecutableLoweredProject project,
-                                               Map<ModuleId, StructuredBodyTable> tables,
-                                               Map<ModuleId, ClassFactoryRegistry> registries,
-                                               HostDeclarationSurface declarationSurface,
-                                               FfiEmissionInput ffiEmissionInput) {
-        return emitProductionProject(project, tables, registries,
-            declarationSurface, ffiEmissionInput, null);
-    }
-
     /**
      * The source-mapping production entry (the v1.3 default debugging
      * artifacts): identical emission to the overload above with one
@@ -190,7 +176,6 @@ public final class LuaSemanticEmitter {
                                                Map<ModuleId, StructuredBodyTable> tables,
                                                Map<ModuleId, ClassFactoryRegistry> registries,
                                                HostDeclarationSurface declarationSurface,
-                                               FfiEmissionInput ffiEmissionInput,
                                                SourceMapRecorder sourceMapRecorder) {
         Objects.requireNonNull(project, "project must not be null");
         Objects.requireNonNull(tables, "tables must not be null");
@@ -198,7 +183,7 @@ public final class LuaSemanticEmitter {
         Objects.requireNonNull(declarationSurface,
             "declarationSurface must not be null");
         return new Session(project, tables, registries, false,
-            declarationSurface, ffiEmissionInput, sourceMapRecorder).emit();
+            declarationSurface, sourceMapRecorder).emit();
     }
 
     public static String emitProductionModule(LoweredModuleUnit unit,
@@ -207,54 +192,6 @@ public final class LuaSemanticEmitter {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         return new Session(unit, table, false, entryModule).emit();
-    }
-
-    /**
-     * The typed provider gap of the extern-C load emission's binding step
-     * (design source {@code plan-evaluator-provider-binding-surface} P4 and
-     * the provider-gap fail-closed contract): a provider the emitting
-     * artifact does not publish in the wrapper convention before the
-     * binding position, or one import alias the declaration facts bind to
-     * two provider modules. The message carries the producing facts — the
-     * extern-C import's raw specifier and statement origin, the resolved
-     * declaration module, and the offending provider alias and module —
-     * and {@link #consumingModulePath()} is the module whose
-     * {@code MODULE_IMPORT} carries the extern-C import. The production arm
-     * maps this signal to exactly one E6005 {@code SHARED_EMITTER_COVERAGE}
-     * whose detail names the consuming module and those facts and whose
-     * range is the import statement's own origin (the identifiable
-     * offending span), never a bare generic gap.
-     */
-    public static final class FfiProviderGap extends SharedEmissionFailure {
-        private static final long serialVersionUID = 1L;
-
-        /** The module whose MODULE_IMPORT carries the extern-C import. */
-        private final String consumingModulePath;
-
-        FfiProviderGap(String consumingModulePath, String detail) {
-            this(consumingModulePath, detail, null);
-        }
-
-        FfiProviderGap(String consumingModulePath, String detail,
-                       DiagnosticRange offendingRange) {
-            super(detail, offendingRange);
-            this.consumingModulePath = Objects.requireNonNull(
-                consumingModulePath, "consumingModulePath must not be null");
-        }
-
-        /** The consuming (emitting) module of the extern-C import. */
-        public String consumingModulePath() {
-            return consumingModulePath;
-        }
-
-        /**
-         * The extern-C import statement's offending source range, or
-         * {@code null} when the gap names no import op (the canonical
-         * synthetic range stays the E6005's own).
-         */
-        public DiagnosticRange offendingRange() {
-            return diagnosticRange();
-        }
     }
 
     // =========================================================================
@@ -285,23 +222,18 @@ public final class LuaSemanticEmitter {
 
         final Map<ClassId, ModuleId> hostClassModules = new LinkedHashMap<>();
 
-        final Map<ClassId, ModuleId> ffiClassModules = new LinkedHashMap<>();
-
         /**
          * The compile's class registration seeds (the declaration classes'
          * {@link ClassLayout}s and the compiler-owned builtin
          * {@code Error}), or {@code null} outside a project session. The
-         * host-carrier metadata's extern-C field map reads the declared
-         * extern-C layout here (the class layouts of the units carry only
+         * host-carrier metadata reads the declared layout here (the class layouts of the units carry only
          * the project's own DEAL declarations).
          */
         final ClassRegistrationSeeds classSeeds;
-
-        final FfiEmissionInput ffiInput;
         /**
          * The declaration modules whose load this session's walk already
          * emitted into the chunk-global {@code __exportSurfaces} registry
-         * (the {@code load_host} and {@code load_ffi} loads, in emission
+         * (the {@code load_host} loads, in emission
          * order). The provider-binding predicate admits a declaration
          * provider exactly when its load was emitted before the binding
          * position: the binding captures the registry entry by value, so
@@ -310,8 +242,7 @@ public final class LuaSemanticEmitter {
          */
         final java.util.Set<ModuleId> emittedDeclarationLoads =
             new java.util.LinkedHashSet<>();
-        /** The per-session ordinal of the emitted FFI import locals. */
-        int ffiImportCounter;
+
         /** The selected entry module runs the ENTRY_INVOKE delegation. */
         final boolean entryModule;
         /** The function id of the factory currently being emitted (the
@@ -332,7 +263,7 @@ public final class LuaSemanticEmitter {
             this.projectSession = false;
             this.hostSurface = null;
             this.classSeeds = null;
-            this.ffiInput = null;
+
             this.entryModule = entryModule;
             registerUnit(unit, table, new ClassFactoryRegistry(Map.of()));
             if (!entryModule) {
@@ -355,40 +286,24 @@ public final class LuaSemanticEmitter {
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
                 HostDeclarationSurface hostSurface) {
-            this(project, tables, registries, trace, hostSurface, null, null);
+            this(project, tables, registries, trace, hostSurface, null);
         }
 
-        /**
-         * The FFI-capable production project session: the combined closure
-         * plus the compile's host declaration surface (the declared-map
-         * source of the {@code MODULE_IMPORT(HOST)} load and the extern-C
-         * declaration-kind source) and the compile's FFI emission input
-         * (the extern-C generated-module metadata of the emitted
-         * {@code load_ffi} prelude and the manifest-directory text
-         * resolving a manifest-relative loader text). A null FFI input is
-         * a session without an FFI emission input; a non-null input
-         * requires the declaration surface.
-         */
+
         Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
                 Map<ModuleId, ClassFactoryRegistry> registries, boolean trace,
-                HostDeclarationSurface hostSurface, FfiEmissionInput ffiInput,
+                HostDeclarationSurface hostSurface,
                 SourceMapRecorder sourceMapRecorder) {
             super(project.modules().get(project.entryModule()),
                 tables.get(project.entryModule()));
-            if (ffiInput != null && hostSurface == null) {
-                throw new IllegalArgumentException(
-                    "an FFI emission input requires the compile's host"
-                        + " declaration surface (the extern-C declaration"
-                        + " kind and the provider coverage both resolve through"
-                        + " it — a producer defect)");
-            }
+
             if (unit == null || table == null) {
                 throw new IllegalArgumentException(
                     "the entry module is not in the executable closure");
             }
             this.hostSurface = hostSurface;
             this.classSeeds = project.classSeeds();
-            this.ffiInput = ffiInput;
+
             this.projectSession = true;
             this.trace = trace;
             this.entryModule = true;
@@ -415,8 +330,6 @@ public final class LuaSemanticEmitter {
             for (ModuleId declarationModule : hostSurface.moduleIds()) {
                 HostDeclarationSurface.DeclarationFacts facts =
                     hostSurface.require(declarationModule);
-                boolean externC = facts.kind()
-                    == HostDeclarationSurface.DeclarationKind.EXTERN_C;
                 for (Map.Entry<String, Type> export : facts.exports().entrySet()) {
                     if (!(export.getValue() instanceof Type.Class)) {
                         continue;
@@ -424,13 +337,10 @@ public final class LuaSemanticEmitter {
                     RuntimeDescriptor descriptor =
                         DescriptorService.describe(export.getValue());
                     if (descriptor instanceof RuntimeDescriptor.Class classDescriptor) {
-                        if (externC) {
-                            ffiClassModules.put(classDescriptor.classId(),
-                                declarationModule);
-                        } else {
+
                             hostClassModules.put(classDescriptor.classId(),
                                 declarationModule);
-                        }
+
                     }
                 }
             }
@@ -440,6 +350,7 @@ public final class LuaSemanticEmitter {
         private boolean isHostClass(ClassId classId) {
             return hostClassModules.containsKey(classId);
         }
+
 
         /**
          * The host-carrier declaration metadata (ISSUE-0849): exactly three
@@ -452,7 +363,7 @@ public final class LuaSemanticEmitter {
          *       {@code {field = canonical field descriptor}} map in
          *       declaration order, for every HOST-kind declared class (the
          *       declaration surface's {@code DeclaredClass.fields}) and for
-         *       every extern-C (the declared {@link ClassLayout}) and DEAL
+         *       every declared host and DEAL
          *       class of the compile (the class layouts);</li>
          *   <li>{@code __hostClassKinds} — the same identities to
          *       {@code "host"}, {@code "deal"}, or {@code "extc"};</li>
@@ -520,24 +431,7 @@ public final class LuaSemanticEmitter {
             ClassId classId, String kind, Map<String, String> fields) {
         }
 
-        /**
-         * The metadata's classes in emission order: the declaration
-         * surface's classes in declaration-module and declaration order —
-         * HOST field descriptors from the declaration surface's resolved
-         * declared field types, extern-C field descriptors from the class
-         * registration seed's {@link ClassLayout} (the unit class layouts
-         * carry only the project's own DEAL declarations) — followed by the
-         * project's own classes in class-layout registration order. The
-         * builtin {@code Error} identity is never a key.
-         *
-         * <p>Every declaration class identity comes from the compile's
-         * class-registration seeds — the one producer the checker, the
-         * descriptor surface, and the class layouts share — never from the
-         * HOST import ops of the lowered units: a declaration module that
-         * only another {@code .d.deal} imports carries no such op, and its
-         * classes are still declared classes whose canonical externals
-         * identity a crossing can name.</p>
-         */
+
         private List<HostCarrierClass> hostCarrierClasses() {
             List<HostCarrierClass> classes = new ArrayList<>();
             java.util.Set<ClassId> emitted = new java.util.LinkedHashSet<>();
@@ -550,8 +444,6 @@ public final class LuaSemanticEmitter {
                     if (facts.classes().isEmpty()) {
                         continue;
                     }
-                    boolean externC = facts.kind()
-                        == HostDeclarationSurface.DeclarationKind.EXTERN_C;
                     for (HostDeclarationSurface.DeclaredClass declaredClass
                             : facts.classes().values()) {
                         ClassId classId = declaredClassId(declaredIds,
@@ -562,33 +454,15 @@ public final class LuaSemanticEmitter {
                             continue;
                         }
                         Map<String, String> fields = new LinkedHashMap<>();
-                        if (externC) {
-                            ClassRegistrationSeeds.ClassRegistration
-                                registration = classSeeds == null ? null
-                                    : classSeeds.registrationFor(classId);
-                            if (registration == null) {
-                                throw new IllegalStateException(
-                                    "the declared extern-C class " + classId
-                                        + " carries no class-registration"
-                                        + " seed: the host-carrier metadata's"
-                                        + " extern-C field map reads the"
-                                        + " declared ClassLayout (a producer"
-                                        + " defect)");
-                            }
-                            for (ClassLayout.FieldLayout field
-                                    : registration.layout().fields()) {
-                                fields.put(field.name(),
-                                    field.descriptor().canonicalSpecText());
-                            }
-                        } else {
+
                             for (HostDeclarationSurface.DeclaredField field
                                     : declaredClass.fields()) {
                                 fields.put(field.declaration().name(),
                                     hostDescriptorText(field.type()));
                             }
-                        }
+
                         classes.add(new HostCarrierClass(classId,
-                            classKindOf(classId, externC ? "extc" : "host"),
+                            classKindOf(classId, "host"),
                             fields));
                     }
                 }
@@ -620,21 +494,12 @@ public final class LuaSemanticEmitter {
             return classes;
         }
 
-        /**
-         * The declared kind of one class identity: {@code "host"} for the
-         * compile's declared host classes, {@code "extc"} for its declared
-         * extern-C classes (both classified by the same maps the load and
-         * plan emission read), and {@code "deal"} for the project's own
-         * class layouts. A declared class the module does not export is
-         * named by no crossing; it keeps its declaration module's kind.
-         */
+
         private String classKindOf(ClassId classId, String declaredKind) {
             if (hostClassModules.containsKey(classId)) {
                 return "host";
             }
-            if (ffiClassModules.containsKey(classId)) {
-                return "extc";
-            }
+
             return declaredKind;
         }
 
@@ -811,19 +676,6 @@ public final class LuaSemanticEmitter {
                 collectFunctionShapes(shapes, func.returnType());
             }
         }
-
-        private String ffiPlanExpr(SemanticOp op, ClassId classId) {
-            ModuleId declarationModule = ffiClassModules.get(classId);
-            if (declarationModule == null) {
-                throw rejectedOp(op, "the class " + classId
-                    + " is not a declared extern-C class of the compile's"
-                    + " declaration surface (the class plan entry has exactly one"
-                    + " source — a producer defect)");
-            }
-            return "__ffiClassPlan(" + luaString(declarationModule.path())
-                + ", " + luaString(classId.name()) + ")";
-        }
-
         /**
          * The emitted expression of one declared host class's loaded
          * {@code <C>_defaults} entry (K10; ISSUE-0855): the module's
@@ -1606,10 +1458,7 @@ public final class LuaSemanticEmitter {
             return false;
         }
 
-        /**
-         * Whether the session's op walk carries at least one HOST-kind
-         * import (host or extern-C).
-         */
+
         private boolean hasHostImports() {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
@@ -5223,10 +5072,7 @@ public final class LuaSemanticEmitter {
 
                 layout = payload.layout();
             }
-            if (layout == null && payload.defaultOwner() == DefaultOwner.FFI_PLAN) {
 
-                layout = payload.layout();
-            }
             if (layout == null) {
                 throw rejectedOp(op, "CLASS_NEW " + op.opId() + " classId "
                     + payload.classId() + " has no layout in the resolution context "
@@ -5256,11 +5102,7 @@ public final class LuaSemanticEmitter {
                 case HOST_DEFAULTS -> {
 
                 }
-                case FFI_PLAN -> {
 
-                    emitClassNewFfiPlan(op, payload, layout);
-                    return;
-                }
                 case BUILTIN_DEFAULTS -> {
                     // The builtin Error construction (K13 items 2-4): the
                     // builtin defaults are compiler constants, so no default
@@ -5465,7 +5307,7 @@ public final class LuaSemanticEmitter {
             // table in pairs() order, so the first supplied name outside
             // the loaded map is pinned here — the same first-extra order
             // the oracle's host construction scans and the JVM host arm
-            // pre-scans, and the same guard shape the FFI_PLAN arm emits.
+            // pre-scans.
             String hostDefaults = "__hdT" + op.opId().id();
             out.append(hostDefaults).append(" = ")
                 .append(hostDefaultsExpr(op, payload.classId())).append("\n");
@@ -5515,82 +5357,6 @@ public final class LuaSemanticEmitter {
             out.append(target).append(" = __instT\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
-
-        private void emitClassNewFfiPlan(SemanticOp op,
-                KindPayload.ClassNewPayload payload, ClassLayout layout) {
-            if (ffiClassModules.get(payload.classId()) == null) {
-                throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner FFI_PLAN for " + payload.classId()
-                    + ", which is not a declared extern-C class of the compile's"
-                    + " declaration surface (the class plan entry has exactly one"
-                    + " source — a producer defect)");
-            }
-            if (payload.classFactoryRef() != null
-                    || !payload.classDefaultOpIds().isEmpty()) {
-                throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner FFI_PLAN with a non-null factory"
-                    + " ref or a non-empty default child list: the C-struct"
-                    + " construction carries neither (the loaded plan's"
-                    + " evaluators are the single default authority — a"
-                    + " producer defect)");
-            }
-            // (1) The provided fields in declaration order: the boundary
-            // child's descriptor-kind check over the provided value's
-            // completed slot, then the admitted value into the provided
-            // table (a class-typed position projects to the runtime
-            // representation the loaded matcher validates).
-            out.append("__provT = {}\n");
-            for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
-                SemanticOp boundary = requireClassNewFieldBoundary(op, entry);
-                String checked = "__fpcT" + boundary.opId().id();
-                emitClassNewFieldCheck(op, boundary, checked);
-                out.append("__provT[").append(luaString(entry.field()))
-                    .append("] = ")
-                    .append(ffiClassFieldProjection(
-                        ((KindPayload.BoundaryPayload) boundary.payload())
-                            .descriptor(),
-                        checked))
-                    .append("\n");
-            }
-            // (2) The deterministic extra-key guard.
-            emitExtraKeyRejection(op, payload, payload.layout());
-            // (3) The runtime's four phases over the loaded plan entry.
-            out.append("__okB, __instT = pcall(__rt.class_plan_, ")
-                .append(luaString(payload.classId().text())).append(", ")
-                .append(ffiPlanExpr(op, payload.classId())).append(", __provT, ")
-                .append(classLiteralOriginArgs(op)).append(")\n");
-            out.append("if not __okB then\n");
-            out.append("  __eT = __hostError(__instT, ")
-                .append(luaString(originOf(op))).append(")\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
-            out.append("  error(__eT, 0)\n");
-            out.append("end\n");
-            // (4) The wrapper-to-chunk projection of the constructed
-            // instance, then the publication.
-            String target = slot((ValueId) op.result());
-            out.append(target).append(" = __hostDealProject(")
-                .append(luaString(payload.classId().text())).append(", __instT, ")
-                .append(luaString(originOf(op))).append(")\n");
-            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
-        }
-
-        /**
-         * The provided-table expression of one C-struct field: a
-         * class-typed position (the declared descriptor is a class
-         * identity) is projected from the chunk representation to the
-         * runtime representation the loaded plan's phase-3 matcher
-         * validates (the load/crossing page F4's {@code __hostClassProject})
-         * and every other position passes its checked value unchanged.
-         */
-        private String ffiClassFieldProjection(RuntimeDescriptor descriptor,
-                String checked) {
-            if (descriptor instanceof RuntimeDescriptor.Class) {
-                return "__hostClassProject(" + luaString(descriptorText(descriptor))
-                    + ", " + checked + ")";
-            }
-            return checked;
-        }
-
         /**
          * The construction's omitted required defaults in declaration order:
          * the complement of the skip-provided rule. A provided field neither
@@ -7573,22 +7339,6 @@ public final class LuaSemanticEmitter {
             }
         }
 
-        /**
-         * The generated metadata of one extern-C declaration module: an
-         * absent entry is the fail-closed presence rule of the emission
-         * input, so the identifying MODULE_IMPORT operation's own copied
-         * origin supplies the diagnostic range while the lookup's
-         * unchanged message and cause chain are preserved (D4).
-         */
-        private FfiGeneratedModule requireFfiModule(SemanticOp op,
-                                                    ModuleId moduleId) {
-            try {
-                return ffiInput.require(moduleId);
-            } catch (IllegalStateException missing) {
-                throw rejectedOp(op, missing.getMessage(), missing);
-            }
-        }
-
         private void emitModuleImport(SemanticOp op) {
             KindPayload.ModuleImportPayload payload =
                 (KindPayload.ModuleImportPayload) op.payload();
@@ -7597,17 +7347,14 @@ public final class LuaSemanticEmitter {
 
                 HostDeclarationSurface.DeclarationFacts facts =
                     requireDeclarationFacts(op, payload.resolvedModule());
-                if (facts.kind() == HostDeclarationSurface.DeclarationKind.EXTERN_C) {
-                    if (ffiInput != null) {
-                        emitFfiLoad(op, payload);
-                    }
-                } else {
+
                     emitHostLoad(op, payload, facts);
-                }
+
             }
             emitAliasCellCompletion(payload);
             emitPlainSuccess(op);
         }
+
 
         /**
          * The {@code MODULE_IMPORT} completion write (K15 item 2): every
@@ -7617,7 +7364,7 @@ public final class LuaSemanticEmitter {
          * single load created, never a per-alias re-derivation — in the
          * cell's own publication discipline ({@code SHARED_CELL} writes
          * the captured cell table in place). The write runs after the
-         * kind-specific load, so a HOST/FFI alias holds the loaded table.
+         * kind-specific load, so a HOST alias holds the loaded table.
          */
         private void emitAliasCellCompletion(KindPayload.ModuleImportPayload payload) {
             if (payload.aliasCells().isEmpty()) {
@@ -7709,194 +7456,6 @@ public final class LuaSemanticEmitter {
             out.append("__nsOrder(__exportSurfaces[").append(key).append("], ")
                 .append(order).append(")\n");
         }
-
-        private void emitFfiLoad(SemanticOp op,
-                                 KindPayload.ModuleImportPayload payload) {
-            ModuleId moduleId = payload.resolvedModule();
-            FfiGeneratedModule module = requireFfiModule(op, moduleId);
-            int ordinal = ++ffiImportCounter;
-            String bindingsLocal = "__ffi_bindings_" + ordinal;
-            String importPrefix = "__ffi_import_" + ordinal + "_";
-            LuaFfiBindingGenerator.Generation generation =
-                LuaFfiBindingGenerator.generate(module,
-                    ffiInput.manifestDirectory(), bindingsLocal,
-                    importPrefix);
-            if (generation.failure() != null) {
-                throw rejectedOp(op, "the extern-C generated"
-                    + " module of '" + moduleId.path() + "' cannot be"
-                    + " serialized into the load_ffi literals: "
-                    + generation.failure().message());
-            }
-            LuaFfiBindingGenerator.LoadCallParts parts = generation.parts();
-            requireOneProviderModulePerAlias(op, payload, moduleId, module);
-            for (LuaFfiBindingGenerator.ProviderBinding provider
-                    : LuaFfiBindingGenerator.providerBindings(
-                        module.bindings())) {
-                ModuleId providerId = new ModuleId(provider.importedModulePath());
-                if (!isWrapperCapableProvider(providerId)) {
-                    String consuming = consumingModulePathOf(op);
-                    throw new FfiProviderGap(consuming,
-                        "the extern-C import '" + payload.rawSpecifier()
-                        + "' in the consuming module '" + consuming + "' at "
-                        + importOriginText(op)
-                        + " resolves the declaration module '"
-                        + moduleId.path() + "' and binds the provider alias '"
-                        + provider.importAlias() + "' to the module '"
-                        + provider.importedModulePath() + "', which the"
-                        + " artifact does not publish in the wrapper"
-                        + " convention before the binding position: the"
-                        + " provider is neither a session unit of the"
-                        + " lowered closure nor a covered declaration"
-                        + " module whose load the emission already emitted"
-                        + " (a provider gap — a producer defect)",
-                        op.origin().span().range());
-                }
-                out.append("local ").append(importPrefix)
-                    .append(provider.importAlias())
-                    .append(" = __exportSurfaces[")
-                    .append(luaString(provider.importedModulePath()))
-                    .append("] or {}\n");
-            }
-            out.append("local ").append(bindingsLocal).append(" = ")
-                .append(parts.bindingsLiteral()).append("\n");
-            String key = luaString(moduleId.path());
-            out.append("__exportSurfaces[").append(key).append("] = ")
-                .append("__exportSurfaces[").append(key)
-                .append("] or __rt.load_ffi(")
-                .append(parts.moduleKeyLiteral()).append(", ")
-                .append(parts.bundleLiteral()).append(", ")
-                .append(parts.plansLiteral()).append(", ")
-                .append(bindingsLocal).append(", ")
-                .append(loadOriginArgs(op)).append(")\n");
-            out.append("__nsSurface(__exportSurfaces[").append(key).append("])\n");
-            // The loaded extern-C table is the import's namespace value,
-            // and its declared function exports are its entries in source
-            // order (the runtime's `<exportName>_plan` entries are the
-            // construction child's loaded plans, not declared exports), so
-            // the surface's order discipline records exactly the entries
-            // the runtime publishes for the declared functions.
-            emitSurfaceOrder(key, ffiDeclaredFunctionExports(module));
-            // The load's registry entry exists from this position on, so
-            // a later binding of a provider alias naming this declaration
-            // module captures the published loaded table.
-            emittedDeclarationLoads.add(moduleId);
-        }
-
-        /** The declared function export names of one extern-C module, in order. */
-        private static List<String> ffiDeclaredFunctionExports(
-                FfiGeneratedModule module) {
-            List<String> names = new ArrayList<>();
-            for (FfiFunctionDescriptor function : module.descriptor().functions()) {
-                names.add(function.dealName());
-            }
-            return names;
-        }
-
-        /**
-         * The wrapper-capability predicate of one provider module (P2):
-         * the artifact must publish the provider's export surface in the
-         * wrapper convention before the binding position — either a
-         * session unit of the one lowered closure (its surface object is
-         * created at the chunk top and filled by the module's own
-         * {@code EXPORT_PUBLISH} publication, so an entry published later
-         * in the program is visible to the evaluator through the captured
-         * object) or a covered declaration module whose load this walk
-         * already emitted before the binding position (the loaded table
-         * the registry holds when the binding captures it). Every other
-         * provider is wrapper-incapable and fails the compile closed —
-         * wrapper capability is a property of the artifact's publication,
-         * never of the module kind alone.
-         */
-        private boolean isWrapperCapableProvider(ModuleId providerId) {
-            return units.containsKey(providerId)
-                || emittedDeclarationLoads.contains(providerId);
-        }
-
-        /**
-         * The one-binding-per-alias invariant's fail-closed half (P1): one
-         * import alias resolves exactly one provider module, so a
-         * reference that names a provider module different from the
-         * alias's already-bound provider module is a producer defect —
-         * never a silent first-wins. The two reference lists are the
-         * validator's frozen graph-ordered facts.
-         */
-        private void requireOneProviderModulePerAlias(SemanticOp op,
-                KindPayload.ModuleImportPayload payload, ModuleId moduleId,
-                FfiGeneratedModule module) {
-            Map<String, String> aliasProviders = new LinkedHashMap<>();
-            for (FfiImportedFunctionReference ref
-                    : module.bindings().importedFunctions()) {
-                requireStableAliasProvider(op, payload, moduleId,
-                    aliasProviders, ref.importAlias(),
-                    ref.importedModulePath());
-            }
-            for (FfiImportedClassPlanReference ref
-                    : module.bindings().importedClassPlans()) {
-                requireStableAliasProvider(op, payload, moduleId,
-                    aliasProviders, ref.importAlias(),
-                    ref.importedModulePath());
-            }
-        }
-
-        /** One alias's provider-module agreement check. */
-        private void requireStableAliasProvider(SemanticOp op,
-                KindPayload.ModuleImportPayload payload, ModuleId moduleId,
-                Map<String, String> aliasProviders, String importAlias,
-                String importedModulePath) {
-            String bound = aliasProviders.putIfAbsent(importAlias,
-                importedModulePath);
-            if (bound != null && !bound.equals(importedModulePath)) {
-                String consuming = consumingModulePathOf(op);
-                throw new FfiProviderGap(consuming,
-                    "the extern-C import '" + payload.rawSpecifier()
-                    + "' in the consuming module '" + consuming + "' at "
-                    + importOriginText(op)
-                    + " resolves the declaration module '"
-                    + moduleId.path() + "' and binds the provider alias '"
-                    + importAlias + "' to two provider modules ('" + bound
-                    + "' and '" + importedModulePath + "'): one import"
-                    + " alias resolves exactly one provider module (a"
-                    + " provider gap — a producer defect)",
-                    op.origin().span().range());
-            }
-        }
-
-        /**
-         * The consuming (emitting) module of one extern-C import op: the
-         * module whose {@code MODULE_IMPORT} carries the extern-C import —
-         * the module a provider-gap detail names.
-         */
-        private String consumingModulePathOf(SemanticOp op) {
-            ModuleId owner = opModule.get(op.opId());
-            if (owner == null) {
-                throw rejectedOp(op, "the extern-C import op "
-                    + op.opId() + " carries no owning module: the provider"
-                    + " gap cannot name its consuming module (a producer"
-                    + " defect)");
-            }
-            return owner.path();
-        }
-
-        /**
-         * The text of one import statement's origin (file, line, column)
-         * for a fail-closed provider-gap message: the same origin the
-         * load's own {@code FFI_LIBRARY_LOAD}/{@code FFI_SYMBOL_MISSING}
-         * failures name. A span-less import op cannot name a real origin
-         * and is a producer defect (the load's own origin requires the
-         * import statement's span too).
-         */
-        private static String importOriginText(SemanticOp op) {
-            SourceSpan span = op.origin().span();
-            if (span == null) {
-                throw new IllegalStateException("the extern-C import "
-                    + op.opId() + " carries no source span: the provider-gap"
-                    + " origin needs the import statement's own origin (a"
-                    + " producer defect)");
-            }
-            return op.origin().sourceId() + ":" + span.startLine() + ":"
-                + span.startColumn();
-        }
-
         /**
          * The declared-map literal of one host declaration module: the
          * declared exports in declaration order, each with its canonical
@@ -8114,11 +7673,12 @@ public final class LuaSemanticEmitter {
             return null;
         }
 
+
         /**
          * {@code EXPORT_READ} — the per-kind read resolution (M2/M4/M5/M6):
          * a COMPILED read resolves the owning module's published value
          * through the chunk-global program-scoped export-surface registry
-         * (the entry's {@code __val} field); a HOST/FFI read resolves the
+         * (the entry's {@code __val} field); a HOST read resolves the
          * same registry's entry itself — for a HOST module the surface is
          * the loaded module table {@code __rt.load_host} returns, so the
          * entry is the host ABI's value and the read never re-wraps it; an
@@ -9625,7 +9185,7 @@ end
 -- which subsumes the landed class/array projection: a HOST-kind identity
 -- becomes the dual-tagged instance (top-level declared fields, the runtime
 -- class/identity marks, and the chunk __c/__id tags the emitted field ops
--- and the chunk matcher read), a DEAL or extern-C identity keeps the chunk
+-- and the chunk matcher read), a DEAL identity keeps the chunk
 -- __f/__p carrier this helper's callers hold, the builtin Error instance
 -- maps to the chunk __d carrier — the shape every emitted Error read and
 -- boundary check observes — arrays become the __a carrier, and the
@@ -10018,26 +9578,6 @@ local function __hostClassDefaults(module, class)
       .." every construction in dependency order — a producer defect)", 0)
   end
   return surface[class.."_defaults"]
-end
--- The loaded <C>_plan entry of one declared extern-C C-struct class
--- (ISSUE-0666; struct-plan F1): the declaring module's published surface
--- is the loaded module table the one production load returned
--- (__rt.load_ffi, which retains the validated plan per class under the
--- runtime's own <C>_plan key), and the construction calls
--- __rt.class_plan_ over that entry. An absent surface (the declaring
--- module's MODULE_IMPORT load has not run) is a fail-closed producer
--- defect: the load precedes every construction in dependency order. An
--- absent entry stays the runtime entry's own E8001 plan-shape failure —
--- the loaded plan is the only construction authority, never a silent
--- default.
-local function __ffiClassPlan(module, class)
-  local surface = __exportSurfaces[module]
-  if type(surface) ~= "table" then
-    error("the extern-C module '"..module.."' has no published surface before"
-      .." the construction of '"..class.."' (the MODULE_IMPORT load precedes"
-      .." every construction in dependency order — a producer defect)", 0)
-  end
-  return surface[class.."_plan"]
 end
 """;
 
@@ -10520,7 +10060,7 @@ __factories.__hostCarrierIn = function(desc, v, memo)
         values[#values + 1] = {k, val}
       end
     end
-    if kind == "deal" or kind == "extc" then
+    if kind == "deal" then
       local out = {[__dealCarrierKeys.c] = true,
         [__dealCarrierKeys.id] = identity,
         [__dealCarrierKeys.f] = {}, [__dealCarrierKeys.p] = {}}
@@ -10956,7 +10496,7 @@ local __rtMissing = nil
 -- from an absent key via the presence map (has()/FIELD_READ).
 -- A module export surface (the K15 namespace value an import alias cell
 -- holds: a compiled module's publication table, a stdlib module's
--- cataloged-callable table, or the runtime-loaded host/FFI module table)
+-- cataloged-callable table, or the runtime-loaded host module table)
 -- is the module's table in the shared table discipline without carrying a
 -- compiler mark of its own: its entries stay exactly the module's
 -- declared exports (the retained-caller ABI table and every publication
@@ -10966,7 +10506,7 @@ local __rtMissing = nil
 -- nil), and the published value of an entry is __nsEntry's projection: a
 -- compiled module's entry is the cross-chunk ABI wrapper ({__kind, sig,
 -- f, __val}) whose __val is the identical value the direct __exportValue
--- read resolves, while a cataloged callable and a loaded host/FFI entry
+-- read resolves, while a cataloged callable and a loaded host entry
 -- carry no __val and are the entry itself. The state records the entry
 -- order (the module's declared exports in declaration order plus every
 -- later member/index write), the recorded keys, and the number-variant
@@ -11148,7 +10688,7 @@ local function __exportValue(module, name)
   if value == nil then return __MISSING end
   return value
 end
--- The host/FFI export read (M5): the module surface's entry itself. A
+-- The host export read (M5): the module surface's entry itself. A
 -- HOST module's surface is the loaded module table the MODULE_IMPORT
 -- load publishes (__rt.load_host returns the wrapped export table), so
 -- the entry is the host ABI's value — the read re-wraps nothing, copies
@@ -12464,7 +12004,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     -- A shared table carrier (__t) and a module export surface (the K15
     -- namespace value an import alias cell holds: a compiled module's
     -- publication table, a stdlib module's cataloged-callable table, or
-    -- the runtime-loaded host/FFI module table) both admit. The surface
+    -- the runtime-loaded host module table) both admit. The surface
     -- carries no carrier mark of its own (its namespace state is
     -- identity-keyed), so admission follows the actual-kind projection
     -- (the marked carriers of other kinds keep their own arms and never

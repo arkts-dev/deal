@@ -1,20 +1,7 @@
 package deal.lexer;
-
-/**
- * The fixed compiler directive names
- * (fixed-name-directive-events D1/D2).
- *
- * <p>The fixed matching order is the declaration order:
- * {@code jsonable}, {@code extern-c},
- * {@code c-struct}, {@code c-pointer}. The first complete literal match
- * is the name; every remaining pre-terminator scalar is the raw
- * argument, with no delimiter requirement.</p>
- */
+/** The compiler's declaration directive. */
 public enum DirectiveName {
-    JSONABLE("jsonable"),
-    EXTERN_C("extern-c"),
-    C_STRUCT("c-struct"),
-    C_POINTER("c-pointer");
+    JSONABLE("jsonable");
 
     private final String text;
 
@@ -33,22 +20,10 @@ public enum DirectiveName {
      * extend a pending declaration run (D3).
      */
     public boolean isDeclarationDirective() {
-        return this == JSONABLE || this == C_STRUCT || this == C_POINTER;
+        return true;
     }
 
-    /**
-     * True for {@code extern-c}, which clears a pending declaration run
-     * without anchoring it (D3).
-     */
     public boolean isFileDirective() {
-        return this == EXTERN_C;
-    }
-
-    /**
-     * True for the C marker directives {@code c-struct} and
-     * {@code c-pointer} (D4).
-     */
-    public boolean isCMarker() {
-        return this == C_STRUCT || this == C_POINTER;
+        return false;
     }
 }

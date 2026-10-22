@@ -12,7 +12,6 @@ import deal.codegen.js.JsSemanticEmitter;
 import deal.codegen.js.JsSourceFile;
 import deal.codegen.js.RuntimeDeclarationProjection;
 import deal.codegen.js.RuntimeDeclarationSurface;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.semantic.CapabilityRegistry;
@@ -303,11 +302,7 @@ public class JsSemanticEmitterTest {
             throw new IllegalStateException("the fixture project produced no"
                 + " checked closure and manifest set");
         }
-        Map<ModuleId, FfiGeneratedModule> externC = new LinkedHashMap<>();
-        for (Map.Entry<String, FfiGeneratedModule> generated
-                : orchestrator.ffiGenerations().entrySet()) {
-            externC.put(new ModuleId(generated.getKey()), generated.getValue());
-        }
+
         Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
         for (ModuleId declarationModule
                 : orchestrator.hostDeclarationSurface().moduleIds()) {
@@ -337,8 +332,7 @@ public class JsSemanticEmitterTest {
         } else {
             lowering = SemanticLowerer.lowerProject(invocation(), built.input(),
                 built.index(), manifests.manifests(),
-                orchestrator.hostDeclarationSurface(), identities, externC,
-                BuiltinErrorDeclaration.synthesized(
+                orchestrator.hostDeclarationSurface(), identities, BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                     IntrinsicKind.BYTES_NEW), callbackExports);
@@ -2125,7 +2119,7 @@ public class JsSemanticEmitterTest {
             "the @jsonable class publishes the hidden C$fields descriptor"
                 + " export");
         check(appSource != null && appSource.contains(
-                "$rt.registerFactory(\"app\",") 
+                "$rt.registerFactory(\"app\",")
                 && !appSource.contains("$rt.registerFactory(\"lib\","),
             "a module registers only its own factories (the imported class's"
                 + " transfer stays in its declaring module)");

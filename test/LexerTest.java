@@ -1349,7 +1349,7 @@ public class LexerTest {
         // Three events in one run; the next non-comment token is LET at
         // stream index 0 (two preceding directive comments, no other
         // non-comment token).
-        r = tokenize("// @jsonable\n// @c-struct\n// @c-pointer\nlet x = 1;");
+        r = tokenize("// @jsonable\n// @jsonable\n// @jsonable\nlet x = 1;");
         assertNoDiagnostics(r.diagnostics(), "three-marker run");
         check(r.directiveEvents().size() == 3,
             "three events, got " + r.directiveEvents().size());
@@ -1363,7 +1363,7 @@ public class LexerTest {
 
         // --- Broken C run: @c-struct broken by @extern-c never attaches ---
         r = tokenize("// @c-struct\n// @extern-c\nclass A { x: int = 0; }");
-        assertNoDiagnostics(r.diagnostics(), "broken C run fixture (lexer emits no E1046)");
+        assertDiagnosticCode(r.diagnostics(), "E1044", "removed C directives reject");
         check(r.directiveEvents().size() == 2,
             "two events (c-struct + extern-c), got " + r.directiveEvents().size());
         for (CompilerDirective e : r.directiveEvents()) {

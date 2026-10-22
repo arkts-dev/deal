@@ -251,7 +251,7 @@ public final class SourceModuleResolverTest {
                 ? success.resolvedPath().toString()
                 : dir.resolve(entry.getValue()).normalize().toString();
             externals.put(entry.getKey(), new ExternalEntry(entry.getKey(),
-                new NormalizedDeclarationPath(resolved, dummyRange()), null, dummyRange()));
+                new NormalizedDeclarationPath(resolved, dummyRange()), dummyRange()));
         }
         OutputConfigResolver.OutputRef output = new OutputConfigResolver.OutputRef(
             OutputConfigResolver.Source.MANIFEST,
@@ -1382,7 +1382,7 @@ public final class SourceModuleResolverTest {
         String pinnedPath = pinned.toRealPath().toString();
         Map<String, ExternalEntry> overlapExternals = new LinkedHashMap<>();
         overlapExternals.put("console", new ExternalEntry("console",
-            new NormalizedDeclarationPath(pinnedPath, dummyRange()), null,
+            new NormalizedDeclarationPath(pinnedPath, dummyRange()),
             dummyRange()));
         ProjectContext overlapContext = syntheticContext(overlapDir, List.of(),
             Map.of(), overlapDir.resolve("std").toRealPath().toString());

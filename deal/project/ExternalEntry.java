@@ -17,7 +17,6 @@ import deal.source.SourceScalarRange;
 public record ExternalEntry(
     String rawImportSpecifier,
     NormalizedDeclarationPath declarationPath,
-    NativeLibraryRef nativeLibrary,
     SourceScalarRange sourceRange
 ) {
 }

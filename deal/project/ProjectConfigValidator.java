@@ -7,55 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The post-walk field-schema validation of the strict v1.3 manifest
- * (design source {@code strict-project-context-resolution-identity} D2,
- * {@code deal-v1.2-directives-and-c-ffi-declarations} D5).
- *
- * <p>This validator runs only after {@link StrictManifestParser}'s strict
- * walk found no structural defect. It consumes the strictly decoded
- * {@link StrictJsonDocument} and enforces the pinned post-walk
- * validations in canonical order, independent of member document order:
- *
- * <ol>
- *   <li>{@code languageVersion} — required, exactly the JSON string
- *       {@code "1.3"}; missing → failure at the enclosing root-object
- *       range; empty input → the pinned document-start zero-length SOURCE
- *       range {@code (1,1,1,1,0,0)}; wrong value/type → the member value
- *       range;</li>
- *   <li>{@code backend} — when present exactly {@code "luajit"},
- *       {@code "jvm"}, or {@code "js"} (case/whitespace variants,
- *       {@code lua}, empty, and unknown values fail); absence defaults
- *       to {@code "luajit"};</li>
- *   <li>{@code moduleRoots} — value-level only: an array of non-empty,
- *       scalar-valid, NUL-free, host-representable <b>relative</b> strings
- *       (leading {@code /} fails); wrong field/member types and defective
- *       members fail at the member value range; absence is the empty
- *       list; no implicit root;</li>
- *   <li>{@code output} — a non-empty, scalar-valid, NUL-free string
- *       (value-level only; classification and conversion are the output
- *       resolver's duty);</li>
- *   <li>{@code stdlib} — when present exactly {@code "1.3"}, otherwise
- *       defaults to {@code "1.3"};</li>
- *   <li>{@code dependencies} — when present must be a JSON object;
- *       contents are preserved opaquely (structural strictness was
- *       already enforced by the walk);</li>
- *   <li>{@code externals} — must be an object (the legacy list form and
- *       any other shape fail at the {@code externals} value range); each
- *       entry in member order requires a non-empty, scalar-valid,
- *       NUL-free string {@code declaration} ending in {@code .d.deal}
- *       (leading {@code /} is absolute, else manifest-relative; lexical
- *       {@code ..} is permitted) and an optional string
- *       {@code nativeLibrary} classified per
- *       {@link NativeLibraryRef.Kind}.</li>
- * </ol>
- *
- * <p>Content-only: no filesystem access, no byte-level decoding, no
- * {@code deal.diagnostics} dependency. A failure is returned as a
- * {@link Failure} with a message and an anchor range; the caller
- * (StrictManifestParser, which owns the manifest path) converts it into
- * the single E2010 diagnostic.
- */
+
 public final class ProjectConfigValidator {
 
     private ProjectConfigValidator() {
@@ -250,29 +202,9 @@ public final class ProjectConfigValidator {
                         declarationRange);
                 }
 
-                NativeLibraryRef nativeLibrary = null;
-                StrictJsonValue nativeLibraryValue = entryMembers.get("nativeLibrary");
-                if (nativeLibraryValue != null) {
-                    SourceScalarRange nativeLibraryRange = rangeOf(document, nativeLibraryValue);
-                    if (!(nativeLibraryValue instanceof StrictJsonValue.StringVal
-                            nativeLibraryString)) {
-                        return failure("deal.json: externals entry '" + specifier
-                                + "': 'nativeLibrary' must be a string",
-                            nativeLibraryRange);
-                    }
-                    Failure nativeLibraryFailure = pathTextFailure("externals entry '"
-                            + specifier + "' nativeLibrary",
-                        nativeLibraryString.value(), nativeLibraryRange);
-                    if (nativeLibraryFailure != null) {
-                        return new Outcome(null, nativeLibraryFailure);
-                    }
-                    nativeLibrary = classifyNativeLibrary(nativeLibraryString.value(),
-                        nativeLibraryRange);
-                }
-
                 externals.put(specifier, new ExternalEntrySpec(specifier,
                     new ManifestString(declarationString.value(), declarationRange),
-                    nativeLibrary, entryRange));
+                    entryRange));
             }
         }
 
@@ -307,15 +239,7 @@ public final class ProjectConfigValidator {
     // Shared text checks and classification
     // =========================================================================
 
-    /**
-     * The shared non-empty / scalar-valid / NUL-free text checks for
-     * {@code moduleRoots} entries, {@code output}, externals
-     * {@code declaration}, and externals {@code nativeLibrary} values.
-     * NUL and host-representability: a value materialized as a host path
-     * must carry no U+0000 and no replacement character; the strict
-     * decode (ProjectLocator D1 step 3) guarantees the latter, and the
-     * parser re-checks the former here.
-     */
+
     private static Failure pathTextFailure(String what, String value,
                                            SourceScalarRange range) {
         if (value.isEmpty()) {
@@ -344,25 +268,6 @@ public final class ProjectConfigValidator {
             }
         }
         return false;
-    }
-
-    /**
-     * The pinned Linux {@code nativeLibrary} classification: leading
-     * {@code /} → absolute; otherwise any {@code /} → manifest-relative;
-     * no {@code /} → unchanged bare loader name. Backslash is an ordinary
-     * filename character.
-     */
-    private static NativeLibraryRef classifyNativeLibrary(String loaderText,
-                                                          SourceScalarRange range) {
-        NativeLibraryRef.Kind kind;
-        if (loaderText.startsWith("/")) {
-            kind = NativeLibraryRef.Kind.ABSOLUTE_PATH;
-        } else if (loaderText.contains("/")) {
-            kind = NativeLibraryRef.Kind.MANIFEST_RELATIVE_PATH;
-        } else {
-            kind = NativeLibraryRef.Kind.BARE_NAME;
-        }
-        return new NativeLibraryRef(kind, loaderText, range);
     }
 
     // =========================================================================

@@ -34,14 +34,8 @@ public record HostDeclarationSurface(
          * A host declaration module: its declared classes carry the
          * loaded host module's {@code <C>_defaults} entry.
          */
-        HOST,
+        HOST
 
-        /**
-         * An extern-C declaration module (the metadata phase classifies
-         * it through {@code @extern-c}): its declared classes carry the
-         * loaded module's validated {@code <C>_plan} entry.
-         */
-        EXTERN_C
     }
 
     /**
@@ -248,7 +242,7 @@ public record HostDeclarationSurface(
             throw new IllegalStateException(
                 "declaration module '" + moduleId.path()
                     + "' has no declaration-surface entry: the surface covers"
-                    + " every host and extern-C declaration module of the"
+                    + " every host declaration module of the"
                     + " compilation (producer defect)");
         }
         return found;

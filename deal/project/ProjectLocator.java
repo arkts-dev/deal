@@ -33,146 +33,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * The exact-v1.3 project locator (design source
- * {@code strict-project-context-resolution-identity} D1,
- * {@code deal-v1.2-directives-and-c-ffi-declarations} D5/D10/D11,
- * {@code deal-v1.2-int32-and-bytes-architecture} D5):
- * {@code locate(entryFile, cliOverrides) -> ProjectContext | E2010 |
- * CliDiagnostic} — one immutable {@link ProjectContext} or exactly one
- * structured failure.
- *
- * <p>The eight-step pipeline (D1):</p>
- * <ol>
- *   <li><b>Entry validation</b> —
- *       {@link ProtectedPathOps#validateEntry(String)}: non-empty,
- *       NUL-free, host-representable, symlink-resolved to a regular
- *       readable file. Any failure is a {@link CliDiagnostic} (a
- *       CLI-supplied value), never E2010.</li>
- *   <li><b>Ancestor discovery</b> — walk the symlink-resolved parent
- *       chain of the validated entry up to and including the filesystem
- *       root and collect every regular {@code deal.json} (regular after
- *       resolution). Zero → one E2010 with a v1.3-manifest note; two or
- *       more → one E2010 with candidate-path notes. The walk continues to
- *       the root even after a hit, so the multiple case reports every
- *       candidate; the compiler never guesses. Discovery E2010s use the
- *       pinned synthetic range {@code (entryFile,1,1,1,1,0,0,0,SYNTHETIC)}
- *       with candidate/manifest notes.</li>
- *   <li><b>Read + strict decode, then strict parse, then overrides</b> —
- *       the discovered manifest's exact bytes are read once and decoded
- *       with a strict UTF-8 decoder in REPORT mode (malformed and
- *       unmappable input report). Any malformed byte sequence — invalid
- *       continuation, truncated final sequence, overlong form, or
- *       CESU-8 surrogate-range encoding — is one E2010 with a SOURCE
- *       range in the manifest file at the position where the malformed
- *       sequence begins (the UTF-16 index equal to the length of the
- *       strictly decoded valid prefix), span length 1. No replacement
- *       character is produced: U+FFFD reaches the strict pass only
- *       through a literal {@code \uFFFD} escape (valid per D2). A leading
- *       UTF-8 BOM is not stripped and fails the strict pass as an
- *       out-of-alphabet scalar. The strictly decoded text is the sole
- *       parser input ({@link StrictManifestParser} performs no byte
- *       decoding). A malformed manifest fails E2010 before any override
- *       is consulted. On a valid manifest the overrides are validated: a
- *       valid CLI backend alias {@code lua|luajit|jvm|js} (trim +
- *       lowercase) overrides the manifest backend; a valid CLI output
- *       string
- *       (trimmed, non-empty, scalar-valid, NUL-free, host-representable)
- *       overrides the manifest output, with the trimmed value winning. An
- *       empty/whitespace-only or otherwise invalid override is a
- *       {@link CliDiagnostic}; overrides can never bypass a malformed
- *       manifest.</li>
- *   <li><b>Roots and externals declarations</b> — (a) every
- *       {@code moduleRoots} entry resolves from the manifest directory
- *       through the D4 root conversion (no existence requirement;
- *       absolute + lexical normalization + symlink resolution of the
- *       longest existing directory prefix) into a
- *       {@link ConfiguredModuleRoot}; two entries with equal converted
- *       {@code absoluteNormalizedPath}s are E2010 at the second member's
- *       value range (symlink-alias spellings included). No implicit root
- *       is added. (b) every externals entry's declaration file must exist
- *       as a regular readable file, fully symlink-resolved, completing
- *       each {@link ExternalEntrySpec} into an {@link ExternalEntry};
- *       missing/unreadable is E2010 at the declaration value range. An
- *       entry whose declaration resolves to one of the six spec-listed
- *       stdlib declaration files under the pinned stdlib surface is E2010
- *       at the declaration value range with a note naming the stdlib
- *       module (stdlib-overlap rejection — standard library modules are
- *       language-distribution modules, not project externals). An entry
- *       whose declaration file lexes with an {@code @extern-c} directive
- *       event (the production Lexer's structured events — never a
- *       textual scan) and whose {@code nativeLibrary} member is absent
- *       is E2010 at the entry object's value range (the extern-C
- *       nativeLibrary policy, spec {@code docs/spec-v1.3.md:1830}; a
- *       present-but-invalid nativeLibrary is already the
- *       {@link StrictManifestParser}/{@link ProjectConfigValidator}
- *       E2010, and a present nativeLibrary never fires the check — the
- *       scan is best-effort and backend-independent). All per-entry
- *       checks run in member order; two entries whose declaration files
- *       resolve to the same canonical path are E2010 at the second
- *       entry's declaration value range, checked after the per-entry
- *       checks.</li>
- *   <li><b>Output and backend</b> — the effective backend follows the D3
- *       backend-selection rule, then output classification/conversion is
- *       delegated to {@link OutputConfigResolver}. A MANIFEST-source
- *       output failure is E2010; a CLI-source failure is
- *       {@link CliDiagnostic}. No directory is created during locate and
- *       the conversion never requires the path to exist.</li>
- *   <li><b>Stdlib surface</b> — the pinned three-tier resolution of
- *       {@link DistributionHome}
- *       ({@code release-distribution-packaging-and-discovery} D3):
- *       {@code <manifestDirectory>/std} when it exists as a directory
- *       (the pinned v1.3 project-local override surface), else the
- *       language distribution (the classpath-resource {@code std/}
- *       directory when a pinned declaration resource materializes,
- *       then the {@code DEAL_HOME}/{@code deal.home} filesystem
- *       {@code std/} directory), else {@code <processCWD>/std} when
- *       that exists as a directory, else absent (absence is not an
- *       error). The six spec-listed files under the surface are
- *       canonicalized once (fully symlink-resolved; only existing
- *       regular resolvable files contribute) and published as the
- *       context's {@code stdlibDeclarationFiles}; the same canonical
- *       paths supply step 4(b)'s stdlib-overlap check (a symlinked
- *       spec-listed file keeps its pinned identity for its resolved
- *       target).</li>
- *   <li><b>Deployment identity</b> — {@link ProjectDeploymentIdentity}
- *       per D4: the symlink-resolved {@code file:} URI via
- *       {@link ProtectedPathOps#toFileUri(Path)} after protected
- *       validation, and SHA-256 (64 lowercase hex chars) over the exact
- *       manifest bytes that passed the strict decode.</li>
- *   <li><b>Publication</b> — one immutable {@link ProjectContext}. Any
- *       failure publishes no context, creates no directory or artifact,
- *       and loads no native code.</li>
- * </ol>
- *
- * <p><b>Fail-fast:</b> exactly one E2010 per failed configuration read in
- * the pinned order — strict UTF-8 decode (first offending byte) → T2
- * scan-order → T2 post-walk canonical order → step 4 (root conversion
- * order, normalized-root duplicates, externals declaration
- * existence/readability in member order, per-entry stdlib-overlap in
- * member order, per-entry extern-C nativeLibrary policy in member
- * order, cross-entry duplicate declarations) → step 5 output
- * conversion → later steps. Failure classification is pinned: E2010 for
- * manifest discovery, byte-level decode, schema, duplicates, roots,
- * externals declarations (including stdlib-overlap), and manifest
- * output; {@link CliDiagnostic} for malformed entry and malformed CLI
- * overrides; E2003/E2009 are the import-resolution surface of later
- * tasks; post-validation artifact write failures are deterministic
- * compiler I/O diagnostics. A missing stdlib surface is not a
- * configuration error. Every emitted diagnostic carries a complete
- * {@link DiagnosticRange} per the pinned shapes (SOURCE scalar ranges for
- * anchored sites; the canonical synthetic shape plus anchor notes for
- * anchorless sites).</p>
- *
- * <p>This class depends only on the JDK, {@code deal.source} (the
- * {@link ScalarSourceCursor} position arithmetic),
- * {@code deal.diagnostics} (the range carrier), and {@code deal.lexer}
- * (the single directive-recognition authority for the step 4(b)
- * extern-C scan; the lexer imports nothing from
- * {@code deal.project}). No raw path, encoding,
- * JSON, or I/O exception escapes {@link #locate(String, CliOverrides)}:
- * every failure is a structured result.</p>
- */
+/** Resolves an entry into one immutable project context before output creation.
+ * Manifest decoding, closed-schema validation, canonical roots and external
+ * declarations precede overrides and publication. Failures retain their source
+ * ranges and never publish a partial context. */
 public final class ProjectLocator {
 
     private ProjectLocator() {
@@ -399,19 +263,11 @@ public final class ProjectLocator {
                         + " than as a project external host module"
                         + " (docs/spec-v1.3.md:1830)", null)));
             }
-            if (spec.nativeLibrary() == null
-                    && declaresExternC(declarationPathText)) {
-                return e2010("deal.json: externals entry '" + spec.rawImportSpecifier()
-                        + "': declaration '" + declarationText
-                        + "' is an extern-C declaration without a nativeLibrary:"
-                        + " a C FFI entry must include nativeLibrary"
-                        + " (docs/spec-v1.3.md:1830)",
-                    sourceRange(manifestPathText, spec.sourceRange()), null);
-            }
+
             completedExternals.add(new ExternalEntry(spec.rawImportSpecifier(),
                 new NormalizedDeclarationPath(declarationPathText,
                     spec.declaration().sourceRange()),
-                spec.nativeLibrary(), spec.sourceRange()));
+                spec.sourceRange()));
         }
         Map<String, String> seenDeclarationPaths = new LinkedHashMap<>();
         for (ExternalEntry completedEntry : completedExternals) {
@@ -714,39 +570,6 @@ public final class ProjectLocator {
             }
         }
         return null;
-    }
-
-    /**
-     * The best-effort extern-C classification scan (the extern-C
-     * nativeLibrary policy, design source
-     * {@code production-project-graph-fixtures} D6/D7): reads and
-     * strictly decodes the declaration file and runs the production
-     * Lexer; any read, decode, or lex failure yields no extern-C signal
-     * and no locate failure from this check — locate stays config-only
-     * and the compile phase owns the file's own diagnostics. The scan
-     * uses the Lexer's structured directive events (the single
-     * directive-recognition authority), never a textual scan, and is
-     * stateless: one scan per externals entry, no caching, no retries.
-     *
-     */
-    private static boolean declaresExternC(String declarationPathText) {
-        byte[] bytes;
-        try {
-            bytes = Files.readAllBytes(Path.of(declarationPathText));
-        } catch (IOException readFailure) {
-            return false;
-        }
-        StrictDecode decode = strictUtf8Decode(bytes);
-        if (decode.malformedOffset() >= 0) {
-            return false;
-        }
-        LexResult lexed = new Lexer(decode.text(), declarationPathText).tokenize();
-        for (CompilerDirective event : lexed.directiveEvents()) {
-            if (event.name() == DirectiveName.EXTERN_C) {
-                return true;
-            }
-        }
-        return false;
     }
 
     // =========================================================================

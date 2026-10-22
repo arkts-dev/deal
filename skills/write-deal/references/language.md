@@ -110,11 +110,3 @@ Async functions declare their completion type directly. Await each async call in
 ## Host ABI and interoperability
 
 A host import requires `.d.deal`, a manifest external entry, and an embedding implementation. External function declarations end with semicolons. Boundary wrappers validate arguments/results. Invoke async exports through the embedding's documented ABI.
-
-## C FFI declaration files
-
-C FFI is available on the LuaJIT backend only; the JVM and JS backends reject FFI declarations before producing artifacts. Inspect the C header and backend support before binding. `// @extern-c` follows imports and precedes declarations; its external entry includes `nativeLibrary`. Mark struct/pointer classes with `// @c-struct`/`// @c-pointer`.
-
-Parameters admit int, number, boolean, string, bytes, and same-file struct/pointer classes. Returns admit scalar types, same-file struct/pointer classes, and null. Declare synchronous calls. Struct fields use defaulted int/number/boolean or same-file pointer classes; construct opaque pointer values through native functions.
-
-Bytes cross as borrowed read-only pointer plus length; C must copy before retaining. Opaque pointers need explicit cleanup. Use C shims to adapt callbacks, out parameters, and ownership shapes. Verify linkage and a real call.

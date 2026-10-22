@@ -316,8 +316,7 @@ public class CompositeTerminatorAnalysisTest {
             SemanticLowerer.lowerProject(invocation, built.input(),
                 built.index(), manifests.manifests(),
                 new deal.semantic.HostDeclarationSurface(Map.of()),
-                Map.of(), Map.of(),
-                BuiltinErrorDeclaration.synthesized(parse.program().span()),
+                Map.of(), BuiltinErrorDeclaration.synthesized(parse.program().span()),
                 List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                     IntrinsicKind.BYTES_NEW),
                 Set.of());
@@ -363,7 +362,7 @@ public class CompositeTerminatorAnalysisTest {
         SemanticLowerer.ProjectLoweringResult result = SemanticLowerer.lowerProject(
             invocation, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
-            Map.of(), BuiltinErrorDeclaration.synthesized(
+            BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
                 IntrinsicKind.BYTES_NEW), Set.of());

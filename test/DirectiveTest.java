@@ -99,18 +99,16 @@ public class DirectiveTest {
                         && e.rawArgument().equals(""),
                     "jsonable shape under " + esc(terminator));
             }
-            r = lex("// @c-struct" + suffix);
-            check(!r.directiveEvents().isEmpty()
-                    && r.directiveEvents().get(0).name() == DirectiveName.C_STRUCT,
-                "c-struct under " + esc(terminator));
-            r = lex("// @c-pointer" + suffix);
-            check(!r.directiveEvents().isEmpty()
-                    && r.directiveEvents().get(0).name() == DirectiveName.C_POINTER,
-                "c-pointer under " + esc(terminator));
-            r = lex("// @extern-c" + suffix);
-            check(!r.directiveEvents().isEmpty()
-                    && r.directiveEvents().get(0).name() == DirectiveName.EXTERN_C,
-                "extern-c under " + esc(terminator));
+            for (String name : new String[]{"extern-c", "c-struct", "c-pointer"}) {
+                LexResult removed = lex("// @" + name + suffix);
+                CompilerDiagnostic rejected = diagOf(removed.diagnostics(), "E1044");
+                check(rejected != null, "removed @" + name + " rejected under " + esc(terminator));
+                if (rejected != null) {
+                    check(rejected.range().startScalarOffset() == 4
+                        && rejected.range().endScalarOffset() == 4 + name.length(),
+                        "removed directive range covers its exact name");
+                }
+            }
             r = lex("// @deal-version 1.4" + suffix);
             check(diagOf(r.diagnostics(), "E1044") != null,
                 "removed deal-version directive rejected under " + esc(terminator));
@@ -262,20 +260,9 @@ public class DirectiveTest {
                 && r.directiveEvents().get(0).declarationAnchorTokenIndex() == null,
             "EOF retains the event unanchored");
 
-        // Broken C runs never attach.
-        r = lex("// @c-struct\n// @extern-c\nexport class C {}");
-        check(r.directiveEvents().size() == 2
-                && r.directiveEvents().get(0).declarationAnchorTokenIndex() == null
-                && r.directiveEvents().get(1).declarationAnchorTokenIndex() == null,
-            "@c-struct broken by @extern-c never attaches");
-        r = lex("// @c-struct\n// @nope\nexport class C {}");
-        check(r.directiveEvents().size() == 2
-                && r.directiveEvents().get(0).declarationAnchorTokenIndex() == null,
-            "@c-struct broken by an unknown directive never attaches");
-
         // A second declaration directive extends the run: one anchor for
         // both.
-        r = lex("// @c-struct\n// @c-pointer\nexport class C {}");
+        r = lex("// @jsonable\n// @jsonable\nexport class C {}");
         check(r.directiveEvents().size() == 2
                 && r.directiveEvents().get(0).declarationAnchorTokenIndex() != null
                 && r.directiveEvents().get(0).declarationAnchorTokenIndex() == 0
@@ -332,33 +319,6 @@ public class DirectiveTest {
             "no synthetic C$fromJson for an invalid binding");
         check(!exports.containsKey("C$toJson"),
             "no synthetic C$toJson for an invalid binding");
-
-        // C-marker cardinality 0/1/2 in extern-C files → E7002 at the
-        // class span (see ParserTest.testCMarkerCardinality); markers
-        // outside extern-C → E1046 at the directive range.
-        r = parse("// @c-pointer\nexport class C { x: int = 0; }");
-        check(hasError(r, "E1046"), "marker outside extern-C → E1046");
-        CompilerDiagnostic d = diagOf(r, "E1046");
-        if (d != null) {
-            check(d.range().startScalarOffset() == 0
-                    && d.range().endScalarOffset() == 13,
-                "E1046 at the directive range (0,13) — the complete "
-                    + "'// @c-pointer' comment, got ("
-                    + d.range().startScalarOffset() + ","
-                    + d.range().endScalarOffset() + ")");
-        }
-        // No jsonable metadata on the marker-bearing class.
-        ed = (ExportDeclaration) r.program().statements().get(0);
-        cd = (ClassDeclaration) ed.declaration();
-        check(!cd.isJsonable() && cd.directives().contains(
-                DeclarationDirective.C_POINTER),
-            "C marker recorded, no jsonable metadata");
-
-        // Markers on non-class declarations in a non-extern-C file:
-        // E1046.
-        r = parse("// @c-struct\nexport function f(): int { return 0; }");
-        check(hasError(r, "E1046"),
-            "marker on a function outside extern-C → E1046");
 
         // Invalid metadata never reaches generation: the only jsonable
         // classes are the valid export-class bindings.
@@ -430,20 +390,7 @@ public class DirectiveTest {
             }
         }
 
-        // Extern-c file-directive failures.
-        check(hasError(parse("// @extern-c\nexport class C { x: int = 0; }"),
-            "E1046"), "@extern-c in an implementation file → E1046");
-        check(hasError(parseFile(
-                "// @extern-c\n// @extern-c\nexport class C { x: int = 0; }",
-                "m.d.deal"),
-            "E1046"), "duplicate @extern-c → E1046");
-        check(hasError(parseFile(
-                "export class C { x: int = 0; }\n// @extern-c", "m.d.deal"),
-            "E1046"), "@extern-c after a declaration → E1046");
-        check(hasError(parseFile(
-                "// @extern-c\nimport * as m from \"./m\";\nexport class C { x: int = 0; }",
-                "m.d.deal"),
-            "E1046"), "@extern-c with a later import → E1046");
+
     }
 
     // =========================================================================
@@ -497,20 +444,20 @@ public class DirectiveTest {
                     + e1044.notes());
         }
 
-        // @deal-version inside an interpolation: E1046 placement with a
+        // @deal-version inside an interpolation: E1044 placement with a
         // truthful preceding count.
         ParseResult r3 = parse("let s = `${ // @deal-version 1.3\n x}`;");
         check(hasError(r3, "E1044"),
             "embedded removed @deal-version → E1044");
 
-        // A C marker inside an interpolation: E1046 (no extern-C).
+        // A C marker inside an interpolation: E1044 (no extern-C).
         ParseResult r4 = parse("let s = `${ // @c-struct\n x}`;");
-        CompilerDiagnostic e1046c = diagOf(r4, "E1046");
-        check(e1046c != null, "embedded C marker → E1046");
+        CompilerDiagnostic e1046c = diagOf(r4, "E1044");
+        check(e1046c != null, "embedded C marker → E1044");
         if (e1046c != null) {
-            check(e1046c.range().startScalarOffset() == 12
+            check(e1046c.range().startScalarOffset() == 16
                     && e1046c.range().endScalarOffset() == 24,
-                "embedded C-marker E1046 at the rebased range (12,24)");
+                "embedded C-marker E1044 at the rebased range (12,24)");
         }
 
         // Nested templates bubble their events up.
@@ -584,144 +531,8 @@ public class DirectiveTest {
     }
 
     // =========================================================================
-    // Production C FFI manifest policy (docs/spec-v1.3.md:1830)
+    // Manifest admission
     // =========================================================================
-
-    static void testProductionCffiManifestPolicy() throws Exception {
-        System.out.println("-- Production C FFI manifest policy: E2010 at the import --");
-
-        Path tmp = Files.createTempDirectory("deal_cffi_manifest_");
-        try {
-            String importLine = "import * as ffi from \"./ffi_math\";";
-            // Case 1 (the promoted conformance pin's exact shape): an
-            // import of a @extern-c declaration file that no externals
-            // entry declares with nativeLibrary is rejected with exactly
-            // one E2010 at the import span.
-            Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\".\"]}\n");
-            Files.writeString(tmp.resolve("ffi_math.d.deal"),
-                "// @extern-c\n\nexport function add(a: int, b: int): int;\n");
-            Path entry = tmp.resolve("main.deal");
-            Files.writeString(entry,
-                importLine + "\n\n"
-                    + "export function test_ffi_add(): int {\n"
-                    + "  return ffi.add(1, 2);\n"
-                    + "}\n\n"
-                    + "export function main(): null { return null; }\n");
-            CompilationOrchestrator orchestrator = locateOrchestrator(entry);
-            if (orchestrator == null) {
-                return;
-            }
-            boolean ok = orchestrator.compile();
-            check(!ok, "the unlisted extern-C import fails the production compile");
-            List<CompilerDiagnostic> diags = orchestrator.diagnostics();
-            List<CompilerDiagnostic> e2010s = diags.stream()
-                .filter(d -> "E2010".equals(d.code()))
-                .toList();
-            check(e2010s.size() == 1,
-                "the unlisted extern-C import emits exactly one E2010, got "
-                    + e2010s.size() + ": " + diags);
-            if (e2010s.size() == 1) {
-                CompilerDiagnostic d = e2010s.get(0);
-                check(d.range().startScalarOffset() == 0,
-                    "E2010 starts at the import statement (offset 0), got "
-                        + d.range().startScalarOffset());
-                check(d.range().endScalarOffset() >= importLine.length(),
-                    "E2010 covers the whole import statement ("
-                        + importLine.length() + " chars), got end "
-                        + d.range().endScalarOffset());
-            }
-
-            // Case 2: the same declaration imported through an
-            // externals entry carrying nativeLibrary compiles with no
-            // E2010 (the manifest policy's passing shape).
-            Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\".\"],"
-                    + " \"externals\": {\"ffi\": {\"declaration\":"
-                    + " \"ffi_math.d.deal\", \"nativeLibrary\": \"math\"}}}\n");
-            Files.writeString(entry,
-                "import * as ffi from \"ffi\";\n"
-                    + "export function test_ffi_add(): int {\n"
-                    + "  return ffi.add(1, 2);\n"
-                    + "}\n\n"
-                    + "export function main(): null { return null; }\n");
-            CompilationOrchestrator backed = locateOrchestrator(entry);
-            if (backed == null) {
-                return;
-            }
-            boolean backedOk = backed.compile();
-            check(backedOk, backedOk ? "" :
-                "the manifest-backed extern-C import compiles: " + backed.diagnostics());
-            boolean noE2010 = backed.diagnostics().stream()
-                .noneMatch(d -> "E2010".equals(d.code()));
-            check(noE2010, noE2010 ? "" :
-                "the manifest-backed extern-C import emits no E2010: " + backed.diagnostics());
-
-            ByteArrayOutputStream prodErr = new ByteArrayOutputStream();
-            PrintStream originalErr = System.err;
-            int prodExit;
-            try {
-                System.setErr(new PrintStream(prodErr, true,
-                    java.nio.charset.StandardCharsets.UTF_8));
-                prodExit = deal.Main.run(new String[]{"compile",
-                    entry.toString(), "--output",
-                    tmp.resolve("prod_out").toString()});
-                System.err.flush();
-            } finally {
-                System.setErr(originalErr);
-            }
-            String prodText = prodErr.toString(
-                java.nio.charset.StandardCharsets.UTF_8);
-            check(prodExit == 0,
-                "the release-owned production invocation admits the extern-C "
-                    + "fixture: " + prodText);
-            Path prodArtifact = tmp.resolve("prod_out/main.lua");
-            check(Files.exists(prodArtifact),
-                "the admitted production compile stages the project artifact");
-            if (Files.exists(prodArtifact)) {
-                String prodLua = Files.readString(prodArtifact);
-                boolean hasPrelude = prodLua.contains("__rt.load_ffi(\"ffi:@$external/ffi\", ");
-                check(hasPrelude, hasPrelude ? "" :
-                    "the production artifact emits the load_ffi prelude with "
-                        + "the metadata-provided module key: " + prodLua);
-                boolean hasLoader = prodLua.contains("nativeLibrary = { kind = \"BARE_NAME\", "
-                    + "loaderText = \"math\" }");
-                check(hasLoader, hasLoader ? "" :
-                    "the bundle carries the bare-name loader text: " + prodLua);
-                check(!prodLua.contains("ffi.C") && !prodLua.contains("cdef("),
-                    "the production artifact carries no ffi.C/cdef text");
-            }
-
-            Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\".\"],"
-                    + " \"externals\": {\"ffi\": {\"declaration\":"
-                    + " \"ffi_math.d.deal\"}}}\n");
-            ProjectLocator.LocateResult unbacked = ProjectLocator.locate(
-                entry.toString(), null);
-            check(unbacked.e2010() != null,
-                "the nativeLibrary-less externals entry is rejected at "
-                    + "locate time with an E2010");
-            check(unbacked.cliDiagnostic() == null
-                    && unbacked.context() == null,
-                "the nativeLibrary-less externals entry publishes exactly "
-                    + "the E2010 (no cliDiagnostic, no context)");
-            if (unbacked.e2010() != null) {
-                check("E2010".equals(unbacked.e2010().code()),
-                    "the locate-time rejection code is exactly E2010: "
-                        + unbacked.e2010().code());
-                check(unbacked.e2010().message().contains(
-                        "without a nativeLibrary"),
-                    "the locate-time E2010 names the nativeLibrary policy: "
-                        + unbacked.e2010().message());
-            }
-        } finally {
-            try {
-                Files.walk(tmp).sorted(Comparator.reverseOrder())
-                    .forEach(f -> { try { Files.deleteIfExists(f); }
-                        catch (IOException ignored) { } });
-            } catch (IOException ignored) { }
-        }
-    }
 
     private static CompilationOrchestrator locateOrchestrator(Path entry) {
         ProjectLocator.LocateResult located = ProjectLocator.locate(
@@ -754,7 +565,6 @@ public class DirectiveTest {
         testVersionContract();
         testTemplateEmbedded();
         testProductionSpecHeaderE1044();
-        testProductionCffiManifestPolicy();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

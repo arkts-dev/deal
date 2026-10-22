@@ -69,14 +69,6 @@ public final class Parser {
     /** Events claimed by declaration binding (identity semantics). */
     private final Set<CompilerDirective> claimedEvents =
         Collections.newSetFromMap(new IdentityHashMap<>());
-    /** Statement nodes keyed by their start-token index (finalize E7002). */
-    private final Map<Integer, StatementNode> statementByStartIndex =
-        new LinkedHashMap<>();
-    /** C-marker events recorded on export-wrapped classes (cardinality). */
-    private final Map<ClassDeclaration, List<CompilerDirective>> cMarkersByClass =
-        new IdentityHashMap<>();
-    /** Recorded C-marker events in scan order (extern-C-off E1046 sweep). */
-    private final List<CompilerDirective> recordedCMarkers = new ArrayList<>();
 
     // -----------------------------------------------------------------------
     // Construction
@@ -112,7 +104,7 @@ public final class Parser {
         if (directiveEvents != null) {
             this.directiveEvents.addAll(directiveEvents);
         }
-        this.evaluator = new FileDirectiveEvaluator(file, diagnostics);
+        this.evaluator = new FileDirectiveEvaluator(diagnostics);
     }
 
     /**
@@ -133,9 +125,7 @@ public final class Parser {
     // =======================================================================
 
     public ParseResult parse() {
-        // Phase 0: file-directive evaluation over the parent lexer events
-        // (D4): extern-c shape, duplicate, placement, and
-        // version checks, then the E1045 argument sweep in event order.
+        // Validate directive arguments in event order.
         evaluator.evaluateParentEvents(directiveEvents);
 
         List<StatementNode> statements = new ArrayList<>();
@@ -149,12 +139,7 @@ public final class Parser {
             }
         }
 
-        // Finalize in the pinned order (D4): (1) extern-c placement,
-        // (2) unclaimed-anchored and unanchored event sweep,
-        // (3) C-marker cardinality.
-        evaluator.finalizeExternCPlacement(statements);
         sweepUnclaimedAndUnanchored();
-        cardinality(statements);
 
         Span progSpan;
         if (statements.isEmpty()) {
@@ -224,11 +209,8 @@ public final class Parser {
         }
         if (stmt instanceof ExportDeclaration exp
                 && exp.declaration() instanceof ClassDeclaration cd) {
-            // Export-wrapped class: jsonable → JSONABLE metadata (never in
-            // declaration files — spec :717-718 no-effect, no diagnostic);
-            // C markers recorded on the class for cardinality.
+            // Declaration files accept the marker without applying metadata.
             Set<DeclarationDirective> dirs = new HashSet<>(cd.directives());
-            List<CompilerDirective> cMarkers = new ArrayList<>();
             boolean changed = false;
             for (CompilerDirective e : anchored) {
                 claimedEvents.add(e);
@@ -237,11 +219,6 @@ public final class Parser {
                         dirs.add(DeclarationDirective.JSONABLE);
                         changed = true;
                     }
-                } else if (e.name() == DirectiveName.C_STRUCT
-                        || e.name() == DirectiveName.C_POINTER) {
-                    dirs.add(toDeclarationDirective(e.name()));
-                    cMarkers.add(e);
-                    changed = true;
                 }
             }
             if (!changed) {
@@ -249,110 +226,30 @@ public final class Parser {
             }
             ClassDeclaration newCd = new ClassDeclaration(cd.span(),
                 cd.name(), cd.fields(), dirs);
-            if (!cMarkers.isEmpty()) {
-                cMarkersByClass.put(newCd, cMarkers);
-                recordedCMarkers.addAll(cMarkers);
-            }
             return new ExportDeclaration(exp.span(), newCd);
         }
-        // Export-wrapped function or a non-exported class/function/async
-        // function: jsonable → E1043 error with no metadata applied;
-        // C markers deferred to the finalize sweep (never recorded).
+        // Other declaration attachments reject without applying metadata.
         for (CompilerDirective e : anchored) {
             if (e.name() == DirectiveName.JSONABLE) {
                 errorJsonable(e);
                 claimedEvents.add(e);
-            } else if (e.name() == DirectiveName.C_STRUCT
-                    || e.name() == DirectiveName.C_POINTER) {
-                // Deferred to the finalize sweep: left unclaimed.
             } else {
                 claimedEvents.add(e);
             }
         }
         return stmt;
     }
-
-    /**
-     * Finalize step 2 (D4): sweep all unclaimed anchored events and
-     * unanchored events in event order — jsonable → E1043 error;
-     * C marker → E7002 under effective extern-C (at the declaration node
-     * span when one exists, else the directive range), otherwise E1046
-     * at the directive range.
-     */
+    /** Reject unattached jsonable events in event order. */
     private void sweepUnclaimedAndUnanchored() {
-        boolean externCEffective = evaluator.externCEffective();
         for (CompilerDirective e : directiveEvents) {
             if (claimedEvents.contains(e)) {
                 continue;
             }
-            StatementNode node = null;
-            if (e.declarationAnchorTokenIndex() != null) {
-                node = statementByStartIndex.get(e.declarationAnchorTokenIndex());
-            }
             if (e.name() == DirectiveName.JSONABLE) {
                 errorJsonable(e);
-            } else if (e.name() == DirectiveName.C_STRUCT
-                    || e.name() == DirectiveName.C_POINTER) {
-                cMarkerPlacementError(e, node, externCEffective);
             }
         }
     }
-
-    /**
-     * Finalize step 3 (D4): C-marker cardinality. Under effective
-     * extern-C every exported class must have exactly one attached
-     * C-marker event — zero or two-or-more → E7002 at the class
-     * declaration span; without effective extern-C every recorded C
-     * marker is E1046 at its directive range.
-     */
-    private void cardinality(List<StatementNode> statements) {
-        if (evaluator.externCEffective()) {
-            for (StatementNode stmt : statements) {
-                if (stmt instanceof ExportDeclaration exp
-                        && exp.declaration() instanceof ClassDeclaration cd) {
-                    List<CompilerDirective> markers =
-                        cMarkersByClass.getOrDefault(cd, List.of());
-                    if (markers.size() != 1) {
-                        error(DiagnosticCode.E7002,
-                            "Exported class '" + cd.name()
-                                + "' must have exactly one C marker"
-                                + " (@c-struct or @c-pointer)",
-                            cd.span());
-                    }
-                }
-            }
-        } else {
-            for (CompilerDirective marker : recordedCMarkers) {
-                error(DiagnosticCode.E1046,
-                    "C markers are only valid in extern-C declaration"
-                        + " (.d.deal) files",
-                    marker.sourceRange());
-            }
-        }
-    }
-
-    /** One C marker without a valid recorded placement (D4/D6). */
-    private void cMarkerPlacementError(CompilerDirective e, StatementNode node,
-                                       boolean externCEffective) {
-        if (externCEffective) {
-            if (node != null) {
-                error(DiagnosticCode.E7002,
-                    "Invalid C FFI declaration: C markers are only valid"
-                        + " on exported classes",
-                    node.span());
-            } else {
-                error(DiagnosticCode.E7002,
-                    "Invalid C FFI declaration: unattached C marker",
-                    e.sourceRange());
-            }
-        } else {
-            error(DiagnosticCode.E1046,
-                "C markers are only valid in extern-C declaration"
-                    + " (.d.deal) files",
-                e.sourceRange());
-        }
-    }
-
     /**
      * The E1043 incompatible-attachment rejection (D4): error severity,
      * the pinned message, no metadata, compilation continues; anchored at
@@ -362,15 +259,6 @@ public final class Parser {
         diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1043,
             "@jsonable directive is only valid on 'export class'",
             e.sourceRange()));
-    }
-
-    private static DeclarationDirective toDeclarationDirective(DirectiveName name) {
-        return switch (name) {
-            case C_STRUCT -> DeclarationDirective.C_STRUCT;
-            case C_POINTER -> DeclarationDirective.C_POINTER;
-            default -> throw new IllegalStateException(
-                "Not a C marker directive: " + name);
-        };
     }
 
     // =======================================================================
@@ -442,7 +330,6 @@ public final class Parser {
         };
         if (stmt != null) {
             stmt = applyBinding(stmt, anchored);
-            statementByStartIndex.put(startIndex, stmt);
         }
         return stmt;
     }
@@ -1690,7 +1577,6 @@ public final class Parser {
         //    being re-evaluated here; the seen-sets are shared with the
         //    parent events (D10.5) so nested duplicate checks see them.
         Parser subParser = new Parser(adjusted, file, List.of());
-        subParser.evaluator.adoptSeenState(evaluator);
         ExpressionNode expr = subParser.parseExpression();
 
         // 6. Merge sub-parser diagnostics. The adjusted tokens carry rebased

@@ -47,7 +47,6 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
-import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalModuleIdentity;
 import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AsyncLinkKind;
@@ -1137,7 +1136,6 @@ public final class SemanticLowerer {
             List<SemanticRequirementManifest> requirementManifests,
             HostDeclarationSurface declarationSurface,
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
-            Map<ModuleId, FfiGeneratedModule> externCModules,
             BuiltinErrorDeclaration builtinError,
             List<IntrinsicKind> conversionIntrinsics,
             Set<String> callbackExports) {
@@ -1149,7 +1147,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(declarationSurface, "declarationSurface must not be null");
         Objects.requireNonNull(declarationModuleIdentities,
             "declarationModuleIdentities must not be null");
-        Objects.requireNonNull(externCModules, "externCModules must not be null");
         Objects.requireNonNull(builtinError, "builtinError must not be null");
         Objects.requireNonNull(conversionIntrinsics,
             "conversionIntrinsics must not be null");
@@ -1162,9 +1159,7 @@ public final class SemanticLowerer {
 
         // (2) The declaration-fact agreement: every declaration import of
         // the closure is covered by the surface (a declaration module's
-        // class literal would otherwise defer silently) and the surface's
-        // declaration kind agrees with the extern-C generated metadata (the
-        // seeds' owner member derives from exactly that pair).
+        // class literal would otherwise defer silently).
         for (CheckedModuleInput module : checkedProject.modules()) {
             for (ResolvedImport importFact : module.imports()) {
                 deal.semantic.ir.ExternalModuleInterface target =
@@ -1184,29 +1179,13 @@ public final class SemanticLowerer {
                 }
             }
         }
-        for (ModuleId declarationModule : declarationSurface.moduleIds()) {
-            HostDeclarationSurface.DeclarationFacts facts =
-                declarationSurface.require(declarationModule);
-            boolean externC = externCModules.containsKey(declarationModule);
-            if (externC
-                    != (facts.kind()
-                        == HostDeclarationSurface.DeclarationKind.EXTERN_C)) {
-                return projectFailure(declarationModule,
-                    SemanticCapability.CLASSES, DECLARATION_KIND_MISMATCH,
-                    invocation.semanticProfile(),
-                    "the declaration surface classifies '" + declarationModule.path()
-                        + "' as " + facts.kind() + " but the extern-C generated"
-                        + " metadata " + (externC ? "is present" : "is absent")
-                        + " for it (the seeds' owner member derives from exactly"
-                        + " this pair)");
-            }
-        }
+
 
         // (2) The class registration seeds, produced before the first unit
         // walk: one layout per declared class of every declaration module
         // plus the compiler-owned builtin Error entry.
         ClassRegistrationSeeds.Production seeds = ClassRegistrationSeeds.produce(
-            declarationSurface, declarationModuleIdentities, externCModules,
+            declarationSurface, declarationModuleIdentities,
             builtinError);
         if (seeds.hasErrors()) {
             return projectFailureResult(seeds.diagnostics());
@@ -12850,7 +12829,7 @@ public final class SemanticLowerer {
                 declaredParameterAnnotations.get(calleeModule);
             if (moduleIndex == null) {
                 // A callee outside the checked project's implementation
-                // closure (a host/extern-C declaration module): the host
+                // closure (a host declaration module): the host
                 // cells' own convention applies, never a fabricated
                 // annotation. The fail-closed rule below applies to the
                 // closure's own declared callees.
