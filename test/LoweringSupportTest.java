@@ -1016,7 +1016,11 @@ public class LoweringSupportTest {
      * must not claim it. A module whose only identifier occurrence is an
      * assignment target therefore records {@code ASSIGNMENT} without
      * {@code IDENTIFIER}, and the production compile passes R-COVERAGE;
-     * an identifier read still records the row.
+     * an identifier read still records the row. Suppressing the read row
+     * suppresses only the coverage row: the write position still carries
+     * its checked type, so a bytes-typed target keeps the {@code bytesValue}
+     * mark and therefore the module's {@code bytesBearing} marker and
+     * {@code CONTAINERS_AND_STRINGS} claim.
      */
     static void testIdentifierWriteTargetClaimsAssignmentOnly() throws Exception {
         System.out.println("-- constructCoverage: a bare identifier write target "
@@ -1061,6 +1065,39 @@ public class LoweringSupportTest {
                 check(readManifest.constructCoverage()
                         .containsKey(ConstructKind.IDENTIFIER),
                     "an identifier read records the IDENTIFIER row");
+            }
+
+            // The type mark survives the suppressed read row: a bytes-typed
+            // bare identifier write target (RHS null) must keep the
+            // plan-time bytes fact even when it is the module's only bytes
+            // occurrence.
+            RequirementManifestResult bytesStore = compileAndCompute(
+                tmp.resolve("bytes-store"), Map.of(
+                    "main.deal", """
+                        export function main(): null {
+                          let a: bytes | null = null;
+                          a = null;
+                          return null;
+                        }
+                        """), "main.deal");
+            SemanticRequirementManifest bytesStoreManifest = manifestOf(bytesStore, "main");
+            check(bytesStoreManifest != null,
+                "the bytes store-only module produces a manifest");
+            if (bytesStoreManifest != null) {
+                check(bytesStoreManifest.constructCoverage()
+                        .containsKey(ConstructKind.ASSIGNMENT),
+                    "the bytes store-only module records the ASSIGNMENT row");
+                check(!bytesStoreManifest.constructCoverage()
+                        .containsKey(ConstructKind.IDENTIFIER),
+                    "a bytes-typed bare identifier write target records no "
+                        + "IDENTIFIER read row");
+                check(bytesStoreManifest.bytesBearing(),
+                    "a bytes-typed bare identifier write target still sets the "
+                        + "bytesBearing marker");
+                check(bytesStoreManifest.capabilities()
+                        .contains(SemanticCapability.CONTAINERS_AND_STRINGS),
+                    "a bytes-typed bare identifier write target still claims "
+                        + "CONTAINERS_AND_STRINGS: " + bytesStoreManifest.capabilities());
             }
         } finally {
             deleteRecursively(tmp);

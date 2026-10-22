@@ -794,7 +794,11 @@ public final class LoweringSupport {
      * the {@code ASSIGNMENT} row), never a {@code BINDING_LOAD}, so the
      * {@code IDENTIFIER} read row must not claim it — a module whose only
      * identifier occurrence is an assignment target has no identifier read
-     * to cover.
+     * to cover. Suppressing the read row does not suppress the checked-type
+     * mark the ordinary expression walk performs: a bytes-typed target
+     * still sets {@code bytesValue}, so the manifest keeps
+     * {@code bytesBearing} and the {@code CONTAINERS_AND_STRINGS} claim for
+     * a module whose only bytes occurrence is a store target.
      */
     private static void walkWriteTarget(ExpressionNode target, CheckedModuleInput module,
                                         ModuleScan scan, SymbolTable checkerScope)
@@ -812,9 +816,15 @@ public final class LoweringSupport {
                 walkExpression(index.array(), module, scan, checkerScope);
                 walkExpression(index.index(), module, scan, checkerScope);
             }
-            case IdentifierExpr ignored -> {
+            case IdentifierExpr identifier -> {
                 // The ASSIGNMENT/DELETE row owns the identifier write
                 // position; no IDENTIFIER read row is produced for it.
+                // The write position still carries its checked type, so
+                // the walkExpression type mark applies: a bytes-typed
+                // target bears bytes even though it records no read row.
+                if (Types.containsBytes(checkedType(module, identifier))) {
+                    scan.bytesValue = true;
+                }
             }
             default -> walkExpression(target, module, scan, checkerScope);
         }
