@@ -1,6 +1,5 @@
 package deal.parser;
 
-import deal.ast.DealVersion;
 import deal.ast.FileDirectives;
 import deal.ast.ImportDeclaration;
 import deal.ast.StatementNode;
@@ -29,11 +28,6 @@ final class FileDirectiveEvaluator {
     private final boolean isDeclarationFile;
     private final List<CompilerDiagnostic> diagnostics;
 
-    private boolean seenDealVersion = false;
-    private DealVersion declaredDealVersion = null;
-    private final DealVersion effectiveDealVersion = new DealVersion(1, 3);
-    private DiagnosticRange dealVersionRange = null;
-
     private boolean seenExternC = false;
     private CompilerDirective validExternCEvent = null;
     private DiagnosticRange externCRange = null;
@@ -47,15 +41,12 @@ final class FileDirectiveEvaluator {
 
     /**
      * Evaluates the parent lexer events before statement parsing (D4):
-     * first the deal-version/extern-c shape, duplicate, placement, and
-     * version checks in event order, then the argument sweep in event
+     * first the extern-c shape, duplicate and placement checks in event order, then the argument sweep in event
      * order.
      */
     void evaluateParentEvents(List<CompilerDirective> events) {
         for (CompilerDirective e : events) {
-            if (e.name() == DirectiveName.DEAL_VERSION) {
-                checkDealVersion(e);
-            } else if (e.name() == DirectiveName.EXTERN_C) {
+            if (e.name() == DirectiveName.EXTERN_C) {
                 checkExternC(e);
             }
         }
@@ -69,9 +60,7 @@ final class FileDirectiveEvaluator {
      * (D10.5): the same per-event rules as the parse-start evaluator.
      */
     void evaluateMergedEvent(CompilerDirective e) {
-        if (e.name() == DirectiveName.DEAL_VERSION) {
-            checkDealVersion(e);
-        } else if (e.name() == DirectiveName.EXTERN_C) {
+        if (e.name() == DirectiveName.EXTERN_C) {
             checkExternC(e);
         }
         argumentSweep(e);
@@ -83,66 +72,7 @@ final class FileDirectiveEvaluator {
      * template sub-parser before nested merge points run.
      */
     void adoptSeenState(FileDirectiveEvaluator parent) {
-        this.seenDealVersion = parent.seenDealVersion;
         this.seenExternC = parent.seenExternC;
-    }
-
-    /**
-     * One {@code @deal-version} event (D4/D7): placement before the
-     * first non-comment token, at most once, exactly one non-empty
-     * version value, and numeric {@code (1,3)} compatibility. No
-     * migration registry exists or is consulted.
-     */
-    private void checkDealVersion(CompilerDirective e) {
-        if (e.precedingNonCommentTokenCount() > 0) {
-            error(DiagnosticCode.E1046,
-                "@deal-version must occur before the first non-comment token",
-                e.sourceRange());
-        }
-        if (seenDealVersion) {
-            error(DiagnosticCode.E1046,
-                "Duplicate @deal-version directive (each file directive may"
-                    + " occur at most once)",
-                e.sourceRange());
-        }
-        seenDealVersion = true;
-        if (dealVersionRange == null) {
-            dealVersionRange = e.sourceRange();
-        }
-        String arg = e.trimmedArgument();
-        if (arg.isEmpty()) {
-            error(DiagnosticCode.E1045,
-                "@deal-version requires exactly one non-empty version argument",
-                e.sourceRange());
-            return;
-        }
-        if (hasInternalWhitespace(arg)) {
-            error(DiagnosticCode.E1045,
-                "@deal-version requires exactly one version value, got: '"
-                    + arg + "'",
-                e.sourceRange());
-            return;
-        }
-        DealVersion parsed = parseVersion(arg);
-        if (parsed == null) {
-            error(DiagnosticCode.E1046,
-                "Malformed DEAL version '" + arg
-                    + "': expected 'digits.digits'",
-                e.sourceRange());
-            return;
-        }
-        if (!parsed.equals(DealVersion.V1_3)) {
-            error(DiagnosticCode.E1046,
-                "Unsupported DEAL version '" + arg
-                    + "': DEAL v1.3 is not source-compatible with earlier"
-                    + " language versions and this compiler supports"
-                    + " only '1.3'",
-                e.sourceRange());
-            return;
-        }
-        if (declaredDealVersion == null) {
-            declaredDealVersion = parsed;
-        }
     }
 
     /**
@@ -176,8 +106,7 @@ final class FileDirectiveEvaluator {
      * The argument sweep (D4): any non-empty trimmed argument on
      * {@code jsonable}, {@code extern-c}, {@code c-struct}, or
      * {@code c-pointer} is E1045 at the complete directive comment
-     * range. {@code @deal-version} arguments are validated by
-     * {@link #checkDealVersion}; unknown events carry an empty argument.
+     * range. Unknown events carry an empty argument.
      */
     private void argumentSweep(CompilerDirective e) {
         if (e.name() == null || e.trimmedArgument().isEmpty()) {
@@ -190,8 +119,7 @@ final class FileDirectiveEvaluator {
                     + e.trimmedArgument() + "'",
                 e.sourceRange());
             default -> {
-                // DEAL_VERSION arguments are validated by
-                // checkDealVersion; UNKNOWN events carry no argument.
+                // Unknown events carry no argument.
             }
         }
     }
@@ -240,56 +168,7 @@ final class FileDirectiveEvaluator {
      */
     FileDirectives build() {
         return new FileDirectives(
-            declaredDealVersion != null ? declaredDealVersion : effectiveDealVersion,
-            declaredDealVersion,
-            externCEffective(),
-            dealVersionRange,
-            externCRange);
-    }
-
-    /**
-     * The ASCII {@code digits+ "." digits+} version grammar, parsed
-     * numerically (D7). Digit-run overflow and any shape deviation are
-     * malformed (null).
-     */
-    static DealVersion parseVersion(String value) {
-        int dot = value.indexOf('.');
-        if (dot < 0 || value.indexOf('.', dot + 1) >= 0) {
-            return null;
-        }
-        String majorText = value.substring(0, dot);
-        String minorText = value.substring(dot + 1);
-        if (majorText.isEmpty() || minorText.isEmpty()
-                || !isDigits(majorText) || !isDigits(minorText)) {
-            return null;
-        }
-        try {
-            return new DealVersion(Long.parseLong(majorText),
-                Long.parseLong(minorText));
-        } catch (NumberFormatException e) {
-            // Digit-run overflow → malformed.
-            return null;
-        }
-    }
-
-    private static boolean isDigits(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c < '0' || c > '9') {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean hasInternalWhitespace(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == ' ' || c == '\t') {
-                return true;
-            }
-        }
-        return false;
+            externCEffective(), externCRange);
     }
 
     private void error(DiagnosticCode code, String message, DiagnosticRange range) {

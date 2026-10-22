@@ -111,21 +111,12 @@ public class DirectiveTest {
             check(!r.directiveEvents().isEmpty()
                     && r.directiveEvents().get(0).name() == DirectiveName.EXTERN_C,
                 "extern-c under " + esc(terminator));
-            r = lex("// @deal-version 1.3" + suffix);
-            check(!r.directiveEvents().isEmpty()
-                    && r.directiveEvents().get(0).name() == DirectiveName.DEAL_VERSION
-                    && r.directiveEvents().get(0).trimmedArgument().equals("1.3")
-                    && r.directiveEvents().get(0).rawArgument().equals(" 1.3"),
-                "deal-version raw/trimmed under " + esc(terminator));
+            r = lex("// @deal-version 1.4" + suffix);
+            check(diagOf(r.diagnostics(), "E1044") != null,
+                "removed deal-version directive rejected under " + esc(terminator));
         }
 
-        // Delimiter-free @deal-version1.3 (D2).
-        LexResult r = lex("// @deal-version1.3\nexport class C {}");
-        check(!r.directiveEvents().isEmpty()
-                && r.directiveEvents().get(0).name() == DirectiveName.DEAL_VERSION
-                && r.directiveEvents().get(0).trimmedArgument().equals("1.3"),
-            "delimiter-free @deal-version1.3");
-
+        LexResult r;
         // Recognized prefixes are never reclassified as unknown: the four
         // forbidden-argument forms parse to jsonable + argument, and the
         // parser's argument sweep emits E1045 at the complete comment.
@@ -428,55 +419,16 @@ public class DirectiveTest {
     static void testVersionContract() {
         System.out.println("-- Declaration-version contract (D7) --");
 
-        for (String value : new String[]{"1.3", "01.03", "1.03"}) {
-            ParseResult r = parse("// @deal-version " + value
-                + "\nexport class C { x: int = 0; }");
-            boolean clean = r.diagnostics().isEmpty();
-            check(clean, clean ? "" :
-                "@deal-version " + value + " accepted: " + r.diagnostics());
-            check(r.program().fileDirectives().declaredDealVersion() != null
-                    && r.program().fileDirectives().declaredDealVersion()
-                        .equals(new DealVersion(1, 3)),
-                value + " parses to (1,3)");
+        for (String value : new String[]{"", "1.3", "1.4", "01.04", "2.0", "bad"}) {
+            CompilerDiagnostic d = diagOf(fullDiags("// @deal-version " + value
+                + "\nexport class C {}"), "E1044");
+            check(d != null, "removed @deal-version rejected regardless of argument");
+            if (d != null) {
+                check(d.range().startScalarOffset() == 4
+                    && d.range().endScalarOffset() == 16,
+                    "removed directive reports its name, not its former argument");
+            }
         }
-
-        // Omission.
-        ParseResult r = parse("export class C { x: int = 0; }");
-        check(r.diagnostics().isEmpty() && r.program().fileDirectives()
-                .declaredDealVersion() == null
-                && r.program().fileDirectives().effectiveDealVersion()
-                    .equals(new DealVersion(1, 3)),
-            "omission defaults to effective (1,3)");
-
-        // Empty / multi-value → E1045.
-        check(hasError(parse("// @deal-version\nexport class C { x: int = 0; }"),
-            "E1045"), "empty argument → E1045");
-        check(hasError(parse("// @deal-version 1.3 1.4\nexport class C { x: int = 0; }"),
-            "E1045"), "multi-value argument → E1045");
-
-        // Malformed → E1046.
-        for (String bad : new String[]{"1.2.3", "1", "1.", ".2", "abc", "1,2",
-                "99999999999999999999999.2"}) {
-            check(hasError(parse("// @deal-version " + bad
-                    + "\nexport class C { x: int = 0; }"), "E1046"),
-                "malformed '" + bad + "' → E1046");
-        }
-
-        // Older/newer → E1046.
-        for (String bad : new String[]{"1.0", "1.1", "1.2", "0.9", "2.0"}) {
-            check(hasError(parse("// @deal-version " + bad
-                    + "\nexport class C { x: int = 0; }"), "E1046"),
-                "unsupported '" + bad + "' → E1046");
-        }
-
-        // Duplicate and post-token → E1046.
-        check(hasError(parse("// @deal-version 1.3\n// @deal-version 1.3"),
-            "E1046"), "duplicate → E1046");
-        check(hasError(parse("class A { x: int = 0; }\n// @deal-version 1.3"),
-            "E1046"), "post-token → E1046");
-
-        check(hasError(parse("// @deal-version 1.2\nexport class C { x: int = 0; }"),
-            "E1046"), "1.2 is never migrated");
 
         // Extern-c file-directive failures.
         check(hasError(parse("// @extern-c\nexport class C { x: int = 0; }"),
@@ -548,8 +500,8 @@ public class DirectiveTest {
         // @deal-version inside an interpolation: E1046 placement with a
         // truthful preceding count.
         ParseResult r3 = parse("let s = `${ // @deal-version 1.3\n x}`;");
-        check(hasError(r3, "E1046"),
-            "embedded @deal-version → E1046 placement");
+        check(hasError(r3, "E1044"),
+            "embedded removed @deal-version → E1044");
 
         // A C marker inside an interpolation: E1046 (no extern-C).
         ParseResult r4 = parse("let s = `${ // @c-struct\n x}`;");

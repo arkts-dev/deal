@@ -1,6 +1,6 @@
-// @spec: Lexical elements — v1.3 @deal-version file directive
-// @description: A module containing only a leading @deal-version directive is an empty module (Program ::= ImportDeclaration* TopLevelDeclaration*); the directive satisfies the placement rule vacuously and compiles
-// @expected: compile-ok
-// @features: lexer, directives, deal-version, v1.3, empty-module
+// @spec: Lexical elements — Comment semantics
+// @description: Removed file-version directives are unknown in every position and argument form
+// @expected: compile-error E1044
+// @features: lexer, directives, deal-version, v1.4, empty-module
 
 // @deal-version 1.3

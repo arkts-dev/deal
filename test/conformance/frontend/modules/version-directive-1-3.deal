@@ -1,5 +1,5 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: A declaration file accepts an exact v1.3 deal-version directive
+// @description: Declaration files require no source-level version directive
 // @expected: compile-ok
 // @features: modules, declarations, directives, v1.3
 

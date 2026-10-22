@@ -1,6 +1,6 @@
 // @spec: Modules, declarations, standard library, and host ABI — Package manifest
-// @description: the // @deal-version file directive accepts one non-empty version value and occurs before the first non-comment token (v1.3)
-// @expected: compile-ok
+// @description: File-version directives are rejected; the project manifest owns the version
+// @expected: compile-error E1044
 // @features: directives, modules, v1.3
 
 // @deal-version 1.3

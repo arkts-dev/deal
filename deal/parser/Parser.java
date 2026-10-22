@@ -134,7 +134,7 @@ public final class Parser {
 
     public ParseResult parse() {
         // Phase 0: file-directive evaluation over the parent lexer events
-        // (D4): deal-version/extern-c shape, duplicate, placement, and
+        // (D4): extern-c shape, duplicate, placement, and
         // version checks, then the E1045 argument sweep in event order.
         evaluator.evaluateParentEvents(directiveEvents);
 

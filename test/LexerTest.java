@@ -1411,87 +1411,15 @@ public class LexerTest {
     static void testDealVersionDirectives() {
         System.out.println("-- @deal-version Directive Event Tests --");
 
-        // --- @deal-version before the first non-comment token: unanchored
-        // event (a file directive clears the declaration run, D3) ---
-        LexResult r = tokenize("// @deal-version 1.3\nexport class C {}");
-        assertNoDiagnostics(r.diagnostics(),
-            "@deal-version before first token: no lexer diagnostics");
-        List<Token> tokens = r.tokens();
-        Token exp = tokens.get(0);
-        check(exp.type() == TokenType.EXPORT,
-            "@deal-version: first token is EXPORT");
-        check(r.directiveEvents().size() == 1,
-            "one event, got " + r.directiveEvents().size());
-        if (!r.directiveEvents().isEmpty()) {
-            CompilerDirective e = r.directiveEvents().get(0);
-            check(e.name() == DirectiveName.DEAL_VERSION,
-                "name DEAL_VERSION, got " + e.name());
-            check(e.rawArgument().equals(" 1.3"),
-                "raw argument ' 1.3', got '" + e.rawArgument() + "'");
-            check(e.trimmedArgument().equals("1.3"),
-                "trimmed argument '1.3', got '" + e.trimmedArgument() + "'");
-            check(e.precedingNonCommentTokenCount() == 0,
-                "preceding count 0");
-            check(e.declarationAnchorTokenIndex() == null,
-                "file directive never anchors");
-            check(e.sourceRange().startScalarOffset() == 0
-                    && e.sourceRange().endScalarOffset() == 20
-                    && e.sourceRange().scalarLength() == 20,
-                "sourceRange (0,20) — the complete comment, got ("
-                    + e.sourceRange().startScalarOffset() + ","
-                    + e.sourceRange().endScalarOffset() + ")");
-            check(e.nameRange().startScalarOffset() == 4
-                    && e.nameRange().endScalarOffset() == 16
-                    && e.nameRange().scalarLength() == 12,
-                "nameRange (4,16) — 'deal-version' after '// @', got ("
-                    + e.nameRange().startScalarOffset() + ","
-                    + e.nameRange().endScalarOffset() + ")");
-        }
-
-        // --- @deal-version at end of file: EOF retention, unanchored ---
-        r = tokenize("// @deal-version 1.3");
-        assertNoDiagnostics(r.diagnostics(), "@deal-version alone at EOF");
-        tokens = r.tokens();
-        check(tokens.size() == 1,
-            "@deal-version alone at EOF: only EOF token, got " + tokens.size());
-        check(tokens.get(0).type() == TokenType.EOF,
-            "@deal-version alone at EOF: token is EOF");
-        check(r.directiveEvents().size() == 1,
-            "one event retained at EOF");
-        if (!r.directiveEvents().isEmpty()) {
+        LexResult r;
+        for (String term : new String[]{"\n", "\r\n", "\r", ""}) {
+            r = tokenize("// @deal-version 1.4" + term);
+            check(r.diagnostics().stream().anyMatch(d -> d.code().equals("E1044")),
+                "removed file version directive is unknown under every terminator");
+            check(r.directiveEvents().get(0).name() == null,
+                "removed directive never receives a known name");
             check(r.directiveEvents().get(0).declarationAnchorTokenIndex() == null,
-                "EOF retains the event unanchored");
-        }
-
-        // --- @deal-version after a non-comment token: no lexer diagnostic;
-        // the parser's placement check owns E1046 (D4) ---
-        r = tokenize("class A { x: int = 0; }\n// @deal-version 1.3");
-        assertNoDiagnostics(r.diagnostics(),
-            "@deal-version after a declaration: lexer emits no placement error");
-        check(r.directiveEvents().size() == 1,
-            "one event, got " + r.directiveEvents().size());
-        if (!r.directiveEvents().isEmpty()) {
-            CompilerDirective e = r.directiveEvents().get(0);
-            check(e.precedingNonCommentTokenCount() == 10,
-                "preceding count 10 (class, A, {, x, :, int, =, 0, ;, }), got "
-                    + e.precedingNonCommentTokenCount());
-            check(e.declarationAnchorTokenIndex() == null,
-                "file directive stays unanchored");
-        }
-
-        // --- Delimiter-free @deal-version1.3 (D2): fixed-name first match ---
-        r = tokenize("// @deal-version1.3\nexport class C {}");
-        assertNoDiagnostics(r.diagnostics(), "delimiter-free @deal-version1.3");
-        check(r.directiveEvents().size() == 1,
-            "one event, got " + r.directiveEvents().size());
-        if (!r.directiveEvents().isEmpty()) {
-            CompilerDirective e = r.directiveEvents().get(0);
-            check(e.name() == DirectiveName.DEAL_VERSION,
-                "name DEAL_VERSION (recognized prefix never reclassified)");
-            check(e.rawArgument().equals("1.3"),
-                "raw argument '1.3', got '" + e.rawArgument() + "'");
-            check(e.trimmedArgument().equals("1.3"),
-                "trimmed argument '1.3', got '" + e.trimmedArgument() + "'");
+                "removed directive never attaches");
         }
 
         // --- @jsonablex / @jsonable:foo / @jsonable-foo / @jsonable foo ---
