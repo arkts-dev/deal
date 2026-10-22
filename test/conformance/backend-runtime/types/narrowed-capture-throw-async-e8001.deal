@@ -1,0 +1,21 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The async throw operand of a call-preserved narrowing refinement: a capturing closure clears the binding inside the async body, and the operand read is admitted before the throw machinery consumes the Error value, so the awaited export fails with the catchable canonical typed-boundary tuple (E8001, expected class instance, expected class, actual null) at the read — never a raw backend nil index error or a host null dereference that the production async invoker must classify as an infrastructure failure.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, runtime-errors, error-handling, async-await
+
+export async function test_async_throw_admission(): null {
+  let e: Error | null = { code: "ASYNC", message: "async" };
+  let clear: () => null = function(): null {
+    e = null;
+    return null;
+  };
+  if (e !== null) {
+    clear();
+    throw e;
+  }
+  throw { code: "CONTROL_FAIL", message: "async throw: no error was raised" };
+}
+
+export function main(): null {
+  return null;
+}

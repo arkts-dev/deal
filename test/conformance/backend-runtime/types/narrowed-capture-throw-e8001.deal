@@ -1,0 +1,17 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: A call-preserved narrowing refinement whose binding a capturing closure cleared is admitted at the throw operand: the throw reports the typed-boundary tuple (E8001, expected class instance, expected class, actual null) at the identifier read before the throw machinery consumes the Error value — never a raw backend nil index error (LuaJIT) or a host null dereference (JVM) escaping the enclosing DEAL try — and the throw transfer is never produced.
+// @expected: runtime-error E8001
+// @features: type-system, nullable, narrowing, runtime-errors, error-handling
+
+export function main(): null {
+  let e: Error | null = { code: "CONSTRUCTED", message: "constructed" };
+  let clear: () => null = function(): null {
+    e = null;
+    return null;
+  };
+  if (e !== null) {
+    clear();
+    throw e;
+  }
+  return null;
+}

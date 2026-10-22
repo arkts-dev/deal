@@ -89,6 +89,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -193,6 +194,7 @@ public class ControlFlowLoweringTest {
     }
 
     /**
+
      * Lowers one slice through the full-program E7 walk (the production
      * statement walk: the binding, closure, group and full-program arms
      * with the E7 call machine, which is what makes a closure body's
@@ -373,6 +375,66 @@ public class ControlFlowLoweringTest {
             }
         }
         return found;
+    }
+
+    /**
+     * Every {@code THROW} statement of the module in source order, the
+     * function bodies included (the lowering lowers a declaration's body, so
+     * the statement walk must reach it).
+     */
+    private static void collectThrowStatements(List<StatementNode> statements,
+                                               List<ThrowStatement> found) {
+        for (StatementNode statement : statements) {
+            switch (statement) {
+                case ThrowStatement throwStatement -> found.add(throwStatement);
+                case Block block ->
+                    collectThrowStatements(block.statements(), found);
+                case IfStatement ifStatement -> {
+                    collectThrowStatements(ifStatement.thenBlock().statements(),
+                        found);
+                    ifStatement.elseBranch().ifPresent(branch -> {
+                        switch (branch) {
+                            case deal.ast.Either.Left<IfStatement, Block> left ->
+                                collectThrowStatements(List.of(left.value()),
+                                    found);
+                            case deal.ast.Either.Right<IfStatement, Block> right ->
+                                collectThrowStatements(right.value().statements(),
+                                    found);
+                        }
+                    });
+                }
+                case WhileStatement whileStatement ->
+                    collectThrowStatements(whileStatement.body().statements(),
+                        found);
+                case ForStatement forStatement ->
+                    collectThrowStatements(forStatement.body().statements(),
+                        found);
+                case ForOfStatement forOfStatement ->
+                    collectThrowStatements(forOfStatement.body().statements(),
+                        found);
+                case TryStatement tryStatement -> {
+                    collectThrowStatements(tryStatement.tryBlock().statements(),
+                        found);
+                    collectThrowStatements(tryStatement.catchBlock().statements(),
+                        found);
+                }
+                case deal.ast.FunctionDeclaration function ->
+                    collectThrowStatements(function.body().statements(), found);
+                default -> {
+                    // other statements carry no throw statement
+                }
+            }
+        }
+    }
+
+    /** The op whose result value is {@code value} ({@code null} when none does). */
+    private static SemanticOp producerOf(List<SemanticOp> ops, ValueId value) {
+        for (SemanticOp op : ops) {
+            if (value.equals(op.result())) {
+                return op;
+            }
+        }
+        return null;
     }
 
     private static void checkOrigin(String what, SemanticOp op, Span expected,
@@ -1226,6 +1288,155 @@ public class ControlFlowLoweringTest {
     // =========================================================================
     // 4. TRY_CATCH / THROW
     // =========================================================================
+
+    /**
+     * ISSUE-0887: the {@code THROW} operand lowers through the same refined
+     * operand admission as every other consumed value, so a
+     * null-narrowing-refined identifier read is validated at its own origin
+     * before the throw machinery dereferences the {@code Error} value.
+     *
+     * <p>The slice carries the unchanged non-null operand beside the direct
+     * and parenthesized refined operands: only the two refined reads produce
+     * a {@code NARROWED_READ} cell, each cell publishes the value its own
+     * {@code THROW} consumes and precedes it, each cell's descriptor is
+     * {@code D(Error)}, each cell's origin is the identifier read's own span
+     * (the {@code THROW} keeps the statement's span), and each refined read
+     * lowers exactly once — the admission republishes the read, never a
+     * second evaluation.</p>
+     */
+    static void testThrowOperandAdmission() {
+        System.out.println("-- THROW operand: the refined read is admitted before the "
+            + "throw machinery consumes it --");
+
+        CheckedSlice slice = checkSlice("""
+            function plain(value: Error): null {
+              try { throw value; } catch (caught) { }
+              return null;
+            }
+            function probe(e: Error | null): null {
+              if (e !== null) {
+                try { throw e; } catch (caught) { }
+                try { throw (e); } catch (caught) { }
+              }
+              return null;
+            }
+            """);
+        if (slice == null) {
+            return;
+        }
+        SemanticLowerer.LoweringResult result = lowerFullProgram(slice);
+        check(result != null && !result.hasErrors(),
+            "the throw-operand slice lowers: "
+                + (result == null ? "null" : result.diagnostics()));
+        if (result == null || result.hasErrors()) {
+            return;
+        }
+        List<SemanticOp> ops = result.unit().ops();
+        List<ThrowStatement> throwStatements = new ArrayList<>();
+        collectThrowStatements(slice.program().statements(), throwStatements);
+        List<SemanticOp> throwOps = ofKind(ops, SemanticOpKind.THROW);
+        check(throwStatements.size() == 3 && throwOps.size() == 3,
+            "the slice carries the unchanged, direct and parenthesized THROW ops; "
+                + "got " + throwStatements.size() + " statement(s) and "
+                + throwOps.size() + " op(s)");
+        if (throwStatements.size() != 3 || throwOps.size() != 3) {
+            return;
+        }
+        List<SemanticOp> refined = new ArrayList<>();
+        for (SemanticOp op : ofKind(ops, SemanticOpKind.BOUNDARY)) {
+            if (op.payload() instanceof KindPayload.BoundaryPayload payload
+                    && payload.kind() == BoundaryKind.NARROWED_READ) {
+                refined.add(op);
+            }
+        }
+        check(refined.size() == 2, "only the direct and parenthesized operands "
+            + "produce a NARROWED_READ cell; got " + refined.size());
+
+        int admitted = 0;
+        int unadmitted = 0;
+        Set<ValueId> reads = new LinkedHashSet<>();
+        for (ThrowStatement statement : throwStatements) {
+            SemanticOp throwOp = null;
+            for (SemanticOp candidate : throwOps) {
+                if (candidate.origin().span().startLine()
+                            == statement.span().startLine()
+                        && candidate.origin().span().startColumn()
+                            == statement.span().startColumn()) {
+                    throwOp = candidate;
+                }
+            }
+            check(throwOp != null, "the THROW op of the statement at "
+                + statement.span().startLine() + ":"
+                + statement.span().startColumn() + " is in the unit");
+            if (throwOp == null) {
+                continue;
+            }
+            ValueId operand = ((KindPayload.ThrowPayload) throwOp.payload())
+                .errorValue();
+            SemanticOp cell = null;
+            for (SemanticOp candidate : refined) {
+                if (operand.equals(candidate.result())) {
+                    cell = candidate;
+                }
+            }
+            if (cell == null) {
+                unadmitted++;
+                SemanticOp producer = producerOf(ops, operand);
+                check(producer != null
+                        && producer.kind() == SemanticOpKind.BINDING_LOAD,
+                    "the unchanged non-null Error operand is the plain binding "
+                        + "read, so it gains no admission cell; got "
+                        + (producer == null ? "no producer" : producer.kind()));
+                continue;
+            }
+            admitted++;
+            KindPayload.BoundaryPayload payload =
+                (KindPayload.BoundaryPayload) cell.payload();
+            check(payload.descriptor().equals(new RuntimeDescriptor.Class(
+                    new deal.semantic.ir.ClassId("", "Error"))),
+                "the admission validates the refined Error descriptor; got "
+                    + payload.descriptor());
+            check(ops.indexOf(cell) < ops.indexOf(throwOp),
+                "the admission precedes the THROW that consumes it");
+            SemanticOp input = producerOf(ops, payload.input());
+            check(input != null && input.kind() == SemanticOpKind.BINDING_LOAD,
+                "the admission input is the binding read");
+            reads.add(payload.input());
+            Span read = statement.expr().span();
+            check(cell.origin().kind() == SourceOriginKind.USER
+                    && cell.origin().span().startLine() == read.startLine()
+                    && cell.origin().span().startColumn() == read.startColumn(),
+                "the admission's origin is the operand read's own span ("
+                    + read.startLine() + ":" + read.startColumn() + "); got "
+                    + cell.origin().span().startLine() + ":"
+                    + cell.origin().span().startColumn());
+            check(throwOp.origin().span().startLine()
+                        == statement.span().startLine()
+                    && throwOp.origin().span().startColumn()
+                        == statement.span().startColumn(),
+                "the THROW keeps the statement's own span, so the two origins "
+                    + "stay distinct");
+        }
+        check(admitted == 2 && unadmitted == 1, "exactly the direct and "
+            + "parenthesized operands are admitted and the unchanged one is not; "
+            + "got " + admitted + " admitted and " + unadmitted + " unadmitted");
+        check(reads.size() == 2, "each refined operand reads the binding once; "
+            + "got " + reads.size() + " read(s)");
+        BindingId refinedBinding = null;
+        int operandReads = 0;
+        for (ValueId read : reads) {
+            SemanticOp load = producerOf(ops, read);
+            if (load != null && load.payload()
+                    instanceof KindPayload.BindingLoadPayload payload) {
+                refinedBinding = payload.binding();
+                operandReads++;
+            }
+        }
+        check(refinedBinding != null, "the refined operand inputs are binding reads");
+        check(operandReads == 2, "each THROW statement's operand owns exactly one "
+            + "binding read (the admission republishes it, never a second "
+            + "evaluation); got " + operandReads);
+    }
 
     static void testTryCatchThrowArm() {
         System.out.println("-- TRY_CATCH/THROW: blocks, catchBinding, THROW_TRANSFER --");
@@ -2374,7 +2585,11 @@ public class ControlFlowLoweringTest {
         testNarrowedForOfIterableAdmission();
         testForEachArrayValuesArm();
         testTryCatchThrowArm();
+
         testCatchBindingLexicalMutable();
+
+        testThrowOperandAdmission();
+
         testBreakContinueTargets();
         testDiscardArm();
         testValidatorNegatives();

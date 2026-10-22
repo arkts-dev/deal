@@ -13554,9 +13554,26 @@ public final class SemanticLowerer {
          * {@code TRY_CATCH}, else the error escapes as the host-visible
          * {@code DEALRuntimeError}. {@code THROW} terminates its block
          * (its exit state is closed for the implicit-return analysis).
+         *
+         * <p>The operand lowers through {@link #lowerOperand(ExpressionNode)}:
+         * a null-narrowing-refined identifier read is a consumed value like
+         * the arithmetic operand, condition, index receiver/key, table member
+         * receiver, {@code .length} receiver, for-of iterable and {@code has}
+         * receiver positions, so the {@code NARROWED_READ} admission validates
+         * the read at its own origin before the throw machinery dereferences
+         * the {@code Error} value's transport. docs/spec-v1.3.md Nullable
+         * semantics keeps calls non-invalidating on purpose, so a capturing
+         * closure call can leave the binding null while the refinement claim
+         * still holds; without the admission the cleared binding reaches the
+         * throw path and every backend dereferences the cleared value (a
+         * native nil index error on LuaJIT, a host null dereference on the
+         * JVM), escaping the enclosing DEAL {@code try}. The admission makes
+         * the failure the standard typed-boundary projection (E8001 with the
+         * class descriptor's expected/actual tuple) at the read, so it stays
+         * a catchable DEAL error and no backend consumes the cleared value.</p>
          */
         private void lowerThrow(ThrowStatement statement) {
-            ValueId errorValue = lowerExpression(statement.expr());
+            ValueId errorValue = lowerOperand(statement.expr());
             emitNullOp(SemanticOpKind.THROW,
                 new KindPayload.ThrowPayload(errorValue), statement.span(),
                 FailurePolicyId.THROW_TRANSFER, SourceOriginKind.USER, currentParent());

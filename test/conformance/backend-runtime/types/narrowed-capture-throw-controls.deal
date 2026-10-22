@@ -1,0 +1,213 @@
+// @spec: Type system — Nullable semantics (narrowing invalidation across calls)
+// @description: The throw controls of the call-preserved narrowing refinement: an unchanged non-null Error keeps its identity, code and message through throw and catch, a call preserves the refinement, the operand expression completes exactly once, and after a capturing closure clears the binding every throw operand form — direct, parenthesized, inside a helper whose caller catches, and inside an async export — raises its own catchable canonical E8001 whose caught flag is asserted after the try, while a caught error rethrows unchanged with its own field writes visible.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, runtime-errors, error-handling, async-await
+
+function expectNoError(what: string): null {
+  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+}
+
+function expectCaught(e: Error, what: string, code: string, message: string): null {
+  if (e.code !== code || e.message !== message) {
+    throw { code: "CONTROL_FAIL", message: what + ": expected " + code + " " + message
+      + ", got " + e.code + " " + e.message };
+  }
+  return null;
+}
+
+function expectEqual(what: string, actual: int, expected: int): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+  }
+  return null;
+}
+
+function expectTrue(what: string, actual: boolean): null {
+  if (!actual) {
+    throw { code: "CONTROL_FAIL", message: what };
+  }
+  return null;
+}
+
+function preserveCall(): null {
+  return null;
+}
+
+// The caller-catch operand: the helper's throw of a cleared narrowed binding
+// must cross the function boundary as the catchable canonical DEAL error.
+function relayInvalidated(): null {
+  let e: Error | null = { code: "RELAY", message: "relay" };
+  let clear: () => null = function(): null {
+    e = null;
+    return null;
+  };
+  if (e !== null) {
+    clear();
+    throw e;
+  }
+  expectNoError("relay throw");
+  return null;
+}
+
+async function settle(tag: string): string {
+  return tag;
+}
+
+export function main(): null {
+  // The unchanged non-null Error operand: a plain (non-refined) Error read is
+  // thrown and caught as the identical instance, so a field write through the
+  // catch binding is visible through every alias.
+  let original: Error = { code: "UNCHANGED", message: "unchanged" };
+  let alias: Error = original;
+  let unchangedCaught: boolean = false;
+  try {
+    throw original;
+  } catch (caught) {
+    if (caught !== original || caught !== alias) {
+      throw { code: "CONTROL_FAIL", message: "the unchanged throw lost the Error identity" };
+    }
+    expectCaught(caught, "unchanged non-null", "UNCHANGED", "unchanged");
+    caught.message = "mutated";
+    unchangedCaught = true;
+  }
+  if (!unchangedCaught) {
+    throw { code: "CONTROL_FAIL", message: "unchanged non-null: the caught flag stayed false" };
+  }
+  if (alias.message !== "mutated") {
+    throw { code: "CONTROL_FAIL", message: "the unchanged throw lost the alias mutation" };
+  }
+
+  // The direct operand of a live refinement: a call preserves the refinement
+  // and the valid Error value still throws normally.
+  let e: Error | null = { code: "DIRECT", message: "direct" };
+  let clear: () => null = function(): null {
+    e = null;
+    return null;
+  };
+  if (e !== null) {
+    preserveCall();
+    let validCaught: boolean = false;
+    try {
+      throw e;
+    } catch (caught) {
+      expectCaught(caught, "call-preserved throw", "DIRECT", "direct");
+      validCaught = true;
+    }
+    if (!validCaught) {
+      throw { code: "CONTROL_FAIL", message: "call-preserved throw: the caught flag stayed false" };
+    }
+  }
+  if (e !== null) {
+    clear();
+
+    // The direct operand after the capturing closure cleared the binding: the
+    // read is admitted before the throw machinery consumes it, so the caught
+    // flag asserted after the try proves the canonical error was caught,
+    // never a raw backend nil index error or a host null dereference.
+    let directCaught: boolean = false;
+    try {
+      throw e;
+      expectNoError("direct throw");
+    } catch (caught) {
+      expectCaught(caught, "direct throw", "E8001", "expected class instance");
+      directCaught = true;
+    }
+    if (!directCaught) {
+      throw { code: "CONTROL_FAIL", message: "direct throw: the caught flag stayed false" };
+    }
+
+    // The parenthesized operand is the same identifier read.
+    let parenCaught: boolean = false;
+    try {
+      throw (e);
+      expectNoError("parenthesized throw");
+    } catch (caught) {
+      expectCaught(caught, "parenthesized throw", "E8001", "expected class instance");
+      parenCaught = true;
+    }
+    if (!parenCaught) {
+      throw { code: "CONTROL_FAIL", message: "parenthesized throw: the caught flag stayed false" };
+    }
+
+    // The caller-catch operand: the failure crosses the helper's function
+    // boundary and the caller observes the same canonical code.
+    let relayCaught: boolean = false;
+    try {
+      relayInvalidated();
+      expectNoError("caller-catch throw");
+    } catch (caught) {
+      expectCaught(caught, "caller-catch throw", "E8001", "expected class instance");
+      relayCaught = true;
+    }
+    if (!relayCaught) {
+      throw { code: "CONTROL_FAIL", message: "caller-catch throw: the caught flag stayed false" };
+    }
+
+    // The rethrow operand: the caught canonical error rethrows unchanged, so
+    // the handler's own field write is visible through the second catch
+    // (the identical instance crossed the rethrow).
+    let rethrowCaught: boolean = false;
+    try {
+      try {
+        throw e;
+        expectNoError("rethrow");
+      } catch (inner) {
+        inner.message = "rethrown";
+        throw inner;
+      }
+    } catch (outer) {
+      expectCaught(outer, "rethrow", "E8001", "rethrown");
+      rethrowCaught = true;
+    }
+    if (!rethrowCaught) {
+      throw { code: "CONTROL_FAIL", message: "rethrow: the caught flag stayed false" };
+    }
+  }
+
+  // The operand expression completes exactly once per throw.
+  let calls: int = 0;
+  let make: () => Error = function(): Error {
+    calls = calls + 1;
+    return { code: "ONCE", message: "once" };
+  };
+  let onceCaught: boolean = false;
+  try {
+    throw make();
+  } catch (caught) {
+    expectCaught(caught, "once-only operand", "ONCE", "once");
+    onceCaught = true;
+  }
+  if (!onceCaught) {
+    throw { code: "CONTROL_FAIL", message: "once-only operand: the caught flag stayed false" };
+  }
+  expectEqual("operand evaluations", calls, 1);
+  return null;
+}
+
+// The async operand: the awaited statement keeps the same clearing capture,
+// and the cleared binding's throw is admitted as the catchable canonical
+// DEAL error inside the async body (never an infrastructure failure).
+export async function test_async_throw_caught(): int {
+  let tag: string = await settle("async");
+  expectTrue("the await completed", tag === "async");
+  let e: Error | null = { code: "ASYNC", message: "async" };
+  let clear: () => null = function(): null {
+    e = null;
+    return null;
+  };
+  let asyncCaught: boolean = false;
+  if (e !== null) {
+    clear();
+    try {
+      throw e;
+      expectNoError("async throw");
+    } catch (caught) {
+      expectCaught(caught, "async throw", "E8001", "expected class instance");
+      asyncCaught = true;
+    }
+  }
+  if (!asyncCaught) {
+    throw { code: "CONTROL_FAIL", message: "async throw: the caught flag stayed false" };
+  }
+  return 1;
+}
