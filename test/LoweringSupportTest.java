@@ -1028,7 +1028,12 @@ public class LoweringSupportTest {
 
         Path tmp = Files.createTempDirectory("deal-manifest-write-target");
         try {
-            RequirementManifestResult storeOnly = compileAndCompute(
+            // The store-only module must complete the production compile:
+            // the write position is the address chain's BINDING_STORE, so
+            // R-COVERAGE accepts a module whose only identifier occurrence
+            // is an assignment target (a compile failure here would be a
+            // rejected valid program, not a manifest fact).
+            CompiledFixture storeOnlyFixture = compileFixture(
                 tmp.resolve("store-only"), Map.of(
                     "main.deal", """
                         export function main(): null {
@@ -1037,7 +1042,11 @@ public class LoweringSupportTest {
                           return null;
                         }
                         """), "main.deal");
-            SemanticRequirementManifest storeManifest = manifestOf(storeOnly, "main");
+            check(storeOnlyFixture.ok(), "the write-only module compiles with "
+                + "zero diagnostics (R-COVERAGE): "
+                + storeOnlyFixture.orchestrator().diagnostics());
+            SemanticRequirementManifest storeManifest =
+                manifestOf(storeOnlyFixture.manifests(), "main");
             check(storeManifest != null,
                 "the write-only module produces a manifest");
             if (storeManifest != null) {
@@ -1070,8 +1079,8 @@ public class LoweringSupportTest {
             // The type mark survives the suppressed read row: a bytes-typed
             // bare identifier write target (RHS null) must keep the
             // plan-time bytes fact even when it is the module's only bytes
-            // occurrence.
-            RequirementManifestResult bytesStore = compileAndCompute(
+            // occurrence — and that module compiles too.
+            CompiledFixture bytesStoreFixture = compileFixture(
                 tmp.resolve("bytes-store"), Map.of(
                     "main.deal", """
                         export function main(): null {
@@ -1080,7 +1089,11 @@ public class LoweringSupportTest {
                           return null;
                         }
                         """), "main.deal");
-            SemanticRequirementManifest bytesStoreManifest = manifestOf(bytesStore, "main");
+            check(bytesStoreFixture.ok(), "the bytes store-only module compiles "
+                + "with zero diagnostics (R-COVERAGE): "
+                + bytesStoreFixture.orchestrator().diagnostics());
+            SemanticRequirementManifest bytesStoreManifest =
+                manifestOf(bytesStoreFixture.manifests(), "main");
             check(bytesStoreManifest != null,
                 "the bytes store-only module produces a manifest");
             if (bytesStoreManifest != null) {

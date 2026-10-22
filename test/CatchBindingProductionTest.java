@@ -1,14 +1,19 @@
 package deal.test;
 
+import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmAsyncExportInvoker;
 import deal.codegen.jvm.JvmNames;
 import deal.codegen.lua.LuaJitAsyncExportInvoker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.module.CompilationOrchestrator;
+import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
+import deal.semantic.SemanticLowerer;
+import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.IntrinsicKind;
 import deal.test.conformance.JvmCompilation;
 import deal.test.conformance.SidecarExpectations;
 
@@ -54,7 +59,13 @@ import java.util.stream.Stream;
  * captured catch binding materializes as a fresh cell per catch execution
  * (the LuaJIT table, the JVM box, the JavaScript mutable {@code let}) and
  * the created closures receive that cell — the exact shapes whose absence
- * rejected the source with E6005 or froze the binding at capture time.</p>
+ * rejected the source with E6005 or froze the binding at capture time.
+ * The semantic oracle is a third consumer of the same lowered IR, so the
+ * differential matrix drives it beside the two shared artifacts over the
+ * fixture's production project and requires the same trace, effects and
+ * terminal; the store-only write (the binding's only occurrence, no read)
+ * is compiled and executed on every lane, the exact shape that was
+ * rejected with E6005 CONSTRUCT_UNLOWERED.</p>
  */
 public final class CatchBindingProductionTest {
 
@@ -674,6 +685,139 @@ public final class CatchBindingProductionTest {
     }
 
     // =========================================================================
+    // The store-only catch variable: the write is the binding's only use
+    // =========================================================================
+
+    /**
+     * The issue's second minimal manifestation with the assignment as the
+     * catch variable's only occurrence: a bare identifier write target is
+     * the declared binding's own address chain ({@code BINDING_STORE}), so
+     * the module compiles — the coverage detector asks for no
+     * {@code IDENTIFIER} read — and the published artifact of every lane
+     * runs. The synchronous fixture's direct assignment is followed by
+     * reads, so this is the exact shape that the missing binding rejected
+     * with E6005 CONSTRUCT_UNLOWERED.
+     */
+    private static final String STORE_ONLY_SOURCE = """
+        export function main(): null {
+          try { throw { code: "E_STORE", message: "caught" }; }
+          catch (e) { e = { code: "E_STORE2", message: "stored" }; }
+          return null;
+        }
+        """;
+
+    private static Project compileStoreOnly(Path root, Backend backend,
+            String label) throws Exception {
+        Project project = writeProject(root, STORE_ONLY_SOURCE);
+        assertProductionEmission(productionCompile(project, backend), label);
+        return project;
+    }
+
+    private static void testStoreOnlyDirectAssignment(Path root) throws Exception {
+        System.out.println("-- the store-only catch variable compiles and runs "
+            + "on every lane --");
+        ExpectedExecution expected = new ExpectedExecution(new byte[0],
+            new byte[0], 0);
+
+        Project luajit = compileStoreOnly(root.resolve("luajit"),
+            Backend.LUAJIT, "store-only luajit");
+        Path luaArtifact = luajit.out().resolve(ENTRY_MODULE + ".lua");
+        check(Files.isRegularFile(luaArtifact), "store-only luajit: the "
+            + "production compile stages the entry chunk " + luaArtifact);
+        if (Files.isRegularFile(luaArtifact)) {
+            assertExecution("store-only luajit", runProcess(
+                List.of("luajit", ENTRY_MODULE + ".lua"), luajit.out()), expected);
+        }
+
+        Project jvm = compileStoreOnly(root.resolve("jvm"), Backend.JVM,
+            "store-only jvm");
+        String className = JvmNames.classNameFor(ENTRY_MODULE);
+        Path jvmArtifact = jvm.out().resolve(className + ".java");
+        check(Files.isRegularFile(jvmArtifact), "store-only jvm: the production "
+            + "compile stages the entry class " + jvmArtifact);
+        if (Files.isRegularFile(jvmArtifact)) {
+            assertJvmExecution(jvm, className, jvmArtifact, "store-only jvm",
+                expected);
+        }
+
+        Project js = compileStoreOnly(root.resolve("js"), Backend.JS,
+            "store-only js");
+        Path jsArtifact = js.out().resolve(ENTRY_MODULE + ".js");
+        check(Files.isRegularFile(jsArtifact), "store-only js: the production "
+            + "compile stages the entry artifact " + jsArtifact);
+        if (Files.isRegularFile(jsArtifact)) {
+            assertExecution("store-only js", runProcess(
+                List.of("node", ENTRY_MODULE + ".js"), js.out()), expected);
+        }
+    }
+
+    // =========================================================================
+    // The semantic oracle: the third consumer of the same lowered IR
+    // =========================================================================
+
+    /**
+     * The production lowering of one compiled project: the compile's own
+     * invocation, checked project, manifests and declaration surface are
+     * the production arm's inputs, so the differential drives exactly the
+     * unit the published artifacts were emitted from.
+     */
+    private static SemanticLowerer.ProjectLoweringResult productionLowering(
+            CompilationOrchestrator orchestrator) {
+        CheckedProjectBuildResult checked = orchestrator.checkedProject();
+        return SemanticLowerer.lowerProject(orchestrator.invocation(),
+            checked.input(), checked.index(),
+            orchestrator.requirementManifests().manifests(),
+            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
+            BuiltinErrorDeclaration.synthesized(
+                checked.input().modules().get(0).ast().span()),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
+                IntrinsicKind.BYTES_NEW), Set.of());
+    }
+
+    /**
+     * The semantic oracle is a third consumer of the same lowered IR, so
+     * it must agree with the emitted artifacts. The differential harness
+     * drives the oracle and the two shared artifacts over the fixture's
+     * production project: every capture form and the repeated loop
+     * catches — a fresh mutable binding per catch execution, so a closure
+     * created in an earlier catch keeps that execution's value — are in
+     * that one run, and either consumer reusing a catch cell fails the
+     * comparison.
+     */
+    private static void testOracleParity(Path root) throws Exception {
+        System.out.println("-- the semantic oracle and the shared artifacts "
+            + "agree over the fixture's catch bindings --");
+        Project project = writeProject(root, fixtureSource(SYNC_FIXTURE));
+        CompilationOrchestrator orchestrator = productionCompile(project,
+            Backend.LUAJIT);
+        assertProductionEmission(orchestrator, "oracle parity");
+        SemanticLowerer.ProjectLoweringResult lowered =
+            productionLowering(orchestrator);
+        checkEq(List.of(), lowered.diagnostics(), "oracle parity: the production "
+            + "lowering reports zero diagnostics");
+        if (lowered.project() == null) {
+            return;
+        }
+        Path workspace = root.resolve("differential");
+        Files.createDirectories(workspace);
+        SemanticDifferentialHarness.Verdict verdict =
+            SemanticDifferentialHarness.runProject(lowered.project(),
+                lowered.tables(), lowered.registries(),
+                SemanticDifferentialHarness.Expectation.success(
+                    "the catch-binding fixture", List.of("OK"), "null"),
+                workspace);
+        checkEq(3, verdict.runs().size(), "oracle parity: the differential ran the "
+            + "oracle and both shared artifacts: " + verdict.failures());
+        check(verdict.pass(), "oracle parity: the three consumers agree: "
+            + verdict.failures());
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "oracle parity: " + run.consumer() + " completes successfully: "
+                    + run.terminal());
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -687,6 +831,8 @@ public final class CatchBindingProductionTest {
             testSyncLuaJit(root.resolve("sync-luajit"), syncExpected);
             testSyncJvm(root.resolve("sync-jvm"), syncExpected);
             testSyncJs(root.resolve("sync-js"), syncExpected);
+            testStoreOnlyDirectAssignment(root.resolve("store-only"));
+            testOracleParity(root.resolve("oracle-parity"));
             testAsyncLuaJit(root.resolve("async-luajit"));
             testAsyncJvm(root.resolve("async-jvm"));
             testAsyncJs(root.resolve("async-js"));

@@ -6844,9 +6844,17 @@ public final class SemanticOracle {
             // binding; the failure's memoized identity carries its
             // transport, so a rethrow of it preserves origin,
             // expected/actual, frames and cause unchanged and catching the
-            // rethrown error again is the identical Error value.
+            // rethrown error again is the identical Error value. The
+            // binding is a fresh mutable lexical binding per catch
+            // execution (docs/spec-v1.3.md §Closures and captured
+            // variables, §try / catch), so the cell is allocated here and
+            // never reused: a closure created in an earlier catch captured
+            // that execution's cell and keeps observing its own caught
+            // value, exactly like the emitted per-execution cell. The catch
+            // block's leading BINDING_ALLOC stays non-reallocating
+            // (executeBindingAlloc skips a catch binding).
             Value.ErrorValue error = caught.reify();
-            Cell cell = cellOf(payload.catchBinding(), 0, true);
+            Cell cell = freshCellOf(payload.catchBinding(), 0);
             cell.value = error;
             cell.initialized = true;
             try {
