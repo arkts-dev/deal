@@ -1,0 +1,19 @@
+// @expected: companion
+// @description: Classified support module for the optional-null read case: the imported plain class (optional null, optional T and optional nullable T fields) with a reader function, plus an imported jsonable class whose optional null field crosses the generated JSON path.
+// The importing fixture reads the fields and the generated helpers cross-module.
+
+export class LibBox {
+  n?: null;
+  tag?: string;
+  maybe?: string | null;
+}
+
+export function readMissing(b: LibBox): null {
+  return b.n;
+}
+
+// @jsonable
+export class LibNote {
+  label: string = "";
+  n?: null;
+}

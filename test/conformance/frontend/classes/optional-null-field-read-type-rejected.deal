@@ -1,0 +1,12 @@
+// @spec: Classes — Field access
+// @description: An optional field declared null reads as language null, so a non-null target type fails with the ordinary typed-assignment diagnostic
+// @expected: compile-error E3001
+// @features: classes, optional, null, field-read
+
+class Box { n?: null; }
+
+export function main(): null {
+  let b: Box = {};
+  let wrong: int = b.n;
+  return null;
+}

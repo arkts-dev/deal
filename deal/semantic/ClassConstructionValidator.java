@@ -488,10 +488,8 @@ public final class ClassConstructionValidator {
             return Optional.of(new SeedModuleViolation(unit, op,
                 "the FIELD_DELETE names required declaration field " + classId + "." + name));
         }
-        RuntimeDescriptor descriptor = field.descriptor();
-        if (read && !field.required() && !(descriptor instanceof RuntimeDescriptor.Nullable)) {
-            descriptor = new RuntimeDescriptor.Nullable(descriptor);
-        }
+        RuntimeDescriptor declared = field.descriptor();
+        RuntimeDescriptor descriptor = read ? field.readResultDescriptor() : declared;
         String expected = descriptor.canonicalSpecText();
         if (read && !expected.equals(op.resultType())) {
             return Optional.of(new SeedModuleViolation(unit, op,
@@ -940,11 +938,7 @@ public final class ClassConstructionValidator {
 
         private static RuntimeDescriptor readResultDescriptorOf(
                 ClassLayout.FieldLayout field) {
-            RuntimeDescriptor declared = field.descriptor();
-            if (!field.required() && !(declared instanceof RuntimeDescriptor.Nullable)) {
-                return new RuntimeDescriptor.Nullable(declared);
-            }
-            return declared;
+            return field.readResultDescriptor();
         }
 
         /** The descriptor-kind rule policy of one checked descriptor. */

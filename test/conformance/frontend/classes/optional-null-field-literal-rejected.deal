@@ -1,0 +1,11 @@
+// @spec: Classes — Object literal type checking
+// @description: A construction literal supplying a non-null value for a field declared null fails with the ordinary field-type diagnostic
+// @expected: compile-error E4003
+// @features: classes, optional, null, construction
+
+class Box { n?: null; }
+
+export function main(): null {
+  let b: Box = { n: 2 };
+  return null;
+}

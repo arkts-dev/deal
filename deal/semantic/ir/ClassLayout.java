@@ -38,6 +38,21 @@ public record ClassLayout(ClassId classId, List<FieldLayout> fields) {
             Objects.requireNonNull(descriptor, "descriptor must not be null");
             Objects.requireNonNull(defaultOwner, "defaultOwner must not be null");
         }
+
+        /**
+         * The field's read-result descriptor (the checker's optional-read
+         * wrap): a required-present field reads as its declared descriptor,
+         * and an optional field reads as {@code T | null}. The wrap is the
+         * one canonical nullable production
+         * ({@link RuntimeDescriptor#nullable}), so an optional field whose
+         * declared type is {@code null} reads as that {@code null} atom —
+         * {@code null | null} is {@code null}, never the forbidden
+         * {@code ?null} wrapper measured with a raw
+         * {@code new RuntimeDescriptor.Nullable(...)}.
+         */
+        public RuntimeDescriptor readResultDescriptor() {
+            return required ? descriptor : RuntimeDescriptor.nullable(descriptor);
+        }
     }
 
     public ClassLayout(ClassId classId, List<FieldLayout> fields) {

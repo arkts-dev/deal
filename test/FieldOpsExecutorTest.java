@@ -295,11 +295,7 @@ public class FieldOpsExecutorTest {
 
     /** The read's checked result descriptor (the checker's optional-read wrap). */
     private static RuntimeDescriptor readResultDescriptor(ClassLayout layout, String field) {
-        ClassLayout.FieldLayout fieldLayout = declaredField(layout, field);
-        if (!fieldLayout.required() && !(fieldLayout.descriptor() instanceof RuntimeDescriptor.Nullable)) {
-            return new RuntimeDescriptor.Nullable(fieldLayout.descriptor());
-        }
-        return fieldLayout.descriptor();
+        return declaredField(layout, field).readResultDescriptor();
     }
 
     private static FieldReadFixture fieldReadFixture(ValueId receiver, ClassId classId,
@@ -503,6 +499,79 @@ public class FieldOpsExecutorTest {
             "a missing required field pre-maps to null and the non-nullable descriptor "
                 + "fails E8001 'expected int' at the op origin; got "
                 + requiredMissing);
+    }
+
+    /**
+     * The optional null read (ISSUE-0883): an optional field whose declared
+     * type is {@code null} reads as language {@code null} in both states,
+     * and the OPTIONAL_FIELD_READ descriptor the executor derives is the
+     * {@code null} atom — the canonical wrap, never the forbidden
+     * {@code ?null} form that a raw {@code new RuntimeDescriptor.Nullable}
+     * would reject at construction.
+     */
+    private static void testOptionalNullFieldRead() {
+        System.out.println("-- optional null read: missing and present null both "
+            + "publish language null under the null-atom descriptor --");
+
+        RuntimeDescriptor nullDescriptor = RuntimeDescriptor.Null.INSTANCE;
+        ClassLayout nullLayout = layout(field("x", INT, true), field("n", nullDescriptor, false));
+        check(nullLayout.fields().get(1).readResultDescriptor() == nullDescriptor,
+            "the optional null field's read-result descriptor is the null atom");
+        check(optionalIntReadWraps(nullLayout),
+            "the required x:int control keeps its declared descriptor, and an"
+                + " optional int field reads as the one ?int wrap");
+        Map<ClassId, ClassLayout> layouts = Map.of(CLS, nullLayout);
+
+        // The missing state: the pre-mapped null crosses the null descriptor.
+        BaseInstanceFixture missing = baseInstance(Map.of("x", new Value.Int(1)), nullLayout);
+        FieldReadFixture read = fieldReadFixture(BASE_REF, CLS, "n", nullLayout);
+        check(read.op().resultType() == nullDescriptor,
+            "the FIELD_READ publishes the null-atom result descriptor; got "
+                + read.op().resultType());
+        Outcome<Value> missingRead = ClassOpsExecutor.executeFieldRead(read.op(),
+            missing.heap(), read.receiverBoundary(), read.fieldBoundary(), layouts,
+            realDelegate(null));
+        check(missingRead instanceof Outcome.Success<Value> missingSuccess
+                && missingSuccess.value() == Value.Null.INSTANCE,
+            "reading the omitted optional null field publishes language null; got "
+                + missingRead);
+
+        // The present-null state: the explicit null crosses the same descriptor.
+        BaseInstanceFixture presentNull = baseInstance(
+            Map.of("x", new Value.Int(1), "n", Value.Null.INSTANCE), nullLayout);
+        Outcome<Value> presentNullRead = ClassOpsExecutor.executeFieldRead(read.op(),
+            presentNull.heap(), read.receiverBoundary(), read.fieldBoundary(), layouts,
+            realDelegate(null));
+        check(presentNullRead instanceof Outcome.Success<Value> presentSuccess
+                && presentSuccess.value() == Value.Null.INSTANCE,
+            "reading the present-null optional null field publishes language null; got "
+                + presentNullRead);
+
+        // The write control: the assignment cell's declared descriptor is the
+        // null atom, so a non-null value is rejected with E8001 rather than
+        // stored.
+        ValueId stored = nextValue();
+        Map<ValueId, Value> writeHeap = new LinkedHashMap<>(missing.heap());
+        writeHeap.put(stored, new Value.Int(3));
+        FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "n", nullLayout, stored);
+        Outcome<Value> rejected = ClassOpsExecutor.executeFieldWrite(write.op(), writeHeap,
+            write.receiverBoundary(), write.fieldBoundary(), layouts, realDelegate(null));
+        check(rejected instanceof Outcome.Failure<Value> rejectedFail
+                && rejectedFail.failure().failure().code() == DiagnosticCode.E8001
+                && "expected null".equals(rejectedFail.failure().failure().message()),
+            "a non-null value at the null-typed field fails E8001 'expected null'; got "
+                + rejected);
+    }
+
+    /** True when the required field keeps its descriptor and an optional int wraps once. */
+    private static boolean optionalIntReadWraps(ClassLayout layout) {
+        ClassLayout.FieldLayout required = layout.fields().get(0);
+        ClassLayout optionalProbe = new ClassLayout(CLS,
+            List.of(new ClassLayout.FieldLayout("probe", INT, false, DefaultOwner.LOCAL)));
+        return required.readResultDescriptor() == INT
+            && optionalProbe.fields().get(0).readResultDescriptor()
+                instanceof RuntimeDescriptor.Nullable nullable
+            && nullable.inner() == INT;
     }
 
     private static void testNominalReceiverFailures() {
@@ -1141,6 +1210,7 @@ public class FieldOpsExecutorTest {
             LAYOUT);
         testT2InstanceFeedsFieldReads(missingSeed);
         testReadPresenceMatrix(nullSeed, valueSeed);
+        testOptionalNullFieldRead();
         testNominalReceiverFailures();
         testWriteCommitOrderingAndPresence(missingSeed);
         testDeleteTurnsPresentIntoMissingAndIsIdempotent(valueSeed);

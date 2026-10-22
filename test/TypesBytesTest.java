@@ -50,6 +50,7 @@ public class TypesBytesTest {
         testContainsBytesDeepRecursion();
         testDeepCompositionConstructsWithoutError();
         testNullableGuardUnchanged();
+        testNullableOrSelf();
         testDescriptorTextPins();
 
         System.out.println();
@@ -325,6 +326,30 @@ public class TypesBytesTest {
         assertThrows(IllegalArgumentException.class,
             () -> new Type.Func(null, Type.Bytes.INSTANCE, false),
             "Func(null params, bytes) throws");
+    }
+
+    // -----------------------------------------------------------------------
+    // The canonical nullable wrap (the optional-field read type)
+    // -----------------------------------------------------------------------
+
+    static void testNullableOrSelf() {
+        System.out.println("-- nullableOrSelf: the canonical T | null wrap --");
+
+        check(Types.nullableOrSelf(Type.Null.INSTANCE) == Type.Null.INSTANCE,
+            "nullableOrSelf(null) is the null atom (null | null is null)");
+        Type once = Types.nullableOrSelf(Type.Int.INSTANCE);
+        check(once instanceof Type.Nullable nullable && nullable.inner() == Type.Int.INSTANCE,
+            "nullableOrSelf(int) is the one ?int wrap");
+        check(Types.nullableOrSelf(once) == once,
+            "nullableOrSelf(?int) is that same wrap (idempotent)");
+        Type classType = Types.classType("Box",
+            IdentityTestFixtures.identityOf("main", "Box"));
+        check(Types.nullableOrSelf(classType) instanceof Type.Nullable classWrap
+                && Types.equals(classWrap.inner(), classType),
+            "nullableOrSelf(Box) wraps the class type once");
+        assertThrows(NullPointerException.class,
+            () -> Types.nullableOrSelf(null),
+            "nullableOrSelf(null Java ref) throws");
     }
 
     // -----------------------------------------------------------------------

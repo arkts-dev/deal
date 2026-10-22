@@ -235,6 +235,21 @@ public class ClassConstructionValidatorTest {
             contractFor(op, payload, digest));
     }
 
+    /** Rebuild one op with a different published result type and a wired digest. */
+    private static SemanticOp rebuildWithResultType(SemanticOp op, OpResultType resultType) {
+        ClosedSelector selector = op.payload() instanceof KindPayload.SelectorCarrying carrying
+            ? carrying.selector() : null;
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, op.kind(), resultType, op.operandTypes(),
+            selector, op.payload(), op.failurePolicy(), List.of(), "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(contract);
+        OperationContractSnapshot wired = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, op.kind(), resultType, op.operandTypes(),
+            selector, op.payload(), op.failurePolicy(), List.of(), digest);
+        return new SemanticOp(op.opId(), op.kind(), op.origin(), op.result(), resultType,
+            op.operands(), op.operandTypes(), op.payload(), op.failurePolicy(), wired);
+    }
+
     private static SemanticOp withParent(SemanticOp op, OpId parent) {
         SourceOrigin origin = new SourceOrigin(op.origin().sourceId(), op.origin().span(),
             op.origin().kind(), op.origin().anchorId(), parent);
@@ -515,10 +530,16 @@ public class ClassConstructionValidatorTest {
 
     private static List<SemanticOp> replaceOp(LoweredModuleUnit unit, SemanticOp replacement) {
         List<SemanticOp> ops = new ArrayList<>(unit.ops());
+        replaceOpIn(ops, replacement);
+        return ops;
+    }
+
+    /** Replace one op's entry in an already-detached op list, in place. */
+    private static void replaceOpIn(List<SemanticOp> ops, SemanticOp replacement) {
         for (int i = 0; i < ops.size(); i++) {
             if (ops.get(i).opId().equals(replacement.opId())) {
                 ops.set(i, replacement);
-                return ops;
+                return;
             }
         }
         throw new IllegalArgumentException("no op with id " + replacement.opId());
@@ -740,6 +761,84 @@ public class ClassConstructionValidatorTest {
                 lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
+    }
+
+    /**
+     * The optional null read at the validator (ISSUE-0883): the read result
+     * of an optional field whose declared type is {@code null} is the
+     * {@code null} atom — {@code null | null} canonicalizes to {@code null}
+     * — so the layout-derived expected descriptor never builds the
+     * forbidden {@code ?null} wrapper. The read arm validates cleanly, and a
+     * read that publishes the wrong wrap (the op result and its boundary
+     * child both retyped to {@code ?string}) fails the pinned
+     * FIELD_OPERATION_SHAPE rule instead of crashing.
+     */
+    private static void testOptionalNullFieldReadArm() {
+        System.out.println("-- optional null read: the read-result descriptor is the "
+            + "null atom, never ?null --");
+
+        LoweredSlice lowered = lowerModule("""
+            class Box {
+              n?: null;
+            }
+            let b: Box = {};
+            let n: null = b.n;
+            """);
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            lowered == null ? null : lowered.result();
+        check(result != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null,
+            "the optional-null read slice lowers and validates: "
+                + (result == null || result.lowering() == null ? "null"
+                    : result.lowering().diagnostics()));
+        if (result == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.lowering().unit();
+        SemanticOp read = firstOfKind(unit, SemanticOpKind.FIELD_READ);
+        check(read != null, "the slice lowers one FIELD_READ op");
+        if (read == null) {
+            return;
+        }
+        check(read.resultType() == RuntimeDescriptor.Null.INSTANCE,
+            "the FIELD_READ publishes the null atom; got " + read.resultType());
+        List<SemanticOp> children = childrenOf(unit, read);
+        check(children.size() == 2,
+            "the read parents exactly two boundary children; got " + children.size());
+        if (children.size() != 2
+                || !(children.get(1).payload()
+                    instanceof KindPayload.BoundaryPayload fieldBoundary)) {
+            return;
+        }
+        check(fieldBoundary.kind() == BoundaryKind.OPTIONAL_FIELD_READ
+                && fieldBoundary.descriptor() == RuntimeDescriptor.Null.INSTANCE,
+            "the OPTIONAL_FIELD_READ descriptor is the null atom; got "
+                + fieldBoundary.kind() + " " + fieldBoundary.descriptor());
+
+        // The layout-derived expected descriptor must be the null atom: the
+        // clean re-validation of the lowered unit is the regression (a raw
+        // ?null construction throws out of the validator instead).
+        check(ClassConstructionValidator.validate(unit, result.lowering().table(),
+                result.registry(), result.jsonDefaults(), lowered.ownInterface(), Map.of())
+                .isEmpty(),
+            "the lowered optional-null read re-validates with no failure");
+
+        // A read publishing the wrong wrap: the ?string form names the same
+        // shape, so only the layout comparison can reject it.
+        RuntimeDescriptor nullableString =
+            new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE);
+        SemanticOp wrongRead = rebuildWithResultType(read, nullableString);
+        SemanticOp wrongChild = rebuild(children.get(1),
+            new KindPayload.BoundaryPayload(fieldBoundary.kind(), nullableString,
+                fieldBoundary.input(), fieldBoundary.realization()));
+        List<SemanticOp> tampered = replaceOp(unit, wrongRead);
+        replaceOpIn(tampered, wrongChild);
+        expectE6005(ClassConstructionValidator.validate(
+                unitWithOps(unit, tampered),
+                result.lowering().table(), result.registry(), result.jsonDefaults(),
+                lowered.ownInterface(), Map.of()),
+            ClassConstructionValidator.FIELD_OPERATION_SHAPE);
     }
 
     /**
@@ -2209,6 +2308,100 @@ public class ClassConstructionValidatorTest {
                 seeds, null), "a null unit list");
     }
 
+    /**
+     * The declaration-seed field-operation rule with an optional null field
+     * (ISSUE-0883): the seed's read-result descriptor of an optional field
+     * declared {@code null} is the {@code null} atom (its two states are the
+     * missing and present-null reads, both language {@code null}), so a
+     * transported FIELD_READ publishing {@code null} and its
+     * OPTIONAL_FIELD_READ boundary agree with the registration, while any
+     * other nullable wrap of the read disagrees with a normal violation
+     * instead of aborting the check.
+     */
+    private static void testSeedOptionalNullFieldOperation() {
+        System.out.println("-- the declaration-seed optional-null read-result "
+            + "projection --");
+
+        ClassRegistrationSeeds withNull = withEndpointExtraField("n",
+            RuntimeDescriptor.Null.INSTANCE, false);
+        // The optional ?string control keeps its one nullable wrap.
+        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(withNull,
+                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "note", "?string"),
+                    rawFieldReadBoundary(new OpId(MODULE, 1L), "?string")))).isEmpty(),
+            "the optional ?string field read agrees with its registration");
+        check(ClassConstructionValidator.checkProjectSeedModuleCoherence(withNull,
+                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "n", "null"),
+                    rawFieldReadBoundary(new OpId(MODULE, 1L), "null")))).isEmpty(),
+            "the optional null field read publishing the null atom agrees with its "
+                + "registration");
+
+        Optional<ClassConstructionValidator.SeedModuleViolation> wrong =
+            ClassConstructionValidator.checkProjectSeedModuleCoherence(withNull,
+                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "n", "?string"),
+                    rawFieldReadBoundary(new OpId(MODULE, 1L), "?string"))));
+        check(wrong.isPresent() && wrong.get().detail().contains("FIELD_READ")
+                && wrong.get().detail().contains("null"),
+            "a read publishing a nullable wrap over the null atom rejects: " + wrong);
+        Optional<ClassConstructionValidator.SeedModuleViolation> boundary =
+            ClassConstructionValidator.checkProjectSeedModuleCoherence(withNull,
+                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "n", "null"),
+                    rawFieldReadBoundary(new OpId(MODULE, 1L), "?string"))));
+        check(boundary.isPresent() && boundary.get().detail().contains(
+                BoundaryKind.OPTIONAL_FIELD_READ.name()),
+            "a boundary descriptor that disagrees with the null atom rejects: "
+                + boundary);
+    }
+
+    /** One seed registration carrying an extra field after the declared ones. */
+    private static ClassRegistrationSeeds withEndpointExtraField(String name,
+            RuntimeDescriptor descriptor, boolean required) {
+        ClassRegistrationSeeds base = facadeSeeds();
+        Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
+            new LinkedHashMap<>(base.registrations());
+        ClassRegistrationSeeds.ClassRegistration endpoint =
+            registrations.get(FACADE_ENDPOINT);
+        List<ClassLayout.FieldLayout> fields =
+            new ArrayList<>(endpoint.layout().fields());
+        fields.add(seedField(name, descriptor, required));
+        registrations.put(FACADE_ENDPOINT,
+            new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(FACADE_ENDPOINT, fields), endpoint.owner()));
+        return new ClassRegistrationSeeds(registrations);
+    }
+
+    /** One raw unit carrying a field-read op and its boundary child. */
+    private static RawUnit unitWithRawOps(RawOp read, RawOp boundary) {
+        return unitWithOps(List.of(read, boundary));
+    }
+
+    /** One raw FIELD_READ naming a declaration field and its published result text. */
+    private static RawOp rawFieldRead(ClassId classId, String field, String resultType) {
+        CanonicalJson.Obj payload = CanonicalJson.obj(
+            CanonicalJson.e("classId",
+                ContractSnapshotCanonicalizer.semanticIdJson(classId)),
+            CanonicalJson.e("classValue",
+                ContractSnapshotCanonicalizer.semanticIdJson(new ValueId(1L))),
+            CanonicalJson.e("field", CanonicalJson.str(field)));
+        return new RawOp(new OpId(MODULE, 1L), SemanticOpKind.FIELD_READ.name(),
+            FailurePolicyId.NO_DEAL_FAILURE.name(), null, new ValueId(1L), null,
+            resultType, List.of(), List.of(), payload, null, "digest",
+            CanonicalJson.obj(), new RawOrigin(SOURCE_ID, SOURCE_ID, 1, 1, 1, 1, 0, 0,
+                SourceOriginKind.SYNTHETIC.name(), 0));
+    }
+
+    /** One raw OPTIONAL_FIELD_READ boundary child of the given read op. */
+    private static RawOp rawFieldReadBoundary(OpId parent, String descriptor) {
+        CanonicalJson.Obj payload = CanonicalJson.obj(
+            CanonicalJson.e("kind",
+                CanonicalJson.str(BoundaryKind.OPTIONAL_FIELD_READ.name())),
+            CanonicalJson.e("descriptor", CanonicalJson.str(descriptor)));
+        return new RawOp(new OpId(MODULE, 3L), SemanticOpKind.BOUNDARY.name(),
+            FailurePolicyId.TYPE_DESCRIPTOR.name(), parent, new ValueId(2L), null,
+            null, List.of(), List.of(), payload, null, "digest",
+            CanonicalJson.obj(), new RawOrigin(SOURCE_ID, SOURCE_ID, 1, 1, 1, 1, 0, 0,
+                SourceOriginKind.SYNTHETIC.name(), 0));
+    }
+
     /** One raw unit carrying exactly the given raw operations. */
     private static RawUnit unitWithOps(List<RawOp> ops) {
         return new RawUnit(MODULE.path(), SemanticProfile.DEAL_V1_3_INT32.name(),
@@ -2345,6 +2538,7 @@ public class ClassConstructionValidatorTest {
         testFactoryNegatives(shared);
         testConstructionNegatives(shared);
         testFieldOperationNegatives();
+        testOptionalNullFieldReadArm();
         testFieldLayoutLinkOrigins();
         testDefaultBlockAdmissionNegatives(shared);
         testDefaultBlockAdmissionReferenceOrigins();
@@ -2353,6 +2547,7 @@ public class ClassConstructionValidatorTest {
         testFailureRangeOrigins(shared);
         testProjectSeedCoherence();
         testProjectSeedModuleCoherence();
+        testSeedOptionalNullFieldOperation();
         testSeedDeclaredTypeRenderingAgainstProducers();
         System.out.println();
         if (failed == 0) {

@@ -1,0 +1,12 @@
+// @spec: Classes — Function and variable access — typed assignment
+// @description: A field declared null accepts only null, so a non-null assignment fails with the ordinary typed-assignment diagnostic
+// @expected: compile-error E3001
+// @features: classes, optional, null, assignment
+
+class Box { n?: null; }
+
+export function main(): null {
+  let b: Box = {};
+  b.n = 1;
+  return null;
+}

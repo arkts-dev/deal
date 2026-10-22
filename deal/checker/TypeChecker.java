@@ -2097,10 +2097,12 @@ public final class TypeChecker {
                         exactFieldClassSymbol(sym, cf.type(), fieldType));
                     if (cf.optional() && !cf.nullable() && !assignmentTargetMode) {
                         // A read of an omitted optional field yields null;
-                        // a write target keeps the declared field type.
-                        try {
-                            fieldType = Types.nullable(fieldType);
-                        } catch (IllegalArgumentException e) { /* already nullable */ }
+                        // a write target keeps the declared field type. The
+                        // read result is the canonical T | null wrap, so a
+                        // field declared null reads as null (null | null is
+                        // null) and the forbidden Nullable<Null> form is
+                        // never built (docs/spec-v1.3.md §Field access).
+                        fieldType = Types.nullableOrSelf(fieldType);
                     }
                     return fieldType;
                 } else {

@@ -375,6 +375,84 @@ public class FieldOpsLoweringTest {
     }
 
     // =========================================================================
+    // (b2) the optional null read: the canonical null read result
+    // =========================================================================
+
+    /**
+     * The optional null read (ISSUE-0883): an optional field whose declared
+     * type is {@code null} reads as language {@code null} — the spec's
+     * {@code T | null} with {@code T = null} canonicalizes to {@code null} —
+     * so the FIELD_READ result descriptor and its OPTIONAL_FIELD_READ
+     * boundary are the {@code null} atom itself, never the forbidden
+     * {@code ?null} wrapper. The retained optional {@code T} and optional
+     * nullable {@code T} wraps stay exactly one nullable wrap deep. The
+     * slice lowers through the production validator, so a raw
+     * {@code new RuntimeDescriptor.Nullable(null)} at either read-result
+     * site fails the slice with the constructor's exception instead of
+     * validating.
+     */
+    private static void testOptionalNullFieldReadArm() {
+        System.out.println("-- optional null read: the read result canonicalizes to "
+            + "the null atom (never ?null) --");
+
+        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
+            class Box { n?: null; tag?: string; maybe?: string | null; }
+            let b: Box = {};
+            let n: null = b.n;
+            let tag: string | null = b.tag;
+            let maybe: string | null = b.maybe;
+            """);
+        check(result != null && result.lowering() != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null,
+            "the optional-null read slice lowers to a validated unit: "
+                + (result == null || result.lowering() == null ? "null"
+                    : result.lowering().diagnostics()));
+        if (result == null || result.lowering() == null
+                || result.lowering().hasErrors() || result.lowering().unit() == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.lowering().unit();
+        List<SemanticOp> reads = ofKind(unit.ops(), SemanticOpKind.FIELD_READ);
+        check(reads.size() == 3, "exactly three FIELD_READ ops; got " + reads.size());
+        RuntimeDescriptor nullableString =
+            new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE);
+        for (SemanticOp read : reads) {
+            KindPayload.FieldReadPayload payload =
+                (KindPayload.FieldReadPayload) read.payload();
+            RuntimeDescriptor expected = switch (payload.field()) {
+                case "n" -> RuntimeDescriptor.Null.INSTANCE;
+                case "tag", "maybe" -> nullableString;
+                default -> null;
+            };
+            if (expected == null) {
+                fail("the slice reads an undeclared field " + payload.field());
+                continue;
+            }
+            check(read.resultType().equals(expected),
+                "the " + payload.field() + " read publishes the canonical read result "
+                    + expected.canonicalSpecText() + "; got "
+                    + read.resultType());
+            List<SemanticOp> children = childrenOf(unit, read);
+            check(children.size() == 2,
+                "the " + payload.field() + " read parents exactly two boundary "
+                    + "children; got " + children.size());
+            if (children.size() == 2
+                    && children.get(1).payload()
+                        instanceof KindPayload.BoundaryPayload boundary) {
+                check(boundary.kind() == BoundaryKind.OPTIONAL_FIELD_READ
+                        && boundary.descriptor().equals(expected),
+                    "the " + payload.field() + " OPTIONAL_FIELD_READ descriptor is "
+                        + expected.canonicalSpecText() + "; got " + boundary.kind()
+                        + " " + boundary.descriptor().canonicalSpecText());
+                check(children.get(1).failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+                    "the " + payload.field() + " OPTIONAL_FIELD_READ carries the "
+                        + "descriptor-kind policy TYPE_DESCRIPTOR; got "
+                        + children.get(1).failurePolicy());
+            }
+        }
+    }
+
+    // =========================================================================
     // (c) the cross-module class read
     // =========================================================================
 
@@ -1265,6 +1343,7 @@ public class FieldOpsLoweringTest {
 
         testFieldReadArm();
         testOptionalFieldReadArm();
+        testOptionalNullFieldReadArm();
         testCrossModuleNullableReadArm();
         SemanticLowerer.ClassDeclarationCoreResult fieldMutations = lowerModule("""
             class Point { x: int; y?: int = 0; }

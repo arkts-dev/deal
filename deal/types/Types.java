@@ -234,6 +234,23 @@ public final class Types {
         return (Type.Nullable) canonicalize(new Type.Nullable(inner));
     }
 
+    /**
+     * The canonical nullable wrap of one type — the spec's {@code T | null}
+     * type ({@code docs/spec-v1.3.md} §Types: {@code T | null}
+     * canonicalizes to {@code Nullable<T>}). The wrap canonicalizes its inner
+     * type at construction, so an already-nullable type is its own wrap and
+     * so is {@code null} itself: {@code null | null} is {@code null}, which
+     * is the derived read type of an optional field declared {@code null}
+     * and never the forbidden {@code Nullable<Null>} form. The one caller is
+     * the optional-field read type; no surface annotation produces a
+     * {@code null | null} spelling.
+     */
+    public static Type nullableOrSelf(Type inner) {
+        Objects.requireNonNull(inner, "inner must not be null");
+        return inner instanceof Type.Null || inner instanceof Type.Nullable
+            ? inner : nullable(inner);
+    }
+
     /** Make an Array type, canonicalizing the element type. */
     public static Type.Array array(Type element) {
         return (Type.Array) canonicalize(new Type.Array(element));

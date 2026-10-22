@@ -1621,16 +1621,13 @@ public final class ClassOpsExecutor {
 
     /**
      * The pinned {@code OPTIONAL_FIELD_READ} result descriptor of one
-     * layout field (the checker's optional-read wrap): the field's
-     * declared descriptor, nullable-wrapped for an optional non-nullable
-     * field.
+     * layout field (the checker's optional-read wrap, the one canonical
+     * nullable production: a declared {@code null} optional field reads as
+     * {@code null}): the field's declared descriptor, nullable-wrapped for
+     * an optional non-nullable field.
      */
     private static RuntimeDescriptor readResultDescriptorOf(ClassLayout.FieldLayout field) {
-        RuntimeDescriptor declared = field.descriptor();
-        if (!field.required() && !(declared instanceof RuntimeDescriptor.Nullable)) {
-            return new RuntimeDescriptor.Nullable(declared);
-        }
-        return declared;
+        return field.readResultDescriptor();
     }
 
     /**

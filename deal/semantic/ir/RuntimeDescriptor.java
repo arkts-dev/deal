@@ -205,6 +205,25 @@ public sealed interface RuntimeDescriptor extends OpResultType
         }
     }
 
+    /**
+     * The canonical nullable wrap of one descriptor — the descriptor-side
+     * counterpart of {@link deal.types.Types#nullable}. The wrap is the
+     * spec's {@code T | null} type, so it is canonicalized at construction:
+     * an already-nullable descriptor is its own wrap, and the {@code null}
+     * descriptor is too, because {@code null | null} is {@code null}
+     * ({@code docs/spec-v1.3.md} §Field access — an optional {@code n?:
+     * null} field's read yields language {@code null}). The forbidden
+     * {@code ?null} form is therefore never constructed by a read-result
+     * path, and no consumer has to normalize it.
+     */
+    static RuntimeDescriptor nullable(RuntimeDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "descriptor must not be null");
+        if (descriptor instanceof Null || descriptor instanceof Nullable) {
+            return descriptor;
+        }
+        return new Nullable(descriptor);
+    }
+
     /** The {@code boolean} descriptor; canonical text {@code "boolean"}. */
     enum Boolean implements RuntimeDescriptor {
         INSTANCE;

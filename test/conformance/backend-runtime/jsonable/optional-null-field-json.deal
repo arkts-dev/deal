@@ -1,0 +1,69 @@
+// @spec: Classes — @jsonable — optional null field
+// @description: A jsonable class field declared null decodes and encodes in the missing and explicit-null states, its direct read is language null in both states, and presence keeps the two states distinct across the generated JSON path
+// @expected: runtime-ok
+// @features: jsonable, classes, optional, null, field-read, has
+
+import * as console from "std/console";
+
+// @jsonable
+export class Note {
+  label: string = "";
+  n?: null;
+}
+
+function require(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: what };
+  }
+  return null;
+}
+
+export function main(): null {
+  // The explicit-null document: the field is present, its direct read is
+  // language null, and the encode keeps the explicit JSON null.
+  let decodedNull: Note | null = Note$fromJson("{\"label\":\"a\",\"n\":null}");
+  require("explicit null decode succeeds", decodedNull !== null);
+  if (decodedNull !== null) {
+    require("explicit null field is present", has(decodedNull.n));
+    let nullRead: null = decodedNull.n;
+    require("explicit null read is null", nullRead === null);
+    let encoded: string = Note$toJson(decodedNull);
+    require("explicit null encodes as JSON null",
+      encoded === "{\"label\":\"a\",\"n\":null}");
+    let redecoded: Note | null = Note$fromJson(encoded);
+    require("explicit null roundtrip decodes", redecoded !== null);
+    if (redecoded !== null) {
+      require("explicit null roundtrip field is present", has(redecoded.n));
+      let roundtripRead: null = redecoded.n;
+      require("explicit null roundtrip read is null", roundtripRead === null);
+    }
+  }
+
+  // The omitted document: the optional field stays absent, its direct read
+  // is language null, and the encode omits the key.
+  let decodedMissing: Note | null = Note$fromJson("{\"label\":\"b\"}");
+  require("missing decode succeeds", decodedMissing !== null);
+  if (decodedMissing !== null) {
+    require("missing field is absent", !has(decodedMissing.n));
+    let missingRead: null = decodedMissing.n;
+    require("missing read is null", missingRead === null);
+    let encodedMissing: string = Note$toJson(decodedMissing);
+    require("missing field is omitted from the encode",
+      encodedMissing === "{\"label\":\"b\"}");
+    let redecodeMissing: Note | null = Note$fromJson(encodedMissing);
+    require("missing roundtrip decodes", redecodeMissing !== null);
+    if (redecodeMissing !== null) {
+      require("missing roundtrip field stays absent", !has(redecodeMissing.n));
+      let roundtripMissingRead: null = redecodeMissing.n;
+      require("missing roundtrip read is null", roundtripMissingRead === null);
+    }
+  }
+
+  // A value the field's declared null type never admits is rejected by the
+  // generated decode (the language null result), not stored.
+  let rejected: Note | null = Note$fromJson("{\"label\":\"c\",\"n\":1}");
+  require("non-null value is rejected", rejected === null);
+
+  console.log("OK");
+  return null;
+}
