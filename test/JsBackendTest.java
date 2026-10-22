@@ -3587,11 +3587,11 @@ public class JsBackendTest {
             "a literal beyond the signed-32 range rejects before emission "
                 + "(the legacy ±(2^53-1) range is gone)");
 
-        NodeResult trunc = runDealNode(
-            "export function test(): int { return -7 % 3; }",
-            "int-mod-trunc");
-        check(trunc.exitCode() == 0 && trunc.output().equals("-1"),
-            "int % int is truncated (-7 % 3 === -1): " + trunc.output());
+        Frontend removedRemainder = compileFrontend(
+            "export function test(): int { return -7 % 3; }", "removed-remainder.deal");
+        check(removedRemainder.errors().stream().anyMatch(d -> d.code().equals("E1001")),
+            "removed remainder syntax rejects before emission");
+
     }
 
     private static void testInt32RuntimeGateEmission() throws Exception {
@@ -3705,14 +3705,14 @@ public class JsBackendTest {
             {"add-over", "return 2147483647 + 1;", "E8004", "int out of safe range"},
             {"sub-under", "return -2147483648 - 1;", "E8004", "int out of safe range"},
             {"div-over", "return -2147483648 / -1;", "E8004"},
-            {"mod-min-neg-one", "return -2147483648 % -1;", "0"},
+
             {"neg-over", "return -(-2147483648);", "E8004"},
             {"div-zero", "return 5 / 0;", "E8005", "integer division by zero"},
-            {"mod-zero", "return 5 % 0;", "E8005"},
+
             {"neg-exp", "return 2 ** -1;", "E1037"},
             {"pow-over", "return 2 ** 10000;", "E1037"},
-            {"trunc-signs", "let a: int = -7 / 3; let b: int = 7 / -3; let c: int = -7 % 3; "
-                + "if (a === -2 && b === -2 && c === -1) { return 1; } return 0;", "1"},
+            {"trunc-signs", "let a: int = -7 / 3; let b: int = 7 / -3; "
+                + "if (a === -2 && b === -2) { return 1; } return 0;", "1"},
             {"conv-range", "return int(2147483648.0);", "E8004", "int out of safe range"},
             {"conv-nan", "return int(0.0 / 0.0);", "E8001", "expected int, got NaN"},
             {"conv-inf", "return int(1.0 / 0.0);", "E8001", "expected int, got infinity"}
@@ -4702,13 +4702,13 @@ public class JsBackendTest {
     }
 
     private static void testNumModFloored() throws Exception {
-        System.out.println("-- v1.3: remainder requires int operands --");
+        System.out.println("-- v1.4: remainder syntax is rejected --");
         String[] subjects = { "-5.0 % 2.0", "5.0 % -2.0", "-5.0 % -2.0", "5.0 % 2.0" };
         for (String subject : subjects) {
             Frontend rejected = compileFrontend(
                 "export function test(): number { return " + subject + "; }", "nummod.deal");
-            check(rejected.errors().stream().anyMatch(d -> d.code().equals("E3007")
-                    && d.message().contains("requires int operands")),
+            check(rejected.errors().stream().anyMatch(d -> d.code().equals("E1001")
+                    && d.message().equals("Unrecognized character: '%'")),
                 subject + ": number remainder rejects before emission: " + rejected.errors());
         }
     }

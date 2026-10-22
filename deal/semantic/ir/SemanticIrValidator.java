@@ -2368,7 +2368,7 @@ public final class SemanticIrValidator {
     /**
      * The closed selector→policy table for {@code BINARY} (parent
      * "selector→policy is fixed"): {@code INT32_ADD/SUB/MUL} →
-     * {@code INT32_RESULT}; {@code INT32_DIV_TRUNC/MOD_TRUNC} →
+     * {@code INT32_RESULT}; {@code INT32_DIV_TRUNC} →
      * {@code INT32_DIVISOR_THEN_RESULT}; every {@code NUMBER_}* arithmetic
      * and every {@code INT32_*}/{@code NUMBER_*}
      * comparison → {@code NO_DEAL_FAILURE}. This method is the single
@@ -2380,7 +2380,7 @@ public final class SemanticIrValidator {
     public static FailurePolicyId binaryPolicy(BinarySelector selector) {
         return switch (selector) {
             case INT32_ADD, INT32_SUB, INT32_MUL -> FailurePolicyId.INT32_RESULT;
-            case INT32_DIV_TRUNC, INT32_MOD_TRUNC -> FailurePolicyId.INT32_DIVISOR_THEN_RESULT;
+            case INT32_DIV_TRUNC -> FailurePolicyId.INT32_DIVISOR_THEN_RESULT;
             case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE,
                  INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,

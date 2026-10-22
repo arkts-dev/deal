@@ -1274,8 +1274,7 @@ public final class JsSemanticEmitter {
                     + spanArgs(op) + ")";
                 case INT32_DIV_TRUNC -> "$rt.intDiv(" + left + ", " + right
                     + ", " + spanArgs(op) + ")";
-                case INT32_MOD_TRUNC -> "$rt.intMod(" + left + ", " + right
-                    + ", " + spanArgs(op) + ")";
+
                 case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + numeric(right) + ")";
                 case NUMBER_SUB -> "(" + numeric(left) + " - "

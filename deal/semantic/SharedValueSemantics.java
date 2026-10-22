@@ -93,7 +93,7 @@ public final class SharedValueSemantics {
     }
 
     // =========================================================================
-    // Int32 division/remainder (INT32_DIVISOR_THEN_RESULT)
+    // Int32 division (INT32_DIVISOR_THEN_RESULT)
     // =========================================================================
 
     /**
@@ -109,19 +109,7 @@ public final class SharedValueSemantics {
         return checkInt32Integral((long) a / b, origin);
     }
 
-    /**
-     * Truncated remainder: zero divisor E8005 first, then the truncated
-     * {@code long} remainder, then the signed32 gate —
-     * {@code -2147483648 % -1} → {@code 0} (docs/spec-v1.3.md
-     * §Numeric overflow, NaN, and Infinity; §Runtime library, int_mod).
-     */
-    public static Int32Result int32Mod(int a, int b, SourceOrigin origin) {
-        Objects.requireNonNull(origin, "origin must not be null");
-        if (b == 0) {
-            return failOf(FailurePolicyId.INT32_DIVISOR_THEN_RESULT, 0, origin);
-        }
-        return checkInt32Integral((long) a % b, origin);
-    }
+
 
     // =========================================================================
     // Conversions (INT_CONVERSION / NUMBER_CONVERSION)
@@ -278,7 +266,7 @@ public final class SharedValueSemantics {
     /**
      * This primitive's row projection for the binary selectors it
      * implements: {@code INT32_ADD/SUB/MUL} → {@code INT32_RESULT};
-     * {@code INT32_DIV_TRUNC/MOD_TRUNC} →
+     * {@code INT32_DIV_TRUNC} →
      * {@code INT32_DIVISOR_THEN_RESULT}; every covered
      * {@code NUMBER_*} arithmetic and every covered
      * {@code INT32_*}/{@code NUMBER_*} comparison →
@@ -295,7 +283,7 @@ public final class SharedValueSemantics {
         Objects.requireNonNull(selector, "selector must not be null");
         return switch (selector) {
             case INT32_ADD, INT32_SUB, INT32_MUL -> FailurePolicyId.INT32_RESULT;
-            case INT32_DIV_TRUNC, INT32_MOD_TRUNC ->
+            case INT32_DIV_TRUNC ->
                 FailurePolicyId.INT32_DIVISOR_THEN_RESULT;
             case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE,
                  INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT,

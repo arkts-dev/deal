@@ -49,8 +49,7 @@ __rt.__keys = __K
 -- ===== Signed-32 gate (signed-int32 foundation I4) =====
 -- The signed-32 gate is active from runtime load: check_int gates
 -- [-2147483648, 2147483647] with the pinned template E8004 "int out of
--- safe range", and int_mod gates the truncated remainder only
--- (-2147483648 % -1 => 0). Every int boundary — direct runtime/stdlib
+-- safe range". Every int boundary — direct runtime/stdlib
 -- callers included — observes the same boundary; no mode selects an
 -- alternate range. _json_is_int narrows to signed32 unconditionally
 -- (canonical ISSUE-0342, luajit-v1.2-stdlib-contracts D5).
@@ -559,16 +558,7 @@ function __rt.int_div(a, b, file, line, column)
   return __rt.check_int(math.modf(a / b), file, line, column)
 end
 
-function __rt.int_mod(a, b, file, line, column)
-  if b == 0 then
-    error(__rt._err("E8005", "integer division by zero", file, line, column, nil, nil))
-  end
-  -- Gate the truncated remainder only (spec remainder rule), so
-  -- -2147483648 % -1 => 0 (signed-int32 foundation I4;
-  -- SharedValueSemantics.int32Mod agrees).
-  local q = math.modf(a / b)
-  return __rt.check_int(a - q * b, file, line, column)
-end
+
 
 function __rt.int_neg(a, file, line, column)
   return __rt.check_int(-a, file, line, column)

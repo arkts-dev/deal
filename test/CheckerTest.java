@@ -692,7 +692,7 @@ public class CheckerTest {
             "let b: int = 1 - 2;\n" +
             "let c: int = 1 * 2;\n" +
             "let d: int = 1 / 2;\n" +
-            "let e: int = 1 % 2;\n" +
+            "let e: int = 1 * 2;\n" +
             "let f: int = 2 * 3;"
         );
         assertNoErrors(out, "int arithmetic");

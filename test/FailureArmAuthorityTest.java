@@ -2329,10 +2329,6 @@ public class FailureArmAuthorityTest {
             "the division-by-zero cell",
             () -> deal.codegen.jvm.JvmRuntime.arith("INT32_DIV_TRUNC", 1L, 0L,
                 "op", "digest", "parent", origin));
-        checkJvmArm(FailureArmId.INT32_DIVISION_BY_ZERO, Map.of(), null, null, origin,
-            "the modulo-by-zero cell",
-            () -> deal.codegen.jvm.JvmRuntime.arith("INT32_MOD_TRUNC", 1L, 0L,
-                "op", "digest", "parent", origin));
         checkJvmArm(FailureArmId.INT32_RANGE, Map.of(), null, null, origin,
             "the MATH_ABS_INT range cell",
             () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "MATH_ABS_INT",

@@ -29,7 +29,7 @@ function decimal(value: int): string {
   let result: string = "";
   let remaining: int = value;
   while (remaining > 0) {
-    let digit: int = remaining % 10;
+    let digit: int = remaining - (remaining / 10) * 10;
     result = strings.substring(digits, digit, digit + 1) + result;
     remaining = remaining / 10;
   }

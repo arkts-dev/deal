@@ -266,7 +266,6 @@ public class LexerTest {
             new OpTest("-",   TokenType.MINUS,      "-"),
             new OpTest("*",   TokenType.STAR,       "*"),
             new OpTest("/",   TokenType.SLASH,      "/"),
-            new OpTest("%",   TokenType.PERCENT,    "%"),
             new OpTest("===", TokenType.EQ_STRICT,  "==="),
             new OpTest("!==", TokenType.NEQ_STRICT, "!=="),
             new OpTest("==",  TokenType.EQ,         "=="),

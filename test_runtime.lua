@@ -869,17 +869,8 @@ test("int_div(1, 0) errors with E8005", function()
   assert_error(function() __rt.int_div(1, 0) end, "E8005")
 end)
 
-test("int_mod(5, 2) returns 1", function()
-  assert(__rt.int_mod(5, 2) == 1)
-end)
 
-test("int_mod(-5, 2) returns -1 (truncated remainder)", function()
-  assert(__rt.int_mod(-5, 2) == -1)
-end)
 
-test("int_mod(1, 0) errors with E8005", function()
-  assert_error(function() __rt.int_mod(1, 0) end, "E8005")
-end)
 
 test("int arithmetic overflow errors with E8004", function()
   assert_error(function() __rt.int_add(2147483647, 1) end, "E8004")
@@ -909,9 +900,6 @@ test("int_div(-2147483648, -1) errors with E8004 (MIN / -1)", function()
   assert_error(function() __rt.int_div(-2147483648, -1) end, "E8004")
 end)
 
-test("int_mod(-2147483648, -1) returns 0 (truncated remainder)", function()
-  assert(__rt.int_mod(-2147483648, -1) == 0)
-end)
 
 test("int_div(5, 0) errors with E8005", function()
   assert_error(function() __rt.int_div(5, 0) end, "E8005")
@@ -921,9 +909,6 @@ test("int_div(-5, -0) errors with E8005 (negative zero divisor)", function()
   assert_error(function() __rt.int_div(-5, -0) end, "E8005")
 end)
 
-test("int_mod(5, 0) errors with E8005", function()
-  assert_error(function() __rt.int_mod(5, 0) end, "E8005")
-end)
 
 test("int_neg(5) returns -5", function()
   assert(__rt.int_neg(5) == -5)
@@ -951,13 +936,7 @@ test("int_div(-5, -2) returns 2 (truncation toward zero)", function()
   assert(__rt.int_div(-5, -2) == 2)
 end)
 
-test("int_mod(5, -2) returns 1 (truncated remainder)", function()
-  assert(__rt.int_mod(5, -2) == 1)
-end)
 
-test("int_mod(-5, -2) returns -1 (truncated remainder)", function()
-  assert(__rt.int_mod(-5, -2) == -1)
-end)
 
 test("int_convert(2147483647.0) returns 2147483647", function()
   assert(__rt.int_convert(2147483647.0) == 2147483647)

@@ -4,7 +4,7 @@
 // @features: int32, arithmetic, errors, evaluation-order
 
 export function main(): null {
-  if (5 / 2 !== 2 || -5 / 2 !== -2 || -5 % 2 !== -1 || 5 % -2 !== 1) {
+  if (5 / 2 !== 2 || -5 / 2 !== -2) {
     throw { code: "TEST_FAIL", message: "signed division or remainder mismatch" };
   }
 

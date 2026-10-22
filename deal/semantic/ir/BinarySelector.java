@@ -7,7 +7,7 @@ public enum BinarySelector implements ClosedSelector {
     INT32_SUB,
     INT32_MUL,
     INT32_DIV_TRUNC,
-    INT32_MOD_TRUNC,
+
 
     // Number arithmetic.
     NUMBER_ADD,

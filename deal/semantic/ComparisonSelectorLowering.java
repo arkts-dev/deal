@@ -151,7 +151,7 @@ public final class ComparisonSelectorLowering {
                 "the logical operator " + op + " reached the comparison producer: '&&'/'||' "
                     + "never lower to BINARY (they lower to selector-bearing BRANCH — "
                     + "COMPARISON_SELECTOR)");
-            case ADD, SUB, MUL, DIV, MOD, POW -> throw new Defect(
+            case ADD, SUB, MUL, DIV, POW -> throw new Defect(
                 "the arithmetic operator " + op + " reached the comparison producer: "
                     + "arithmetic selectors are the signed-int32/containers epics' domain "
                     + "(COMPARISON_SELECTOR)");

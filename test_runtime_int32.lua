@@ -118,14 +118,7 @@ test("int_div(1, 0) raises E8005", function()
   assert_error(function() __rt.int_div(1, 0) end, "E8005", "integer division by zero")
 end)
 
-test("int_mod(1, 0) raises E8005", function()
-  assert_error(function() __rt.int_mod(1, 0) end, "E8005", "integer division by zero")
-end)
 
-test("int_mod(-2147483648, -1) returns 0 (truncated remainder)", function()
-  local r = __rt.int_mod(-2147483648, -1)
-  assert(r == 0)
-end)
 
 -- ==================== int conversion: the signed32 gate ====================
 

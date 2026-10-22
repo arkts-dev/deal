@@ -2,9 +2,9 @@
   "version": 1,
   "mode": "compile-error",
   "diagnostic": {
-    "code": "E3007",
+    "code": "E1001",
     "line": 7,
-    "column": 19,
-    "message": "Remainder '%' requires int operands, got number and number"
+    "column": 24,
+    "message": "Unrecognized character: '%'"
   }
 }

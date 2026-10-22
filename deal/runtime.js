@@ -3293,7 +3293,7 @@ const $rt = {
   // checkInt (the D3 contract): -0 normalizes to 0, overflow to ±Infinity
   // is E8001 "expected int, got infinity" before the E8004 finite-range
   // arm, and finite values outside the signed-32 range are E8004.
-  // intDiv/intMod raise E8005 on a zero divisor before any division. The
+  // intDiv raises E8005 on a zero divisor before any division. The
   // truncation operations use the T1 $Math capture — $Math.trunc is the
   // math.modf truncation-toward-zero analog — and every error is produced
   // through the T2 spine (fail) with the caller's (file, line, column)
@@ -3326,22 +3326,6 @@ const $rt = {
       $rt.fail("E8005", "integer division by zero", file, line, column);
     }
     return $rt.checkInt($Math.trunc(a / b), file, line, column);
-  },
-
-  // intMod: E8005 on a zero divisor first, then the truncated remainder
-  // rule (deal/runtime.lua:301-327): the truncated remainder alone is
-  // gated (spec remainder rule — only / overflows on MIN_VALUE / -1), so
-  // -2147483648 % -1 computes 0 (signed-int32 foundation I4;
-  // SharedValueSemantics.int32Mod agrees). The remainder a - q * b then
-  // passes through checkInt.
-  intMod: function $intMod(a, b, file, line, column) {
-    a = $numOf(a);
-    b = $numOf(b);
-    if (b === 0) {
-      $rt.fail("E8005", "integer division by zero", file, line, column);
-    }
-    const $q = $Math.trunc(a / b);
-    return $rt.checkInt(a - $q * b, file, line, column);
   },
 
   // ===== Bytes carrier and the five helpers (js-v12-int32-bytes D3/D4) =====

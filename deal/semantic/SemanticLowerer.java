@@ -14722,7 +14722,7 @@ public final class SemanticLowerer {
         private static boolean isComparisonOperator(BinaryOp op) {
             return switch (op) {
                 case EQ, NEQ, LT, LTE, GT, GTE -> true;
-                case ADD, SUB, MUL, DIV, MOD, POW, AND, OR -> false;
+                case ADD, SUB, MUL, DIV, POW, AND, OR -> false;
             };
         }
 
@@ -14826,7 +14826,7 @@ public final class SemanticLowerer {
         /** True iff the operator is one of the six arithmetic operators (I3). */
         private static boolean isArithmeticOperator(BinaryOp op) {
             return switch (op) {
-                case ADD, SUB, MUL, DIV, MOD, POW -> true;
+                case ADD, SUB, MUL, DIV, POW -> true;
                 case EQ, NEQ, LT, LTE, GT, GTE, AND, OR -> false;
             };
         }
@@ -14834,7 +14834,7 @@ public final class SemanticLowerer {
         /**
          * {@code BINARY} — the I3 int32/number arithmetic arm: exactly one
          * closed selector from the operator plus the checked operand type
-         * ({@code INT32_ADD/SUB/MUL/DIV_TRUNC/MOD_TRUNC} over int;
+         * ({@code INT32_ADD/SUB/MUL/DIV_TRUNC} over int;
          * {@code NUMBER_ADD/SUB/MUL/DIV_IEEE} over
          * number), operands in source order (left then right), the policy
          * stamped from the single closed {@code binaryPolicy} table (never
@@ -14855,7 +14855,7 @@ public final class SemanticLowerer {
                     case SUB -> BinarySelector.INT32_SUB;
                     case MUL -> BinarySelector.INT32_MUL;
                     case DIV -> BinarySelector.INT32_DIV_TRUNC;
-                    case MOD -> BinarySelector.INT32_MOD_TRUNC;
+
                     default -> throw new ConstructUnlowered("arithmetic operator "
                         + binary.op() + " outside the I3 int32 rows (producer defect)",
                             binary.span());

@@ -2220,7 +2220,7 @@ public final class Parser {
             case EQ_STRICT, NEQ_STRICT -> PREC_EQUALITY;
             case LT, LTE, GT, GTE -> PREC_RELATIONAL;
             case PLUS, MINUS -> PREC_ADDITIVE;
-            case STAR, SLASH, PERCENT -> PREC_MULTIPLICATIVE;
+            case STAR, SLASH -> PREC_MULTIPLICATIVE;
             default         -> PREC_NONE;
         };
     }
@@ -2231,7 +2231,7 @@ public final class Parser {
             case MINUS       -> BinaryOp.SUB;
             case STAR        -> BinaryOp.MUL;
             case SLASH       -> BinaryOp.DIV;
-            case PERCENT     -> BinaryOp.MOD;
+
             case EQ_STRICT   -> BinaryOp.EQ;
             case NEQ_STRICT  -> BinaryOp.NEQ;
             case LT          -> BinaryOp.LT;

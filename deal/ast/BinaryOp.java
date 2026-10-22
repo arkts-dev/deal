@@ -6,7 +6,7 @@ public enum BinaryOp {
     SUB,
     MUL,
     DIV,
-    MOD,   // %
+
     POW,
     EQ,
     NEQ,   // !==

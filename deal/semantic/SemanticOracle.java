@@ -2211,14 +2211,6 @@ public final class SemanticOracle {
                     }
                     yield int32Result(op, dividend / divisor);
                 }
-                case INT32_MOD_TRUNC -> {
-                    long divisor = integerUse(right);
-                    if (divisor == 0) {
-                        throw registryFailure(op, FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
-                            null, null);
-                    }
-                    yield int32Result(op, integerUse(left) % divisor);
-                }
                 case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 case NUMBER_SUB -> new Value.NumValue(numberUse(left) - numberUse(right));
                 case NUMBER_MUL -> new Value.NumValue(numberUse(left) * numberUse(right));

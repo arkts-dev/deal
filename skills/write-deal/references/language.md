@@ -15,7 +15,7 @@ Assignments use `x = x + 1`. Write callbacks as function expressions; `=>` descr
 
 Built-ins: `null`, `boolean`, `int`, `number`, `string`, `bytes`, `table`, `Error`. Compose nominal classes, homogeneous `T[]`, nullable `T | null`, and function types.
 
-Types are invariant. Integer literals are int; decimal/exponent literals are number. Int is signed 32-bit; number is IEEE 754 double. Integer arithmetic checks overflow; division truncates toward zero and rejects zero divisors. There is no exponentiation operator, and `%` is int-only.
+Types are invariant. Integer literals are int; decimal/exponent literals are number. Int is signed 32-bit; number is IEEE 754 double. Integer arithmetic checks overflow; division truncates toward zero and rejects zero divisors. There are no exponentiation or remainder operators.
 
 Explicit `number(intValue)` converts to floating point. `int(numberValue)` requires an integral, finite, in-range value. Round deliberately before converting. Use a typed helper or declared host API for text conversion.
 

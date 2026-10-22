@@ -2562,16 +2562,6 @@ public final class JvmRuntime {
                 return int32Result(longOf(l) / divisor, opKey, digest, parent, origin,
                     "BINARY");
             }
-            case "INT32_MOD_TRUNC" -> {
-                long divisor = longOf(r);
-                if (divisor == 0) {
-                    raiseArm(deal.semantic.ir.FailureArmId.INT32_DIVISION_BY_ZERO,
-                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
-                        "BINARY");
-                }
-                return int32Result(longOf(l) % divisor, opKey, digest, parent, origin,
-                    "BINARY");
-            }
             case "NUMBER_ADD" -> {
                 return ((Number) l).doubleValue() + ((Number) r).doubleValue();
             }
