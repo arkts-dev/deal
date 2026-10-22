@@ -1,0 +1,15 @@
+// @spec: Tables — table literals and key syntax
+// @description: Table literal property names and table member reads are dynamic string keys, not user declarations; $ in key and string data stays accepted
+// @expected: compile-ok
+// @features: tables, dollar-prohibition, string-data, accept-control
+
+export function main(): null {
+  let t: table = { bad$key: 1 };
+  let direct: int = t.bad$key;
+  let key: string = "bad$key";
+  t[key] = direct;
+  let indexed: int = t[key];
+  let text: string = "price$";
+  let templated: string = `tag$${text}`;
+  return null;
+}

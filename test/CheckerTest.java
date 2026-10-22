@@ -422,6 +422,8 @@ public class CheckerTest {
         testE2008_dollarInRestParam();
         testE2008_dollarInForLoopVar();
         testE2008_dollarInForOfLoopVar();
+        testE2008_dollarInCatchVar();
+        testE2008_dollarInCatchVarRejectedOnAllTargets();
 
         testE4006_errorVariantsNoError();
 
@@ -3912,6 +3914,174 @@ public class CheckerTest {
             "}"
         );
         assertError(out, "E2008", "dollar in for-of loop variable name produces E2008");
+    }
+
+    /**
+     * ISSUE-0884: a catch identifier declares a local Error variable, so it
+     * is a user declaration under the $ prohibition. The canonical E2008
+     * wording is kept, every $ position is rejected, and nested catch
+     * scopes are each checked. Normal catch bindings, generated @jsonable
+     * helper names, and dynamic table/string data keys stay accepted.
+     */
+    static void testE2008_dollarInCatchVar() {
+        System.out.println("-- ISSUE-0884: dollar in catch variable (E2008) --");
+
+        // First-, middle-, and last-position $ are each rejected; the bare
+        // $ is the shortest identifier the leading position produces.
+        String[] catchVars = { "$bad", "$", "bad$name", "b$ad", "bad$" };
+        for (String catchVar : catchVars) {
+            CheckerOutput out = checkProgram(
+                "export function main(): null {\n"
+                + "  try { throw {}; } catch (" + catchVar + ") {}\n"
+                + "  return null;\n"
+                + "}\n");
+            assertError(out, "E2008", "dollar in catch variable '" + catchVar
+                + "' produces E2008");
+            check(hasDiagnosticMessage(out, "E2008",
+                    "Identifier '" + catchVar + "' must not contain '$'"),
+                "catch variable '" + catchVar + "' keeps the canonical E2008"
+                    + " wording: " + out.result.diagnostics());
+        }
+
+        // Nested catch scopes: the inner and the outer declaration are
+        // each checked in their own catch scope.
+        CheckerOutput nested = checkProgram(
+            "export function main(): null {\n"
+            + "  try { try {} catch (inner$e) {} } catch (outer$e) {}\n"
+            + "  return null;\n"
+            + "}\n");
+        List<String> nestedMessages = nested.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E2008"))
+            .map(CompilerDiagnostic::message)
+            .toList();
+        check(nestedMessages.equals(List.of(
+                "Identifier 'inner$e' must not contain '$'",
+                "Identifier 'outer$e' must not contain '$'")),
+            "nested catch scopes each reject their $ identifier: "
+                + nested.result.diagnostics());
+
+        // Passing controls: ordinary catch identifiers (including nested
+        // scopes and the Error surface) remain legal.
+        CheckerOutput normal = checkProgram(
+            "export function main(): null {\n"
+            + "  try {\n"
+            + "    try { throw {}; } catch (inner) {\n"
+            + "      let msg: string = inner.message;\n"
+            + "    }\n"
+            + "  } catch (outer) {\n"
+            + "    let code: string = outer.code;\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n");
+        assertNoErrors(normal, "normal catch identifiers stay accepted");
+
+        // Generated names remain compiler-owned and source-visible.
+        CheckerOutput helpers = checkProgram(
+            "// @jsonable\n"
+            + "export class Payload { name: string = \"\"; }\n"
+            + "export function main(): null {\n"
+            + "  let encoded: string = Payload$toJson({ name: \"x\" });\n"
+            + "  let decoded: Payload | null = Payload$fromJson(encoded);\n"
+            + "  return null;\n"
+            + "}\n");
+        assertNoErrors(helpers,
+            "generated C$fromJson/C$toJson helpers stay visible");
+
+        // Assessment control: table literal property names and table member
+        // reads are dynamic string keys (data), not user declarations, so $
+        // stays legal there; string data likewise. A class member read has
+        // no such data-key route: it stays the declared-field rejection.
+        CheckerOutput tableData = checkProgram(
+            "export function main(): null {\n"
+            + "  let t: table = { bad$key: 1 };\n"
+            + "  let direct: int = t.bad$key;\n"
+            + "  let key: string = \"bad$key\";\n"
+            + "  t[key] = direct;\n"
+            + "  let indexed: int = t[key];\n"
+            + "  let text: string = \"price$\";\n"
+            + "  let tpl: string = `tag$${text}`;\n"
+            + "  return null;\n"
+            + "}\n");
+        assertNoErrors(tableData,
+            "table keys and string data may contain $");
+
+        CheckerOutput classMember = checkProgram(
+            "class C { x: int = 0; }\n"
+            + "export function main(): null {\n"
+            + "  let c: C = { x: 1 };\n"
+            + "  let v: int = c.bad$key;\n"
+            + "  return null;\n"
+            + "}\n");
+        assertError(classMember, "E4002",
+            "a class member read stays the declared-field rejection");
+    }
+
+    /**
+     * ISSUE-0884: the catch declaration is rejected on every target
+     * request before any artifact is published, with the identifier range
+     * and the canonical E2008 wording — first- and middle-position $
+     * included, each anchored on its own identifier span.
+     */
+    static void testE2008_dollarInCatchVarRejectedOnAllTargets() {
+        System.out.println("-- ISSUE-0884: dollar in catch variable on all targets --");
+
+        Path root;
+        try {
+            root = Files.createTempDirectory("deal_e2008_catch_");
+        } catch (IOException e) {
+            fail("dollar catch variable: cannot create temp directory: "
+                + e.getMessage());
+            return;
+        }
+        // name, identifier range on line 2 (start-(start+length))
+        String[][] cases = {
+            { "$bad", "main.deal:2:28-2:32" },
+            { "bad$name", "main.deal:2:28-2:36" },
+        };
+        try {
+            int index = 0;
+            for (String[] c : cases) {
+                String catchVar = c[0];
+                String range = c[1];
+                Path entry = cliProject(root, "catch_dollar_" + index++,
+                    "export function main(): null {\n"
+                    + "  try { throw {}; } catch (" + catchVar + ") {}\n"
+                    + "  return null;\n"
+                    + "}\n");
+                for (String backend : List.of("lua", "luajit", "jvm", "js")) {
+                    Path out = root.resolve("out-" + catchVar.replace("$", "s")
+                        + "-" + backend);
+                    CliResult result = cliCompile(entry, backend, out);
+                    check(result.exitCode() == 1,
+                        "dollar catch variable '" + catchVar
+                            + "' is rejected on " + backend
+                            + ": " + result.output());
+                    check(result.output().contains("ERROR E2008: Identifier '"
+                            + catchVar + "' must not contain '$'"),
+                        "dollar catch variable '" + catchVar + "' keeps the"
+                            + " canonical E2008 wording on " + backend
+                            + ": " + result.output());
+                    check(result.output().contains(range),
+                        "dollar catch '" + catchVar + "' keeps the exact"
+                            + " identifier range on " + backend
+                            + ": " + result.output());
+                    check(!Files.exists(out),
+                        "dollar catch '" + catchVar + "' publishes no artifact"
+                            + " directory on " + backend);
+                }
+            }
+        } catch (IOException e) {
+            fail("dollar catch variable on all targets: " + e.getMessage());
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** True when one diagnostic of the code carries exactly the message. */
+    private static boolean hasDiagnosticMessage(CheckerOutput out, String code,
+                                                String message) {
+        return out.result.diagnostics().stream()
+            .anyMatch(d -> d.code().equals(code) && d.message().equals(message));
     }
 
     /** Test that class names similar to Error (but not exactly "Error") do NOT produce E4006. */

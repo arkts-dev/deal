@@ -902,6 +902,11 @@ public final class NameResolver {
     private void walkTry(TryStatement ts) {
         walkBlock(ts.tryBlock());
 
+        // A catch identifier declares a local Error variable, so it is a
+        // user declaration under the $ prohibition (E2008). The diagnostic
+        // anchors on the identifier's own span, not the whole statement.
+        checkNoDollar(ts.catchVar(), ts.catchVarSpan());
+
         SymbolTable saved = currentScope;
         currentScope = currentScope.enterScope();
         scopeMap.put(ts, currentScope);

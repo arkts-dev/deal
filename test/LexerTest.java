@@ -697,7 +697,11 @@ public class LexerTest {
         System.out.println("-- Identifiers --");
 
         String[] ids = { "x", "myVar", "_private", "$jq", "camelCase", "PascalCase",
-                         "snake_case", "x1", "a0" };
+                         "snake_case", "x1", "a0",
+                         // ISSUE-0884: the lexer admits $ in every identifier
+                         // position; the frontend rejects user declarations
+                         // that use it (E2008), not the token shape.
+                         "bad$name", "b$ad", "bad$" };
 
         for (String id : ids) {
             LexResult r = tokenize(id);

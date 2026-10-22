@@ -1,0 +1,15 @@
+// @spec: Lexical elements — identifier restrictions
+// @description: Generated @jsonable C$fromJson/C$toJson helper names remain source-visible and callable
+// @expected: compile-ok
+// @features: classes, jsonable, generated-identifiers, accept-control
+
+// @jsonable
+export class Payload {
+  name: string = "";
+}
+
+export function main(): null {
+  let encoded: string = Payload$toJson({ name: "x" });
+  let decoded: Payload | null = Payload$fromJson(encoded);
+  return null;
+}
